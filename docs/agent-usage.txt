@@ -1,0 +1,35 @@
+atm agent usage
+===============
+
+Use refs printed by command output. The stable part is the suffix after the
+project prefix:
+
+  APP-7KQ9A1X
+
+The project prefix is display context, not identity. If a task moves projects,
+the displayed prefix changes and the suffix remains the same.
+
+Refs:
+
+  * Use the printed qualified ref when possible.
+  * Bare suffix refs work when unambiguous.
+  * Typed suffix refs must be at least 3 characters.
+  * Retry with a longer suffix when atm reports error ambiguous-ref.
+  * Do not assume an old project prefix still names the task.
+
+Markdown input:
+
+  * Use --description-file or --description-stdin for long descriptions.
+  * Use note --file or note --stdin for durable task notes.
+  * Notes are append-only and are better for handoff context than scratch work.
+
+Conflicts:
+
+  * Inspect conflicts before resolving them.
+  * Use conflict list to find conflicted fields.
+  * Use conflict show <ref> --field <field> to see stable variant tokens.
+  * Use conflict resolve <ref> <field> --use <variant> only after selecting the
+    intended value.
+  * Use --value, --value-file, or --value-stdin when neither variant is the
+    desired final value.
+  * Do not bulk resolve conflicts or pick newest, local, or remote by default.

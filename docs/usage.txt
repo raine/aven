@@ -1,0 +1,60 @@
+atm usage
+=========
+
+Build:
+
+  cargo build
+
+Run checks:
+
+  just check
+
+Run the manual end-to-end script:
+
+  scripts/e2e.sh
+
+Choose a local database path:
+
+  atm --db /tmp/client-a.sqlite list
+  ATM_DB=/tmp/client-a.sqlite atm list
+
+If neither is set, atm stores data under the operating system app data
+directory, for example ~/.local/share/atm/db.sqlite on Linux.
+
+Common CLI examples:
+
+  atm label create bug
+  atm project create app --path /path/to/repo
+  atm add "fix sync conflict display" --project app --label bug
+  printf '## Context\nMarkdown works here\n' \
+    | atm add "write docs" --project app --description-stdin
+  atm list --project app
+  atm show APP-7KQ9A1X --full
+  atm update 7KQ --status active --priority high
+  printf 'handoff note\n' | atm note 7KQ --stdin
+  atm delete 7KQ
+  atm restore 7KQ
+
+Sync server:
+
+  atm server --bind 127.0.0.1:0 --data /tmp/atm-server.sqlite
+
+The server prints:
+
+  listening url=http://127.0.0.1:<port>
+
+Sync a client:
+
+  atm --db /tmp/client-a.sqlite sync --server http://127.0.0.1:<port>
+
+The server stores an idempotent operation log. Clients push unsynced local
+changes and pull changes after their local server cursor.
+
+Known limitations:
+
+  * v1 has no authentication.
+  * v1 sync is an HTTP/JSON operation log, not a CRDT.
+  * Path mappings are local to one device.
+  * There is no TUI, web UI, Mac app, GitHub polling, due date, relation,
+    custom status, recurring task, or team feature.
+  * Conflict resolution is explicit and field based.
