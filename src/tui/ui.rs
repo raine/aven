@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -60,16 +62,16 @@ pub(crate) fn render(
     });
 
     let [header, body, footer] = Layout::vertical([
-        Constraint::Length(3),
+        Constraint::Length(2),
         Constraint::Fill(1),
-        Constraint::Length(4),
+        Constraint::Length(3),
     ])
     .areas(inner);
 
     let [sidebar, main] =
         Layout::horizontal([Constraint::Length(34), Constraint::Fill(1)]).areas(body);
 
-    frame.render_widget(header_bar(store), header);
+    render_header(frame, store, header);
     render_sidebar(frame, store, widgets, view, sidebar);
     render_tasks(frame, store, widgets, view, main);
     frame.render_widget(footer_bar(view), footer);
@@ -87,7 +89,22 @@ pub(crate) fn render(
     }
 }
 
-fn header_bar(store: &TuiStore) -> Paragraph<'static> {
+fn render_header(frame: &mut Frame, store: &TuiStore, area: Rect) {
+    frame.render_widget(
+        Block::new()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::new().fg(BORDER))
+            .style(Style::new().bg(BG)),
+        area,
+    );
+    let [left, right] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(26)])
+        .areas(Rect { height: 1, ..area });
+
+    frame.render_widget(header_tabs(store), left);
+    frame.render_widget(header_status(), right);
+}
+
+fn header_tabs(store: &TuiStore) -> Paragraph<'static> {
     let conflict_count = store.tasks.iter().filter(|task| task.has_conflict).count();
     let search = store.filters.search.as_ref().map(|search| {
         Span::styled(
@@ -113,13 +130,48 @@ fn header_bar(store: &TuiStore) -> Paragraph<'static> {
     if let Some(search) = search {
         spans.push(search);
     }
-    spans.extend([
-        Span::raw("        "),
+    Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BG))
+}
+
+fn header_status() -> Paragraph<'static> {
+    Paragraph::new(Line::from(vec![
         Span::styled("●", Style::new().fg(ACCENT)),
         Span::styled(" local", Style::new().fg(FG_DIM)),
-        Span::styled("  Fri Jun 19", Style::new().fg(FG_DIM)),
-    ]);
-    Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BG))
+        Span::styled(format!("  {}", today_short()), Style::new().fg(FG_DIM)),
+    ]))
+    .alignment(Alignment::Right)
+    .style(Style::new().fg(FG_DIM).bg(BG))
+}
+
+fn today_short() -> String {
+    let days = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| (duration.as_secs() / 86_400) as i64)
+        .unwrap_or(0);
+    let (_, month, day, weekday) = civil_from_unix_days(days);
+    let months = [
+        "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    format!(
+        "{} {} {}",
+        weekdays[weekday as usize], months[month as usize], day
+    )
+}
+
+fn civil_from_unix_days(days: i64) -> (i64, u32, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if month <= 2 { 1 } else { 0 };
+    let weekday = (days + 4).rem_euclid(7);
+    (year, month as u32, day as u32, weekday as u32)
 }
 
 fn footer_bar(view: &ViewState) -> Paragraph<'static> {
@@ -158,7 +210,7 @@ fn footer_bar(view: &ViewState) -> Paragraph<'static> {
         key("q"),
         cmd("quit"),
     ]);
-    Paragraph::new(Text::from(vec![first, Line::from(""), second]))
+    Paragraph::new(Text::from(vec![first, second]))
         .block(
             Block::new()
                 .borders(Borders::TOP)
@@ -197,8 +249,8 @@ fn render_sidebar(
             let label_width = area.width.saturating_sub(8) as usize;
             let color = match entry.target {
                 Some(SidebarTarget::Project(_)) => theme::project_color(index),
-                Some(SidebarTarget::Inbox) => FG_DIM,
                 Some(SidebarTarget::Active) => FG_MUTED,
+                Some(SidebarTarget::Todo) => FG_DIM,
                 _ => FG,
             };
             let line = Line::from(vec![
@@ -281,7 +333,7 @@ fn render_tasks(
     .header(header)
     .block(
         Block::new()
-            .borders(Borders::LEFT | Borders::TOP | Borders::BOTTOM)
+            .borders(Borders::BOTTOM)
             .border_style(Style::new().fg(BORDER))
             .style(Style::new().bg(BG)),
     )
@@ -340,7 +392,7 @@ fn badge(count: i64, active: bool) -> Span<'static> {
 fn sidebar_icon(entry: &crate::tui::store::SidebarEntry) -> &'static str {
     match entry.target {
         Some(SidebarTarget::All) => "○",
-        Some(SidebarTarget::Inbox) => "□",
+        Some(SidebarTarget::Todo) => "□",
         Some(SidebarTarget::Active) => "●",
         Some(SidebarTarget::Project(_)) => "●",
         None => " ",
@@ -350,9 +402,16 @@ fn sidebar_icon(entry: &crate::tui::store::SidebarEntry) -> &'static str {
 fn sidebar_label(entry: &crate::tui::store::SidebarEntry) -> String {
     match entry.target {
         Some(SidebarTarget::All) => "Today's queue".to_string(),
-        Some(SidebarTarget::Inbox) => "All todo".to_string(),
         Some(SidebarTarget::Active) => "All active".to_string(),
-        _ => entry.label.clone(),
+        Some(SidebarTarget::Todo) => "All todo".to_string(),
+        Some(SidebarTarget::Project(_)) => entry
+            .label
+            .split_once(' ')
+            .map(|(_, name)| name)
+            .unwrap_or(&entry.label)
+            .trim_end_matches('*')
+            .to_string(),
+        None => entry.label.clone(),
     }
 }
 
@@ -416,7 +475,7 @@ fn task_row(item: &TaskListItem, index: usize) -> Row<'static> {
     Row::new([
         Cell::from(Line::from(vec![
             Span::styled("● ", Style::new().fg(dot_color)),
-            Span::styled(item.display_ref.clone(), Style::new().fg(FG_MUTED)),
+            Span::styled(short_ref(&item.display_ref), Style::new().fg(FG_MUTED)),
         ])),
         Cell::from(title_cell(item)),
         Cell::from(project_cell(item, index)),
@@ -430,6 +489,14 @@ fn task_row(item: &TaskListItem, index: usize) -> Row<'static> {
         )),
     ])
     .style(Style::new().bg(BG))
+}
+
+fn short_ref(display_ref: &str) -> String {
+    display_ref
+        .rsplit_once('-')
+        .map(|(_, suffix)| suffix)
+        .unwrap_or(display_ref)
+        .to_string()
 }
 
 fn project_cell(item: &TaskListItem, index: usize) -> Line<'static> {

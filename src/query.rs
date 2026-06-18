@@ -50,6 +50,7 @@ pub(crate) struct SidebarCounts {
     pub(crate) all: i64,
     pub(crate) inbox: i64,
     pub(crate) active: i64,
+    pub(crate) todo: i64,
 }
 
 pub(crate) async fn list_task_items(
@@ -167,7 +168,8 @@ pub(crate) async fn sidebar_counts(conn: &mut SqliteConnection) -> Result<Sideba
         "SELECT
          COALESCE(SUM(CASE WHEN deleted = 0 THEN 1 ELSE 0 END), 0) AS all_count,
          COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'inbox' THEN 1 ELSE 0 END), 0) AS inbox_count,
-         COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'active' THEN 1 ELSE 0 END), 0) AS active_count
+         COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'active' THEN 1 ELSE 0 END), 0) AS active_count,
+         COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'todo' THEN 1 ELSE 0 END), 0) AS todo_count
          FROM tasks",
     )
     .fetch_one(&mut *conn)
@@ -176,6 +178,7 @@ pub(crate) async fn sidebar_counts(conn: &mut SqliteConnection) -> Result<Sideba
         all: row.get("all_count"),
         inbox: row.get("inbox_count"),
         active: row.get("active_count"),
+        todo: row.get("todo_count"),
     })
 }
 

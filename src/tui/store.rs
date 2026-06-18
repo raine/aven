@@ -12,8 +12,8 @@ use crate::query::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SidebarTarget {
     All,
-    Inbox,
     Active,
+    Todo,
     Project(String),
 }
 
@@ -97,8 +97,8 @@ impl TuiStore {
         self.filters.status = None;
         match &self.active_view {
             SidebarTarget::All => {}
-            SidebarTarget::Inbox => self.filters.status = Some("inbox".to_string()),
             SidebarTarget::Active => self.filters.status = Some("active".to_string()),
+            SidebarTarget::Todo => self.filters.status = Some("todo".to_string()),
             SidebarTarget::Project(project) => self.filters.project = Some(project.clone()),
         }
         self.refresh(None).await?;
@@ -192,15 +192,15 @@ impl TuiStore {
                 section: false,
             },
             SidebarEntry {
-                label: "Inbox".to_string(),
-                count: self.counts.inbox,
-                target: Some(SidebarTarget::Inbox),
-                section: false,
-            },
-            SidebarEntry {
                 label: "Active".to_string(),
                 count: self.counts.active,
                 target: Some(SidebarTarget::Active),
+                section: false,
+            },
+            SidebarEntry {
+                label: "Todo".to_string(),
+                count: self.counts.todo,
+                target: Some(SidebarTarget::Todo),
                 section: false,
             },
             SidebarEntry {
