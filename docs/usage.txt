@@ -53,6 +53,17 @@ Common CLI examples:
   printf 'handoff note\n' | atm note 7KQ --stdin
   atm delete 7KQ
   atm restore 7KQ
+  atm tui
+
+TUI:
+
+  atm tui
+
+The TUI uses the same database selection rules as the CLI: --db, ATM_DB,
+then config. It opens a keyboard-first task browser with all tasks by
+default, project-specific sidebar views, queue sorting, task detail, search,
+manual refresh, and triage shortcuts for status, priority, delete, and
+restore.
 
 Sync server:
 
@@ -87,6 +98,6 @@ Known limitations:
   * v1 supports one configured sync server per local database. Use a fresh
     database for a different sync server.
   * Path mappings are local to one device.
-  * There is no TUI, web UI, Mac app, GitHub polling, due date, relation,
-    custom status, recurring task, or team feature.
+  * There is no web UI, Mac app, GitHub polling, due date, relation, custom
+    status, recurring task, or team feature.
   * Conflict resolution is explicit and field based.

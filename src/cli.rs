@@ -39,6 +39,7 @@ pub(crate) enum Commands {
     Daemon(DaemonCommand),
     Server(ServerArgs),
     Sync(SyncArgs),
+    Tui,
 }
 
 #[derive(Args)]

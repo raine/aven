@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use serde_json::json;
-use sqlx::{Connection as _, QueryBuilder, Sqlite, SqliteConnection};
+use sqlx::{Connection as _, SqliteConnection};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -14,9 +14,12 @@ mod daemon;
 mod db;
 mod ids;
 mod input;
+mod mutation;
+mod query;
 mod render;
 mod signals;
 mod sync;
+mod tui;
 
 pub use cli::Cli;
 
@@ -26,14 +29,15 @@ use cli::{
     DaemonSubcommand, LabelCommand, LabelSubcommand, ListArgs, NoteArgs, ProjectCommand,
     ProjectPathSubcommand, ProjectSubcommand, RefArgs, SearchArgs, ShowArgs, SyncArgs, UpdateArgs,
 };
-use db::{
-    conflict_exists, field_version, insert_change, open_db, set_field_version, task_from_row,
-    task_has_conflict,
-};
+#[cfg(test)]
+use db::conflict_exists;
+use db::{insert_change, open_db, set_field_version, task_has_conflict};
 #[cfg(test)]
 use ids::{BASE32, encode_crockford};
 use ids::{new_id, now};
 use input::{read_optional_text, read_required_text};
+use mutation::{apply_field_value, set_task_field};
+use query::{TaskFilters, TaskListItem, TaskSort};
 use render::{print_near_error, quote};
 use sync::{run_server, sync_client};
 
@@ -69,6 +73,9 @@ pub async fn run_cli() -> Result<()> {
             let config = load_config_for_command(cli.db.is_some(), &command)?;
             let db_path = config::resolve_db_path(cli.db, &config)?;
             let pool = open_db(&db_path).await?;
+            if matches!(command, Commands::Tui) {
+                return tui::run(pool).await;
+            }
             let mut conn = pool.acquire().await?;
             let should_wake = command_should_wake(&command);
             let result = match command {
@@ -85,6 +92,7 @@ pub async fn run_cli() -> Result<()> {
                 Commands::Restore(args) => cmd_delete_restore(&mut conn, args, false).await,
                 Commands::Conflict(args) => cmd_conflict(&mut conn, args).await,
                 Commands::Sync(args) => sync_client(&mut conn, args, &config).await,
+                Commands::Tui => unreachable!(),
                 Commands::Config(_) | Commands::Daemon(_) | Commands::Server(_) => unreachable!(),
             };
             if result.is_ok()
@@ -209,61 +217,18 @@ async fn cmd_show(conn: &mut SqliteConnection, args: ShowArgs) -> Result<()> {
 }
 
 async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Result<()> {
-    let mut query = QueryBuilder::<Sqlite>::new(
-        "SELECT t.id, t.title, t.description, t.project_key, p.prefix, t.status, t.priority,
-         t.created_at, t.updated_at, t.deleted
-         FROM tasks t JOIN projects p ON p.key = t.project_key",
-    );
-    let mut filters = 0;
-    if !args.all {
-        push_filter_prefix(&mut query, &mut filters);
-        query.push("t.deleted = 0");
-    }
-    let project_key = if let Some(project) = args.project.as_deref() {
-        Some(resolve_existing_project(conn, project).await?.key)
-    } else {
-        None
+    let filters = TaskFilters {
+        project: args.project,
+        status: args.status,
+        priority: args.priority,
+        label: args.label,
+        include_deleted: args.all,
+        search: None,
     };
-    if let Some(project_key) = project_key {
-        push_filter_prefix(&mut query, &mut filters);
-        query.push("t.project_key = ");
-        query.push_bind(project_key);
-    }
-    if let Some(status) = args.status.as_deref() {
-        validate_choice("status", status, STATUSES)?;
-        push_filter_prefix(&mut query, &mut filters);
-        query.push("t.status = ");
-        query.push_bind(status.to_string());
-    }
-    if let Some(priority) = args.priority.as_deref() {
-        validate_choice("priority", priority, PRIORITIES)?;
-        push_filter_prefix(&mut query, &mut filters);
-        query.push("t.priority = ");
-        query.push_bind(priority.to_string());
-    }
-    if let Some(label) = args.label.as_deref() {
-        let label = ensure_label_exists(conn, label).await?;
-        push_filter_prefix(&mut query, &mut filters);
-        query.push("EXISTS (SELECT 1 FROM task_labels tl WHERE tl.task_id = t.id AND tl.label = ");
-        query.push_bind(label);
-        query.push(")");
-    }
-    query.push(" ORDER BY t.updated_at DESC, t.created_at DESC");
-
-    let rows = query.build().fetch_all(&mut *conn).await?;
-    for row in rows {
-        print_task_line(conn, &task_from_row(&row)?).await?;
+    for item in query::list_task_items(conn, filters, TaskSort::Updated).await? {
+        print_task_line_item(&item).await?;
     }
     Ok(())
-}
-
-fn push_filter_prefix(query: &mut QueryBuilder<'_, Sqlite>, filters: &mut usize) {
-    if *filters == 0 {
-        query.push(" WHERE ");
-    } else {
-        query.push(" AND ");
-    }
-    *filters += 1;
 }
 
 async fn cmd_update(conn: &mut SqliteConnection, args: UpdateArgs) -> Result<()> {
@@ -612,112 +577,6 @@ async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictCommand) -> Res
             );
         }
     }
-    Ok(())
-}
-
-async fn set_task_field(
-    conn: &mut SqliteConnection,
-    task_id: &str,
-    field: &str,
-    value: &str,
-) -> Result<()> {
-    if conflict_exists(conn, task_id, field).await? {
-        bail!(
-            "error conflicted-field ref={} field={} hint=\"use conflict resolve\"",
-            task_id,
-            field
-        );
-    }
-    let base = field_version(conn, task_id, field).await?;
-    apply_field_value(conn, task_id, field, value).await?;
-    let change_id = insert_change(
-        conn,
-        "task",
-        task_id,
-        Some(field),
-        "set_field",
-        json!({ "value": value }),
-        base.as_deref(),
-    )
-    .await?;
-    set_field_version(conn, task_id, field, &change_id).await?;
-    Ok(())
-}
-
-async fn apply_field_value(
-    conn: &mut SqliteConnection,
-    task_id: &str,
-    field: &str,
-    value: &str,
-) -> Result<()> {
-    let ts = now();
-    let deleted_value = value.parse::<i64>().unwrap_or(0);
-    match field {
-        "title" => sqlx::query!(
-            "UPDATE tasks SET title = ?, updated_at = ? WHERE id = ?",
-            value,
-            ts,
-            task_id,
-        )
-        .execute(&mut *conn)
-        .await?
-        .rows_affected(),
-        "description" => sqlx::query!(
-            "UPDATE tasks SET description = ?, updated_at = ? WHERE id = ?",
-            value,
-            ts,
-            task_id,
-        )
-        .execute(&mut *conn)
-        .await?
-        .rows_affected(),
-        "project" => {
-            let project = resolve_project_for_add(conn, Some(value)).await?;
-            sqlx::query!(
-                "UPDATE tasks SET project_key = ?, updated_at = ? WHERE id = ?",
-                project.key,
-                ts,
-                task_id,
-            )
-            .execute(&mut *conn)
-            .await?
-            .rows_affected()
-        }
-        "status" => {
-            validate_choice("status", value, STATUSES)?;
-            sqlx::query!(
-                "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
-                value,
-                ts,
-                task_id,
-            )
-            .execute(&mut *conn)
-            .await?
-            .rows_affected()
-        }
-        "priority" => {
-            validate_choice("priority", value, PRIORITIES)?;
-            sqlx::query!(
-                "UPDATE tasks SET priority = ?, updated_at = ? WHERE id = ?",
-                value,
-                ts,
-                task_id,
-            )
-            .execute(&mut *conn)
-            .await?
-            .rows_affected()
-        }
-        "deleted" => sqlx::query!(
-            "UPDATE tasks SET deleted = ?, updated_at = ? WHERE id = ?",
-            deleted_value,
-            ts,
-            task_id,
-        )
-        .execute(&mut *conn)
-        .await?
-        .rows_affected(),
-        _ => bail!("error unknown-field field={field}"),
-    };
     Ok(())
 }
 
@@ -1244,6 +1103,31 @@ async fn print_task_line(conn: &mut SqliteConnection, task: &Task) -> Result<()>
     Ok(())
 }
 
+async fn print_task_line_item(item: &TaskListItem) -> Result<()> {
+    let labels = item.labels.join(",");
+    let conflict = if item.has_conflict {
+        " conflicts=yes"
+    } else {
+        ""
+    };
+    let deleted = if item.task.deleted {
+        " deleted=yes"
+    } else {
+        ""
+    };
+    println!(
+        "{} status={} priority={} labels={}{}{} title={}",
+        item.display_ref,
+        item.task.status,
+        item.task.priority,
+        labels,
+        conflict,
+        deleted,
+        quote(&item.task.title)
+    );
+    Ok(())
+}
+
 async fn print_task(conn: &mut SqliteConnection, task: &Task, full: bool) -> Result<()> {
     print_task_line(conn, task).await?;
     if full {
@@ -1347,6 +1231,7 @@ async fn conflict_variant_value(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::Sqlite;
 
     async fn test_conn() -> (tempfile::TempDir, sqlx::pool::PoolConnection<Sqlite>) {
         let temp = tempfile::tempdir().unwrap();
