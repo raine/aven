@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use rand::Rng;
+use getrandom::fill as fill_random;
 
 pub(crate) const BASE32: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -19,7 +19,7 @@ pub(crate) fn now() -> String {
 
 pub(crate) fn new_id() -> String {
     let mut bytes = [0u8; 10];
-    rand::rng().fill_bytes(&mut bytes);
+    fill_random(&mut bytes).expect("fill random bytes");
     encode_crockford(&bytes)
 }
 

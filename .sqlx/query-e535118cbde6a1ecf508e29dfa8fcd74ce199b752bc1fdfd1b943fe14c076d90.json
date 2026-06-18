@@ -6,57 +6,123 @@
       {
         "name": "change_id!: String",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "changes",
+            "name": "change_id"
+          }
+        }
       },
       {
         "name": "client_id!: String",
         "ordinal": 1,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "changes",
+            "name": "client_id"
+          }
+        }
       },
       {
         "name": "local_seq!: i64",
         "ordinal": 2,
-        "type_info": "Integer"
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "changes",
+            "name": "local_seq"
+          }
+        }
       },
       {
         "name": "entity_type!: String",
         "ordinal": 3,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "changes",
+            "name": "entity_type"
+          }
+        }
       },
       {
         "name": "entity_id!: String",
         "ordinal": 4,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "changes",
+            "name": "entity_id"
+          }
+        }
       },
       {
         "name": "field",
         "ordinal": 5,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "changes",
+            "name": "field"
+          }
+        }
       },
       {
         "name": "op_type!: String",
         "ordinal": 6,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "changes",
+            "name": "op_type"
+          }
+        }
       },
       {
         "name": "payload!: String",
         "ordinal": 7,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "changes",
+            "name": "payload"
+          }
+        }
       },
       {
         "name": "base_version",
         "ordinal": 8,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "changes",
+            "name": "base_version"
+          }
+        }
       },
       {
         "name": "created_at!: String",
         "ordinal": 9,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "changes",
+            "name": "created_at"
+          }
+        }
       },
       {
         "name": "server_seq",
         "ordinal": 10,
-        "type_info": "Integer"
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "changes",
+            "name": "server_seq"
+          }
+        }
       }
     ],
     "parameters": {

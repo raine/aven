@@ -6,7 +6,13 @@
       {
         "name": "label!: String",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task_labels",
+            "name": "label"
+          }
+        }
       }
     ],
     "parameters": {

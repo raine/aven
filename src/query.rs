@@ -182,7 +182,7 @@ pub(crate) async fn sidebar_counts(conn: &mut SqliteConnection) -> Result<Sideba
     })
 }
 
-fn push_filter_prefix(query: &mut QueryBuilder<'_, Sqlite>, filters: &mut usize) {
+fn push_filter_prefix(query: &mut QueryBuilder<Sqlite>, filters: &mut usize) {
     if *filters == 0 {
         query.push(" WHERE ");
     } else {
@@ -191,7 +191,7 @@ fn push_filter_prefix(query: &mut QueryBuilder<'_, Sqlite>, filters: &mut usize)
     *filters += 1;
 }
 
-fn push_sort(query: &mut QueryBuilder<'_, Sqlite>, sort: TaskSort) {
+fn push_sort(query: &mut QueryBuilder<Sqlite>, sort: TaskSort) {
     match sort {
         TaskSort::Queue => query.push(
             " ORDER BY

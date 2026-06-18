@@ -2,6 +2,7 @@
 name = "atm"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.96"
 authors = ["Raine"]
 description = "Local-first task manager CLI and sync server"
 license = "MIT"
@@ -10,9 +11,9 @@ license = "MIT"
 axum = "0.8"
 clap = { version = "4.5", features = ["derive"] }
 dirs = "6.0"
-rand = "0.10"
+getrandom = "0.3"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
-sqlx = { version = "0.8", default-features = false, features = [
+sqlx = { version = "0.9", default-features = false, features = [
   "runtime-tokio",
   "sqlite",
   "macros",
