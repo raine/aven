@@ -33,7 +33,7 @@ fn infers_project_from_git_root() {
     let db = env.db("git.sqlite");
     let repo = env.path("git-inferred");
     fs::create_dir_all(&repo).unwrap();
-    let status = Command::new("git")
+    let status = clean_git_command()
         .args(["init", "-q"])
         .current_dir(&repo)
         .status()
@@ -52,6 +52,59 @@ fn requires_project_without_mapping_or_git() {
     fs::create_dir_all(&cwd).unwrap();
     let error = fail(env.atm_in(&db, &cwd, ["add", "no project"]));
     contains_all(&error, &["error project-required"]);
+}
+
+#[test]
+fn ignores_inherited_git_environment_for_project_inference() {
+    let env = TestEnv::new();
+    let db = env.db("inherited-git.sqlite");
+    let cwd = env.path("no-project");
+    fs::create_dir_all(&cwd).unwrap();
+    let work_tree = env.path("git-inferred");
+    fs::create_dir_all(&work_tree).unwrap();
+    let status = clean_git_command()
+        .args(["init", "-q"])
+        .current_dir(&work_tree)
+        .status()
+        .expect("git init");
+    assert!(status.success(), "git init failed");
+    let git_dir = work_tree.join(".git");
+    let output = Command::new(common::bin())
+        .arg("--db")
+        .arg(&db)
+        .args(["add", "no project"])
+        .current_dir(&cwd)
+        .env("GIT_DIR", &git_dir)
+        .env("GIT_WORK_TREE", &work_tree)
+        .output()
+        .expect("run atm with inherited git env");
+
+    let error = fail(output);
+    contains_all(&error, &["error project-required"]);
+}
+
+fn clean_git_command() -> Command {
+    let mut command = Command::new("git");
+    for name in [
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_GRAFT_FILE",
+        "GIT_INDEX_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_PREFIX",
+        "GIT_SHALLOW_FILE",
+        "GIT_COMMON_DIR",
+    ] {
+        command.env_remove(name);
+    }
+    command
 }
 
 #[test]

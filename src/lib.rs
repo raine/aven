@@ -786,9 +786,11 @@ async fn project_from_path_mapping(conn: &mut SqliteConnection) -> Result<Option
 }
 
 fn git_root_name() -> Result<Option<String>> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output();
+    let mut command = Command::new("git");
+    for name in git_local_env_vars() {
+        command.env_remove(name);
+    }
+    let output = command.args(["rev-parse", "--show-toplevel"]).output();
     let Ok(output) = output else {
         return Ok(None);
     };
@@ -799,6 +801,26 @@ fn git_root_name() -> Result<Option<String>> {
     Ok(Path::new(&root)
         .file_name()
         .map(|name| name.to_string_lossy().to_string()))
+}
+
+fn git_local_env_vars() -> &'static [&'static str] {
+    &[
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_GRAFT_FILE",
+        "GIT_INDEX_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_PREFIX",
+        "GIT_SHALLOW_FILE",
+        "GIT_COMMON_DIR",
+    ]
 }
 
 async fn add_project_path(
