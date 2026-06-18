@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{self, Event};
@@ -31,6 +31,7 @@ pub(crate) struct App {
     pub(crate) search_open: bool,
     pub(crate) search_input: String,
     pub(crate) message: Option<String>,
+    pub(crate) message_at: Option<Instant>,
 }
 
 impl App {
@@ -49,6 +50,7 @@ impl App {
             search_open: false,
             search_input: String::new(),
             message: None,
+            message_at: None,
         };
         app.widgets.sidebar.select(app.store.sidebar_selection());
         app.widgets
@@ -65,13 +67,23 @@ impl App {
             if event::poll(Duration::from_millis(250))?
                 && let Event::Key(key) = event::read()?
             {
-                self.handle(Action::from_key(key.code, self.search_open))
-                    .await?;
+                let action = if self.search_open {
+                    Action::from_search_key(key.code)
+                } else {
+                    Action::from_normal_key(key.code)
+                };
+                if let Err(error) = self.handle(action).await {
+                    self.set_message(format!("error: {error:#}"));
+                }
             }
 
-            if self.store.last_refresh.elapsed() >= Duration::from_secs(5) {
-                self.refresh().await?;
+            if self.store.last_refresh.elapsed() >= Duration::from_secs(5)
+                && let Err(error) = self.refresh().await
+            {
+                self.set_message(format!("refresh failed: {error:#}"));
             }
+
+            self.clear_expired_message();
         }
         Ok(())
     }
@@ -239,7 +251,7 @@ impl App {
             .update_status(self.widgets.table.selected(), status)
             .await?
         {
-            self.message = Some(message);
+            self.set_message(message);
             self.restore_selection_after_mutation();
         }
         Ok(())
@@ -251,7 +263,7 @@ impl App {
             .update_priority(self.widgets.table.selected(), reverse)
             .await?
         {
-            self.message = Some(message);
+            self.set_message(message);
             self.restore_selection_after_mutation();
         }
         Ok(())
@@ -263,7 +275,7 @@ impl App {
             .update_deleted(self.widgets.table.selected(), deleted)
             .await?
         {
-            self.message = Some(message);
+            self.set_message(message);
             self.restore_selection_after_mutation();
         }
         Ok(())
@@ -280,6 +292,21 @@ impl App {
             .is_none_or(|index| index >= self.store.tasks.len())
         {
             self.widgets.table.select(Some(0));
+        }
+    }
+
+    fn set_message(&mut self, message: String) {
+        self.message = Some(message);
+        self.message_at = Some(Instant::now());
+    }
+
+    fn clear_expired_message(&mut self) {
+        if self
+            .message_at
+            .is_some_and(|time| time.elapsed() >= Duration::from_secs(4))
+        {
+            self.message = None;
+            self.message_at = None;
         }
     }
 }

@@ -27,17 +27,17 @@ pub(crate) enum Action {
 }
 
 impl Action {
-    pub(crate) fn from_key(code: KeyCode, searching: bool) -> Self {
-        if searching {
-            return match code {
-                KeyCode::Esc => Self::CancelSearch,
-                KeyCode::Enter => Self::AcceptSearch,
-                KeyCode::Backspace => Self::BackspaceSearch,
-                KeyCode::Char(ch) => Self::SearchChar(ch),
-                _ => Self::None,
-            };
+    pub(crate) fn from_search_key(code: KeyCode) -> Self {
+        match code {
+            KeyCode::Esc => Self::CancelSearch,
+            KeyCode::Enter => Self::AcceptSearch,
+            KeyCode::Backspace => Self::BackspaceSearch,
+            KeyCode::Char(ch) => Self::SearchChar(ch),
+            _ => Self::None,
         }
+    }
 
+    pub(crate) fn from_normal_key(code: KeyCode) -> Self {
         match code {
             KeyCode::Char('q') | KeyCode::Esc => Self::Quit,
             KeyCode::Char('j') | KeyCode::Down => Self::MoveDown,
@@ -69,26 +69,26 @@ mod tests {
     #[test]
     fn maps_navigation_keys() {
         assert_eq!(
-            Action::from_key(KeyCode::Char('j'), false),
+            Action::from_normal_key(KeyCode::Char('j')),
             Action::MoveDown
         );
-        assert_eq!(Action::from_key(KeyCode::Down, false), Action::MoveDown);
-        assert_eq!(Action::from_key(KeyCode::Char('k'), false), Action::MoveUp);
-        assert_eq!(Action::from_key(KeyCode::Up, false), Action::MoveUp);
+        assert_eq!(Action::from_normal_key(KeyCode::Down), Action::MoveDown);
+        assert_eq!(Action::from_normal_key(KeyCode::Char('k')), Action::MoveUp);
+        assert_eq!(Action::from_normal_key(KeyCode::Up), Action::MoveUp);
     }
 
     #[test]
     fn maps_status_keys() {
         assert_eq!(
-            Action::from_key(KeyCode::Char('1'), false),
+            Action::from_normal_key(KeyCode::Char('1')),
             Action::SetStatus("inbox")
         );
         assert_eq!(
-            Action::from_key(KeyCode::Char('4'), false),
+            Action::from_normal_key(KeyCode::Char('4')),
             Action::SetStatus("active")
         );
         assert_eq!(
-            Action::from_key(KeyCode::Char('6'), false),
+            Action::from_normal_key(KeyCode::Char('6')),
             Action::SetStatus("canceled")
         );
     }
@@ -96,10 +96,13 @@ mod tests {
     #[test]
     fn search_mode_captures_text_keys() {
         assert_eq!(
-            Action::from_key(KeyCode::Char('q'), true),
+            Action::from_search_key(KeyCode::Char('q')),
             Action::SearchChar('q')
         );
-        assert_eq!(Action::from_key(KeyCode::Enter, true), Action::AcceptSearch);
-        assert_eq!(Action::from_key(KeyCode::Esc, true), Action::CancelSearch);
+        assert_eq!(
+            Action::from_search_key(KeyCode::Enter),
+            Action::AcceptSearch
+        );
+        assert_eq!(Action::from_search_key(KeyCode::Esc), Action::CancelSearch);
     }
 }
