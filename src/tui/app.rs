@@ -8,7 +8,8 @@ use sqlx::SqlitePool;
 
 use crate::mutation::{cycle_priority, set_deleted, set_status};
 use crate::query::{
-    ProjectListItem, TaskFilters, TaskListItem, TaskSort, list_project_items, list_task_items,
+    ProjectListItem, SidebarCounts, TaskFilters, TaskListItem, TaskSort, list_project_items,
+    list_task_items, sidebar_counts,
 };
 use crate::tui::event::Action;
 use crate::tui::ui;
@@ -43,6 +44,7 @@ pub(crate) struct App {
     pub(crate) table: TableState,
     pub(crate) tasks: Vec<TaskListItem>,
     pub(crate) projects: Vec<ProjectListItem>,
+    pub(crate) counts: SidebarCounts,
     pub(crate) sidebar_entries: Vec<SidebarEntry>,
     pub(crate) active_view: SidebarTarget,
     pub(crate) filters: TaskFilters,
@@ -65,6 +67,7 @@ impl App {
             table: TableState::default(),
             tasks: Vec::new(),
             projects: Vec::new(),
+            counts: SidebarCounts::default(),
             sidebar_entries: Vec::new(),
             active_view: SidebarTarget::All,
             filters: TaskFilters::default(),
@@ -150,6 +153,7 @@ impl App {
         let selected_id = self.selected_task().map(|item| item.task.id.clone());
         let mut conn = self.pool.acquire().await?;
         self.projects = list_project_items(&mut conn).await?;
+        self.counts = sidebar_counts(&mut conn).await?;
         self.tasks = list_task_items(&mut conn, self.filters.clone(), self.sort).await?;
         self.rebuild_sidebar();
         self.restore_task_selection(selected_id.as_deref());
@@ -158,18 +162,6 @@ impl App {
     }
 
     fn rebuild_sidebar(&mut self) {
-        let all = self.tasks.iter().filter(|item| !item.task.deleted).count() as i64;
-        let inbox = self
-            .tasks
-            .iter()
-            .filter(|item| item.task.status == "inbox" && !item.task.deleted)
-            .count() as i64;
-        let active = self
-            .tasks
-            .iter()
-            .filter(|item| item.task.status == "active" && !item.task.deleted)
-            .count() as i64;
-
         let mut entries = vec![
             SidebarEntry {
                 label: "Smart Views".to_string(),
@@ -179,19 +171,19 @@ impl App {
             },
             SidebarEntry {
                 label: "All".to_string(),
-                count: all,
+                count: self.counts.all,
                 target: Some(SidebarTarget::All),
                 section: false,
             },
             SidebarEntry {
                 label: "Inbox".to_string(),
-                count: inbox,
+                count: self.counts.inbox,
                 target: Some(SidebarTarget::Inbox),
                 section: false,
             },
             SidebarEntry {
                 label: "Active".to_string(),
-                count: active,
+                count: self.counts.active,
                 target: Some(SidebarTarget::Active),
                 section: false,
             },

@@ -41,6 +41,13 @@ pub(crate) struct ProjectListItem {
     pub(crate) inbox_count: i64,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SidebarCounts {
+    pub(crate) all: i64,
+    pub(crate) inbox: i64,
+    pub(crate) active: i64,
+}
+
 pub(crate) async fn list_task_items(
     conn: &mut SqliteConnection,
     filters: TaskFilters,
@@ -149,6 +156,23 @@ pub(crate) async fn list_project_items(
             inbox_count: row.get("inbox_count"),
         })
         .collect())
+}
+
+pub(crate) async fn sidebar_counts(conn: &mut SqliteConnection) -> Result<SidebarCounts> {
+    let row = sqlx::query(
+        "SELECT
+         COALESCE(SUM(CASE WHEN deleted = 0 THEN 1 ELSE 0 END), 0) AS all_count,
+         COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'inbox' THEN 1 ELSE 0 END), 0) AS inbox_count,
+         COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'active' THEN 1 ELSE 0 END), 0) AS active_count
+         FROM tasks",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(SidebarCounts {
+        all: row.get("all_count"),
+        inbox: row.get("inbox_count"),
+        active: row.get("active_count"),
+    })
 }
 
 fn push_filter_prefix(query: &mut QueryBuilder<'_, Sqlite>, filters: &mut usize) {
