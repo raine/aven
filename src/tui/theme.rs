@@ -15,13 +15,12 @@ pub(crate) const RED: Color = Color::Rgb(239, 82, 86);
 pub(crate) const PINK: Color = Color::Rgb(225, 91, 139);
 pub(crate) const PURPLE: Color = Color::Rgb(137, 124, 232);
 pub(crate) const GREEN: Color = Color::Rgb(137, 199, 82);
-pub(crate) const CREAM: Color = Color::Rgb(249, 236, 213);
-pub(crate) const PILL_BLUE: Color = Color::Rgb(221, 237, 250);
-pub(crate) const PILL_GRAY: Color = Color::Rgb(48, 48, 45);
+pub(crate) const CHIP_BG: Color = Color::Rgb(48, 48, 45);
 pub(crate) const SELECTED: Style = Style::new()
     .fg(FG)
     .bg(SELECTED_BG)
     .add_modifier(Modifier::BOLD);
+pub(crate) const SELECTED_INACTIVE: Style = Style::new().fg(FG_MUTED).bg(BG_PANEL);
 
 pub(crate) fn priority_style(priority: &str) -> Style {
     let color = match priority {
@@ -35,24 +34,28 @@ pub(crate) fn priority_style(priority: &str) -> Style {
 }
 
 pub(crate) fn status_style(status: &str) -> Style {
-    match status {
-        "active" => Style::new().fg(BLUE).bg(PILL_BLUE),
-        "todo" => Style::new().fg(FG_MUTED).bg(PILL_GRAY),
-        "inbox" => Style::new().fg(FG_DIM).bg(PILL_GRAY),
-        "backlog" => Style::new().fg(FG_DIM).bg(PILL_GRAY),
-        "done" => Style::new().fg(ACCENT).bg(PILL_GRAY),
-        "canceled" => Style::new().fg(RED).bg(PILL_GRAY),
-        _ => Style::new().fg(FG_DIM).bg(PILL_GRAY),
-    }
+    let color = match status {
+        "active" => ACCENT,
+        "todo" => BLUE,
+        "inbox" => FG_DIM,
+        "backlog" => FG_MUTED,
+        "done" => GREEN,
+        "canceled" => RED,
+        _ => FG_DIM,
+    };
+    Style::new().fg(color).bg(CHIP_BG)
 }
 
-pub(crate) fn project_color(index: usize) -> Color {
-    match index % 6 {
+pub(crate) fn project_color(key: &str) -> Color {
+    let hash = key
+        .bytes()
+        .fold(5381usize, |acc, byte| acc.wrapping_mul(33) ^ byte as usize);
+    match hash % 6 {
         0 => PURPLE,
         1 => ACCENT,
         2 => ORANGE,
         3 => Color::Rgb(234, 99, 64),
         4 => PINK,
-        _ => FG_DIM,
+        _ => GREEN,
     }
 }

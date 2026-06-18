@@ -14,8 +14,8 @@ use crate::render::quote;
 use crate::tui::app::{Focus, WidgetState};
 use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::theme::{
-    self, ACCENT, BG, BG_ALT, BG_PANEL, BLUE, BORDER, CREAM, FG, FG_DIM, FG_MUTED, ORANGE, PINK,
-    RED, SELECTED,
+    self, ACCENT, BG, BG_ALT, BG_PANEL, BORDER, CHIP_BG, FG, FG_DIM, FG_MUTED, ORANGE, PINK, RED,
+    SELECTED, SELECTED_INACTIVE,
 };
 use crate::tui::widgets::{priority_short, title_cell};
 
@@ -69,7 +69,7 @@ pub(crate) fn render(
     .areas(inner);
 
     let [sidebar, main] =
-        Layout::horizontal([Constraint::Length(34), Constraint::Fill(1)]).areas(body);
+        Layout::horizontal([Constraint::Max(34), Constraint::Fill(1)]).areas(body);
 
     render_header(frame, store, header);
     render_sidebar(frame, store, widgets, view, sidebar);
@@ -185,7 +185,7 @@ fn footer_bar(view: &ViewState) -> Paragraph<'static> {
         .map(|message| format!("  {message}"))
         .unwrap_or_default();
     let first = Line::from(vec![
-        Span::styled("9", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled("atm", Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
         Span::raw("  "),
         Span::styled(format!("focus {focus}"), Style::new().fg(FG_MUTED)),
         Span::styled(message, Style::new().fg(ORANGE)),
@@ -223,7 +223,7 @@ fn render_sidebar(
     frame: &mut Frame,
     store: &TuiStore,
     widgets: &mut WidgetState,
-    _view: &ViewState,
+    view: &ViewState,
     area: Rect,
 ) {
     let mut items: Vec<ListItem> = store
@@ -236,8 +236,12 @@ fn render_sidebar(
                     return ListItem::new(Line::from(""));
                 }
                 return ListItem::new(
-                    Line::from(entry.label.to_uppercase())
-                        .style(Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD)),
+                    Line::from(format!(" {} ", entry.label.to_uppercase())).style(
+                        Style::new()
+                            .fg(FG_DIM)
+                            .bg(BG_ALT)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 );
             }
             let marker = if index == widgets.sidebar.selected().unwrap_or(usize::MAX) {
@@ -247,28 +251,22 @@ fn render_sidebar(
             };
             let label = sidebar_label(entry);
             let label_width = area.width.saturating_sub(8) as usize;
-            let color = match entry.target {
-                Some(SidebarTarget::Project(_)) => theme::project_color(index),
+            let is_active_view = entry.target.as_ref() == Some(&store.active_view);
+            let color = match &entry.target {
+                Some(SidebarTarget::Project(project)) => theme::project_color(project),
                 Some(SidebarTarget::Active) => FG_MUTED,
                 Some(SidebarTarget::Todo) => FG_DIM,
                 _ => FG,
             };
+            let label_style = if is_active_view {
+                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
+            } else {
+                Style::new().fg(FG)
+            };
             let line = Line::from(vec![
                 Span::styled(format!("{marker} "), Style::new().fg(color)),
-                Span::styled(
-                    format!("{:<label_width$}", label),
-                    Style::new().fg(FG).add_modifier(
-                        if entry.target.as_ref() == Some(&store.active_view) {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        },
-                    ),
-                ),
-                badge(
-                    entry.count,
-                    entry.target.as_ref() == Some(&store.active_view),
-                ),
+                Span::styled(format!("{:<label_width$}", label), label_style),
+                badge(entry.count, is_active_view),
             ]);
             ListItem::new(line)
         })
@@ -289,6 +287,11 @@ fn render_sidebar(
         filter_item("⚡", "conflicts", conflict_count, PINK),
     ]);
 
+    let highlight_style = if view.focus == Focus::Sidebar {
+        SELECTED
+    } else {
+        SELECTED_INACTIVE
+    };
     let list = List::new(items)
         .block(
             Block::new()
@@ -297,8 +300,7 @@ fn render_sidebar(
                 .border_style(Style::new().fg(BORDER))
                 .style(Style::new().bg(BG)),
         )
-        .highlight_style(SELECTED)
-        .highlight_symbol(" ");
+        .highlight_style(highlight_style);
     frame.render_stateful_widget(list, area, &mut widgets.sidebar);
 }
 
@@ -306,7 +308,7 @@ fn render_tasks(
     frame: &mut Frame,
     store: &TuiStore,
     widgets: &mut WidgetState,
-    _view: &ViewState,
+    view: &ViewState,
     area: Rect,
 ) {
     let header = Row::new(["  REF", "TITLE", "PROJECT / LABELS", "STATUS", "PRIORITY"])
@@ -316,32 +318,39 @@ fn render_tasks(
                 .bg(BG_ALT)
                 .add_modifier(Modifier::BOLD),
         )
-        .height(2);
+        .height(1);
 
+    let [table_area, preview_area] = if area.height >= 24 {
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(8)]).areas(area)
+    } else {
+        [area, Rect::default()]
+    };
     let (rows, selected) = task_rows(store, widgets.table.selected());
 
+    let highlight_style = if view.focus == Focus::Tasks {
+        SELECTED
+    } else {
+        SELECTED_INACTIVE
+    };
     let table = Table::new(
         rows,
         [
-            Constraint::Length(12),
-            Constraint::Fill(1),
-            Constraint::Length(18),
-            Constraint::Length(12),
-            Constraint::Length(13),
+            Constraint::Min(8),
+            Constraint::Fill(2),
+            Constraint::Max(30),
+            Constraint::Length(10),
+            Constraint::Length(11),
         ],
     )
     .header(header)
-    .block(
-        Block::new()
-            .borders(Borders::BOTTOM)
-            .border_style(Style::new().fg(BORDER))
-            .style(Style::new().bg(BG)),
-    )
-    .row_highlight_style(SELECTED)
-    .highlight_symbol(" ");
+    .block(Block::new().style(Style::new().bg(BG)))
+    .row_highlight_style(highlight_style);
 
     let mut visual_state = TableState::default().with_selected(selected);
-    frame.render_stateful_widget(table, area, &mut visual_state);
+    frame.render_stateful_widget(table, table_area, &mut visual_state);
+    if preview_area.height > 0 {
+        render_task_preview(frame, store, widgets.table.selected(), preview_area);
+    }
 }
 
 fn tab(label: &str, count: Option<usize>, active: bool) -> Span<'static> {
@@ -379,11 +388,14 @@ fn badge(count: i64, active: bool) -> Span<'static> {
         return Span::raw("   ");
     }
     let style = if active {
-        Style::new().fg(BLUE).bg(CREAM).add_modifier(Modifier::BOLD)
+        Style::new()
+            .fg(ACCENT)
+            .bg(CHIP_BG)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::new()
             .fg(FG_MUTED)
-            .bg(Color::Rgb(16, 16, 15))
+            .bg(CHIP_BG)
             .add_modifier(Modifier::BOLD)
     };
     Span::styled(format!(" {:>2} ", count), style)
@@ -449,14 +461,14 @@ fn task_rows(store: &TuiStore, selected_task: Option<usize>) -> (Vec<Row<'static
 
 fn group_row(status: &str, count: usize) -> Row<'static> {
     Row::new([
+        Cell::from(""),
         Cell::from(Line::from(vec![
-            Span::styled(" ▸ ", Style::new().fg(FG_DIM)),
+            Span::styled("▸ ", Style::new().fg(ACCENT)),
             Span::styled(
                 format!("{} - {count}", status.to_uppercase()),
-                Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
             ),
         ])),
-        Cell::from(""),
         Cell::from(""),
         Cell::from(""),
         Cell::from(""),
@@ -464,7 +476,7 @@ fn group_row(status: &str, count: usize) -> Row<'static> {
     .style(Style::new().bg(BG_ALT))
 }
 
-fn task_row(item: &TaskListItem, index: usize) -> Row<'static> {
+fn task_row(item: &TaskListItem, _index: usize) -> Row<'static> {
     let dot_color = match item.task.priority.as_str() {
         "urgent" => RED,
         "high" => ORANGE,
@@ -478,7 +490,7 @@ fn task_row(item: &TaskListItem, index: usize) -> Row<'static> {
             Span::styled(short_ref(&item.display_ref), Style::new().fg(FG_MUTED)),
         ])),
         Cell::from(title_cell(item)),
-        Cell::from(project_cell(item, index)),
+        Cell::from(project_cell(item)),
         Cell::from(Span::styled(
             format!(" {} ", item.task.status),
             theme::status_style(&item.task.status).add_modifier(Modifier::BOLD),
@@ -499,11 +511,11 @@ fn short_ref(display_ref: &str) -> String {
         .to_string()
 }
 
-fn project_cell(item: &TaskListItem, index: usize) -> Line<'static> {
+fn project_cell(item: &TaskListItem) -> Line<'static> {
     let mut spans = vec![Span::styled(
         item.task.project_key.clone(),
         Style::new()
-            .fg(theme::project_color(index))
+            .fg(theme::project_color(&item.task.project_key))
             .add_modifier(Modifier::BOLD),
     )];
     for label in &item.labels {
@@ -513,8 +525,76 @@ fn project_cell(item: &TaskListItem, index: usize) -> Line<'static> {
     Line::from(spans)
 }
 
+fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usize>, area: Rect) {
+    let Some(item) = store.selected_task(selected) else {
+        return;
+    };
+    let labels = if item.labels.is_empty() {
+        "none".to_string()
+    } else {
+        item.labels.join(", ")
+    };
+    let text = Text::from(vec![
+        Line::from(vec![
+            Span::styled(
+                &item.display_ref,
+                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                &item.task.title,
+                Style::new().fg(FG).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("project ", Style::new().fg(FG_DIM)),
+            Span::styled(
+                item.task.project_key.clone(),
+                Style::new()
+                    .fg(theme::project_color(&item.task.project_key))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  status ", Style::new().fg(FG_DIM)),
+            Span::styled(
+                format!(" {} ", item.task.status),
+                theme::status_style(&item.task.status).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  priority ", Style::new().fg(FG_DIM)),
+            Span::styled(
+                priority_short(&item.task.priority),
+                theme::priority_style(&item.task.priority).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("labels ", Style::new().fg(FG_DIM)),
+            Span::styled(labels, Style::new().fg(FG_MUTED)),
+        ]),
+        Line::from(""),
+        Line::from(if item.task.description.is_empty() {
+            "(no description)".to_string()
+        } else {
+            item.task.description.clone()
+        }),
+    ]);
+    frame.render_widget(
+        Paragraph::new(text)
+            .block(
+                Block::new()
+                    .title(" SELECTED ")
+                    .borders(Borders::TOP)
+                    .border_style(Style::new().fg(BORDER))
+                    .padding(Padding::horizontal(1)),
+            )
+            .wrap(Wrap { trim: false })
+            .style(Style::new().fg(FG).bg(BG)),
+        area,
+    );
+}
+
 fn render_detail(frame: &mut Frame, item: &TaskListItem) {
-    let area = centered(frame.area(), 72, 12);
+    let width = frame.area().width.saturating_sub(8).min(84);
+    let height = frame.area().height.saturating_sub(4).min(18);
+    let area = centered(frame.area(), width, height);
     frame.render_widget(Clear, area);
     let labels = if item.labels.is_empty() {
         "none".to_string()
@@ -585,7 +665,7 @@ fn render_search(frame: &mut Frame, view: &ViewState) {
     let area = centered(frame.area(), 54, 3);
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(format!("/{}", view.search_input))
+        Paragraph::new(format!("/{}▌", view.search_input))
             .block(overlay_block("Search"))
             .style(Style::new().fg(FG).bg(BG_ALT)),
         area,
