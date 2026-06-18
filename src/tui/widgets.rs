@@ -1,25 +1,54 @@
-use ratatui::style::Style;
-use ratatui::style::palette::tailwind;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::query::TaskListItem;
+use crate::tui::theme::{BLUE, CREAM, FG, GREEN, ORANGE, PILL_GRAY, PURPLE, RED};
 
 pub(crate) fn priority_short(priority: &str) -> &'static str {
     match priority {
-        "urgent" => "U",
-        "high" => "H",
-        "medium" => "M",
-        "low" => "L",
-        _ => " ",
+        "urgent" => "▲ urgent",
+        "high" => "↑ high",
+        "medium" => "◆ med",
+        "low" => "─ low",
+        _ => "· none",
     }
 }
 
 pub(crate) fn title_cell(item: &TaskListItem) -> Line<'static> {
-    let marker = if item.has_conflict { "! " } else { "" };
+    let marker = if item.has_conflict { "⚡ " } else { "" };
     let deleted = if item.task.deleted { "deleted " } else { "" };
-    Line::from(vec![
-        Span::styled(marker.to_string(), Style::new().fg(tailwind::YELLOW.c400)),
-        Span::styled(deleted.to_string(), Style::new().fg(tailwind::RED.c400)),
-        Span::raw(item.task.title.clone()),
-    ])
+    let spans = vec![
+        Span::styled(marker.to_string(), Style::new().fg(ORANGE)),
+        Span::styled(deleted.to_string(), Style::new().fg(RED)),
+        Span::styled(
+            item.task.title.clone(),
+            Style::new().fg(FG).add_modifier(Modifier::BOLD),
+        ),
+    ];
+    Line::from(spans)
+}
+
+pub(crate) fn label_pill(label: &str) -> Span<'static> {
+    let (fg, bg) = match label {
+        "bug" => (RED, Colorish::Light),
+        "cleanup" => (FG, Colorish::Dark),
+        "agent" => (PURPLE, Colorish::Light),
+        "docs" => (GREEN, Colorish::Light),
+        _ => (BLUE, Colorish::Light),
+    };
+    Span::styled(
+        format!(" {label} "),
+        Style::new()
+            .fg(fg)
+            .bg(match bg {
+                Colorish::Light => CREAM,
+                Colorish::Dark => PILL_GRAY,
+            })
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+enum Colorish {
+    Light,
+    Dark,
 }
