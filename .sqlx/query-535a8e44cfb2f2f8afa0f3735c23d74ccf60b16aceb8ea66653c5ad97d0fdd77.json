@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT key AS \"key!: String\", name AS \"name!: String\", prefix AS \"prefix!: String\"\n         FROM projects\n         WHERE deleted = 0 AND (key = ? OR lower(name) = lower(?))",
+  "describe": {
+    "columns": [
+      {
+        "name": "key!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "prefix!: String",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "535a8e44cfb2f2f8afa0f3735c23d74ccf60b16aceb8ea66653c5ad97d0fdd77"
+}

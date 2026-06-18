@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT t.id AS \"id!: String\", t.title AS \"title!: String\",\n         t.description AS \"description!: String\", t.project_key AS \"project_key!: String\",\n         p.prefix AS \"project_prefix!: String\", t.status AS \"status!: String\",\n         t.priority AS \"priority!: String\", t.created_at AS \"created_at!: String\",\n         t.updated_at AS \"updated_at!: String\", t.deleted AS \"deleted!: i64\"\n         FROM tasks t JOIN projects p ON p.key = t.project_key\n         WHERE t.id LIKE ? || '%'\n         ORDER BY t.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "title!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "description!: String",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "project_key!: String",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "project_prefix!: String",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "status!: String",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "priority!: String",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at!: String",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at!: String",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "deleted!: i64",
+        "ordinal": 9,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "2461909aa976fe0585cb82a61fc5e827ce14442301a7b5e7aa6673bfd67f3197"
+}

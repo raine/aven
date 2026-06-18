@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM project_paths WHERE project_key = ? AND path = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "bba9f4095655ce8dd9f17913ad7e397c4c3e9c4bad90bceba9707976d1a4a5ef"
+}

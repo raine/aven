@@ -4,7 +4,8 @@ use std::io::{self, Read};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
+use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use axum::Json;
@@ -14,9 +15,10 @@ use axum::routing::post;
 use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{Args, Parser, Subcommand};
 use rand::RngCore;
-use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
+use sqlx::{Connection as _, QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool};
 use tokio::net::TcpListener;
 
 const STYLES: Styles = Styles::styled()
@@ -255,6 +257,39 @@ struct ChangeWire {
     server_seq: Option<i64>,
 }
 
+#[derive(Debug)]
+struct ChangeRow {
+    change_id: String,
+    client_id: String,
+    local_seq: i64,
+    entity_type: String,
+    entity_id: String,
+    field: Option<String>,
+    op_type: String,
+    payload: String,
+    base_version: Option<String>,
+    created_at: String,
+    server_seq: Option<i64>,
+}
+
+impl ChangeRow {
+    fn into_wire(self) -> ChangeWire {
+        ChangeWire {
+            change_id: self.change_id,
+            client_id: self.client_id,
+            local_seq: self.local_seq,
+            entity_type: self.entity_type,
+            entity_id: self.entity_id,
+            field: self.field,
+            op_type: self.op_type,
+            payload: serde_json::from_str(&self.payload).unwrap_or(Value::Null),
+            base_version: self.base_version,
+            created_at: self.created_at,
+            server_seq: self.server_seq,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct SyncRequest {
     client_id: String,
@@ -270,7 +305,7 @@ struct SyncResponse {
 
 #[derive(Clone)]
 struct ServerState {
-    db_path: Arc<PathBuf>,
+    pool: SqlitePool,
 }
 
 pub async fn run_cli() -> Result<()> {
@@ -279,21 +314,22 @@ pub async fn run_cli() -> Result<()> {
         Commands::Server(args) => run_server(args).await,
         command => {
             let db_path = db_path(cli.db)?;
-            let conn = open_db(&db_path)?;
+            let pool = open_db(&db_path).await?;
+            let mut conn = pool.acquire().await?;
             match command {
-                Commands::Add(args) => cmd_add(&conn, args),
-                Commands::Show(args) => cmd_show(&conn, args),
-                Commands::List(args) => cmd_list(&conn, args),
-                Commands::Update(args) => cmd_update(&conn, args),
-                Commands::Note(args) => cmd_note(&conn, args),
-                Commands::Projects(args) => cmd_projects(&conn, args),
-                Commands::Labels(args) => cmd_labels(&conn, args),
-                Commands::Label(args) => cmd_label(&conn, args),
-                Commands::Project(args) => cmd_project(&conn, args),
-                Commands::Delete(args) => cmd_delete_restore(&conn, args, true),
-                Commands::Restore(args) => cmd_delete_restore(&conn, args, false),
-                Commands::Conflict(args) => cmd_conflict(&conn, args),
-                Commands::Sync(args) => sync_client(&conn, args).await,
+                Commands::Add(args) => cmd_add(&mut conn, args).await,
+                Commands::Show(args) => cmd_show(&mut conn, args).await,
+                Commands::List(args) => cmd_list(&mut conn, args).await,
+                Commands::Update(args) => cmd_update(&mut conn, args).await,
+                Commands::Note(args) => cmd_note(&mut conn, args).await,
+                Commands::Projects(args) => cmd_projects(&mut conn, args).await,
+                Commands::Labels(args) => cmd_labels(&mut conn, args).await,
+                Commands::Label(args) => cmd_label(&mut conn, args).await,
+                Commands::Project(args) => cmd_project(&mut conn, args).await,
+                Commands::Delete(args) => cmd_delete_restore(&mut conn, args, true).await,
+                Commands::Restore(args) => cmd_delete_restore(&mut conn, args, false).await,
+                Commands::Conflict(args) => cmd_conflict(&mut conn, args).await,
+                Commands::Sync(args) => sync_client(&mut conn, args).await,
                 Commands::Server(_) => unreachable!(),
             }
         }
@@ -313,111 +349,35 @@ fn db_path(flag: Option<PathBuf>) -> Result<PathBuf> {
     Ok(dir)
 }
 
-fn open_db(path: &Path) -> Result<Connection> {
+async fn open_db(path: &Path) -> Result<SqlitePool> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;
     }
-    let conn =
-        Connection::open(path).with_context(|| format!("could not open {}", path.display()))?;
-    ensure_schema(&conn)?;
-    Ok(conn)
+    let options = SqliteConnectOptions::from_str(&path.display().to_string())?
+        .create_if_missing(true)
+        .foreign_keys(true)
+        .busy_timeout(Duration::from_secs(5));
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .with_context(|| format!("could not open {}", path.display()))?;
+    sqlx::migrate!("./migrations").run(&pool).await?;
+    initialize_meta(&pool).await?;
+    Ok(pool)
 }
 
-fn ensure_schema(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        "
-        PRAGMA foreign_keys = ON;
-        CREATE TABLE IF NOT EXISTS meta (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS projects (
-            key TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            prefix TEXT NOT NULL UNIQUE,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            deleted INTEGER NOT NULL DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS project_paths (
-            project_key TEXT NOT NULL,
-            path TEXT NOT NULL UNIQUE,
-            PRIMARY KEY (project_key, path)
-        );
-        CREATE TABLE IF NOT EXISTS labels (
-            name TEXT PRIMARY KEY,
-            created_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS tasks (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            description TEXT NOT NULL,
-            project_key TEXT NOT NULL,
-            status TEXT NOT NULL,
-            priority TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            deleted INTEGER NOT NULL DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS task_labels (
-            task_id TEXT NOT NULL,
-            label TEXT NOT NULL,
-            PRIMARY KEY (task_id, label)
-        );
-        CREATE TABLE IF NOT EXISTS notes (
-            id TEXT PRIMARY KEY,
-            task_id TEXT NOT NULL,
-            body TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            change_id TEXT NOT NULL UNIQUE
-        );
-        CREATE TABLE IF NOT EXISTS changes (
-            change_id TEXT PRIMARY KEY,
-            client_id TEXT NOT NULL,
-            local_seq INTEGER NOT NULL,
-            entity_type TEXT NOT NULL,
-            entity_id TEXT NOT NULL,
-            field TEXT,
-            op_type TEXT NOT NULL,
-            payload TEXT NOT NULL,
-            base_version TEXT,
-            created_at TEXT NOT NULL,
-            server_seq INTEGER
-        );
-        CREATE TABLE IF NOT EXISTS field_versions (
-            entity_id TEXT NOT NULL,
-            field TEXT NOT NULL,
-            version TEXT NOT NULL,
-            PRIMARY KEY (entity_id, field)
-        );
-        CREATE TABLE IF NOT EXISTS conflicts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id TEXT NOT NULL,
-            field TEXT NOT NULL,
-            base_version TEXT,
-            local_value TEXT NOT NULL,
-            remote_value TEXT NOT NULL,
-            local_change_id TEXT,
-            remote_change_id TEXT NOT NULL,
-            variant_a TEXT NOT NULL,
-            variant_b TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            resolved INTEGER NOT NULL DEFAULT 0,
-            UNIQUE (task_id, field, remote_change_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_changes_server_seq ON changes(server_seq);
-        CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_key);
-        ",
-    )?;
-    if get_meta(conn, "client_id")?.is_none() {
-        set_meta(conn, "client_id", &new_id())?;
+async fn initialize_meta(pool: &SqlitePool) -> Result<()> {
+    let mut conn = pool.acquire().await?;
+    if get_meta(&mut conn, "client_id").await?.is_none() {
+        set_meta(&mut conn, "client_id", &new_id()).await?;
     }
-    if get_meta(conn, "sync_cursor")?.is_none() {
-        set_meta(conn, "sync_cursor", "0")?;
+    if get_meta(&mut conn, "sync_cursor").await?.is_none() {
+        set_meta(&mut conn, "sync_cursor", "0").await?;
     }
-    if get_meta(conn, "local_seq")?.is_none() {
-        set_meta(conn, "local_seq", "0")?;
+    if get_meta(&mut conn, "local_seq").await?.is_none() {
+        set_meta(&mut conn, "local_seq", "0").await?;
     }
     Ok(())
 }
@@ -454,34 +414,38 @@ fn encode_crockford(bytes: &[u8; 10]) -> String {
     String::from_utf8(chars.to_vec()).expect("base32 is utf8")
 }
 
-fn get_meta(conn: &Connection, key: &str) -> Result<Option<String>> {
-    Ok(conn
-        .query_row("SELECT value FROM meta WHERE key = ?", [key], |row| {
-            row.get(0)
-        })
-        .optional()?)
+async fn get_meta(conn: &mut SqliteConnection, key: &str) -> Result<Option<String>> {
+    Ok(
+        sqlx::query_scalar!("SELECT value FROM meta WHERE key = ?", key)
+            .fetch_optional(&mut *conn)
+            .await?,
+    )
 }
 
-fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
-    conn.execute(
+async fn set_meta(conn: &mut SqliteConnection, key: &str, value: &str) -> Result<()> {
+    sqlx::query!(
         "INSERT INTO meta(key, value) VALUES (?, ?)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![key, value],
-    )?;
+        key,
+        value,
+    )
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
-fn next_local_seq(conn: &Connection) -> Result<i64> {
-    let seq = get_meta(conn, "local_seq")?
+async fn next_local_seq(conn: &mut SqliteConnection) -> Result<i64> {
+    let seq = get_meta(conn, "local_seq")
+        .await?
         .unwrap_or_else(|| "0".to_string())
         .parse::<i64>()?
         + 1;
-    set_meta(conn, "local_seq", &seq.to_string())?;
+    set_meta(conn, "local_seq", &seq.to_string()).await?;
     Ok(seq)
 }
 
-fn insert_change(
-    conn: &Connection,
+async fn insert_change(
+    conn: &mut SqliteConnection,
     entity_type: &str,
     entity_id: &str,
     field: Option<&str>,
@@ -490,30 +454,33 @@ fn insert_change(
     base_version: Option<&str>,
 ) -> Result<String> {
     let change_id = new_id();
-    let client_id = get_meta(conn, "client_id")?.context("missing client id")?;
-    let local_seq = next_local_seq(conn)?;
+    let client_id = get_meta(conn, "client_id")
+        .await?
+        .context("missing client id")?;
+    let local_seq = next_local_seq(conn).await?;
     let created_at = now();
-    conn.execute(
+    let payload = payload.to_string();
+    sqlx::query!(
         "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field,
          op_type, payload, base_version, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        params![
-            change_id,
-            client_id,
-            local_seq,
-            entity_type,
-            entity_id,
-            field,
-            op_type,
-            payload.to_string(),
-            base_version,
-            created_at
-        ],
-    )?;
+        change_id,
+        client_id,
+        local_seq,
+        entity_type,
+        entity_id,
+        field,
+        op_type,
+        payload,
+        base_version,
+        created_at,
+    )
+    .execute(&mut *conn)
+    .await?;
     Ok(change_id)
 }
 
-fn cmd_add(conn: &Connection, args: AddArgs) -> Result<()> {
+async fn cmd_add(conn: &mut SqliteConnection, args: AddArgs) -> Result<()> {
     validate_choice("priority", &args.priority, PRIORITIES)?;
     let description = read_optional_text(
         args.description,
@@ -522,23 +489,35 @@ fn cmd_add(conn: &Connection, args: AddArgs) -> Result<()> {
         "description",
     )?
     .unwrap_or_default();
-    let project = resolve_project_for_add(conn, args.project.as_deref())?;
-    let labels = resolve_labels(conn, &args.label)?;
     let id = new_id();
     let ts = now();
-    conn.execute(
+    let mut tx = conn.begin().await?;
+    let project = resolve_project_for_add(&mut tx, args.project.as_deref()).await?;
+    let labels = resolve_labels(&mut tx, &args.label).await?;
+    sqlx::query!(
         "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
          VALUES (?, ?, ?, ?, 'inbox', ?, ?, ?)",
-        params![id, args.title, description, project.key, args.priority, ts, ts],
-    )?;
+        id,
+        args.title,
+        description,
+        project.key,
+        args.priority,
+        ts,
+        ts,
+    )
+    .execute(&mut *tx)
+    .await?;
     for label in &labels {
-        conn.execute(
+        sqlx::query!(
             "INSERT OR IGNORE INTO task_labels(task_id, label) VALUES (?, ?)",
-            params![id, label],
-        )?;
+            id,
+            label,
+        )
+        .execute(&mut *tx)
+        .await?;
     }
     let change_id = insert_change(
-        conn,
+        &mut tx,
         "task",
         &id,
         None,
@@ -555,7 +534,8 @@ fn cmd_add(conn: &Connection, args: AddArgs) -> Result<()> {
             "created_at": ts,
         }),
         None,
-    )?;
+    )
+    .await?;
     for field in [
         "title",
         "description",
@@ -564,13 +544,14 @@ fn cmd_add(conn: &Connection, args: AddArgs) -> Result<()> {
         "priority",
         "deleted",
     ] {
-        set_field_version(conn, &id, field, &change_id)?;
+        set_field_version(&mut tx, &id, field, &change_id).await?;
     }
-    let task = get_task(conn, &id)?;
+    tx.commit().await?;
+    let task = get_task(conn, &id).await?;
     println!(
         "created {} ref={} project={} status={} priority={} title={}",
-        display_ref(conn, &task)?,
-        display_suffix(conn, &task.id)?,
+        display_ref(conn, &task).await?,
+        display_suffix(conn, &task.id).await?,
         task.project_key,
         task.status,
         task.priority,
@@ -579,65 +560,71 @@ fn cmd_add(conn: &Connection, args: AddArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_show(conn: &Connection, args: ShowArgs) -> Result<()> {
-    let task = resolve_task_ref(conn, &args.task_ref)?;
-    print_task(conn, &task, args.full)
+async fn cmd_show(conn: &mut SqliteConnection, args: ShowArgs) -> Result<()> {
+    let task = resolve_task_ref(conn, &args.task_ref).await?;
+    print_task(conn, &task, args.full).await
 }
 
-fn cmd_list(conn: &Connection, args: ListArgs) -> Result<()> {
-    let mut query = String::from(
+async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Result<()> {
+    let mut query = QueryBuilder::<Sqlite>::new(
         "SELECT t.id, t.title, t.description, t.project_key, p.prefix, t.status, t.priority,
          t.created_at, t.updated_at, t.deleted
          FROM tasks t JOIN projects p ON p.key = t.project_key",
     );
-    let mut filters = Vec::new();
-    let mut values = Vec::new();
+    let mut filters = 0;
     if !args.all {
-        filters.push("t.deleted = 0".to_string());
+        push_filter_prefix(&mut query, &mut filters);
+        query.push("t.deleted = 0");
     }
     let project_key = if let Some(project) = args.project.as_deref() {
-        Some(resolve_existing_project(conn, project)?.key)
+        Some(resolve_existing_project(conn, project).await?.key)
     } else {
         None
     };
     if let Some(project_key) = project_key {
-        filters.push("t.project_key = ?".to_string());
-        values.push(project_key);
+        push_filter_prefix(&mut query, &mut filters);
+        query.push("t.project_key = ");
+        query.push_bind(project_key);
     }
     if let Some(status) = args.status.as_deref() {
         validate_choice("status", status, STATUSES)?;
-        filters.push("t.status = ?".to_string());
-        values.push(status.to_string());
+        push_filter_prefix(&mut query, &mut filters);
+        query.push("t.status = ");
+        query.push_bind(status.to_string());
     }
     if let Some(priority) = args.priority.as_deref() {
         validate_choice("priority", priority, PRIORITIES)?;
-        filters.push("t.priority = ?".to_string());
-        values.push(priority.to_string());
+        push_filter_prefix(&mut query, &mut filters);
+        query.push("t.priority = ");
+        query.push_bind(priority.to_string());
     }
     if let Some(label) = args.label.as_deref() {
-        let label = ensure_label_exists(conn, label)?;
-        filters.push(
-            "EXISTS (SELECT 1 FROM task_labels tl WHERE tl.task_id = t.id AND tl.label = ?)"
-                .to_string(),
-        );
-        values.push(label);
+        let label = ensure_label_exists(conn, label).await?;
+        push_filter_prefix(&mut query, &mut filters);
+        query.push("EXISTS (SELECT 1 FROM task_labels tl WHERE tl.task_id = t.id AND tl.label = ");
+        query.push_bind(label);
+        query.push(")");
     }
-    if !filters.is_empty() {
-        query.push_str(" WHERE ");
-        query.push_str(&filters.join(" AND "));
-    }
-    query.push_str(" ORDER BY t.updated_at DESC, t.created_at DESC");
+    query.push(" ORDER BY t.updated_at DESC, t.created_at DESC");
 
-    let mut stmt = conn.prepare(&query)?;
-    let rows = stmt.query_map(rusqlite::params_from_iter(values), task_from_row)?;
+    let rows = query.build().fetch_all(&mut *conn).await?;
     for row in rows {
-        print_task_line(conn, &row?)?;
+        print_task_line(conn, &task_from_row(&row)?).await?;
     }
     Ok(())
 }
 
-fn cmd_update(conn: &Connection, args: UpdateArgs) -> Result<()> {
-    let task = resolve_task_ref(conn, &args.task_ref)?;
+fn push_filter_prefix(query: &mut QueryBuilder<'_, Sqlite>, filters: &mut usize) {
+    if *filters == 0 {
+        query.push(" WHERE ");
+    } else {
+        query.push(" AND ");
+    }
+    *filters += 1;
+}
+
+async fn cmd_update(conn: &mut SqliteConnection, args: UpdateArgs) -> Result<()> {
+    let task = resolve_task_ref(conn, &args.task_ref).await?;
     let description = read_optional_text(
         args.description,
         args.description_file.as_deref(),
@@ -651,63 +638,73 @@ fn cmd_update(conn: &Connection, args: UpdateArgs) -> Result<()> {
         validate_choice("priority", priority, PRIORITIES)?;
     }
     let mut changed = Vec::new();
+    let mut tx = conn.begin().await?;
     if let Some(title) = args.title {
-        set_task_field(conn, &task.id, "title", &title)?;
+        set_task_field(&mut tx, &task.id, "title", &title).await?;
         changed.push("title");
     }
     if let Some(description) = description {
-        set_task_field(conn, &task.id, "description", &description)?;
+        set_task_field(&mut tx, &task.id, "description", &description).await?;
         changed.push("description");
     }
     if let Some(project) = args.project {
-        let project = resolve_project_for_add(conn, Some(&project))?;
-        set_task_field(conn, &task.id, "project", &project.key)?;
+        let project = resolve_project_for_add(&mut tx, Some(&project)).await?;
+        set_task_field(&mut tx, &task.id, "project", &project.key).await?;
         changed.push("project");
     }
     if let Some(status) = args.status {
-        set_task_field(conn, &task.id, "status", &status)?;
+        set_task_field(&mut tx, &task.id, "status", &status).await?;
         changed.push("status");
     }
     if let Some(priority) = args.priority {
-        set_task_field(conn, &task.id, "priority", &priority)?;
+        set_task_field(&mut tx, &task.id, "priority", &priority).await?;
         changed.push("priority");
     }
-    for label in resolve_labels(conn, &args.label)? {
-        conn.execute(
+    for label in resolve_labels(&mut tx, &args.label).await? {
+        sqlx::query!(
             "INSERT OR IGNORE INTO task_labels(task_id, label) VALUES (?, ?)",
-            params![task.id, label],
-        )?;
+            task.id,
+            label,
+        )
+        .execute(&mut *tx)
+        .await?;
         insert_change(
-            conn,
+            &mut tx,
             "task",
             &task.id,
             Some("labels"),
             "label_add",
             json!({ "label": label }),
             None,
-        )?;
+        )
+        .await?;
         changed.push("label");
     }
-    for label in resolve_labels(conn, &args.remove_label)? {
-        conn.execute(
+    for label in resolve_labels(&mut tx, &args.remove_label).await? {
+        sqlx::query!(
             "DELETE FROM task_labels WHERE task_id = ? AND label = ?",
-            params![task.id, label],
-        )?;
+            task.id,
+            label,
+        )
+        .execute(&mut *tx)
+        .await?;
         insert_change(
-            conn,
+            &mut tx,
             "task",
             &task.id,
             Some("labels"),
             "label_remove",
             json!({ "label": label }),
             None,
-        )?;
+        )
+        .await?;
         changed.push("label");
     }
-    let task = get_task(conn, &task.id)?;
+    tx.commit().await?;
+    let task = get_task(conn, &task.id).await?;
     println!(
         "updated {} changed={} status={} priority={} title={}",
-        display_ref(conn, &task)?,
+        display_ref(conn, &task).await?,
         if changed.is_empty() { "none" } else { "yes" },
         task.status,
         task.priority,
@@ -716,30 +713,39 @@ fn cmd_update(conn: &Connection, args: UpdateArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_note(conn: &Connection, args: NoteArgs) -> Result<()> {
-    let task = resolve_task_ref(conn, &args.task_ref)?;
+async fn cmd_note(conn: &mut SqliteConnection, args: NoteArgs) -> Result<()> {
+    let task = resolve_task_ref(conn, &args.task_ref).await?;
     let body = read_required_text(args.text, args.file.as_deref(), args.stdin, "note")?;
     let note_id = new_id();
     let ts = now();
+    let mut tx = conn.begin().await?;
     let change_id = insert_change(
-        conn,
+        &mut tx,
         "task",
         &task.id,
         Some("notes"),
         "note_add",
         json!({ "note_id": note_id, "body": body, "created_at": ts }),
         None,
-    )?;
-    conn.execute(
+    )
+    .await?;
+    sqlx::query!(
         "INSERT INTO notes(id, task_id, body, created_at, change_id) VALUES (?, ?, ?, ?, ?)",
-        params![note_id, task.id, body, ts, change_id],
-    )?;
-    println!("noted {} note={}", display_ref(conn, &task)?, note_id);
+        note_id,
+        task.id,
+        body,
+        ts,
+        change_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    println!("noted {} note={}", display_ref(conn, &task).await?, note_id);
     Ok(())
 }
 
-fn cmd_projects(conn: &Connection, args: SearchArgs) -> Result<()> {
-    let projects = list_projects(conn, args.search.as_deref())?;
+async fn cmd_projects(conn: &mut SqliteConnection, args: SearchArgs) -> Result<()> {
+    let projects = list_projects(conn, args.search.as_deref()).await?;
     for project in projects {
         println!(
             "{} prefix={} name={}",
@@ -751,15 +757,15 @@ fn cmd_projects(conn: &Connection, args: SearchArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_labels(conn: &Connection, args: SearchArgs) -> Result<()> {
-    let labels = list_labels(conn, args.search.as_deref())?;
+async fn cmd_labels(conn: &mut SqliteConnection, args: SearchArgs) -> Result<()> {
+    let labels = list_labels(conn, args.search.as_deref()).await?;
     for label in labels {
         println!("{label}");
     }
     Ok(())
 }
 
-fn cmd_label(conn: &Connection, args: LabelCommand) -> Result<()> {
+async fn cmd_label(conn: &mut SqliteConnection, args: LabelCommand) -> Result<()> {
     match args.command {
         LabelSubcommand::Create { name } => {
             let name = normalize_label(&name);
@@ -767,10 +773,13 @@ fn cmd_label(conn: &Connection, args: LabelCommand) -> Result<()> {
                 bail!("error invalid-label");
             }
             let created_at = now();
-            conn.execute(
+            sqlx::query!(
                 "INSERT OR IGNORE INTO labels(name, created_at) VALUES (?, ?)",
-                params![name, created_at],
-            )?;
+                name,
+                created_at,
+            )
+            .execute(&mut *conn)
+            .await?;
             insert_change(
                 conn,
                 "label",
@@ -779,19 +788,20 @@ fn cmd_label(conn: &Connection, args: LabelCommand) -> Result<()> {
                 "create_label",
                 json!({ "name": name, "created_at": created_at }),
                 None,
-            )?;
+            )
+            .await?;
             println!("created-label {name}");
         }
     }
     Ok(())
 }
 
-fn cmd_project(conn: &Connection, args: ProjectCommand) -> Result<()> {
+async fn cmd_project(conn: &mut SqliteConnection, args: ProjectCommand) -> Result<()> {
     match args.command {
         ProjectSubcommand::Create { name, path } => {
-            let project = create_project(conn, &name)?;
+            let project = create_project(conn, &name).await?;
             if let Some(path) = path {
-                add_project_path(conn, &project.key, &path)?;
+                add_project_path(conn, &project.key, &path).await?;
             }
             println!(
                 "created-project {} prefix={} name={}",
@@ -802,8 +812,8 @@ fn cmd_project(conn: &Connection, args: ProjectCommand) -> Result<()> {
         }
         ProjectSubcommand::Path { command } => match command {
             ProjectPathSubcommand::Add { project, path } => {
-                let project = resolve_existing_project(conn, &project)?;
-                add_project_path(conn, &project.key, &path)?;
+                let project = resolve_existing_project(conn, &project).await?;
+                add_project_path(conn, &project.key, &path).await?;
                 println!(
                     "added-project-path {} path={}",
                     project.key,
@@ -811,11 +821,15 @@ fn cmd_project(conn: &Connection, args: ProjectCommand) -> Result<()> {
                 );
             }
             ProjectPathSubcommand::Remove { project, path } => {
-                let project = resolve_existing_project(conn, &project)?;
-                conn.execute(
+                let project = resolve_existing_project(conn, &project).await?;
+                let path_display = path.display().to_string();
+                sqlx::query!(
                     "DELETE FROM project_paths WHERE project_key = ? AND path = ?",
-                    params![project.key, path.display().to_string()],
-                )?;
+                    project.key,
+                    path_display,
+                )
+                .execute(&mut *conn)
+                .await?;
                 println!(
                     "removed-project-path {} path={}",
                     project.key,
@@ -827,55 +841,54 @@ fn cmd_project(conn: &Connection, args: ProjectCommand) -> Result<()> {
     Ok(())
 }
 
-fn cmd_delete_restore(conn: &Connection, args: RefArgs, delete: bool) -> Result<()> {
-    let task = resolve_task_ref(conn, &args.task_ref)?;
-    set_task_field(conn, &task.id, "deleted", if delete { "1" } else { "0" })?;
-    let task = get_task(conn, &task.id)?;
+async fn cmd_delete_restore(
+    conn: &mut SqliteConnection,
+    args: RefArgs,
+    delete: bool,
+) -> Result<()> {
+    let task = resolve_task_ref(conn, &args.task_ref).await?;
+    set_task_field(conn, &task.id, "deleted", if delete { "1" } else { "0" }).await?;
+    let task = get_task(conn, &task.id).await?;
     if delete {
-        println!("deleted {}", display_ref(conn, &task)?);
+        println!("deleted {}", display_ref(conn, &task).await?);
     } else {
-        println!("restored {}", display_ref(conn, &task)?);
+        println!("restored {}", display_ref(conn, &task).await?);
     }
     Ok(())
 }
 
-fn cmd_conflict(conn: &Connection, args: ConflictCommand) -> Result<()> {
+async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictCommand) -> Result<()> {
     match args.command {
         ConflictSubcommand::List { project, field } => {
             let project_key = if let Some(project) = project {
-                Some(resolve_existing_project(conn, &project)?.key)
+                Some(resolve_existing_project(conn, &project).await?.key)
             } else {
                 None
             };
-            let mut stmt = conn.prepare(
-                "SELECT c.task_id, c.field, c.variant_a, c.variant_b, t.title, p.prefix, t.project_key
+            let rows = sqlx::query!(
+                r#"SELECT c.task_id AS "task_id!: String", c.field AS "field!: String",
+                 c.variant_a AS "variant_a!: String", c.variant_b AS "variant_b!: String",
+                 t.title AS "title!: String", p.prefix AS "prefix!: String",
+                 t.project_key AS "project_key!: String"
                  FROM conflicts c
                  JOIN tasks t ON t.id = c.task_id
                  JOIN projects p ON p.key = t.project_key
                  WHERE c.resolved = 0
                  AND (?1 IS NULL OR t.project_key = ?1)
                  AND (?2 IS NULL OR c.field = ?2)
-                 ORDER BY c.created_at",
-            )?;
-            let rows = stmt.query_map(params![project_key, field], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, String>(6)?,
-                ))
-            })?;
+                 ORDER BY c.created_at"#,
+                project_key,
+                field,
+            )
+            .fetch_all(&mut *conn)
+            .await?;
             for row in rows {
-                let (id, field, a, b, title, prefix, project_key) = row?;
                 let task = Task {
-                    id,
-                    title,
+                    id: row.task_id,
+                    title: row.title,
                     description: String::new(),
-                    project_key,
-                    project_prefix: prefix,
+                    project_key: row.project_key,
+                    project_prefix: row.prefix,
                     status: String::new(),
                     priority: String::new(),
                     created_at: String::new(),
@@ -884,17 +897,17 @@ fn cmd_conflict(conn: &Connection, args: ConflictCommand) -> Result<()> {
                 };
                 println!(
                     "{} conflict field={} variants={},{} title={}",
-                    display_ref(conn, &task)?,
-                    field,
-                    a,
-                    b,
+                    display_ref(conn, &task).await?,
+                    row.field,
+                    row.variant_a,
+                    row.variant_b,
                     quote(&task.title)
                 );
             }
         }
         ConflictSubcommand::Show { task_ref, field } => {
-            let task = resolve_task_ref(conn, &task_ref)?;
-            print_conflicts(conn, &task, field.as_deref())?;
+            let task = resolve_task_ref(conn, &task_ref).await?;
+            print_conflicts(conn, &task, field.as_deref()).await?;
         }
         ConflictSubcommand::Resolve {
             task_ref,
@@ -904,44 +917,59 @@ fn cmd_conflict(conn: &Connection, args: ConflictCommand) -> Result<()> {
             value_file,
             value_stdin,
         } => {
-            let task = resolve_task_ref(conn, &task_ref)?;
+            let task = resolve_task_ref(conn, &task_ref).await?;
             let value = if let Some(token) = use_variant {
-                conflict_variant_value(conn, &task.id, &field, &token)?
+                conflict_variant_value(conn, &task.id, &field, &token).await?
             } else {
                 read_required_text(value, value_file.as_deref(), value_stdin, "value")?
             };
-            apply_field_value(conn, &task.id, &field, &value)?;
-            conn.execute(
+            let mut tx = conn.begin().await?;
+            apply_field_value(&mut tx, &task.id, &field, &value).await?;
+            sqlx::query!(
                 "UPDATE conflicts SET resolved = 1 WHERE task_id = ? AND field = ? AND resolved = 0",
-                params![task.id, field],
-            )?;
+                task.id,
+                field,
+            )
+            .execute(&mut *tx)
+            .await?;
             let change_id = insert_change(
-                conn,
+                &mut tx,
                 "task",
                 &task.id,
                 Some(&field),
                 "resolve_field",
                 json!({ "value": value }),
                 None,
-            )?;
-            set_field_version(conn, &task.id, &field, &change_id)?;
-            let task = get_task(conn, &task.id)?;
-            println!("resolved {} field={}", display_ref(conn, &task)?, field);
+            )
+            .await?;
+            set_field_version(&mut tx, &task.id, &field, &change_id).await?;
+            tx.commit().await?;
+            let task = get_task(conn, &task.id).await?;
+            println!(
+                "resolved {} field={}",
+                display_ref(conn, &task).await?,
+                field
+            );
         }
     }
     Ok(())
 }
 
-fn set_task_field(conn: &Connection, task_id: &str, field: &str, value: &str) -> Result<()> {
-    if conflict_exists(conn, task_id, field)? {
+async fn set_task_field(
+    conn: &mut SqliteConnection,
+    task_id: &str,
+    field: &str,
+    value: &str,
+) -> Result<()> {
+    if conflict_exists(conn, task_id, field).await? {
         bail!(
             "error conflicted-field ref={} field={} hint=\"use conflict resolve\"",
             task_id,
             field
         );
     }
-    let base = field_version(conn, task_id, field)?;
-    apply_field_value(conn, task_id, field, value)?;
+    let base = field_version(conn, task_id, field).await?;
+    apply_field_value(conn, task_id, field, value).await?;
     let change_id = insert_change(
         conn,
         "task",
@@ -950,46 +978,84 @@ fn set_task_field(conn: &Connection, task_id: &str, field: &str, value: &str) ->
         "set_field",
         json!({ "value": value }),
         base.as_deref(),
-    )?;
-    set_field_version(conn, task_id, field, &change_id)?;
+    )
+    .await?;
+    set_field_version(conn, task_id, field, &change_id).await?;
     Ok(())
 }
 
-fn apply_field_value(conn: &Connection, task_id: &str, field: &str, value: &str) -> Result<()> {
+async fn apply_field_value(
+    conn: &mut SqliteConnection,
+    task_id: &str,
+    field: &str,
+    value: &str,
+) -> Result<()> {
+    let ts = now();
+    let deleted_value = value.parse::<i64>().unwrap_or(0);
     match field {
-        "title" => conn.execute(
+        "title" => sqlx::query!(
             "UPDATE tasks SET title = ?, updated_at = ? WHERE id = ?",
-            params![value, now(), task_id],
-        )?,
-        "description" => conn.execute(
+            value,
+            ts,
+            task_id,
+        )
+        .execute(&mut *conn)
+        .await?
+        .rows_affected(),
+        "description" => sqlx::query!(
             "UPDATE tasks SET description = ?, updated_at = ? WHERE id = ?",
-            params![value, now(), task_id],
-        )?,
+            value,
+            ts,
+            task_id,
+        )
+        .execute(&mut *conn)
+        .await?
+        .rows_affected(),
         "project" => {
-            let project = resolve_project_for_add(conn, Some(value))?;
-            conn.execute(
+            let project = resolve_project_for_add(conn, Some(value)).await?;
+            sqlx::query!(
                 "UPDATE tasks SET project_key = ?, updated_at = ? WHERE id = ?",
-                params![project.key, now(), task_id],
-            )?
+                project.key,
+                ts,
+                task_id,
+            )
+            .execute(&mut *conn)
+            .await?
+            .rows_affected()
         }
         "status" => {
             validate_choice("status", value, STATUSES)?;
-            conn.execute(
+            sqlx::query!(
                 "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
-                params![value, now(), task_id],
-            )?
+                value,
+                ts,
+                task_id,
+            )
+            .execute(&mut *conn)
+            .await?
+            .rows_affected()
         }
         "priority" => {
             validate_choice("priority", value, PRIORITIES)?;
-            conn.execute(
+            sqlx::query!(
                 "UPDATE tasks SET priority = ?, updated_at = ? WHERE id = ?",
-                params![value, now(), task_id],
-            )?
+                value,
+                ts,
+                task_id,
+            )
+            .execute(&mut *conn)
+            .await?
+            .rows_affected()
         }
-        "deleted" => conn.execute(
+        "deleted" => sqlx::query!(
             "UPDATE tasks SET deleted = ?, updated_at = ? WHERE id = ?",
-            params![value.parse::<i64>().unwrap_or(0), now(), task_id],
-        )?,
+            deleted_value,
+            ts,
+            task_id,
+        )
+        .execute(&mut *conn)
+        .await?
+        .rows_affected(),
         _ => bail!("error unknown-field field={field}"),
     };
     Ok(())
@@ -1068,48 +1134,43 @@ fn normalize_label(input: &str) -> String {
     normalize_key(input)
 }
 
-fn project_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
-    Ok(Project {
-        key: row.get(0)?,
-        name: row.get(1)?,
-        prefix: row.get(2)?,
-    })
-}
-
-fn resolve_project_for_add(conn: &Connection, project: Option<&str>) -> Result<Project> {
+async fn resolve_project_for_add(
+    conn: &mut SqliteConnection,
+    project: Option<&str>,
+) -> Result<Project> {
     if let Some(project) = project {
-        if let Some(existing) = find_project(conn, project)? {
+        if let Some(existing) = find_project(conn, project).await? {
             return Ok(existing);
         }
-        let choices = near_projects(conn, project)?;
+        let choices = near_projects(conn, project).await?;
         if !choices.is_empty() {
             print_near_error("project", project, &choices);
             bail!("near-match project");
         }
-        return create_project(conn, project);
+        return create_project(conn, project).await;
     }
-    if let Some(project) = project_from_path_mapping(conn)? {
+    if let Some(project) = project_from_path_mapping(conn).await? {
         return Ok(project);
     }
     if let Some(root_name) = git_root_name()? {
-        if let Some(existing) = find_project(conn, &root_name)? {
+        if let Some(existing) = find_project(conn, &root_name).await? {
             return Ok(existing);
         }
-        let choices = near_projects(conn, &root_name)?;
+        let choices = near_projects(conn, &root_name).await?;
         if !choices.is_empty() {
             print_near_error("project", &root_name, &choices);
             bail!("near-match project");
         }
-        return create_project(conn, &root_name);
+        return create_project(conn, &root_name).await;
     }
     bail!("error project-required");
 }
 
-fn resolve_existing_project(conn: &Connection, project: &str) -> Result<Project> {
-    if let Some(project) = find_project(conn, project)? {
+async fn resolve_existing_project(conn: &mut SqliteConnection, project: &str) -> Result<Project> {
+    if let Some(project) = find_project(conn, project).await? {
         return Ok(project);
     }
-    let choices = near_projects(conn, project)?;
+    let choices = near_projects(conn, project).await?;
     if !choices.is_empty() {
         print_near_error("project", project, &choices);
     } else {
@@ -1118,32 +1179,44 @@ fn resolve_existing_project(conn: &Connection, project: &str) -> Result<Project>
     bail!("unknown project");
 }
 
-fn find_project(conn: &Connection, input: &str) -> Result<Option<Project>> {
+async fn find_project(conn: &mut SqliteConnection, input: &str) -> Result<Option<Project>> {
     let key = normalize_key(input);
-    Ok(conn
-        .query_row(
-            "SELECT key, name, prefix FROM projects
-             WHERE deleted = 0 AND (key = ? OR lower(name) = lower(?))",
-            params![key, input],
-            project_from_row,
-        )
-        .optional()?)
+    let row = sqlx::query!(
+        r#"SELECT key AS "key!: String", name AS "name!: String", prefix AS "prefix!: String"
+         FROM projects
+         WHERE deleted = 0 AND (key = ? OR lower(name) = lower(?))"#,
+        key,
+        input,
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(row.map(|row| Project {
+        key: row.key,
+        name: row.name,
+        prefix: row.prefix,
+    }))
 }
 
-fn create_project(conn: &Connection, name: &str) -> Result<Project> {
+async fn create_project(conn: &mut SqliteConnection, name: &str) -> Result<Project> {
     let key = normalize_key(name);
     if key.is_empty() {
         bail!("error invalid-project input={}", quote(name));
     }
-    if let Some(project) = find_project(conn, &key)? {
+    if let Some(project) = find_project(conn, &key).await? {
         return Ok(project);
     }
-    let prefix = unique_project_prefix(conn, &key)?;
+    let prefix = unique_project_prefix(conn, &key).await?;
     let ts = now();
-    conn.execute(
+    sqlx::query!(
         "INSERT INTO projects(key, name, prefix, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-        params![key, name, prefix, ts, ts],
-    )?;
+        key,
+        name,
+        prefix,
+        ts,
+        ts,
+    )
+    .execute(&mut *conn)
+    .await?;
     insert_change(
         conn,
         "project",
@@ -1152,7 +1225,8 @@ fn create_project(conn: &Connection, name: &str) -> Result<Project> {
         "create_project",
         json!({ "key": key, "name": name, "prefix": prefix, "created_at": ts }),
         None,
-    )?;
+    )
+    .await?;
     Ok(Project {
         key,
         name: name.to_string(),
@@ -1160,18 +1234,17 @@ fn create_project(conn: &Connection, name: &str) -> Result<Project> {
     })
 }
 
-fn unique_project_prefix(conn: &Connection, key: &str) -> Result<String> {
+async fn unique_project_prefix(conn: &mut SqliteConnection, key: &str) -> Result<String> {
     let base = prefix_base(key);
     let mut candidate = base.clone();
     let mut n = 2;
-    while conn
-        .query_row(
-            "SELECT 1 FROM projects WHERE prefix = ?",
-            [&candidate],
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some()
+    while sqlx::query_scalar!(
+        r#"SELECT count(*) AS "count!: i64" FROM projects WHERE prefix = ?"#,
+        candidate
+    )
+    .fetch_one(&mut *conn)
+    .await?
+        > 0
     {
         candidate = format!("{}{}", base.chars().take(2).collect::<String>(), n);
         n += 1;
@@ -1217,26 +1290,23 @@ fn prefix_base(key: &str) -> String {
     out.to_ascii_uppercase()
 }
 
-fn project_from_path_mapping(conn: &Connection) -> Result<Option<Project>> {
+async fn project_from_path_mapping(conn: &mut SqliteConnection) -> Result<Option<Project>> {
     let cwd = fs::canonicalize(env::current_dir()?)?;
-    let mut stmt = conn.prepare(
-        "SELECT p.key, p.name, p.prefix, pp.path
+    let rows = sqlx::query!(
+        r#"SELECT p.key AS "key!: String", p.name AS "name!: String",
+         p.prefix AS "prefix!: String", pp.path AS "path!: String"
          FROM project_paths pp JOIN projects p ON p.key = pp.project_key
-         ORDER BY length(pp.path) DESC",
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((
-            Project {
-                key: row.get(0)?,
-                name: row.get(1)?,
-                prefix: row.get(2)?,
-            },
-            row.get::<_, String>(3)?,
-        ))
-    })?;
+         ORDER BY length(pp.path) DESC"#,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
     for row in rows {
-        let (project, path) = row?;
-        if cwd.starts_with(Path::new(&path)) {
+        let project = Project {
+            key: row.key,
+            name: row.name,
+            prefix: row.prefix,
+        };
+        if cwd.starts_with(Path::new(&row.path)) {
             return Ok(Some(project));
         }
     }
@@ -1259,19 +1329,27 @@ fn git_root_name() -> Result<Option<String>> {
         .map(|name| name.to_string_lossy().to_string()))
 }
 
-fn add_project_path(conn: &Connection, project_key: &str, path: &Path) -> Result<()> {
+async fn add_project_path(
+    conn: &mut SqliteConnection,
+    project_key: &str,
+    path: &Path,
+) -> Result<()> {
     let path =
         fs::canonicalize(path).with_context(|| format!("could not resolve {}", path.display()))?;
-    conn.execute(
+    let path = path.display().to_string();
+    sqlx::query!(
         "INSERT OR IGNORE INTO project_paths(project_key, path) VALUES (?, ?)",
-        params![project_key, path.display().to_string()],
-    )?;
+        project_key,
+        path,
+    )
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
-fn near_projects(conn: &Connection, input: &str) -> Result<Vec<String>> {
+async fn near_projects(conn: &mut SqliteConnection, input: &str) -> Result<Vec<String>> {
     let needle = normalize_key(input);
-    let projects = list_projects(conn, None)?;
+    let projects = list_projects(conn, None).await?;
     Ok(projects
         .into_iter()
         .filter(|project| is_near(&needle, &project.key))
@@ -1286,9 +1364,10 @@ fn near_projects(conn: &Connection, input: &str) -> Result<Vec<String>> {
         .collect())
 }
 
-fn near_labels(conn: &Connection, input: &str) -> Result<Vec<String>> {
+async fn near_labels(conn: &mut SqliteConnection, input: &str) -> Result<Vec<String>> {
     let needle = normalize_label(input);
-    Ok(list_labels(conn, None)?
+    Ok(list_labels(conn, None)
+        .await?
         .into_iter()
         .filter(|label| is_near(&needle, label))
         .collect())
@@ -1324,16 +1403,24 @@ fn levenshtein(a: &str, b: &str) -> usize {
     costs[b.len()]
 }
 
-fn list_projects(conn: &Connection, search: Option<&str>) -> Result<Vec<Project>> {
+async fn list_projects(conn: &mut SqliteConnection, search: Option<&str>) -> Result<Vec<Project>> {
     let search = search.map(normalize_key);
-    let mut stmt = conn.prepare(
-        "SELECT key, name, prefix FROM projects
+    let rows = sqlx::query!(
+        r#"SELECT key AS "key!: String", name AS "name!: String", prefix AS "prefix!: String"
+         FROM projects
          WHERE deleted = 0
-         ORDER BY key",
-    )?;
-    let projects = stmt
-        .query_map([], project_from_row)?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+         ORDER BY key"#,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let projects = rows
+        .into_iter()
+        .map(|row| Project {
+            key: row.key,
+            name: row.name,
+            prefix: row.prefix,
+        })
+        .collect::<Vec<_>>();
     Ok(projects
         .into_iter()
         .filter(|project| {
@@ -1344,12 +1431,11 @@ fn list_projects(conn: &Connection, search: Option<&str>) -> Result<Vec<Project>
         .collect())
 }
 
-fn list_labels(conn: &Connection, search: Option<&str>) -> Result<Vec<String>> {
+async fn list_labels(conn: &mut SqliteConnection, search: Option<&str>) -> Result<Vec<String>> {
     let search = search.map(normalize_label);
-    let mut stmt = conn.prepare("SELECT name FROM labels ORDER BY name")?;
-    let labels = stmt
-        .query_map([], |row| row.get::<_, String>(0))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let labels = sqlx::query_scalar!(r#"SELECT name AS "name!: String" FROM labels ORDER BY name"#)
+        .fetch_all(&mut *conn)
+        .await?;
     Ok(labels
         .into_iter()
         .filter(|label| {
@@ -1360,16 +1446,19 @@ fn list_labels(conn: &Connection, search: Option<&str>) -> Result<Vec<String>> {
         .collect())
 }
 
-fn ensure_label_exists(conn: &Connection, label: &str) -> Result<String> {
+async fn ensure_label_exists(conn: &mut SqliteConnection, label: &str) -> Result<String> {
     let label = normalize_label(label);
-    if conn
-        .query_row("SELECT 1 FROM labels WHERE name = ?", [&label], |_| Ok(()))
-        .optional()?
-        .is_some()
+    if sqlx::query_scalar!(
+        r#"SELECT count(*) AS "count!: i64" FROM labels WHERE name = ?"#,
+        label
+    )
+    .fetch_one(&mut *conn)
+    .await?
+        > 0
     {
         Ok(label)
     } else {
-        let choices = near_labels(conn, &label)?;
+        let choices = near_labels(conn, &label).await?;
         eprintln!("error unknown-label input={}", label);
         for choice in choices {
             eprintln!("choice {choice}");
@@ -1379,55 +1468,90 @@ fn ensure_label_exists(conn: &Connection, label: &str) -> Result<String> {
     }
 }
 
-fn resolve_labels(conn: &Connection, labels: &[String]) -> Result<Vec<String>> {
-    labels
-        .iter()
-        .map(|label| ensure_label_exists(conn, label))
-        .collect()
+async fn resolve_labels(conn: &mut SqliteConnection, labels: &[String]) -> Result<Vec<String>> {
+    let mut resolved = Vec::with_capacity(labels.len());
+    for label in labels {
+        resolved.push(ensure_label_exists(conn, label).await?);
+    }
+    Ok(resolved)
 }
 
-fn task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
+fn task_from_row(row: &SqliteRow) -> Result<Task> {
     Ok(Task {
-        id: row.get(0)?,
-        title: row.get(1)?,
-        description: row.get(2)?,
-        project_key: row.get(3)?,
-        project_prefix: row.get(4)?,
-        status: row.get(5)?,
-        priority: row.get(6)?,
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
-        deleted: row.get::<_, i64>(9)? != 0,
+        id: row.try_get(0)?,
+        title: row.try_get(1)?,
+        description: row.try_get(2)?,
+        project_key: row.try_get(3)?,
+        project_prefix: row.try_get(4)?,
+        status: row.try_get(5)?,
+        priority: row.try_get(6)?,
+        created_at: row.try_get(7)?,
+        updated_at: row.try_get(8)?,
+        deleted: row.try_get::<i64, _>(9)? != 0,
     })
 }
 
-fn get_task(conn: &Connection, id: &str) -> Result<Task> {
-    Ok(conn.query_row(
-        "SELECT t.id, t.title, t.description, t.project_key, p.prefix, t.status, t.priority,
-         t.created_at, t.updated_at, t.deleted
+async fn get_task(conn: &mut SqliteConnection, id: &str) -> Result<Task> {
+    let row = sqlx::query!(
+        r#"SELECT t.id AS "id!: String", t.title AS "title!: String",
+         t.description AS "description!: String", t.project_key AS "project_key!: String",
+         p.prefix AS "project_prefix!: String", t.status AS "status!: String",
+         t.priority AS "priority!: String", t.created_at AS "created_at!: String",
+         t.updated_at AS "updated_at!: String", t.deleted AS "deleted!: i64"
          FROM tasks t JOIN projects p ON p.key = t.project_key
-         WHERE t.id = ?",
-        [id],
-        task_from_row,
-    )?)
+         WHERE t.id = ?"#,
+        id,
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(Task {
+        id: row.id,
+        title: row.title,
+        description: row.description,
+        project_key: row.project_key,
+        project_prefix: row.project_prefix,
+        status: row.status,
+        priority: row.priority,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        deleted: row.deleted != 0,
+    })
 }
 
-fn resolve_task_ref(conn: &Connection, input: &str) -> Result<Task> {
+async fn resolve_task_ref(conn: &mut SqliteConnection, input: &str) -> Result<Task> {
     let (hint, suffix) = split_ref(input);
     if suffix.len() < 3 {
         bail!("error ref-too-short input={} minimum=3", input);
     }
     let suffix = suffix.to_ascii_uppercase();
-    let mut stmt = conn.prepare(
-        "SELECT t.id, t.title, t.description, t.project_key, p.prefix, t.status, t.priority,
-         t.created_at, t.updated_at, t.deleted
+    let rows = sqlx::query!(
+        r#"SELECT t.id AS "id!: String", t.title AS "title!: String",
+         t.description AS "description!: String", t.project_key AS "project_key!: String",
+         p.prefix AS "project_prefix!: String", t.status AS "status!: String",
+         t.priority AS "priority!: String", t.created_at AS "created_at!: String",
+         t.updated_at AS "updated_at!: String", t.deleted AS "deleted!: i64"
          FROM tasks t JOIN projects p ON p.key = t.project_key
          WHERE t.id LIKE ? || '%'
-         ORDER BY t.id",
-    )?;
-    let matches = stmt
-        .query_map([suffix], task_from_row)?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+         ORDER BY t.id"#,
+        suffix,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let matches = rows
+        .into_iter()
+        .map(|row| Task {
+            id: row.id,
+            title: row.title,
+            description: row.description,
+            project_key: row.project_key,
+            project_prefix: row.project_prefix,
+            status: row.status,
+            priority: row.priority,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            deleted: row.deleted != 0,
+        })
+        .collect::<Vec<_>>();
     if matches.is_empty() {
         bail!("error unknown-ref input={}", input);
     }
@@ -1448,7 +1572,7 @@ fn resolve_task_ref(conn: &Connection, input: &str) -> Result<Task> {
     for task in matches {
         println!(
             "match {} title={}",
-            display_ref(conn, &task)?,
+            display_ref(conn, &task).await?,
             quote(&task.title)
         );
     }
@@ -1476,22 +1600,23 @@ fn normalize_ref(input: &str) -> String {
         .collect()
 }
 
-fn display_ref(conn: &Connection, task: &Task) -> Result<String> {
+async fn display_ref(conn: &mut SqliteConnection, task: &Task) -> Result<String> {
     Ok(format!(
         "{}-{}",
         task.project_prefix,
-        display_suffix(conn, &task.id)?
+        display_suffix(conn, &task.id).await?
     ))
 }
 
-fn display_suffix(conn: &Connection, id: &str) -> Result<String> {
+async fn display_suffix(conn: &mut SqliteConnection, id: &str) -> Result<String> {
     for len in 7..=16 {
         let prefix = &id[..len];
-        let count: i64 = conn.query_row(
-            "SELECT count(*) FROM tasks WHERE id LIKE ? || '%'",
-            [prefix],
-            |row| row.get(0),
-        )?;
+        let count: i64 = sqlx::query_scalar!(
+            r#"SELECT count(*) AS "count!: i64" FROM tasks WHERE id LIKE ? || '%'"#,
+            prefix
+        )
+        .fetch_one(&mut *conn)
+        .await?;
         if count <= 1 {
             return Ok(prefix.to_string());
         }
@@ -1499,17 +1624,18 @@ fn display_suffix(conn: &Connection, id: &str) -> Result<String> {
     Ok(id.to_string())
 }
 
-fn labels_for_task(conn: &Connection, task_id: &str) -> Result<Vec<String>> {
-    let mut stmt =
-        conn.prepare("SELECT label FROM task_labels WHERE task_id = ? ORDER BY label")?;
-    Ok(stmt
-        .query_map([task_id], |row| row.get::<_, String>(0))?
-        .collect::<rusqlite::Result<Vec<_>>>()?)
+async fn labels_for_task(conn: &mut SqliteConnection, task_id: &str) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT label AS "label!: String" FROM task_labels WHERE task_id = ? ORDER BY label"#,
+        task_id
+    )
+    .fetch_all(&mut *conn)
+    .await?)
 }
 
-fn print_task_line(conn: &Connection, task: &Task) -> Result<()> {
-    let labels = labels_for_task(conn, &task.id)?.join(",");
-    let conflict = if task_has_conflict(conn, &task.id)? {
+async fn print_task_line(conn: &mut SqliteConnection, task: &Task) -> Result<()> {
+    let labels = labels_for_task(conn, &task.id).await?.join(",");
+    let conflict = if task_has_conflict(conn, &task.id).await? {
         " conflicts=yes"
     } else {
         ""
@@ -1517,7 +1643,7 @@ fn print_task_line(conn: &Connection, task: &Task) -> Result<()> {
     let deleted = if task.deleted { " deleted=yes" } else { "" };
     println!(
         "{} status={} priority={} labels={}{}{} title={}",
-        display_ref(conn, task)?,
+        display_ref(conn, task).await?,
         task.status,
         task.priority,
         labels,
@@ -1528,8 +1654,8 @@ fn print_task_line(conn: &Connection, task: &Task) -> Result<()> {
     Ok(())
 }
 
-fn print_task(conn: &Connection, task: &Task, full: bool) -> Result<()> {
-    print_task_line(conn, task)?;
+async fn print_task(conn: &mut SqliteConnection, task: &Task, full: bool) -> Result<()> {
+    print_task_line(conn, task).await?;
     if full {
         println!("id={}", task.id);
         println!(
@@ -1545,17 +1671,21 @@ fn print_task(conn: &Connection, task: &Task, full: bool) -> Result<()> {
             }
             println!("EOF");
         }
-        let mut stmt = conn.prepare(
-            "SELECT body, created_at FROM notes WHERE task_id = ? ORDER BY created_at, id",
-        )?;
-        let notes = stmt.query_map([&task.id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
+        let notes = sqlx::query!(
+            r#"SELECT body AS "body!: String", created_at AS "created_at!: String"
+             FROM notes WHERE task_id = ? ORDER BY created_at, id"#,
+            task.id,
+        )
+        .fetch_all(&mut *conn)
+        .await?;
         for note in notes {
-            let (body, created_at) = note?;
-            println!("note created={created_at} body={}", quote(&body));
+            println!(
+                "note created={} body={}",
+                note.created_at,
+                quote(&note.body)
+            );
         }
-        print_conflicts(conn, task, None)?;
+        print_conflicts(conn, task, None).await?;
     }
     Ok(())
 }
@@ -1564,97 +1694,124 @@ fn quote(input: &str) -> String {
     serde_json::to_string(input).unwrap_or_else(|_| "\"\"".to_string())
 }
 
-fn field_version(conn: &Connection, entity_id: &str, field: &str) -> Result<Option<String>> {
-    Ok(conn
-        .query_row(
-            "SELECT version FROM field_versions WHERE entity_id = ? AND field = ?",
-            params![entity_id, field],
-            |row| row.get(0),
+async fn field_version(
+    conn: &mut SqliteConnection,
+    entity_id: &str,
+    field: &str,
+) -> Result<Option<String>> {
+    Ok(
+        sqlx::query_scalar!(
+            r#"SELECT version AS "version!: String" FROM field_versions WHERE entity_id = ? AND field = ?"#,
+            entity_id,
+            field
         )
-        .optional()?)
+            .fetch_optional(&mut *conn)
+            .await?,
+    )
 }
 
-fn set_field_version(conn: &Connection, entity_id: &str, field: &str, version: &str) -> Result<()> {
-    conn.execute(
+async fn set_field_version(
+    conn: &mut SqliteConnection,
+    entity_id: &str,
+    field: &str,
+    version: &str,
+) -> Result<()> {
+    sqlx::query!(
         "INSERT INTO field_versions(entity_id, field, version) VALUES (?, ?, ?)
          ON CONFLICT(entity_id, field) DO UPDATE SET version = excluded.version",
-        params![entity_id, field, version],
-    )?;
+        entity_id,
+        field,
+        version,
+    )
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
-fn task_has_conflict(conn: &Connection, task_id: &str) -> Result<bool> {
-    Ok(conn
-        .query_row(
-            "SELECT 1 FROM conflicts WHERE task_id = ? AND resolved = 0 LIMIT 1",
-            [task_id],
-            |_| Ok(()),
+async fn task_has_conflict(conn: &mut SqliteConnection, task_id: &str) -> Result<bool> {
+    Ok(
+        sqlx::query_scalar!(
+            r#"SELECT count(*) AS "count!: i64" FROM conflicts WHERE task_id = ? AND resolved = 0 LIMIT 1"#,
+            task_id,
         )
-        .optional()?
-        .is_some())
+        .fetch_one(&mut *conn)
+        .await?
+            > 0,
+    )
 }
 
-fn conflict_exists(conn: &Connection, task_id: &str, field: &str) -> Result<bool> {
-    Ok(conn
-        .query_row(
-            "SELECT 1 FROM conflicts WHERE task_id = ? AND field = ? AND resolved = 0 LIMIT 1",
-            params![task_id, field],
-            |_| Ok(()),
+async fn conflict_exists(conn: &mut SqliteConnection, task_id: &str, field: &str) -> Result<bool> {
+    Ok(
+        sqlx::query_scalar!(
+            r#"SELECT count(*) AS "count!: i64" FROM conflicts WHERE task_id = ? AND field = ? AND resolved = 0 LIMIT 1"#,
+            task_id,
+            field,
         )
-        .optional()?
-        .is_some())
+        .fetch_one(&mut *conn)
+        .await?
+            > 0,
+    )
 }
 
-fn print_conflicts(conn: &Connection, task: &Task, field: Option<&str>) -> Result<()> {
-    let mut stmt = conn.prepare(
-        "SELECT field, variant_a, local_value, variant_b, remote_value
+async fn print_conflicts(
+    conn: &mut SqliteConnection,
+    task: &Task,
+    field: Option<&str>,
+) -> Result<()> {
+    let rows = sqlx::query!(
+        r#"SELECT field AS "field!: String", variant_a AS "variant_a!: String",
+         local_value AS "local_value!: String", variant_b AS "variant_b!: String",
+         remote_value AS "remote_value!: String"
          FROM conflicts
          WHERE task_id = ? AND resolved = 0 AND (? IS NULL OR field = ?)
-         ORDER BY field, id",
-    )?;
-    let rows = stmt.query_map(params![task.id, field, field], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-        ))
-    })?;
+         ORDER BY field, id"#,
+        task.id,
+        field,
+        field,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
     for row in rows {
-        let (field, a, local, b, remote) = row?;
-        println!("conflict {} field={}", display_ref(conn, task)?, field);
-        println!("variant {} value={}", a, quote(&local));
-        println!("variant {} value={}", b, quote(&remote));
+        println!(
+            "conflict {} field={}",
+            display_ref(conn, task).await?,
+            row.field
+        );
+        println!(
+            "variant {} value={}",
+            row.variant_a,
+            quote(&row.local_value)
+        );
+        println!(
+            "variant {} value={}",
+            row.variant_b,
+            quote(&row.remote_value)
+        );
     }
     Ok(())
 }
 
-fn conflict_variant_value(
-    conn: &Connection,
+async fn conflict_variant_value(
+    conn: &mut SqliteConnection,
     task_id: &str,
     field: &str,
     token: &str,
 ) -> Result<String> {
-    let mut stmt = conn.prepare(
-        "SELECT variant_a, local_value, variant_b, remote_value
-         FROM conflicts WHERE task_id = ? AND field = ? AND resolved = 0",
-    )?;
-    let rows = stmt.query_map(params![task_id, field], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-        ))
-    })?;
+    let rows = sqlx::query!(
+        r#"SELECT variant_a AS "variant_a!: String", local_value AS "local_value!: String",
+         variant_b AS "variant_b!: String", remote_value AS "remote_value!: String"
+         FROM conflicts WHERE task_id = ? AND field = ? AND resolved = 0"#,
+        task_id,
+        field,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
     for row in rows {
-        let (a, local, b, remote) = row?;
-        if token == a {
-            return Ok(local);
+        if token == row.variant_a {
+            return Ok(row.local_value);
         }
-        if token == b {
-            return Ok(remote);
+        if token == row.variant_b {
+            return Ok(row.remote_value);
         }
     }
     bail!("error unknown-variant token={}", token);
@@ -1664,10 +1821,8 @@ async fn run_server(args: ServerArgs) -> Result<()> {
     if !args.unsafe_public_bind && !args.bind.ip().is_loopback() {
         bail!("error public-bind-requires --unsafe-public-bind");
     }
-    let _conn = open_db(&args.data)?;
-    let state = ServerState {
-        db_path: Arc::new(args.data),
-    };
+    let pool = open_db(&args.data).await?;
+    let state = ServerState { pool };
     let app = Router::new()
         .route("/sync", post(sync_handler))
         .with_state(state);
@@ -1704,43 +1859,43 @@ async fn sync_handler(
     State(state): State<ServerState>,
     Json(request): Json<SyncRequest>,
 ) -> std::result::Result<Json<SyncResponse>, String> {
-    let conn = open_db(&state.db_path).map_err(|err| err.to_string())?;
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|err| err.to_string())?;
+    let mut conn = state.pool.acquire().await.map_err(|err| err.to_string())?;
+    let mut tx = conn.begin().await.map_err(|err| err.to_string())?;
     for change in request.changes {
-        let exists = tx
-            .query_row(
-                "SELECT 1 FROM changes WHERE change_id = ?",
-                [&change.change_id],
-                |_| Ok(()),
-            )
-            .optional()
-            .map_err(|err| err.to_string())?
-            .is_some();
+        let exists = sqlx::query_scalar!(
+            r#"SELECT count(*) AS "count!: i64" FROM changes WHERE change_id = ?"#,
+            change.change_id
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|err| err.to_string())?
+            > 0;
         if !exists {
-            tx.execute(
+            let payload = change.payload.to_string();
+            sqlx::query!(
                 "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field,
                  op_type, payload, base_version, created_at, server_seq)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(server_seq), 0) + 1 FROM changes))",
-                params![
-                    change.change_id,
-                    change.client_id,
-                    change.local_seq,
-                    change.entity_type,
-                    change.entity_id,
-                    change.field,
-                    change.op_type,
-                    change.payload.to_string(),
-                    change.base_version,
-                    change.created_at
-                ],
+                change.change_id,
+                change.client_id,
+                change.local_seq,
+                change.entity_type,
+                change.entity_id,
+                change.field,
+                change.op_type,
+                payload,
+                change.base_version,
+                change.created_at,
             )
+            .execute(&mut *tx)
+            .await
             .map_err(|err| err.to_string())?;
         }
     }
-    tx.commit().map_err(|err| err.to_string())?;
-    let changes = load_server_changes(&conn, request.after).map_err(|err| err.to_string())?;
+    tx.commit().await.map_err(|err| err.to_string())?;
+    let changes = load_server_changes_after(&mut conn, request.after)
+        .await
+        .map_err(|err| err.to_string())?;
     let cursor = changes
         .iter()
         .filter_map(|change| change.server_seq)
@@ -1749,12 +1904,15 @@ async fn sync_handler(
     Ok(Json(SyncResponse { cursor, changes }))
 }
 
-async fn sync_client(conn: &Connection, args: SyncArgs) -> Result<()> {
-    let client_id = get_meta(conn, "client_id")?.context("missing client id")?;
-    let after = get_meta(conn, "sync_cursor")?
+async fn sync_client(conn: &mut SqliteConnection, args: SyncArgs) -> Result<()> {
+    let client_id = get_meta(conn, "client_id")
+        .await?
+        .context("missing client id")?;
+    let after = get_meta(conn, "sync_cursor")
+        .await?
         .unwrap_or_else(|| "0".to_string())
         .parse::<i64>()?;
-    let changes = load_unsynced_changes(conn)?;
+    let changes = load_unsynced_changes(conn).await?;
     let url = format!("{}/sync", args.server.trim_end_matches('/'));
     let response = reqwest::Client::new()
         .post(url)
@@ -1769,21 +1927,23 @@ async fn sync_client(conn: &Connection, args: SyncArgs) -> Result<()> {
         .json::<SyncResponse>()
         .await?;
     let mut applied = 0;
+    let mut tx = conn.begin().await?;
     for change in &response.changes {
-        if change_exists(conn, &change.change_id)? {
-            update_change_server_seq(conn, &change.change_id, change.server_seq)?;
+        if change_exists(&mut tx, &change.change_id).await? {
+            update_change_server_seq(&mut tx, &change.change_id, change.server_seq).await?;
             continue;
         }
-        apply_remote_change(conn, change)?;
-        insert_wire_change(conn, change)?;
+        apply_remote_change(&mut tx, change).await?;
+        insert_wire_change(&mut tx, change).await?;
         applied += 1;
     }
-    set_meta(conn, "sync_cursor", &response.cursor.to_string())?;
-    let pushed = conn.query_row(
-        "SELECT count(*) FROM changes WHERE server_seq IS NOT NULL",
-        [],
-        |row| row.get::<_, i64>(0),
-    )?;
+    set_meta(&mut tx, "sync_cursor", &response.cursor.to_string()).await?;
+    tx.commit().await?;
+    let pushed: i64 = sqlx::query_scalar!(
+        r#"SELECT count(*) AS "count!: i64" FROM changes WHERE server_seq IS NOT NULL"#
+    )
+    .fetch_one(&mut *conn)
+    .await?;
     println!(
         "synced pushed={} pulled={} cursor={}",
         pushed, applied, response.cursor
@@ -1791,185 +1951,200 @@ async fn sync_client(conn: &Connection, args: SyncArgs) -> Result<()> {
     Ok(())
 }
 
-fn load_unsynced_changes(conn: &Connection) -> Result<Vec<ChangeWire>> {
-    load_changes_where(conn, "server_seq IS NULL", &[])
+async fn load_unsynced_changes(conn: &mut SqliteConnection) -> Result<Vec<ChangeWire>> {
+    let rows = sqlx::query_as!(
+        ChangeRow,
+        r#"SELECT change_id AS "change_id!: String", client_id AS "client_id!: String",
+         local_seq AS "local_seq!: i64", entity_type AS "entity_type!: String",
+         entity_id AS "entity_id!: String", field, op_type AS "op_type!: String",
+         payload AS "payload!: String", base_version, created_at AS "created_at!: String",
+         server_seq
+         FROM changes WHERE server_seq IS NULL ORDER BY COALESCE(server_seq, local_seq), created_at"#,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows.into_iter().map(ChangeRow::into_wire).collect())
 }
 
-fn load_server_changes(conn: &Connection, after: i64) -> Result<Vec<ChangeWire>> {
-    load_changes_where(conn, "server_seq > ?", &[&after])
-}
-
-fn load_changes_where(
-    conn: &Connection,
-    condition: &str,
-    params_in: &[&dyn rusqlite::ToSql],
+async fn load_server_changes_after(
+    conn: &mut SqliteConnection,
+    after: i64,
 ) -> Result<Vec<ChangeWire>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT change_id, client_id, local_seq, entity_type, entity_id, field, op_type,
-         payload, base_version, created_at, server_seq
-         FROM changes WHERE {condition} ORDER BY COALESCE(server_seq, local_seq), created_at"
-    ))?;
-    let changes = stmt
-        .query_map(params_in, |row| {
-            let payload: String = row.get(7)?;
-            Ok(ChangeWire {
-                change_id: row.get(0)?,
-                client_id: row.get(1)?,
-                local_seq: row.get(2)?,
-                entity_type: row.get(3)?,
-                entity_id: row.get(4)?,
-                field: row.get(5)?,
-                op_type: row.get(6)?,
-                payload: serde_json::from_str(&payload).unwrap_or(Value::Null),
-                base_version: row.get(8)?,
-                created_at: row.get(9)?,
-                server_seq: row.get(10)?,
-            })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(changes)
+    let rows = sqlx::query_as!(
+        ChangeRow,
+        r#"SELECT change_id AS "change_id!: String", client_id AS "client_id!: String",
+         local_seq AS "local_seq!: i64", entity_type AS "entity_type!: String",
+         entity_id AS "entity_id!: String", field, op_type AS "op_type!: String",
+         payload AS "payload!: String", base_version, created_at AS "created_at!: String",
+         server_seq
+         FROM changes WHERE server_seq > ? ORDER BY COALESCE(server_seq, local_seq), created_at"#,
+        after,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows.into_iter().map(ChangeRow::into_wire).collect())
 }
 
-fn change_exists(conn: &Connection, change_id: &str) -> Result<bool> {
-    Ok(conn
-        .query_row(
-            "SELECT 1 FROM changes WHERE change_id = ?",
-            [change_id],
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some())
+async fn change_exists(conn: &mut SqliteConnection, change_id: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT count(*) AS "count!: i64" FROM changes WHERE change_id = ?"#,
+        change_id
+    )
+    .fetch_one(&mut *conn)
+    .await?
+        > 0)
 }
 
-fn update_change_server_seq(
-    conn: &Connection,
+async fn update_change_server_seq(
+    conn: &mut SqliteConnection,
     change_id: &str,
     server_seq: Option<i64>,
 ) -> Result<()> {
     if let Some(server_seq) = server_seq {
-        conn.execute(
+        sqlx::query!(
             "UPDATE changes SET server_seq = ? WHERE change_id = ?",
-            params![server_seq, change_id],
-        )?;
+            server_seq,
+            change_id,
+        )
+        .execute(&mut *conn)
+        .await?;
     }
     Ok(())
 }
 
-fn insert_wire_change(conn: &Connection, change: &ChangeWire) -> Result<()> {
-    conn.execute(
+async fn insert_wire_change(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
+    let payload = change.payload.to_string();
+    sqlx::query!(
         "INSERT OR IGNORE INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field,
          op_type, payload, base_version, created_at, server_seq)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        params![
-            change.change_id,
-            change.client_id,
-            change.local_seq,
-            change.entity_type,
-            change.entity_id,
-            change.field,
-            change.op_type,
-            change.payload.to_string(),
-            change.base_version,
-            change.created_at,
-            change.server_seq
-        ],
-    )?;
+        change.change_id,
+        change.client_id,
+        change.local_seq,
+        change.entity_type,
+        change.entity_id,
+        change.field,
+        change.op_type,
+        payload,
+        change.base_version,
+        change.created_at,
+        change.server_seq,
+    )
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
-fn apply_remote_change(conn: &Connection, change: &ChangeWire) -> Result<()> {
+async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     match change.op_type.as_str() {
         "create_project" => {
             let key = str_payload(&change.payload, "key")?;
             let name = str_payload(&change.payload, "name")?;
             let prefix = str_payload(&change.payload, "prefix")?;
             let created_at = str_payload(&change.payload, "created_at").unwrap_or_else(|_| now());
-            conn.execute(
+            sqlx::query!(
                 "INSERT OR IGNORE INTO projects(key, name, prefix, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?)",
-                params![key, name, prefix, created_at, created_at],
-            )?;
+                key,
+                name,
+                prefix,
+                created_at,
+                created_at,
+            )
+            .execute(&mut *conn)
+            .await?;
         }
         "create_label" => {
             let name = str_payload(&change.payload, "name")?;
             let created_at = str_payload(&change.payload, "created_at").unwrap_or_else(|_| now());
-            conn.execute(
+            sqlx::query!(
                 "INSERT OR IGNORE INTO labels(name, created_at) VALUES (?, ?)",
-                params![name, created_at],
-            )?;
+                name,
+                created_at,
+            )
+            .execute(&mut *conn)
+            .await?;
         }
-        "create_task" => apply_remote_create_task(conn, change)?,
-        "set_field" => apply_remote_set_field(conn, change, false)?,
-        "resolve_field" => apply_remote_set_field(conn, change, true)?,
+        "create_task" => apply_remote_create_task(conn, change).await?,
+        "set_field" => apply_remote_set_field(conn, change, false).await?,
+        "resolve_field" => apply_remote_set_field(conn, change, true).await?,
         "label_add" => {
             let label = str_payload(&change.payload, "label")?;
-            conn.execute(
+            sqlx::query!(
                 "INSERT OR IGNORE INTO labels(name, created_at) VALUES (?, ?)",
-                params![label, change.created_at],
-            )?;
-            conn.execute(
+                label,
+                change.created_at,
+            )
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query!(
                 "INSERT OR IGNORE INTO task_labels(task_id, label) VALUES (?, ?)",
-                params![change.entity_id, label],
-            )?;
+                change.entity_id,
+                label,
+            )
+            .execute(&mut *conn)
+            .await?;
         }
         "label_remove" => {
             let label = str_payload(&change.payload, "label")?;
-            conn.execute(
+            sqlx::query!(
                 "DELETE FROM task_labels WHERE task_id = ? AND label = ?",
-                params![change.entity_id, label],
-            )?;
+                change.entity_id,
+                label,
+            )
+            .execute(&mut *conn)
+            .await?;
         }
         "note_add" => {
             let note_id = str_payload(&change.payload, "note_id")?;
             let body = str_payload(&change.payload, "body")?;
             let created_at = str_payload(&change.payload, "created_at")
                 .unwrap_or_else(|_| change.created_at.clone());
-            conn.execute(
+            sqlx::query!(
                 "INSERT OR IGNORE INTO notes(id, task_id, body, created_at, change_id)
                  VALUES (?, ?, ?, ?, ?)",
-                params![
-                    note_id,
-                    change.entity_id,
-                    body,
-                    created_at,
-                    change.change_id
-                ],
-            )?;
+                note_id,
+                change.entity_id,
+                body,
+                created_at,
+                change.change_id,
+            )
+            .execute(&mut *conn)
+            .await?;
         }
         _ => {}
     }
     Ok(())
 }
 
-fn apply_remote_create_task(conn: &Connection, change: &ChangeWire) -> Result<()> {
-    if conn
-        .query_row(
-            "SELECT 1 FROM tasks WHERE id = ?",
-            [&change.entity_id],
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some()
+async fn apply_remote_create_task(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
+    if sqlx::query_scalar!(
+        r#"SELECT count(*) AS "count!: i64" FROM tasks WHERE id = ?"#,
+        change.entity_id
+    )
+    .fetch_one(&mut *conn)
+    .await?
+        > 0
     {
         return Ok(());
     }
     let project_key = str_payload(&change.payload, "project_key")?;
-    if find_project(conn, &project_key)?.is_none() {
+    if find_project(conn, &project_key).await?.is_none() {
         let name =
             str_payload(&change.payload, "project_name").unwrap_or_else(|_| project_key.clone());
         let prefix = str_payload(&change.payload, "project_prefix")
             .unwrap_or_else(|_| prefix_base(&project_key));
-        conn.execute(
+        sqlx::query!(
             "INSERT OR IGNORE INTO projects(key, name, prefix, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?)",
-            params![
-                project_key,
-                name,
-                prefix,
-                change.created_at,
-                change.created_at
-            ],
-        )?;
+            project_key,
+            name,
+            prefix,
+            change.created_at,
+            change.created_at,
+        )
+        .execute(&mut *conn)
+        .await?;
     }
     let title = str_payload(&change.payload, "title")?;
     let description = str_payload(&change.payload, "description").unwrap_or_default();
@@ -1977,21 +2152,36 @@ fn apply_remote_create_task(conn: &Connection, change: &ChangeWire) -> Result<()
     let priority = str_payload(&change.payload, "priority").unwrap_or_else(|_| "none".to_string());
     let created_at =
         str_payload(&change.payload, "created_at").unwrap_or_else(|_| change.created_at.clone());
-    conn.execute(
+    sqlx::query!(
         "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        params![change.entity_id, title, description, project_key, status, priority, created_at, change.created_at],
-    )?;
+        change.entity_id,
+        title,
+        description,
+        project_key,
+        status,
+        priority,
+        created_at,
+        change.created_at,
+    )
+    .execute(&mut *conn)
+    .await?;
     if let Some(labels) = change.payload.get("labels").and_then(Value::as_array) {
         for label in labels.iter().filter_map(Value::as_str) {
-            conn.execute(
+            sqlx::query!(
                 "INSERT OR IGNORE INTO labels(name, created_at) VALUES (?, ?)",
-                params![label, change.created_at],
-            )?;
-            conn.execute(
+                label,
+                change.created_at,
+            )
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query!(
                 "INSERT OR IGNORE INTO task_labels(task_id, label) VALUES (?, ?)",
-                params![change.entity_id, label],
-            )?;
+                change.entity_id,
+                label,
+            )
+            .execute(&mut *conn)
+            .await?;
         }
     }
     for field in [
@@ -2002,46 +2192,53 @@ fn apply_remote_create_task(conn: &Connection, change: &ChangeWire) -> Result<()
         "priority",
         "deleted",
     ] {
-        set_field_version(conn, &change.entity_id, field, &change.change_id)?;
+        set_field_version(conn, &change.entity_id, field, &change.change_id).await?;
     }
     Ok(())
 }
 
-fn apply_remote_set_field(conn: &Connection, change: &ChangeWire, force: bool) -> Result<()> {
+async fn apply_remote_set_field(
+    conn: &mut SqliteConnection,
+    change: &ChangeWire,
+    force: bool,
+) -> Result<()> {
     let field = change
         .field
         .as_deref()
         .context("field change missing field")?;
     let value = str_payload(&change.payload, "value")?;
     if !force {
-        let current = field_version(conn, &change.entity_id, field)?;
+        let current = field_version(conn, &change.entity_id, field).await?;
         if current != change.base_version {
-            create_conflict(conn, change, field, &value, current.as_deref())?;
+            create_conflict(conn, change, field, &value, current.as_deref()).await?;
             return Ok(());
         }
     }
-    apply_field_value(conn, &change.entity_id, field, &value)?;
-    set_field_version(conn, &change.entity_id, field, &change.change_id)?;
+    apply_field_value(conn, &change.entity_id, field, &value).await?;
+    set_field_version(conn, &change.entity_id, field, &change.change_id).await?;
     if force {
-        conn.execute(
+        sqlx::query!(
             "UPDATE conflicts SET resolved = 1 WHERE task_id = ? AND field = ? AND resolved = 0",
-            params![change.entity_id, field],
-        )?;
+            change.entity_id,
+            field,
+        )
+        .execute(&mut *conn)
+        .await?;
     }
     Ok(())
 }
 
-fn create_conflict(
-    conn: &Connection,
+async fn create_conflict(
+    conn: &mut SqliteConnection,
     change: &ChangeWire,
     field: &str,
     remote_value: &str,
     local_change_id: Option<&str>,
 ) -> Result<()> {
-    if conflict_exists(conn, &change.entity_id, field)? {
+    if conflict_exists(conn, &change.entity_id, field).await? {
         return Ok(());
     }
-    let local_value = current_field_value(conn, &change.entity_id, field)?;
+    let local_value = current_field_value(conn, &change.entity_id, field).await?;
     let variant_a = format!(
         "v{}",
         local_change_id
@@ -2051,28 +2248,32 @@ fn create_conflict(
             .collect::<String>()
     );
     let variant_b = format!("v{}", change.change_id.chars().take(6).collect::<String>());
-    conn.execute(
+    sqlx::query!(
         "INSERT OR IGNORE INTO conflicts(task_id, field, base_version, local_value, remote_value,
          local_change_id, remote_change_id, variant_a, variant_b, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        params![
-            change.entity_id,
-            field,
-            change.base_version,
-            local_value,
-            remote_value,
-            local_change_id,
-            change.change_id,
-            variant_a,
-            variant_b,
-            change.created_at
-        ],
-    )?;
+        change.entity_id,
+        field,
+        change.base_version,
+        local_value,
+        remote_value,
+        local_change_id,
+        change.change_id,
+        variant_a,
+        variant_b,
+        change.created_at,
+    )
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
-fn current_field_value(conn: &Connection, task_id: &str, field: &str) -> Result<String> {
-    let task = get_task(conn, task_id)?;
+async fn current_field_value(
+    conn: &mut SqliteConnection,
+    task_id: &str,
+    field: &str,
+) -> Result<String> {
+    let task = get_task(conn, task_id).await?;
     match field {
         "title" => Ok(task.title),
         "description" => Ok(task.description),
@@ -2096,10 +2297,11 @@ fn str_payload(payload: &Value, key: &str) -> Result<String> {
 mod tests {
     use super::*;
 
-    fn memory() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        ensure_schema(&conn).unwrap();
-        conn
+    async fn test_conn() -> (tempfile::TempDir, sqlx::pool::PoolConnection<Sqlite>) {
+        let temp = tempfile::tempdir().unwrap();
+        let pool = open_db(&temp.path().join("test.sqlite")).await.unwrap();
+        let conn = pool.acquire().await.unwrap();
+        (temp, conn)
     }
 
     #[test]
@@ -2117,46 +2319,55 @@ mod tests {
         assert!(id.chars().all(|ch| BASE32.contains(&(ch as u8))));
     }
 
-    #[test]
-    fn resolves_short_refs_when_unambiguous() {
-        let conn = memory();
-        let project = create_project(&conn, "app").unwrap();
-        conn.execute(
+    #[tokio::test]
+    async fn resolves_short_refs_when_unambiguous() {
+        let (_temp, mut conn) = test_conn().await;
+        let project = create_project(&mut conn, "app").await.unwrap();
+        sqlx::query!(
             "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
              VALUES ('7KQ9A1X4MV2P8D6R', 'test', '', ?, 'inbox', 'none', 't', 't')",
-            [project.key],
+            project.key,
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        let task = resolve_task_ref(&conn, "7KQ").unwrap();
+        let task = resolve_task_ref(&mut conn, "7KQ").await.unwrap();
         assert_eq!(task.id, "7KQ9A1X4MV2P8D6R");
     }
 
-    #[test]
-    fn rejects_ambiguous_refs() {
-        let conn = memory();
-        let project = create_project(&conn, "app").unwrap();
+    #[tokio::test]
+    async fn rejects_ambiguous_refs() {
+        let (_temp, mut conn) = test_conn().await;
+        let project = create_project(&mut conn, "app").await.unwrap();
         for id in ["7KQ9A1X4MV2P8D6R", "7KQZZZZZZZZZZZZZ"] {
-            conn.execute(
+            sqlx::query!(
                 "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
                  VALUES (?, 'test', '', ?, 'inbox', 'none', 't', 't')",
-                params![id, project.key],
+                id,
+                project.key,
             )
+            .execute(&mut *conn)
+            .await
             .unwrap();
         }
-        assert!(resolve_task_ref(&conn, "7KQ").is_err());
+        assert!(resolve_task_ref(&mut conn, "7KQ").await.is_err());
     }
 
-    #[test]
-    fn creates_conflict_on_same_field_version_mismatch() {
-        let conn = memory();
-        let project = create_project(&conn, "app").unwrap();
-        conn.execute(
+    #[tokio::test]
+    async fn creates_conflict_on_same_field_version_mismatch() {
+        let (_temp, mut conn) = test_conn().await;
+        let project = create_project(&mut conn, "app").await.unwrap();
+        sqlx::query!(
             "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
              VALUES ('7KQ9A1X4MV2P8D6R', 'local', '', ?, 'inbox', 'none', 't', 't')",
-            [project.key],
+            project.key,
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        set_field_version(&conn, "7KQ9A1X4MV2P8D6R", "title", "localchange").unwrap();
+        set_field_version(&mut conn, "7KQ9A1X4MV2P8D6R", "title", "localchange")
+            .await
+            .unwrap();
         let change = ChangeWire {
             change_id: "remotechange1234".to_string(),
             client_id: "remote".to_string(),
@@ -2170,7 +2381,13 @@ mod tests {
             created_at: "t".to_string(),
             server_seq: Some(1),
         };
-        apply_remote_set_field(&conn, &change, false).unwrap();
-        assert!(conflict_exists(&conn, "7KQ9A1X4MV2P8D6R", "title").unwrap());
+        apply_remote_set_field(&mut conn, &change, false)
+            .await
+            .unwrap();
+        assert!(
+            conflict_exists(&mut conn, "7KQ9A1X4MV2P8D6R", "title")
+                .await
+                .unwrap()
+        );
     }
 }

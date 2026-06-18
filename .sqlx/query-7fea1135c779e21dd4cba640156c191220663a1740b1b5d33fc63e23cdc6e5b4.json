@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT version AS \"version!: String\" FROM field_versions WHERE entity_id = ? AND field = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "version!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7fea1135c779e21dd4cba640156c191220663a1740b1b5d33fc63e23cdc6e5b4"
+}

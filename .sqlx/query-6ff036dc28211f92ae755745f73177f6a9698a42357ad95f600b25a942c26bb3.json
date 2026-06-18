@@ -1,0 +1,80 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT change_id AS \"change_id!: String\", client_id AS \"client_id!: String\",\n         local_seq AS \"local_seq!: i64\", entity_type AS \"entity_type!: String\",\n         entity_id AS \"entity_id!: String\", field, op_type AS \"op_type!: String\",\n         payload AS \"payload!: String\", base_version, created_at AS \"created_at!: String\",\n         server_seq\n         FROM changes WHERE server_seq IS NULL ORDER BY COALESCE(server_seq, local_seq), created_at",
+  "describe": {
+    "columns": [
+      {
+        "name": "change_id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "client_id!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "local_seq!: i64",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "entity_type!: String",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "entity_id!: String",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "field",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "op_type!: String",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "payload!: String",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "base_version",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at!: String",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "server_seq",
+        "ordinal": 10,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "6ff036dc28211f92ae755745f73177f6a9698a42357ad95f600b25a942c26bb3"
+}

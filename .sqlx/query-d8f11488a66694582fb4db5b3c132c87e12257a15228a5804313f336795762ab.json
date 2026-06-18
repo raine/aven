@@ -1,0 +1,56 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT c.task_id AS \"task_id!: String\", c.field AS \"field!: String\",\n                 c.variant_a AS \"variant_a!: String\", c.variant_b AS \"variant_b!: String\",\n                 t.title AS \"title!: String\", p.prefix AS \"prefix!: String\",\n                 t.project_key AS \"project_key!: String\"\n                 FROM conflicts c\n                 JOIN tasks t ON t.id = c.task_id\n                 JOIN projects p ON p.key = t.project_key\n                 WHERE c.resolved = 0\n                 AND (?1 IS NULL OR t.project_key = ?1)\n                 AND (?2 IS NULL OR c.field = ?2)\n                 ORDER BY c.created_at",
+  "describe": {
+    "columns": [
+      {
+        "name": "task_id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "field!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "variant_a!: String",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "variant_b!: String",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "title!: String",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "prefix!: String",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "project_key!: String",
+        "ordinal": 6,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d8f11488a66694582fb4db5b3c132c87e12257a15228a5804313f336795762ab"
+}

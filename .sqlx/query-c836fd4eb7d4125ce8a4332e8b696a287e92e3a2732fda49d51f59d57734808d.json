@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT variant_a AS \"variant_a!: String\", local_value AS \"local_value!: String\",\n         variant_b AS \"variant_b!: String\", remote_value AS \"remote_value!: String\"\n         FROM conflicts WHERE task_id = ? AND field = ? AND resolved = 0",
+  "describe": {
+    "columns": [
+      {
+        "name": "variant_a!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "local_value!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "variant_b!: String",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "remote_value!: String",
+        "ordinal": 3,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "c836fd4eb7d4125ce8a4332e8b696a287e92e3a2732fda49d51f59d57734808d"
+}

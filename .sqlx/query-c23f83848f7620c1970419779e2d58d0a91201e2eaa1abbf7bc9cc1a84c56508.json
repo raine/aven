@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO notes(id, task_id, body, created_at, change_id)\n                 VALUES (?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "c23f83848f7620c1970419779e2d58d0a91201e2eaa1abbf7bc9cc1a84c56508"
+}

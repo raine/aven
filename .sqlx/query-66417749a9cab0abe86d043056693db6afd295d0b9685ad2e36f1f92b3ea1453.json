@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO field_versions(entity_id, field, version) VALUES (?, ?, ?)\n         ON CONFLICT(entity_id, field) DO UPDATE SET version = excluded.version",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "66417749a9cab0abe86d043056693db6afd295d0b9685ad2e36f1f92b3ea1453"
+}

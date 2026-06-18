@@ -42,6 +42,14 @@ build:
 test:
     cargo test
 
+# Generate sqlx offline query metadata
+sqlx-prepare:
+    cargo sqlx prepare -- --all-targets
+
+# Check sqlx offline query metadata
+sqlx-check:
+    cargo sqlx prepare --check -- --all-targets
+
 # Install release binary globally
 install:
     cargo install --offline --path . --locked

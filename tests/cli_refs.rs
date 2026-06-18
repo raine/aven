@@ -1,6 +1,6 @@
 mod common;
 
-use rusqlite::{Connection, params};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 use common::{TestEnv, contains_all, extract_ref, fail, ok, suffix};
 
@@ -30,22 +30,29 @@ fn qualified_ref_prefix_is_a_hint() {
     contains_all(&shown, &[&moved, "moving task"]);
 }
 
-#[test]
-fn ambiguous_ref_fails_with_choices() {
+#[tokio::test]
+async fn ambiguous_ref_fails_with_choices() {
     let env = TestEnv::new();
     let db = env.db("ambiguous.sqlite");
     ok(env.atm(&db, ["project", "create", "ambig"]));
 
-    let conn = Connection::open(&db).unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(SqliteConnectOptions::new().filename(&db))
+        .await
+        .unwrap();
     for (id, title) in [
         ("7KQ1111111111111", "ambig one"),
         ("7KQ2222222222222", "ambig two"),
     ] {
-        conn.execute(
+        sqlx::query!(
             "INSERT INTO tasks(id,title,description,project_key,status,priority,created_at,updated_at)
              VALUES (?, ?, '', 'ambig', 'inbox', 'none', 't', 't')",
-            params![id, title],
+            id,
+            title,
         )
+        .execute(&pool)
+        .await
         .unwrap();
     }
 
