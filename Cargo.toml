@@ -25,7 +25,7 @@ toml = "0.8"
 anyhow = "1.0"
 crossterm = "0.29"
 ratatui = "0.30"
-tokio = { version = "1.45", features = ["full"] }
+tokio = { version = "1.45", features = ["macros", "rt-multi-thread", "signal", "net", "time"] }
 
 [dev-dependencies]
 tempfile = "3.14"
