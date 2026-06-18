@@ -14,6 +14,7 @@ mod daemon;
 mod db;
 mod ids;
 mod input;
+mod render;
 mod signals;
 mod sync;
 
@@ -33,6 +34,7 @@ use db::{
 use ids::{BASE32, encode_crockford};
 use ids::{new_id, now};
 use input::{read_optional_text, read_required_text};
+use render::{print_near_error, quote};
 use sync::{run_server, sync_client};
 
 #[derive(Debug, Clone)]
@@ -984,14 +986,6 @@ async fn near_labels(conn: &mut SqliteConnection, input: &str) -> Result<Vec<Str
         .collect())
 }
 
-fn print_near_error(kind: &str, input: &str, choices: &[String]) {
-    eprintln!("error unknown-{kind} input={}", input);
-    for choice in choices {
-        eprintln!("choice {choice}");
-    }
-    eprintln!("hint \"retry with an exact {kind} or create it explicitly\"");
-}
-
 fn is_near(a: &str, b: &str) -> bool {
     a.contains(b) || b.contains(a) || levenshtein(a, b) <= 2
 }
@@ -1284,10 +1278,6 @@ async fn print_task(conn: &mut SqliteConnection, task: &Task, full: bool) -> Res
         print_conflicts(conn, task, None).await?;
     }
     Ok(())
-}
-
-fn quote(input: &str) -> String {
-    serde_json::to_string(input).unwrap_or_else(|_| "\"\"".to_string())
 }
 
 async fn print_conflicts(
