@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+mod choices;
 mod cli;
 mod config;
 mod daemon;
@@ -18,6 +19,7 @@ mod sync;
 
 pub use cli::Cli;
 
+use choices::{PRIORITIES, STATUSES, validate_choice};
 use cli::{
     AddArgs, Commands, ConfigCommand, ConfigSubcommand, ConflictCommand, ConflictSubcommand,
     DaemonSubcommand, LabelCommand, LabelSubcommand, ListArgs, NoteArgs, ProjectCommand,
@@ -32,9 +34,6 @@ use ids::{BASE32, encode_crockford};
 use ids::{new_id, now};
 use input::{read_optional_text, read_required_text};
 use sync::{run_server, sync_client};
-
-const STATUSES: &[&str] = &["inbox", "backlog", "todo", "active", "done", "canceled"];
-const PRIORITIES: &[&str] = &["none", "low", "medium", "high", "urgent"];
 
 #[derive(Debug, Clone)]
 struct Task {
@@ -718,18 +717,6 @@ async fn apply_field_value(
         _ => bail!("error unknown-field field={field}"),
     };
     Ok(())
-}
-
-fn validate_choice(name: &str, value: &str, choices: &[&str]) -> Result<()> {
-    if choices.contains(&value) {
-        Ok(())
-    } else {
-        bail!(
-            "error invalid-{name} input={} choices={}",
-            value,
-            choices.join(",")
-        );
-    }
 }
 
 #[derive(Debug, Clone)]
