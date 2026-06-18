@@ -8,7 +8,9 @@ use tokio::net::UdpSocket;
 use tokio::time::{Instant, sleep_until, timeout};
 
 use crate::config::AppConfig;
-use crate::{open_db, run_sync_once, shutdown_signal};
+use crate::db::open_db;
+use crate::shutdown_signal;
+use crate::sync::run_sync_once;
 
 pub struct DaemonRunArgs {
     pub db_path: PathBuf,
