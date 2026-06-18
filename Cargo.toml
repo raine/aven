@@ -10,8 +10,8 @@ license = "MIT"
 axum = "0.8"
 clap = { version = "4.5", features = ["derive"] }
 dirs = "6.0"
-rand = "0.9"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rand = "0.10"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 sqlx = { version = "0.8", default-features = false, features = [
   "runtime-tokio",
   "sqlite",
@@ -21,7 +21,7 @@ sqlx = { version = "0.8", default-features = false, features = [
 ] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.8"
+toml = "1.1"
 anyhow = "1.0"
 crossterm = "0.29"
 ratatui = "0.30"

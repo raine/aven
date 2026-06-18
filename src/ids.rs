@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use rand::RngCore;
+use rand::Rng;
 
 pub(crate) const BASE32: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
