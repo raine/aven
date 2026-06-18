@@ -13,7 +13,8 @@ use tokio::net::TcpListener;
 use crate::cli::{ServerArgs, SyncArgs};
 use crate::config;
 use crate::db::{conflict_exists, field_version, get_meta, open_db, set_field_version, set_meta};
-use crate::{apply_field_value, find_project, get_task, now, prefix_base, shutdown_signal};
+use crate::signals::shutdown_signal;
+use crate::{apply_field_value, find_project, get_task, now, prefix_base};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ChangeWire {

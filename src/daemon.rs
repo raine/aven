@@ -9,7 +9,7 @@ use tokio::time::{Instant, sleep_until, timeout};
 
 use crate::config::AppConfig;
 use crate::db::open_db;
-use crate::shutdown_signal;
+use crate::signals::shutdown_signal;
 use crate::sync::run_sync_once;
 
 pub struct DaemonRunArgs {

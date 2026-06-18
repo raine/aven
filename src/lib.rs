@@ -13,6 +13,7 @@ mod cli;
 mod config;
 mod daemon;
 mod db;
+mod signals;
 mod sync;
 
 pub use cli::Cli;
@@ -1364,26 +1365,6 @@ async fn print_task(conn: &mut SqliteConnection, task: &Task, full: bool) -> Res
 
 fn quote(input: &str) -> String {
     serde_json::to_string(input).unwrap_or_else(|_| "\"\"".to_string())
-}
-
-pub(crate) async fn shutdown_signal() {
-    let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
-    };
-    #[cfg(unix)]
-    let terminate = async {
-        if let Ok(mut signal) =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        {
-            signal.recv().await;
-        }
-    };
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
 }
 
 async fn print_conflicts(
