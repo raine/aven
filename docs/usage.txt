@@ -9,9 +9,9 @@ Run checks:
 
   just check
 
-Run the manual end-to-end script:
+Run the integration test suite:
 
-  scripts/e2e.sh
+  cargo test
 
 Choose a local database path:
 
