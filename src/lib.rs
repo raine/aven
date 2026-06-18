@@ -17,9 +17,12 @@ use clap::{Args, Parser, Subcommand};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
 use sqlx::{Connection as _, QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool};
 use tokio::net::TcpListener;
+
+mod config;
+mod daemon;
 
 const STYLES: Styles = Styles::styled()
     .header(AnsiColor::Green.on_default().effects(Effects::BOLD))
@@ -56,6 +59,8 @@ enum Commands {
     Delete(RefArgs),
     Restore(RefArgs),
     Conflict(ConflictCommand),
+    Config(ConfigCommand),
+    Daemon(DaemonCommand),
     Server(ServerArgs),
     Sync(SyncArgs),
 }
@@ -213,6 +218,29 @@ enum ConflictSubcommand {
 }
 
 #[derive(Args)]
+struct ConfigCommand {
+    #[command(subcommand)]
+    command: ConfigSubcommand,
+}
+
+#[derive(Subcommand)]
+enum ConfigSubcommand {
+    Init,
+    Show,
+}
+
+#[derive(Args)]
+struct DaemonCommand {
+    #[command(subcommand)]
+    command: DaemonSubcommand,
+}
+
+#[derive(Subcommand)]
+enum DaemonSubcommand {
+    Run,
+}
+
+#[derive(Args)]
 struct ServerArgs {
     #[arg(long, default_value = "127.0.0.1:0")]
     bind: SocketAddr,
@@ -225,7 +253,7 @@ struct ServerArgs {
 #[derive(Args)]
 struct SyncArgs {
     #[arg(long)]
-    server: String,
+    server: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -312,11 +340,23 @@ pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Server(args) => run_server(args).await,
+        Commands::Config(args) => cmd_config(args).await,
+        Commands::Daemon(args) => {
+            let config = config::AppConfig::load()?;
+            let db_path = config::resolve_db_path(cli.db, &config)?;
+            match args.command {
+                DaemonSubcommand::Run => {
+                    daemon::run(daemon::DaemonRunArgs { db_path, config }).await
+                }
+            }
+        }
         command => {
-            let db_path = db_path(cli.db)?;
+            let config = load_config_for_command(cli.db.is_some(), &command)?;
+            let db_path = config::resolve_db_path(cli.db, &config)?;
             let pool = open_db(&db_path).await?;
             let mut conn = pool.acquire().await?;
-            match command {
+            let should_wake = command_should_wake(&command);
+            let result = match command {
                 Commands::Add(args) => cmd_add(&mut conn, args).await,
                 Commands::Show(args) => cmd_show(&mut conn, args).await,
                 Commands::List(args) => cmd_list(&mut conn, args).await,
@@ -329,27 +369,46 @@ pub async fn run_cli() -> Result<()> {
                 Commands::Delete(args) => cmd_delete_restore(&mut conn, args, true).await,
                 Commands::Restore(args) => cmd_delete_restore(&mut conn, args, false).await,
                 Commands::Conflict(args) => cmd_conflict(&mut conn, args).await,
-                Commands::Sync(args) => sync_client(&mut conn, args).await,
-                Commands::Server(_) => unreachable!(),
+                Commands::Sync(args) => sync_client(&mut conn, args, &config).await,
+                Commands::Config(_) | Commands::Daemon(_) | Commands::Server(_) => unreachable!(),
+            };
+            if result.is_ok()
+                && should_wake
+                && config.sync.enabled
+                && let Ok(addr) = config.wake_addr()
+            {
+                daemon::wake(addr);
             }
+            result
         }
     }
 }
 
-fn db_path(flag: Option<PathBuf>) -> Result<PathBuf> {
-    if let Some(path) = flag {
-        return Ok(path);
+fn load_config_for_command(db_flag_set: bool, command: &Commands) -> Result<config::AppConfig> {
+    if db_flag_set && !matches!(command, Commands::Sync(SyncArgs { server: None })) {
+        Ok(config::AppConfig::default())
+    } else {
+        config::AppConfig::load()
     }
-    if let Ok(path) = env::var("ATM_DB") {
-        return Ok(PathBuf::from(path));
-    }
-    let mut dir = dirs::data_dir().context("could not find app data directory")?;
-    dir.push("atm");
-    dir.push("db.sqlite");
-    Ok(dir)
 }
 
-async fn open_db(path: &Path) -> Result<SqlitePool> {
+fn command_should_wake(command: &Commands) -> bool {
+    matches!(
+        command,
+        Commands::Add(_)
+            | Commands::Update(_)
+            | Commands::Note(_)
+            | Commands::Label(_)
+            | Commands::Project(_)
+            | Commands::Delete(_)
+            | Commands::Restore(_)
+            | Commands::Conflict(ConflictCommand {
+                command: ConflictSubcommand::Resolve { .. }
+            })
+    )
+}
+
+pub(crate) async fn open_db(path: &Path) -> Result<SqlitePool> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;
@@ -357,6 +416,7 @@ async fn open_db(path: &Path) -> Result<SqlitePool> {
     let options = SqliteConnectOptions::from_str(&path.display().to_string())?
         .create_if_missing(true)
         .foreign_keys(true)
+        .journal_mode(SqliteJournalMode::Wal)
         .busy_timeout(Duration::from_secs(5));
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -370,15 +430,9 @@ async fn open_db(path: &Path) -> Result<SqlitePool> {
 
 async fn initialize_meta(pool: &SqlitePool) -> Result<()> {
     let mut conn = pool.acquire().await?;
-    if get_meta(&mut conn, "client_id").await?.is_none() {
-        set_meta(&mut conn, "client_id", &new_id()).await?;
-    }
-    if get_meta(&mut conn, "sync_cursor").await?.is_none() {
-        set_meta(&mut conn, "sync_cursor", "0").await?;
-    }
-    if get_meta(&mut conn, "local_seq").await?.is_none() {
-        set_meta(&mut conn, "local_seq", "0").await?;
-    }
+    insert_meta_if_missing(&mut conn, "client_id", &new_id()).await?;
+    insert_meta_if_missing(&mut conn, "sync_cursor", "0").await?;
+    insert_meta_if_missing(&mut conn, "local_seq", "0").await?;
     Ok(())
 }
 
@@ -428,6 +482,17 @@ async fn set_meta(conn: &mut SqliteConnection, key: &str, value: &str) -> Result
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         key,
         value,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn insert_meta_if_missing(conn: &mut SqliteConnection, key: &str, value: &str) -> Result<()> {
+    sqlx::query!(
+        "INSERT OR IGNORE INTO meta(key, value) VALUES (?, ?)",
+        key,
+        value
     )
     .execute(&mut *conn)
     .await?;
@@ -853,6 +918,23 @@ async fn cmd_delete_restore(
         println!("deleted {}", display_ref(conn, &task).await?);
     } else {
         println!("restored {}", display_ref(conn, &task).await?);
+    }
+    Ok(())
+}
+
+async fn cmd_config(args: ConfigCommand) -> Result<()> {
+    match args.command {
+        ConfigSubcommand::Init => {
+            let path = config::config_file_path()?;
+            config::write_default_config(&path)?;
+            println!("created-config path={}", quote(&path.display().to_string()));
+        }
+        ConfigSubcommand::Show => {
+            let path = config::config_file_path()?;
+            let config = config::AppConfig::load()?;
+            println!("config path={}", quote(&path.display().to_string()));
+            println!("{}", toml::to_string_pretty(&config)?);
+        }
     }
     Ok(())
 }
@@ -1835,7 +1917,7 @@ async fn run_server(args: ServerArgs) -> Result<()> {
     Ok(())
 }
 
-async fn shutdown_signal() {
+pub(crate) async fn shutdown_signal() {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
     };
@@ -1904,7 +1986,32 @@ async fn sync_handler(
     Ok(Json(SyncResponse { cursor, changes }))
 }
 
-async fn sync_client(conn: &mut SqliteConnection, args: SyncArgs) -> Result<()> {
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SyncSummary {
+    pushed: i64,
+    pulled: usize,
+    cursor: i64,
+}
+
+async fn sync_client(
+    conn: &mut SqliteConnection,
+    args: SyncArgs,
+    config: &config::AppConfig,
+) -> Result<()> {
+    let server = config::resolve_sync_server(args.server.as_deref(), config)?;
+    let summary = run_sync_once(conn, &server).await?;
+    println!(
+        "synced pushed={} pulled={} cursor={}",
+        summary.pushed, summary.pulled, summary.cursor
+    );
+    Ok(())
+}
+
+pub(crate) async fn run_sync_once(
+    conn: &mut SqliteConnection,
+    server: &str,
+) -> Result<SyncSummary> {
+    validate_sync_server(conn, server).await?;
     let client_id = get_meta(conn, "client_id")
         .await?
         .context("missing client id")?;
@@ -1913,8 +2020,11 @@ async fn sync_client(conn: &mut SqliteConnection, args: SyncArgs) -> Result<()> 
         .unwrap_or_else(|| "0".to_string())
         .parse::<i64>()?;
     let changes = load_unsynced_changes(conn).await?;
-    let url = format!("{}/sync", args.server.trim_end_matches('/'));
-    let response = reqwest::Client::new()
+    let pushed = changes.len() as i64;
+    let url = format!("{}/sync", server.trim_end_matches('/'));
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?
         .post(url)
         .json(&SyncRequest {
             client_id,
@@ -1939,15 +2049,26 @@ async fn sync_client(conn: &mut SqliteConnection, args: SyncArgs) -> Result<()> 
     }
     set_meta(&mut tx, "sync_cursor", &response.cursor.to_string()).await?;
     tx.commit().await?;
-    let pushed: i64 = sqlx::query_scalar!(
-        r#"SELECT count(*) AS "count!: i64" FROM changes WHERE server_seq IS NOT NULL"#
-    )
-    .fetch_one(&mut *conn)
-    .await?;
-    println!(
-        "synced pushed={} pulled={} cursor={}",
-        pushed, applied, response.cursor
-    );
+    Ok(SyncSummary {
+        pushed,
+        pulled: applied,
+        cursor: response.cursor,
+    })
+}
+
+async fn validate_sync_server(conn: &mut SqliteConnection, server: &str) -> Result<()> {
+    let normalized = server.trim_end_matches('/');
+    if let Some(existing) = get_meta(conn, "sync_server_url").await? {
+        if existing != normalized {
+            bail!(
+                "error sync-server-changed existing={} requested={} hint=\"use a fresh database for a different sync server\"",
+                existing,
+                normalized
+            );
+        }
+    } else {
+        set_meta(conn, "sync_server_url", normalized).await?;
+    }
     Ok(())
 }
 

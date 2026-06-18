@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO meta(key, value) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "12a1b76cb83ffc0726a202bdd5c1b4224cff2a58d8063861dbf0ad31554e35f4"
+}

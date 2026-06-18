@@ -18,8 +18,27 @@ Choose a local database path:
   atm --db /tmp/client-a.sqlite list
   ATM_DB=/tmp/client-a.sqlite atm list
 
-If neither is set, atm stores data under the operating system app data
-directory, for example ~/.local/share/atm/db.sqlite on Linux.
+If neither is set, atm reads config from the platform config directory,
+for example ~/.config/agentic-task-manager/config.toml on Linux. If the
+config has no local.db_path, atm stores data under the operating system app
+data directory, for example ~/.local/share/atm/db.sqlite on Linux.
+
+Create a default config file:
+
+  atm config init
+
+Example config:
+
+  [local]
+  db_path = "/tmp/client-a.sqlite"
+
+  [sync]
+  enabled = true
+  server_url = "http://127.0.0.1:3000"
+  interval_seconds = 30
+
+  [daemon]
+  wake_addr = "127.0.0.1:47631"
 
 Common CLI examples:
 
@@ -46,14 +65,27 @@ The server prints:
 Sync a client:
 
   atm --db /tmp/client-a.sqlite sync --server http://127.0.0.1:<port>
+  atm sync
 
+The second form uses sync.server_url from config, or ATM_SYNC_SERVER if set.
 The server stores an idempotent operation log. Clients push unsynced local
 changes and pull changes after their local server cursor.
+
+Run automatic sync for the configured local database:
+
+  atm daemon run
+
+The daemon uses the same local SQLite database as the CLI. CLI commands still
+work offline and write directly to SQLite. The daemon runs sync in the
+background, wakes after successful local mutations when possible, and also
+syncs periodically while it is running.
 
 Known limitations:
 
   * v1 has no authentication.
   * v1 sync is an HTTP/JSON operation log, not a CRDT.
+  * v1 supports one configured sync server per local database. Use a fresh
+    database for a different sync server.
   * Path mappings are local to one device.
   * There is no TUI, web UI, Mac app, GitHub polling, due date, relation,
     custom status, recurring task, or team feature.

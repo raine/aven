@@ -17,6 +17,15 @@ Refs:
   * Retry with a longer suffix when atm reports error ambiguous-ref.
   * Do not assume an old project prefix still names the task.
 
+Sync:
+
+  * Normal commands work against the local SQLite database and do not require
+    network access.
+  * Use atm sync --server <url> for explicit sync.
+  * If sync.server_url is configured, atm sync can omit --server.
+  * The optional daemon only performs background sync. Do not assume it is
+    required for local task operations.
+
 Markdown input:
 
   * Use --description-file or --description-stdin for long descriptions.
