@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v git-format-staged >/dev/null 2>&1; then
+  echo "error: git-format-staged is required for the pre-commit hook" >&2
+  echo "install it or bypass with git commit --no-verify" >&2
+  exit 1
+fi
+
+git-format-staged
+just pre-commit
