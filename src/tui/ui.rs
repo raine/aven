@@ -8,11 +8,27 @@ use ratatui::widgets::{
 
 use crate::query::TaskListItem;
 use crate::render::quote;
-use crate::tui::app::{App, Focus, SidebarTarget};
+use crate::tui::app::{Focus, WidgetState};
+use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::theme::{self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, SELECTED};
 use crate::tui::widgets::{priority_short, title_cell};
 
-pub(crate) fn render(frame: &mut Frame, app: &mut App) {
+#[derive(Clone)]
+pub(crate) struct ViewState {
+    pub(crate) focus: Focus,
+    pub(crate) detail_open: bool,
+    pub(crate) help_open: bool,
+    pub(crate) search_open: bool,
+    pub(crate) search_input: String,
+    pub(crate) message: Option<String>,
+}
+
+pub(crate) fn render(
+    frame: &mut Frame,
+    store: &TuiStore,
+    widgets: &mut WidgetState,
+    view: &ViewState,
+) {
     frame.render_widget(Block::new().style(Style::new().bg(BG)), frame.area());
 
     if frame.area().width < 70 || frame.area().height < 18 {
@@ -35,32 +51,32 @@ pub(crate) fn render(frame: &mut Frame, app: &mut App) {
     let [sidebar, main] =
         Layout::horizontal([Constraint::Length(20), Constraint::Fill(1)]).areas(body);
 
-    frame.render_widget(header_bar(app), header);
-    render_sidebar(frame, app, sidebar);
-    render_tasks(frame, app, main);
-    frame.render_widget(footer_bar(app), footer);
+    frame.render_widget(header_bar(store), header);
+    render_sidebar(frame, store, widgets, view, sidebar);
+    render_tasks(frame, store, widgets, view, main);
+    frame.render_widget(footer_bar(view), footer);
 
-    if app.detail_open
-        && let Some(task) = app.selected_task()
+    if view.detail_open
+        && let Some(task) = store.selected_task(widgets.table.selected())
     {
         render_detail(frame, task);
     }
-    if app.help_open {
+    if view.help_open {
         render_help(frame);
     }
-    if app.search_open {
-        render_search(frame, app);
+    if view.search_open {
+        render_search(frame, view);
     }
 }
 
-fn header_bar(app: &App) -> Paragraph<'static> {
-    let view = match &app.active_view {
+fn header_bar(store: &TuiStore) -> Paragraph<'static> {
+    let view = match &store.active_view {
         SidebarTarget::All => "All".to_string(),
         SidebarTarget::Inbox => "Inbox".to_string(),
         SidebarTarget::Active => "Active".to_string(),
         SidebarTarget::Project(project) => format!("Project {project}"),
     };
-    let search = app
+    let search = store
         .filters
         .search
         .as_ref()
@@ -68,18 +84,18 @@ fn header_bar(app: &App) -> Paragraph<'static> {
         .unwrap_or_default();
     Paragraph::new(format!(
         " atm  view: {view}  sort: {}{}                                      ? help",
-        app.sort_label(),
+        store.sort_label(),
         search
     ))
     .style(Style::new().fg(FG).bg(BG))
 }
 
-fn footer_bar(app: &App) -> Paragraph<'static> {
-    let focus = match app.focus {
+fn footer_bar(view: &ViewState) -> Paragraph<'static> {
+    let focus = match view.focus {
         Focus::Sidebar => "sidebar",
         Focus::Tasks => "tasks",
     };
-    let message = app
+    let message = view
         .message
         .as_deref()
         .map(|message| format!("  {message}"))
@@ -90,20 +106,26 @@ fn footer_bar(app: &App) -> Paragraph<'static> {
     .style(Style::new().fg(FG).bg(BG))
 }
 
-fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
-    let border_style = if app.focus == Focus::Sidebar {
+fn render_sidebar(
+    frame: &mut Frame,
+    store: &TuiStore,
+    widgets: &mut WidgetState,
+    view: &ViewState,
+    area: Rect,
+) {
+    let border_style = if view.focus == Focus::Sidebar {
         Style::new().fg(ACCENT)
     } else {
         Style::new().fg(BORDER)
     };
-    let items = app.sidebar_entries.iter().map(|entry| {
+    let items = store.sidebar_entries.iter().map(|entry| {
         if entry.section {
             return ListItem::new(
                 Line::from(entry.label.clone())
                     .style(Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD)),
             );
         }
-        let marker = if entry.target.as_ref() == Some(&app.active_view) {
+        let marker = if entry.target.as_ref() == Some(&store.active_view) {
             "> "
         } else {
             "  "
@@ -121,11 +143,17 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         )
         .highlight_style(SELECTED)
         .highlight_symbol(" ");
-    frame.render_stateful_widget(list, area, &mut app.sidebar);
+    frame.render_stateful_widget(list, area, &mut widgets.sidebar);
 }
 
-fn render_tasks(frame: &mut Frame, app: &mut App, area: Rect) {
-    let border_style = if app.focus == Focus::Tasks {
+fn render_tasks(
+    frame: &mut Frame,
+    store: &TuiStore,
+    widgets: &mut WidgetState,
+    view: &ViewState,
+    area: Rect,
+) {
+    let border_style = if view.focus == Focus::Tasks {
         Style::new().fg(ACCENT)
     } else {
         Style::new().fg(BORDER)
@@ -137,7 +165,7 @@ fn render_tasks(frame: &mut Frame, app: &mut App, area: Rect) {
             .add_modifier(Modifier::BOLD),
     );
 
-    let rows = app.tasks.iter().map(|item| {
+    let rows = store.tasks.iter().map(|item| {
         Row::new([
             Cell::from(item.display_ref.clone()),
             Cell::from(priority_short(&item.task.priority))
@@ -169,7 +197,7 @@ fn render_tasks(frame: &mut Frame, app: &mut App, area: Rect) {
     .row_highlight_style(SELECTED)
     .highlight_symbol(" ");
 
-    frame.render_stateful_widget(table, area, &mut app.table);
+    frame.render_stateful_widget(table, area, &mut widgets.table);
 }
 
 fn render_detail(frame: &mut Frame, item: &TaskListItem) {
@@ -240,11 +268,11 @@ fn render_help(frame: &mut Frame) {
     );
 }
 
-fn render_search(frame: &mut Frame, app: &App) {
+fn render_search(frame: &mut Frame, view: &ViewState) {
     let area = centered(frame.area(), 54, 3);
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(format!("/{}", app.search_input))
+        Paragraph::new(format!("/{}", view.search_input))
             .block(overlay_block("Search"))
             .style(Style::new().fg(FG).bg(BG_ALT)),
         area,
