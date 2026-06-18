@@ -1,8 +1,7 @@
 use std::env;
 use std::fs;
 use std::io::{self, Read};
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::str::FromStr;
 use std::time::Duration;
@@ -12,8 +11,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::routing::post;
-use clap::builder::styling::{AnsiColor, Effects, Styles};
-use clap::{Args, Parser, Subcommand};
+use clap::Parser;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -21,240 +19,22 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::{Connection as _, QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool};
 use tokio::net::TcpListener;
 
+mod cli;
 mod config;
 mod daemon;
 
-const STYLES: Styles = Styles::styled()
-    .header(AnsiColor::Green.on_default().effects(Effects::BOLD))
-    .usage(AnsiColor::Green.on_default().effects(Effects::BOLD))
-    .literal(AnsiColor::Cyan.on_default().effects(Effects::BOLD))
-    .placeholder(AnsiColor::Cyan.on_default());
+pub use cli::Cli;
+
+use cli::{
+    AddArgs, Commands, ConfigCommand, ConfigSubcommand, ConflictCommand, ConflictSubcommand,
+    DaemonSubcommand, LabelCommand, LabelSubcommand, ListArgs, NoteArgs, ProjectCommand,
+    ProjectPathSubcommand, ProjectSubcommand, RefArgs, SearchArgs, ServerArgs, ShowArgs, SyncArgs,
+    UpdateArgs,
+};
 
 const STATUSES: &[&str] = &["inbox", "backlog", "todo", "active", "done", "canceled"];
 const PRIORITIES: &[&str] = &["none", "low", "medium", "high", "urgent"];
 const BASE32: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-
-#[derive(Parser)]
-#[command(name = "atm")]
-#[command(about = "Local-first task manager")]
-#[command(styles = STYLES)]
-pub struct Cli {
-    #[arg(long, global = true)]
-    db: Option<PathBuf>,
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    Add(AddArgs),
-    Show(ShowArgs),
-    List(ListArgs),
-    Update(UpdateArgs),
-    Note(NoteArgs),
-    Projects(SearchArgs),
-    Labels(SearchArgs),
-    Label(LabelCommand),
-    Project(ProjectCommand),
-    Delete(RefArgs),
-    Restore(RefArgs),
-    Conflict(ConflictCommand),
-    Config(ConfigCommand),
-    Daemon(DaemonCommand),
-    Server(ServerArgs),
-    Sync(SyncArgs),
-}
-
-#[derive(Args)]
-struct AddArgs {
-    title: String,
-    #[arg(long)]
-    project: Option<String>,
-    #[arg(long)]
-    description: Option<String>,
-    #[arg(long)]
-    description_file: Option<PathBuf>,
-    #[arg(long)]
-    description_stdin: bool,
-    #[arg(long, default_value = "none")]
-    priority: String,
-    #[arg(long)]
-    label: Vec<String>,
-}
-
-#[derive(Args)]
-struct ShowArgs {
-    task_ref: String,
-    #[arg(long)]
-    full: bool,
-}
-
-#[derive(Args)]
-struct ListArgs {
-    #[arg(long)]
-    project: Option<String>,
-    #[arg(long)]
-    status: Option<String>,
-    #[arg(long)]
-    priority: Option<String>,
-    #[arg(long)]
-    label: Option<String>,
-    #[arg(long)]
-    all: bool,
-}
-
-#[derive(Args)]
-struct UpdateArgs {
-    task_ref: String,
-    #[arg(long)]
-    title: Option<String>,
-    #[arg(long)]
-    description: Option<String>,
-    #[arg(long)]
-    description_file: Option<PathBuf>,
-    #[arg(long)]
-    description_stdin: bool,
-    #[arg(long)]
-    project: Option<String>,
-    #[arg(long)]
-    status: Option<String>,
-    #[arg(long)]
-    priority: Option<String>,
-    #[arg(long)]
-    label: Vec<String>,
-    #[arg(long)]
-    remove_label: Vec<String>,
-}
-
-#[derive(Args)]
-struct NoteArgs {
-    task_ref: String,
-    text: Option<String>,
-    #[arg(long)]
-    file: Option<PathBuf>,
-    #[arg(long)]
-    stdin: bool,
-}
-
-#[derive(Args)]
-struct SearchArgs {
-    #[arg(long)]
-    search: Option<String>,
-}
-
-#[derive(Args)]
-struct RefArgs {
-    task_ref: String,
-}
-
-#[derive(Args)]
-struct LabelCommand {
-    #[command(subcommand)]
-    command: LabelSubcommand,
-}
-
-#[derive(Subcommand)]
-enum LabelSubcommand {
-    Create { name: String },
-}
-
-#[derive(Args)]
-struct ProjectCommand {
-    #[command(subcommand)]
-    command: ProjectSubcommand,
-}
-
-#[derive(Subcommand)]
-enum ProjectSubcommand {
-    Create {
-        name: String,
-        #[arg(long)]
-        path: Option<PathBuf>,
-    },
-    Path {
-        #[command(subcommand)]
-        command: ProjectPathSubcommand,
-    },
-}
-
-#[derive(Subcommand)]
-enum ProjectPathSubcommand {
-    Add { project: String, path: PathBuf },
-    Remove { project: String, path: PathBuf },
-}
-
-#[derive(Args)]
-struct ConflictCommand {
-    #[command(subcommand)]
-    command: ConflictSubcommand,
-}
-
-#[derive(Subcommand)]
-enum ConflictSubcommand {
-    List {
-        #[arg(long)]
-        project: Option<String>,
-        #[arg(long)]
-        field: Option<String>,
-    },
-    Show {
-        task_ref: String,
-        #[arg(long)]
-        field: Option<String>,
-    },
-    Resolve {
-        task_ref: String,
-        field: String,
-        #[arg(long)]
-        #[arg(long = "use")]
-        use_variant: Option<String>,
-        #[arg(long)]
-        value: Option<String>,
-        #[arg(long)]
-        value_file: Option<PathBuf>,
-        #[arg(long)]
-        value_stdin: bool,
-    },
-}
-
-#[derive(Args)]
-struct ConfigCommand {
-    #[command(subcommand)]
-    command: ConfigSubcommand,
-}
-
-#[derive(Subcommand)]
-enum ConfigSubcommand {
-    Init,
-    Show,
-}
-
-#[derive(Args)]
-struct DaemonCommand {
-    #[command(subcommand)]
-    command: DaemonSubcommand,
-}
-
-#[derive(Subcommand)]
-enum DaemonSubcommand {
-    Run,
-}
-
-#[derive(Args)]
-struct ServerArgs {
-    #[arg(long, default_value = "127.0.0.1:0")]
-    bind: SocketAddr,
-    #[arg(long)]
-    data: PathBuf,
-    #[arg(long)]
-    unsafe_public_bind: bool,
-}
-
-#[derive(Args)]
-struct SyncArgs {
-    #[arg(long)]
-    server: Option<String>,
-}
 
 #[derive(Debug, Clone)]
 struct Task {
@@ -385,7 +165,7 @@ pub async fn run_cli() -> Result<()> {
 }
 
 fn load_config_for_command(db_flag_set: bool, command: &Commands) -> Result<config::AppConfig> {
-    if db_flag_set && !matches!(command, Commands::Sync(SyncArgs { server: None })) {
+    if db_flag_set && !matches!(command, Commands::Sync(SyncArgs { server: None, .. })) {
         Ok(config::AppConfig::default())
     } else {
         config::AppConfig::load()
