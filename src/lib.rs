@@ -4,7 +4,6 @@ use serde_json::json;
 use sqlx::{Connection as _, QueryBuilder, Sqlite, SqliteConnection};
 use std::env;
 use std::fs;
-use std::io::{self, Read};
 use std::path::Path;
 use std::process::Command;
 
@@ -13,6 +12,7 @@ mod config;
 mod daemon;
 mod db;
 mod ids;
+mod input;
 mod signals;
 mod sync;
 
@@ -30,6 +30,7 @@ use db::{
 #[cfg(test)]
 use ids::{BASE32, encode_crockford};
 use ids::{new_id, now};
+use input::{read_optional_text, read_required_text};
 use sync::{run_server, sync_client};
 
 const STATUSES: &[&str] = &["inbox", "backlog", "todo", "active", "done", "canceled"];
@@ -717,41 +718,6 @@ async fn apply_field_value(
         _ => bail!("error unknown-field field={field}"),
     };
     Ok(())
-}
-
-fn read_optional_text(
-    inline: Option<String>,
-    file: Option<&Path>,
-    stdin_flag: bool,
-    name: &str,
-) -> Result<Option<String>> {
-    let count = inline.is_some() as u8 + file.is_some() as u8 + stdin_flag as u8;
-    if count > 1 {
-        bail!("error multiple-{name}-sources");
-    }
-    if let Some(text) = inline {
-        Ok(Some(text))
-    } else if let Some(path) = file {
-        Ok(Some(fs::read_to_string(path).with_context(|| {
-            format!("could not read {}", path.display())
-        })?))
-    } else if stdin_flag {
-        let mut text = String::new();
-        io::stdin().read_to_string(&mut text)?;
-        Ok(Some(text))
-    } else {
-        Ok(None)
-    }
-}
-
-fn read_required_text(
-    inline: Option<String>,
-    file: Option<&Path>,
-    stdin_flag: bool,
-    name: &str,
-) -> Result<String> {
-    read_optional_text(inline, file, stdin_flag, name)?
-        .with_context(|| format!("error missing-{name}"))
 }
 
 fn validate_choice(name: &str, value: &str, choices: &[&str]) -> Result<()> {
