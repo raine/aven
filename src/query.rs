@@ -3,7 +3,11 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::db::{task_from_row, task_has_conflict};
-use crate::{Task, display_ref, ensure_label_exists, labels_for_task, resolve_existing_project};
+use crate::labels::ensure_label_exists;
+use crate::projects::resolve_existing_project;
+use crate::refs::display_ref;
+use crate::task_render::labels_for_task;
+use crate::types::Task;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TaskSort {

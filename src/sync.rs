@@ -15,8 +15,9 @@ use crate::config;
 use crate::db::{conflict_exists, field_version, get_meta, open_db, set_field_version, set_meta};
 use crate::ids::now;
 use crate::mutation::apply_field_value;
+use crate::projects::{find_project, prefix_base};
+use crate::refs::get_task;
 use crate::signals::shutdown_signal;
-use crate::{find_project, get_task, prefix_base};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ChangeWire {

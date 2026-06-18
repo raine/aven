@@ -5,7 +5,9 @@ use sqlx::SqliteConnection;
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::db::{conflict_exists, field_version, insert_change, set_field_version};
 use crate::ids::now;
-use crate::{Task, get_task, resolve_project_for_add};
+use crate::projects::resolve_project_for_add;
+use crate::refs::get_task;
+use crate::types::Task;
 
 pub(crate) async fn set_status(
     conn: &mut SqliteConnection,

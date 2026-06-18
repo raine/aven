@@ -36,6 +36,11 @@ fn infers_project_from_git_root() {
     let status = clean_git_command()
         .args(["init", "-q"])
         .current_dir(&repo)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_PREFIX")
         .status()
         .expect("git init");
     assert!(status.success(), "git init failed");

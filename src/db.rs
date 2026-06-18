@@ -8,8 +8,8 @@ use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
-use crate::Task;
 use crate::ids::{new_id, now};
+use crate::types::Task;
 
 pub(crate) async fn open_db(path: &Path) -> Result<SqlitePool> {
     if let Some(parent) = path.parent() {
