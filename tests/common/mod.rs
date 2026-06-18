@@ -10,6 +10,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use assert_cmd::cargo::cargo_bin;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
+use sqlx::{Connection as _, SqliteConnection};
 use tempfile::TempDir;
 
 pub struct TestEnv {
@@ -261,19 +263,35 @@ impl TestProcess {
             .spawn()
             .expect("spawn atm daemon");
         let process = Self::capture(child);
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline {
-            let output = process.output();
-            if output.contains("daemon db=") {
-                return process;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-        panic!("daemon did not start\n{}", process.output());
+        process.wait_for_log("daemon db=", Duration::from_secs(10));
+        process
     }
 
     pub fn output(&self) -> String {
         self.output.lock().expect("process output lock").clone()
+    }
+
+    pub fn log_mark(&self) -> usize {
+        self.output().len()
+    }
+
+    pub fn wait_for_log(&self, pattern: &str, timeout: Duration) {
+        self.wait_for_log_after(0, pattern, timeout);
+    }
+
+    pub fn wait_for_log_after(&self, mark: usize, pattern: &str, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            let output = self.output();
+            if output
+                .get(mark..)
+                .is_some_and(|text| text.contains(pattern))
+            {
+                return;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        panic!("timed out waiting for {pattern:?}\n{}", self.output());
     }
 }
 
@@ -290,6 +308,62 @@ impl Drop for TestProcess {
     }
 }
 
+pub fn eventually<F>(timeout: Duration, mut check: F)
+where
+    F: FnMut() -> bool,
+{
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if check() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(check(), "condition was not met within {timeout:?}");
+}
+
+pub fn meta_value(db: &Path, key: &str) -> Option<String> {
+    let runtime = test_runtime();
+    runtime.block_on(async {
+        let mut conn = open_test_db(db).await;
+        sqlx::query_scalar::<_, String>("SELECT value FROM meta WHERE key = ?")
+            .bind(key)
+            .fetch_optional(&mut conn)
+            .await
+            .expect("read meta value")
+    })
+}
+
+pub fn scalar_i64(db: &Path, sql: &str) -> i64 {
+    let runtime = test_runtime();
+    runtime.block_on(async {
+        let mut conn = open_test_db(db).await;
+        sqlx::query_scalar::<_, i64>(sql)
+            .fetch_one(&mut conn)
+            .await
+            .expect("read scalar value")
+    })
+}
+
+fn test_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create tokio runtime")
+}
+
+async fn open_test_db(db: &Path) -> SqliteConnection {
+    let options = SqliteConnectOptions::new()
+        .filename(db)
+        .create_if_missing(false)
+        .foreign_keys(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(Duration::from_secs(5));
+    SqliteConnection::connect_with(&options)
+        .await
+        .expect("open sqlite db")
+}
+
 pub struct TestServer {
     child: Child,
     output: Arc<Mutex<String>>,
@@ -300,6 +374,10 @@ pub struct TestServer {
 
 impl TestServer {
     pub fn start(env: &TestEnv) -> Self {
+        Self::start_with_data(env, "server.sqlite")
+    }
+
+    pub fn start_with_data(env: &TestEnv, data: &str) -> Self {
         let output = Arc::new(Mutex::new(String::new()));
         let (url_tx, url_rx) = mpsc::channel();
         let mut child = command()
@@ -308,7 +386,7 @@ impl TestServer {
                 "--bind",
                 "127.0.0.1:0",
                 "--data",
-                env.path("server.sqlite").to_str().expect("utf8 temp path"),
+                env.path(data).to_str().expect("utf8 temp path"),
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
