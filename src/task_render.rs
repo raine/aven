@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use sqlx::SqliteConnection;
 
 use crate::db::task_has_conflict;
@@ -137,30 +137,4 @@ pub(crate) async fn print_conflicts(
         );
     }
     Ok(())
-}
-
-pub(crate) async fn conflict_variant_value(
-    conn: &mut SqliteConnection,
-    task_id: &str,
-    field: &str,
-    token: &str,
-) -> Result<String> {
-    let rows = sqlx::query!(
-        r#"SELECT variant_a AS "variant_a!: String", local_value AS "local_value!: String",
-         variant_b AS "variant_b!: String", remote_value AS "remote_value!: String"
-         FROM conflicts WHERE task_id = ? AND field = ? AND resolved = 0"#,
-        task_id,
-        field,
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    for row in rows {
-        if token == row.variant_a {
-            return Ok(row.local_value);
-        }
-        if token == row.variant_b {
-            return Ok(row.remote_value);
-        }
-    }
-    bail!("error unknown-variant token={}", token);
 }
