@@ -47,19 +47,7 @@ pub(crate) fn render(
         return;
     }
 
-    let shell = frame.area();
-    frame.render_widget(
-        Block::new()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::new().fg(BORDER))
-            .style(Style::new().bg(BG)),
-        shell,
-    );
-    let inner = shell.inner(ratatui::layout::Margin {
-        horizontal: 1,
-        vertical: 1,
-    });
+    let inner = frame.area();
 
     let [header, body, footer] = Layout::vertical([
         Constraint::Length(2),
