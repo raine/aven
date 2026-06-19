@@ -1,5 +1,16 @@
 use crossterm::event::KeyCode;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ViewTarget {
+    All,
+    Inbox,
+    Backlog,
+    Todo,
+    Active,
+    Project,
+    Conflicts,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Action {
@@ -38,6 +49,13 @@ pub(crate) enum Action {
     BeginAddNote,
     BeginAddProject,
     BeginAddLabel,
+    BeginFilterProject,
+    BeginFilterLabel,
+    BeginFilterStatus,
+    BeginFilterPriority,
+    ClearFilters,
+    ToggleDeletedFilter,
+    ShowView(ViewTarget),
     Planned(&'static str),
     Disabled(&'static str),
     None,
@@ -433,7 +451,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::SetStatus("canceled"),
     ),
     // Views
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "view-all",
         "show all tasks",
         "Views",
@@ -441,9 +459,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('g'), KeyCode::Char('a')],
             label: "g a",
         }],
-        PLANNED_FLOW_REASON,
+        Action::ShowView(ViewTarget::All),
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "view-inbox",
         "show inbox view",
         "Views",
@@ -451,9 +469,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('g'), KeyCode::Char('i')],
             label: "g i",
         }],
-        PLANNED_FLOW_REASON,
+        Action::ShowView(ViewTarget::Inbox),
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "view-backlog",
         "show backlog view",
         "Views",
@@ -461,9 +479,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('g'), KeyCode::Char('b')],
             label: "g b",
         }],
-        PLANNED_FLOW_REASON,
+        Action::ShowView(ViewTarget::Backlog),
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "view-todo",
         "show todo view",
         "Views",
@@ -471,9 +489,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('g'), KeyCode::Char('t')],
             label: "g t",
         }],
-        PLANNED_FLOW_REASON,
+        Action::ShowView(ViewTarget::Todo),
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "view-active",
         "show active view",
         "Views",
@@ -481,9 +499,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('g'), KeyCode::Char('v')],
             label: "g v",
         }],
-        PLANNED_FLOW_REASON,
+        Action::ShowView(ViewTarget::Active),
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "view-project",
         "show project view",
         "Views",
@@ -491,9 +509,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('g'), KeyCode::Char('p')],
             label: "g p",
         }],
-        PLANNED_FLOW_REASON,
+        Action::ShowView(ViewTarget::Project),
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "view-conflicts",
         "show conflicts view",
         "Views",
@@ -501,7 +519,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('g'), KeyCode::Char('c')],
             label: "g c",
         }],
-        PLANNED_FLOW_REASON,
+        Action::ShowView(ViewTarget::Conflicts),
     ),
     CommandSpec::planned(
         "view-deleted",
@@ -678,7 +696,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::SetPriority("urgent"),
     ),
     // Filters
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "filter-project",
         "filter by project",
         "Filters",
@@ -686,9 +704,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('f'), KeyCode::Char('p')],
             label: "f p",
         }],
-        PLANNED_FLOW_REASON,
+        Action::BeginFilterProject,
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "filter-label",
         "filter by label",
         "Filters",
@@ -696,9 +714,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('f'), KeyCode::Char('l')],
             label: "f l",
         }],
-        PLANNED_FLOW_REASON,
+        Action::BeginFilterLabel,
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "filter-status",
         "filter by status",
         "Filters",
@@ -706,9 +724,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('f'), KeyCode::Char('s')],
             label: "f s",
         }],
-        PLANNED_FLOW_REASON,
+        Action::BeginFilterStatus,
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "filter-priority",
         "filter by priority",
         "Filters",
@@ -716,9 +734,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('f'), KeyCode::Char('r')],
             label: "f r",
         }],
-        PLANNED_FLOW_REASON,
+        Action::BeginFilterPriority,
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "filter-clear",
         "clear all filters",
         "Filters",
@@ -726,9 +744,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('f'), KeyCode::Char('c')],
             label: "f c",
         }],
-        PLANNED_FLOW_REASON,
+        Action::ClearFilters,
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "filter-deleted",
         "filter deleted tasks",
         "Filters",
@@ -736,7 +754,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('f'), KeyCode::Char('x')],
             label: "f x",
         }],
-        PLANNED_FLOW_REASON,
+        Action::ToggleDeletedFilter,
     ),
     // Order
     CommandSpec::planned(
@@ -1030,6 +1048,13 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginAddNote
             | Action::BeginAddProject
             | Action::BeginAddLabel
+            | Action::BeginFilterProject
+            | Action::BeginFilterLabel
+            | Action::BeginFilterStatus
+            | Action::BeginFilterPriority
+            | Action::ClearFilters
+            | Action::ToggleDeletedFilter
+            | Action::ShowView(_)
     )
 }
 
@@ -1474,6 +1499,30 @@ mod tests {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('1')]),
             ShortcutLookup::Found(Action::SetStatus("inbox"))
+        );
+    }
+
+    #[test]
+    fn resolves_filter_shortcuts() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('p')]),
+            ShortcutLookup::Found(Action::BeginFilterProject)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('c')]),
+            ShortcutLookup::Found(Action::ClearFilters)
+        );
+    }
+
+    #[test]
+    fn resolves_view_shortcuts() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('a')]),
+            ShortcutLookup::Found(Action::ShowView(ViewTarget::All))
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('c')]),
+            ShortcutLookup::Found(Action::ShowView(ViewTarget::Conflicts))
         );
     }
 }

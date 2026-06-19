@@ -8,13 +8,14 @@ use sqlx::SqlitePool;
 
 use crate::operations::TaskDraft;
 use crate::tui::event::{
-    Action, CommandLookup, ShortcutLookup, lookup_command, resolve_shortcut, shortcut_label,
+    Action, CommandLookup, ShortcutLookup, ViewTarget, lookup_command, resolve_shortcut,
+    shortcut_label,
 };
 use crate::tui::overlay::{
     MultilineInputState, OverlayOutcome, OverlayState, OverlaySubmit, OverlayView, PickerItem,
     PickerState, TextInputState,
 };
-use crate::tui::store::{SidebarEntry, TuiStore};
+use crate::tui::store::{SidebarEntry, SidebarTarget, TuiStore};
 use crate::tui::ui;
 
 const ADD_PROJECT_TITLE: &str = "Add project";
@@ -30,6 +31,11 @@ const EDIT_DESCRIPTION_TITLE: &str = "Edit task: description";
 const EDIT_PROJECT_TITLE: &str = "Edit task: project";
 const EDIT_PRIORITY_TITLE: &str = "Edit task: priority";
 const EDIT_LABELS_TITLE: &str = "Edit task: labels";
+const FILTER_PROJECT_TITLE: &str = "Filter: project";
+const FILTER_LABEL_TITLE: &str = "Filter: label";
+const FILTER_STATUS_TITLE: &str = "Filter: status";
+const FILTER_PRIORITY_TITLE: &str = "Filter: priority";
+const VIEW_PROJECT_TITLE: &str = "Go: project";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AddTaskDraftState {
@@ -324,6 +330,21 @@ impl App {
             OverlaySubmit::Picker { title, values } if title == EDIT_LABELS_TITLE => {
                 self.submit_edit_labels(values).await?;
             }
+            OverlaySubmit::Picker { title, values } if title == FILTER_PROJECT_TITLE => {
+                self.submit_filter_project(values).await?;
+            }
+            OverlaySubmit::Picker { title, values } if title == FILTER_LABEL_TITLE => {
+                self.submit_filter_label(values).await?;
+            }
+            OverlaySubmit::Picker { title, values } if title == FILTER_STATUS_TITLE => {
+                self.submit_filter_status(values).await?;
+            }
+            OverlaySubmit::Picker { title, values } if title == FILTER_PRIORITY_TITLE => {
+                self.submit_filter_priority(values).await?;
+            }
+            OverlaySubmit::Picker { title, values } if title == VIEW_PROJECT_TITLE => {
+                self.submit_view_project(values).await?;
+            }
             other => self.set_message(other.message()),
         }
         Ok(())
@@ -365,6 +386,13 @@ impl App {
             Action::BeginAddLabel => self.begin_add_label(),
             Action::BeginAddTask => self.begin_add_task(),
             Action::BeginAddNote => self.begin_add_note(),
+            Action::BeginFilterProject => self.begin_filter_project(),
+            Action::BeginFilterLabel => self.begin_filter_label(),
+            Action::BeginFilterStatus => self.begin_filter_status(),
+            Action::BeginFilterPriority => self.begin_filter_priority(),
+            Action::ClearFilters => self.clear_filters().await?,
+            Action::ToggleDeletedFilter => self.toggle_deleted_filter().await?,
+            Action::ShowView(target) => self.show_view(target).await?,
             Action::Planned(name) => self.set_message(format!(":{name} is not yet implemented")),
             Action::Disabled(name) => self.set_message(format!(":{name} is disabled")),
             Action::AcceptCommand
@@ -981,6 +1009,185 @@ impl App {
         }
     }
 
+    fn begin_filter_project(&mut self) {
+        self.pending_shortcut.clear();
+        let selected = self.store.filters.project.as_deref().unwrap_or_default();
+        let items = self.store.existing_project_picker_items(selected);
+        self.overlay = Some(OverlayState::Picker(PickerState {
+            title: FILTER_PROJECT_TITLE.to_string(),
+            filter: String::new(),
+            selected: selected_picker_index(&items),
+            items,
+            multi: false,
+        }));
+    }
+
+    fn begin_filter_label(&mut self) {
+        self.pending_shortcut.clear();
+        let mut items = self.store.label_picker_items();
+        for item in &mut items {
+            item.selected = Some(&item.value) == self.store.filters.label.as_ref();
+        }
+        self.overlay = Some(OverlayState::Picker(PickerState {
+            title: FILTER_LABEL_TITLE.to_string(),
+            filter: String::new(),
+            selected: selected_picker_index(&items),
+            items,
+            multi: false,
+        }));
+    }
+
+    fn begin_filter_status(&mut self) {
+        self.pending_shortcut.clear();
+        let items = self
+            .store
+            .status_picker_items(self.store.filters.status.as_deref());
+        self.overlay = Some(OverlayState::Picker(PickerState {
+            title: FILTER_STATUS_TITLE.to_string(),
+            filter: String::new(),
+            selected: selected_picker_index(&items),
+            items,
+            multi: false,
+        }));
+    }
+
+    fn begin_filter_priority(&mut self) {
+        self.pending_shortcut.clear();
+        let selected = self.store.filters.priority.as_deref().unwrap_or_default();
+        let items = self.store.priority_picker_items(selected);
+        self.overlay = Some(OverlayState::Picker(PickerState {
+            title: FILTER_PRIORITY_TITLE.to_string(),
+            filter: String::new(),
+            selected: selected_picker_index(&items),
+            items,
+            multi: false,
+        }));
+    }
+
+    fn begin_view_project(&mut self) {
+        self.pending_shortcut.clear();
+        let selected = match &self.store.active_view {
+            SidebarTarget::Project(project) => project.as_str(),
+            _ => "",
+        };
+        let items = self.store.existing_project_picker_items(selected);
+        self.overlay = Some(OverlayState::Picker(PickerState {
+            title: VIEW_PROJECT_TITLE.to_string(),
+            filter: String::new(),
+            selected: selected_picker_index(&items),
+            items,
+            multi: false,
+        }));
+    }
+
+    async fn show_view(&mut self, target: ViewTarget) -> Result<()> {
+        let sidebar_target = match target {
+            ViewTarget::All => SidebarTarget::All,
+            ViewTarget::Inbox => SidebarTarget::Inbox,
+            ViewTarget::Active => SidebarTarget::Active,
+            ViewTarget::Backlog => SidebarTarget::Backlog,
+            ViewTarget::Todo => SidebarTarget::Todo,
+            ViewTarget::Conflicts => SidebarTarget::Conflicts,
+            ViewTarget::Project => {
+                self.begin_view_project();
+                return Ok(());
+            }
+        };
+        let selected = self.store.show_view(sidebar_target).await?;
+        self.apply_filter_selection(selected);
+        self.set_message("view updated".to_string());
+        Ok(())
+    }
+
+    fn apply_filter_selection(&mut self, selected: Option<usize>) {
+        self.widgets.table.select(selected);
+        self.widgets.sidebar.select(self.store.sidebar_selection());
+        self.focus = Focus::Tasks;
+        self.overlay = None;
+    }
+
+    async fn clear_filters(&mut self) -> Result<()> {
+        let selected = self.store.clear_filters().await?;
+        self.apply_filter_selection(selected);
+        self.set_message("filters cleared".to_string());
+        Ok(())
+    }
+
+    async fn toggle_deleted_filter(&mut self) -> Result<()> {
+        let selected = self.store.toggle_deleted_filter().await?;
+        self.apply_filter_selection(selected);
+        let message = if self.store.filters.include_deleted {
+            "showing deleted tasks"
+        } else {
+            "hiding deleted tasks"
+        };
+        self.set_message(message.to_string());
+        Ok(())
+    }
+
+    async fn submit_filter_project(&mut self, values: Vec<String>) -> Result<()> {
+        let Some(project) = values.first().cloned() else {
+            self.set_message("no matching project".to_string());
+            self.begin_filter_project();
+            return Ok(());
+        };
+        let selected = self.store.filter_project(project).await?;
+        self.apply_filter_selection(selected);
+        self.set_message("project filter applied".to_string());
+        Ok(())
+    }
+
+    async fn submit_filter_label(&mut self, values: Vec<String>) -> Result<()> {
+        let Some(label) = values.first().cloned() else {
+            self.set_message("no matching label".to_string());
+            self.begin_filter_label();
+            return Ok(());
+        };
+        let selected = self.store.filter_label(label).await?;
+        self.apply_filter_selection(selected);
+        self.set_message("label filter applied".to_string());
+        Ok(())
+    }
+
+    async fn submit_filter_status(&mut self, values: Vec<String>) -> Result<()> {
+        let Some(status) = values.first().cloned() else {
+            self.set_message("no matching status".to_string());
+            self.begin_filter_status();
+            return Ok(());
+        };
+        let selected = self.store.filter_status(status).await?;
+        self.apply_filter_selection(selected);
+        self.set_message("status filter applied".to_string());
+        Ok(())
+    }
+
+    async fn submit_filter_priority(&mut self, values: Vec<String>) -> Result<()> {
+        let Some(priority) = values.first().cloned() else {
+            self.set_message("no matching priority".to_string());
+            self.begin_filter_priority();
+            return Ok(());
+        };
+        let selected = self.store.filter_priority(priority).await?;
+        self.apply_filter_selection(selected);
+        self.set_message("priority filter applied".to_string());
+        Ok(())
+    }
+
+    async fn submit_view_project(&mut self, values: Vec<String>) -> Result<()> {
+        let Some(project) = values.first().cloned() else {
+            self.set_message("no matching project".to_string());
+            self.begin_view_project();
+            return Ok(());
+        };
+        let selected = self
+            .store
+            .show_view(SidebarTarget::Project(project))
+            .await?;
+        self.apply_filter_selection(selected);
+        self.set_message("project view selected".to_string());
+        Ok(())
+    }
+
     fn set_message(&mut self, message: String) {
         self.message = Some(message);
         self.message_at = Some(Instant::now());
@@ -1228,12 +1435,54 @@ mod tests {
     #[tokio::test]
     async fn planned_shortcut_reports_not_yet_implemented() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('q')).await.unwrap();
         assert_eq!(
             app.message.as_deref(),
-            Some(":filter-project is not yet implemented")
+            Some(":order-queue is not yet implemented")
         );
+    }
+
+    #[tokio::test]
+    async fn filter_project_shortcut_opens_project_picker() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
+        app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(PickerState { title, .. })) if title == FILTER_PROJECT_TITLE
+        ));
+    }
+
+    #[tokio::test]
+    async fn clear_filters_shortcut_resets_default_view() {
+        let mut app = test_app().await;
+        app.store.filters.status = Some("todo".to_string());
+        app.store.active_view = SidebarTarget::Todo;
+
+        app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+
+        assert_eq!(app.store.active_view, SidebarTarget::All);
+        assert!(app.store.filters.status.is_none());
+        assert_eq!(app.message.as_deref(), Some("filters cleared"));
+    }
+
+    #[tokio::test]
+    async fn go_conflicts_shortcut_sets_conflicts_view() {
+        let mut app = test_app().await;
+
+        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+
+        assert_eq!(app.store.active_view, SidebarTarget::Conflicts);
+        assert!(app.store.filters.conflicts_only);
     }
 
     #[tokio::test]

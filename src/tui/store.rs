@@ -26,8 +26,11 @@ pub(crate) struct MutationMessage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SidebarTarget {
     All,
+    Inbox,
     Active,
+    Backlog,
     Todo,
+    Conflicts,
     Project(String),
 }
 
@@ -109,17 +112,83 @@ impl TuiStore {
         else {
             return Ok(());
         };
+        self.show_view(target).await?;
+        Ok(())
+    }
+
+    pub(crate) async fn show_view(&mut self, target: SidebarTarget) -> Result<Option<usize>> {
         self.active_view = target;
-        self.filters.project = None;
-        self.filters.status = None;
+        self.apply_active_view_filters();
+        self.refresh(None).await
+    }
+
+    pub(crate) async fn clear_filters(&mut self) -> Result<Option<usize>> {
+        self.active_view = SidebarTarget::All;
+        self.filters = TaskFilters::default();
+        self.refresh(None).await
+    }
+
+    pub(crate) async fn filter_project(&mut self, project: String) -> Result<Option<usize>> {
+        self.filters.project = Some(project);
+        self.filters.include_deleted = false;
+        self.filters.conflicts_only = false;
+        self.refresh(None).await
+    }
+
+    pub(crate) async fn filter_label(&mut self, label: String) -> Result<Option<usize>> {
+        self.filters.label = Some(label);
+        self.filters.include_deleted = false;
+        self.filters.conflicts_only = false;
+        self.refresh(None).await
+    }
+
+    pub(crate) async fn filter_status(&mut self, status: String) -> Result<Option<usize>> {
+        self.filters.status = Some(status);
+        self.filters.include_deleted = false;
+        self.filters.conflicts_only = false;
+        self.refresh(None).await
+    }
+
+    pub(crate) async fn filter_priority(&mut self, priority: String) -> Result<Option<usize>> {
+        self.filters.priority = Some(priority);
+        self.filters.include_deleted = false;
+        self.filters.conflicts_only = false;
+        self.refresh(None).await
+    }
+
+    pub(crate) async fn toggle_deleted_filter(&mut self) -> Result<Option<usize>> {
+        self.filters.include_deleted = !self.filters.include_deleted;
+        self.filters.conflicts_only = false;
+        self.refresh(None).await
+    }
+
+    fn apply_active_view_filters(&mut self) {
+        let search = self.filters.search.clone();
+        self.filters = TaskFilters {
+            search,
+            ..TaskFilters::default()
+        };
         match &self.active_view {
             SidebarTarget::All => {}
+            SidebarTarget::Inbox => self.filters.status = Some("inbox".to_string()),
             SidebarTarget::Active => self.filters.status = Some("active".to_string()),
+            SidebarTarget::Backlog => self.filters.status = Some("backlog".to_string()),
             SidebarTarget::Todo => self.filters.status = Some("todo".to_string()),
+            SidebarTarget::Conflicts => self.filters.conflicts_only = true,
             SidebarTarget::Project(project) => self.filters.project = Some(project.clone()),
         }
-        self.refresh(None).await?;
-        Ok(())
+    }
+
+    pub(crate) fn status_picker_items(&self, selected: Option<&str>) -> Vec<PickerItem> {
+        let selected = selected.unwrap_or_default();
+        crate::choices::STATUSES
+            .iter()
+            .map(|status| PickerItem {
+                label: (*status).to_string(),
+                value: (*status).to_string(),
+                selected: *status == selected,
+            })
+            .collect()
     }
 
     pub(crate) async fn accept_search(&mut self, input: &str) -> Result<Option<usize>> {
@@ -456,15 +525,33 @@ impl TuiStore {
                 section: false,
             },
             SidebarEntry {
+                label: "Inbox".to_string(),
+                count: self.counts.inbox,
+                target: Some(SidebarTarget::Inbox),
+                section: false,
+            },
+            SidebarEntry {
                 label: "Active".to_string(),
                 count: self.counts.active,
                 target: Some(SidebarTarget::Active),
                 section: false,
             },
             SidebarEntry {
+                label: "Backlog".to_string(),
+                count: self.counts.backlog,
+                target: Some(SidebarTarget::Backlog),
+                section: false,
+            },
+            SidebarEntry {
                 label: "Todo".to_string(),
                 count: self.counts.todo,
                 target: Some(SidebarTarget::Todo),
+                section: false,
+            },
+            SidebarEntry {
+                label: "Conflicts".to_string(),
+                count: self.counts.conflicts,
+                target: Some(SidebarTarget::Conflicts),
                 section: false,
             },
             SidebarEntry {
@@ -815,5 +902,55 @@ mod tests {
         assert!(!items.iter().any(|item| item.label == "Infer project"));
         assert!(items.iter().any(|item| item.value == "mobile-app"));
         assert!(items.iter().any(|item| item.selected));
+    }
+
+    #[tokio::test]
+    async fn clear_filters_returns_to_all_view() {
+        let mut store = test_store().await;
+        store.filters.status = Some("todo".to_string());
+        store.filters.search = Some("needle".to_string());
+        store.active_view = SidebarTarget::Todo;
+
+        store.clear_filters().await.unwrap();
+
+        assert_eq!(store.active_view, SidebarTarget::All);
+        assert!(store.filters.status.is_none());
+        assert!(store.filters.search.is_none());
+    }
+
+    #[tokio::test]
+    async fn show_conflicts_view_sets_conflicts_filter() {
+        let mut store = test_store().await;
+
+        store.show_view(SidebarTarget::Conflicts).await.unwrap();
+
+        assert_eq!(store.active_view, SidebarTarget::Conflicts);
+        assert!(store.filters.conflicts_only);
+    }
+
+    #[tokio::test]
+    async fn show_todo_view_clears_stale_view_flags_and_preserves_search() {
+        let mut store = test_store().await;
+        store.filters.include_deleted = true;
+        store.filters.conflicts_only = true;
+        store.filters.search = Some("needle".to_string());
+
+        store.show_view(SidebarTarget::Todo).await.unwrap();
+
+        assert_eq!(store.filters.status.as_deref(), Some("todo"));
+        assert_eq!(store.filters.search.as_deref(), Some("needle"));
+        assert!(!store.filters.include_deleted);
+        assert!(!store.filters.conflicts_only);
+    }
+
+    #[tokio::test]
+    async fn toggle_deleted_filter_switches_include_deleted() {
+        let mut store = test_store().await;
+
+        store.toggle_deleted_filter().await.unwrap();
+        assert!(store.filters.include_deleted);
+
+        store.toggle_deleted_filter().await.unwrap();
+        assert!(!store.filters.include_deleted);
     }
 }

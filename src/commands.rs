@@ -66,6 +66,7 @@ pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Res
         priority: args.priority,
         label: args.label,
         include_deleted: args.all,
+        conflicts_only: false,
         search: None,
     };
     for item in query::list_task_items(conn, filters, TaskSort::Updated).await? {

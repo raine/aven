@@ -101,12 +101,6 @@ fn render_header(frame: &mut Frame, store: &TuiStore, area: Rect) {
 
 fn header_tabs(store: &TuiStore) -> Paragraph<'static> {
     let conflict_count = store.tasks.iter().filter(|task| task.has_conflict).count();
-    let search = store.filters.search.as_ref().map(|search| {
-        Span::styled(
-            format!("  search {}", quote(search)),
-            Style::new().fg(FG_MUTED),
-        )
-    });
     let mut spans = vec![
         Span::styled("tasks", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
         Span::raw("   "),
@@ -122,10 +116,41 @@ fn header_tabs(store: &TuiStore) -> Paragraph<'static> {
         Span::raw("   "),
         tab("conflicts", Some(conflict_count), false),
     ];
-    if let Some(search) = search {
-        spans.push(search);
-    }
+    spans.extend(active_filter_spans(store));
     Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BG))
+}
+
+fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
+    let mut parts = Vec::new();
+    if let Some(project) = &store.filters.project {
+        parts.push(format!("project={project}"));
+    }
+    if let Some(label) = &store.filters.label {
+        parts.push(format!("label={label}"));
+    }
+    if let Some(status) = &store.filters.status {
+        parts.push(format!("status={status}"));
+    }
+    if let Some(priority) = &store.filters.priority {
+        parts.push(format!("priority={priority}"));
+    }
+    if store.filters.include_deleted {
+        parts.push("include_deleted".to_string());
+    }
+    if store.filters.conflicts_only {
+        parts.push("conflicts".to_string());
+    }
+    if let Some(search) = &store.filters.search {
+        parts.push(format!("search={}", quote(search)));
+    }
+    if parts.is_empty() {
+        Vec::new()
+    } else {
+        vec![Span::styled(
+            format!("  filter {}", parts.join(" ")),
+            Style::new().fg(FG_MUTED),
+        )]
+    }
 }
 
 fn header_status() -> Paragraph<'static> {
@@ -391,8 +416,11 @@ fn badge(count: i64, active: bool) -> Span<'static> {
 fn sidebar_icon(entry: &crate::tui::store::SidebarEntry) -> &'static str {
     match entry.target {
         Some(SidebarTarget::All) => "○",
+        Some(SidebarTarget::Inbox) => "▣",
         Some(SidebarTarget::Todo) => "□",
         Some(SidebarTarget::Active) => "●",
+        Some(SidebarTarget::Backlog) => "◌",
+        Some(SidebarTarget::Conflicts) => "!",
         Some(SidebarTarget::Project(_)) => "●",
         None => " ",
     }
@@ -401,8 +429,11 @@ fn sidebar_icon(entry: &crate::tui::store::SidebarEntry) -> &'static str {
 fn sidebar_label(entry: &crate::tui::store::SidebarEntry) -> String {
     match entry.target {
         Some(SidebarTarget::All) => "Today's queue".to_string(),
+        Some(SidebarTarget::Inbox) => "Inbox".to_string(),
         Some(SidebarTarget::Active) => "All active".to_string(),
+        Some(SidebarTarget::Backlog) => "Backlog".to_string(),
         Some(SidebarTarget::Todo) => "All todo".to_string(),
+        Some(SidebarTarget::Conflicts) => "Conflicts".to_string(),
         Some(SidebarTarget::Project(_)) => entry
             .label
             .split_once(' ')
@@ -1184,7 +1215,7 @@ mod tests {
     fn command_line_marks_planned_actions() {
         let command = COMMANDS
             .iter()
-            .find(|command| command.name == "filter-project")
+            .find(|command| command.name == "order-queue")
             .unwrap();
         let rendered = command_line(command).to_string();
         assert!(rendered.contains("planned"));
@@ -1192,13 +1223,46 @@ mod tests {
 
     #[test]
     fn prefix_hint_lines_mark_planned_actions() {
-        let rendered = prefix_hint_lines(&["f".to_string()])
+        let rendered = prefix_hint_lines(&["o".to_string()])
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(rendered.contains(":filter-project"));
+        assert!(rendered.contains(":order-queue"));
         assert!(rendered.contains("planned"));
+    }
+
+    #[test]
+    fn header_shows_active_filters() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rendered = rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let pool = crate::db::open_db(&dir.path().join("test.db"))
+                .await
+                .unwrap();
+            let mut store = TuiStore::new(pool).await.unwrap();
+            store.filters = crate::query::TaskFilters {
+                project: Some("mobile-app".to_string()),
+                label: Some("needs-review".to_string()),
+                status: Some("todo".to_string()),
+                priority: Some("high".to_string()),
+                include_deleted: true,
+                conflicts_only: true,
+                search: Some("needle".to_string()),
+            };
+            active_filter_spans(&store)
+                .into_iter()
+                .map(|span| span.content)
+                .collect::<Vec<_>>()
+                .join("")
+        });
+        assert!(rendered.contains("project=mobile-app"));
+        assert!(rendered.contains("label=needs-review"));
+        assert!(rendered.contains("status=todo"));
+        assert!(rendered.contains("priority=high"));
+        assert!(rendered.contains("include_deleted"));
+        assert!(rendered.contains("conflicts"));
+        assert!(rendered.contains("search="));
     }
 
     #[test]

@@ -25,6 +25,7 @@ pub(crate) struct TaskFilters {
     pub(crate) priority: Option<String>,
     pub(crate) label: Option<String>,
     pub(crate) include_deleted: bool,
+    pub(crate) conflicts_only: bool,
     pub(crate) search: Option<String>,
 }
 
@@ -50,7 +51,9 @@ pub(crate) struct SidebarCounts {
     pub(crate) all: i64,
     pub(crate) inbox: i64,
     pub(crate) active: i64,
+    pub(crate) backlog: i64,
     pub(crate) todo: i64,
+    pub(crate) conflicts: i64,
 }
 
 pub(crate) async fn list_task_items(
@@ -107,6 +110,10 @@ pub(crate) async fn list_task_items(
         query.push("EXISTS (SELECT 1 FROM task_labels tl WHERE tl.task_id = t.id AND tl.label = ");
         query.push_bind(label);
         query.push(")");
+    }
+    if filters.conflicts_only {
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push("EXISTS (SELECT 1 FROM conflicts c WHERE c.task_id = t.id AND c.resolved = 0)");
     }
     if let Some(search) = filters.search.filter(|search| !search.is_empty()) {
         push_filter_prefix(&mut query, &mut filters_added);
@@ -176,7 +183,12 @@ pub(crate) async fn sidebar_counts(conn: &mut SqliteConnection) -> Result<Sideba
          COALESCE(SUM(CASE WHEN deleted = 0 THEN 1 ELSE 0 END), 0) AS all_count,
          COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'inbox' THEN 1 ELSE 0 END), 0) AS inbox_count,
          COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'active' THEN 1 ELSE 0 END), 0) AS active_count,
-         COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'todo' THEN 1 ELSE 0 END), 0) AS todo_count
+         COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'backlog' THEN 1 ELSE 0 END), 0) AS backlog_count,
+         COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'todo' THEN 1 ELSE 0 END), 0) AS todo_count,
+         (SELECT COUNT(DISTINCT c.task_id)
+          FROM conflicts c
+          JOIN tasks t ON t.id = c.task_id
+          WHERE c.resolved = 0 AND t.deleted = 0) AS conflicts_count
          FROM tasks",
     )
     .fetch_one(&mut *conn)
@@ -185,7 +197,9 @@ pub(crate) async fn sidebar_counts(conn: &mut SqliteConnection) -> Result<Sideba
         all: row.get("all_count"),
         inbox: row.get("inbox_count"),
         active: row.get("active_count"),
+        backlog: row.get("backlog_count"),
         todo: row.get("todo_count"),
+        conflicts: row.get("conflicts_count"),
     })
 }
 
@@ -296,5 +310,58 @@ mod tests {
                 "done urgent"
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn conflicts_only_filter_returns_unresolved_conflicts() {
+        let (_temp, mut conn) = test_conn().await;
+        sqlx::query(
+            "INSERT INTO projects(key, name, prefix, created_at, updated_at)
+             VALUES ('app', 'app', 'APP', 't', 't')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        for (id, title) in [
+            ("0000000000000011", "conflicted"),
+            ("0000000000000012", "clean"),
+        ] {
+            sqlx::query(
+                "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
+                 VALUES (?, ?, '', 'app', 'todo', 'none', '001', '001')",
+            )
+            .bind(id)
+            .bind(title)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        }
+
+        sqlx::query(
+            "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
+             local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
+             VALUES ('0000000000000011', 'title', NULL, 'local', 'remote', NULL, ?, 'a', 'b', ?, 0)",
+        )
+        .bind(crate::ids::new_id())
+        .bind(crate::ids::now())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let items = list_task_items(
+            &mut conn,
+            TaskFilters {
+                conflicts_only: true,
+                ..TaskFilters::default()
+            },
+            TaskSort::Queue,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].task.title, "conflicted");
+        assert!(items[0].has_conflict);
     }
 }
