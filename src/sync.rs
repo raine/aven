@@ -1,3 +1,5 @@
+use std::fmt;
+use std::net::IpAddr;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -89,14 +91,78 @@ struct ServerState {
     auth_token: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BindScope {
+    Loopback,
+    Private,
+    Public,
+}
+
+impl BindScope {
+    pub(crate) fn classify(addr: IpAddr) -> Self {
+        if addr.is_loopback() {
+            Self::Loopback
+        } else if is_private_addr(addr) {
+            Self::Private
+        } else {
+            Self::Public
+        }
+    }
+}
+
+impl fmt::Display for BindScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Loopback => f.write_str("loopback"),
+            Self::Private => f.write_str("private"),
+            Self::Public => f.write_str("public"),
+        }
+    }
+}
+
+fn is_private_addr(addr: IpAddr) -> bool {
+    match addr {
+        IpAddr::V4(addr) => {
+            let octets = addr.octets();
+            addr.is_private()
+                || addr.is_link_local()
+                || octets[0] == 100 && (64..=127).contains(&octets[1])
+        }
+        IpAddr::V6(addr) => addr.is_unique_local() || addr.is_unicast_link_local(),
+    }
+}
+
+fn validate_bind_policy(
+    scope: BindScope,
+    unsafe_public_bind: bool,
+    auth_token: Option<&str>,
+) -> Result<()> {
+    match scope {
+        BindScope::Loopback => Ok(()),
+        BindScope::Private => {
+            if auth_token.is_none() {
+                bail!(
+                    "error private-bind-requires-auth hint=\"set sync.auth_token or bind to 127.0.0.1\""
+                );
+            }
+            Ok(())
+        }
+        BindScope::Public => {
+            if !unsafe_public_bind {
+                bail!("error public-bind-requires --unsafe-public-bind");
+            }
+            if auth_token.is_none() {
+                bail!("error sync-auth-token-required hint=\"set sync.auth_token in config.toml\"");
+            }
+            Ok(())
+        }
+    }
+}
+
 pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> Result<()> {
-    if !args.unsafe_public_bind && !args.bind.ip().is_loopback() {
-        bail!("error public-bind-requires --unsafe-public-bind");
-    }
+    let scope = BindScope::classify(args.bind.ip());
     let auth_token = config.sync_auth_token().map(str::to_string);
-    if !args.bind.ip().is_loopback() && auth_token.is_none() {
-        bail!("error sync-auth-token-required hint=\"set sync.auth_token in config.toml\"");
-    }
+    validate_bind_policy(scope, args.unsafe_public_bind, auth_token.as_deref())?;
     let pool = open_db(&args.data).await?;
     let state = ServerState { pool, auth_token };
     let app = Router::new()
@@ -104,7 +170,10 @@ pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> R
         .with_state(state);
     let listener = TcpListener::bind(args.bind).await?;
     let addr = listener.local_addr()?;
-    println!("listening url=http://{}", addr);
+    if scope == BindScope::Public {
+        println!("warning public bind enabled; use TLS or a reverse proxy");
+    }
+    println!("listening url=http://{} scope={}", addr, scope);
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
@@ -787,4 +856,68 @@ fn str_payload(payload: &Value, key: &str) -> Result<String> {
         .and_then(Value::as_str)
         .map(str::to_string)
         .with_context(|| format!("payload missing {key}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::IpAddr;
+
+    use super::{BindScope, validate_bind_policy};
+
+    #[test]
+    fn classifies_bind_scope() {
+        for addr in ["127.0.0.1", "::1"] {
+            assert_eq!(
+                BindScope::classify(addr.parse::<IpAddr>().unwrap()),
+                BindScope::Loopback
+            );
+        }
+        for addr in [
+            "10.0.0.5",
+            "172.16.0.5",
+            "192.168.1.5",
+            "100.64.0.5",
+            "100.127.255.5",
+            "169.254.1.5",
+            "fd00::1",
+            "fe80::1",
+        ] {
+            assert_eq!(
+                BindScope::classify(addr.parse::<IpAddr>().unwrap()),
+                BindScope::Private
+            );
+        }
+        for addr in ["8.8.8.8", "100.128.0.1", "1.1.1.1", "2001:4860:4860::8888"] {
+            assert_eq!(
+                BindScope::classify(addr.parse::<IpAddr>().unwrap()),
+                BindScope::Public
+            );
+        }
+    }
+
+    #[test]
+    fn bind_policy_enforces_guardrails() {
+        assert!(validate_bind_policy(BindScope::Loopback, false, None).is_ok());
+        assert!(validate_bind_policy(BindScope::Private, false, Some("secret")).is_ok());
+        assert!(validate_bind_policy(BindScope::Public, true, Some("secret")).is_ok());
+
+        assert_eq!(
+            validate_bind_policy(BindScope::Private, false, None)
+                .unwrap_err()
+                .to_string(),
+            "error private-bind-requires-auth hint=\"set sync.auth_token or bind to 127.0.0.1\""
+        );
+        assert_eq!(
+            validate_bind_policy(BindScope::Public, false, Some("secret"))
+                .unwrap_err()
+                .to_string(),
+            "error public-bind-requires --unsafe-public-bind"
+        );
+        assert_eq!(
+            validate_bind_policy(BindScope::Public, true, None)
+                .unwrap_err()
+                .to_string(),
+            "error sync-auth-token-required hint=\"set sync.auth_token in config.toml\""
+        );
+    }
 }

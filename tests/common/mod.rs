@@ -249,6 +249,27 @@ impl TestProcess {
         }
     }
 
+    pub fn start_server<I, S>(env: &TestEnv, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let child = command()
+            .env(
+                "ATM_CONFIG_DIR",
+                env.config_dir().join("agentic-task-manager"),
+            )
+            .env_remove("ATM_DB")
+            .env_remove("ATM_SYNC_SERVER")
+            .arg("server")
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn atm server");
+        Self::capture(child)
+    }
+
     pub fn start_daemon(env: &TestEnv) -> Self {
         let child = command()
             .env(
@@ -417,12 +438,15 @@ impl TestServer {
         let stdout_thread = thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines().map_while(Result::ok) {
-                if let Some(url) = line.strip_prefix("listening url=") {
+                {
+                    let mut output = stdout_output.lock().expect("server output lock");
+                    output.push_str(&line);
+                    output.push('\n');
+                }
+                if let Some(rest) = line.strip_prefix("listening url=") {
+                    let url = rest.split_whitespace().next().expect("listening url value");
                     let _ = url_tx.send(url.to_string());
                 }
-                let mut output = stdout_output.lock().expect("server output lock");
-                output.push_str(&line);
-                output.push('\n');
             }
         });
 

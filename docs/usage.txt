@@ -92,7 +92,27 @@ Sync server:
 
 The server prints:
 
-  listening url=http://127.0.0.1:<port>
+  listening url=http://127.0.0.1:<port> scope=loopback
+
+Bind scope is classified as loopback, private, or public. Loopback binds work
+without authentication for local testing. Private binds (RFC1918, CGNAT
+100.64.0.0/10, link-local, and unique-local IPv6) require sync.auth_token on
+the server and matching client tokens. Public binds require
+--unsafe-public-bind, sync.auth_token, and user-provided TLS or a reverse
+proxy. The server prints a warning when a public bind is enabled.
+
+Recommended VPN or private-network setup:
+
+  # server config (~/.config/agentic-task-manager/config.toml)
+  [sync]
+  auth_token = "your-shared-secret"
+
+  atm server --bind 100.64.0.10:3000 --data /tmp/atm-server.sqlite
+
+  # client config
+  [sync]
+  server_url = "http://100.64.0.10:3000"
+  auth_token = "your-shared-secret"
 
 Sync a client:
 
@@ -114,7 +134,9 @@ syncs periodically while it is running.
 
 Known limitations:
 
-  * v1 has no authentication.
+  * Sync over plain HTTP is intended for loopback, a trusted VPN or private
+    network, or TLS termination you provide externally. Direct public internet
+    exposure requires --unsafe-public-bind and is otherwise unsupported.
   * v1 sync is an HTTP/JSON operation log, not a CRDT.
   * v1 supports one configured sync server per local database. Use a fresh
     database for a different sync server.

@@ -1,6 +1,11 @@
 mod common;
 
-use common::{TestEnv, TestServer, contains_all, contains_none, extract_ref, fail, ok, scalar_i64};
+use std::time::Duration;
+
+use common::{
+    TestEnv, TestProcess, TestServer, contains_all, contains_none, extract_ref, fail, ok,
+    scalar_i64,
+};
 use serde_json::{Value, json};
 
 fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
@@ -338,7 +343,86 @@ fn sync_auth_public_bind_requires_token_even_with_unsafe_flag() {
         server_db.to_str().expect("utf8 db path"),
     ]));
 
-    contains_all(&error, &["sync-auth-token-required"]);
+    contains_all(
+        &error,
+        &[
+            "error sync-auth-token-required",
+            "set sync.auth_token in config.toml",
+        ],
+    );
+}
+
+#[test]
+fn sync_server_bind_startup_output_includes_scope() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+
+    contains_all(&server.output(), &["listening url=", "scope=loopback"]);
+    assert!(server.url.starts_with("http://127.0.0.1:"));
+}
+
+#[test]
+fn sync_server_bind_private_requires_token() {
+    let env = TestEnv::new();
+    let error = fail(env.atm_config([
+        "server",
+        "--bind",
+        "100.64.0.1:0",
+        "--data",
+        env.path("server.sqlite").to_str().expect("utf8 temp path"),
+    ]));
+
+    contains_all(
+        &error,
+        &[
+            "error private-bind-requires-auth",
+            "set sync.auth_token or bind to 127.0.0.1",
+        ],
+    );
+}
+
+#[test]
+fn sync_server_bind_public_stays_behind_unsafe_flag() {
+    let env = TestEnv::new();
+    let error = fail(env.atm_config([
+        "server",
+        "--bind",
+        "0.0.0.0:0",
+        "--data",
+        env.path("server.sqlite").to_str().expect("utf8 temp path"),
+    ]));
+
+    contains_all(&error, &["error public-bind-requires --unsafe-public-bind"]);
+}
+
+#[test]
+fn sync_server_bind_public_warns_when_enabled() {
+    let env = TestEnv::new();
+    env.write_config(
+        r#"
+[sync]
+auth_token = "secret"
+"#,
+    );
+    let process = TestProcess::start_server(
+        &env,
+        [
+            "--bind",
+            "0.0.0.0:0",
+            "--unsafe-public-bind",
+            "--data",
+            env.path("server.sqlite").to_str().expect("utf8 temp path"),
+        ],
+    );
+
+    process.wait_for_log("warning public bind enabled", Duration::from_secs(5));
+    process.wait_for_log("scope=public", Duration::from_secs(5));
+    let output = process.output();
+    assert!(
+        output.find("warning public bind enabled").unwrap()
+            < output.find("listening url=").unwrap(),
+        "warning should be printed before listening line\n{output}"
+    );
 }
 
 #[tokio::test]
