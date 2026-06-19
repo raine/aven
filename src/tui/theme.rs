@@ -26,7 +26,7 @@ pub(crate) fn priority_style(priority: &str) -> Style {
     let color = match priority {
         "urgent" => RED,
         "high" => ORANGE,
-        "medium" => ACCENT,
+        "medium" => PURPLE,
         "low" => FG_DIM,
         _ => BORDER,
     };
