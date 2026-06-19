@@ -8,8 +8,11 @@ use crate::labels::list_labels;
 use crate::mutation::{cycle_priority, set_deleted, set_status};
 use crate::operations::{
     TaskDraft, TaskUpdate, add_note as add_note_operation, create_label_operation,
-    create_project_operation, create_task as create_task_operation, resolve_conflict,
-    task_conflicts, update_task as update_task_operation,
+    create_project_operation, create_task as create_task_operation,
+    init_config as init_config_operation, resolve_conflict, show_config as show_config_operation,
+    show_config_paths as show_config_paths_operation,
+    show_config_status as show_config_status_operation, task_conflicts,
+    update_task as update_task_operation,
 };
 use crate::query::{
     ProjectListItem, SidebarCounts, SortDirection, TaskFilters, TaskListItem, TaskSort,
@@ -700,6 +703,29 @@ impl TuiStore {
         selected_id
             .and_then(|id| self.tasks.iter().position(|item| item.task.id == id))
             .or(Some(0))
+    }
+
+    pub(crate) fn config_status_lines(&self) -> Result<Vec<String>> {
+        Ok(show_config_status_operation()?.lines)
+    }
+
+    pub(crate) fn config_info_lines(&self) -> Result<Vec<String>> {
+        let outcome = show_config_operation()?;
+        let mut lines = vec![
+            format!("config path: {}", outcome.path.display()),
+            String::new(),
+        ];
+        lines.extend(outcome.text.lines().map(str::to_string));
+        Ok(lines)
+    }
+
+    pub(crate) fn config_path_lines(&self) -> Result<Vec<String>> {
+        Ok(show_config_paths_operation()?.lines)
+    }
+
+    pub(crate) fn init_config(&self) -> Result<String> {
+        let outcome = init_config_operation()?;
+        Ok(format!("created config {}", outcome.path.display()))
     }
 }
 

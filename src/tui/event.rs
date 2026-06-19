@@ -68,6 +68,10 @@ pub(crate) enum Action {
     AcceptConflictLocal,
     AcceptConflictRemote,
     BeginManualConflictMerge,
+    ShowConfigStatus,
+    ShowConfigInfo,
+    ShowConfigPaths,
+    BeginConfigInit,
     Planned(&'static str),
     Disabled(&'static str),
     None,
@@ -194,10 +198,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "help",
         "toggle shortcut help",
         "General",
-        &[KeySequence {
-            codes: &[KeyCode::Char('?')],
-            label: "?",
-        }],
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('?')],
+                label: "?",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('h')],
+                label: "h",
+            },
+        ],
         Action::ToggleHelp,
     ),
     CommandSpec::implemented(
@@ -914,17 +924,37 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::BeginManualConflictMerge,
     ),
     // Config
-    CommandSpec::planned(
-        "config-show",
-        "show configuration",
+    CommandSpec::implemented(
+        "config-status",
+        "show sync and daemon status",
         "Config",
         &[KeySequence {
             codes: &[KeyCode::Char('C'), KeyCode::Char('s')],
             label: "C s",
         }],
-        PLANNED_FLOW_REASON,
+        Action::ShowConfigStatus,
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
+        "config-show",
+        "show configuration",
+        "Config",
+        &[KeySequence {
+            codes: &[KeyCode::Char('C'), KeyCode::Char('c')],
+            label: "C c",
+        }],
+        Action::ShowConfigInfo,
+    ),
+    CommandSpec::implemented(
+        "config-paths",
+        "show data paths",
+        "Config",
+        &[KeySequence {
+            codes: &[KeyCode::Char('C'), KeyCode::Char('d')],
+            label: "C d",
+        }],
+        Action::ShowConfigPaths,
+    ),
+    CommandSpec::implemented(
         "config-init",
         "initialize configuration",
         "Config",
@@ -932,7 +962,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('C'), KeyCode::Char('i')],
             label: "C i",
         }],
-        PLANNED_FLOW_REASON,
+        Action::BeginConfigInit,
     ),
 ];
 
@@ -1100,6 +1130,10 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::AcceptConflictLocal
             | Action::AcceptConflictRemote
             | Action::BeginManualConflictMerge
+            | Action::ShowConfigStatus
+            | Action::ShowConfigInfo
+            | Action::ShowConfigPaths
+            | Action::BeginConfigInit
     )
 }
 
@@ -1490,6 +1524,9 @@ mod tests {
             "conflict-list",
             "add-project",
             "config-show",
+            "config-status",
+            "config-paths",
+            "config-init",
         ] {
             assert!(
                 COMMANDS.iter().any(|command| command.name == name),
@@ -1611,6 +1648,34 @@ mod tests {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('c'), KeyCode::Char('m')]),
             ShortcutLookup::Found(Action::BeginManualConflictMerge)
+        );
+    }
+
+    #[test]
+    fn resolves_config_shortcuts() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('h')]),
+            ShortcutLookup::Found(Action::ToggleHelp)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('C')]),
+            ShortcutLookup::Prefix
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('C'), KeyCode::Char('s')]),
+            ShortcutLookup::Found(Action::ShowConfigStatus)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('C'), KeyCode::Char('c')]),
+            ShortcutLookup::Found(Action::ShowConfigInfo)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('C'), KeyCode::Char('d')]),
+            ShortcutLookup::Found(Action::ShowConfigPaths)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('C'), KeyCode::Char('i')]),
+            ShortcutLookup::Found(Action::BeginConfigInit)
         );
     }
 

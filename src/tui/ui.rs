@@ -1252,7 +1252,7 @@ mod tests {
     fn command_line_marks_planned_actions() {
         let command = COMMANDS
             .iter()
-            .find(|command| command.name == "config-show")
+            .find(|command| command.name == "view-deleted")
             .unwrap();
         let rendered = command_line(command).to_string();
         assert!(rendered.contains("planned"));
@@ -1260,13 +1260,27 @@ mod tests {
 
     #[test]
     fn prefix_hint_lines_mark_planned_actions() {
+        let rendered = prefix_hint_lines(&["g".to_string()])
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains(":view-deleted"));
+        assert!(rendered.contains("planned"));
+    }
+
+    #[test]
+    fn prefix_hint_lines_show_config_shortcuts_without_planned_badge() {
         let rendered = prefix_hint_lines(&["C".to_string()])
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
+        assert!(rendered.contains(":config-status"));
         assert!(rendered.contains(":config-show"));
-        assert!(rendered.contains("planned"));
+        assert!(rendered.contains(":config-paths"));
+        assert!(rendered.contains(":config-init"));
+        assert!(!rendered.contains("planned"));
     }
 
     #[test]

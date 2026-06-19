@@ -42,6 +42,10 @@ const CONFLICT_CONFIRM_LOCAL_TITLE: &str = "Resolve conflict: local";
 const CONFLICT_CONFIRM_REMOTE_TITLE: &str = "Resolve conflict: remote";
 const CONFLICT_MANUAL_TITLE: &str = "Resolve conflict: manual";
 const CONFLICT_DETAILS_TITLE: &str = "Conflict details";
+const CONFIG_STATUS_TITLE: &str = "Config status";
+const CONFIG_INFO_TITLE: &str = "Configuration";
+const CONFIG_PATHS_TITLE: &str = "Config paths";
+const CONFIG_INIT_TITLE: &str = "Initialize configuration";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AddTaskDraftState {
@@ -386,6 +390,9 @@ impl App {
             {
                 self.submit_confirmed_conflict_resolution().await?;
             }
+            OverlaySubmit::Confirm { title } if title == CONFIG_INIT_TITLE => {
+                self.submit_config_init()?;
+            }
             OverlaySubmit::Text { title, value } if title == CONFLICT_MANUAL_TITLE => {
                 self.submit_manual_conflict_value(value).await?;
             }
@@ -468,6 +475,10 @@ impl App {
                     .await?
             }
             Action::BeginManualConflictMerge => self.begin_manual_conflict_merge().await?,
+            Action::ShowConfigStatus => self.show_config_status()?,
+            Action::ShowConfigInfo => self.show_config_info()?,
+            Action::ShowConfigPaths => self.show_config_paths()?,
+            Action::BeginConfigInit => self.begin_config_init()?,
             Action::Planned(name) => self.set_message(format!(":{name} is not yet implemented")),
             Action::Disabled(name) => self.set_message(format!(":{name} is disabled")),
             Action::AcceptCommand
@@ -1365,6 +1376,49 @@ impl App {
         Ok(())
     }
 
+    fn show_config_status(&mut self) -> Result<()> {
+        self.pending_shortcut.clear();
+        self.overlay = Some(OverlayState::TextPanel(TextPanelState {
+            title: CONFIG_STATUS_TITLE.to_string(),
+            lines: self.store.config_status_lines()?,
+        }));
+        Ok(())
+    }
+
+    fn show_config_info(&mut self) -> Result<()> {
+        self.pending_shortcut.clear();
+        self.overlay = Some(OverlayState::TextPanel(TextPanelState {
+            title: CONFIG_INFO_TITLE.to_string(),
+            lines: self.store.config_info_lines()?,
+        }));
+        Ok(())
+    }
+
+    fn show_config_paths(&mut self) -> Result<()> {
+        self.pending_shortcut.clear();
+        self.overlay = Some(OverlayState::TextPanel(TextPanelState {
+            title: CONFIG_PATHS_TITLE.to_string(),
+            lines: self.store.config_path_lines()?,
+        }));
+        Ok(())
+    }
+
+    fn begin_config_init(&mut self) -> Result<()> {
+        self.pending_shortcut.clear();
+        let path = crate::config::config_file_path()?;
+        self.overlay = Some(OverlayState::Confirm(ConfirmState {
+            title: CONFIG_INIT_TITLE.to_string(),
+            prompt: format!("Create default config at {}?", path.display()),
+        }));
+        Ok(())
+    }
+
+    fn submit_config_init(&mut self) -> Result<()> {
+        let message = self.store.init_config()?;
+        self.set_message(message);
+        Ok(())
+    }
+
     fn move_to_conflict(&mut self, delta: isize) {
         let current = self.widgets.table.selected();
         let Some(next) = self.store.next_conflict_index(current, delta) else {
@@ -1710,7 +1764,7 @@ fn next_selectable_sidebar(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::overlay::{ConfirmState, TextInputState};
+    use crate::tui::overlay::{ConfirmState, TextInputState, TextPanelState};
     use crate::tui::store::SidebarTarget;
 
     async fn test_app() -> App {
@@ -1867,6 +1921,105 @@ mod tests {
         app.overlay = Some(OverlayState::Help);
         app.toggle_help();
         assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn help_key_opens_help_overlay() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('h')).await.unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::Help)));
+    }
+
+    #[tokio::test]
+    async fn config_info_opens_text_panel() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+
+        let Some(OverlayState::TextPanel(panel)) = app.overlay else {
+            panic!("expected text panel");
+        };
+        assert_eq!(panel.title, CONFIG_INFO_TITLE);
+        assert!(panel.lines.iter().any(|line| line.contains("config path:")));
+    }
+
+    #[tokio::test]
+    async fn config_status_opens_text_panel() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
+
+        let Some(OverlayState::TextPanel(panel)) = app.overlay else {
+            panic!("expected text panel");
+        };
+        assert_eq!(panel.title, CONFIG_STATUS_TITLE);
+        assert!(
+            panel
+                .lines
+                .iter()
+                .any(|line| line.contains("sync enabled:"))
+        );
+        assert!(
+            panel
+                .lines
+                .iter()
+                .any(|line| line.contains("daemon state: not checked from TUI"))
+        );
+    }
+
+    #[tokio::test]
+    async fn config_paths_opens_text_panel() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+
+        let Some(OverlayState::TextPanel(panel)) = app.overlay else {
+            panic!("expected text panel");
+        };
+        assert_eq!(panel.title, CONFIG_PATHS_TITLE);
+        assert!(
+            panel
+                .lines
+                .iter()
+                .any(|line| line.contains("effective database:"))
+        );
+    }
+
+    #[tokio::test]
+    async fn config_init_requires_confirmation() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('i')).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Confirm(ConfirmState { ref title, .. })) if title == CONFIG_INIT_TITLE
+        ));
+    }
+
+    #[tokio::test]
+    async fn config_init_cancel_does_not_set_success_message() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('i')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Char('n')))
+            .await
+            .unwrap();
+        assert!(app.overlay.is_none());
+        assert!(app.message.is_none());
+    }
+
+    #[tokio::test]
+    async fn command_panel_runs_config_show() {
+        let mut app = test_app().await;
+        app.begin_command();
+        type_chars(&mut app, "config-show").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::TextPanel(TextPanelState { ref title, .. })) if title == CONFIG_INFO_TITLE
+        ));
     }
 
     #[tokio::test]
