@@ -1184,7 +1184,7 @@ mod tests {
     fn command_line_marks_planned_actions() {
         let command = COMMANDS
             .iter()
-            .find(|command| command.name == "edit-title")
+            .find(|command| command.name == "filter-project")
             .unwrap();
         let rendered = command_line(command).to_string();
         assert!(rendered.contains("planned"));
@@ -1192,12 +1192,12 @@ mod tests {
 
     #[test]
     fn prefix_hint_lines_mark_planned_actions() {
-        let rendered = prefix_hint_lines(&["e".to_string()])
+        let rendered = prefix_hint_lines(&["f".to_string()])
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(rendered.contains(":edit-title"));
+        assert!(rendered.contains(":filter-project"));
         assert!(rendered.contains("planned"));
     }
 

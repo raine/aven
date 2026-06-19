@@ -25,6 +25,11 @@ const ADD_TASK_PRIORITY_TITLE: &str = "Add task: priority";
 const ADD_TASK_LABELS_TITLE: &str = "Add task: labels";
 const ADD_TASK_DESCRIPTION_TITLE: &str = "Add task: description";
 const ADD_NOTE_TITLE: &str = "Add note";
+const EDIT_TITLE_TITLE: &str = "Edit task: title";
+const EDIT_DESCRIPTION_TITLE: &str = "Edit task: description";
+const EDIT_PROJECT_TITLE: &str = "Edit task: project";
+const EDIT_PRIORITY_TITLE: &str = "Edit task: priority";
+const EDIT_LABELS_TITLE: &str = "Edit task: labels";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AddTaskDraftState {
@@ -294,6 +299,31 @@ impl App {
                 let message = self.store.create_label(value).await?;
                 self.set_message(message);
             }
+            OverlaySubmit::Text { title, value } if title == EDIT_TITLE_TITLE => {
+                self.submit_edit_title(value).await?;
+            }
+            OverlaySubmit::Multiline { title, value } if title == EDIT_DESCRIPTION_TITLE => {
+                self.submit_edit_description(value).await?;
+            }
+            OverlaySubmit::Picker { title, values } if title == EDIT_PROJECT_TITLE => {
+                if let Some(project) = values.first() {
+                    self.submit_edit_project(project.clone()).await?;
+                } else {
+                    self.set_message("no matching project".to_string());
+                    self.begin_edit_project();
+                }
+            }
+            OverlaySubmit::Picker { title, values } if title == EDIT_PRIORITY_TITLE => {
+                if let Some(priority) = values.first() {
+                    self.submit_edit_priority(priority.clone()).await?;
+                } else {
+                    self.set_message("no matching priority".to_string());
+                    self.begin_edit_priority();
+                }
+            }
+            OverlaySubmit::Picker { title, values } if title == EDIT_LABELS_TITLE => {
+                self.submit_edit_labels(values).await?;
+            }
             other => self.set_message(other.message()),
         }
         Ok(())
@@ -322,7 +352,13 @@ impl App {
                 self.refresh().await?;
             }
             Action::SetStatus(status) => self.update_status(status).await?,
+            Action::SetPriority(priority) => self.set_exact_priority(priority).await?,
             Action::CyclePriority(reverse) => self.update_priority(reverse).await?,
+            Action::BeginEditTitle => self.begin_edit_title(),
+            Action::BeginEditDescription => self.begin_edit_description(),
+            Action::BeginEditProject => self.begin_edit_project(),
+            Action::BeginEditPriority => self.begin_edit_priority(),
+            Action::BeginEditLabels => self.begin_edit_labels(),
             Action::Delete => self.update_deleted(true).await?,
             Action::Restore => self.update_deleted(false).await?,
             Action::BeginAddProject => self.begin_add_project(),
@@ -683,37 +719,250 @@ impl App {
     }
 
     async fn update_status(&mut self, status: &'static str) -> Result<()> {
-        if let Some(message) = self
+        if let Some(result) = self
             .store
             .update_status(self.widgets.table.selected(), status)
             .await?
         {
-            self.set_message(message);
-            self.restore_selection_after_mutation();
+            self.apply_mutation_result(result);
+        }
+        Ok(())
+    }
+
+    async fn set_exact_priority(&mut self, priority: &'static str) -> Result<()> {
+        if let Some(result) = self
+            .store
+            .set_exact_priority(self.widgets.table.selected(), priority)
+            .await?
+        {
+            self.apply_mutation_result(result);
+        } else {
+            self.set_message("no selected task to edit".to_string());
         }
         Ok(())
     }
 
     async fn update_priority(&mut self, reverse: bool) -> Result<()> {
-        if let Some(message) = self
+        if let Some(result) = self
             .store
             .update_priority(self.widgets.table.selected(), reverse)
             .await?
         {
-            self.set_message(message);
-            self.restore_selection_after_mutation();
+            self.apply_mutation_result(result);
         }
         Ok(())
     }
 
     async fn update_deleted(&mut self, deleted: bool) -> Result<()> {
-        if let Some(message) = self
+        if let Some(result) = self
             .store
             .update_deleted(self.widgets.table.selected(), deleted)
             .await?
         {
-            self.set_message(message);
-            self.restore_selection_after_mutation();
+            self.apply_mutation_result(result);
+        }
+        Ok(())
+    }
+
+    fn apply_mutation_result(&mut self, result: crate::tui::store::MutationMessage) {
+        self.widgets.table.select(result.selected);
+        self.widgets.sidebar.select(self.store.sidebar_selection());
+        self.set_message(result.message);
+    }
+
+    fn begin_edit_title(&mut self) {
+        self.pending_shortcut.clear();
+        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
+            self.set_message("no selected task to edit".to_string());
+            return;
+        };
+        self.open_edit_title_overlay(item.task.title.clone());
+    }
+
+    fn open_edit_title_overlay(&mut self, input: String) {
+        let cursor = input.len();
+        self.overlay = Some(OverlayState::TextInput(TextInputState {
+            title: EDIT_TITLE_TITLE.to_string(),
+            prompt: "title:".to_string(),
+            input,
+            cursor,
+        }));
+    }
+
+    fn begin_edit_description(&mut self) {
+        self.pending_shortcut.clear();
+        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
+            self.set_message("no selected task to edit".to_string());
+            return;
+        };
+        let mut lines = item
+            .task
+            .description
+            .split('\n')
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+        let row = lines.len() - 1;
+        let column = lines[row].len();
+        self.overlay = Some(OverlayState::MultilineInput(MultilineInputState {
+            title: EDIT_DESCRIPTION_TITLE.to_string(),
+            prompt: "description:".to_string(),
+            lines,
+            row,
+            column,
+        }));
+    }
+
+    fn begin_edit_project(&mut self) {
+        self.pending_shortcut.clear();
+        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
+            self.set_message("no selected task to edit".to_string());
+            return;
+        };
+        let selected = item.task.project_key.as_str();
+        let items = self.store.existing_project_picker_items(selected);
+        self.overlay = Some(OverlayState::Picker(PickerState {
+            title: EDIT_PROJECT_TITLE.to_string(),
+            filter: String::new(),
+            selected: selected_picker_index(&items),
+            items,
+            multi: false,
+        }));
+    }
+
+    fn begin_edit_priority(&mut self) {
+        self.pending_shortcut.clear();
+        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
+            self.set_message("no selected task to edit".to_string());
+            return;
+        };
+        let items = self
+            .store
+            .priority_picker_items(item.task.priority.as_str());
+        self.overlay = Some(OverlayState::Picker(PickerState {
+            title: EDIT_PRIORITY_TITLE.to_string(),
+            filter: String::new(),
+            selected: selected_picker_index(&items),
+            items,
+            multi: false,
+        }));
+    }
+
+    fn begin_edit_labels(&mut self) {
+        self.pending_shortcut.clear();
+        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
+            self.set_message("no selected task to edit".to_string());
+            return;
+        };
+        let mut items = self.store.label_picker_items();
+        for picker_item in &mut items {
+            picker_item.selected = item.labels.contains(&picker_item.value);
+        }
+        self.overlay = Some(OverlayState::Picker(PickerState {
+            title: EDIT_LABELS_TITLE.to_string(),
+            filter: String::new(),
+            selected: selected_picker_index(&items),
+            items,
+            multi: true,
+        }));
+    }
+
+    async fn submit_edit_title(&mut self, value: String) -> Result<()> {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            self.set_message("task title is required".to_string());
+            self.open_edit_title_overlay(value);
+            return Ok(());
+        }
+        match self
+            .store
+            .update_title(self.widgets.table.selected(), trimmed)
+            .await
+        {
+            Ok(Some(result)) => self.apply_mutation_result(result),
+            Ok(None) => self.set_message("no selected task to edit".to_string()),
+            Err(error) => {
+                self.set_message(format!("error: {error:#}"));
+                self.open_edit_title_overlay(value);
+            }
+        }
+        Ok(())
+    }
+
+    async fn submit_edit_description(&mut self, value: String) -> Result<()> {
+        match self
+            .store
+            .update_description(self.widgets.table.selected(), value.clone())
+            .await
+        {
+            Ok(Some(result)) => self.apply_mutation_result(result),
+            Ok(None) => self.set_message("no selected task to edit".to_string()),
+            Err(error) => {
+                self.set_message(format!("error: {error:#}"));
+                let mut lines = value.split('\n').map(str::to_string).collect::<Vec<_>>();
+                if lines.is_empty() {
+                    lines.push(String::new());
+                }
+                let row = lines.len() - 1;
+                let column = lines[row].len();
+                self.overlay = Some(OverlayState::MultilineInput(MultilineInputState {
+                    title: EDIT_DESCRIPTION_TITLE.to_string(),
+                    prompt: "description:".to_string(),
+                    lines,
+                    row,
+                    column,
+                }));
+            }
+        }
+        Ok(())
+    }
+
+    async fn submit_edit_project(&mut self, project: String) -> Result<()> {
+        match self
+            .store
+            .update_project(self.widgets.table.selected(), project)
+            .await
+        {
+            Ok(Some(result)) => self.apply_mutation_result(result),
+            Ok(None) => self.set_message("no selected task to edit".to_string()),
+            Err(error) => {
+                self.set_message(format!("error: {error:#}"));
+                self.begin_edit_project();
+            }
+        }
+        Ok(())
+    }
+
+    async fn submit_edit_priority(&mut self, priority: String) -> Result<()> {
+        match self
+            .store
+            .set_exact_priority(self.widgets.table.selected(), &priority)
+            .await
+        {
+            Ok(Some(result)) => self.apply_mutation_result(result),
+            Ok(None) => self.set_message("no selected task to edit".to_string()),
+            Err(error) => {
+                self.set_message(format!("error: {error:#}"));
+                self.begin_edit_priority();
+            }
+        }
+        Ok(())
+    }
+
+    async fn submit_edit_labels(&mut self, labels: Vec<String>) -> Result<()> {
+        match self
+            .store
+            .update_labels(self.widgets.table.selected(), labels)
+            .await
+        {
+            Ok(Some(result)) => self.apply_mutation_result(result),
+            Ok(None) => self.set_message("no selected task to edit".to_string()),
+            Err(error) => {
+                self.set_message(format!("error: {error:#}"));
+                self.begin_edit_labels();
+            }
         }
         Ok(())
     }
@@ -979,11 +1228,11 @@ mod tests {
     #[tokio::test]
     async fn planned_shortcut_reports_not_yet_implemented() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
         assert_eq!(
             app.message.as_deref(),
-            Some(":edit-title is not yet implemented")
+            Some(":filter-project is not yet implemented")
         );
     }
 
@@ -1235,6 +1484,297 @@ mod tests {
                 .iter()
                 .any(|item| item.value == "needs-review")
         );
+    }
+
+    #[tokio::test]
+    async fn edit_title_shortcut_prefills_and_updates_title() {
+        let mut app = test_app().await;
+        let (_, selected) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "Old title".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        app.widgets.table.select(selected);
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state))
+                if state.title == EDIT_TITLE_TITLE && state.input == "Old title"
+        ));
+
+        app.handle_overlay_key(key(KeyCode::End)).await.unwrap();
+        type_chars(&mut app, " updated").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.title, "Old title updated");
+    }
+
+    #[tokio::test]
+    async fn edit_description_prefills_and_ctrl_s_updates() {
+        let mut app = test_app().await;
+        let (_, selected) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "Description target".to_string(),
+                    description: "first\nsecond".to_string(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        app.widgets.table.select(selected);
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state))
+                if state.title == EDIT_DESCRIPTION_TITLE
+                    && state.lines == vec!["first".to_string(), "second".to_string()]
+        ));
+
+        app.handle_overlay_key(key(KeyCode::End)).await.unwrap();
+        type_chars(&mut app, " updated").await;
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(
+            app.store.tasks[selected].task.description,
+            "first\nsecond updated"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_project_picker_uses_existing_projects_only() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        let (_, selected) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "Project target".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        app.widgets.table.select(selected);
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state))
+                if state.title == EDIT_PROJECT_TITLE
+                    && !state.items.iter().any(|item| item.label == "Infer project")
+        ));
+
+        type_chars(&mut app, "mobile").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.project_key, "mobile-app");
+    }
+
+    #[tokio::test]
+    async fn edit_priority_picker_prefills_current_priority() {
+        let mut app = test_app().await;
+        let (_, selected) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "Priority target".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "high".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        app.widgets.table.select(selected);
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state))
+                if state.title == EDIT_PRIORITY_TITLE
+                    && state.items.iter().any(|item| item.value == "high" && item.selected)
+        ));
+
+        type_chars(&mut app, "urgent").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.priority, "urgent");
+    }
+
+    #[tokio::test]
+    async fn edit_labels_picker_prefills_current_labels_and_removes_unselected() {
+        let mut app = test_app().await;
+        app.store.create_label("Bug".to_string()).await.unwrap();
+        app.store.create_label("Docs".to_string()).await.unwrap();
+        let (_, selected) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "Label target".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: vec!["bug".to_string()],
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        app.widgets.table.select(selected);
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state))
+                if state.title == EDIT_LABELS_TITLE
+                    && state.items.iter().any(|item| item.value == "bug" && item.selected)
+        ));
+
+        type_chars(&mut app, "bug").await;
+        app.handle_overlay_key(key(KeyCode::Char(' ')))
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Backspace))
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Backspace))
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Backspace))
+            .await
+            .unwrap();
+        type_chars(&mut app, "docs").await;
+        app.handle_overlay_key(key(KeyCode::Char(' ')))
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].labels, vec!["docs".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn exact_priority_shortcut_updates_selected_task() {
+        let mut app = test_app().await;
+        let (_, selected) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "Priority shortcut".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        app.widgets.table.select(selected);
+
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.priority, "urgent");
+    }
+
+    #[tokio::test]
+    async fn edit_shortcuts_require_selected_task() {
+        let mut app = test_app().await;
+        app.widgets.table.select(None);
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(app.message.as_deref(), Some("no selected task to edit"));
+    }
+
+    #[tokio::test]
+    async fn edit_description_conflict_preserves_overlay() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mut app = App::new(pool.clone()).await.unwrap();
+        let (_, selected) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "Conflict target".to_string(),
+                    description: "old".to_string(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        app.widgets.table.select(selected);
+        let task_id = app.store.tasks[selected.unwrap()].task.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
+             local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
+             VALUES (?, 'description', NULL, 'local', 'remote', NULL, ?, 'a', 'b', ?, 0)",
+        )
+        .bind(&task_id)
+        .bind(crate::ids::new_id())
+        .bind(crate::ids::now())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+        type_chars(&mut app, " updated").await;
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        assert!(
+            app.message
+                .as_deref()
+                .is_some_and(|message| message.contains("conflicted-field"))
+        );
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state))
+                if state.lines.join("\n") == "old updated"
+        ));
     }
 
     #[tokio::test]

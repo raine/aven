@@ -25,7 +25,13 @@ pub(crate) enum Action {
     Refresh,
     CycleSort,
     SetStatus(&'static str),
+    SetPriority(&'static str),
     CyclePriority(bool),
+    BeginEditTitle,
+    BeginEditDescription,
+    BeginEditProject,
+    BeginEditPriority,
+    BeginEditLabels,
     Delete,
     Restore,
     BeginAddTask,
@@ -570,7 +576,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         PROJECT_PATH_FLOW_REASON,
     ),
     // Edit
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "edit-title",
         "edit selected task title",
         "Edit",
@@ -578,9 +584,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('e'), KeyCode::Char('t')],
             label: "e t",
         }],
-        PLANNED_FLOW_REASON,
+        Action::BeginEditTitle,
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "edit-description",
         "edit selected task description",
         "Edit",
@@ -588,9 +594,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('e'), KeyCode::Char('d')],
             label: "e d",
         }],
-        PLANNED_FLOW_REASON,
+        Action::BeginEditDescription,
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "edit-project",
         "edit selected task project",
         "Edit",
@@ -598,9 +604,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('e'), KeyCode::Char('p')],
             label: "e p",
         }],
-        PLANNED_FLOW_REASON,
+        Action::BeginEditProject,
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "edit-priority",
         "edit selected task priority",
         "Edit",
@@ -608,9 +614,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('e'), KeyCode::Char('r')],
             label: "e r",
         }],
-        PLANNED_FLOW_REASON,
+        Action::BeginEditPriority,
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "edit-labels",
         "edit selected task labels",
         "Edit",
@@ -618,10 +624,10 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('e'), KeyCode::Char('l')],
             label: "e l",
         }],
-        PLANNED_FLOW_REASON,
+        Action::BeginEditLabels,
     ),
     // Priority
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "priority-none",
         "set priority to none",
         "Priority",
@@ -629,9 +635,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('m'), KeyCode::Char('0')],
             label: "m 0",
         }],
-        PLANNED_FLOW_REASON,
+        Action::SetPriority("none"),
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "priority-low",
         "set priority to low",
         "Priority",
@@ -639,9 +645,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('m'), KeyCode::Char('l')],
             label: "m l",
         }],
-        PLANNED_FLOW_REASON,
+        Action::SetPriority("low"),
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "priority-medium",
         "set priority to medium",
         "Priority",
@@ -649,9 +655,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('m'), KeyCode::Char('m')],
             label: "m m",
         }],
-        PLANNED_FLOW_REASON,
+        Action::SetPriority("medium"),
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "priority-high",
         "set priority to high",
         "Priority",
@@ -659,9 +665,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('m'), KeyCode::Char('h')],
             label: "m h",
         }],
-        PLANNED_FLOW_REASON,
+        Action::SetPriority("high"),
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "priority-urgent",
         "set priority to urgent",
         "Priority",
@@ -669,7 +675,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('m'), KeyCode::Char('u')],
             label: "m u",
         }],
-        PLANNED_FLOW_REASON,
+        Action::SetPriority("urgent"),
     ),
     // Filters
     CommandSpec::planned(
@@ -1011,7 +1017,13 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::Refresh
             | Action::CycleSort
             | Action::SetStatus(_)
+            | Action::SetPriority(_)
             | Action::CyclePriority(_)
+            | Action::BeginEditTitle
+            | Action::BeginEditDescription
+            | Action::BeginEditProject
+            | Action::BeginEditPriority
+            | Action::BeginEditLabels
             | Action::Delete
             | Action::Restore
             | Action::BeginAddTask
@@ -1403,5 +1415,65 @@ mod tests {
                 "missing required command :{name}"
             );
         }
+    }
+
+    #[test]
+    fn resolves_task_editing_shortcuts() {
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('t')]),
+            ShortcutLookup::Found(Action::BeginEditTitle)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('d')]),
+            ShortcutLookup::Found(Action::BeginEditDescription)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('p')]),
+            ShortcutLookup::Found(Action::BeginEditProject)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('r')]),
+            ShortcutLookup::Found(Action::BeginEditPriority)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('l')]),
+            ShortcutLookup::Found(Action::BeginEditLabels)
+        ));
+    }
+
+    #[test]
+    fn resolves_exact_priority_shortcuts() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('m'), KeyCode::Char('0')]),
+            ShortcutLookup::Found(Action::SetPriority("none"))
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('m'), KeyCode::Char('l')]),
+            ShortcutLookup::Found(Action::SetPriority("low"))
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('m'), KeyCode::Char('m')]),
+            ShortcutLookup::Found(Action::SetPriority("medium"))
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('m'), KeyCode::Char('h')]),
+            ShortcutLookup::Found(Action::SetPriority("high"))
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('m'), KeyCode::Char('u')]),
+            ShortcutLookup::Found(Action::SetPriority("urgent"))
+        );
+    }
+
+    #[test]
+    fn status_shortcuts_still_resolve() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('m'), KeyCode::Char('i')]),
+            ShortcutLookup::Found(Action::SetStatus("inbox"))
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('1')]),
+            ShortcutLookup::Found(Action::SetStatus("inbox"))
+        );
     }
 }

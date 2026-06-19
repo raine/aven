@@ -7,14 +7,21 @@ use crate::choices::PRIORITIES;
 use crate::labels::list_labels;
 use crate::mutation::{cycle_priority, set_deleted, set_status};
 use crate::operations::{
-    TaskDraft, add_note as add_note_operation, create_label_operation, create_project_operation,
-    create_task as create_task_operation,
+    TaskDraft, TaskUpdate, add_note as add_note_operation, create_label_operation,
+    create_project_operation, create_task as create_task_operation,
+    update_task as update_task_operation,
 };
 use crate::query::{
     ProjectListItem, SidebarCounts, TaskFilters, TaskListItem, TaskSort, list_project_items,
     list_task_items, sidebar_counts,
 };
 use crate::tui::overlay::PickerItem;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MutationMessage {
+    pub(crate) message: String,
+    pub(crate) selected: Option<usize>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SidebarTarget {
@@ -138,13 +145,16 @@ impl TuiStore {
         &mut self,
         index: Option<usize>,
         status: &'static str,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<MutationMessage>> {
         if let Some(item) = self.selected_task(index).cloned() {
             let mut conn = self.pool.acquire().await?;
             set_status(&mut conn, &item.task, status).await?;
             drop(conn);
-            self.refresh(Some(&item.task.id)).await?;
-            return Ok(Some(format!("set {} status={status}", item.display_ref)));
+            let selected = self.refresh(Some(&item.task.id)).await?;
+            return Ok(Some(MutationMessage {
+                message: format!("set {} status={status}", item.display_ref),
+                selected,
+            }));
         }
         Ok(None)
     }
@@ -153,16 +163,159 @@ impl TuiStore {
         &mut self,
         index: Option<usize>,
         reverse: bool,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<MutationMessage>> {
         if let Some(item) = self.selected_task(index).cloned() {
             let mut conn = self.pool.acquire().await?;
             let task = cycle_priority(&mut conn, &item.task, reverse).await?;
             drop(conn);
-            self.refresh(Some(&item.task.id)).await?;
-            return Ok(Some(format!(
-                "set {} priority={}",
-                item.display_ref, task.priority
-            )));
+            let selected = self.refresh(Some(&item.task.id)).await?;
+            return Ok(Some(MutationMessage {
+                message: format!("set {} priority={}", item.display_ref, task.priority),
+                selected,
+            }));
+        }
+        Ok(None)
+    }
+
+    pub(crate) async fn set_exact_priority(
+        &mut self,
+        index: Option<usize>,
+        priority: &str,
+    ) -> Result<Option<MutationMessage>> {
+        if let Some(item) = self.selected_task(index).cloned() {
+            let mut conn = self.pool.acquire().await?;
+            update_task_operation(
+                &mut conn,
+                &item.task.id,
+                TaskUpdate {
+                    priority: Some(priority.to_string()),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await?;
+            drop(conn);
+            let selected = self.refresh(Some(&item.task.id)).await?;
+            return Ok(Some(MutationMessage {
+                message: format!("set {} priority={priority}", item.display_ref),
+                selected,
+            }));
+        }
+        Ok(None)
+    }
+
+    pub(crate) async fn update_title(
+        &mut self,
+        index: Option<usize>,
+        title: String,
+    ) -> Result<Option<MutationMessage>> {
+        let title = title.trim().to_string();
+        if let Some(item) = self.selected_task(index).cloned() {
+            let mut conn = self.pool.acquire().await?;
+            update_task_operation(
+                &mut conn,
+                &item.task.id,
+                TaskUpdate {
+                    title: Some(title),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await?;
+            drop(conn);
+            let selected = self.refresh(Some(&item.task.id)).await?;
+            return Ok(Some(MutationMessage {
+                message: format!("set {} title", item.display_ref),
+                selected,
+            }));
+        }
+        Ok(None)
+    }
+
+    pub(crate) async fn update_description(
+        &mut self,
+        index: Option<usize>,
+        description: String,
+    ) -> Result<Option<MutationMessage>> {
+        if let Some(item) = self.selected_task(index).cloned() {
+            let mut conn = self.pool.acquire().await?;
+            update_task_operation(
+                &mut conn,
+                &item.task.id,
+                TaskUpdate {
+                    description: Some(description),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await?;
+            drop(conn);
+            let selected = self.refresh(Some(&item.task.id)).await?;
+            return Ok(Some(MutationMessage {
+                message: format!("set {} description", item.display_ref),
+                selected,
+            }));
+        }
+        Ok(None)
+    }
+
+    pub(crate) async fn update_project(
+        &mut self,
+        index: Option<usize>,
+        project: String,
+    ) -> Result<Option<MutationMessage>> {
+        if let Some(item) = self.selected_task(index).cloned() {
+            let mut conn = self.pool.acquire().await?;
+            update_task_operation(
+                &mut conn,
+                &item.task.id,
+                TaskUpdate {
+                    project: Some(project),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await?;
+            drop(conn);
+            let selected = self.refresh(Some(&item.task.id)).await?;
+            return Ok(Some(MutationMessage {
+                message: format!("set {} project", item.display_ref),
+                selected,
+            }));
+        }
+        Ok(None)
+    }
+
+    pub(crate) async fn update_labels(
+        &mut self,
+        index: Option<usize>,
+        selected_labels: Vec<String>,
+    ) -> Result<Option<MutationMessage>> {
+        if let Some(item) = self.selected_task(index).cloned() {
+            let add_labels = selected_labels
+                .iter()
+                .filter(|label| !item.labels.contains(label))
+                .cloned()
+                .collect::<Vec<_>>();
+            let remove_labels = item
+                .labels
+                .iter()
+                .filter(|label| !selected_labels.contains(label))
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut conn = self.pool.acquire().await?;
+            update_task_operation(
+                &mut conn,
+                &item.task.id,
+                TaskUpdate {
+                    add_labels,
+                    remove_labels,
+                    ..TaskUpdate::default()
+                },
+            )
+            .await?;
+            drop(conn);
+            let selected = self.refresh(Some(&item.task.id)).await?;
+            return Ok(Some(MutationMessage {
+                message: format!("set {} labels", item.display_ref),
+                selected,
+            }));
         }
         Ok(None)
     }
@@ -171,17 +324,20 @@ impl TuiStore {
         &mut self,
         index: Option<usize>,
         deleted: bool,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<MutationMessage>> {
         if let Some(item) = self.selected_task(index).cloned() {
             let mut conn = self.pool.acquire().await?;
             set_deleted(&mut conn, &item.task, deleted).await?;
             drop(conn);
             self.filters.include_deleted = deleted;
-            self.refresh(Some(&item.task.id)).await?;
-            return Ok(Some(if deleted {
-                format!("deleted {} (showing deleted)", item.display_ref)
-            } else {
-                format!("restored {}", item.display_ref)
+            let selected = self.refresh(Some(&item.task.id)).await?;
+            return Ok(Some(MutationMessage {
+                message: if deleted {
+                    format!("deleted {} (showing deleted)", item.display_ref)
+                } else {
+                    format!("restored {}", item.display_ref)
+                },
+                selected,
             }));
         }
         Ok(None)
@@ -205,7 +361,6 @@ impl TuiStore {
         Ok(format!("created label {}", outcome.name))
     }
 
-    #[allow(dead_code)]
     pub(crate) fn label_picker_items(&self) -> Vec<PickerItem> {
         self.labels
             .iter()
@@ -213,6 +368,17 @@ impl TuiStore {
                 label: label.clone(),
                 value: label.clone(),
                 selected: false,
+            })
+            .collect()
+    }
+
+    pub(crate) fn existing_project_picker_items(&self, selected: &str) -> Vec<PickerItem> {
+        self.projects
+            .iter()
+            .map(|project| PickerItem {
+                label: format!("{} {}", project.prefix, project.name),
+                value: project.key.clone(),
+                selected: project.key == selected,
             })
             .collect()
     }
@@ -526,5 +692,128 @@ mod tests {
             .await
             .unwrap();
         assert!(!note_id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn update_task_fields_refresh_selected_task() {
+        let mut store = test_store().await;
+        let (_, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Old".to_string(),
+                    description: "old body".to_string(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+
+        store
+            .update_title(Some(selected), "New".to_string())
+            .await
+            .unwrap();
+        store
+            .update_description(Some(selected), "new body".to_string())
+            .await
+            .unwrap();
+        store
+            .set_exact_priority(Some(selected), "urgent")
+            .await
+            .unwrap();
+
+        let task = &store.tasks[selected].task;
+        assert_eq!(task.title, "New");
+        assert_eq!(task.description, "new body");
+        assert_eq!(task.priority, "urgent");
+    }
+
+    #[tokio::test]
+    async fn update_labels_adds_and_removes_labels() {
+        let mut store = test_store().await;
+        store.create_label("bug".to_string()).await.unwrap();
+        store.create_label("docs".to_string()).await.unwrap();
+        let (_, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Labels".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: vec!["bug".to_string()],
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+
+        store
+            .update_labels(Some(selected), vec!["docs".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(store.tasks[selected].labels, vec!["docs".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn update_title_returns_conflicted_field_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mut store = TuiStore::new(pool.clone()).await.unwrap();
+        let (_, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Conflict".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+        let task_id = store.tasks[selected].task.id.clone();
+
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
+             local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
+             VALUES (?, 'title', NULL, 'local', 'remote', NULL, ?, 'a', 'b', ?, 0)",
+        )
+        .bind(&task_id)
+        .bind(crate::ids::new_id())
+        .bind(crate::ids::now())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        let error = store
+            .update_title(Some(selected), "blocked".to_string())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("conflicted-field"));
+    }
+
+    #[tokio::test]
+    async fn existing_project_picker_items_excludes_infer_project() {
+        let mut store = test_store().await;
+        store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
+        let items = store.existing_project_picker_items("mobile-app");
+        assert!(!items.iter().any(|item| item.label == "Infer project"));
+        assert!(items.iter().any(|item| item.value == "mobile-app"));
+        assert!(items.iter().any(|item| item.selected));
     }
 }

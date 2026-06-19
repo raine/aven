@@ -40,6 +40,20 @@ pub(crate) struct TaskUpdate {
     pub(crate) remove_labels: Vec<String>,
 }
 
+impl Default for TaskUpdate {
+    fn default() -> Self {
+        Self {
+            title: None,
+            description: None,
+            project: None,
+            status: None,
+            priority: None,
+            add_labels: Vec::new(),
+            remove_labels: Vec::new(),
+        }
+    }
+}
+
 pub(crate) struct TaskUpdateOutcome {
     pub(crate) task: Task,
     pub(crate) changed: bool,
