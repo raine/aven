@@ -17,7 +17,7 @@ use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, ORANGE, PINK, RED, SELECTED,
     SELECTED_INACTIVE,
 };
-use crate::tui::widgets::{priority_short, title_cell};
+use crate::tui::widgets::{priority_icon, priority_short, title_cell};
 
 #[derive(Clone)]
 pub(crate) struct ViewState {
@@ -516,16 +516,12 @@ fn group_row(status: &str, count: usize) -> Row<'static> {
 }
 
 fn task_row(item: &TaskListItem, _index: usize) -> Row<'static> {
-    let dot_color = match item.task.priority.as_str() {
-        "urgent" => RED,
-        "high" => ORANGE,
-        "medium" => ACCENT,
-        "low" => FG_DIM,
-        _ => BORDER,
-    };
     Row::new([
         Cell::from(Line::from(vec![
-            Span::styled("● ", Style::new().fg(dot_color)),
+            Span::styled(
+                format!("{} ", priority_icon(&item.task.priority)),
+                theme::priority_style(&item.task.priority),
+            ),
             Span::styled(short_ref(&item.display_ref), Style::new().fg(FG_MUTED)),
         ])),
         Cell::from(title_cell(item)),

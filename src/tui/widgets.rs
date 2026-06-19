@@ -4,13 +4,22 @@ use ratatui::text::{Line, Span};
 use crate::query::TaskListItem;
 use crate::tui::theme::{BLUE, CHIP_BG, FG, GREEN, ORANGE, PURPLE, RED};
 
+pub(crate) fn priority_icon(priority: &str) -> &'static str {
+    match priority {
+        "urgent" | "high" => "●",
+        "medium" => "◐",
+        "low" => "◌",
+        _ => "─",
+    }
+}
+
 pub(crate) fn priority_short(priority: &str) -> &'static str {
     match priority {
-        "urgent" => "▲ urgent",
-        "high" => "↑ high",
-        "medium" => "◆ med",
-        "low" => "─ low",
-        _ => "· none",
+        "urgent" => "● urgent",
+        "high" => "● high",
+        "medium" => "◐ med",
+        "low" => "◌ low",
+        _ => "─ none",
     }
 }
 
