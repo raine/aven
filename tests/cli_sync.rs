@@ -1,6 +1,6 @@
 mod common;
 
-use common::{TestEnv, TestServer, contains_all, contains_none, extract_ref, ok};
+use common::{TestEnv, TestServer, contains_all, contains_none, extract_ref, fail, ok, scalar_i64};
 
 fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
     let output = ok(env.atm(db, ["sync", "--server", &server.url]));
@@ -131,4 +131,149 @@ fn soft_delete_syncs_and_restores() {
     let restored_b = ok(env.atm(&b, ["list"]));
     contains_all(&restored_b, &[&task_ref, "temporary task"]);
     contains_none(&restored_b, &["deleted=yes"]);
+}
+
+#[test]
+fn sync_auth_config_init_includes_placeholder() {
+    let env = TestEnv::new();
+    ok(env.atm_config(["config", "init"]));
+
+    let text = std::fs::read_to_string(env.config_file()).expect("read config");
+    contains_all(&text, &["[sync]", "auth_token = \"\""]);
+}
+
+#[test]
+fn sync_auth_missing_token_is_rejected() {
+    let server_env = TestEnv::new();
+    server_env.write_config(
+        r#"
+[sync]
+auth_token = "secret"
+"#,
+    );
+    let server = TestServer::start_configured(&server_env, "server.sqlite");
+    let client = server_env.db("client.sqlite");
+    ok(server_env.atm(&client, ["add", "auth missing", "--project", "app"]));
+
+    let error = fail(server_env.atm(&client, ["sync", "--server", &server.url]));
+    contains_all(&error, &["401"]);
+    assert_eq!(
+        scalar_i64(&server_env.path("server.sqlite"), "SELECT count(*) FROM changes"),
+        0
+    );
+}
+
+#[test]
+fn sync_auth_wrong_token_is_rejected() {
+    let server_env = TestEnv::new();
+    server_env.write_config(
+        r#"
+[sync]
+auth_token = "secret"
+"#,
+    );
+    let server = TestServer::start_configured(&server_env, "server.sqlite");
+
+    let client_env = TestEnv::new();
+    let client = client_env.db("client.sqlite");
+    client_env.write_config(&format!(
+        r#"
+[local]
+db_path = "{}"
+
+[sync]
+server_url = "{}"
+auth_token = "wrong"
+"#,
+        client.display(),
+        server.url
+    ));
+    ok(client_env.atm_config(["add", "auth wrong", "--project", "app"]));
+
+    let error = fail(client_env.atm_config(["sync"]));
+    contains_all(&error, &["401"]);
+    assert_eq!(
+        scalar_i64(&server_env.path("server.sqlite"), "SELECT count(*) FROM changes"),
+        0
+    );
+}
+
+#[test]
+fn sync_auth_correct_token_syncs() {
+    let server_env = TestEnv::new();
+    server_env.write_config(
+        r#"
+[sync]
+auth_token = "secret"
+"#,
+    );
+    let server = TestServer::start_configured(&server_env, "server.sqlite");
+
+    let client_env = TestEnv::new();
+    let a = client_env.db("client-a.sqlite");
+    let b = client_env.db("client-b.sqlite");
+    client_env.write_config(&format!(
+        r#"
+[sync]
+server_url = "{}"
+auth_token = "secret"
+"#,
+        server.url
+    ));
+
+    let task_ref = extract_ref(&ok(client_env.atm(
+        &a,
+        ["add", "auth synced", "--project", "app"],
+    )));
+    ok(client_env.atm_config([
+        "--db",
+        a.to_str().expect("utf8 db path"),
+        "sync",
+        "--server",
+        &server.url,
+    ]));
+    ok(client_env.atm_config([
+        "--db",
+        b.to_str().expect("utf8 db path"),
+        "sync",
+        "--server",
+        &server.url,
+    ]));
+
+    let shown = ok(client_env.atm(&b, ["show", &task_ref]));
+    contains_all(&shown, &[&task_ref, "auth synced"]);
+}
+
+#[test]
+fn sync_auth_loopback_without_token_still_syncs() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("client-a.sqlite");
+    let b = env.db("client-b.sqlite");
+
+    let task_ref = extract_ref(&ok(env.atm(
+        &a,
+        ["add", "local no auth", "--project", "app"],
+    )));
+    ok(env.atm(&a, ["sync", "--server", &server.url]));
+    ok(env.atm(&b, ["sync", "--server", &server.url]));
+
+    let shown = ok(env.atm(&b, ["show", &task_ref]));
+    contains_all(&shown, &[&task_ref, "local no auth"]);
+}
+
+#[test]
+fn sync_auth_public_bind_requires_token_even_with_unsafe_flag() {
+    let env = TestEnv::new();
+    let server_db = env.path("server.sqlite");
+    let error = fail(env.atm_config([
+        "server",
+        "--bind",
+        "0.0.0.0:0",
+        "--unsafe-public-bind",
+        "--data",
+        server_db.to_str().expect("utf8 db path"),
+    ]));
+
+    contains_all(&error, &["sync-auth-token-required"]);
 }

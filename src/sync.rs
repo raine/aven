@@ -4,6 +4,8 @@ use anyhow::{Context, Result, bail};
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -83,14 +85,19 @@ struct SyncResponse {
 #[derive(Clone)]
 struct ServerState {
     pool: SqlitePool,
+    auth_token: Option<String>,
 }
 
-pub(crate) async fn run_server(args: ServerArgs) -> Result<()> {
+pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> Result<()> {
     if !args.unsafe_public_bind && !args.bind.ip().is_loopback() {
         bail!("error public-bind-requires --unsafe-public-bind");
     }
+    let auth_token = config.sync_auth_token().map(str::to_string);
+    if !args.bind.ip().is_loopback() && auth_token.is_none() {
+        bail!("error sync-auth-token-required hint=\"set sync.auth_token in config.toml\"");
+    }
     let pool = open_db(&args.data).await?;
-    let state = ServerState { pool };
+    let state = ServerState { pool, auth_token };
     let app = Router::new()
         .route("/sync", post(sync_handler))
         .with_state(state);
@@ -105,18 +112,44 @@ pub(crate) async fn run_server(args: ServerArgs) -> Result<()> {
 
 async fn sync_handler(
     State(state): State<ServerState>,
+    headers: HeaderMap,
     Json(request): Json<SyncRequest>,
-) -> std::result::Result<Json<SyncResponse>, String> {
-    let mut conn = state.pool.acquire().await.map_err(|err| err.to_string())?;
-    let mut tx = conn.begin().await.map_err(|err| err.to_string())?;
+) -> Response {
+    if let Err(status) = validate_auth(&state, &headers) {
+        return status.into_response();
+    }
+    match handle_sync(state, request).await {
+        Ok(response) => Json(response).into_response(),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+    }
+}
+
+fn validate_auth(state: &ServerState, headers: &HeaderMap) -> std::result::Result<(), StatusCode> {
+    let Some(expected) = state.auth_token.as_deref() else {
+        return Ok(());
+    };
+    let authorized = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .is_some_and(|token| token == expected);
+    if authorized {
+        Ok(())
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+async fn handle_sync(state: ServerState, request: SyncRequest) -> Result<SyncResponse> {
+    let mut conn = state.pool.acquire().await?;
+    let mut tx = conn.begin().await?;
     for change in request.changes {
         let exists = sqlx::query_scalar!(
             r#"SELECT count(*) AS "count!: i64" FROM changes WHERE change_id = ?"#,
             change.change_id
         )
         .fetch_one(&mut *tx)
-        .await
-        .map_err(|err| err.to_string())?
+        .await?
             > 0;
         if !exists {
             let payload = change.payload.to_string();
@@ -136,20 +169,17 @@ async fn sync_handler(
                 change.created_at,
             )
             .execute(&mut *tx)
-            .await
-            .map_err(|err| err.to_string())?;
+            .await?;
         }
     }
-    tx.commit().await.map_err(|err| err.to_string())?;
-    let changes = load_server_changes_after(&mut conn, request.after)
-        .await
-        .map_err(|err| err.to_string())?;
+    tx.commit().await?;
+    let changes = load_server_changes_after(&mut conn, request.after).await?;
     let cursor = changes
         .iter()
         .filter_map(|change| change.server_seq)
         .max()
         .unwrap_or(request.after);
-    Ok(Json(SyncResponse { cursor, changes }))
+    Ok(SyncResponse { cursor, changes })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -165,7 +195,7 @@ pub(crate) async fn sync_client(
     config: &config::AppConfig,
 ) -> Result<()> {
     let server = config::resolve_sync_server(args.server.as_deref(), config)?;
-    let summary = run_sync_once(conn, &server).await?;
+    let summary = run_sync_once(conn, &server, config.sync_auth_token()).await?;
     println!(
         "synced pushed={} pulled={} cursor={}",
         summary.pushed, summary.pulled, summary.cursor
@@ -176,6 +206,7 @@ pub(crate) async fn sync_client(
 pub(crate) async fn run_sync_once(
     conn: &mut SqliteConnection,
     server: &str,
+    auth_token: Option<&str>,
 ) -> Result<SyncSummary> {
     validate_sync_server(conn, server).await?;
     let client_id = get_meta(conn, "client_id")
@@ -188,15 +219,18 @@ pub(crate) async fn run_sync_once(
     let changes = load_unsynced_changes(conn).await?;
     let pushed = changes.len() as i64;
     let url = format!("{}/sync", server.trim_end_matches('/'));
-    let response = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
-        .build()?
-        .post(url)
-        .json(&SyncRequest {
-            client_id,
-            after,
-            changes,
-        })
+        .build()?;
+    let mut request = client.post(url).json(&SyncRequest {
+        client_id,
+        after,
+        changes,
+    });
+    if let Some(token) = auth_token {
+        request = request.bearer_auth(token);
+    }
+    let response = request
         .send()
         .await?
         .error_for_status()?

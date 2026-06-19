@@ -130,9 +130,17 @@ server_url = "{}"
 }
 
 #[test]
-fn db_flag_bypasses_config_except_sync_server_resolution() {
+fn db_flag_bypasses_config_except_for_sync_settings() {
+    let server_env = TestEnv::new();
+    server_env.write_config(
+        r#"
+[sync]
+auth_token = "secret"
+"#,
+    );
+    let server = TestServer::start_configured(&server_env, "server.sqlite");
+
     let env = TestEnv::new();
-    let server = TestServer::start(&env);
     let config_db = env.db("config.sqlite");
     let flag_db = env.db("flag.sqlite");
     env.write_config(&format!(
@@ -143,6 +151,7 @@ db_path = "{}"
 [sync]
 enabled = true
 server_url = "{}"
+auth_token = "secret"
 "#,
         config_db.display(),
         server.url

@@ -39,7 +39,14 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         wake_addr
     );
 
-    run_loop(pool, server, socket, args.config.sync_interval_seconds()).await
+    run_loop(
+        pool,
+        server,
+        socket,
+        args.config.sync_interval_seconds(),
+        args.config.sync_auth_token().map(str::to_string),
+    )
+    .await
 }
 
 async fn run_loop(
@@ -47,6 +54,7 @@ async fn run_loop(
     server: String,
     socket: UdpSocket,
     interval_seconds: u64,
+    auth_token: Option<String>,
 ) -> Result<()> {
     let mut wake_buf = [0_u8; 16];
     let mut backoff_seconds = 1_u64;
@@ -62,7 +70,12 @@ async fn run_loop(
                 next_sync = Instant::now();
             }
             _ = sleep_until(next_sync) => {
-                match timeout(Duration::from_secs(35), sync_once(&pool, &server)).await {
+                match timeout(
+                    Duration::from_secs(35),
+                    sync_once(&pool, &server, auth_token.as_deref()),
+                )
+                .await
+                {
                     Ok(Ok(())) => {
                         backoff_seconds = 1;
                         next_sync = Instant::now() + Duration::from_secs(interval_seconds);
@@ -88,9 +101,9 @@ fn drain_wakes(socket: &UdpSocket, wake_buf: &mut [u8]) {
     while socket.try_recv_from(wake_buf).is_ok() {}
 }
 
-async fn sync_once(pool: &SqlitePool, server: &str) -> Result<()> {
+async fn sync_once(pool: &SqlitePool, server: &str, auth_token: Option<&str>) -> Result<()> {
     let mut conn = pool.acquire().await?;
-    let summary = run_sync_once(&mut conn, server).await?;
+    let summary = run_sync_once(&mut conn, server, auth_token).await?;
     println!(
         "daemon-synced pushed={} pulled={} cursor={}",
         summary.pushed, summary.pulled, summary.cursor

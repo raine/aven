@@ -377,17 +377,32 @@ impl TestServer {
         Self::start_with_data(env, "server.sqlite")
     }
 
+    pub fn start_configured(env: &TestEnv, data: &str) -> Self {
+        Self::start_with_data_and_config(env, data, Some(env.config_dir().join("agentic-task-manager")))
+    }
+
     pub fn start_with_data(env: &TestEnv, data: &str) -> Self {
+        Self::start_with_data_and_config(env, data, None)
+    }
+
+    fn start_with_data_and_config(env: &TestEnv, data: &str, config_dir: Option<PathBuf>) -> Self {
         let output = Arc::new(Mutex::new(String::new()));
         let (url_tx, url_rx) = mpsc::channel();
-        let mut child = command()
-            .args([
-                "server",
-                "--bind",
-                "127.0.0.1:0",
-                "--data",
-                env.path(data).to_str().expect("utf8 temp path"),
-            ])
+        let mut command = command();
+        command.args([
+            "server",
+            "--bind",
+            "127.0.0.1:0",
+            "--data",
+            env.path(data).to_str().expect("utf8 temp path"),
+        ]);
+        if let Some(config_dir) = config_dir {
+            command
+                .env("ATM_CONFIG_DIR", config_dir)
+                .env_remove("ATM_DB")
+                .env_remove("ATM_SYNC_SERVER");
+        }
+        let mut child = command
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

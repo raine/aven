@@ -25,7 +25,7 @@ mod types;
 
 pub use cli::Cli;
 
-use cli::{Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand, SyncArgs};
+use cli::{Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand};
 use commands::{
     cmd_add, cmd_config, cmd_conflict, cmd_delete_restore, cmd_label, cmd_labels, cmd_list,
     cmd_note, cmd_project, cmd_projects, cmd_show, cmd_update,
@@ -36,7 +36,10 @@ use sync::{run_server, sync_client};
 pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Server(args) => run_server(args).await,
+        Commands::Server(args) => {
+            let config = config::AppConfig::load()?;
+            run_server(args, config).await
+        }
         Commands::Config(args) => cmd_config(args).await,
         Commands::Daemon(args) => {
             let config = config::AppConfig::load()?;
@@ -86,7 +89,7 @@ pub async fn run_cli() -> Result<()> {
 }
 
 fn load_config_for_command(db_flag_set: bool, command: &Commands) -> Result<config::AppConfig> {
-    if db_flag_set && !matches!(command, Commands::Sync(SyncArgs { server: None, .. })) {
+    if db_flag_set && !matches!(command, Commands::Sync(_)) {
         Ok(config::AppConfig::default())
     } else {
         config::AppConfig::load()

@@ -223,3 +223,63 @@ fn two_daemons_converge_bidirectionally() {
             && list_b.contains(&b_ref)
     });
 }
+
+#[test]
+fn sync_auth_daemon_sends_token() {
+    let server_env = TestEnv::new();
+    server_env.write_config(
+        r#"
+[sync]
+auth_token = "secret"
+"#,
+    );
+    let server = TestServer::start_configured(&server_env, "server.sqlite");
+
+    let env = TestEnv::new();
+    let client_a = env.db("client-a.sqlite");
+    let client_b = env.db("client-b.sqlite");
+    let wake_addr = env.free_loopback_addr();
+
+    env.write_config(&format!(
+        r#"
+[local]
+db_path = "{}"
+
+[sync]
+enabled = true
+server_url = "{}"
+interval_seconds = 3600
+auth_token = "secret"
+
+[daemon]
+wake_addr = "{}"
+"#,
+        client_a.display(),
+        server.url,
+        wake_addr
+    ));
+
+    let daemon = TestProcess::start_daemon(&env);
+    daemon.wait_for_log("daemon-synced", Duration::from_secs(5));
+
+    let mark = daemon.log_mark();
+    let task_ref = extract_ref(&ok(env.atm_config([
+        "add",
+        "daemon auth task",
+        "--project",
+        "app",
+    ])));
+    daemon.wait_for_log_after(mark, "daemon-synced", Duration::from_secs(5));
+
+    ok(env.atm_config([
+        "--db",
+        client_b.to_str().expect("utf8 db path"),
+        "sync",
+        "--server",
+        &server.url,
+    ]));
+    contains_all(
+        &ok(env.atm(&client_b, ["show", &task_ref])),
+        &[&task_ref, "daemon auth task"],
+    );
+}

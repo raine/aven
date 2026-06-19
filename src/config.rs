@@ -32,6 +32,7 @@ pub struct SyncConfig {
     pub enabled: bool,
     pub server_url: Option<String>,
     pub interval_seconds: Option<u64>,
+    pub auth_token: Option<String>,
 }
 
 impl Default for SyncConfig {
@@ -40,6 +41,7 @@ impl Default for SyncConfig {
             enabled: false,
             server_url: None,
             interval_seconds: Some(DEFAULT_SYNC_INTERVAL_SECONDS),
+            auth_token: None,
         }
     }
 }
@@ -77,6 +79,14 @@ impl AppConfig {
             .interval_seconds
             .unwrap_or(DEFAULT_SYNC_INTERVAL_SECONDS)
             .max(1)
+    }
+
+    pub fn sync_auth_token(&self) -> Option<&str> {
+        self.sync
+            .auth_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
     }
 
     pub fn wake_addr(&self) -> Result<SocketAddr> {
@@ -154,7 +164,9 @@ pub fn write_default_config(path: &Path) -> Result<()> {
     if path.exists() {
         bail!("error config-exists path={}", path.display());
     }
-    let text = toml::to_string_pretty(&AppConfig::default())?;
+    let mut config = AppConfig::default();
+    config.sync.auth_token = Some(String::new());
+    let text = toml::to_string_pretty(&config)?;
     fs::write(path, text).with_context(|| format!("could not write {}", path.display()))?;
     Ok(())
 }

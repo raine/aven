@@ -41,7 +41,7 @@
 5. `tui` hands the open pool to `tui::run`.
 6. Successful mutating CLI commands wake the daemon when sync is enabled and a loopback wake address is configured.
 
-`--db` has command-specific config behavior. For most commands, passing `--db` skips the config file and uses defaults for the rest. `sync --db` still loads config when `--server` is omitted so it can resolve the sync server URL.
+`--db` has command-specific config behavior. For most commands, passing `--db` skips the config file and uses defaults for the rest. `sync --db` loads config so it can resolve the sync server URL and auth token.
 
 CLI commands cover task add, show, list, update, note, delete, restore, projects, labels, project paths, conflict list or show or resolve, config, daemon, server, sync, and TUI.
 
@@ -120,7 +120,7 @@ Manual sync performs this sequence:
 4. Apply returned remote changes transactionally.
 5. Update `sync_cursor`.
 
-The server is an Axum `POST /sync` endpoint using the `SyncRequest`, `SyncResponse`, and `ChangeWire` JSON shapes in `src/sync.rs`. It assigns server sequence numbers and persists changes. Public bind addresses are rejected unless `--unsafe-public-bind` is set. Daemon wake addresses must be loopback.
+The server is an Axum `POST /sync` endpoint using the `SyncRequest`, `SyncResponse`, and `ChangeWire` JSON shapes in `src/sync.rs`. It assigns server sequence numbers and persists changes. The server can require a shared token from `sync.auth_token`. When configured, clients send `Authorization: Bearer <token>` and the server rejects unauthorized `/sync` requests before applying changes. Public bind addresses are rejected unless `--unsafe-public-bind` is set. Non-loopback server binds also require a configured token. Loopback binds can run without a token for local testing. Daemon wake addresses must be loopback.
 
 If a remote scalar change base version does not match the current field version, sync records a `conflicts` row instead of overwriting. If an unresolved conflict already exists for that task field, another remote change for the field is also rejected into conflict handling.
 
