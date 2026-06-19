@@ -110,7 +110,7 @@ static-analysis:
 
 # Install release binary globally
 install:
-    cargo install --offline --path . --locked
+    env SQLX_OFFLINE=true cargo install --offline --path . --locked
 
 # Install debug binary globally via symlink
 install-dev:
