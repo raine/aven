@@ -14,6 +14,7 @@ pub(crate) enum Action {
     ToggleHelp,
     BeginSearch,
     AcceptSearch,
+    CancelOverlay,
     CancelSearch,
     BackspaceSearch,
     SearchChar(char),
@@ -39,7 +40,8 @@ impl Action {
 
     pub(crate) fn from_normal_key(code: KeyCode) -> Self {
         match code {
-            KeyCode::Char('q') | KeyCode::Esc => Self::Quit,
+            KeyCode::Char('q') => Self::Quit,
+            KeyCode::Esc => Self::CancelOverlay,
             KeyCode::Char('j') | KeyCode::Down => Self::MoveDown,
             KeyCode::Char('k') | KeyCode::Up => Self::MoveUp,
             KeyCode::Char('g') | KeyCode::Home => Self::First,
@@ -104,5 +106,10 @@ mod tests {
             Action::AcceptSearch
         );
         assert_eq!(Action::from_search_key(KeyCode::Esc), Action::CancelSearch);
+    }
+
+    #[test]
+    fn normal_escape_cancels_overlay() {
+        assert_eq!(Action::from_normal_key(KeyCode::Esc), Action::CancelOverlay);
     }
 }

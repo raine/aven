@@ -102,6 +102,7 @@ impl App {
     async fn handle(&mut self, action: Action) -> Result<()> {
         match action {
             Action::Quit => self.should_quit = true,
+            Action::CancelOverlay => self.cancel_overlay(),
             Action::MoveDown => self.move_selection(1).await?,
             Action::MoveUp => self.move_selection(-1).await?,
             Action::First => self.select_edge(false).await?,
@@ -243,6 +244,14 @@ impl App {
     fn cancel_search(&mut self) {
         self.search_open = false;
         self.search_input.clear();
+    }
+
+    fn cancel_overlay(&mut self) {
+        if self.help_open {
+            self.help_open = false;
+        } else if self.detail_open {
+            self.detail_open = false;
+        }
     }
 
     async fn update_status(&mut self, status: &'static str) -> Result<()> {
