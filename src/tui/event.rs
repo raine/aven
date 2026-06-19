@@ -1,5 +1,6 @@
 use crossterm::event::KeyCode;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Action {
     Quit,
@@ -943,6 +944,7 @@ pub(crate) fn lookup_command(input: &str) -> CommandLookup {
 }
 
 impl Action {
+    #[allow(dead_code)]
     pub(crate) fn from_search_key(code: KeyCode) -> Self {
         match code {
             KeyCode::Esc => Self::CancelSearch,
@@ -953,6 +955,7 @@ impl Action {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn from_command_key(code: KeyCode) -> Self {
         match code {
             KeyCode::Esc => Self::CancelCommand,

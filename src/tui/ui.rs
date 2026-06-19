@@ -12,6 +12,9 @@ use crate::query::TaskListItem;
 use crate::render::quote;
 use crate::tui::app::{Focus, WidgetState};
 use crate::tui::event::{COMMANDS, CommandLifecycle, CommandSpec, key_label, matching_commands};
+use crate::tui::overlay::{
+    ConfirmView, MultilineInputView, OverlayView, PickerView, TextInputView,
+};
 use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, ORANGE, PINK, RED, SELECTED,
@@ -22,12 +25,7 @@ use crate::tui::widgets::{priority_icon, priority_short, title_cell};
 #[derive(Clone)]
 pub(crate) struct ViewState {
     pub(crate) focus: Focus,
-    pub(crate) detail_open: bool,
-    pub(crate) help_open: bool,
-    pub(crate) search_open: bool,
-    pub(crate) search_input: String,
-    pub(crate) command_open: bool,
-    pub(crate) command_input: String,
+    pub(crate) overlay: Option<OverlayView>,
     pub(crate) message: Option<String>,
     pub(crate) pending_shortcut: Vec<String>,
 }
@@ -73,22 +71,16 @@ pub(crate) fn render(
     }
     frame.render_widget(footer_bar(view), footer);
 
-    if view.detail_open
-        && let Some(task) = store.selected_task(widgets.table.selected())
+    if !view.pending_shortcut.is_empty()
+        && !view
+            .overlay
+            .as_ref()
+            .is_some_and(OverlayView::captures_input)
     {
-        render_detail(frame, task);
-    }
-    if view.help_open {
-        render_help(frame);
-    }
-    if !view.pending_shortcut.is_empty() && !view.search_open && !view.command_open {
         render_prefix_hints(frame, view);
     }
-    if view.search_open {
-        render_search(frame, view);
-    }
-    if view.command_open {
-        render_command(frame, view);
+    if let Some(overlay) = &view.overlay {
+        render_overlay(frame, store, widgets, overlay);
     }
 }
 
@@ -873,13 +865,13 @@ fn command_line(command: &CommandSpec) -> Line<'static> {
     Line::from(spans)
 }
 
-fn render_command(frame: &mut Frame, view: &ViewState) {
-    let matches = matching_commands(&view.command_input);
+fn render_command(frame: &mut Frame, input: &str) {
+    let matches = matching_commands(input);
     let height = (matches.len().min(8) as u16).saturating_add(3);
     let area = centered(frame.area(), 72, height);
     frame.render_widget(Clear, area);
 
-    let mut lines = vec![Line::from(format!(":{}▌", view.command_input))];
+    let mut lines = vec![Line::from(format!(":{input}▌"))];
     for command in matches.into_iter().take(8) {
         lines.push(command_line(command));
     }
@@ -892,15 +884,154 @@ fn render_command(frame: &mut Frame, view: &ViewState) {
     );
 }
 
-fn render_search(frame: &mut Frame, view: &ViewState) {
+fn render_search(frame: &mut Frame, input: &str) {
     let area = centered(frame.area(), 54, 3);
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(format!("/{}▌", view.search_input))
+        Paragraph::new(format!("/{input}▌"))
             .block(overlay_block("Search"))
             .style(Style::new().fg(FG).bg(BG_ALT)),
         area,
     );
+}
+
+fn render_overlay(
+    frame: &mut Frame,
+    store: &TuiStore,
+    widgets: &mut WidgetState,
+    overlay: &OverlayView,
+) {
+    match overlay {
+        OverlayView::Help => render_help(frame),
+        OverlayView::Detail => {
+            if let Some(task) = store.selected_task(widgets.table.selected()) {
+                render_detail(frame, task);
+            }
+        }
+        OverlayView::Search { input } => render_search(frame, input),
+        OverlayView::Command { input } => render_command(frame, input),
+        OverlayView::TextInput(state) => render_text_input(frame, state),
+        OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
+        OverlayView::Picker(state) => render_picker(frame, state),
+        OverlayView::Confirm(state) => render_confirm(frame, state),
+    }
+}
+
+fn render_text_input(frame: &mut Frame, state: &TextInputView) {
+    let area = centered(frame.area(), 54, 5);
+    frame.render_widget(Clear, area);
+    let input = insert_cursor(&state.input, state.cursor);
+    let text = Text::from(vec![
+        Line::from(Span::styled(&state.prompt, Style::new().fg(FG_DIM))),
+        Line::from(input),
+        Line::from(Span::styled(
+            "Enter submit  Esc cancel",
+            Style::new().fg(FG_MUTED),
+        )),
+    ]);
+    frame.render_widget(
+        Paragraph::new(text)
+            .block(overlay_block(&state.title))
+            .style(Style::new().fg(FG).bg(BG_ALT)),
+        area,
+    );
+}
+
+fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
+    let height = (state.lines.len() as u16).saturating_add(5).min(16);
+    let area = centered(frame.area(), 60, height);
+    frame.render_widget(Clear, area);
+    let mut lines = vec![Line::from(Span::styled(
+        &state.prompt,
+        Style::new().fg(FG_DIM),
+    ))];
+    for (row_index, line) in state.lines.iter().enumerate() {
+        let text = if row_index == state.row {
+            insert_cursor(line, state.column)
+        } else {
+            line.clone()
+        };
+        lines.push(Line::from(text));
+    }
+    lines.push(Line::from(Span::styled(
+        "Ctrl+S submit  Esc cancel",
+        Style::new().fg(FG_MUTED),
+    )));
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(overlay_block(&state.title))
+            .wrap(Wrap { trim: false })
+            .style(Style::new().fg(FG).bg(BG_ALT)),
+        area,
+    );
+}
+
+fn render_picker(frame: &mut Frame, state: &PickerView) {
+    let visible_count = state.visible_indices.len().max(1);
+    let height = (visible_count.min(8) as u16).saturating_add(5);
+    let area = centered(frame.area(), 60, height);
+    frame.render_widget(Clear, area);
+    let mut lines = vec![Line::from(format!("/{}▌", state.filter)), Line::from("")];
+    for index in state.visible_indices.iter().take(8) {
+        let item = &state.items[*index];
+        let marker = if *index == state.selected {
+            "▸ "
+        } else {
+            "  "
+        };
+        let check = if state.multi && item.selected {
+            " ✓"
+        } else {
+            ""
+        };
+        lines.push(Line::from(format!("{marker}{}{check}", item.label)));
+    }
+    let hints = if state.multi {
+        "j/k move  Space toggle  Enter submit  Esc cancel"
+    } else {
+        "j/k move  Enter submit  Esc cancel"
+    };
+    lines.push(Line::from(Span::styled(hints, Style::new().fg(FG_MUTED))));
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(overlay_block(&state.title))
+            .style(Style::new().fg(FG).bg(BG_ALT)),
+        area,
+    );
+}
+
+fn render_confirm(frame: &mut Frame, state: &ConfirmView) {
+    let area = centered(frame.area(), 48, 5);
+    frame.render_widget(Clear, area);
+    let text = Text::from(vec![
+        Line::from(state.prompt.as_str()),
+        Line::from(Span::styled(
+            "y yes  n no  Esc cancel",
+            Style::new().fg(FG_MUTED),
+        )),
+    ]);
+    frame.render_widget(
+        Paragraph::new(text)
+            .block(overlay_block(&state.title))
+            .style(Style::new().fg(FG).bg(BG_ALT)),
+        area,
+    );
+}
+
+fn insert_cursor(input: &str, cursor: usize) -> String {
+    let cursor = cursor.min(input.len());
+    let (before, after) = input.split_at(cursor);
+    format!("{before}▌{after}")
+}
+
+fn overlay_block(title: &str) -> Block<'_> {
+    Block::new()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(ACCENT))
+        .padding(Padding::horizontal(1))
+        .style(Style::new().bg(BG_ALT))
 }
 
 fn prefix_hint_lines(pending: &[String]) -> Vec<Line<'static>> {
@@ -965,16 +1096,6 @@ fn render_prefix_hints(frame: &mut Frame, view: &ViewState) {
     );
 }
 
-fn overlay_block(title: &'static str) -> Block<'static> {
-    Block::new()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(ACCENT))
-        .padding(Padding::horizontal(1))
-        .style(Style::new().bg(BG_ALT))
-}
-
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let [area] = Layout::horizontal([Constraint::Length(width.min(area.width.saturating_sub(2)))])
         .flex(Flex::Center)
@@ -990,6 +1111,38 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::overlay::{
+        ConfirmView, MultilineInputView, OverlayView, PickerItem, PickerView, TextInputView,
+    };
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn buffer_text(backend: &TestBackend) -> String {
+        backend
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    fn render_overlay_view(overlay: OverlayView) -> String {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| match &overlay {
+                OverlayView::Help => render_help(frame),
+                OverlayView::Search { input } => render_search(frame, input),
+                OverlayView::Command { input } => render_command(frame, input),
+                OverlayView::TextInput(state) => render_text_input(frame, state),
+                OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
+                OverlayView::Picker(state) => render_picker(frame, state),
+                OverlayView::Confirm(state) => render_confirm(frame, state),
+                OverlayView::Detail => {}
+            })
+            .unwrap();
+        buffer_text(terminal.backend())
+    }
 
     #[test]
     fn compact_age_formats_hours_days_weeks_and_months() {
@@ -1066,5 +1219,85 @@ mod tests {
             .join("\n");
         assert!(rendered.contains(":conflict-use-a"));
         assert!(rendered.contains("disabled"));
+    }
+
+    #[test]
+    fn overlay_render_includes_search_title_and_input() {
+        let rendered = render_overlay_view(OverlayView::Search {
+            input: "query".to_string(),
+        });
+        assert!(rendered.contains("Search"));
+        assert!(rendered.contains("/query"));
+    }
+
+    #[test]
+    fn overlay_render_includes_command_title_and_input() {
+        let rendered = render_overlay_view(OverlayView::Command {
+            input: "ref".to_string(),
+        });
+        assert!(rendered.contains("Command"));
+        assert!(rendered.contains(":ref"));
+    }
+
+    #[test]
+    fn overlay_render_includes_help_title() {
+        let rendered = render_overlay_view(OverlayView::Help);
+        assert!(rendered.contains("Shortcuts"));
+    }
+
+    #[test]
+    fn overlay_render_includes_text_input_prompt_and_hints() {
+        let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
+            title: "Edit title".to_string(),
+            prompt: "New title".to_string(),
+            input: "alpha".to_string(),
+            cursor: 5,
+        }));
+        assert!(rendered.contains("Edit title"));
+        assert!(rendered.contains("New title"));
+        assert!(rendered.contains("Enter submit"));
+    }
+
+    #[test]
+    fn overlay_render_includes_multiline_ctrl_s_hint() {
+        let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+            title: "Description".to_string(),
+            prompt: "Body".to_string(),
+            lines: vec!["line one".to_string()],
+            row: 0,
+            column: 4,
+        }));
+        assert!(rendered.contains("Description"));
+        assert!(rendered.contains("Ctrl+S submit"));
+    }
+
+    #[test]
+    fn overlay_render_includes_picker_filter_and_hints() {
+        let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+            title: "Project".to_string(),
+            filter: "app".to_string(),
+            items: vec![PickerItem {
+                label: "APP app".to_string(),
+                value: "app".to_string(),
+                selected: false,
+            }],
+            selected: 0,
+            multi: true,
+            visible_indices: vec![0],
+        }));
+        assert!(rendered.contains("Project"));
+        assert!(rendered.contains("/app"));
+        assert!(rendered.contains("Space toggle"));
+    }
+
+    #[test]
+    fn overlay_render_includes_confirm_prompt_and_hints() {
+        let rendered = render_overlay_view(OverlayView::Confirm(ConfirmView {
+            title: "Delete".to_string(),
+            prompt: "Delete task?".to_string(),
+        }));
+        assert!(rendered.contains("Delete"));
+        assert!(rendered.contains("Delete task?"));
+        assert!(rendered.contains("y yes"));
     }
 }

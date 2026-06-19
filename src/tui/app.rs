@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::DefaultTerminal;
 use ratatui::widgets::{ListState, TableState};
 use sqlx::SqlitePool;
@@ -9,6 +9,7 @@ use sqlx::SqlitePool;
 use crate::tui::event::{
     Action, CommandLookup, ShortcutLookup, lookup_command, resolve_shortcut, shortcut_label,
 };
+use crate::tui::overlay::{OverlayOutcome, OverlayState, OverlayView};
 use crate::tui::store::{SidebarEntry, TuiStore};
 use crate::tui::ui;
 
@@ -28,12 +29,7 @@ pub(crate) struct App {
     pub(crate) should_quit: bool,
     pub(crate) focus: Focus,
     pub(crate) widgets: WidgetState,
-    pub(crate) detail_open: bool,
-    pub(crate) help_open: bool,
-    pub(crate) search_open: bool,
-    pub(crate) search_input: String,
-    pub(crate) command_open: bool,
-    pub(crate) command_input: String,
+    pub(crate) overlay: Option<OverlayState>,
     pub(crate) message: Option<String>,
     pub(crate) message_at: Option<Instant>,
     pending_shortcut: Vec<KeyCode>,
@@ -50,12 +46,7 @@ impl App {
                 sidebar: ListState::default(),
                 table: TableState::default(),
             },
-            detail_open: false,
-            help_open: false,
-            search_open: false,
-            search_input: String::new(),
-            command_open: false,
-            command_input: String::new(),
+            overlay: None,
             message: None,
             message_at: None,
             pending_shortcut: Vec::new(),
@@ -75,13 +66,7 @@ impl App {
             if event::poll(Duration::from_millis(250))?
                 && let Event::Key(key) = event::read()?
             {
-                let result = if self.command_open {
-                    self.handle(Action::from_command_key(key.code)).await
-                } else if self.search_open {
-                    self.handle(Action::from_search_key(key.code)).await
-                } else {
-                    self.handle_normal_key(key.code).await
-                };
+                let result = self.dispatch_key(key).await;
                 if let Err(error) = result {
                     self.set_message(format!("error: {error:#}"));
                 }
@@ -101,12 +86,7 @@ impl App {
     pub(crate) fn view(&self) -> ui::ViewState {
         ui::ViewState {
             focus: self.focus,
-            detail_open: self.detail_open,
-            help_open: self.help_open,
-            search_open: self.search_open,
-            search_input: self.search_input.clone(),
-            command_open: self.command_open,
-            command_input: self.command_input.clone(),
+            overlay: self.overlay.as_ref().map(OverlayView::from),
             message: self.message.clone(),
             pending_shortcut: self
                 .pending_shortcut
@@ -116,7 +96,27 @@ impl App {
         }
     }
 
+    async fn dispatch_key(&mut self, key: KeyEvent) -> Result<()> {
+        if self.overlay_captures_input() {
+            self.handle_overlay_key(key).await
+        } else {
+            self.handle_normal_key(key.code).await
+        }
+    }
+
+    fn overlay_captures_input(&self) -> bool {
+        self.overlay
+            .as_ref()
+            .is_some_and(OverlayState::captures_input)
+    }
+
     async fn handle_normal_key(&mut self, code: KeyCode) -> Result<()> {
+        if self.overlay_captures_input() {
+            return self
+                .handle_overlay_key(KeyEvent::new(code, KeyModifiers::NONE))
+                .await;
+        }
+
         if code == KeyCode::Esc {
             if !self.pending_shortcut.is_empty() {
                 self.pending_shortcut.clear();
@@ -145,21 +145,61 @@ impl App {
         Ok(())
     }
 
-    async fn handle(&mut self, action: Action) -> Result<()> {
-        match action {
-            Action::AcceptCommand => {
-                if let Some(action) = self.accept_command() {
-                    self.execute(action).await?;
+    pub(crate) async fn handle_overlay_key(&mut self, key: KeyEvent) -> Result<()> {
+        let Some(overlay) = self.overlay.take() else {
+            return Ok(());
+        };
+
+        match overlay {
+            OverlayState::Search { mut input } => match key.code {
+                KeyCode::Esc => {}
+                KeyCode::Enter => self.accept_search_input(input).await?,
+                KeyCode::Backspace => {
+                    input.pop();
+                    self.overlay = Some(OverlayState::Search { input });
                 }
-            }
-            Action::CancelCommand => self.cancel_command(),
-            Action::BackspaceCommand => {
-                self.command_input.pop();
-            }
-            Action::CommandChar(ch) => self.command_input.push(ch),
-            action => self.execute(action).await?,
+                KeyCode::Char(ch) => {
+                    input.push(ch);
+                    self.overlay = Some(OverlayState::Search { input });
+                }
+                _ => self.overlay = Some(OverlayState::Search { input }),
+            },
+            OverlayState::Command { mut input } => match key.code {
+                KeyCode::Esc => {}
+                KeyCode::Enter => {
+                    if let Some(action) = self.accept_command_input(&input) {
+                        self.execute(action).await?;
+                    } else {
+                        self.overlay = Some(OverlayState::Command { input });
+                    }
+                }
+                KeyCode::Backspace => {
+                    input.pop();
+                    self.overlay = Some(OverlayState::Command { input });
+                }
+                KeyCode::Char(ch) => {
+                    input.push(ch);
+                    self.overlay = Some(OverlayState::Command { input });
+                }
+                _ => self.overlay = Some(OverlayState::Command { input }),
+            },
+            overlay => self.handle_generic_overlay_key(key, overlay),
         }
+
         Ok(())
+    }
+
+    fn handle_generic_overlay_key(&mut self, key: KeyEvent, overlay: OverlayState) {
+        let outcome = crate::tui::overlay::handle_generic_overlay_key(key, overlay);
+        match outcome {
+            OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
+            OverlayOutcome::Cancelled => {}
+            OverlayOutcome::Submitted(submit) => self.set_message(submit.message()),
+        }
+    }
+
+    async fn handle(&mut self, action: Action) -> Result<()> {
+        self.execute(action).await
     }
 
     async fn execute(&mut self, action: Action) -> Result<()> {
@@ -172,15 +212,9 @@ impl App {
             Action::Last => self.select_edge(true).await?,
             Action::ToggleFocus => self.toggle_focus(),
             Action::ToggleDetail => self.activate_or_toggle_detail().await?,
-            Action::ToggleHelp => self.help_open = !self.help_open,
+            Action::ToggleHelp => self.toggle_help(),
             Action::BeginSearch => self.begin_search(),
             Action::BeginCommand => self.begin_command(),
-            Action::AcceptSearch => self.accept_search().await?,
-            Action::CancelSearch => self.cancel_search(),
-            Action::BackspaceSearch => {
-                self.search_input.pop();
-            }
-            Action::SearchChar(ch) => self.search_input.push(ch),
             Action::Refresh => self.refresh().await?,
             Action::CycleSort => {
                 self.store.cycle_sort();
@@ -196,6 +230,10 @@ impl App {
             | Action::CancelCommand
             | Action::BackspaceCommand
             | Action::CommandChar(_)
+            | Action::AcceptSearch
+            | Action::CancelSearch
+            | Action::BackspaceSearch
+            | Action::SearchChar(_)
             | Action::None => {}
         }
         Ok(())
@@ -280,11 +318,13 @@ impl App {
 
     async fn activate_or_toggle_detail(&mut self) -> Result<()> {
         if self.focus == Focus::Sidebar {
-            self.apply_sidebar_selection().await
+            self.apply_sidebar_selection().await?;
+        } else if matches!(self.overlay, Some(OverlayState::Detail)) {
+            self.overlay = None;
         } else {
-            self.detail_open = !self.detail_open;
-            Ok(())
+            self.overlay = Some(OverlayState::Detail);
         }
+        Ok(())
     }
 
     async fn apply_sidebar_selection(&mut self) -> Result<()> {
@@ -292,7 +332,7 @@ impl App {
             .apply_sidebar_selection(self.widgets.sidebar.selected())
             .await?;
         self.focus = Focus::Tasks;
-        self.detail_open = false;
+        self.overlay = None;
         self.widgets.sidebar.select(self.store.sidebar_selection());
         self.widgets
             .table
@@ -300,43 +340,31 @@ impl App {
         Ok(())
     }
 
-    fn begin_search(&mut self) {
+    pub(crate) fn begin_search(&mut self) {
         self.pending_shortcut.clear();
-        self.search_open = true;
-        self.search_input = self.store.filters.search.clone().unwrap_or_default();
+        self.overlay = Some(OverlayState::Search {
+            input: self.store.filters.search.clone().unwrap_or_default(),
+        });
     }
 
-    async fn accept_search(&mut self) -> Result<()> {
-        self.search_open = false;
+    async fn accept_search_input(&mut self, input: String) -> Result<()> {
         self.widgets
             .table
-            .select(self.store.accept_search(&self.search_input).await?);
+            .select(self.store.accept_search(&input).await?);
         Ok(())
     }
 
-    fn cancel_search(&mut self) {
-        self.search_open = false;
-        self.search_input.clear();
-    }
-
-    fn begin_command(&mut self) {
+    pub(crate) fn begin_command(&mut self) {
         self.pending_shortcut.clear();
-        self.command_open = true;
-        self.command_input.clear();
-        self.help_open = false;
+        self.overlay = Some(OverlayState::Command {
+            input: String::new(),
+        });
     }
 
-    fn cancel_command(&mut self) {
-        self.command_open = false;
-        self.command_input.clear();
-    }
-
-    fn accept_command(&mut self) -> Option<Action> {
-        match lookup_command(&self.command_input) {
+    fn accept_command_input(&mut self, input: &str) -> Option<Action> {
+        match lookup_command(input) {
             CommandLookup::Found(action) => {
                 self.pending_shortcut.clear();
-                self.command_open = false;
-                self.command_input.clear();
                 Some(action)
             }
             CommandLookup::Empty => {
@@ -344,25 +372,28 @@ impl App {
                 None
             }
             CommandLookup::Ambiguous => {
-                self.set_message(format!("ambiguous command: {}", self.command_input.trim()));
+                self.set_message(format!("ambiguous command: {}", input.trim()));
                 None
             }
             CommandLookup::Missing => {
-                self.set_message(format!("unknown command: {}", self.command_input.trim()));
+                self.set_message(format!("unknown command: {}", input.trim()));
                 None
             }
         }
     }
 
+    fn toggle_help(&mut self) {
+        if matches!(self.overlay, Some(OverlayState::Help)) {
+            self.overlay = None;
+        } else {
+            self.overlay = Some(OverlayState::Help);
+        }
+    }
+
     fn cancel_overlay(&mut self) {
         self.pending_shortcut.clear();
-        if self.command_open {
-            self.cancel_command();
-        } else if self.help_open {
-            self.help_open = false;
-        } else if self.detail_open {
-            self.detail_open = false;
-        } else if self.focus == Focus::Sidebar {
+        let had_overlay = self.overlay.take().is_some();
+        if !had_overlay && self.focus == Focus::Sidebar {
             self.focus = Focus::Tasks;
             self.widgets.sidebar.select(self.store.sidebar_selection());
         }
@@ -482,6 +513,7 @@ fn next_selectable_sidebar(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::overlay::{ConfirmState, TextInputState};
     use crate::tui::store::SidebarTarget;
 
     async fn test_app() -> App {
@@ -490,6 +522,10 @@ mod tests {
             .await
             .unwrap();
         App::new(pool).await.unwrap()
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
     }
 
     fn section(label: &str) -> SidebarEntry {
@@ -551,16 +587,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn prefix_is_inactive_while_overlay_captures_input() {
+        let mut app = test_app().await;
+        app.begin_search();
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+
+        assert!(app.pending_shortcut.is_empty());
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Search { input }) if input == "m"
+        ));
+    }
+
+    #[tokio::test]
     async fn esc_cancels_prefix_before_overlay() {
         let mut app = test_app().await;
-        app.help_open = true;
+        app.overlay = Some(OverlayState::Help);
         app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
         app.handle_normal_key(KeyCode::Esc).await.unwrap();
         assert!(app.pending_shortcut.is_empty());
-        assert!(app.help_open);
+        assert!(matches!(app.overlay, Some(OverlayState::Help)));
 
         app.handle_normal_key(KeyCode::Esc).await.unwrap();
-        assert!(!app.help_open);
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn command_overlay_executes_unique_lookup_and_keeps_overlay_on_errors() {
+        let mut app = test_app().await;
+
+        app.begin_command();
+        for ch in "ref".chars() {
+            app.handle_overlay_key(key(KeyCode::Char(ch)))
+                .await
+                .unwrap();
+        }
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(app.overlay.is_none());
+
+        app.begin_command();
+        app.handle_overlay_key(key(KeyCode::Char('s')))
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
+        assert_eq!(app.message.as_deref(), Some("ambiguous command: s"));
+
+        app.begin_command();
+        for ch in "zzzz".chars() {
+            app.handle_overlay_key(key(KeyCode::Char(ch)))
+                .await
+                .unwrap();
+        }
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
+        assert_eq!(app.message.as_deref(), Some("unknown command: zzzz"));
+    }
+
+    #[tokio::test]
+    async fn search_replaces_existing_overlay() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::Help);
+        app.begin_search();
+        assert!(matches!(app.overlay, Some(OverlayState::Search { .. })));
+    }
+
+    #[tokio::test]
+    async fn toggle_help_closes_active_help_overlay() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::Help);
+        app.toggle_help();
+        assert!(app.overlay.is_none());
     }
 
     #[tokio::test]
@@ -597,5 +694,33 @@ mod tests {
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         assert_eq!(app.message.as_deref(), Some(":conflict-use-a is disabled"));
+    }
+
+    #[tokio::test]
+    async fn generic_text_input_submits_message() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::TextInput(TextInputState {
+            title: "Title".to_string(),
+            prompt: "Enter title".to_string(),
+            input: "done".to_string(),
+            cursor: 4,
+        }));
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(app.overlay.is_none());
+        assert_eq!(app.message.as_deref(), Some("submitted Title"));
+    }
+
+    #[tokio::test]
+    async fn generic_confirm_submits_on_y() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::Confirm(ConfirmState {
+            title: "Delete".to_string(),
+            prompt: "Continue?".to_string(),
+        }));
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+        assert!(app.overlay.is_none());
+        assert_eq!(app.message.as_deref(), Some("confirmed Delete"));
     }
 }
