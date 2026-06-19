@@ -53,18 +53,6 @@ pub(crate) async fn set_deleted(
     get_task(conn, &task.id).await
 }
 
-pub(crate) fn status_for_key(ch: char) -> Option<&'static str> {
-    match ch {
-        '1' => Some(STATUSES[0]),
-        '2' => Some(STATUSES[1]),
-        '3' => Some(STATUSES[2]),
-        '4' => Some(STATUSES[3]),
-        '5' => Some(STATUSES[4]),
-        '6' => Some(STATUSES[5]),
-        _ => None,
-    }
-}
-
 pub(crate) async fn set_task_field(
     conn: &mut SqliteConnection,
     task_id: &str,

@@ -6,7 +6,7 @@ use ratatui::DefaultTerminal;
 use ratatui::widgets::{ListState, TableState};
 use sqlx::SqlitePool;
 
-use crate::tui::event::Action;
+use crate::tui::event::{Action, CommandLookup, lookup_command};
 use crate::tui::store::{SidebarEntry, TuiStore};
 use crate::tui::ui;
 
@@ -30,6 +30,8 @@ pub(crate) struct App {
     pub(crate) help_open: bool,
     pub(crate) search_open: bool,
     pub(crate) search_input: String,
+    pub(crate) command_open: bool,
+    pub(crate) command_input: String,
     pub(crate) message: Option<String>,
     pub(crate) message_at: Option<Instant>,
 }
@@ -49,6 +51,8 @@ impl App {
             help_open: false,
             search_open: false,
             search_input: String::new(),
+            command_open: false,
+            command_input: String::new(),
             message: None,
             message_at: None,
         };
@@ -67,7 +71,9 @@ impl App {
             if event::poll(Duration::from_millis(250))?
                 && let Event::Key(key) = event::read()?
             {
-                let action = if self.search_open {
+                let action = if self.command_open {
+                    Action::from_command_key(key.code)
+                } else if self.search_open {
                     Action::from_search_key(key.code)
                 } else {
                     Action::from_normal_key(key.code)
@@ -95,11 +101,30 @@ impl App {
             help_open: self.help_open,
             search_open: self.search_open,
             search_input: self.search_input.clone(),
+            command_open: self.command_open,
+            command_input: self.command_input.clone(),
             message: self.message.clone(),
         }
     }
 
     async fn handle(&mut self, action: Action) -> Result<()> {
+        match action {
+            Action::AcceptCommand => {
+                if let Some(action) = self.accept_command() {
+                    self.execute(action).await?;
+                }
+            }
+            Action::CancelCommand => self.cancel_command(),
+            Action::BackspaceCommand => {
+                self.command_input.pop();
+            }
+            Action::CommandChar(ch) => self.command_input.push(ch),
+            action => self.execute(action).await?,
+        }
+        Ok(())
+    }
+
+    async fn execute(&mut self, action: Action) -> Result<()> {
         match action {
             Action::Quit => self.should_quit = true,
             Action::CancelOverlay => self.cancel_overlay(),
@@ -111,6 +136,7 @@ impl App {
             Action::ToggleDetail => self.activate_or_toggle_detail().await?,
             Action::ToggleHelp => self.help_open = !self.help_open,
             Action::BeginSearch => self.begin_search(),
+            Action::BeginCommand => self.begin_command(),
             Action::AcceptSearch => self.accept_search().await?,
             Action::CancelSearch => self.cancel_search(),
             Action::BackspaceSearch => {
@@ -126,7 +152,11 @@ impl App {
             Action::CyclePriority(reverse) => self.update_priority(reverse).await?,
             Action::Delete => self.update_deleted(true).await?,
             Action::Restore => self.update_deleted(false).await?,
-            Action::None => {}
+            Action::AcceptCommand
+            | Action::CancelCommand
+            | Action::BackspaceCommand
+            | Action::CommandChar(_)
+            | Action::None => {}
         }
         Ok(())
     }
@@ -248,8 +278,43 @@ impl App {
         self.search_input.clear();
     }
 
+    fn begin_command(&mut self) {
+        self.command_open = true;
+        self.command_input.clear();
+        self.help_open = false;
+    }
+
+    fn cancel_command(&mut self) {
+        self.command_open = false;
+        self.command_input.clear();
+    }
+
+    fn accept_command(&mut self) -> Option<Action> {
+        match lookup_command(&self.command_input) {
+            CommandLookup::Found(action) => {
+                self.command_open = false;
+                self.command_input.clear();
+                Some(action)
+            }
+            CommandLookup::Empty => {
+                self.set_message("empty command".to_string());
+                None
+            }
+            CommandLookup::Ambiguous => {
+                self.set_message(format!("ambiguous command: {}", self.command_input.trim()));
+                None
+            }
+            CommandLookup::Missing => {
+                self.set_message(format!("unknown command: {}", self.command_input.trim()));
+                None
+            }
+        }
+    }
+
     fn cancel_overlay(&mut self) {
-        if self.help_open {
+        if self.command_open {
+            self.cancel_command();
+        } else if self.help_open {
             self.help_open = false;
         } else if self.detail_open {
             self.detail_open = false;

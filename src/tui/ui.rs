@@ -11,6 +11,7 @@ use ratatui::widgets::{
 use crate::query::TaskListItem;
 use crate::render::quote;
 use crate::tui::app::{Focus, WidgetState};
+use crate::tui::event::{COMMANDS, CommandSpec, matching_commands};
 use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, ORANGE, PINK, RED, SELECTED,
@@ -25,6 +26,8 @@ pub(crate) struct ViewState {
     pub(crate) help_open: bool,
     pub(crate) search_open: bool,
     pub(crate) search_input: String,
+    pub(crate) command_open: bool,
+    pub(crate) command_input: String,
     pub(crate) message: Option<String>,
 }
 
@@ -79,6 +82,9 @@ pub(crate) fn render(
     }
     if view.search_open {
         render_search(frame, view);
+    }
+    if view.command_open {
+        render_command(frame, view);
     }
 }
 
@@ -196,6 +202,8 @@ fn footer_bar(view: &ViewState) -> Paragraph<'static> {
         cmd("priority"),
         key("/"),
         cmd("search"),
+        key(":"),
+        cmd("command"),
         key("d"),
         cmd("delete"),
         key("?"),
@@ -772,20 +780,72 @@ fn render_detail(frame: &mut Frame, item: &TaskListItem) {
 }
 
 fn render_help(frame: &mut Frame) {
-    let area = centered(frame.area(), 64, 11);
+    let area = centered(frame.area(), 82, 16);
     frame.render_widget(Clear, area);
-    let text = Text::from(vec![
-        Line::from("j/k or arrows move the focused list"),
-        Line::from("Tab switches between views and tasks"),
-        Line::from("Enter selects a view or toggles task detail"),
-        Line::from("1 inbox  2 backlog  3 todo  4 active  5 done  6 canceled"),
-        Line::from("p/P cycle priority, d deletes, u restores"),
-        Line::from("/ searches title and description, s cycles sort"),
-        Line::from("r refreshes from SQLite, q quits"),
-    ]);
+    let inner = overlay_block("Shortcuts");
+    let content = inner.inner(area);
+    frame.render_widget(inner, area);
+    let [left, right] =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(content);
+
+    render_help_column(frame, left, &["General", "Navigation"]);
+    render_help_column(frame, right, &["Tasks", "Status"]);
+}
+
+fn render_help_column(frame: &mut Frame, area: Rect, sections: &[&str]) {
+    let mut lines = Vec::new();
+    for section in sections {
+        if !lines.is_empty() {
+            lines.push(Line::from(""));
+        }
+        lines.push(Line::from(Span::styled(
+            *section,
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )));
+        for command in COMMANDS
+            .iter()
+            .filter(|command| command.section == *section)
+        {
+            lines.push(command_line(command));
+        }
+    }
     frame.render_widget(
-        Paragraph::new(text)
-            .block(overlay_block("Help"))
+        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG_ALT)),
+        area,
+    );
+}
+
+fn command_line(command: &CommandSpec) -> Line<'static> {
+    let keys = command
+        .keys
+        .iter()
+        .map(|key| key.label)
+        .collect::<Vec<_>>()
+        .join("/");
+    Line::from(vec![
+        Span::styled(format!("{keys:<10}"), Style::new().fg(FG_MUTED)),
+        Span::styled(
+            format!(":{:<18}", command.name),
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(command.description, Style::new().fg(FG_DIM)),
+    ])
+}
+
+fn render_command(frame: &mut Frame, view: &ViewState) {
+    let matches = matching_commands(&view.command_input);
+    let height = (matches.len().min(8) as u16).saturating_add(3);
+    let area = centered(frame.area(), 72, height);
+    frame.render_widget(Clear, area);
+
+    let mut lines = vec![Line::from(format!(":{}▌", view.command_input))];
+    for command in matches.into_iter().take(8) {
+        lines.push(command_line(command));
+    }
+
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(overlay_block("Command"))
             .style(Style::new().fg(FG).bg(BG_ALT)),
         area,
     );
