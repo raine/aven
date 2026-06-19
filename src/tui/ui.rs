@@ -70,14 +70,14 @@ pub(crate) fn render(
 
     render_header(frame, store, header);
     if body.width < 100 {
-        match view.focus {
-            Focus::Sidebar => render_sidebar(frame, store, widgets, view, body),
-            Focus::Tasks => render_tasks(frame, store, widgets, view, body),
+        render_tasks(frame, store, widgets, view, body);
+        if view.focus == Focus::Sidebar {
+            render_sidebar_overlay(frame, store, widgets, view, body);
         }
     } else {
         let [sidebar, main] =
             Layout::horizontal([Constraint::Max(26), Constraint::Fill(1)]).areas(body);
-        render_sidebar(frame, store, widgets, view, sidebar);
+        render_sidebar(frame, store, widgets, view, sidebar, false);
         render_tasks(frame, store, widgets, view, main);
     }
     frame.render_widget(footer_bar(view), footer);
@@ -225,12 +225,32 @@ fn footer_bar(view: &ViewState) -> Paragraph<'static> {
         .style(Style::new().fg(FG).bg(BG))
 }
 
+fn render_sidebar_overlay(
+    frame: &mut Frame,
+    store: &TuiStore,
+    widgets: &mut WidgetState,
+    view: &ViewState,
+    area: Rect,
+) {
+    let width = area.width.saturating_sub(4).min(34);
+    let height = area.height.saturating_sub(2).min(24);
+    let area = Rect {
+        x: area.x + 2,
+        y: area.y + 1,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, area);
+    render_sidebar(frame, store, widgets, view, area, true);
+}
+
 fn render_sidebar(
     frame: &mut Frame,
     store: &TuiStore,
     widgets: &mut WidgetState,
     view: &ViewState,
     area: Rect,
+    overlay: bool,
 ) {
     let mut items: Vec<ListItem> = store
         .sidebar_entries
@@ -298,11 +318,17 @@ fn render_sidebar(
     } else {
         SELECTED_INACTIVE
     };
+    let borders = if overlay {
+        Borders::ALL
+    } else {
+        Borders::RIGHT
+    };
     let list = List::new(items)
         .block(
             Block::new()
                 .title(" VIEWS ")
-                .borders(Borders::RIGHT)
+                .borders(borders)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::new().fg(BORDER))
                 .style(Style::new().bg(BG)),
         )
