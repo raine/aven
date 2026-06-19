@@ -8,4 +8,4 @@ if ! command -v git-format-staged >/dev/null 2>&1; then
 fi
 
 git-format-staged
-just pre-commit
+just clippy-fix pre-commit
