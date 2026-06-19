@@ -500,14 +500,14 @@ fn task_rows(store: &TuiStore, selected_task: Option<usize>) -> (Vec<Row<'static
 
 fn group_row(status: &str, count: usize) -> Row<'static> {
     Row::new([
-        Cell::from(""),
-        Cell::from(Line::from(vec![
-            Span::styled("▸ ", Style::new().fg(ACCENT)),
-            Span::styled(
-                format!("{} - {count}", status.to_uppercase()),
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ),
-        ])),
+        Cell::from(Line::from(vec![Span::styled(
+            " ▸",
+            Style::new().fg(ACCENT),
+        )])),
+        Cell::from(Line::from(Span::styled(
+            format!("{} - {count}", status.to_uppercase()),
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ))),
         Cell::from(""),
         Cell::from(""),
         Cell::from(""),
