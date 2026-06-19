@@ -14,8 +14,8 @@ use crate::render::quote;
 use crate::tui::app::{Focus, WidgetState};
 use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::theme::{
-    self, ACCENT, BG, BG_ALT, BG_PANEL, BORDER, CHIP_BG, FG, FG_DIM, FG_MUTED, ORANGE, PINK, RED,
-    SELECTED, SELECTED_INACTIVE,
+    self, ACCENT, BG, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, ORANGE, PINK, RED, SELECTED,
+    SELECTED_INACTIVE,
 };
 use crate::tui::widgets::{priority_short, title_cell};
 
@@ -69,7 +69,7 @@ pub(crate) fn render(
     .areas(inner);
 
     let [sidebar, main] =
-        Layout::horizontal([Constraint::Max(34), Constraint::Fill(1)]).areas(body);
+        Layout::horizontal([Constraint::Max(26), Constraint::Fill(1)]).areas(body);
 
     render_header(frame, store, header);
     render_sidebar(frame, store, widgets, view, sidebar);
@@ -250,7 +250,7 @@ fn render_sidebar(
                 sidebar_icon(entry)
             };
             let label = sidebar_label(entry);
-            let label_width = area.width.saturating_sub(8) as usize;
+            let label_width = area.width.saturating_sub(6) as usize;
             let is_active_view = entry.target.as_ref() == Some(&store.active_view);
             let color = match &entry.target {
                 Some(SidebarTarget::Project(project)) => theme::project_color(project),
@@ -385,20 +385,13 @@ fn cmd(label: &str) -> Span<'static> {
 
 fn badge(count: i64, active: bool) -> Span<'static> {
     if count <= 0 {
-        return Span::raw("   ");
+        return Span::raw(" ");
     }
-    let style = if active {
-        Style::new()
-            .fg(ACCENT)
-            .bg(CHIP_BG)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::new()
-            .fg(FG_MUTED)
-            .bg(CHIP_BG)
-            .add_modifier(Modifier::BOLD)
-    };
-    Span::styled(format!(" {:>2} ", count), style)
+    let color = if active { ACCENT } else { FG_MUTED };
+    Span::styled(
+        format!("{count:>2}"),
+        Style::new().fg(color).add_modifier(Modifier::BOLD),
+    )
 }
 
 fn sidebar_icon(entry: &crate::tui::store::SidebarEntry) -> &'static str {
@@ -428,9 +421,9 @@ fn sidebar_label(entry: &crate::tui::store::SidebarEntry) -> String {
 }
 
 fn filter_item(icon: &str, label: &str, count: i64, color: Color) -> ListItem<'static> {
-    let label_width = 24usize;
+    let label_width = 16usize;
     ListItem::new(Line::from(vec![
-        Span::styled(format!("{icon} "), Style::new().fg(color)),
+        Span::styled(format!("{icon:<2} "), Style::new().fg(color)),
         Span::styled(format!("{label:<label_width$}"), Style::new().fg(FG_MUTED)),
         badge(count, false),
     ]))
