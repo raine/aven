@@ -41,31 +41,31 @@ check-ci: check
 
 # Format Rust files
 format:
-    cargo fmt --all
+    @scripts/quiet-check format cargo fmt --all
 
 # Check Rust formatting without changing files
 format-check:
-    cargo fmt --all -- --check
+    @scripts/quiet-check format-check cargo fmt --all -- --check
 
 # Run clippy and fail on any warnings
 clippy:
-    cargo clippy --all-targets -- -D clippy::all
+    @scripts/quiet-check clippy cargo clippy --all-targets -- -D clippy::all
 
 # Auto-fix clippy warnings
 clippy-fix:
-    cargo clippy --fix --allow-dirty --all-targets -- -W clippy::all
+    @scripts/quiet-check clippy-fix cargo clippy --fix --allow-dirty --all-targets -- -W clippy::all
 
 # Build the project
 build:
-    cargo build --all --locked
+    @scripts/quiet-check build cargo build --all --locked
 
 # Type-check all targets without producing final artifacts
 check-types:
-    cargo check --all-targets --locked
+    @scripts/quiet-check check-types cargo check --all-targets --locked
 
 # Run tests
 test:
-    cargo test --all --locked
+    @scripts/quiet-check test cargo test --all --locked
 
 # Generate sqlx offline query metadata
 sqlx-prepare:
@@ -83,9 +83,9 @@ sqlx-check:
     set -euo pipefail
     db="target/sqlx-check.sqlite"
     rm -f "$db"
-    DATABASE_URL="sqlite://$db" cargo sqlx database create
-    DATABASE_URL="sqlite://$db" cargo sqlx migrate run
-    DATABASE_URL="sqlite://$db" cargo sqlx prepare --check -- --all-targets
+    scripts/quiet-check sqlx-create env DATABASE_URL="sqlite://$db" cargo sqlx database create
+    scripts/quiet-check sqlx-migrate env DATABASE_URL="sqlite://$db" cargo sqlx migrate run
+    scripts/quiet-check sqlx-check env DATABASE_URL="sqlite://$db" cargo sqlx prepare --check -- --all-targets
 
 # Run installed static analysis tools
 static-analysis:
@@ -93,13 +93,13 @@ static-analysis:
     set -euo pipefail
     ran=0
     if command -v cargo-deny >/dev/null 2>&1; then
-      cargo deny check
+      scripts/quiet-check cargo-deny cargo deny check
       ran=1
     else
       echo "skip cargo-deny: not installed"
     fi
     if command -v cargo-machete >/dev/null 2>&1; then
-      cargo machete --with-metadata
+      scripts/quiet-check cargo-machete cargo machete --with-metadata
       ran=1
     else
       echo "skip cargo-machete: not installed"

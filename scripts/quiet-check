@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -lt 2 ]]; then
+  echo "usage: quiet-check <label> <command> [args...]" >&2
+  exit 2
+fi
+
+label="$1"
+shift
+
+output_file="$(mktemp -t atm-quiet-check.XXXXXX)"
+cleanup() {
+  rm -f "$output_file"
+}
+trap cleanup EXIT
+
+if "$@" >"$output_file" 2>&1; then
+  printf 'ok %s\n' "$label"
+else
+  status=$?
+  printf 'error %s\n' "$label" >&2
+  cat "$output_file" >&2
+  exit "$status"
+fi
