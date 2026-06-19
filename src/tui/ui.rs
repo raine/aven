@@ -435,11 +435,12 @@ fn render_task_list(
         return;
     }
 
+    let project_width = project_column_width(store, area.width < 90);
     let columns = if area.width < 90 {
         [
             Constraint::Length(12),
             Constraint::Fill(1),
-            Constraint::Max(16),
+            Constraint::Length(project_width),
             Constraint::Length(8),
             Constraint::Length(3),
             Constraint::Length(5),
@@ -447,8 +448,8 @@ fn render_task_list(
     } else {
         [
             Constraint::Length(12),
-            Constraint::Fill(2),
-            Constraint::Max(30),
+            Constraint::Fill(1),
+            Constraint::Length(project_width),
             Constraint::Length(10),
             Constraint::Length(3),
             Constraint::Length(5),
@@ -496,6 +497,18 @@ fn render_task_list(
             break;
         }
     }
+}
+
+fn project_column_width(store: &TuiStore, narrow: bool) -> u16 {
+    let max_width = if narrow { 14 } else { 18 };
+    store
+        .tasks
+        .iter()
+        .map(|item| item.task.project_key.chars().count() as u16)
+        .max()
+        .unwrap_or(7)
+        .max(7)
+        .min(max_width)
 }
 
 fn task_visual_row(store: &TuiStore, selected_task: usize) -> usize {
