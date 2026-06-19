@@ -1,12 +1,14 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossterm::event::{self, Event};
+use crossterm::event::{self, Event, KeyCode};
 use ratatui::DefaultTerminal;
 use ratatui::widgets::{ListState, TableState};
 use sqlx::SqlitePool;
 
-use crate::tui::event::{Action, CommandLookup, lookup_command};
+use crate::tui::event::{
+    Action, CommandLookup, ShortcutLookup, lookup_command, resolve_shortcut, shortcut_label,
+};
 use crate::tui::store::{SidebarEntry, TuiStore};
 use crate::tui::ui;
 
@@ -34,6 +36,7 @@ pub(crate) struct App {
     pub(crate) command_input: String,
     pub(crate) message: Option<String>,
     pub(crate) message_at: Option<Instant>,
+    pending_shortcut: Vec<KeyCode>,
 }
 
 impl App {
@@ -55,6 +58,7 @@ impl App {
             command_input: String::new(),
             message: None,
             message_at: None,
+            pending_shortcut: Vec::new(),
         };
         app.widgets.sidebar.select(app.store.sidebar_selection());
         app.widgets
@@ -71,14 +75,14 @@ impl App {
             if event::poll(Duration::from_millis(250))?
                 && let Event::Key(key) = event::read()?
             {
-                let action = if self.command_open {
-                    Action::from_command_key(key.code)
+                let result = if self.command_open {
+                    self.handle(Action::from_command_key(key.code)).await
                 } else if self.search_open {
-                    Action::from_search_key(key.code)
+                    self.handle(Action::from_search_key(key.code)).await
                 } else {
-                    Action::from_normal_key(key.code)
+                    self.handle_normal_key(key.code).await
                 };
-                if let Err(error) = self.handle(action).await {
+                if let Err(error) = result {
                     self.set_message(format!("error: {error:#}"));
                 }
             }
@@ -104,7 +108,41 @@ impl App {
             command_open: self.command_open,
             command_input: self.command_input.clone(),
             message: self.message.clone(),
+            pending_shortcut: self
+                .pending_shortcut
+                .iter()
+                .map(|code| crate::tui::event::key_label(*code))
+                .collect(),
         }
+    }
+
+    async fn handle_normal_key(&mut self, code: KeyCode) -> Result<()> {
+        if code == KeyCode::Esc {
+            if !self.pending_shortcut.is_empty() {
+                self.pending_shortcut.clear();
+            } else {
+                self.handle(Action::CancelOverlay).await?;
+            }
+            return Ok(());
+        }
+
+        let mut sequence = self.pending_shortcut.clone();
+        sequence.push(code);
+        match resolve_shortcut(&sequence) {
+            ShortcutLookup::Found(action) | ShortcutLookup::Ambiguous(action) => {
+                self.pending_shortcut.clear();
+                self.handle(action).await?;
+            }
+            ShortcutLookup::Prefix => {
+                self.pending_shortcut = sequence;
+            }
+            ShortcutLookup::Missing => {
+                let label = shortcut_label(&sequence);
+                self.pending_shortcut.clear();
+                self.set_message(format!("invalid shortcut: {label}"));
+            }
+        }
+        Ok(())
     }
 
     async fn handle(&mut self, action: Action) -> Result<()> {
@@ -261,6 +299,7 @@ impl App {
     }
 
     fn begin_search(&mut self) {
+        self.pending_shortcut.clear();
         self.search_open = true;
         self.search_input = self.store.filters.search.clone().unwrap_or_default();
     }
@@ -279,6 +318,7 @@ impl App {
     }
 
     fn begin_command(&mut self) {
+        self.pending_shortcut.clear();
         self.command_open = true;
         self.command_input.clear();
         self.help_open = false;
@@ -292,6 +332,7 @@ impl App {
     fn accept_command(&mut self) -> Option<Action> {
         match lookup_command(&self.command_input) {
             CommandLookup::Found(action) => {
+                self.pending_shortcut.clear();
                 self.command_open = false;
                 self.command_input.clear();
                 Some(action)
@@ -312,6 +353,7 @@ impl App {
     }
 
     fn cancel_overlay(&mut self) {
+        self.pending_shortcut.clear();
         if self.command_open {
             self.cancel_command();
         } else if self.help_open {
@@ -440,6 +482,14 @@ mod tests {
     use super::*;
     use crate::tui::store::SidebarTarget;
 
+    async fn test_app() -> App {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        App::new(pool).await.unwrap()
+    }
+
     fn section(label: &str) -> SidebarEntry {
         SidebarEntry {
             label: label.to_string(),
@@ -489,5 +539,42 @@ mod tests {
     #[test]
     fn wraps_up_from_first_task_to_last_task() {
         assert_eq!(next_index(Some(0), 3, -1, true), Some(2));
+    }
+
+    #[tokio::test]
+    async fn prefix_key_enters_prefix_mode() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        assert_eq!(app.pending_shortcut, vec![KeyCode::Char('m')]);
+    }
+
+    #[tokio::test]
+    async fn esc_cancels_prefix_before_overlay() {
+        let mut app = test_app().await;
+        app.help_open = true;
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Esc).await.unwrap();
+        assert!(app.pending_shortcut.is_empty());
+        assert!(app.help_open);
+
+        app.handle_normal_key(KeyCode::Esc).await.unwrap();
+        assert!(!app.help_open);
+    }
+
+    #[tokio::test]
+    async fn invalid_continuation_shows_message() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('z')).await.unwrap();
+        assert!(app.pending_shortcut.is_empty());
+        assert_eq!(app.message.as_deref(), Some("invalid shortcut: m z"));
+    }
+
+    #[tokio::test]
+    async fn valid_continuation_executes_and_clears() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        assert!(app.pending_shortcut.is_empty());
     }
 }

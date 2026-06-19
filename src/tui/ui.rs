@@ -11,7 +11,7 @@ use ratatui::widgets::{
 use crate::query::TaskListItem;
 use crate::render::quote;
 use crate::tui::app::{Focus, WidgetState};
-use crate::tui::event::{COMMANDS, CommandSpec, matching_commands};
+use crate::tui::event::{COMMANDS, CommandSpec, key_label, matching_commands};
 use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, ORANGE, PINK, RED, SELECTED,
@@ -29,6 +29,7 @@ pub(crate) struct ViewState {
     pub(crate) command_open: bool,
     pub(crate) command_input: String,
     pub(crate) message: Option<String>,
+    pub(crate) pending_shortcut: Vec<String>,
 }
 
 pub(crate) fn render(
@@ -79,6 +80,9 @@ pub(crate) fn render(
     }
     if view.help_open {
         render_help(frame);
+    }
+    if !view.pending_shortcut.is_empty() && !view.search_open && !view.command_open {
+        render_prefix_hints(frame, view);
     }
     if view.search_open {
         render_search(frame, view);
@@ -178,11 +182,13 @@ fn footer_bar(view: &ViewState) -> Paragraph<'static> {
         Focus::Sidebar => "sidebar",
         Focus::Tasks => "tasks",
     };
-    let message = view
-        .message
-        .as_deref()
-        .map(|message| format!("  {message}"))
-        .unwrap_or_default();
+    let message = if let Some(message) = &view.message {
+        format!("  {message}")
+    } else if !view.pending_shortcut.is_empty() {
+        format!("  pending: {}", view.pending_shortcut.join(" "))
+    } else {
+        String::new()
+    };
     let first = Line::from(vec![
         Span::styled("atm", Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
         Span::raw("  "),
@@ -862,6 +868,64 @@ fn render_search(frame: &mut Frame, view: &ViewState) {
     );
 }
 
+fn prefix_hint_lines(pending: &[String]) -> Vec<Line<'static>> {
+    COMMANDS
+        .iter()
+        .flat_map(|command| {
+            command.keys.iter().filter_map(move |key| {
+                if key.codes.len() <= pending.len() {
+                    return None;
+                }
+                let labels: Vec<String> = key.codes.iter().map(|code| key_label(*code)).collect();
+                if labels.len() <= pending.len()
+                    || !labels
+                        .iter()
+                        .zip(pending.iter())
+                        .all(|(actual, expected)| actual == expected)
+                {
+                    return None;
+                }
+                let next_key = labels[pending.len()].clone();
+                Some(Line::from(vec![
+                    Span::styled(
+                        format!(" {:<6} ", next_key),
+                        Style::new().fg(FG_MUTED).bg(BG_PANEL),
+                    ),
+                    Span::styled(
+                        format!(":{:<18}", command.name),
+                        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(command.description, Style::new().fg(FG_DIM)),
+                ]))
+            })
+        })
+        .collect()
+}
+
+fn render_prefix_hints(frame: &mut Frame, view: &ViewState) {
+    let lines = prefix_hint_lines(&view.pending_shortcut);
+    if lines.is_empty() {
+        return;
+    }
+    let height = (lines.len().min(8) as u16).saturating_add(2);
+    let area = centered(frame.area(), 72, height);
+    frame.render_widget(Clear, area);
+    let title = format!("{} …", view.pending_shortcut.join(" "));
+    let block = Block::new()
+        .title(Line::from(title))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(ACCENT))
+        .padding(Padding::horizontal(1))
+        .style(Style::new().bg(BG_ALT));
+    frame.render_widget(
+        Paragraph::new(Text::from(lines.into_iter().take(8).collect::<Vec<_>>()))
+            .block(block)
+            .style(Style::new().fg(FG).bg(BG_ALT)),
+        area,
+    );
+}
+
 fn overlay_block(title: &'static str) -> Block<'static> {
     Block::new()
         .title(title)
@@ -899,5 +963,28 @@ mod tests {
     #[test]
     fn unix_seconds_parses_utc_timestamp() {
         assert_eq!(unix_seconds("1970-01-02T01:02:03Z"), Some(90_123));
+    }
+
+    #[test]
+    fn prefix_hint_lines_use_shared_catalog() {
+        let lines = prefix_hint_lines(&["m".to_string()]);
+        let rendered = lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains(":status-active"));
+        assert!(rendered.contains(" a "));
+    }
+
+    #[test]
+    fn command_line_includes_multi_key_label() {
+        let command = COMMANDS
+            .iter()
+            .find(|command| command.name == "status-active")
+            .unwrap();
+        let line = command_line(command);
+        let rendered = line.to_string();
+        assert!(rendered.contains("4/m a"));
     }
 }

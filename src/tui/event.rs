@@ -150,8 +150,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         section: "Navigation",
         keys: &[
             KeySequence {
-                codes: &[KeyCode::Char('g')],
-                label: "g",
+                codes: &[KeyCode::Char('g'), KeyCode::Char('g')],
+                label: "g g",
             },
             KeySequence {
                 codes: &[KeyCode::Home],
@@ -262,63 +262,125 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "status-inbox",
         description: "set status to inbox",
         section: "Status",
-        keys: &[KeySequence {
-            codes: &[KeyCode::Char('1')],
-            label: "1",
-        }],
+        keys: &[
+            KeySequence {
+                codes: &[KeyCode::Char('1')],
+                label: "1",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('m'), KeyCode::Char('i')],
+                label: "m i",
+            },
+        ],
         action: Action::SetStatus("inbox"),
     },
     CommandSpec {
         name: "status-backlog",
         description: "set status to backlog",
         section: "Status",
-        keys: &[KeySequence {
-            codes: &[KeyCode::Char('2')],
-            label: "2",
-        }],
+        keys: &[
+            KeySequence {
+                codes: &[KeyCode::Char('2')],
+                label: "2",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('m'), KeyCode::Char('b')],
+                label: "m b",
+            },
+        ],
         action: Action::SetStatus("backlog"),
     },
     CommandSpec {
         name: "status-todo",
         description: "set status to todo",
         section: "Status",
-        keys: &[KeySequence {
-            codes: &[KeyCode::Char('3')],
-            label: "3",
-        }],
+        keys: &[
+            KeySequence {
+                codes: &[KeyCode::Char('3')],
+                label: "3",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('m'), KeyCode::Char('t')],
+                label: "m t",
+            },
+        ],
         action: Action::SetStatus("todo"),
     },
     CommandSpec {
         name: "status-active",
         description: "set status to active",
         section: "Status",
-        keys: &[KeySequence {
-            codes: &[KeyCode::Char('4')],
-            label: "4",
-        }],
+        keys: &[
+            KeySequence {
+                codes: &[KeyCode::Char('4')],
+                label: "4",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('m'), KeyCode::Char('a')],
+                label: "m a",
+            },
+        ],
         action: Action::SetStatus("active"),
     },
     CommandSpec {
         name: "status-done",
         description: "set status to done",
         section: "Status",
-        keys: &[KeySequence {
-            codes: &[KeyCode::Char('5')],
-            label: "5",
-        }],
+        keys: &[
+            KeySequence {
+                codes: &[KeyCode::Char('5')],
+                label: "5",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('m'), KeyCode::Char('d')],
+                label: "m d",
+            },
+        ],
         action: Action::SetStatus("done"),
     },
     CommandSpec {
         name: "status-canceled",
         description: "set status to canceled",
         section: "Status",
-        keys: &[KeySequence {
-            codes: &[KeyCode::Char('6')],
-            label: "6",
-        }],
+        keys: &[
+            KeySequence {
+                codes: &[KeyCode::Char('6')],
+                label: "6",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('m'), KeyCode::Char('x')],
+                label: "m x",
+            },
+        ],
         action: Action::SetStatus("canceled"),
     },
 ];
+
+pub(crate) fn key_label(code: KeyCode) -> String {
+    match code {
+        KeyCode::Char(ch) => ch.to_string(),
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Esc => "Esc".to_string(),
+        KeyCode::Backspace => "Backspace".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::BackTab => "Shift+Tab".to_string(),
+        KeyCode::Home => "Home".to_string(),
+        KeyCode::End => "End".to_string(),
+        KeyCode::Up => "Up".to_string(),
+        KeyCode::Down => "Down".to_string(),
+        KeyCode::Left => "Left".to_string(),
+        KeyCode::Right => "Right".to_string(),
+        _ => format!("{code:?}"),
+    }
+}
+
+pub(crate) fn shortcut_label(codes: &[KeyCode]) -> String {
+    codes
+        .iter()
+        .map(|code| key_label(*code))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 pub(crate) fn resolve_shortcut(input: &[KeyCode]) -> ShortcutLookup {
     resolve_shortcut_in(COMMANDS, input)
@@ -396,6 +458,7 @@ impl Action {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn from_normal_key(code: KeyCode) -> Self {
         if code == KeyCode::Esc {
             return Self::CancelOverlay;
@@ -618,15 +681,41 @@ mod tests {
     }
 
     #[test]
+    fn resolves_phase_prefix_shortcuts() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('g')]),
+            ShortcutLookup::Prefix
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('g')]),
+            ShortcutLookup::Found(Action::First)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('m')]),
+            ShortcutLookup::Prefix
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('m'), KeyCode::Char('a')]),
+            ShortcutLookup::Found(Action::SetStatus("active"))
+        );
+    }
+
+    #[test]
+    fn formats_shortcut_labels() {
+        assert_eq!(
+            shortcut_label(&[KeyCode::Char('m'), KeyCode::Char('a')]),
+            "m a"
+        );
+        assert_eq!(shortcut_label(&[KeyCode::Home]), "Home");
+    }
+
+    #[test]
     fn preserves_existing_shortcuts() {
         for command in COMMANDS {
             for key in command.keys {
-                assert_eq!(
-                    key.codes.len(),
-                    1,
-                    "production shortcut for :{} should remain one-key in this phase",
-                    command.name
-                );
+                if key.codes.len() != 1 {
+                    continue;
+                }
                 assert_eq!(
                     Action::from_normal_key(key.codes[0]),
                     command.action,
@@ -639,5 +728,21 @@ mod tests {
 
         assert_eq!(Action::from_normal_key(KeyCode::Esc), Action::CancelOverlay);
         assert_eq!(Action::from_normal_key(KeyCode::Char('z')), Action::None);
+        assert_eq!(Action::from_normal_key(KeyCode::Char('g')), Action::None);
+    }
+
+    #[test]
+    fn production_sequences_are_not_ambiguous() {
+        for command in COMMANDS {
+            for key in command.keys {
+                assert_ne!(
+                    resolve_shortcut(key.codes),
+                    ShortcutLookup::Ambiguous(command.action),
+                    "shortcut {} for :{} should not be ambiguous",
+                    key.label,
+                    command.name
+                );
+            }
+        }
     }
 }
