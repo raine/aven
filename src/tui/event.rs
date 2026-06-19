@@ -31,8 +31,8 @@ pub(crate) enum Action {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct KeyBinding {
-    pub(crate) code: KeyCode,
+pub(crate) struct KeySequence {
+    pub(crate) codes: &'static [KeyCode],
     pub(crate) label: &'static str,
 }
 
@@ -41,7 +41,7 @@ pub(crate) struct CommandSpec {
     pub(crate) name: &'static str,
     pub(crate) description: &'static str,
     pub(crate) section: &'static str,
-    pub(crate) keys: &'static [KeyBinding],
+    pub(crate) keys: &'static [KeySequence],
     pub(crate) action: Action,
 }
 
@@ -53,13 +53,21 @@ pub(crate) enum CommandLookup {
     Missing,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShortcutLookup {
+    Found(Action),
+    Prefix,
+    Ambiguous(Action),
+    Missing,
+}
+
 pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         name: "quit",
         description: "quit the TUI",
         section: "General",
-        keys: &[KeyBinding {
-            code: KeyCode::Char('q'),
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char('q')],
             label: "q",
         }],
         action: Action::Quit,
@@ -68,8 +76,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "command",
         description: "open the command panel",
         section: "General",
-        keys: &[KeyBinding {
-            code: KeyCode::Char(':'),
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char(':')],
             label: ":",
         }],
         action: Action::BeginCommand,
@@ -78,8 +86,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "help",
         description: "toggle shortcut help",
         section: "General",
-        keys: &[KeyBinding {
-            code: KeyCode::Char('?'),
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char('?')],
             label: "?",
         }],
         action: Action::ToggleHelp,
@@ -88,8 +96,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "refresh",
         description: "reload tasks",
         section: "General",
-        keys: &[KeyBinding {
-            code: KeyCode::Char('r'),
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char('r')],
             label: "r",
         }],
         action: Action::Refresh,
@@ -98,8 +106,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "search",
         description: "search title and description",
         section: "General",
-        keys: &[KeyBinding {
-            code: KeyCode::Char('/'),
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char('/')],
             label: "/",
         }],
         action: Action::BeginSearch,
@@ -109,12 +117,12 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         description: "move selection down",
         section: "Navigation",
         keys: &[
-            KeyBinding {
-                code: KeyCode::Char('j'),
+            KeySequence {
+                codes: &[KeyCode::Char('j')],
                 label: "j",
             },
-            KeyBinding {
-                code: KeyCode::Down,
+            KeySequence {
+                codes: &[KeyCode::Down],
                 label: "Down",
             },
         ],
@@ -125,12 +133,12 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         description: "move selection up",
         section: "Navigation",
         keys: &[
-            KeyBinding {
-                code: KeyCode::Char('k'),
+            KeySequence {
+                codes: &[KeyCode::Char('k')],
                 label: "k",
             },
-            KeyBinding {
-                code: KeyCode::Up,
+            KeySequence {
+                codes: &[KeyCode::Up],
                 label: "Up",
             },
         ],
@@ -141,12 +149,12 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         description: "jump to the first item",
         section: "Navigation",
         keys: &[
-            KeyBinding {
-                code: KeyCode::Char('g'),
+            KeySequence {
+                codes: &[KeyCode::Char('g')],
                 label: "g",
             },
-            KeyBinding {
-                code: KeyCode::Home,
+            KeySequence {
+                codes: &[KeyCode::Home],
                 label: "Home",
             },
         ],
@@ -157,12 +165,12 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         description: "jump to the last item",
         section: "Navigation",
         keys: &[
-            KeyBinding {
-                code: KeyCode::Char('G'),
+            KeySequence {
+                codes: &[KeyCode::Char('G')],
                 label: "G",
             },
-            KeyBinding {
-                code: KeyCode::End,
+            KeySequence {
+                codes: &[KeyCode::End],
                 label: "End",
             },
         ],
@@ -173,12 +181,12 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         description: "switch between views and tasks",
         section: "Navigation",
         keys: &[
-            KeyBinding {
-                code: KeyCode::Tab,
+            KeySequence {
+                codes: &[KeyCode::Tab],
                 label: "Tab",
             },
-            KeyBinding {
-                code: KeyCode::BackTab,
+            KeySequence {
+                codes: &[KeyCode::BackTab],
                 label: "Shift+Tab",
             },
         ],
@@ -189,12 +197,12 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         description: "select a view or toggle task detail",
         section: "Navigation",
         keys: &[
-            KeyBinding {
-                code: KeyCode::Enter,
+            KeySequence {
+                codes: &[KeyCode::Enter],
                 label: "Enter",
             },
-            KeyBinding {
-                code: KeyCode::Char('l'),
+            KeySequence {
+                codes: &[KeyCode::Char('l')],
                 label: "l",
             },
         ],
@@ -204,8 +212,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "sort",
         description: "cycle sort order",
         section: "Tasks",
-        keys: &[KeyBinding {
-            code: KeyCode::Char('s'),
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char('s')],
             label: "s",
         }],
         action: Action::CycleSort,
@@ -214,8 +222,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "priority-next",
         description: "cycle priority forward",
         section: "Tasks",
-        keys: &[KeyBinding {
-            code: KeyCode::Char('p'),
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char('p')],
             label: "p",
         }],
         action: Action::CyclePriority(false),
@@ -224,8 +232,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "priority-prev",
         description: "cycle priority backward",
         section: "Tasks",
-        keys: &[KeyBinding {
-            code: KeyCode::Char('P'),
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char('P')],
             label: "P",
         }],
         action: Action::CyclePriority(true),
@@ -234,8 +242,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "delete",
         description: "delete selected task",
         section: "Tasks",
-        keys: &[KeyBinding {
-            code: KeyCode::Char('d'),
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char('d')],
             label: "d",
         }],
         action: Action::Delete,
@@ -244,8 +252,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "restore",
         description: "restore selected task",
         section: "Tasks",
-        keys: &[KeyBinding {
-            code: KeyCode::Char('u'),
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char('u')],
             label: "u",
         }],
         action: Action::Restore,
@@ -254,8 +262,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "status-inbox",
         description: "set status to inbox",
         section: "Status",
-        keys: &[KeyBinding {
-            code: KeyCode::Char('1'),
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char('1')],
             label: "1",
         }],
         action: Action::SetStatus("inbox"),
@@ -264,8 +272,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "status-backlog",
         description: "set status to backlog",
         section: "Status",
-        keys: &[KeyBinding {
-            code: KeyCode::Char('2'),
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char('2')],
             label: "2",
         }],
         action: Action::SetStatus("backlog"),
@@ -274,8 +282,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "status-todo",
         description: "set status to todo",
         section: "Status",
-        keys: &[KeyBinding {
-            code: KeyCode::Char('3'),
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char('3')],
             label: "3",
         }],
         action: Action::SetStatus("todo"),
@@ -284,8 +292,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "status-active",
         description: "set status to active",
         section: "Status",
-        keys: &[KeyBinding {
-            code: KeyCode::Char('4'),
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char('4')],
             label: "4",
         }],
         action: Action::SetStatus("active"),
@@ -294,8 +302,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "status-done",
         description: "set status to done",
         section: "Status",
-        keys: &[KeyBinding {
-            code: KeyCode::Char('5'),
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char('5')],
             label: "5",
         }],
         action: Action::SetStatus("done"),
@@ -304,13 +312,44 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "status-canceled",
         description: "set status to canceled",
         section: "Status",
-        keys: &[KeyBinding {
-            code: KeyCode::Char('6'),
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char('6')],
             label: "6",
         }],
         action: Action::SetStatus("canceled"),
     },
 ];
+
+pub(crate) fn resolve_shortcut(input: &[KeyCode]) -> ShortcutLookup {
+    resolve_shortcut_in(COMMANDS, input)
+}
+
+pub(crate) fn resolve_shortcut_in(commands: &[CommandSpec], input: &[KeyCode]) -> ShortcutLookup {
+    if input.is_empty() {
+        return ShortcutLookup::Missing;
+    }
+
+    let mut exact = Vec::new();
+    let mut prefix = false;
+
+    for command in commands {
+        for key in command.keys {
+            if key.codes == input {
+                exact.push(command.action);
+            } else if key.codes.starts_with(input) {
+                prefix = true;
+            }
+        }
+    }
+
+    match (exact.as_slice(), prefix) {
+        ([action], false) => ShortcutLookup::Found(*action),
+        ([action], true) => ShortcutLookup::Ambiguous(*action),
+        ([action, ..], _) => ShortcutLookup::Ambiguous(*action),
+        ([], true) => ShortcutLookup::Prefix,
+        ([], false) => ShortcutLookup::Missing,
+    }
+}
 
 pub(crate) fn matching_commands(input: &str) -> Vec<&'static CommandSpec> {
     let input = input.trim();
@@ -362,16 +401,10 @@ impl Action {
             return Self::CancelOverlay;
         }
 
-        COMMANDS
-            .iter()
-            .find_map(|command| {
-                command
-                    .keys
-                    .iter()
-                    .any(|key| key.code == code)
-                    .then_some(command.action)
-            })
-            .unwrap_or(Self::None)
+        match resolve_shortcut(&[code]) {
+            ShortcutLookup::Found(action) | ShortcutLookup::Ambiguous(action) => action,
+            ShortcutLookup::Prefix | ShortcutLookup::Missing => Self::None,
+        }
     }
 }
 
@@ -479,35 +512,132 @@ mod tests {
     }
 
     #[test]
+    fn resolves_single_key_shortcuts() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('q')]),
+            ShortcutLookup::Found(Action::Quit)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('j')]),
+            ShortcutLookup::Found(Action::MoveDown)
+        );
+    }
+
+    #[test]
+    fn resolves_multi_key_sequences_from_catalog() {
+        let commands = [CommandSpec {
+            name: "test-sequence",
+            description: "test sequence",
+            section: "Test",
+            keys: &[KeySequence {
+                codes: &[KeyCode::Char('a'), KeyCode::Char('t')],
+                label: "a t",
+            }],
+            action: Action::BeginSearch,
+        }];
+
+        assert_eq!(
+            resolve_shortcut_in(&commands, &[KeyCode::Char('a')]),
+            ShortcutLookup::Prefix
+        );
+        assert_eq!(
+            resolve_shortcut_in(&commands, &[KeyCode::Char('a'), KeyCode::Char('t')]),
+            ShortcutLookup::Found(Action::BeginSearch)
+        );
+    }
+
+    #[test]
+    fn resolves_exact_prefix_ambiguity() {
+        let commands = [
+            CommandSpec {
+                name: "single-g",
+                description: "single g",
+                section: "Test",
+                keys: &[KeySequence {
+                    codes: &[KeyCode::Char('g')],
+                    label: "g",
+                }],
+                action: Action::First,
+            },
+            CommandSpec {
+                name: "double-g",
+                description: "double g",
+                section: "Test",
+                keys: &[KeySequence {
+                    codes: &[KeyCode::Char('g'), KeyCode::Char('g')],
+                    label: "g g",
+                }],
+                action: Action::Last,
+            },
+        ];
+
+        assert_eq!(
+            resolve_shortcut_in(&commands, &[KeyCode::Char('g')]),
+            ShortcutLookup::Ambiguous(Action::First)
+        );
+    }
+
+    #[test]
+    fn resolves_duplicate_exact_sequences_as_ambiguous() {
+        let commands = [
+            CommandSpec {
+                name: "first-q",
+                description: "first q",
+                section: "Test",
+                keys: &[KeySequence {
+                    codes: &[KeyCode::Char('q')],
+                    label: "q",
+                }],
+                action: Action::Quit,
+            },
+            CommandSpec {
+                name: "second-q",
+                description: "second q",
+                section: "Test",
+                keys: &[KeySequence {
+                    codes: &[KeyCode::Char('q')],
+                    label: "q",
+                }],
+                action: Action::Refresh,
+            },
+        ];
+
+        assert_eq!(
+            resolve_shortcut_in(&commands, &[KeyCode::Char('q')]),
+            ShortcutLookup::Ambiguous(Action::Quit)
+        );
+    }
+
+    #[test]
+    fn resolver_reports_missing_and_empty_inputs() {
+        assert_eq!(resolve_shortcut(&[]), ShortcutLookup::Missing);
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('z')]),
+            ShortcutLookup::Missing
+        );
+    }
+
+    #[test]
     fn preserves_existing_shortcuts() {
-        assert_eq!(Action::from_normal_key(KeyCode::Char('q')), Action::Quit);
-        assert_eq!(
-            Action::from_normal_key(KeyCode::Char('?')),
-            Action::ToggleHelp
-        );
-        assert_eq!(
-            Action::from_normal_key(KeyCode::Char('/')),
-            Action::BeginSearch
-        );
-        assert_eq!(Action::from_normal_key(KeyCode::Char('r')), Action::Refresh);
-        assert_eq!(
-            Action::from_normal_key(KeyCode::Char('s')),
-            Action::CycleSort
-        );
-        assert_eq!(
-            Action::from_normal_key(KeyCode::Char('p')),
-            Action::CyclePriority(false)
-        );
-        assert_eq!(
-            Action::from_normal_key(KeyCode::Char('P')),
-            Action::CyclePriority(true)
-        );
-        assert_eq!(Action::from_normal_key(KeyCode::Char('d')), Action::Delete);
-        assert_eq!(Action::from_normal_key(KeyCode::Char('u')), Action::Restore);
-        assert_eq!(Action::from_normal_key(KeyCode::Tab), Action::ToggleFocus);
-        assert_eq!(
-            Action::from_normal_key(KeyCode::Enter),
-            Action::ToggleDetail
-        );
+        for command in COMMANDS {
+            for key in command.keys {
+                assert_eq!(
+                    key.codes.len(),
+                    1,
+                    "production shortcut for :{} should remain one-key in this phase",
+                    command.name
+                );
+                assert_eq!(
+                    Action::from_normal_key(key.codes[0]),
+                    command.action,
+                    "shortcut {} for :{} resolved incorrectly",
+                    key.label,
+                    command.name
+                );
+            }
+        }
+
+        assert_eq!(Action::from_normal_key(KeyCode::Esc), Action::CancelOverlay);
+        assert_eq!(Action::from_normal_key(KeyCode::Char('z')), Action::None);
     }
 }
