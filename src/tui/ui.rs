@@ -516,21 +516,13 @@ fn task_visual_row(store: &TuiStore, selected_task: usize) -> usize {
 
 fn render_task_header(frame: &mut Frame, area: Rect, columns: [Constraint; 6]) {
     let cells = Layout::horizontal(columns).areas::<6>(area);
-    frame.render_widget(Block::new().style(Style::new().bg(BG_ALT)), area);
-    for (area, label) in
-        cells
-            .into_iter()
-            .zip(["REF", "TITLE", "PROJECT / LABELS", "STATUS", "P", "AGE"])
+    let style = Style::new().fg(BG).bg(BORDER).add_modifier(Modifier::BOLD);
+    frame.render_widget(Block::new().style(style), area);
+    for (area, label) in cells
+        .into_iter()
+        .zip(["REF", "TITLE", "PROJECT", "STATUS", "P", "AGE"])
     {
-        frame.render_widget(
-            Paragraph::new(label).style(
-                Style::new()
-                    .fg(FG_DIM)
-                    .bg(BG_ALT)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            area,
-        );
+        frame.render_widget(Paragraph::new(label).style(style), area);
     }
 }
 
@@ -642,17 +634,12 @@ fn unix_days_from_civil(year: i64, month: u32, day: u32) -> i64 {
 }
 
 fn project_cell(item: &TaskListItem) -> Line<'static> {
-    let mut spans = vec![Span::styled(
+    Line::from(Span::styled(
         item.task.project_key.clone(),
         Style::new()
             .fg(theme::project_color(&item.task.project_key))
             .add_modifier(Modifier::BOLD),
-    )];
-    for label in &item.labels {
-        spans.push(Span::raw(" "));
-        spans.push(crate::tui::widgets::label_pill(label));
-    }
-    Line::from(spans)
+    ))
 }
 
 fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usize>, area: Rect) {
