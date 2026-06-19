@@ -343,14 +343,21 @@ fn render_tasks(
     view: &ViewState,
     area: Rect,
 ) {
-    let header = Row::new(["  REF", "TITLE", "PROJECT / LABELS", "STATUS", "PRIORITY"])
-        .style(
-            Style::new()
-                .fg(FG_DIM)
-                .bg(BG_ALT)
-                .add_modifier(Modifier::BOLD),
-        )
-        .height(1);
+    let header = Row::new([
+        "  REF",
+        "TITLE",
+        "PROJECT / LABELS",
+        "STATUS",
+        "PRIORITY",
+        "AGE",
+    ])
+    .style(
+        Style::new()
+            .fg(FG_DIM)
+            .bg(BG_ALT)
+            .add_modifier(Modifier::BOLD),
+    )
+    .height(1);
 
     let [table_area, preview_area] = if area.height >= 24 {
         Layout::vertical([Constraint::Fill(1), Constraint::Length(8)]).areas(area)
@@ -371,6 +378,7 @@ fn render_tasks(
             Constraint::Max(16),
             Constraint::Length(8),
             Constraint::Length(8),
+            Constraint::Length(5),
         ]
     } else {
         [
@@ -379,6 +387,7 @@ fn render_tasks(
             Constraint::Max(30),
             Constraint::Length(10),
             Constraint::Length(11),
+            Constraint::Length(5),
         ]
     };
     let table = Table::new(rows, columns)
@@ -511,6 +520,7 @@ fn group_row(status: &str, count: usize) -> Row<'static> {
         Cell::from(""),
         Cell::from(""),
         Cell::from(""),
+        Cell::from(""),
     ])
     .style(Style::new().bg(BG_ALT))
 }
@@ -534,6 +544,10 @@ fn task_row(item: &TaskListItem, _index: usize) -> Row<'static> {
             priority_short(&item.task.priority),
             theme::priority_style(&item.task.priority).add_modifier(Modifier::BOLD),
         )),
+        Cell::from(Span::styled(
+            task_age(&item.task.created_at),
+            Style::new().fg(FG_DIM),
+        )),
     ])
     .style(Style::new().bg(BG))
 }
@@ -544,6 +558,56 @@ fn short_ref(display_ref: &str) -> String {
         .map(|(_, suffix)| suffix)
         .unwrap_or(display_ref)
         .to_string()
+}
+
+fn task_age(created_at: &str) -> String {
+    let Some(created_seconds) = unix_seconds(created_at) else {
+        return String::new();
+    };
+    let now_seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(created_seconds);
+    compact_age(now_seconds.saturating_sub(created_seconds))
+}
+
+fn compact_age(age_seconds: i64) -> String {
+    let hours = age_seconds / 3_600;
+    if hours < 24 {
+        return format!("{}h", hours.max(0));
+    }
+    let days = hours / 24;
+    if days < 14 {
+        return format!("{days}d");
+    }
+    let weeks = days / 7;
+    if weeks < 13 {
+        return format!("{weeks}w");
+    }
+    format!("{}mo", days / 30)
+}
+
+fn unix_seconds(value: &str) -> Option<i64> {
+    let (date, time) = value.trim_end_matches('Z').split_once('T')?;
+    let mut date = date.split('-');
+    let year = date.next()?.parse::<i64>().ok()?;
+    let month = date.next()?.parse::<u32>().ok()?;
+    let day = date.next()?.parse::<u32>().ok()?;
+    let mut time = time.split(':');
+    let hour = time.next()?.parse::<i64>().ok()?;
+    let minute = time.next()?.parse::<i64>().ok()?;
+    let second = time.next()?.parse::<i64>().ok()?;
+    Some(unix_days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second)
+}
+
+fn unix_days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+    let year = year - if month <= 2 { 1 } else { 0 };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = year - era * 400;
+    let month = month as i64;
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 fn project_cell(item: &TaskListItem) -> Line<'static> {
@@ -727,4 +791,22 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
     .flex(Flex::Center)
     .areas(area);
     area
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_age_formats_hours_days_weeks_and_months() {
+        assert_eq!(compact_age(6 * 3_600), "6h");
+        assert_eq!(compact_age(13 * 86_400), "13d");
+        assert_eq!(compact_age(9 * 7 * 86_400), "9w");
+        assert_eq!(compact_age(122 * 86_400), "4mo");
+    }
+
+    #[test]
+    fn unix_seconds_parses_utc_timestamp() {
+        assert_eq!(unix_seconds("1970-01-02T01:02:03Z"), Some(90_123));
+    }
 }
