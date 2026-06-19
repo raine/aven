@@ -20,8 +20,9 @@ Choose a local database path:
 
 If neither is set, atm reads config from the platform config directory,
 for example ~/.config/agentic-task-manager/config.toml on Linux. If the
-config has no local.db_path, atm stores data under the operating system app
-data directory, for example ~/.local/share/atm/db.sqlite on Linux.
+config has no local.db_path, atm stores data under XDG_STATE_HOME, or
+~/.local/state when XDG_STATE_HOME is unset. The default database path is
+~/.local/state/atm/db.sqlite.
 
 Create a default config file:
 

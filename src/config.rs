@@ -110,7 +110,11 @@ pub fn config_file_path() -> Result<PathBuf> {
 }
 
 pub fn default_db_path() -> Result<PathBuf> {
-    let mut dir = dirs::data_dir().context("could not find app data directory")?;
+    let mut dir = env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| dirs::home_dir().map(|home| home.join(".local/state")))
+        .context("could not find state directory")?;
     dir.push("atm");
     dir.push("db.sqlite");
     Ok(dir)
