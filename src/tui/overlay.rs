@@ -11,6 +11,13 @@ pub(crate) enum OverlayState {
     MultilineInput(MultilineInputState),
     Picker(PickerState),
     Confirm(ConfirmState),
+    TextPanel(TextPanelState),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TextPanelState {
+    pub(crate) title: String,
+    pub(crate) lines: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +69,13 @@ pub(crate) enum OverlayView {
     MultilineInput(MultilineInputView),
     Picker(PickerView),
     Confirm(ConfirmView),
+    TextPanel(TextPanelView),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TextPanelView {
+    pub(crate) title: String,
+    pub(crate) lines: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,6 +147,7 @@ impl OverlayState {
                 | Self::MultilineInput(_)
                 | Self::Picker(_)
                 | Self::Confirm(_)
+                | Self::TextPanel(_)
         )
     }
 }
@@ -147,6 +162,7 @@ impl OverlayView {
                 | Self::MultilineInput(_)
                 | Self::Picker(_)
                 | Self::Confirm(_)
+                | Self::TextPanel(_)
         )
     }
 }
@@ -186,6 +202,10 @@ impl From<&OverlayState> for OverlayView {
             OverlayState::Confirm(state) => Self::Confirm(ConfirmView {
                 title: state.title.clone(),
                 prompt: state.prompt.clone(),
+            }),
+            OverlayState::TextPanel(state) => Self::TextPanel(TextPanelView {
+                title: state.title.clone(),
+                lines: state.lines.clone(),
             }),
         }
     }
@@ -301,6 +321,10 @@ pub(crate) fn handle_generic_overlay_key(key: KeyEvent, overlay: OverlayState) -
                 })
             }
             _ => OverlayOutcome::None(OverlayState::Confirm(state)),
+        },
+        OverlayState::TextPanel(state) => match key.code {
+            KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
+            _ => OverlayOutcome::None(OverlayState::TextPanel(state)),
         },
         other => OverlayOutcome::None(other),
     }
@@ -521,6 +545,22 @@ mod tests {
         normalize_picker_selection(&mut state);
         assert_eq!(state.selected, 0);
         assert_eq!(visible_picker_indices(&state), vec![0]);
+    }
+
+    #[test]
+    fn text_panel_closes_on_enter_and_esc() {
+        let state = TextPanelState {
+            title: "Conflicts".to_string(),
+            lines: vec!["field=title".to_string()],
+        };
+        assert!(matches!(
+            handle_generic_overlay_key(key(KeyCode::Enter), OverlayState::TextPanel(state.clone())),
+            OverlayOutcome::Cancelled
+        ));
+        assert!(matches!(
+            handle_generic_overlay_key(key(KeyCode::Esc), OverlayState::TextPanel(state)),
+            OverlayOutcome::Cancelled
+        ));
     }
 
     #[test]

@@ -61,6 +61,13 @@ pub(crate) enum Action {
     ClearFilters,
     ToggleDeletedFilter,
     ShowView(ViewTarget),
+    BeginConflictList,
+    ShowConflictDetails,
+    NextConflict,
+    PreviousConflict,
+    AcceptConflictLocal,
+    AcceptConflictRemote,
+    BeginManualConflictMerge,
     Planned(&'static str),
     Disabled(&'static str),
     None,
@@ -91,7 +98,6 @@ pub(crate) struct CommandSpec {
 
 const PLANNED_FLOW_REASON: &str = "not yet implemented";
 const PROJECT_PATH_FLOW_REASON: &str = "requires a multi-step project/path picker flow";
-const CONFLICT_OVERLAY_REASON: &str = "requires the conflict overlay";
 const DUE_SORT_REASON: &str = "tasks do not have due dates";
 
 impl CommandSpec {
@@ -837,7 +843,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ReverseSort,
     ),
     // Conflict
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "conflict-list",
         "list or filter conflicts",
         "Conflict",
@@ -845,9 +851,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('c'), KeyCode::Char('l')],
             label: "c l",
         }],
-        PLANNED_FLOW_REASON,
+        Action::BeginConflictList,
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "conflict-show",
         "show conflict details",
         "Conflict",
@@ -855,9 +861,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('c'), KeyCode::Char('s')],
             label: "c s",
         }],
-        PLANNED_FLOW_REASON,
+        Action::ShowConflictDetails,
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "conflict-next",
         "jump to next conflict",
         "Conflict",
@@ -865,47 +871,47 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('c'), KeyCode::Char('n')],
             label: "c n",
         }],
-        PLANNED_FLOW_REASON,
+        Action::NextConflict,
     ),
-    CommandSpec::planned(
-        "conflict-resolve",
-        "resolve selected conflict",
+    CommandSpec::implemented(
+        "conflict-prev",
+        "jump to previous conflict",
         "Conflict",
         &[KeySequence {
-            codes: &[KeyCode::Char('c'), KeyCode::Char('r')],
-            label: "c r",
+            codes: &[KeyCode::Char('c'), KeyCode::Char('p')],
+            label: "c p",
         }],
-        PLANNED_FLOW_REASON,
+        Action::PreviousConflict,
     ),
-    CommandSpec::disabled(
-        "conflict-use-a",
-        "resolve with variant A",
+    CommandSpec::implemented(
+        "conflict-use-local",
+        "resolve with local value",
         "Conflict",
         &[KeySequence {
             codes: &[KeyCode::Char('c'), KeyCode::Char('a')],
             label: "c a",
         }],
-        CONFLICT_OVERLAY_REASON,
+        Action::AcceptConflictLocal,
     ),
-    CommandSpec::disabled(
-        "conflict-use-b",
-        "resolve with variant B",
+    CommandSpec::implemented(
+        "conflict-use-remote",
+        "resolve with remote value",
         "Conflict",
         &[KeySequence {
-            codes: &[KeyCode::Char('c'), KeyCode::Char('b')],
-            label: "c b",
+            codes: &[KeyCode::Char('c'), KeyCode::Char('r')],
+            label: "c r",
         }],
-        CONFLICT_OVERLAY_REASON,
+        Action::AcceptConflictRemote,
     ),
-    CommandSpec::disabled(
-        "conflict-edit-value",
-        "resolve with manual edit",
+    CommandSpec::implemented(
+        "conflict-manual-merge",
+        "resolve with manual value",
         "Conflict",
         &[KeySequence {
-            codes: &[KeyCode::Char('c'), KeyCode::Char('e')],
-            label: "c e",
+            codes: &[KeyCode::Char('c'), KeyCode::Char('m')],
+            label: "c m",
         }],
-        CONFLICT_OVERLAY_REASON,
+        Action::BeginManualConflictMerge,
     ),
     // Config
     CommandSpec::planned(
@@ -1087,6 +1093,13 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::ClearFilters
             | Action::ToggleDeletedFilter
             | Action::ShowView(_)
+            | Action::BeginConflictList
+            | Action::ShowConflictDetails
+            | Action::NextConflict
+            | Action::PreviousConflict
+            | Action::AcceptConflictLocal
+            | Action::AcceptConflictRemote
+            | Action::BeginManualConflictMerge
     )
 }
 
@@ -1566,6 +1579,38 @@ mod tests {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('c')]),
             ShortcutLookup::Found(Action::ShowView(ViewTarget::Conflicts))
+        );
+    }
+
+    #[test]
+    fn resolves_conflict_shortcuts() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('c'), KeyCode::Char('l')]),
+            ShortcutLookup::Found(Action::BeginConflictList)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('c'), KeyCode::Char('s')]),
+            ShortcutLookup::Found(Action::ShowConflictDetails)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('c'), KeyCode::Char('n')]),
+            ShortcutLookup::Found(Action::NextConflict)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('c'), KeyCode::Char('p')]),
+            ShortcutLookup::Found(Action::PreviousConflict)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('c'), KeyCode::Char('a')]),
+            ShortcutLookup::Found(Action::AcceptConflictLocal)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('c'), KeyCode::Char('r')]),
+            ShortcutLookup::Found(Action::AcceptConflictRemote)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('c'), KeyCode::Char('m')]),
+            ShortcutLookup::Found(Action::BeginManualConflictMerge)
         );
     }
 

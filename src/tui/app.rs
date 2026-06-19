@@ -13,10 +13,10 @@ use crate::tui::event::{
     shortcut_label,
 };
 use crate::tui::overlay::{
-    MultilineInputState, OverlayOutcome, OverlayState, OverlaySubmit, OverlayView, PickerItem,
-    PickerState, TextInputState,
+    ConfirmState, MultilineInputState, OverlayOutcome, OverlayState, OverlaySubmit, OverlayView,
+    PickerItem, PickerState, TextInputState, TextPanelState,
 };
-use crate::tui::store::{SidebarEntry, SidebarTarget, TuiStore};
+use crate::tui::store::{ConflictTarget, SidebarEntry, SidebarTarget, TuiStore};
 use crate::tui::ui;
 
 const ADD_PROJECT_TITLE: &str = "Add project";
@@ -37,6 +37,11 @@ const FILTER_LABEL_TITLE: &str = "Filter: label";
 const FILTER_STATUS_TITLE: &str = "Filter: status";
 const FILTER_PRIORITY_TITLE: &str = "Filter: priority";
 const VIEW_PROJECT_TITLE: &str = "Go: project";
+const CONFLICT_FIELD_TITLE: &str = "Conflict: field";
+const CONFLICT_CONFIRM_LOCAL_TITLE: &str = "Resolve conflict: local";
+const CONFLICT_CONFIRM_REMOTE_TITLE: &str = "Resolve conflict: remote";
+const CONFLICT_MANUAL_TITLE: &str = "Resolve conflict: manual";
+const CONFLICT_DETAILS_TITLE: &str = "Conflict details";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AddTaskDraftState {
@@ -67,6 +72,30 @@ enum AuthoringFlow {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConflictResolutionChoice {
+    Local,
+    Remote,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ConflictFlow {
+    PickVariant {
+        choice: ConflictResolutionChoice,
+        targets: Vec<ConflictTarget>,
+    },
+    ConfirmVariant {
+        choice: ConflictResolutionChoice,
+        target: ConflictTarget,
+    },
+    PickManual {
+        targets: Vec<ConflictTarget>,
+    },
+    EditManual {
+        target: ConflictTarget,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Focus {
     Sidebar,
     Tasks,
@@ -87,6 +116,7 @@ pub(crate) struct App {
     pub(crate) message_at: Option<Instant>,
     pending_shortcut: Vec<KeyCode>,
     authoring: Option<AuthoringFlow>,
+    conflict_flow: Option<ConflictFlow>,
 }
 
 impl App {
@@ -105,6 +135,7 @@ impl App {
             message_at: None,
             pending_shortcut: Vec::new(),
             authoring: None,
+            conflict_flow: None,
         };
         app.widgets.sidebar.select(app.store.sidebar_selection());
         app.widgets
@@ -346,6 +377,28 @@ impl App {
             OverlaySubmit::Picker { title, values } if title == VIEW_PROJECT_TITLE => {
                 self.submit_view_project(values).await?;
             }
+            OverlaySubmit::Picker { title, values } if title == CONFLICT_FIELD_TITLE => {
+                self.submit_conflict_field_picker(values).await?;
+            }
+            OverlaySubmit::Confirm { title }
+                if title == CONFLICT_CONFIRM_LOCAL_TITLE
+                    || title == CONFLICT_CONFIRM_REMOTE_TITLE =>
+            {
+                self.submit_confirmed_conflict_resolution().await?;
+            }
+            OverlaySubmit::Text { title, value } if title == CONFLICT_MANUAL_TITLE => {
+                self.submit_manual_conflict_value(value).await?;
+            }
+            OverlaySubmit::Multiline { title, value } if title == CONFLICT_MANUAL_TITLE => {
+                self.submit_manual_conflict_value(value).await?;
+            }
+            OverlaySubmit::Picker { title, values } if title == CONFLICT_MANUAL_TITLE => {
+                if let Some(value) = values.first() {
+                    self.submit_manual_conflict_value(value.clone()).await?;
+                } else {
+                    self.set_message("no value selected".to_string());
+                }
+            }
             other => self.set_message(other.message()),
         }
         Ok(())
@@ -402,6 +455,19 @@ impl App {
             Action::ClearFilters => self.clear_filters().await?,
             Action::ToggleDeletedFilter => self.toggle_deleted_filter().await?,
             Action::ShowView(target) => self.show_view(target).await?,
+            Action::BeginConflictList => self.open_conflict_list().await?,
+            Action::ShowConflictDetails => self.show_conflict_details().await?,
+            Action::NextConflict => self.move_to_conflict(1),
+            Action::PreviousConflict => self.move_to_conflict(-1),
+            Action::AcceptConflictLocal => {
+                self.begin_conflict_resolution(ConflictResolutionChoice::Local)
+                    .await?
+            }
+            Action::AcceptConflictRemote => {
+                self.begin_conflict_resolution(ConflictResolutionChoice::Remote)
+                    .await?
+            }
+            Action::BeginManualConflictMerge => self.begin_manual_conflict_merge().await?,
             Action::Planned(name) => self.set_message(format!(":{name} is not yet implemented")),
             Action::Disabled(name) => self.set_message(format!(":{name} is disabled")),
             Action::AcceptCommand
@@ -714,6 +780,7 @@ impl App {
         self.pending_shortcut.clear();
         self.overlay = None;
         self.authoring = None;
+        self.conflict_flow = None;
     }
 
     fn accept_command_input(&mut self, input: &str) -> Option<Action> {
@@ -748,6 +815,7 @@ impl App {
     fn cancel_overlay(&mut self) {
         self.pending_shortcut.clear();
         self.authoring = None;
+        self.conflict_flow = None;
         let had_overlay = self.overlay.take().is_some();
         if !had_overlay && self.focus == Focus::Sidebar {
             self.focus = Focus::Tasks;
@@ -1237,10 +1305,361 @@ impl App {
             self.message_at = None;
         }
     }
+
+    async fn open_conflict_list(&mut self) -> Result<()> {
+        let selected = self.store.show_view(SidebarTarget::Conflicts).await?;
+        self.apply_filter_selection(selected);
+        let count = self
+            .store
+            .tasks
+            .iter()
+            .filter(|task| task.has_conflict)
+            .count();
+        let message = if count == 0 {
+            "no unresolved conflicts".to_string()
+        } else {
+            format!("showing {count} conflicted tasks")
+        };
+        self.set_message(message);
+        Ok(())
+    }
+
+    async fn show_conflict_details(&mut self) -> Result<()> {
+        let Some(targets) = self
+            .store
+            .conflict_targets(self.widgets.table.selected())
+            .await?
+        else {
+            self.set_message("no selected task for conflicts".to_string());
+            return Ok(());
+        };
+        if targets.is_empty() {
+            let display_ref = self
+                .store
+                .selected_task(self.widgets.table.selected())
+                .map(|item| item.display_ref.clone())
+                .unwrap_or_else(|| "task".to_string());
+            self.set_message(format!("{display_ref} has no unresolved conflicts"));
+            return Ok(());
+        }
+        let mut lines = Vec::new();
+        for target in &targets {
+            lines.push(format!("field={}", target.field));
+            lines.push(format!(
+                "local {}: {}",
+                target.variant_a, target.local_value
+            ));
+            lines.push(format!(
+                "remote {}: {}",
+                target.variant_b, target.remote_value
+            ));
+            lines.push(String::new());
+        }
+        if lines.last().is_some_and(String::is_empty) {
+            lines.pop();
+        }
+        self.overlay = Some(OverlayState::TextPanel(TextPanelState {
+            title: CONFLICT_DETAILS_TITLE.to_string(),
+            lines,
+        }));
+        Ok(())
+    }
+
+    fn move_to_conflict(&mut self, delta: isize) {
+        let current = self.widgets.table.selected();
+        let Some(next) = self.store.next_conflict_index(current, delta) else {
+            self.set_message("no conflicts in current list".to_string());
+            return;
+        };
+        if current == Some(next) {
+            self.set_message("selected only conflict".to_string());
+            return;
+        }
+        self.widgets.table.select(Some(next));
+        self.focus = Focus::Tasks;
+        let message = if delta > 0 {
+            "selected next conflict"
+        } else {
+            "selected previous conflict"
+        };
+        self.set_message(message.to_string());
+    }
+
+    async fn begin_conflict_resolution(&mut self, choice: ConflictResolutionChoice) -> Result<()> {
+        let Some(targets) = self
+            .store
+            .conflict_targets(self.widgets.table.selected())
+            .await?
+        else {
+            self.set_message("no selected task for conflict resolution".to_string());
+            return Ok(());
+        };
+        if targets.is_empty() {
+            self.set_message("selected task has no unresolved conflicts".to_string());
+            return Ok(());
+        }
+        if targets.len() == 1 {
+            self.open_conflict_confirm(choice, targets[0].clone());
+            return Ok(());
+        }
+        self.conflict_flow = Some(ConflictFlow::PickVariant {
+            choice,
+            targets: targets.clone(),
+        });
+        self.open_conflict_field_picker(&targets);
+        Ok(())
+    }
+
+    async fn begin_manual_conflict_merge(&mut self) -> Result<()> {
+        let Some(targets) = self
+            .store
+            .conflict_targets(self.widgets.table.selected())
+            .await?
+        else {
+            self.set_message("no selected task for conflict resolution".to_string());
+            return Ok(());
+        };
+        if targets.is_empty() {
+            self.set_message("selected task has no unresolved conflicts".to_string());
+            return Ok(());
+        }
+        if targets.len() == 1 {
+            self.open_manual_conflict_editor(targets[0].clone());
+            return Ok(());
+        }
+        self.conflict_flow = Some(ConflictFlow::PickManual {
+            targets: targets.clone(),
+        });
+        self.open_conflict_field_picker(&targets);
+        Ok(())
+    }
+
+    fn open_conflict_field_picker(&mut self, targets: &[ConflictTarget]) {
+        let items = targets
+            .iter()
+            .map(|target| PickerItem {
+                label: target.field.clone(),
+                value: target.field.clone(),
+                selected: false,
+            })
+            .collect();
+        self.overlay = Some(OverlayState::Picker(PickerState {
+            title: CONFLICT_FIELD_TITLE.to_string(),
+            filter: String::new(),
+            selected: 0,
+            items,
+            multi: false,
+        }));
+    }
+
+    async fn submit_conflict_field_picker(&mut self, values: Vec<String>) -> Result<()> {
+        let Some(field) = values.first().cloned() else {
+            self.set_message("no conflict field selected".to_string());
+            return Ok(());
+        };
+        let flow = self.conflict_flow.take();
+        match flow {
+            Some(ConflictFlow::PickVariant { choice, targets }) => {
+                let Some(target) = targets.into_iter().find(|target| target.field == field) else {
+                    self.set_message(format!("no conflict for field={field}"));
+                    return Ok(());
+                };
+                self.open_conflict_confirm(choice, target);
+            }
+            Some(ConflictFlow::PickManual { targets }) => {
+                let Some(target) = targets.into_iter().find(|target| target.field == field) else {
+                    self.set_message(format!("no conflict for field={field}"));
+                    return Ok(());
+                };
+                self.open_manual_conflict_editor(target);
+            }
+            _ => self.set_message("conflict field picker is not active".to_string()),
+        }
+        Ok(())
+    }
+
+    fn open_conflict_confirm(&mut self, choice: ConflictResolutionChoice, target: ConflictTarget) {
+        let value = match choice {
+            ConflictResolutionChoice::Local => target.local_value.as_str(),
+            ConflictResolutionChoice::Remote => target.remote_value.as_str(),
+        };
+        let title = match choice {
+            ConflictResolutionChoice::Local => CONFLICT_CONFIRM_LOCAL_TITLE,
+            ConflictResolutionChoice::Remote => CONFLICT_CONFIRM_REMOTE_TITLE,
+        };
+        self.conflict_flow = Some(ConflictFlow::ConfirmVariant {
+            choice,
+            target: target.clone(),
+        });
+        self.overlay = Some(OverlayState::Confirm(ConfirmState {
+            title: title.to_string(),
+            prompt: format!(
+                "Resolve field={} with {}?",
+                target.field,
+                truncate_value_preview(value, 60)
+            ),
+        }));
+    }
+
+    async fn submit_confirmed_conflict_resolution(&mut self) -> Result<()> {
+        let Some(ConflictFlow::ConfirmVariant { choice, target }) = self.conflict_flow.take()
+        else {
+            self.set_message("conflict confirmation is not active".to_string());
+            return Ok(());
+        };
+        let value = match choice {
+            ConflictResolutionChoice::Local => target.local_value.clone(),
+            ConflictResolutionChoice::Remote => target.remote_value.clone(),
+        };
+        match self.store.resolve_conflict_value(target, value).await {
+            Ok(result) => {
+                self.conflict_flow = None;
+                self.apply_mutation_result(result);
+            }
+            Err(error) => self.set_message(format!("error: {error:#}")),
+        }
+        Ok(())
+    }
+
+    fn open_manual_conflict_editor(&mut self, target: ConflictTarget) {
+        self.conflict_flow = Some(ConflictFlow::EditManual {
+            target: target.clone(),
+        });
+        match target.field.as_str() {
+            "description" => {
+                let mut lines = target
+                    .local_value
+                    .split('\n')
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                if lines.is_empty() {
+                    lines.push(String::new());
+                }
+                let row = lines.len() - 1;
+                let column = lines[row].len();
+                self.overlay = Some(OverlayState::MultilineInput(MultilineInputState {
+                    title: CONFLICT_MANUAL_TITLE.to_string(),
+                    prompt: format!("manual value for field={}:", target.field),
+                    lines,
+                    row,
+                    column,
+                }));
+            }
+            "title" => {
+                let input = target.local_value.clone();
+                let cursor = input.len();
+                self.overlay = Some(OverlayState::TextInput(TextInputState {
+                    title: CONFLICT_MANUAL_TITLE.to_string(),
+                    prompt: format!("manual value for field={}:", target.field),
+                    input,
+                    cursor,
+                }));
+            }
+            "status" => {
+                let items = self
+                    .store
+                    .status_picker_items(Some(target.local_value.as_str()));
+                self.overlay = Some(OverlayState::Picker(PickerState {
+                    title: CONFLICT_MANUAL_TITLE.to_string(),
+                    filter: String::new(),
+                    selected: selected_picker_index(&items),
+                    items,
+                    multi: false,
+                }));
+            }
+            "priority" => {
+                let items = self
+                    .store
+                    .priority_picker_items(target.local_value.as_str());
+                self.overlay = Some(OverlayState::Picker(PickerState {
+                    title: CONFLICT_MANUAL_TITLE.to_string(),
+                    filter: String::new(),
+                    selected: selected_picker_index(&items),
+                    items,
+                    multi: false,
+                }));
+            }
+            "project" => {
+                let items = self
+                    .store
+                    .existing_project_picker_items(target.local_value.as_str());
+                self.overlay = Some(OverlayState::Picker(PickerState {
+                    title: CONFLICT_MANUAL_TITLE.to_string(),
+                    filter: String::new(),
+                    selected: selected_picker_index(&items),
+                    items,
+                    multi: false,
+                }));
+            }
+            "deleted" => {
+                let items = deleted_picker_items(&target.local_value);
+                self.overlay = Some(OverlayState::Picker(PickerState {
+                    title: CONFLICT_MANUAL_TITLE.to_string(),
+                    filter: String::new(),
+                    selected: selected_picker_index(&items),
+                    items,
+                    multi: false,
+                }));
+            }
+            _ => {
+                self.conflict_flow = None;
+                self.overlay = None;
+                self.set_message(format!(
+                    "manual merge is not supported for field={}",
+                    target.field
+                ));
+            }
+        }
+    }
+
+    async fn submit_manual_conflict_value(&mut self, value: String) -> Result<()> {
+        let Some(ConflictFlow::EditManual { target }) = self.conflict_flow.take() else {
+            self.set_message("manual conflict edit is not active".to_string());
+            return Ok(());
+        };
+        match self
+            .store
+            .resolve_conflict_value(target.clone(), value)
+            .await
+        {
+            Ok(result) => {
+                self.conflict_flow = None;
+                self.apply_mutation_result(result);
+            }
+            Err(error) => {
+                self.set_message(format!("error: {error:#}"));
+                self.open_manual_conflict_editor(target);
+            }
+        }
+        Ok(())
+    }
 }
 
 fn selected_picker_index(items: &[PickerItem]) -> usize {
     items.iter().position(|item| item.selected).unwrap_or(0)
+}
+
+fn deleted_picker_items(selected: &str) -> Vec<PickerItem> {
+    ["0", "1"]
+        .into_iter()
+        .map(|value| PickerItem {
+            label: if value == "1" {
+                "deleted".to_string()
+            } else {
+                "not deleted".to_string()
+            },
+            value: value.to_string(),
+            selected: value == selected,
+        })
+        .collect()
+}
+
+fn truncate_value_preview(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let truncated: String = value.chars().take(max_chars).collect();
+    format!("{truncated}…")
 }
 
 fn next_index(selected: Option<usize>, len: usize, delta: isize, wrap: bool) -> Option<usize> {
@@ -1708,9 +2127,297 @@ mod tests {
     #[tokio::test]
     async fn disabled_shortcut_reports_disabled() {
         let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+        assert_eq!(
+            app.message.as_deref(),
+            Some("due date ordering is not supported")
+        );
+    }
+
+    async fn insert_title_conflict(
+        pool: &SqlitePool,
+        app: &mut App,
+        selected: usize,
+        local: &str,
+        remote: &str,
+    ) {
+        let task_id = app.store.tasks[selected].task.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
+             local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
+             VALUES (?, 'title', NULL, ?, ?, NULL, ?, 'a', 'b', ?, 0)",
+        )
+        .bind(&task_id)
+        .bind(local)
+        .bind(remote)
+        .bind(crate::ids::new_id())
+        .bind(crate::ids::now())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+        app.refresh().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn conflict_list_shortcut_applies_conflicts_view() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+        assert_eq!(app.store.active_view, SidebarTarget::Conflicts);
+        assert!(app.store.filters.conflicts_only);
+        assert_eq!(app.message.as_deref(), Some("no unresolved conflicts"));
+    }
+
+    #[tokio::test]
+    async fn conflict_show_opens_text_panel_and_esc_closes() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mut app = App::new(pool.clone()).await.unwrap();
+        let (_, selected) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "Conflict show".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+        app.widgets.table.select(Some(selected));
+        insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextPanel(state))
+                if state.lines.iter().any(|line| line.contains("field=title"))
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn conflict_next_selects_next_conflicted_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mut app = App::new(pool.clone()).await.unwrap();
+        let (_, first) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "First".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let (_, second) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "Second".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let first = first.unwrap();
+        let second = second.unwrap();
+        insert_title_conflict(&pool, &mut app, first, "local one", "remote one").await;
+        insert_title_conflict(&pool, &mut app, second, "local two", "remote two").await;
+        app.widgets.table.select(Some(first));
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        assert_eq!(app.widgets.table.selected(), Some(second));
+        assert_eq!(app.message.as_deref(), Some("selected next conflict"));
+    }
+
+    #[tokio::test]
+    async fn accept_local_conflict_resolves_after_confirmation() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mut app = App::new(pool.clone()).await.unwrap();
+        let (_, selected) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "Before".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+        app.widgets.table.select(Some(selected));
+        insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-        assert_eq!(app.message.as_deref(), Some(":conflict-use-a is disabled"));
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Confirm(state)) if state.title == CONFLICT_CONFIRM_LOCAL_TITLE
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+        assert!(app.overlay.is_none());
+        assert_eq!(app.store.tasks[selected].task.title, "local title");
+        assert!(!app.store.tasks[selected].has_conflict);
+        assert!(
+            app.message.as_deref().is_some_and(
+                |message| message.contains("resolved") && message.contains("field=title")
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn accept_remote_conflict_resolves_after_confirmation() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mut app = App::new(pool.clone()).await.unwrap();
+        let (_, selected) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "Before".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+        app.widgets.table.select(Some(selected));
+        insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+
+        assert_eq!(app.store.tasks[selected].task.title, "remote title");
+        assert!(!app.store.tasks[selected].has_conflict);
+    }
+
+    #[tokio::test]
+    async fn manual_conflict_merge_resolves_with_submitted_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mut app = App::new(pool.clone()).await.unwrap();
+        let (_, selected) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "Before".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+        app.widgets.table.select(Some(selected));
+        insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        type_chars(&mut app, " merged").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert_eq!(app.store.tasks[selected].task.title, "local title merged");
+        assert!(!app.store.tasks[selected].has_conflict);
+    }
+
+    #[tokio::test]
+    async fn conflict_resolution_without_selected_task_reports_message() {
+        let mut app = test_app().await;
+        app.widgets.table.select(None);
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        assert_eq!(
+            app.message.as_deref(),
+            Some("no selected task for conflict resolution")
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_clears_conflict_flow() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mut app = App::new(pool.clone()).await.unwrap();
+        let (_, selected) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "Conflict".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+        app.widgets.table.select(Some(selected));
+        insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        assert!(app.conflict_flow.is_some());
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        assert!(app.conflict_flow.is_none());
+    }
+
+    #[test]
+    fn truncate_value_preview_uses_character_count() {
+        assert_eq!(truncate_value_preview("abc", 5), "abc");
+        assert_eq!(truncate_value_preview("abcdef", 3), "abc…");
     }
 
     #[tokio::test]

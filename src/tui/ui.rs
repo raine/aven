@@ -13,7 +13,7 @@ use crate::render::quote;
 use crate::tui::app::{Focus, WidgetState};
 use crate::tui::event::{COMMANDS, CommandLifecycle, CommandSpec, key_label, matching_commands};
 use crate::tui::overlay::{
-    ConfirmView, MultilineInputView, OverlayView, PickerView, TextInputView,
+    ConfirmView, MultilineInputView, OverlayView, PickerView, TextInputView, TextPanelView,
 };
 use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::theme::{
@@ -957,6 +957,7 @@ fn render_overlay(
         OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
         OverlayView::Picker(state) => render_picker(frame, state),
         OverlayView::Confirm(state) => render_confirm(frame, state),
+        OverlayView::TextPanel(state) => render_text_panel(frame, state),
     }
 }
 
@@ -1061,6 +1062,28 @@ fn render_confirm(frame: &mut Frame, state: &ConfirmView) {
     );
 }
 
+fn render_text_panel(frame: &mut Frame, state: &TextPanelView) {
+    let height = (state.lines.len() as u16).saturating_add(4).min(16);
+    let area = centered(frame.area(), 60, height);
+    frame.render_widget(Clear, area);
+    let mut lines = state
+        .lines
+        .iter()
+        .map(|line| Line::from(line.as_str()))
+        .collect::<Vec<_>>();
+    lines.push(Line::from(Span::styled(
+        "Enter/Esc close",
+        Style::new().fg(FG_MUTED),
+    )));
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(overlay_block(&state.title))
+            .wrap(Wrap { trim: false })
+            .style(Style::new().fg(FG).bg(BG_ALT)),
+        area,
+    );
+}
+
 fn insert_cursor(input: &str, cursor: usize) -> String {
     let cursor = cursor.min(input.len());
     let (before, after) = input.split_at(cursor);
@@ -1156,6 +1179,7 @@ mod tests {
     use super::*;
     use crate::tui::overlay::{
         ConfirmView, MultilineInputView, OverlayView, PickerItem, PickerView, TextInputView,
+        TextPanelView,
     };
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -1181,6 +1205,7 @@ mod tests {
                 OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
                 OverlayView::Picker(state) => render_picker(frame, state),
                 OverlayView::Confirm(state) => render_confirm(frame, state),
+                OverlayView::TextPanel(state) => render_text_panel(frame, state),
                 OverlayView::Detail => {}
             })
             .unwrap();
@@ -1227,7 +1252,7 @@ mod tests {
     fn command_line_marks_planned_actions() {
         let command = COMMANDS
             .iter()
-            .find(|command| command.name == "conflict-list")
+            .find(|command| command.name == "config-show")
             .unwrap();
         let rendered = command_line(command).to_string();
         assert!(rendered.contains("planned"));
@@ -1235,12 +1260,12 @@ mod tests {
 
     #[test]
     fn prefix_hint_lines_mark_planned_actions() {
-        let rendered = prefix_hint_lines(&["c".to_string()])
+        let rendered = prefix_hint_lines(&["C".to_string()])
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(rendered.contains(":conflict-list"));
+        assert!(rendered.contains(":config-show"));
         assert!(rendered.contains("planned"));
     }
 
@@ -1301,20 +1326,34 @@ mod tests {
     fn command_line_marks_disabled_actions() {
         let command = COMMANDS
             .iter()
-            .find(|command| command.name == "conflict-use-a")
+            .find(|command| command.name == "order-due")
             .unwrap();
         assert!(command_line(command).to_string().contains("disabled"));
     }
 
     #[test]
     fn prefix_hint_lines_mark_disabled_actions() {
-        let rendered = prefix_hint_lines(&["c".to_string()])
+        let rendered = prefix_hint_lines(&["o".to_string()])
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(rendered.contains(":conflict-use-a"));
+        assert!(rendered.contains(":order-due"));
         assert!(rendered.contains("disabled"));
+    }
+
+    #[test]
+    fn overlay_render_includes_text_panel_content_and_hint() {
+        let rendered = render_overlay_view(OverlayView::TextPanel(TextPanelView {
+            title: "Conflict details".to_string(),
+            lines: vec![
+                "field=title".to_string(),
+                "local a: local title".to_string(),
+            ],
+        }));
+        assert!(rendered.contains("Conflict details"));
+        assert!(rendered.contains("field=title"));
+        assert!(rendered.contains("Enter/Esc close"));
     }
 
     #[test]

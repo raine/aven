@@ -410,16 +410,16 @@ pub(crate) async fn list_conflicts(
 ) -> Result<Vec<ConflictListItem>> {
     let rows = sqlx::query!(
         r#"SELECT c.task_id AS "task_id!: String", c.field AS "field!: String",
-         c.variant_a AS "variant_a!: String", c.variant_b AS "variant_b!: String",
-         t.title AS "title!: String", p.prefix AS "prefix!: String",
-         t.project_key AS "project_key!: String"
-         FROM conflicts c
-         JOIN tasks t ON t.id = c.task_id
-         JOIN projects p ON p.key = t.project_key
-         WHERE c.resolved = 0
-         AND (?1 IS NULL OR t.project_key = ?1)
-         AND (?2 IS NULL OR c.field = ?2)
-         ORDER BY c.created_at"#,
+                 c.variant_a AS "variant_a!: String", c.variant_b AS "variant_b!: String",
+                 t.title AS "title!: String", p.prefix AS "prefix!: String",
+                 t.project_key AS "project_key!: String"
+                 FROM conflicts c
+                 JOIN tasks t ON t.id = c.task_id
+                 JOIN projects p ON p.key = t.project_key
+                 WHERE c.resolved = 0
+                 AND (?1 IS NULL OR t.project_key = ?1)
+                 AND (?2 IS NULL OR c.field = ?2)
+                 ORDER BY c.created_at"#,
         project_key,
         field,
     )
@@ -492,6 +492,17 @@ pub(crate) async fn resolve_conflict(
     field: &str,
     value: &str,
 ) -> Result<ConflictOutcome> {
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT id FROM conflicts WHERE task_id = ? AND field = ? AND resolved = 0 LIMIT 1",
+    )
+    .bind(task_id)
+    .bind(field)
+    .fetch_optional(&mut *conn)
+    .await?;
+    if exists.is_none() {
+        bail!("error conflict-not-found task_id={task_id} field={field}");
+    }
+
     let mut tx = conn.begin().await?;
     apply_field_value(&mut tx, task_id, field, value).await?;
     sqlx::query!(

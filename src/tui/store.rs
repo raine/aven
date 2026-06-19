@@ -8,8 +8,8 @@ use crate::labels::list_labels;
 use crate::mutation::{cycle_priority, set_deleted, set_status};
 use crate::operations::{
     TaskDraft, TaskUpdate, add_note as add_note_operation, create_label_operation,
-    create_project_operation, create_task as create_task_operation,
-    update_task as update_task_operation,
+    create_project_operation, create_task as create_task_operation, resolve_conflict,
+    task_conflicts, update_task as update_task_operation,
 };
 use crate::query::{
     ProjectListItem, SidebarCounts, SortDirection, TaskFilters, TaskListItem, TaskSort,
@@ -21,6 +21,17 @@ use crate::tui::overlay::PickerItem;
 pub(crate) struct MutationMessage {
     pub(crate) message: String,
     pub(crate) selected: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConflictTarget {
+    pub(crate) task_id: String,
+    pub(crate) display_ref: String,
+    pub(crate) field: String,
+    pub(crate) variant_a: String,
+    pub(crate) local_value: String,
+    pub(crate) variant_b: String,
+    pub(crate) remote_value: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -537,6 +548,81 @@ impl TuiStore {
         Ok(outcome.note_id)
     }
 
+    pub(crate) async fn conflict_targets(
+        &self,
+        index: Option<usize>,
+    ) -> Result<Option<Vec<ConflictTarget>>> {
+        let Some(item) = self.selected_task(index) else {
+            return Ok(None);
+        };
+        let mut conn = self.pool.acquire().await?;
+        let details = task_conflicts(&mut conn, &item.task.id, None).await?;
+        Ok(Some(
+            details
+                .into_iter()
+                .map(|detail| ConflictTarget {
+                    task_id: item.task.id.clone(),
+                    display_ref: item.display_ref.clone(),
+                    field: detail.field,
+                    variant_a: detail.variant_a,
+                    local_value: detail.local_value,
+                    variant_b: detail.variant_b,
+                    remote_value: detail.remote_value,
+                })
+                .collect(),
+        ))
+    }
+
+    pub(crate) async fn resolve_conflict_value(
+        &mut self,
+        target: ConflictTarget,
+        value: String,
+    ) -> Result<MutationMessage> {
+        let mut conn = self.pool.acquire().await?;
+        let outcome = resolve_conflict(&mut conn, &target.task_id, &target.field, &value).await?;
+        drop(conn);
+        let selected = self.refresh(Some(&outcome.task.id)).await?;
+        Ok(MutationMessage {
+            message: format!(
+                "resolved {} conflict field={}",
+                target.display_ref, outcome.field
+            ),
+            selected,
+        })
+    }
+
+    pub(crate) fn next_conflict_flag_index(
+        flags: &[bool],
+        selected: Option<usize>,
+        delta: isize,
+    ) -> Option<usize> {
+        if flags.is_empty() || !flags.iter().any(|flag| *flag) {
+            return None;
+        }
+        let len = flags.len() as isize;
+        let mut current = selected.unwrap_or(0).min(flags.len() - 1) as isize;
+        for _ in 0..len {
+            current = (current + delta).rem_euclid(len);
+            if flags[current as usize] {
+                return Some(current as usize);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn next_conflict_index(
+        &self,
+        selected: Option<usize>,
+        delta: isize,
+    ) -> Option<usize> {
+        let flags = self
+            .tasks
+            .iter()
+            .map(|task| task.has_conflict)
+            .collect::<Vec<_>>();
+        Self::next_conflict_flag_index(&flags, selected, delta)
+    }
+
     fn rebuild_sidebar(&mut self) {
         let mut entries = vec![
             SidebarEntry {
@@ -871,6 +957,148 @@ mod tests {
             .unwrap();
 
         assert_eq!(store.tasks[selected].labels, vec!["docs".to_string()]);
+    }
+
+    #[test]
+    fn next_conflict_flag_index_wraps_forward() {
+        let flags = vec![false, true, false, true];
+        assert_eq!(
+            TuiStore::next_conflict_flag_index(&flags, Some(1), 1),
+            Some(3)
+        );
+        assert_eq!(
+            TuiStore::next_conflict_flag_index(&flags, Some(3), 1),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn next_conflict_flag_index_wraps_backward() {
+        let flags = vec![false, true, false, true];
+        assert_eq!(
+            TuiStore::next_conflict_flag_index(&flags, Some(3), -1),
+            Some(1)
+        );
+        assert_eq!(
+            TuiStore::next_conflict_flag_index(&flags, Some(1), -1),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn next_conflict_flag_index_returns_none_without_conflicts() {
+        let flags = vec![false, false];
+        assert!(TuiStore::next_conflict_flag_index(&flags, Some(0), 1).is_none());
+    }
+
+    #[test]
+    fn next_conflict_flag_index_keeps_single_conflict() {
+        let flags = vec![false, true, false];
+        assert_eq!(
+            TuiStore::next_conflict_flag_index(&flags, Some(1), 1),
+            Some(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_conflict_value_updates_task_and_clears_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mut store = TuiStore::new(pool.clone()).await.unwrap();
+        let (_, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Before".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+        let task_id = store.tasks[selected].task.id.clone();
+        let display_ref = store.tasks[selected].display_ref.clone();
+
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
+             local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
+             VALUES (?, 'title', NULL, 'local title', 'remote title', NULL, ?, 'a', 'b', ?, 0)",
+        )
+        .bind(&task_id)
+        .bind(crate::ids::new_id())
+        .bind(crate::ids::now())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+        store.refresh(Some(&task_id)).await.unwrap();
+
+        store
+            .resolve_conflict_value(
+                ConflictTarget {
+                    task_id,
+                    display_ref,
+                    field: "title".to_string(),
+                    variant_a: "a".to_string(),
+                    local_value: "local title".to_string(),
+                    variant_b: "b".to_string(),
+                    remote_value: "remote title".to_string(),
+                },
+                "local title".to_string(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(store.tasks[selected].task.title, "local title");
+        assert!(!store.tasks[selected].has_conflict);
+    }
+
+    #[tokio::test]
+    async fn resolve_missing_conflict_leaves_task_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mut store = TuiStore::new(pool.clone()).await.unwrap();
+        let (_, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Stable title".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+        let task_id = store.tasks[selected].task.id.clone();
+
+        let error = store
+            .resolve_conflict_value(
+                ConflictTarget {
+                    task_id,
+                    display_ref: "APP-1".to_string(),
+                    field: "title".to_string(),
+                    variant_a: "a".to_string(),
+                    local_value: "local".to_string(),
+                    variant_b: "b".to_string(),
+                    remote_value: "remote".to_string(),
+                },
+                "local".to_string(),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("conflict-not-found"));
+        assert_eq!(store.tasks[selected].task.title, "Stable title");
     }
 
     #[tokio::test]
