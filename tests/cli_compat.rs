@@ -4,6 +4,13 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 use common::{TestEnv, contains_all, ok};
 
+fn first_token(output: &str) -> &str {
+    output
+        .split_whitespace()
+        .next()
+        .expect("output starts with ref")
+}
+
 #[tokio::test]
 async fn old_schema_database_can_be_opened_and_read() {
     let env = TestEnv::new();
@@ -39,5 +46,6 @@ async fn old_schema_database_can_be_opened_and_read() {
     drop(pool);
 
     let shown = ok(env.atm(&db, ["show", "7KQ"]));
-    contains_all(&shown, &["APP-7KQ9A1X", "old task"]);
+    assert_eq!(first_token(&shown), "APP-7KQ9");
+    contains_all(&shown, &["old task"]);
 }

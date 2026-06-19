@@ -4,7 +4,7 @@ atm agent usage
 Use refs printed by command output. The stable part is the suffix after the
 project prefix:
 
-  APP-7KQ9A1X
+  APP-7KQ9
 
 The project prefix is display context, not identity. If a task moves projects,
 the displayed prefix changes and the suffix remains the same.

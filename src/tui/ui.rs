@@ -568,7 +568,7 @@ fn render_task_row(
     let cells = Layout::horizontal(columns).areas::<6>(area);
     let values = [
         Line::from(Span::styled(
-            short_ref(&item.display_ref),
+            item.display_ref.clone(),
             Style::new().fg(FG_MUTED),
         )),
         title_cell(item),
@@ -589,14 +589,6 @@ fn render_task_row(
     for (area, value) in cells.into_iter().zip(values) {
         frame.render_widget(Paragraph::new(value).style(style), area);
     }
-}
-
-fn short_ref(display_ref: &str) -> String {
-    display_ref
-        .rsplit_once('-')
-        .map(|(_, suffix)| suffix)
-        .unwrap_or(display_ref)
-        .to_string()
 }
 
 fn task_age(created_at: &str) -> String {

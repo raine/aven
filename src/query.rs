@@ -5,7 +5,7 @@ use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::db::{task_from_row, task_has_conflict};
 use crate::labels::ensure_label_exists;
 use crate::projects::resolve_existing_project;
-use crate::refs::display_ref;
+use crate::refs::display_refs_for_tasks;
 use crate::task_render::labels_for_task;
 use crate::types::Task;
 
@@ -120,10 +120,17 @@ pub(crate) async fn list_task_items(
     push_sort(&mut query, sort);
 
     let rows = query.build().fetch_all(&mut *conn).await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        let task = task_from_row(&row)?;
-        let display_ref = display_ref(conn, &task).await?;
+    let tasks = rows
+        .into_iter()
+        .map(|row| task_from_row(&row))
+        .collect::<Result<Vec<_>>>()?;
+    let display_refs = display_refs_for_tasks(conn, &tasks).await?;
+    let mut items = Vec::with_capacity(tasks.len());
+    for task in tasks {
+        let display_ref = display_refs
+            .get(&task.id)
+            .cloned()
+            .unwrap_or_else(|| format!("{}-{}", task.project_prefix, task.id));
         let labels = labels_for_task(conn, &task.id).await?;
         let has_conflict = task_has_conflict(conn, &task.id).await?;
         items.push(TaskListItem {

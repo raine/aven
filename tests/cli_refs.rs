@@ -4,6 +4,13 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 use common::{TestEnv, contains_all, extract_ref, fail, ok, suffix};
 
+fn first_tokens(output: &str) -> Vec<&str> {
+    output
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .collect()
+}
+
 #[test]
 fn short_ref_resolves_when_unambiguous() {
     let env = TestEnv::new();
@@ -28,6 +35,74 @@ fn qualified_ref_prefix_is_a_hint() {
 
     let shown = ok(env.atm(&db, ["show", &stale_ref]));
     contains_all(&shown, &[&moved, "moving task"]);
+}
+
+#[tokio::test]
+async fn display_refs_use_project_prefix_and_unique_suffix_floor() {
+    let env = TestEnv::new();
+    let db = env.db("display-floor.sqlite");
+    ok(env.atm(&db, ["project", "create", "app"]));
+    ok(env.atm(&db, ["project", "create", "ops"]));
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(SqliteConnectOptions::new().filename(&db))
+        .await
+        .unwrap();
+    for (id, title, project) in [
+        ("W3ZX111111111111", "app shared", "app"),
+        ("W3ZX222222222222", "ops shared", "ops"),
+        ("A111111111111111", "short unique", "app"),
+    ] {
+        sqlx::query(
+            "INSERT INTO tasks(id,title,description,project_key,status,priority,created_at,updated_at)
+             VALUES (?, ?, '', ?, 'inbox', 'none', 't', 't')",
+        )
+        .bind(id)
+        .bind(title)
+        .bind(project)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let list = ok(env.atm(&db, ["list", "--all"]));
+    assert_eq!(first_tokens(&list), ["APP-W3ZX1", "OPS-W3ZX2", "APP-A111"]);
+}
+
+#[tokio::test]
+async fn displayed_refs_resolve_after_filtering() {
+    let env = TestEnv::new();
+    let db = env.db("display-visible.sqlite");
+    ok(env.atm(&db, ["project", "create", "app"]));
+    ok(env.atm(&db, ["project", "create", "ops"]));
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(SqliteConnectOptions::new().filename(&db))
+        .await
+        .unwrap();
+    for (id, title, project) in [
+        ("W3ZX111111111111", "app shared", "app"),
+        ("W3ZX222222222222", "ops shared", "ops"),
+    ] {
+        sqlx::query(
+            "INSERT INTO tasks(id,title,description,project_key,status,priority,created_at,updated_at)
+             VALUES (?, ?, '', ?, 'inbox', 'none', 't', 't')",
+        )
+        .bind(id)
+        .bind(title)
+        .bind(project)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let list = ok(env.atm(&db, ["list", "--project", "app"]));
+    assert_eq!(first_tokens(&list), ["APP-W3ZX1"]);
+
+    let shown = ok(env.atm(&db, ["show", "APP-W3ZX1"]));
+    contains_all(&shown, &["APP-W3ZX1", "app shared"]);
 }
 
 #[tokio::test]
@@ -57,13 +132,11 @@ async fn ambiguous_ref_fails_with_choices() {
     }
 
     let error = fail(env.atm(&db, ["show", "7KQ"]));
-    contains_all(
-        &error,
-        &[
-            "error ambiguous-ref",
-            "match AMB-7KQ1111",
-            "match AMB-7KQ2222",
-            "retry with longer ref",
-        ],
-    );
+    contains_all(&error, &["error ambiguous-ref", "retry with longer ref"]);
+    let matches = error
+        .lines()
+        .filter_map(|line| line.strip_prefix("match "))
+        .filter_map(|line| line.split_whitespace().next())
+        .collect::<Vec<_>>();
+    assert_eq!(matches, ["AMB-7KQ1", "AMB-7KQ2"]);
 }

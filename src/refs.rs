@@ -1,8 +1,12 @@
+use std::collections::HashMap;
+
 use anyhow::{Result, bail};
 use sqlx::SqliteConnection;
 
 use crate::render::quote;
 use crate::types::Task;
+
+const DISPLAY_SUFFIX_FLOOR: usize = 4;
 
 pub(crate) async fn get_task(conn: &mut SqliteConnection, id: &str) -> Result<Task> {
     let row = sqlx::query!(
@@ -121,18 +125,45 @@ pub(crate) async fn display_ref(conn: &mut SqliteConnection, task: &Task) -> Res
     ))
 }
 
+pub(crate) async fn display_refs_for_tasks(
+    conn: &mut SqliteConnection,
+    tasks: &[Task],
+) -> Result<HashMap<String, String>> {
+    let ids = task_ids(conn).await?;
+    Ok(tasks
+        .iter()
+        .map(|task| {
+            let suffix = display_suffix_for_id(&task.id, &ids);
+            (task.id.clone(), format!("{}-{suffix}", task.project_prefix))
+        })
+        .collect())
+}
+
 pub(crate) async fn display_suffix(conn: &mut SqliteConnection, id: &str) -> Result<String> {
-    for len in 7..=16 {
+    let ids = task_ids(conn).await?;
+    Ok(display_suffix_for_id(id, &ids))
+}
+
+async fn task_ids(conn: &mut SqliteConnection) -> Result<Vec<String>> {
+    Ok(
+        sqlx::query_scalar::<_, String>("SELECT id FROM tasks ORDER BY id")
+            .fetch_all(&mut *conn)
+            .await?,
+    )
+}
+
+fn display_suffix_for_id(id: &str, ids: &[String]) -> String {
+    let len = display_suffix_len(id, ids);
+    id[..len].to_string()
+}
+
+fn display_suffix_len(id: &str, ids: &[String]) -> usize {
+    for len in DISPLAY_SUFFIX_FLOOR.min(id.len())..=id.len() {
         let prefix = &id[..len];
-        let count: i64 = sqlx::query_scalar!(
-            r#"SELECT count(*) AS "count!: i64" FROM tasks WHERE id LIKE ? || '%'"#,
-            prefix
-        )
-        .fetch_one(&mut *conn)
-        .await?;
+        let count = ids.iter().filter(|other| other.starts_with(prefix)).count();
         if count <= 1 {
-            return Ok(prefix.to_string());
+            return len;
         }
     }
-    Ok(id.to_string())
+    id.len()
 }

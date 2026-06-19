@@ -48,7 +48,7 @@ Common CLI examples:
   printf '## Context\nMarkdown works here\n' \
     | atm add "write docs" --project app --description-stdin
   atm list --project app
-  atm show APP-7KQ9A1X --full
+  atm show APP-7KQ9 --full
   atm update 7KQ --status active --priority high
   printf 'handoff note\n' | atm note 7KQ --stdin
   atm delete 7KQ
