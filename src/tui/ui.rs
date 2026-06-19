@@ -504,10 +504,10 @@ fn project_column_width(store: &TuiStore, narrow: bool) -> u16 {
     store
         .tasks
         .iter()
-        .map(|item| item.task.project_key.chars().count() as u16)
+        .map(|item| item.task.project_key.chars().count() as u16 + 2)
         .max()
-        .unwrap_or(7)
-        .max(7)
+        .unwrap_or(9)
+        .max(9)
         .min(max_width)
 }
 
