@@ -283,8 +283,8 @@ fn render_sidebar(
         ListItem::new(
             Line::from("FILTERS").style(Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD)),
         ),
-        filter_item("▲", "urgent", urgent_count, RED),
-        filter_item("⚡", "conflicts", conflict_count, PINK),
+        filter_item("▲", "urgent", urgent_count, RED, area.width),
+        filter_item("⚡", "conflicts", conflict_count, PINK, area.width),
     ]);
 
     let highlight_style = if view.focus == Focus::Sidebar {
@@ -420,10 +420,16 @@ fn sidebar_label(entry: &crate::tui::store::SidebarEntry) -> String {
     }
 }
 
-fn filter_item(icon: &str, label: &str, count: i64, color: Color) -> ListItem<'static> {
-    let label_width = 16usize;
+fn filter_item(icon: &str, label: &str, count: i64, color: Color, width: u16) -> ListItem<'static> {
+    let icon_cell = if icon == "⚡" {
+        format!("{icon} ")
+    } else {
+        format!("{icon}  ")
+    };
+    let count_width = if count > 0 { 2 } else { 1 };
+    let label_width = (width as usize).saturating_sub(icon_cell.chars().count() + count_width + 2);
     ListItem::new(Line::from(vec![
-        Span::styled(format!("{icon:<2} "), Style::new().fg(color)),
+        Span::styled(icon_cell, Style::new().fg(color)),
         Span::styled(format!("{label:<label_width$}"), Style::new().fg(FG_MUTED)),
         badge(count, false),
     ]))
