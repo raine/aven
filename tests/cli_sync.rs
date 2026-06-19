@@ -1,10 +1,69 @@
 mod common;
 
 use common::{TestEnv, TestServer, contains_all, contains_none, extract_ref, fail, ok, scalar_i64};
+use serde_json::{Value, json};
 
 fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
     let output = ok(env.atm(db, ["sync", "--server", &server.url]));
     contains_all(&output, &["synced", "cursor="]);
+}
+
+fn wire_change(op_type: &str, entity_type: &str, entity_id: &str, payload: Value) -> Value {
+    json!({
+        "change_id": "0123456789ABCDEF",
+        "client_id": "client-a",
+        "local_seq": 1,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "field": null,
+        "op_type": op_type,
+        "payload": payload,
+        "base_version": null,
+        "created_at": "2026-01-01T00:00:00Z",
+        "server_seq": null,
+    })
+}
+
+fn task_change(op_type: &str, payload: Value) -> Value {
+    wire_change(op_type, "task", "0123456789ABCDE0", payload)
+}
+
+async fn post_sync(server: &TestServer, change: Value) -> reqwest::Response {
+    reqwest::Client::new()
+        .post(format!("{}/sync", server.url))
+        .json(&json!({
+            "client_id": "client-a",
+            "after": 0,
+            "changes": [change],
+        }))
+        .send()
+        .await
+        .expect("post sync")
+}
+
+async fn assert_server_log_empty(server: &TestServer) {
+    let response = reqwest::Client::new()
+        .post(format!("{}/sync", server.url))
+        .json(&json!({
+            "client_id": "audit-client",
+            "after": 0,
+            "changes": [],
+        }))
+        .send()
+        .await
+        .expect("pull server log");
+
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let body: Value = response.json().await.expect("sync response json");
+    assert_eq!(body["changes"].as_array().expect("changes array").len(), 0);
+}
+
+async fn rejected_sync(server: &TestServer, change: Value, expected: &str) {
+    let response = post_sync(server, change).await;
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body = response.text().await.expect("error body");
+    contains_all(&body, &["error invalid-sync-change", expected]);
+    assert_server_log_empty(server).await;
 }
 
 #[test]
@@ -158,7 +217,10 @@ auth_token = "secret"
     let error = fail(server_env.atm(&client, ["sync", "--server", &server.url]));
     contains_all(&error, &["401"]);
     assert_eq!(
-        scalar_i64(&server_env.path("server.sqlite"), "SELECT count(*) FROM changes"),
+        scalar_i64(
+            &server_env.path("server.sqlite"),
+            "SELECT count(*) FROM changes"
+        ),
         0
     );
 }
@@ -193,7 +255,10 @@ auth_token = "wrong"
     let error = fail(client_env.atm_config(["sync"]));
     contains_all(&error, &["401"]);
     assert_eq!(
-        scalar_i64(&server_env.path("server.sqlite"), "SELECT count(*) FROM changes"),
+        scalar_i64(
+            &server_env.path("server.sqlite"),
+            "SELECT count(*) FROM changes"
+        ),
         0
     );
 }
@@ -221,10 +286,9 @@ auth_token = "secret"
         server.url
     ));
 
-    let task_ref = extract_ref(&ok(client_env.atm(
-        &a,
-        ["add", "auth synced", "--project", "app"],
-    )));
+    let task_ref = extract_ref(&ok(
+        client_env.atm(&a, ["add", "auth synced", "--project", "app"])
+    ));
     ok(client_env.atm_config([
         "--db",
         a.to_str().expect("utf8 db path"),
@@ -251,10 +315,9 @@ fn sync_auth_loopback_without_token_still_syncs() {
     let a = env.db("client-a.sqlite");
     let b = env.db("client-b.sqlite");
 
-    let task_ref = extract_ref(&ok(env.atm(
-        &a,
-        ["add", "local no auth", "--project", "app"],
-    )));
+    let task_ref = extract_ref(&ok(
+        env.atm(&a, ["add", "local no auth", "--project", "app"])
+    ));
     ok(env.atm(&a, ["sync", "--server", &server.url]));
     ok(env.atm(&b, ["sync", "--server", &server.url]));
 
@@ -276,4 +339,136 @@ fn sync_auth_public_bind_requires_token_even_with_unsafe_flag() {
     ]));
 
     contains_all(&error, &["sync-auth-token-required"]);
+}
+
+#[tokio::test]
+async fn sync_server_rejects_unknown_operations_and_entity_types() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+
+    rejected_sync(
+        &server,
+        task_change("move_task", json!({})),
+        "op_type=move_task",
+    )
+    .await;
+    rejected_sync(
+        &server,
+        wire_change(
+            "create_task",
+            "project",
+            "0123456789ABCDE0",
+            json!({ "title": "bad", "project_key": "app" }),
+        ),
+        "entity_type=project",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn sync_server_rejects_invalid_field_names() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let mut change = task_change("set_field", json!({ "value": "x" }));
+    change
+        .as_object_mut()
+        .expect("change object")
+        .insert("field".to_string(), json!("labels"));
+
+    rejected_sync(&server, change, "field=labels").await;
+}
+
+#[tokio::test]
+async fn sync_server_rejects_invalid_status_priority_and_deleted_values() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+
+    let mut bad_status = task_change("set_field", json!({ "value": "blocked" }));
+    bad_status
+        .as_object_mut()
+        .expect("change object")
+        .insert("field".to_string(), json!("status"));
+    rejected_sync(&server, bad_status, "invalid-status").await;
+
+    let bad_priority = task_change(
+        "create_task",
+        json!({
+            "title": "bad priority",
+            "project_key": "app",
+            "priority": "soon",
+        }),
+    );
+    rejected_sync(&server, bad_priority, "invalid-priority").await;
+
+    let mut bad_deleted = task_change("set_field", json!({ "value": "true" }));
+    bad_deleted
+        .as_object_mut()
+        .expect("change object")
+        .insert("field".to_string(), json!("deleted"));
+    rejected_sync(&server, bad_deleted, "deleted").await;
+}
+
+#[tokio::test]
+async fn sync_server_rejects_malformed_ids() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+
+    let mut bad_change_id = task_change("label_add", json!({ "label": "sync" }));
+    bad_change_id
+        .as_object_mut()
+        .expect("change object")
+        .insert("change_id".to_string(), json!("short"));
+    rejected_sync(&server, bad_change_id, "change_id").await;
+
+    let bad_task_id = wire_change(
+        "label_add",
+        "task",
+        "not-a-task-id",
+        json!({ "label": "sync" }),
+    );
+    rejected_sync(&server, bad_task_id, "entity_id").await;
+
+    let bad_note_id = task_change(
+        "note_add",
+        json!({
+            "note_id": "not-a-note-id",
+            "body": "body",
+            "created_at": "2026-01-01T00:00:00Z",
+        }),
+    );
+    rejected_sync(&server, bad_note_id, "note_id").await;
+}
+
+#[tokio::test]
+async fn sync_server_rejects_client_supplied_server_sequence() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let mut change = task_change("label_add", json!({ "label": "sync" }));
+    change
+        .as_object_mut()
+        .expect("change object")
+        .insert("server_seq".to_string(), json!(99));
+
+    rejected_sync(&server, change, "server_seq").await;
+}
+
+#[test]
+fn valid_offline_batch_with_related_operations_still_syncs() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("client-a.sqlite");
+    let b = env.db("client-b.sqlite");
+
+    ok(env.atm(&a, ["label", "create", "offline"]));
+    let task_ref = extract_ref(&ok(
+        env.atm(&a, ["add", "offline batch", "--project", "app"])
+    ));
+    ok(env.atm(&a, ["update", &task_ref, "--label", "offline"]));
+    ok(env.atm_stdin(&a, ["note", &task_ref, "--stdin"], "batch note\n"));
+
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    let full = ok(env.atm(&b, ["show", &task_ref, "--full"]));
+    contains_all(&full, &["offline batch", "labels=offline", "batch note"]);
 }

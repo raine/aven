@@ -378,7 +378,11 @@ impl TestServer {
     }
 
     pub fn start_configured(env: &TestEnv, data: &str) -> Self {
-        Self::start_with_data_and_config(env, data, Some(env.config_dir().join("agentic-task-manager")))
+        Self::start_with_data_and_config(
+            env,
+            data,
+            Some(env.config_dir().join("agentic-task-manager")),
+        )
     }
 
     pub fn start_with_data(env: &TestEnv, data: &str) -> Self {

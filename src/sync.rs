@@ -12,10 +12,11 @@ use serde_json::Value;
 use sqlx::{Connection as _, SqliteConnection, SqlitePool};
 use tokio::net::TcpListener;
 
+use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::cli::{ServerArgs, SyncArgs};
 use crate::config;
 use crate::db::{conflict_exists, field_version, get_meta, open_db, set_field_version, set_meta};
-use crate::ids::now;
+use crate::ids::{BASE32, now};
 use crate::mutation::apply_field_value;
 use crate::projects::{find_project, prefix_base};
 use crate::refs::get_task;
@@ -120,8 +121,16 @@ async fn sync_handler(
     }
     match handle_sync(state, request).await {
         Ok(response) => Json(response).into_response(),
-        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+        Err(err) => err.into_response(),
     }
+}
+
+fn internal_error(err: impl std::fmt::Display) -> (StatusCode, String) {
+    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+}
+
+fn invalid_sync_change(err: anyhow::Error) -> (StatusCode, String) {
+    (StatusCode::BAD_REQUEST, err.to_string())
 }
 
 fn validate_auth(state: &ServerState, headers: &HeaderMap) -> std::result::Result<(), StatusCode> {
@@ -140,16 +149,21 @@ fn validate_auth(state: &ServerState, headers: &HeaderMap) -> std::result::Resul
     }
 }
 
-async fn handle_sync(state: ServerState, request: SyncRequest) -> Result<SyncResponse> {
-    let mut conn = state.pool.acquire().await?;
-    let mut tx = conn.begin().await?;
+async fn handle_sync(
+    state: ServerState,
+    request: SyncRequest,
+) -> std::result::Result<SyncResponse, (StatusCode, String)> {
+    let mut conn = state.pool.acquire().await.map_err(internal_error)?;
+    let mut tx = conn.begin().await.map_err(internal_error)?;
     for change in request.changes {
+        validate_incoming_change(&change).map_err(invalid_sync_change)?;
         let exists = sqlx::query_scalar!(
             r#"SELECT count(*) AS "count!: i64" FROM changes WHERE change_id = ?"#,
             change.change_id
         )
         .fetch_one(&mut *tx)
-        .await?
+        .await
+        .map_err(internal_error)?
             > 0;
         if !exists {
             let payload = change.payload.to_string();
@@ -169,17 +183,178 @@ async fn handle_sync(state: ServerState, request: SyncRequest) -> Result<SyncRes
                 change.created_at,
             )
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_err(internal_error)?;
         }
     }
-    tx.commit().await?;
-    let changes = load_server_changes_after(&mut conn, request.after).await?;
+    tx.commit().await.map_err(internal_error)?;
+    let changes = load_server_changes_after(&mut conn, request.after)
+        .await
+        .map_err(internal_error)?;
     let cursor = changes
         .iter()
         .filter_map(|change| change.server_seq)
         .max()
         .unwrap_or(request.after);
     Ok(SyncResponse { cursor, changes })
+}
+
+fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
+    ensure_non_empty("change_id", &change.change_id)?;
+    ensure_non_empty("client_id", &change.client_id)?;
+    ensure_non_empty("entity_id", &change.entity_id)?;
+    ensure_non_empty("op_type", &change.op_type)?;
+    ensure_non_empty("entity_type", &change.entity_type)?;
+    ensure_sync_id("change_id", &change.change_id)?;
+    if change.server_seq.is_some() {
+        bail!("error invalid-sync-change server_seq client-supplied");
+    }
+    if !change.payload.is_object() {
+        bail!("error invalid-sync-change payload expected-object");
+    }
+
+    match change.op_type.as_str() {
+        "create_project" => {
+            ensure_entity_type(change, "project")?;
+            required_string_payload("key", &change.payload)?;
+            required_string_payload("name", &change.payload)?;
+            required_string_payload("prefix", &change.payload)?;
+            required_string_payload("created_at", &change.payload)?;
+        }
+        "create_label" => {
+            ensure_entity_type(change, "label")?;
+            required_string_payload("name", &change.payload)?;
+            required_string_payload("created_at", &change.payload)?;
+        }
+        "create_task" => {
+            ensure_entity_type(change, "task")?;
+            ensure_sync_id("entity_id", &change.entity_id)?;
+            required_string_payload("title", &change.payload)?;
+            required_string_payload("project_key", &change.payload)?;
+            optional_string_payload("description", &change.payload)?;
+            optional_string_payload("project_name", &change.payload)?;
+            optional_string_payload("project_prefix", &change.payload)?;
+            if let Some(status) = optional_string_payload("status", &change.payload)? {
+                validate_protocol_choice("status", &status, STATUSES)?;
+            }
+            if let Some(priority) = optional_string_payload("priority", &change.payload)? {
+                validate_protocol_choice("priority", &priority, PRIORITIES)?;
+            }
+            optional_string_array_payload("labels", &change.payload)?;
+            optional_string_payload("created_at", &change.payload)?;
+        }
+        "set_field" | "resolve_field" => {
+            ensure_entity_type(change, "task")?;
+            ensure_sync_id("entity_id", &change.entity_id)?;
+            let field = change
+                .field
+                .as_deref()
+                .filter(|field| !field.trim().is_empty())
+                .context("error invalid-sync-change field missing")?;
+            ensure_scalar_field(field)?;
+            let value = required_string_payload("value", &change.payload)?;
+            validate_field_value(field, &value)?;
+        }
+        "label_add" | "label_remove" => {
+            ensure_entity_type(change, "task")?;
+            ensure_sync_id("entity_id", &change.entity_id)?;
+            required_string_payload("label", &change.payload)?;
+        }
+        "note_add" => {
+            ensure_entity_type(change, "task")?;
+            ensure_sync_id("entity_id", &change.entity_id)?;
+            let note_id = required_string_payload("note_id", &change.payload)?;
+            ensure_sync_id("note_id", &note_id)?;
+            required_string_payload("body", &change.payload)?;
+            required_string_payload("created_at", &change.payload)?;
+        }
+        _ => bail!("error invalid-sync-change op_type={}", change.op_type),
+    }
+    Ok(())
+}
+
+fn validate_protocol_choice(name: &str, value: &str, choices: &[&str]) -> Result<()> {
+    validate_choice(name, value, choices)
+        .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))
+}
+
+fn ensure_entity_type(change: &ChangeWire, expected: &str) -> Result<()> {
+    if change.entity_type == expected {
+        Ok(())
+    } else {
+        bail!(
+            "error invalid-sync-change op_type={} entity_type={} expected={}",
+            change.op_type,
+            change.entity_type,
+            expected
+        )
+    }
+}
+
+fn ensure_non_empty(name: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        bail!("error invalid-sync-change {name} empty");
+    }
+    Ok(())
+}
+
+fn ensure_sync_id(name: &str, value: &str) -> Result<()> {
+    if value.len() == 16 && value.bytes().all(|byte| BASE32.contains(&byte)) {
+        Ok(())
+    } else {
+        bail!("error invalid-sync-change {name} invalid-id");
+    }
+}
+
+fn ensure_scalar_field(field: &str) -> Result<()> {
+    if matches!(
+        field,
+        "title" | "description" | "project" | "status" | "priority" | "deleted"
+    ) {
+        Ok(())
+    } else {
+        bail!("error invalid-sync-change field={field}");
+    }
+}
+
+fn validate_field_value(field: &str, value: &str) -> Result<()> {
+    match field {
+        "status" => validate_protocol_choice("status", value, STATUSES),
+        "priority" => validate_protocol_choice("priority", value, PRIORITIES),
+        "deleted" if matches!(value, "0" | "1") => Ok(()),
+        "deleted" => bail!("error invalid-sync-change deleted value={value}"),
+        _ => Ok(()),
+    }
+}
+
+fn required_string_payload(key: &str, payload: &Value) -> Result<String> {
+    payload
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .with_context(|| format!("error invalid-sync-change payload.{key} missing"))
+}
+
+fn optional_string_payload(key: &str, payload: &Value) -> Result<Option<String>> {
+    match payload.get(key) {
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(Value::Null) | None => Ok(None),
+        Some(_) => bail!("error invalid-sync-change payload.{key} invalid"),
+    }
+}
+
+fn optional_string_array_payload(key: &str, payload: &Value) -> Result<()> {
+    match payload.get(key) {
+        Some(Value::Array(values))
+            if values
+                .iter()
+                .all(|value| value.as_str().is_some_and(|value| !value.trim().is_empty())) =>
+        {
+            Ok(())
+        }
+        Some(Value::Null) | None => Ok(()),
+        Some(_) => bail!("error invalid-sync-change payload.{key} invalid"),
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
