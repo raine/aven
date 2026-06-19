@@ -1440,6 +1440,89 @@ mod tests {
     }
 
     #[test]
+    fn command_rows_render_all_lifecycle_badges_from_catalog() {
+        for command in COMMANDS {
+            let rendered = command_line(command).to_string();
+            assert!(rendered.contains(command.name));
+            match command.lifecycle {
+                CommandLifecycle::Implemented => {
+                    assert!(!rendered.contains("planned"));
+                    assert!(!rendered.contains("disabled"));
+                }
+                CommandLifecycle::Planned { .. } => assert!(rendered.contains("planned")),
+                CommandLifecycle::Disabled { .. } => assert!(rendered.contains("disabled")),
+            }
+        }
+    }
+
+    #[test]
+    fn help_columns_cover_every_command_section() {
+        let sections = HELP_COLUMNS
+            .iter()
+            .flat_map(|column| column.iter().copied())
+            .collect::<Vec<_>>();
+        for command in COMMANDS {
+            assert!(
+                sections.contains(&command.section),
+                ":{} section {} is not rendered by help",
+                command.name,
+                command.section
+            );
+        }
+    }
+
+    #[test]
+    fn prefix_hint_lines_include_every_catalog_continuation() {
+        let mut prefixes: Vec<Vec<String>> = Vec::new();
+
+        for command in COMMANDS {
+            for key in command.keys {
+                for len in 1..key.codes.len() {
+                    let prefix = key.codes[..len]
+                        .iter()
+                        .map(|code| key_label(*code))
+                        .collect::<Vec<_>>();
+                    if !prefixes.contains(&prefix) {
+                        prefixes.push(prefix);
+                    }
+                }
+            }
+        }
+
+        for prefix in prefixes {
+            let rendered = prefix_hint_lines(&prefix)
+                .iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            for command in COMMANDS {
+                for key in command.keys {
+                    let labels = key
+                        .codes
+                        .iter()
+                        .map(|code| key_label(*code))
+                        .collect::<Vec<_>>();
+                    if labels.len() > prefix.len() && labels.starts_with(&prefix) {
+                        assert!(
+                            rendered.contains(&format!(":{}", command.name)),
+                            "prefix {} missing :{}",
+                            prefix.join(" "),
+                            command.name
+                        );
+                        assert!(
+                            rendered.contains(&format!(" {:<6} ", labels[prefix.len()])),
+                            "prefix {} missing next key {}",
+                            prefix.join(" "),
+                            labels[prefix.len()]
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn overlay_render_includes_confirm_prompt_and_hints() {
         let rendered = render_overlay_view(OverlayView::Confirm(ConfirmView {
             title: "Delete".to_string(),

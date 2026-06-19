@@ -39,7 +39,6 @@ pub(crate) enum Action {
     CycleSort,
     SetSort(TaskSort),
     ReverseSort,
-    UnsupportedDueSort,
     SetStatus(&'static str),
     SetPriority(&'static str),
     CyclePriority(bool),
@@ -72,8 +71,14 @@ pub(crate) enum Action {
     ShowConfigInfo,
     ShowConfigPaths,
     BeginConfigInit,
-    Planned(&'static str),
-    Disabled(&'static str),
+    Planned {
+        name: &'static str,
+        reason: &'static str,
+    },
+    Disabled {
+        name: &'static str,
+        reason: &'static str,
+    },
     None,
 }
 
@@ -134,7 +139,7 @@ impl CommandSpec {
             description,
             section,
             keys,
-            action: Action::Planned(name),
+            action: Action::Planned { name, reason },
             lifecycle: CommandLifecycle::Planned { reason },
         }
     }
@@ -151,7 +156,7 @@ impl CommandSpec {
             description,
             section,
             keys,
-            action: Action::Disabled(name),
+            action: Action::Disabled { name, reason },
             lifecycle: CommandLifecycle::Disabled { reason },
         }
     }
@@ -789,19 +794,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetSort(TaskSort::Queue),
     ),
-    CommandSpec {
-        name: "order-due",
-        description: "sort by due date",
-        section: "Order",
-        keys: &[KeySequence {
+    CommandSpec::disabled(
+        "order-due",
+        "sort by due date",
+        "Order",
+        &[KeySequence {
             codes: &[KeyCode::Char('o'), KeyCode::Char('d')],
             label: "o d",
         }],
-        action: Action::UnsupportedDueSort,
-        lifecycle: CommandLifecycle::Disabled {
-            reason: DUE_SORT_REASON,
-        },
-    },
+        DUE_SORT_REASON,
+    ),
     CommandSpec::implemented(
         "order-created",
         "sort by created date",
@@ -1101,7 +1103,6 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::CycleSort
             | Action::SetSort(_)
             | Action::ReverseSort
-            | Action::UnsupportedDueSort
             | Action::SetStatus(_)
             | Action::SetPriority(_)
             | Action::CyclePriority(_)
@@ -1423,24 +1424,30 @@ mod tests {
                         command.name
                     );
                 }
-                (CommandLifecycle::Planned { reason }, Action::Planned(name)) => {
+                (
+                    CommandLifecycle::Planned { reason },
+                    Action::Planned {
+                        name,
+                        reason: action_reason,
+                    },
+                ) => {
                     assert_eq!(name, command.name);
+                    assert_eq!(reason, action_reason);
                     assert!(
                         !reason.trim().is_empty(),
                         ":{} planned reason is empty",
                         command.name
                     );
                 }
-                (CommandLifecycle::Disabled { reason }, Action::Disabled(name)) => {
+                (
+                    CommandLifecycle::Disabled { reason },
+                    Action::Disabled {
+                        name,
+                        reason: action_reason,
+                    },
+                ) => {
                     assert_eq!(name, command.name);
-                    assert!(
-                        !reason.trim().is_empty(),
-                        ":{} disabled reason is empty",
-                        command.name
-                    );
-                }
-                (CommandLifecycle::Disabled { reason }, Action::UnsupportedDueSort) => {
-                    assert_eq!(command.name, "order-due");
+                    assert_eq!(reason, action_reason);
                     assert!(
                         !reason.trim().is_empty(),
                         ":{} disabled reason is empty",
@@ -1680,10 +1687,42 @@ mod tests {
     }
 
     #[test]
+    fn non_executing_lifecycle_shortcuts_resolve_to_catalog_action() {
+        for command in COMMANDS {
+            if !matches!(command.lifecycle, CommandLifecycle::Implemented) {
+                for key in command.keys {
+                    assert_eq!(
+                        resolve_shortcut(key.codes),
+                        ShortcutLookup::Found(command.action),
+                        "shortcut {} for :{} resolved incorrectly",
+                        key.label,
+                        command.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn non_executing_lifecycle_commands_resolve_to_catalog_action() {
+        for command in COMMANDS {
+            if !matches!(command.lifecycle, CommandLifecycle::Implemented) {
+                assert_eq!(
+                    lookup_command(command.name),
+                    CommandLookup::Found(command.action)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn resolves_order_shortcuts() {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('d')]),
-            ShortcutLookup::Found(Action::UnsupportedDueSort)
+            ShortcutLookup::Found(Action::Disabled {
+                name: "order-due",
+                reason: DUE_SORT_REASON,
+            })
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('c')]),

@@ -440,7 +440,6 @@ impl App {
             }
             Action::SetSort(sort) => self.set_sort(sort).await?,
             Action::ReverseSort => self.reverse_sort().await?,
-            Action::UnsupportedDueSort => self.due_sort_message(),
             Action::SetStatus(status) => self.update_status(status).await?,
             Action::SetPriority(priority) => self.set_exact_priority(priority).await?,
             Action::CyclePriority(reverse) => self.update_priority(reverse).await?,
@@ -479,8 +478,12 @@ impl App {
             Action::ShowConfigInfo => self.show_config_info()?,
             Action::ShowConfigPaths => self.show_config_paths()?,
             Action::BeginConfigInit => self.begin_config_init()?,
-            Action::Planned(name) => self.set_message(format!(":{name} is not yet implemented")),
-            Action::Disabled(name) => self.set_message(format!(":{name} is disabled")),
+            Action::Planned { name, reason } => {
+                self.set_message(format!(":{name} is not yet implemented: {reason}"));
+            }
+            Action::Disabled { name, reason } => {
+                self.set_message(format!(":{name} is disabled: {reason}"));
+            }
             Action::AcceptCommand
             | Action::CancelCommand
             | Action::BackspaceCommand
@@ -863,6 +866,8 @@ impl App {
             .await?
         {
             self.apply_mutation_result(result);
+        } else {
+            self.set_message("no selected task to edit".to_string());
         }
         Ok(())
     }
@@ -887,6 +892,8 @@ impl App {
             .await?
         {
             self.apply_mutation_result(result);
+        } else {
+            self.set_message("no selected task to edit".to_string());
         }
         Ok(())
     }
@@ -898,6 +905,8 @@ impl App {
             .await?
         {
             self.apply_mutation_result(result);
+        } else {
+            self.set_message("no selected task to edit".to_string());
         }
         Ok(())
     }
@@ -1188,10 +1197,6 @@ impl App {
             items,
             multi: false,
         }));
-    }
-
-    fn due_sort_message(&mut self) {
-        self.set_message("due date ordering is not supported".to_string());
     }
 
     async fn show_view(&mut self, target: ViewTarget) -> Result<()> {
@@ -1764,7 +1769,9 @@ fn next_selectable_sidebar(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::overlay::{ConfirmState, TextInputState, TextPanelState};
+    use crate::tui::overlay::{
+        ConfirmState, MultilineInputState, PickerState, TextInputState, TextPanelState,
+    };
     use crate::tui::store::SidebarTarget;
 
     async fn test_app() -> App {
@@ -2064,7 +2071,7 @@ mod tests {
         app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
         assert_eq!(
             app.message.as_deref(),
-            Some("due date ordering is not supported")
+            Some(":order-due is disabled: tasks do not have due dates")
         );
     }
 
@@ -2278,14 +2285,112 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disabled_shortcut_reports_disabled() {
+    async fn planned_and_disabled_shortcut_and_command_report_non_executing() {
         let mut app = test_app().await;
+
+        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
+        assert_eq!(
+            app.message.as_deref(),
+            Some(":view-deleted is not yet implemented: not yet implemented")
+        );
+        assert!(app.overlay.is_none());
+
+        app.begin_command();
+        type_chars(&mut app, "view-deleted").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(
+            app.message.as_deref(),
+            Some(":view-deleted is not yet implemented: not yet implemented")
+        );
+        assert!(app.overlay.is_none());
+
         app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
         assert_eq!(
             app.message.as_deref(),
-            Some("due date ordering is not supported")
+            Some(":order-due is disabled: tasks do not have due dates")
         );
+
+        app.begin_command();
+        type_chars(&mut app, "order-due").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(
+            app.message.as_deref(),
+            Some(":order-due is disabled: tasks do not have due dates")
+        );
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn no_selected_mutating_shortcuts_report_failure() {
+        let mut app = test_app().await;
+        app.widgets.table.select(None);
+
+        for code in [
+            KeyCode::Char('1'),
+            KeyCode::Char('p'),
+            KeyCode::Char('d'),
+            KeyCode::Char('u'),
+        ] {
+            app.message = None;
+            app.handle_normal_key(code).await.unwrap();
+            assert_eq!(app.message.as_deref(), Some("no selected task to edit"));
+        }
+    }
+
+    #[tokio::test]
+    async fn esc_closes_every_overlay_variant() {
+        let overlays = vec![
+            OverlayState::Help,
+            OverlayState::Detail,
+            OverlayState::Search {
+                input: "q".to_string(),
+            },
+            OverlayState::Command {
+                input: "ref".to_string(),
+            },
+            OverlayState::TextInput(TextInputState {
+                title: "T".to_string(),
+                prompt: "P".to_string(),
+                input: "x".to_string(),
+                cursor: 1,
+            }),
+            OverlayState::MultilineInput(MultilineInputState {
+                title: "M".to_string(),
+                prompt: "P".to_string(),
+                lines: vec!["x".to_string()],
+                row: 0,
+                column: 1,
+            }),
+            OverlayState::Picker(PickerState {
+                title: "Pick".to_string(),
+                filter: String::new(),
+                items: vec![PickerItem {
+                    label: "One".to_string(),
+                    value: "one".to_string(),
+                    selected: false,
+                }],
+                selected: 0,
+                multi: false,
+            }),
+            OverlayState::Confirm(ConfirmState {
+                title: "C".to_string(),
+                prompt: "?".to_string(),
+            }),
+            OverlayState::TextPanel(TextPanelState {
+                title: "Panel".to_string(),
+                lines: vec!["line".to_string()],
+            }),
+        ];
+
+        for overlay in overlays {
+            let mut app = test_app().await;
+            app.overlay = Some(overlay);
+            app.dispatch_key(key(KeyCode::Esc)).await.unwrap();
+            assert!(app.overlay.is_none());
+            assert!(app.pending_shortcut.is_empty());
+        }
     }
 
     async fn insert_title_conflict(

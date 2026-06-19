@@ -564,6 +564,51 @@ mod tests {
     }
 
     #[test]
+    fn esc_cancels_all_generic_overlay_variants() {
+        let overlays = vec![
+            OverlayState::TextInput(TextInputState {
+                title: "Title".to_string(),
+                prompt: "Prompt".to_string(),
+                input: "value".to_string(),
+                cursor: 5,
+            }),
+            OverlayState::MultilineInput(MultilineInputState {
+                title: "Body".to_string(),
+                prompt: "Prompt".to_string(),
+                lines: vec!["value".to_string()],
+                row: 0,
+                column: 5,
+            }),
+            OverlayState::Picker(PickerState {
+                title: "Pick".to_string(),
+                filter: String::new(),
+                items: vec![PickerItem {
+                    label: "One".to_string(),
+                    value: "one".to_string(),
+                    selected: false,
+                }],
+                selected: 0,
+                multi: false,
+            }),
+            OverlayState::Confirm(ConfirmState {
+                title: "Confirm".to_string(),
+                prompt: "Continue?".to_string(),
+            }),
+            OverlayState::TextPanel(TextPanelState {
+                title: "Panel".to_string(),
+                lines: vec!["line".to_string()],
+            }),
+        ];
+
+        for overlay in overlays {
+            assert!(matches!(
+                handle_generic_overlay_key(key(KeyCode::Esc), overlay),
+                OverlayOutcome::Cancelled
+            ));
+        }
+    }
+
+    #[test]
     fn confirm_yes_and_no() {
         let state = ConfirmState {
             title: "Delete".to_string(),
