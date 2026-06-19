@@ -5,8 +5,7 @@ use ratatui::layout::{Alignment, Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
-    Block, BorderType, Borders, Cell, Clear, List, ListItem, Padding, Paragraph, Row, Table,
-    TableState, Wrap,
+    Block, BorderType, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap,
 };
 
 use crate::query::TaskListItem;
@@ -331,53 +330,12 @@ fn render_tasks(
     view: &ViewState,
     area: Rect,
 ) {
-    let header = Row::new(["REF", "TITLE", "PROJECT / LABELS", "STATUS", "P", "AGE"])
-        .style(
-            Style::new()
-                .fg(FG_DIM)
-                .bg(BG_ALT)
-                .add_modifier(Modifier::BOLD),
-        )
-        .height(1);
-
     let [table_area, preview_area] = if area.height >= 24 {
         Layout::vertical([Constraint::Fill(1), Constraint::Length(8)]).areas(area)
     } else {
         [area, Rect::default()]
     };
-    let (rows, selected) = task_rows(store, widgets.table.selected());
-
-    let highlight_style = if view.focus == Focus::Tasks {
-        SELECTED
-    } else {
-        SELECTED_INACTIVE
-    };
-    let columns = if area.width < 90 {
-        [
-            Constraint::Length(12),
-            Constraint::Fill(1),
-            Constraint::Max(16),
-            Constraint::Length(8),
-            Constraint::Length(3),
-            Constraint::Length(5),
-        ]
-    } else {
-        [
-            Constraint::Length(12),
-            Constraint::Fill(2),
-            Constraint::Max(30),
-            Constraint::Length(10),
-            Constraint::Length(3),
-            Constraint::Length(5),
-        ]
-    };
-    let table = Table::new(rows, columns)
-        .header(header)
-        .block(Block::new().style(Style::new().bg(BG)))
-        .row_highlight_style(highlight_style);
-
-    let mut visual_state = TableState::default().with_selected(selected);
-    frame.render_stateful_widget(table, table_area, &mut visual_state);
+    render_task_list(frame, store, widgets.table.selected(), view, table_area);
     if preview_area.height > 0 {
         render_task_preview(frame, store, widgets.table.selected(), preview_area);
     }
@@ -465,69 +423,172 @@ fn filter_item(icon: &str, label: &str, count: i64, color: Color, width: u16) ->
     ]))
 }
 
-fn task_rows(store: &TuiStore, selected_task: Option<usize>) -> (Vec<Row<'static>>, Option<usize>) {
-    let mut rows = Vec::new();
-    let mut visual_selected = None;
-    let mut last_status: Option<&str> = None;
+fn render_task_list(
+    frame: &mut Frame,
+    store: &TuiStore,
+    selected_task: Option<usize>,
+    view: &ViewState,
+    area: Rect,
+) {
+    frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
+    if area.height == 0 {
+        return;
+    }
 
+    let columns = if area.width < 90 {
+        [
+            Constraint::Length(12),
+            Constraint::Fill(1),
+            Constraint::Max(16),
+            Constraint::Length(8),
+            Constraint::Length(3),
+            Constraint::Length(5),
+        ]
+    } else {
+        [
+            Constraint::Length(12),
+            Constraint::Fill(2),
+            Constraint::Max(30),
+            Constraint::Length(10),
+            Constraint::Length(3),
+            Constraint::Length(5),
+        ]
+    };
+    let row_areas = Layout::vertical(vec![Constraint::Length(1); area.height as usize]).split(area);
+    render_task_header(frame, row_areas[0], columns);
+
+    let viewport_rows = row_areas.len().saturating_sub(1);
+    let selected_row = selected_task
+        .map(|selected| task_visual_row(store, selected))
+        .unwrap_or(0);
+    let scroll = selected_row.saturating_sub(viewport_rows.saturating_sub(1));
+
+    let mut row = 1usize;
+    let mut visual_row = 0usize;
+    let mut last_status: Option<&str> = None;
     for (task_index, item) in store.tasks.iter().enumerate() {
         if last_status != Some(item.task.status.as_str()) {
             last_status = Some(&item.task.status);
-            let count = store
-                .tasks
-                .iter()
-                .filter(|task| task.task.status == item.task.status)
-                .count();
-            rows.push(group_row(&item.task.status, count));
+            if visual_row >= scroll && row < row_areas.len() {
+                let count = store
+                    .tasks
+                    .iter()
+                    .filter(|task| task.task.status == item.task.status)
+                    .count();
+                render_group_row(frame, &item.task.status, count, row_areas[row]);
+                row += 1;
+            }
+            visual_row += 1;
         }
-        if selected_task == Some(task_index) {
-            visual_selected = Some(rows.len());
+        if visual_row >= scroll && row < row_areas.len() {
+            render_task_row(
+                frame,
+                item,
+                selected_task == Some(task_index),
+                view.focus == Focus::Tasks,
+                row_areas[row],
+                columns,
+            );
+            row += 1;
         }
-        rows.push(task_row(item, task_index));
+        visual_row += 1;
+        if row >= row_areas.len() {
+            break;
+        }
     }
-    (rows, visual_selected)
 }
 
-fn group_row(status: &str, count: usize) -> Row<'static> {
-    Row::new([
-        Cell::from(Line::from(vec![
-            Span::styled(" ▸ ", Style::new().fg(ACCENT)),
-            Span::styled(
-                format!("{} - {count}", status.to_uppercase()),
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+fn task_visual_row(store: &TuiStore, selected_task: usize) -> usize {
+    let mut row = 0;
+    let mut last_status: Option<&str> = None;
+    for (task_index, item) in store.tasks.iter().enumerate() {
+        if last_status != Some(item.task.status.as_str()) {
+            last_status = Some(&item.task.status);
+            row += 1;
+        }
+        if task_index == selected_task {
+            return row;
+        }
+        row += 1;
+    }
+    0
+}
+
+fn render_task_header(frame: &mut Frame, area: Rect, columns: [Constraint; 6]) {
+    let cells = Layout::horizontal(columns).areas::<6>(area);
+    frame.render_widget(Block::new().style(Style::new().bg(BG_ALT)), area);
+    for (area, label) in
+        cells
+            .into_iter()
+            .zip(["REF", "TITLE", "PROJECT / LABELS", "STATUS", "P", "AGE"])
+    {
+        frame.render_widget(
+            Paragraph::new(label).style(
+                Style::new()
+                    .fg(FG_DIM)
+                    .bg(BG_ALT)
+                    .add_modifier(Modifier::BOLD),
             ),
-        ])),
-        Cell::from(""),
-        Cell::from(""),
-        Cell::from(""),
-        Cell::from(""),
-        Cell::from(""),
-    ])
-    .style(Style::new().bg(BG_ALT))
+            area,
+        );
+    }
 }
 
-fn task_row(item: &TaskListItem, _index: usize) -> Row<'static> {
-    Row::new([
-        Cell::from(Span::styled(
+fn render_group_row(frame: &mut Frame, status: &str, count: usize, area: Rect) {
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(" ▸ ", Style::new().fg(ACCENT).bg(BG_ALT)),
+            Span::styled(
+                format!("{} ({count})", status.to_uppercase()),
+                Style::new()
+                    .fg(ACCENT)
+                    .bg(BG_ALT)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]))
+        .style(Style::new().bg(BG_ALT)),
+        area,
+    );
+}
+
+fn render_task_row(
+    frame: &mut Frame,
+    item: &TaskListItem,
+    selected: bool,
+    focused: bool,
+    area: Rect,
+    columns: [Constraint; 6],
+) {
+    let style = if selected {
+        if focused { SELECTED } else { SELECTED_INACTIVE }
+    } else {
+        Style::new().bg(BG)
+    };
+    frame.render_widget(Block::new().style(style), area);
+    let cells = Layout::horizontal(columns).areas::<6>(area);
+    let values = [
+        Line::from(Span::styled(
             short_ref(&item.display_ref),
             Style::new().fg(FG_MUTED),
         )),
-        Cell::from(title_cell(item)),
-        Cell::from(project_cell(item)),
-        Cell::from(Span::styled(
+        title_cell(item),
+        project_cell(item),
+        Line::from(Span::styled(
             format!(" {} ", item.task.status),
             theme::status_style(&item.task.status).add_modifier(Modifier::BOLD),
         )),
-        Cell::from(Span::styled(
+        Line::from(Span::styled(
             priority_icon(&item.task.priority),
             theme::priority_style(&item.task.priority).add_modifier(Modifier::BOLD),
         )),
-        Cell::from(Span::styled(
+        Line::from(Span::styled(
             task_age(&item.task.created_at),
             Style::new().fg(FG_DIM),
         )),
-    ])
-    .style(Style::new().bg(BG))
+    ];
+    for (area, value) in cells.into_iter().zip(values) {
+        frame.render_widget(Paragraph::new(value).style(style), area);
+    }
 }
 
 fn short_ref(display_ref: &str) -> String {
