@@ -162,7 +162,6 @@ impl App {
                     true,
                 );
                 self.widgets.sidebar.select(next);
-                self.apply_sidebar_selection().await?;
             }
         }
         Ok(())
@@ -194,7 +193,6 @@ impl App {
                         .position(|entry| entry.target.is_some())
                 };
                 self.widgets.sidebar.select(next);
-                self.apply_sidebar_selection().await?;
             }
         }
         Ok(())
@@ -202,7 +200,10 @@ impl App {
 
     fn toggle_focus(&mut self) {
         self.focus = match self.focus {
-            Focus::Sidebar => Focus::Tasks,
+            Focus::Sidebar => {
+                self.widgets.sidebar.select(self.store.sidebar_selection());
+                Focus::Tasks
+            }
             Focus::Tasks => Focus::Sidebar,
         };
     }
@@ -220,6 +221,7 @@ impl App {
         self.store
             .apply_sidebar_selection(self.widgets.sidebar.selected())
             .await?;
+        self.focus = Focus::Tasks;
         self.detail_open = false;
         self.widgets.sidebar.select(self.store.sidebar_selection());
         self.widgets
@@ -251,6 +253,9 @@ impl App {
             self.help_open = false;
         } else if self.detail_open {
             self.detail_open = false;
+        } else if self.focus == Focus::Sidebar {
+            self.focus = Focus::Tasks;
+            self.widgets.sidebar.select(self.store.sidebar_selection());
         }
     }
 
