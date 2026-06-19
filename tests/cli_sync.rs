@@ -3,8 +3,8 @@ mod common;
 use std::time::Duration;
 
 use common::{
-    TestEnv, TestProcess, TestServer, contains_all, contains_none, extract_ref, fail, ok,
-    scalar_i64,
+    TestEnv, TestProcess, TestServer, contains_all, contains_none, extract_ref, fail, meta_value,
+    ok, scalar_i64,
 };
 use serde_json::{Value, json};
 
@@ -37,6 +37,7 @@ async fn post_sync(server: &TestServer, change: Value) -> reqwest::Response {
     reqwest::Client::new()
         .post(format!("{}/sync", server.url))
         .json(&json!({
+            "protocol_version": 1,
             "client_id": "client-a",
             "after": 0,
             "changes": [change],
@@ -50,6 +51,7 @@ async fn assert_server_log_empty(server: &TestServer) {
     let response = reqwest::Client::new()
         .post(format!("{}/sync", server.url))
         .json(&json!({
+            "protocol_version": 1,
             "client_id": "audit-client",
             "after": 0,
             "changes": [],
@@ -69,6 +71,61 @@ async fn rejected_sync(server: &TestServer, change: Value, expected: &str) {
     let body = response.text().await.expect("error body");
     contains_all(&body, &["error invalid-sync-change", expected]);
     assert_server_log_empty(server).await;
+}
+
+fn project_change_json(change_id: &str, key: &str) -> serde_json::Value {
+    serde_json::json!({
+        "change_id": change_id,
+        "client_id": "old-client",
+        "local_seq": 1,
+        "entity_type": "project",
+        "entity_id": key,
+        "field": null,
+        "op_type": "create_project",
+        "payload": {
+            "key": key,
+            "name": "Legacy",
+            "prefix": "LEG",
+            "created_at": "2026-01-01T00:00:00Z"
+        },
+        "base_version": null,
+        "created_at": "2026-01-01T00:00:00Z",
+        "server_seq": null
+    })
+}
+
+fn post_sync_json(url: &str, body: &str) -> (u16, String) {
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpStream;
+
+    let host = url.strip_prefix("http://").expect("loopback http url");
+    let mut stream = TcpStream::connect(host).expect("connect sync server");
+    write!(
+        stream,
+        "POST /sync HTTP/1.1\r\n\
+         Host: {host}\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\
+         \r\n\
+         {body}",
+        body.len()
+    )
+    .expect("write sync request");
+
+    let mut raw = String::new();
+    stream.read_to_string(&mut raw).expect("read sync response");
+    let (head, body) = raw.split_once("\r\n\r\n").expect("http response split");
+    let status = head
+        .lines()
+        .next()
+        .expect("status line")
+        .split_whitespace()
+        .nth(1)
+        .expect("status code")
+        .parse::<u16>()
+        .expect("numeric status");
+    (status, body.to_string())
 }
 
 #[test]
@@ -555,4 +612,152 @@ fn valid_offline_batch_with_related_operations_still_syncs() {
 
     let full = ok(env.atm(&b, ["show", &task_ref, "--full"]));
     contains_all(&full, &["offline batch", "labels=offline", "batch note"]);
+}
+
+#[test]
+fn current_protocol_version_sync_succeeds() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("client-a.sqlite");
+    let b = env.db("client-b.sqlite");
+
+    let task_ref = extract_ref(&ok(
+        env.atm(&a, ["add", "versioned sync", "--project", "app"])
+    ));
+
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    let shown = ok(env.atm(&b, ["show", &task_ref]));
+    contains_all(&shown, &[&task_ref, "versioned sync"]);
+}
+
+#[test]
+fn missing_request_protocol_version_is_rejected_before_changes_are_stored() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let body = serde_json::json!({
+        "client_id": "old-client",
+        "after": 0,
+        "changes": [project_change_json("missing-version-change", "missing-version")]
+    })
+    .to_string();
+
+    let (status, text) = post_sync_json(&server.url, &body);
+
+    assert_eq!(status, 400);
+    contains_all(
+        &text,
+        &["error sync-protocol-unsupported client=0 server=1"],
+    );
+    assert_eq!(
+        scalar_i64(&env.path("server.sqlite"), "SELECT count(*) FROM changes"),
+        0
+    );
+}
+
+#[test]
+fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let body = serde_json::json!({
+        "protocol_version": 0,
+        "client_id": "old-client",
+        "after": 0,
+        "changes": [project_change_json("old-version-change", "old-version")]
+    })
+    .to_string();
+
+    let (status, text) = post_sync_json(&server.url, &body);
+
+    assert_eq!(status, 400);
+    contains_all(
+        &text,
+        &["error sync-protocol-unsupported client=0 server=1"],
+    );
+    assert_eq!(
+        scalar_i64(&env.path("server.sqlite"), "SELECT count(*) FROM changes"),
+        0
+    );
+}
+
+#[test]
+fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let body = serde_json::json!({
+        "protocol_version": 2,
+        "client_id": "new-client",
+        "after": 0,
+        "changes": [project_change_json("new-version-change", "new-version")]
+    })
+    .to_string();
+
+    let (status, text) = post_sync_json(&server.url, &body);
+
+    assert_eq!(status, 400);
+    contains_all(
+        &text,
+        &["error sync-protocol-unsupported client=2 server=1"],
+    );
+    assert_eq!(
+        scalar_i64(&env.path("server.sqlite"), "SELECT count(*) FROM changes"),
+        0
+    );
+}
+
+#[test]
+fn wrong_response_protocol_version_is_rejected() {
+    use std::io::{BufRead as _, BufReader, Write as _};
+    use std::net::TcpListener;
+    use std::thread;
+
+    let env = TestEnv::new();
+    let db = env.db("client.sqlite");
+    ok(env.atm(&db, ["add", "seed", "--project", "app"]));
+    let changes_before = scalar_i64(&db, "SELECT count(*) FROM changes");
+    let sync_cursor_before = meta_value(&db, "sync_cursor");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake sync server");
+    let url = format!("http://{}", listener.local_addr().expect("fake sync addr"));
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept sync request");
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+        let mut line = String::new();
+        loop {
+            line.clear();
+            reader.read_line(&mut line).expect("read request line");
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+        }
+        let body = serde_json::json!({
+            "protocol_version": 0,
+            "cursor": 7,
+            "changes": [project_change_json("remote-change", "rogue")]
+        })
+        .to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .expect("write fake response");
+    });
+
+    let error = fail(env.atm(&db, ["sync", "--server", &url]));
+    contains_all(
+        &error,
+        &["error sync-protocol-unsupported client=1 server=0"],
+    );
+    assert_eq!(
+        scalar_i64(&db, "SELECT count(*) FROM changes"),
+        changes_before
+    );
+    assert_eq!(
+        scalar_i64(&db, "SELECT count(*) FROM projects WHERE key = 'rogue'"),
+        0
+    );
+    assert_eq!(meta_value(&db, "sync_cursor"), sync_cursor_before);
+    server.join().expect("fake sync server exits");
 }

@@ -116,11 +116,29 @@ Manual sync performs this sequence:
 
 1. Resolve the server URL from CLI, environment, or config.
 2. Load unsynced local changes where `server_seq IS NULL`.
-3. POST `/sync` with `client_id`, `after`, and pending changes.
+3. POST `/sync` with `protocol_version`, `client_id`, `after`, and pending changes.
 4. Apply returned remote changes transactionally.
 5. Update `sync_cursor`.
 
-The server is an Axum `POST /sync` endpoint using the `SyncRequest`, `SyncResponse`, and `ChangeWire` JSON shapes in `src/sync.rs`. It assigns server sequence numbers and persists changes. Startup classifies the bind address as loopback, private, or public and prints `scope=<scope>` on the listening line. Loopback binds can run without a token for local testing. Private binds require a configured `sync.auth_token`. Public binds require `--unsafe-public-bind`, a configured token, and print a warning that TLS or a reverse proxy is needed. When a token is configured, clients send `Authorization: Bearer <token>` and the server rejects unauthorized `/sync` requests before applying changes. The server validates incoming operation names, entity types, payload shapes, fixed-choice values, sync ID formats, and server-owned fields before appending changes to its log. It does not require referenced entities to exist on the server because offline batches can contain related operations that arrive together. Daemon wake addresses must be loopback.
+The server is an Axum `POST /sync` endpoint using the `SyncRequest`,
+`SyncResponse`, and `ChangeWire` JSON shapes in `src/sync.rs`. Requests and
+responses include `protocol_version`, and both peers require an exact match with
+`SYNC_PROTOCOL_VERSION` before applying changes. It assigns server sequence
+numbers and persists changes.
+
+Startup classifies the bind address as loopback, private, or public and prints
+`scope=<scope>` on the listening line. Loopback binds can run without a token
+for local testing. Private binds require a configured `sync.auth_token`. Public
+binds require `--unsafe-public-bind`, a configured token, and print a warning
+that TLS or a reverse proxy is needed. When a token is configured, clients send
+`Authorization: Bearer <token>` and the server rejects unauthorized `/sync`
+requests before applying changes.
+
+The server validates incoming operation names, entity types, payload shapes,
+fixed-choice values, sync ID formats, and server-owned fields before appending
+changes to its log. It does not require referenced entities to exist on the
+server because offline batches can contain related operations that arrive
+together. Daemon wake addresses must be loopback.
 
 If a remote scalar change base version does not match the current field version, sync records a `conflicts` row instead of overwriting. If an unresolved conflict already exists for that task field, another remote change for the field is also rejected into conflict handling.
 

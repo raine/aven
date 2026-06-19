@@ -24,6 +24,8 @@ use crate::projects::{find_project, prefix_base};
 use crate::refs::get_task;
 use crate::signals::shutdown_signal;
 
+pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ChangeWire {
     pub(crate) change_id: String,
@@ -74,6 +76,8 @@ impl ChangeRow {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SyncRequest {
+    #[serde(default)]
+    protocol_version: Option<u32>,
     client_id: String,
     after: i64,
     changes: Vec<ChangeWire>,
@@ -81,8 +85,42 @@ struct SyncRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SyncResponse {
+    protocol_version: u32,
     cursor: i64,
     changes: Vec<ChangeWire>,
+}
+
+#[derive(Debug)]
+struct SyncProtocolError {
+    client: u32,
+    server: u32,
+}
+
+impl std::fmt::Display for SyncProtocolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "error sync-protocol-unsupported client={} server={}",
+            self.client, self.server
+        )
+    }
+}
+
+impl std::error::Error for SyncProtocolError {}
+
+fn sync_protocol_error(client: u32, server: u32) -> anyhow::Error {
+    anyhow::Error::new(SyncProtocolError { client, server })
+}
+
+fn validate_sync_protocol_version(client: u32, server: u32) -> Result<()> {
+    if client != server {
+        return Err(sync_protocol_error(client, server));
+    }
+    Ok(())
+}
+
+fn validate_sync_request_protocol_version(client: Option<u32>) -> Result<()> {
+    validate_sync_protocol_version(client.unwrap_or(0), SYNC_PROTOCOL_VERSION)
 }
 
 #[derive(Clone)]
@@ -222,6 +260,8 @@ async fn handle_sync(
     state: ServerState,
     request: SyncRequest,
 ) -> std::result::Result<SyncResponse, (StatusCode, String)> {
+    validate_sync_request_protocol_version(request.protocol_version)
+        .map_err(invalid_sync_change)?;
     let mut conn = state.pool.acquire().await.map_err(internal_error)?;
     let mut tx = conn.begin().await.map_err(internal_error)?;
     for change in request.changes {
@@ -265,7 +305,11 @@ async fn handle_sync(
         .filter_map(|change| change.server_seq)
         .max()
         .unwrap_or(request.after);
-    Ok(SyncResponse { cursor, changes })
+    Ok(SyncResponse {
+        protocol_version: SYNC_PROTOCOL_VERSION,
+        cursor,
+        changes,
+    })
 }
 
 fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
@@ -467,6 +511,7 @@ pub(crate) async fn run_sync_once(
         .timeout(Duration::from_secs(30))
         .build()?;
     let mut request = client.post(url).json(&SyncRequest {
+        protocol_version: Some(SYNC_PROTOCOL_VERSION),
         client_id,
         after,
         changes,
@@ -480,6 +525,7 @@ pub(crate) async fn run_sync_once(
         .error_for_status()?
         .json::<SyncResponse>()
         .await?;
+    validate_sync_protocol_version(SYNC_PROTOCOL_VERSION, response.protocol_version)?;
     let mut applied = 0;
     let mut tx = conn.begin().await?;
     for change in &response.changes {
