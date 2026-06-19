@@ -7,6 +7,7 @@ use ratatui::widgets::{ListState, TableState};
 use sqlx::SqlitePool;
 
 use crate::operations::TaskDraft;
+use crate::query::TaskSort;
 use crate::tui::event::{
     Action, CommandLookup, ShortcutLookup, ViewTarget, lookup_command, resolve_shortcut,
     shortcut_label,
@@ -371,7 +372,15 @@ impl App {
             Action::CycleSort => {
                 self.store.cycle_sort();
                 self.refresh().await?;
+                self.set_message(format!(
+                    "order {} {}",
+                    self.store.sort_label(),
+                    self.store.sort_direction_label()
+                ));
             }
+            Action::SetSort(sort) => self.set_sort(sort).await?,
+            Action::ReverseSort => self.reverse_sort().await?,
+            Action::UnsupportedDueSort => self.due_sort_message(),
             Action::SetStatus(status) => self.update_status(status).await?,
             Action::SetPriority(priority) => self.set_exact_priority(priority).await?,
             Action::CyclePriority(reverse) => self.update_priority(reverse).await?,
@@ -746,6 +755,28 @@ impl App {
         }
     }
 
+    async fn set_sort(&mut self, sort: TaskSort) -> Result<()> {
+        let selected = self.store.set_sort(sort).await?;
+        self.apply_filter_selection(selected);
+        self.set_message(format!(
+            "order {} {}",
+            self.store.sort_label(),
+            self.store.sort_direction_label()
+        ));
+        Ok(())
+    }
+
+    async fn reverse_sort(&mut self) -> Result<()> {
+        let selected = self.store.reverse_sort().await?;
+        self.apply_filter_selection(selected);
+        self.set_message(format!(
+            "order {} {}",
+            self.store.sort_label(),
+            self.store.sort_direction_label()
+        ));
+        Ok(())
+    }
+
     async fn update_status(&mut self, status: &'static str) -> Result<()> {
         if let Some(result) = self
             .store
@@ -1078,6 +1109,10 @@ impl App {
             items,
             multi: false,
         }));
+    }
+
+    fn due_sort_message(&mut self) {
+        self.set_message("due date ordering is not supported".to_string());
     }
 
     async fn show_view(&mut self, target: ViewTarget) -> Result<()> {
@@ -1433,13 +1468,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn planned_shortcut_reports_not_yet_implemented() {
+    async fn order_shortcut_sets_sort() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('q')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
+        assert_eq!(app.store.sort, TaskSort::Priority);
+        assert_eq!(app.message.as_deref(), Some("order priority asc"));
+    }
+
+    #[tokio::test]
+    async fn order_reverse_shortcut_toggles_direction() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
+        assert_eq!(app.store.sort_direction_label(), "desc");
+        assert_eq!(app.message.as_deref(), Some("order queue desc"));
+    }
+
+    #[tokio::test]
+    async fn due_order_shortcut_reports_unsupported() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
         assert_eq!(
             app.message.as_deref(),
-            Some(":order-queue is not yet implemented")
+            Some("due date ordering is not supported")
         );
     }
 

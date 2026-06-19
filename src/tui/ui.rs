@@ -116,8 +116,20 @@ fn header_tabs(store: &TuiStore) -> Paragraph<'static> {
         Span::raw("   "),
         tab("conflicts", Some(conflict_count), false),
     ];
+    spans.extend(active_order_spans(store));
     spans.extend(active_filter_spans(store));
     Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BG))
+}
+
+fn active_order_spans(store: &TuiStore) -> Vec<Span<'static>> {
+    vec![Span::styled(
+        format!(
+            "  order {} {}",
+            store.sort_label(),
+            store.sort_direction_label()
+        ),
+        Style::new().fg(FG_MUTED),
+    )]
 }
 
 fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
@@ -1215,7 +1227,7 @@ mod tests {
     fn command_line_marks_planned_actions() {
         let command = COMMANDS
             .iter()
-            .find(|command| command.name == "order-queue")
+            .find(|command| command.name == "conflict-list")
             .unwrap();
         let rendered = command_line(command).to_string();
         assert!(rendered.contains("planned"));
@@ -1223,12 +1235,12 @@ mod tests {
 
     #[test]
     fn prefix_hint_lines_mark_planned_actions() {
-        let rendered = prefix_hint_lines(&["o".to_string()])
+        let rendered = prefix_hint_lines(&["c".to_string()])
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(rendered.contains(":order-queue"));
+        assert!(rendered.contains(":conflict-list"));
         assert!(rendered.contains("planned"));
     }
 
@@ -1263,6 +1275,26 @@ mod tests {
         assert!(rendered.contains("include_deleted"));
         assert!(rendered.contains("conflicts"));
         assert!(rendered.contains("search="));
+    }
+
+    #[test]
+    fn header_shows_active_ordering() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rendered = rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let pool = crate::db::open_db(&dir.path().join("test.db"))
+                .await
+                .unwrap();
+            let mut store = TuiStore::new(pool).await.unwrap();
+            store.sort = crate::query::TaskSort::Priority;
+            store.sort_direction = crate::query::SortDirection::Desc;
+            active_order_spans(&store)
+                .into_iter()
+                .map(|span| span.content)
+                .collect::<Vec<_>>()
+                .join("")
+        });
+        assert!(rendered.contains("order priority desc"));
     }
 
     #[test]

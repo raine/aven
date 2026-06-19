@@ -1,5 +1,7 @@
 use crossterm::event::KeyCode;
 
+use crate::query::TaskSort;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ViewTarget {
     All,
@@ -35,6 +37,9 @@ pub(crate) enum Action {
     CommandChar(char),
     Refresh,
     CycleSort,
+    SetSort(TaskSort),
+    ReverseSort,
+    UnsupportedDueSort,
     SetStatus(&'static str),
     SetPriority(&'static str),
     CyclePriority(bool),
@@ -87,6 +92,7 @@ pub(crate) struct CommandSpec {
 const PLANNED_FLOW_REASON: &str = "not yet implemented";
 const PROJECT_PATH_FLOW_REASON: &str = "requires a multi-step project/path picker flow";
 const CONFLICT_OVERLAY_REASON: &str = "requires the conflict overlay";
+const DUE_SORT_REASON: &str = "tasks do not have due dates";
 
 impl CommandSpec {
     const fn implemented(
@@ -757,7 +763,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ToggleDeletedFilter,
     ),
     // Order
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "order-queue",
         "sort by queue order",
         "Order",
@@ -765,9 +771,22 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('o'), KeyCode::Char('q')],
             label: "o q",
         }],
-        PLANNED_FLOW_REASON,
+        Action::SetSort(TaskSort::Queue),
     ),
-    CommandSpec::planned(
+    CommandSpec {
+        name: "order-due",
+        description: "sort by due date",
+        section: "Order",
+        keys: &[KeySequence {
+            codes: &[KeyCode::Char('o'), KeyCode::Char('d')],
+            label: "o d",
+        }],
+        action: Action::UnsupportedDueSort,
+        lifecycle: CommandLifecycle::Disabled {
+            reason: DUE_SORT_REASON,
+        },
+    },
+    CommandSpec::implemented(
         "order-created",
         "sort by created date",
         "Order",
@@ -775,9 +794,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('o'), KeyCode::Char('c')],
             label: "o c",
         }],
-        PLANNED_FLOW_REASON,
+        Action::SetSort(TaskSort::Created),
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "order-updated",
         "sort by updated date",
         "Order",
@@ -785,19 +804,19 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('o'), KeyCode::Char('u')],
             label: "o u",
         }],
-        PLANNED_FLOW_REASON,
+        Action::SetSort(TaskSort::Updated),
     ),
-    CommandSpec::planned(
-        "order-project",
-        "sort by project",
+    CommandSpec::implemented(
+        "order-priority",
+        "sort by priority",
         "Order",
         &[KeySequence {
             codes: &[KeyCode::Char('o'), KeyCode::Char('p')],
             label: "o p",
         }],
-        PLANNED_FLOW_REASON,
+        Action::SetSort(TaskSort::Priority),
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "order-title",
         "sort by title",
         "Order",
@@ -805,7 +824,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('o'), KeyCode::Char('t')],
             label: "o t",
         }],
-        PLANNED_FLOW_REASON,
+        Action::SetSort(TaskSort::Title),
+    ),
+    CommandSpec::implemented(
+        "order-reverse",
+        "reverse sort direction",
+        "Order",
+        &[KeySequence {
+            codes: &[KeyCode::Char('o'), KeyCode::Char('r')],
+            label: "o r",
+        }],
+        Action::ReverseSort,
     ),
     // Conflict
     CommandSpec::planned(
@@ -1034,6 +1063,9 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginCommand
             | Action::Refresh
             | Action::CycleSort
+            | Action::SetSort(_)
+            | Action::ReverseSort
+            | Action::UnsupportedDueSort
             | Action::SetStatus(_)
             | Action::SetPriority(_)
             | Action::CyclePriority(_)
@@ -1360,6 +1392,14 @@ mod tests {
                         command.name
                     );
                 }
+                (CommandLifecycle::Disabled { reason }, Action::UnsupportedDueSort) => {
+                    assert_eq!(command.name, "order-due");
+                    assert!(
+                        !reason.trim().is_empty(),
+                        ":{} disabled reason is empty",
+                        command.name
+                    );
+                }
                 _ => panic!("lifecycle/action mismatch for :{}", command.name),
             }
         }
@@ -1431,6 +1471,9 @@ mod tests {
             "status-active",
             "filter-project",
             "order-queue",
+            "order-due",
+            "order-priority",
+            "order-reverse",
             "conflict-list",
             "add-project",
             "config-show",
@@ -1523,6 +1566,30 @@ mod tests {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('c')]),
             ShortcutLookup::Found(Action::ShowView(ViewTarget::Conflicts))
+        );
+    }
+
+    #[test]
+    fn resolves_order_shortcuts() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('d')]),
+            ShortcutLookup::Found(Action::UnsupportedDueSort)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('c')]),
+            ShortcutLookup::Found(Action::SetSort(TaskSort::Created))
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('p')]),
+            ShortcutLookup::Found(Action::SetSort(TaskSort::Priority))
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('u')]),
+            ShortcutLookup::Found(Action::SetSort(TaskSort::Updated))
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('r')]),
+            ShortcutLookup::Found(Action::ReverseSort)
         );
     }
 }

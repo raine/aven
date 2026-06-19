@@ -16,7 +16,7 @@ use crate::operations::{
     update_task,
 };
 use crate::projects::{list_projects, resolve_existing_project};
-use crate::query::{self, TaskFilters, TaskSort};
+use crate::query::{self, SortDirection, TaskFilters, TaskSort};
 use crate::refs::{display_ref, display_suffix, resolve_task_ref};
 use crate::render::quote;
 use crate::task_render::{print_task, print_task_line_item};
@@ -69,7 +69,9 @@ pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Res
         conflicts_only: false,
         search: None,
     };
-    for item in query::list_task_items(conn, filters, TaskSort::Updated).await? {
+    for item in
+        query::list_task_items(conn, filters, TaskSort::Updated, SortDirection::Desc).await?
+    {
         print_task_line_item(&item).await?;
     }
     Ok(())

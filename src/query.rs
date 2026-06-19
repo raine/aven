@@ -14,8 +14,24 @@ pub(crate) enum TaskSort {
     Queue,
     Created,
     Updated,
+    Priority,
     Project,
     Title,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SortDirection {
+    Asc,
+    Desc,
+}
+
+impl SortDirection {
+    pub(crate) fn toggled(self) -> Self {
+        match self {
+            Self::Asc => Self::Desc,
+            Self::Desc => Self::Asc,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -60,6 +76,7 @@ pub(crate) async fn list_task_items(
     conn: &mut SqliteConnection,
     filters: TaskFilters,
     sort: TaskSort,
+    direction: SortDirection,
 ) -> Result<Vec<TaskListItem>> {
     if let Some(status) = filters.status.as_deref() {
         validate_choice("status", status, STATUSES)?;
@@ -124,7 +141,7 @@ pub(crate) async fn list_task_items(
         query.push(")");
     }
 
-    push_sort(&mut query, sort);
+    push_sort(&mut query, sort, direction);
 
     let rows = query.build().fetch_all(&mut *conn).await?;
     let tasks = rows
@@ -212,9 +229,9 @@ fn push_filter_prefix(query: &mut QueryBuilder<Sqlite>, filters: &mut usize) {
     *filters += 1;
 }
 
-fn push_sort(query: &mut QueryBuilder<Sqlite>, sort: TaskSort) {
-    match sort {
-        TaskSort::Queue => query.push(
+fn push_sort(query: &mut QueryBuilder<Sqlite>, sort: TaskSort, direction: SortDirection) {
+    match (sort, direction) {
+        (TaskSort::Queue, SortDirection::Asc) => query.push(
             " ORDER BY
               CASE t.status
                 WHEN 'active' THEN 0
@@ -235,10 +252,71 @@ fn push_sort(query: &mut QueryBuilder<Sqlite>, sort: TaskSort) {
               END,
               t.created_at ASC",
         ),
-        TaskSort::Created => query.push(" ORDER BY t.created_at DESC"),
-        TaskSort::Updated => query.push(" ORDER BY t.updated_at DESC, t.created_at DESC"),
-        TaskSort::Project => query.push(" ORDER BY t.project_key, t.created_at DESC"),
-        TaskSort::Title => query.push(" ORDER BY lower(t.title), t.created_at DESC"),
+        (TaskSort::Queue, SortDirection::Desc) => query.push(
+            " ORDER BY
+              CASE t.status
+                WHEN 'canceled' THEN 0
+                WHEN 'done' THEN 1
+                WHEN 'backlog' THEN 2
+                WHEN 'inbox' THEN 3
+                WHEN 'todo' THEN 4
+                WHEN 'active' THEN 5
+                ELSE 6
+              END,
+              CASE t.priority
+                WHEN 'none' THEN 0
+                WHEN 'low' THEN 1
+                WHEN 'medium' THEN 2
+                WHEN 'high' THEN 3
+                WHEN 'urgent' THEN 4
+                ELSE 5
+              END,
+              t.created_at DESC",
+        ),
+        (TaskSort::Created, SortDirection::Asc) => query.push(" ORDER BY t.created_at ASC"),
+        (TaskSort::Created, SortDirection::Desc) => query.push(" ORDER BY t.created_at DESC"),
+        (TaskSort::Updated, SortDirection::Asc) => {
+            query.push(" ORDER BY t.updated_at ASC, t.created_at ASC")
+        }
+        (TaskSort::Updated, SortDirection::Desc) => {
+            query.push(" ORDER BY t.updated_at DESC, t.created_at DESC")
+        }
+        (TaskSort::Priority, SortDirection::Asc) => query.push(
+            " ORDER BY
+              CASE t.priority
+                WHEN 'urgent' THEN 0
+                WHEN 'high' THEN 1
+                WHEN 'medium' THEN 2
+                WHEN 'low' THEN 3
+                WHEN 'none' THEN 4
+                ELSE 5
+              END,
+              t.created_at DESC",
+        ),
+        (TaskSort::Priority, SortDirection::Desc) => query.push(
+            " ORDER BY
+              CASE t.priority
+                WHEN 'none' THEN 0
+                WHEN 'low' THEN 1
+                WHEN 'medium' THEN 2
+                WHEN 'high' THEN 3
+                WHEN 'urgent' THEN 4
+                ELSE 5
+              END,
+              t.created_at DESC",
+        ),
+        (TaskSort::Project, SortDirection::Asc) => {
+            query.push(" ORDER BY t.project_key ASC, t.created_at DESC")
+        }
+        (TaskSort::Project, SortDirection::Desc) => {
+            query.push(" ORDER BY t.project_key DESC, t.created_at DESC")
+        }
+        (TaskSort::Title, SortDirection::Asc) => {
+            query.push(" ORDER BY lower(t.title) ASC, t.created_at DESC")
+        }
+        (TaskSort::Title, SortDirection::Desc) => {
+            query.push(" ORDER BY lower(t.title) DESC, t.created_at DESC")
+        }
     };
 }
 
@@ -293,9 +371,14 @@ mod tests {
             .unwrap();
         }
 
-        let items = list_task_items(&mut conn, TaskFilters::default(), TaskSort::Queue)
-            .await
-            .unwrap();
+        let items = list_task_items(
+            &mut conn,
+            TaskFilters::default(),
+            TaskSort::Queue,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
         let titles = items
             .iter()
             .map(|item| item.task.title.as_str())
@@ -310,6 +393,101 @@ mod tests {
                 "done urgent"
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn priority_sort_orders_priority_then_created_at() {
+        let (_temp, mut conn) = test_conn().await;
+        sqlx::query(
+            "INSERT INTO projects(key, name, prefix, created_at, updated_at)
+             VALUES ('app', 'app', 'APP', 't', 't')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        for (id, title, priority, created_at) in [
+            ("0000000000000101", "none old", "none", "001"),
+            ("0000000000000102", "urgent", "urgent", "002"),
+            ("0000000000000103", "high", "high", "003"),
+            ("0000000000000104", "none new", "none", "004"),
+        ] {
+            sqlx::query(
+                "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
+                 VALUES (?, ?, '', 'app', 'todo', ?, ?, ?)",
+            )
+            .bind(id)
+            .bind(title)
+            .bind(priority)
+            .bind(created_at)
+            .bind(created_at)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        }
+
+        let items = list_task_items(
+            &mut conn,
+            TaskFilters::default(),
+            TaskSort::Priority,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+        let titles = items
+            .iter()
+            .map(|item| item.task.title.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(titles, ["urgent", "high", "none new", "none old"]);
+    }
+
+    #[tokio::test]
+    async fn created_sort_respects_direction() {
+        let (_temp, mut conn) = test_conn().await;
+        sqlx::query(
+            "INSERT INTO projects(key, name, prefix, created_at, updated_at)
+             VALUES ('app', 'app', 'APP', 't', 't')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        for (id, title, created_at) in [
+            ("0000000000000201", "first", "001"),
+            ("0000000000000202", "second", "002"),
+        ] {
+            sqlx::query(
+                "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
+                 VALUES (?, ?, '', 'app', 'todo', 'none', ?, ?)",
+            )
+            .bind(id)
+            .bind(title)
+            .bind(created_at)
+            .bind(created_at)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        }
+
+        let items = list_task_items(
+            &mut conn,
+            TaskFilters::default(),
+            TaskSort::Created,
+            SortDirection::Desc,
+        )
+        .await
+        .unwrap();
+        assert_eq!(items[0].task.title, "second");
+
+        let items = list_task_items(
+            &mut conn,
+            TaskFilters::default(),
+            TaskSort::Created,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+        assert_eq!(items[0].task.title, "first");
     }
 
     #[tokio::test]
@@ -356,6 +534,7 @@ mod tests {
                 ..TaskFilters::default()
             },
             TaskSort::Queue,
+            SortDirection::Asc,
         )
         .await
         .unwrap();

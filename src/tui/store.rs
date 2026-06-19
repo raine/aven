@@ -12,8 +12,8 @@ use crate::operations::{
     update_task as update_task_operation,
 };
 use crate::query::{
-    ProjectListItem, SidebarCounts, TaskFilters, TaskListItem, TaskSort, list_project_items,
-    list_task_items, sidebar_counts,
+    ProjectListItem, SidebarCounts, SortDirection, TaskFilters, TaskListItem, TaskSort,
+    list_project_items, list_task_items, sidebar_counts,
 };
 use crate::tui::overlay::PickerItem;
 
@@ -52,6 +52,7 @@ pub(crate) struct TuiStore {
     pub(crate) active_view: SidebarTarget,
     pub(crate) filters: TaskFilters,
     pub(crate) sort: TaskSort,
+    pub(crate) sort_direction: SortDirection,
     pub(crate) last_refresh: Instant,
 }
 
@@ -67,6 +68,7 @@ impl TuiStore {
             active_view: SidebarTarget::All,
             filters: TaskFilters::default(),
             sort: TaskSort::Queue,
+            sort_direction: SortDirection::Asc,
             last_refresh: Instant::now(),
         };
         store.refresh(None).await?;
@@ -82,6 +84,7 @@ impl TuiStore {
             TaskSort::Queue => "queue",
             TaskSort::Created => "created",
             TaskSort::Updated => "updated",
+            TaskSort::Priority => "priority",
             TaskSort::Project => "project",
             TaskSort::Title => "title",
         }
@@ -92,7 +95,13 @@ impl TuiStore {
         self.projects = list_project_items(&mut conn).await?;
         self.labels = list_labels(&mut conn, None).await?;
         self.counts = sidebar_counts(&mut conn).await?;
-        self.tasks = list_task_items(&mut conn, self.filters.clone(), self.sort).await?;
+        self.tasks = list_task_items(
+            &mut conn,
+            self.filters.clone(),
+            self.sort,
+            self.sort_direction,
+        )
+        .await?;
         self.rebuild_sidebar();
         self.last_refresh = Instant::now();
         Ok(self.restored_task_selection(selected_id))
@@ -200,14 +209,32 @@ impl TuiStore {
         self.refresh(None).await
     }
 
+    pub(crate) fn sort_direction_label(&self) -> &'static str {
+        match self.sort_direction {
+            SortDirection::Asc => "asc",
+            SortDirection::Desc => "desc",
+        }
+    }
+
     pub(crate) fn cycle_sort(&mut self) {
         self.sort = match self.sort {
             TaskSort::Queue => TaskSort::Created,
             TaskSort::Created => TaskSort::Updated,
-            TaskSort::Updated => TaskSort::Project,
+            TaskSort::Updated => TaskSort::Priority,
+            TaskSort::Priority => TaskSort::Project,
             TaskSort::Project => TaskSort::Title,
             TaskSort::Title => TaskSort::Queue,
         };
+    }
+
+    pub(crate) async fn set_sort(&mut self, sort: TaskSort) -> Result<Option<usize>> {
+        self.sort = sort;
+        self.refresh(None).await
+    }
+
+    pub(crate) async fn reverse_sort(&mut self) -> Result<Option<usize>> {
+        self.sort_direction = self.sort_direction.toggled();
+        self.refresh(None).await
     }
 
     pub(crate) async fn update_status(
@@ -952,5 +979,17 @@ mod tests {
 
         store.toggle_deleted_filter().await.unwrap();
         assert!(!store.filters.include_deleted);
+    }
+
+    #[tokio::test]
+    async fn set_sort_and_reverse_sort_update_order_state() {
+        let mut store = test_store().await;
+
+        store.set_sort(TaskSort::Priority).await.unwrap();
+        assert_eq!(store.sort, TaskSort::Priority);
+        assert_eq!(store.sort_direction, SortDirection::Asc);
+
+        store.reverse_sort().await.unwrap();
+        assert_eq!(store.sort_direction, SortDirection::Desc);
     }
 }
