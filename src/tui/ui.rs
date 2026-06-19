@@ -343,21 +343,14 @@ fn render_tasks(
     view: &ViewState,
     area: Rect,
 ) {
-    let header = Row::new([
-        "  REF",
-        "TITLE",
-        "PROJECT / LABELS",
-        "STATUS",
-        "PRIORITY",
-        "AGE",
-    ])
-    .style(
-        Style::new()
-            .fg(FG_DIM)
-            .bg(BG_ALT)
-            .add_modifier(Modifier::BOLD),
-    )
-    .height(1);
+    let header = Row::new(["REF", "TITLE", "PROJECT / LABELS", "STATUS", "P", "AGE"])
+        .style(
+            Style::new()
+                .fg(FG_DIM)
+                .bg(BG_ALT)
+                .add_modifier(Modifier::BOLD),
+        )
+        .height(1);
 
     let [table_area, preview_area] = if area.height >= 24 {
         Layout::vertical([Constraint::Fill(1), Constraint::Length(8)]).areas(area)
@@ -373,20 +366,20 @@ fn render_tasks(
     };
     let columns = if area.width < 90 {
         [
-            Constraint::Length(16),
+            Constraint::Length(12),
             Constraint::Fill(1),
             Constraint::Max(16),
             Constraint::Length(8),
-            Constraint::Length(8),
+            Constraint::Length(3),
             Constraint::Length(5),
         ]
     } else {
         [
-            Constraint::Length(16),
+            Constraint::Length(12),
             Constraint::Fill(2),
             Constraint::Max(30),
             Constraint::Length(10),
-            Constraint::Length(11),
+            Constraint::Length(3),
             Constraint::Length(5),
         ]
     };
@@ -527,13 +520,10 @@ fn group_row(status: &str, count: usize) -> Row<'static> {
 
 fn task_row(item: &TaskListItem, _index: usize) -> Row<'static> {
     Row::new([
-        Cell::from(Line::from(vec![
-            Span::styled(
-                format!("{} ", priority_icon(&item.task.priority)),
-                theme::priority_style(&item.task.priority),
-            ),
-            Span::styled(short_ref(&item.display_ref), Style::new().fg(FG_MUTED)),
-        ])),
+        Cell::from(Span::styled(
+            short_ref(&item.display_ref),
+            Style::new().fg(FG_MUTED),
+        )),
         Cell::from(title_cell(item)),
         Cell::from(project_cell(item)),
         Cell::from(Span::styled(
@@ -541,7 +531,7 @@ fn task_row(item: &TaskListItem, _index: usize) -> Row<'static> {
             theme::status_style(&item.task.status).add_modifier(Modifier::BOLD),
         )),
         Cell::from(Span::styled(
-            priority_short(&item.task.priority),
+            priority_icon(&item.task.priority),
             theme::priority_style(&item.task.priority).add_modifier(Modifier::BOLD),
         )),
         Cell::from(Span::styled(
