@@ -3,11 +3,14 @@ use std::time::Instant;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
+use crate::labels::list_labels;
 use crate::mutation::{cycle_priority, set_deleted, set_status};
+use crate::operations::{create_label_operation, create_project_operation};
 use crate::query::{
     ProjectListItem, SidebarCounts, TaskFilters, TaskListItem, TaskSort, list_project_items,
     list_task_items, sidebar_counts,
 };
+use crate::tui::overlay::PickerItem;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SidebarTarget {
@@ -29,6 +32,7 @@ pub(crate) struct TuiStore {
     pool: SqlitePool,
     pub(crate) tasks: Vec<TaskListItem>,
     pub(crate) projects: Vec<ProjectListItem>,
+    pub(crate) labels: Vec<String>,
     pub(crate) counts: SidebarCounts,
     pub(crate) sidebar_entries: Vec<SidebarEntry>,
     pub(crate) active_view: SidebarTarget,
@@ -43,6 +47,7 @@ impl TuiStore {
             pool,
             tasks: Vec::new(),
             projects: Vec::new(),
+            labels: Vec::new(),
             counts: SidebarCounts::default(),
             sidebar_entries: Vec::new(),
             active_view: SidebarTarget::All,
@@ -71,6 +76,7 @@ impl TuiStore {
     pub(crate) async fn refresh(&mut self, selected_id: Option<&str>) -> Result<Option<usize>> {
         let mut conn = self.pool.acquire().await?;
         self.projects = list_project_items(&mut conn).await?;
+        self.labels = list_labels(&mut conn, None).await?;
         self.counts = sidebar_counts(&mut conn).await?;
         self.tasks = list_task_items(&mut conn, self.filters.clone(), self.sort).await?;
         self.rebuild_sidebar();
@@ -177,6 +183,36 @@ impl TuiStore {
         Ok(None)
     }
 
+    pub(crate) async fn create_project(&mut self, name: String) -> Result<String> {
+        let name = name.trim().to_string();
+        let mut conn = self.pool.acquire().await?;
+        let outcome = create_project_operation(&mut conn, &name, None).await?;
+        drop(conn);
+        self.refresh(None).await?;
+        Ok(format!("created project {}", outcome.project.key))
+    }
+
+    pub(crate) async fn create_label(&mut self, name: String) -> Result<String> {
+        let name = name.trim().to_string();
+        let mut conn = self.pool.acquire().await?;
+        let outcome = create_label_operation(&mut conn, &name).await?;
+        self.labels = list_labels(&mut conn, None).await?;
+        drop(conn);
+        Ok(format!("created label {}", outcome.name))
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn label_picker_items(&self) -> Vec<PickerItem> {
+        self.labels
+            .iter()
+            .map(|label| PickerItem {
+                label: label.clone(),
+                value: label.clone(),
+                selected: false,
+            })
+            .collect()
+    }
+
     fn rebuild_sidebar(&mut self) {
         let mut entries = vec![
             SidebarEntry {
@@ -236,5 +272,57 @@ impl TuiStore {
         selected_id
             .and_then(|id| self.tasks.iter().position(|item| item.task.id == id))
             .or(Some(0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_store() -> TuiStore {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        TuiStore::new(pool).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn create_project_refreshes_sidebar() {
+        let mut store = test_store().await;
+        store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
+        assert!(
+            store
+                .projects
+                .iter()
+                .any(|project| project.key == "mobile-app")
+        );
+        assert!(
+            store
+                .sidebar_entries
+                .iter()
+                .any(|entry| entry.label.contains("Mobile App"))
+        );
+    }
+
+    #[tokio::test]
+    async fn create_label_refreshes_label_cache() {
+        let mut store = test_store().await;
+        store
+            .create_label("Needs Review".to_string())
+            .await
+            .unwrap();
+
+        assert!(store.labels.iter().any(|label| label == "needs-review"));
+        assert!(
+            store
+                .label_picker_items()
+                .iter()
+                .any(|item| item.value == "needs-review")
+        );
     }
 }

@@ -9,9 +9,14 @@ use sqlx::SqlitePool;
 use crate::tui::event::{
     Action, CommandLookup, ShortcutLookup, lookup_command, resolve_shortcut, shortcut_label,
 };
-use crate::tui::overlay::{OverlayOutcome, OverlayState, OverlayView};
+use crate::tui::overlay::{
+    OverlayOutcome, OverlayState, OverlaySubmit, OverlayView, TextInputState,
+};
 use crate::tui::store::{SidebarEntry, TuiStore};
 use crate::tui::ui;
+
+const ADD_PROJECT_TITLE: &str = "Add project";
+const ADD_LABEL_TITLE: &str = "Add label";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Focus {
@@ -183,19 +188,40 @@ impl App {
                 }
                 _ => self.overlay = Some(OverlayState::Command { input }),
             },
-            overlay => self.handle_generic_overlay_key(key, overlay),
+            overlay => self.handle_generic_overlay_key(key, overlay).await?,
         }
 
         Ok(())
     }
 
-    fn handle_generic_overlay_key(&mut self, key: KeyEvent, overlay: OverlayState) {
+    async fn handle_generic_overlay_key(
+        &mut self,
+        key: KeyEvent,
+        overlay: OverlayState,
+    ) -> Result<()> {
         let outcome = crate::tui::overlay::handle_generic_overlay_key(key, overlay);
         match outcome {
             OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
             OverlayOutcome::Cancelled => {}
-            OverlayOutcome::Submitted(submit) => self.set_message(submit.message()),
+            OverlayOutcome::Submitted(submit) => self.handle_overlay_submit(submit).await?,
         }
+        Ok(())
+    }
+
+    async fn handle_overlay_submit(&mut self, submit: OverlaySubmit) -> Result<()> {
+        match submit {
+            OverlaySubmit::Text { title, value } if title == ADD_PROJECT_TITLE => {
+                let message = self.store.create_project(value).await?;
+                self.restore_selection_after_mutation();
+                self.set_message(message);
+            }
+            OverlaySubmit::Text { title, value } if title == ADD_LABEL_TITLE => {
+                let message = self.store.create_label(value).await?;
+                self.set_message(message);
+            }
+            other => self.set_message(other.message()),
+        }
+        Ok(())
     }
 
     async fn handle(&mut self, action: Action) -> Result<()> {
@@ -224,6 +250,8 @@ impl App {
             Action::CyclePriority(reverse) => self.update_priority(reverse).await?,
             Action::Delete => self.update_deleted(true).await?,
             Action::Restore => self.update_deleted(false).await?,
+            Action::BeginAddProject => self.begin_add_project(),
+            Action::BeginAddLabel => self.begin_add_label(),
             Action::Planned(name) => self.set_message(format!(":{name} is not yet implemented")),
             Action::Disabled(name) => self.set_message(format!(":{name} is disabled")),
             Action::AcceptCommand
@@ -359,6 +387,26 @@ impl App {
         self.overlay = Some(OverlayState::Command {
             input: String::new(),
         });
+    }
+
+    fn begin_add_project(&mut self) {
+        self.pending_shortcut.clear();
+        self.overlay = Some(OverlayState::TextInput(TextInputState {
+            title: ADD_PROJECT_TITLE.to_string(),
+            prompt: "project name:".to_string(),
+            input: String::new(),
+            cursor: 0,
+        }));
+    }
+
+    fn begin_add_label(&mut self) {
+        self.pending_shortcut.clear();
+        self.overlay = Some(OverlayState::TextInput(TextInputState {
+            title: ADD_LABEL_TITLE.to_string(),
+            prompt: "label name:".to_string(),
+            input: String::new(),
+            cursor: 0,
+        }));
     }
 
     fn accept_command_input(&mut self, input: &str) -> Option<Action> {
@@ -708,6 +756,67 @@ mod tests {
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         assert!(app.overlay.is_none());
         assert_eq!(app.message.as_deref(), Some("submitted Title"));
+    }
+
+    #[tokio::test]
+    async fn add_project_shortcut_opens_prompt_and_creates_project() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state)) if state.prompt == "project name:"
+        ));
+
+        for ch in "Mobile App".chars() {
+            app.handle_overlay_key(key(KeyCode::Char(ch)))
+                .await
+                .unwrap();
+        }
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(app.message.as_deref(), Some("created project mobile-app"));
+        assert!(
+            app.store
+                .projects
+                .iter()
+                .any(|project| project.key == "mobile-app")
+        );
+        assert!(
+            app.store
+                .sidebar_entries
+                .iter()
+                .any(|entry| entry.label.contains("Mobile App"))
+        );
+    }
+
+    #[tokio::test]
+    async fn add_label_shortcut_opens_prompt_and_creates_label() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state)) if state.prompt == "label name:"
+        ));
+
+        for ch in "Needs Review".chars() {
+            app.handle_overlay_key(key(KeyCode::Char(ch)))
+                .await
+                .unwrap();
+        }
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(app.message.as_deref(), Some("created label needs-review"));
+        assert!(app.store.labels.iter().any(|label| label == "needs-review"));
+        assert!(
+            app.store
+                .label_picker_items()
+                .iter()
+                .any(|item| item.value == "needs-review")
+        );
     }
 
     #[tokio::test]

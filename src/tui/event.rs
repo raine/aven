@@ -28,6 +28,8 @@ pub(crate) enum Action {
     CyclePriority(bool),
     Delete,
     Restore,
+    BeginAddProject,
+    BeginAddLabel,
     Planned(&'static str),
     Disabled(&'static str),
     None,
@@ -57,6 +59,7 @@ pub(crate) struct CommandSpec {
 }
 
 const PLANNED_FLOW_REASON: &str = "not yet implemented";
+const PROJECT_PATH_FLOW_REASON: &str = "requires a multi-step project/path picker flow";
 const CONFLICT_OVERLAY_REASON: &str = "requires the conflict overlay";
 
 impl CommandSpec {
@@ -524,7 +527,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         PLANNED_FLOW_REASON,
     ),
     // Metadata
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "add-project",
         "create a new project",
         "Metadata",
@@ -532,9 +535,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('a'), KeyCode::Char('p')],
             label: "a p",
         }],
-        PLANNED_FLOW_REASON,
+        Action::BeginAddProject,
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "add-label",
         "create a new label",
         "Metadata",
@@ -542,7 +545,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('a'), KeyCode::Char('l')],
             label: "a l",
         }],
-        PLANNED_FLOW_REASON,
+        Action::BeginAddLabel,
     ),
     CommandSpec::planned(
         "add-project-path",
@@ -552,7 +555,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('a'), KeyCode::Char('P')],
             label: "a P",
         }],
-        PLANNED_FLOW_REASON,
+        PROJECT_PATH_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "remove-project-path",
+        "remove a path from a project",
+        "Metadata",
+        &[KeySequence {
+            codes: &[KeyCode::Char('a'), KeyCode::Char('R')],
+            label: "a R",
+        }],
+        PROJECT_PATH_FLOW_REASON,
     ),
     // Edit
     CommandSpec::planned(
@@ -999,6 +1012,8 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::CyclePriority(_)
             | Action::Delete
             | Action::Restore
+            | Action::BeginAddProject
+            | Action::BeginAddLabel
     )
 }
 
@@ -1324,6 +1339,34 @@ mod tests {
                 }
                 seen.push((key.codes, command.name, key.label));
             }
+        }
+    }
+
+    #[test]
+    fn resolves_metadata_shortcuts() {
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('a'), KeyCode::Char('p')]),
+            ShortcutLookup::Found(Action::BeginAddProject)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('a'), KeyCode::Char('l')]),
+            ShortcutLookup::Found(Action::BeginAddLabel)
+        ));
+    }
+
+    #[test]
+    fn project_path_commands_remain_planned_with_explicit_reason() {
+        for name in ["add-project-path", "remove-project-path"] {
+            let command = COMMANDS
+                .iter()
+                .find(|command| command.name == name)
+                .unwrap_or_else(|| panic!("missing command :{name}"));
+            assert_eq!(
+                command.lifecycle,
+                CommandLifecycle::Planned {
+                    reason: PROJECT_PATH_FLOW_REASON
+                }
+            );
         }
     }
 
