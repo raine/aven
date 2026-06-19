@@ -6,17 +6,53 @@ use ratatui::DefaultTerminal;
 use ratatui::widgets::{ListState, TableState};
 use sqlx::SqlitePool;
 
+use crate::operations::TaskDraft;
 use crate::tui::event::{
     Action, CommandLookup, ShortcutLookup, lookup_command, resolve_shortcut, shortcut_label,
 };
 use crate::tui::overlay::{
-    OverlayOutcome, OverlayState, OverlaySubmit, OverlayView, TextInputState,
+    MultilineInputState, OverlayOutcome, OverlayState, OverlaySubmit, OverlayView, PickerItem,
+    PickerState, TextInputState,
 };
 use crate::tui::store::{SidebarEntry, TuiStore};
 use crate::tui::ui;
 
 const ADD_PROJECT_TITLE: &str = "Add project";
 const ADD_LABEL_TITLE: &str = "Add label";
+const ADD_TASK_TITLE_TITLE: &str = "Add task: title";
+const ADD_TASK_PROJECT_TITLE: &str = "Add task: project";
+const ADD_TASK_PRIORITY_TITLE: &str = "Add task: priority";
+const ADD_TASK_LABELS_TITLE: &str = "Add task: labels";
+const ADD_TASK_DESCRIPTION_TITLE: &str = "Add task: description";
+const ADD_NOTE_TITLE: &str = "Add note";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AddTaskDraftState {
+    title: String,
+    project: Option<String>,
+    priority: String,
+    labels: Vec<String>,
+}
+
+impl Default for AddTaskDraftState {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            project: None,
+            priority: "none".to_string(),
+            labels: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AuthoringFlow {
+    AddTask(AddTaskDraftState),
+    AddNote {
+        task_id: String,
+        display_ref: String,
+    },
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Focus {
@@ -38,6 +74,7 @@ pub(crate) struct App {
     pub(crate) message: Option<String>,
     pub(crate) message_at: Option<Instant>,
     pending_shortcut: Vec<KeyCode>,
+    authoring: Option<AuthoringFlow>,
 }
 
 impl App {
@@ -55,6 +92,7 @@ impl App {
             message: None,
             message_at: None,
             pending_shortcut: Vec::new(),
+            authoring: None,
         };
         app.widgets.sidebar.select(app.store.sidebar_selection());
         app.widgets
@@ -202,7 +240,7 @@ impl App {
         let outcome = crate::tui::overlay::handle_generic_overlay_key(key, overlay);
         match outcome {
             OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
-            OverlayOutcome::Cancelled => {}
+            OverlayOutcome::Cancelled => self.cancel_authoring_overlay(),
             OverlayOutcome::Submitted(submit) => self.handle_overlay_submit(submit).await?,
         }
         Ok(())
@@ -210,6 +248,43 @@ impl App {
 
     async fn handle_overlay_submit(&mut self, submit: OverlaySubmit) -> Result<()> {
         match submit {
+            OverlaySubmit::Text { title, value } if title == ADD_TASK_TITLE_TITLE => {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    self.set_message("task title is required".to_string());
+                    self.begin_add_task_title();
+                } else if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
+                    draft.title = trimmed.to_string();
+                    self.begin_add_task_project();
+                }
+            }
+            OverlaySubmit::Picker { title, values } if title == ADD_TASK_PROJECT_TITLE => {
+                if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
+                    draft.project = values.first().filter(|value| !value.is_empty()).cloned();
+                    self.begin_add_task_priority();
+                }
+            }
+            OverlaySubmit::Picker { title, values } if title == ADD_TASK_PRIORITY_TITLE => {
+                if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
+                    draft.priority = values
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "none".to_string());
+                    self.begin_add_task_labels();
+                }
+            }
+            OverlaySubmit::Picker { title, values } if title == ADD_TASK_LABELS_TITLE => {
+                if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
+                    draft.labels = values;
+                    self.begin_add_task_description();
+                }
+            }
+            OverlaySubmit::Multiline { title, value } if title == ADD_TASK_DESCRIPTION_TITLE => {
+                self.submit_add_task(value).await?;
+            }
+            OverlaySubmit::Multiline { title, value } if title == ADD_NOTE_TITLE => {
+                self.submit_add_note(value).await?;
+            }
             OverlaySubmit::Text { title, value } if title == ADD_PROJECT_TITLE => {
                 let message = self.store.create_project(value).await?;
                 self.restore_selection_after_mutation();
@@ -252,6 +327,8 @@ impl App {
             Action::Restore => self.update_deleted(false).await?,
             Action::BeginAddProject => self.begin_add_project(),
             Action::BeginAddLabel => self.begin_add_label(),
+            Action::BeginAddTask => self.begin_add_task(),
+            Action::BeginAddNote => self.begin_add_note(),
             Action::Planned(name) => self.set_message(format!(":{name} is not yet implemented")),
             Action::Disabled(name) => self.set_message(format!(":{name} is disabled")),
             Action::AcceptCommand
@@ -409,6 +486,163 @@ impl App {
         }));
     }
 
+    fn begin_add_task(&mut self) {
+        self.pending_shortcut.clear();
+        self.authoring = Some(AuthoringFlow::AddTask(AddTaskDraftState::default()));
+        self.begin_add_task_title();
+    }
+
+    fn begin_add_task_title(&mut self) {
+        let input = match &self.authoring {
+            Some(AuthoringFlow::AddTask(draft)) => draft.title.clone(),
+            _ => return,
+        };
+        let cursor = input.len();
+        self.overlay = Some(OverlayState::TextInput(TextInputState {
+            title: ADD_TASK_TITLE_TITLE.to_string(),
+            prompt: "title:".to_string(),
+            input,
+            cursor,
+        }));
+    }
+
+    fn begin_add_note(&mut self) {
+        self.pending_shortcut.clear();
+        let Some(item) = self
+            .store
+            .selected_task(self.widgets.table.selected())
+            .cloned()
+        else {
+            self.set_message("no selected task for note".to_string());
+            return;
+        };
+        self.authoring = Some(AuthoringFlow::AddNote {
+            task_id: item.task.id.clone(),
+            display_ref: item.display_ref.clone(),
+        });
+        self.overlay = Some(OverlayState::MultilineInput(MultilineInputState {
+            title: ADD_NOTE_TITLE.to_string(),
+            prompt: "note body:".to_string(),
+            lines: vec![String::new()],
+            row: 0,
+            column: 0,
+        }));
+    }
+
+    fn begin_add_task_project(&mut self) {
+        let selected = match &self.authoring {
+            Some(AuthoringFlow::AddTask(draft)) => draft.project.as_deref(),
+            _ => return,
+        };
+        let items = self.store.project_picker_items(selected);
+        self.overlay = Some(OverlayState::Picker(PickerState {
+            title: ADD_TASK_PROJECT_TITLE.to_string(),
+            filter: String::new(),
+            selected: selected_picker_index(&items),
+            items,
+            multi: false,
+        }));
+    }
+
+    fn begin_add_task_priority(&mut self) {
+        let selected = match &self.authoring {
+            Some(AuthoringFlow::AddTask(draft)) => draft.priority.as_str(),
+            _ => return,
+        };
+        let items = self.store.priority_picker_items(selected);
+        self.overlay = Some(OverlayState::Picker(PickerState {
+            title: ADD_TASK_PRIORITY_TITLE.to_string(),
+            filter: String::new(),
+            selected: selected_picker_index(&items),
+            items,
+            multi: false,
+        }));
+    }
+
+    fn begin_add_task_labels(&mut self) {
+        let selected_labels = match &self.authoring {
+            Some(AuthoringFlow::AddTask(draft)) => draft.labels.clone(),
+            _ => return,
+        };
+        let mut items = self.store.label_picker_items();
+        for item in &mut items {
+            item.selected = selected_labels.contains(&item.value);
+        }
+        self.overlay = Some(OverlayState::Picker(PickerState {
+            title: ADD_TASK_LABELS_TITLE.to_string(),
+            filter: String::new(),
+            selected: selected_picker_index(&items),
+            items,
+            multi: true,
+        }));
+    }
+
+    fn begin_add_task_description(&mut self) {
+        self.overlay = Some(OverlayState::MultilineInput(MultilineInputState {
+            title: ADD_TASK_DESCRIPTION_TITLE.to_string(),
+            prompt: "description:".to_string(),
+            lines: vec![String::new()],
+            row: 0,
+            column: 0,
+        }));
+    }
+
+    async fn submit_add_task(&mut self, description: String) -> Result<()> {
+        let Some(AuthoringFlow::AddTask(draft)) = self.authoring.take() else {
+            return Ok(());
+        };
+        let current_selected = self.widgets.table.selected();
+        let (message, selected) = self
+            .store
+            .create_task(
+                TaskDraft {
+                    title: draft.title,
+                    description,
+                    project: draft.project,
+                    priority: draft.priority,
+                    labels: draft.labels,
+                },
+                current_selected,
+            )
+            .await?;
+        self.widgets.table.select(selected);
+        self.widgets.sidebar.select(self.store.sidebar_selection());
+        if selected.is_none() {
+            self.restore_selection_after_mutation();
+        }
+        self.set_message(message);
+        Ok(())
+    }
+
+    async fn submit_add_note(&mut self, body: String) -> Result<()> {
+        let trimmed = body.trim();
+        if trimmed.is_empty() {
+            self.authoring = None;
+            self.set_message("note body is required".to_string());
+            return Ok(());
+        }
+        let Some(AuthoringFlow::AddNote {
+            task_id,
+            display_ref,
+        }) = self.authoring.take()
+        else {
+            self.set_message("no selected task for note".to_string());
+            return Ok(());
+        };
+        let note_id = self
+            .store
+            .add_note_to_task(&task_id, trimmed.to_string())
+            .await?;
+        self.set_message(format!("added note {note_id} to {display_ref}"));
+        Ok(())
+    }
+
+    fn cancel_authoring_overlay(&mut self) {
+        self.pending_shortcut.clear();
+        self.overlay = None;
+        self.authoring = None;
+    }
+
     fn accept_command_input(&mut self, input: &str) -> Option<Action> {
         match lookup_command(input) {
             CommandLookup::Found(action) => {
@@ -440,6 +674,7 @@ impl App {
 
     fn cancel_overlay(&mut self) {
         self.pending_shortcut.clear();
+        self.authoring = None;
         let had_overlay = self.overlay.take().is_some();
         if !had_overlay && self.focus == Focus::Sidebar {
             self.focus = Focus::Tasks;
@@ -513,6 +748,10 @@ impl App {
     }
 }
 
+fn selected_picker_index(items: &[PickerItem]) -> usize {
+    items.iter().position(|item| item.selected).unwrap_or(0)
+}
+
 fn next_index(selected: Option<usize>, len: usize, delta: isize, wrap: bool) -> Option<usize> {
     if len == 0 {
         return None;
@@ -574,6 +813,18 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl_s() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)
+    }
+
+    async fn type_chars(app: &mut App, input: &str) {
+        for ch in input.chars() {
+            app.handle_overlay_key(key(KeyCode::Char(ch)))
+                .await
+                .unwrap();
+        }
     }
 
     fn section(label: &str) -> SidebarEntry {
@@ -728,12 +979,179 @@ mod tests {
     #[tokio::test]
     async fn planned_shortcut_reports_not_yet_implemented() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         assert_eq!(
             app.message.as_deref(),
-            Some(":add-task is not yet implemented")
+            Some(":edit-title is not yet implemented")
         );
+    }
+
+    #[tokio::test]
+    async fn add_task_shortcut_opens_title_prompt() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state)) if state.prompt == "title:"
+        ));
+    }
+
+    #[tokio::test]
+    async fn add_task_flow_creates_task_with_metadata_and_selects_it() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        app.store
+            .create_label("Needs Review".to_string())
+            .await
+            .unwrap();
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state)) if state.title == ADD_TASK_PROJECT_TITLE
+        ));
+        type_chars(&mut app, "mobile").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state)) if state.title == ADD_TASK_PRIORITY_TITLE
+        ));
+        type_chars(&mut app, "high").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state)) if state.title == ADD_TASK_LABELS_TITLE
+        ));
+        type_chars(&mut app, "needs").await;
+        app.handle_overlay_key(key(KeyCode::Char(' ')))
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state)) if state.title == ADD_TASK_DESCRIPTION_TITLE
+        ));
+        type_chars(&mut app, "Long description").await;
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        let selected = app.widgets.table.selected().unwrap();
+        let task = &app.store.tasks[selected];
+        assert_eq!(task.task.title, "Write docs");
+        assert_eq!(task.task.project_key, "mobile-app");
+        assert_eq!(task.task.priority, "high");
+        assert_eq!(task.task.description, "Long description");
+        assert!(task.labels.iter().any(|label| label == "needs-review"));
+    }
+
+    #[tokio::test]
+    async fn add_task_flow_cancels_at_title_step() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn add_task_blank_title_is_rejected() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(app.message.as_deref(), Some("task title is required"));
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state)) if state.title == ADD_TASK_TITLE_TITLE
+        ));
+    }
+
+    #[tokio::test]
+    async fn add_note_requires_selected_task() {
+        let mut app = test_app().await;
+        app.widgets.table.select(None);
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(app.message.as_deref(), Some("no selected task for note"));
+    }
+
+    #[tokio::test]
+    async fn add_note_flow_creates_note_for_selected_task() {
+        let mut app = test_app().await;
+        let (_, selected) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "Note target".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        app.widgets.table.select(selected);
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state)) if state.title == ADD_NOTE_TITLE
+        ));
+
+        type_chars(&mut app, "Important detail").await;
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(
+            app.message
+                .as_deref()
+                .is_some_and(|message| message.starts_with("added note "))
+        );
+    }
+
+    #[tokio::test]
+    async fn add_note_blank_body_is_rejected() {
+        let mut app = test_app().await;
+        let (_, selected) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "Note target".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        app.widgets.table.select(selected);
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(app.message.as_deref(), Some("note body is required"));
     }
 
     #[tokio::test]

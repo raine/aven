@@ -28,6 +28,8 @@ pub(crate) enum Action {
     CyclePriority(bool),
     Delete,
     Restore,
+    BeginAddTask,
+    BeginAddNote,
     BeginAddProject,
     BeginAddLabel,
     Planned(&'static str),
@@ -506,7 +508,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         PLANNED_FLOW_REASON,
     ),
     // Add/Create
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "add-task",
         "add a new task",
         "Add/Create",
@@ -514,9 +516,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('a'), KeyCode::Char('t')],
             label: "a t",
         }],
-        PLANNED_FLOW_REASON,
+        Action::BeginAddTask,
     ),
-    CommandSpec::planned(
+    CommandSpec::implemented(
         "add-note",
         "add a note to selected task",
         "Add/Create",
@@ -524,7 +526,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('a'), KeyCode::Char('n')],
             label: "a n",
         }],
-        PLANNED_FLOW_REASON,
+        Action::BeginAddNote,
     ),
     // Metadata
     CommandSpec::implemented(
@@ -1012,6 +1014,8 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::CyclePriority(_)
             | Action::Delete
             | Action::Restore
+            | Action::BeginAddTask
+            | Action::BeginAddNote
             | Action::BeginAddProject
             | Action::BeginAddLabel
     )
@@ -1351,6 +1355,18 @@ mod tests {
         assert!(matches!(
             resolve_shortcut(&[KeyCode::Char('a'), KeyCode::Char('l')]),
             ShortcutLookup::Found(Action::BeginAddLabel)
+        ));
+    }
+
+    #[test]
+    fn resolves_authoring_shortcuts() {
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('a'), KeyCode::Char('t')]),
+            ShortcutLookup::Found(Action::BeginAddTask)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('a'), KeyCode::Char('n')]),
+            ShortcutLookup::Found(Action::BeginAddNote)
         ));
     }
 

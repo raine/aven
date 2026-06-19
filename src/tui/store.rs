@@ -3,9 +3,13 @@ use std::time::Instant;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
+use crate::choices::PRIORITIES;
 use crate::labels::list_labels;
 use crate::mutation::{cycle_priority, set_deleted, set_status};
-use crate::operations::{create_label_operation, create_project_operation};
+use crate::operations::{
+    TaskDraft, add_note as add_note_operation, create_label_operation, create_project_operation,
+    create_task as create_task_operation,
+};
 use crate::query::{
     ProjectListItem, SidebarCounts, TaskFilters, TaskListItem, TaskSort, list_project_items,
     list_task_items, sidebar_counts,
@@ -213,6 +217,64 @@ impl TuiStore {
             .collect()
     }
 
+    pub(crate) fn project_picker_items(&self, selected: Option<&str>) -> Vec<PickerItem> {
+        let selected = selected.unwrap_or_default();
+        let mut items = vec![PickerItem {
+            label: "Infer project".to_string(),
+            value: String::new(),
+            selected: selected.is_empty(),
+        }];
+        items.extend(self.projects.iter().map(|project| PickerItem {
+            label: format!("{} {}", project.prefix, project.name),
+            value: project.key.clone(),
+            selected: project.key == selected,
+        }));
+        items
+    }
+
+    pub(crate) fn priority_picker_items(&self, selected: &str) -> Vec<PickerItem> {
+        PRIORITIES
+            .iter()
+            .map(|priority| PickerItem {
+                label: (*priority).to_string(),
+                value: (*priority).to_string(),
+                selected: *priority == selected,
+            })
+            .collect()
+    }
+
+    pub(crate) async fn create_task(
+        &mut self,
+        draft: TaskDraft,
+        current_selected_index: Option<usize>,
+    ) -> Result<(String, Option<usize>)> {
+        let previous_id = self
+            .selected_task(current_selected_index)
+            .map(|item| item.task.id.clone());
+        let mut conn = self.pool.acquire().await?;
+        let outcome = create_task_operation(&mut conn, draft).await?;
+        let task_id = outcome.task.id.clone();
+        drop(conn);
+
+        self.refresh(None).await?;
+        let created_index = self.tasks.iter().position(|item| item.task.id == task_id);
+        if created_index.is_some() {
+            return Ok((format!("created task {task_id}"), created_index));
+        }
+
+        let restored = self.restored_task_selection(previous_id.as_deref());
+        Ok((
+            format!("created task {task_id} hidden by current filters"),
+            restored,
+        ))
+    }
+
+    pub(crate) async fn add_note_to_task(&mut self, task_id: &str, body: String) -> Result<String> {
+        let mut conn = self.pool.acquire().await?;
+        let outcome = add_note_operation(&mut conn, task_id, body).await?;
+        Ok(outcome.note_id)
+    }
+
     fn rebuild_sidebar(&mut self) {
         let mut entries = vec![
             SidebarEntry {
@@ -324,5 +386,145 @@ mod tests {
                 .iter()
                 .any(|item| item.value == "needs-review")
         );
+    }
+
+    #[tokio::test]
+    async fn project_picker_includes_infer_project_and_existing_projects() {
+        let mut store = test_store().await;
+        store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
+        let items = store.project_picker_items(None);
+        assert_eq!(items[0].label, "Infer project");
+        assert!(items[0].selected);
+        assert!(items.iter().any(|item| item.value == "mobile-app"));
+    }
+
+    #[tokio::test]
+    async fn priority_picker_includes_all_priorities() {
+        let store = test_store().await;
+        let items = store.priority_picker_items("none");
+        assert_eq!(items.len(), PRIORITIES.len());
+        assert!(items[0].selected);
+    }
+
+    #[tokio::test]
+    async fn create_task_refreshes_and_selects_visible_task() {
+        let mut store = test_store().await;
+        store
+            .create_label("needs-review".to_string())
+            .await
+            .unwrap();
+        let (_, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Write docs".to_string(),
+                    description: "details".to_string(),
+                    project: None,
+                    priority: "high".to_string(),
+                    labels: vec!["needs-review".to_string()],
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        let selected = selected.unwrap();
+        let task = &store.tasks[selected];
+        assert_eq!(task.task.title, "Write docs");
+        assert_eq!(task.task.priority, "high");
+        assert!(task.labels.iter().any(|label| label == "needs-review"));
+    }
+
+    #[tokio::test]
+    async fn create_task_reports_hidden_by_filters() {
+        let mut store = test_store().await;
+        store.filters.status = Some("todo".to_string());
+        let (message, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Inbox task".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(selected.is_none());
+        assert!(message.contains("hidden by current filters"));
+    }
+
+    #[tokio::test]
+    async fn create_task_preserves_previous_selection_when_hidden() {
+        let mut store = test_store().await;
+        let (_, first_selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Todo task".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let first_selected = first_selected.unwrap();
+        let task_id = store.tasks[first_selected].task.id.clone();
+        store
+            .update_status(Some(first_selected), "todo")
+            .await
+            .unwrap();
+        store.filters.status = Some("todo".to_string());
+        let current_index = store.refresh(Some(&task_id)).await.unwrap();
+
+        let (_, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Hidden inbox task".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                current_index,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(selected, current_index);
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.title, "Todo task");
+    }
+
+    #[tokio::test]
+    async fn add_note_to_task_writes_note() {
+        let mut store = test_store().await;
+        let (_, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Note target".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let task_id = store.tasks[selected.unwrap()].task.id.clone();
+        let note_id = store
+            .add_note_to_task(&task_id, "hello note".to_string())
+            .await
+            .unwrap();
+        assert!(!note_id.is_empty());
     }
 }
