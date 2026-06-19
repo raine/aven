@@ -68,12 +68,18 @@ pub(crate) fn render(
     ])
     .areas(inner);
 
-    let [sidebar, main] =
-        Layout::horizontal([Constraint::Max(26), Constraint::Fill(1)]).areas(body);
-
     render_header(frame, store, header);
-    render_sidebar(frame, store, widgets, view, sidebar);
-    render_tasks(frame, store, widgets, view, main);
+    if body.width < 100 {
+        match view.focus {
+            Focus::Sidebar => render_sidebar(frame, store, widgets, view, body),
+            Focus::Tasks => render_tasks(frame, store, widgets, view, body),
+        }
+    } else {
+        let [sidebar, main] =
+            Layout::horizontal([Constraint::Max(26), Constraint::Fill(1)]).areas(body);
+        render_sidebar(frame, store, widgets, view, sidebar);
+        render_tasks(frame, store, widgets, view, main);
+    }
     frame.render_widget(footer_bar(view), footer);
 
     if view.detail_open
@@ -332,19 +338,27 @@ fn render_tasks(
     } else {
         SELECTED_INACTIVE
     };
-    let table = Table::new(
-        rows,
+    let columns = if area.width < 90 {
+        [
+            Constraint::Length(9),
+            Constraint::Fill(1),
+            Constraint::Max(16),
+            Constraint::Length(8),
+            Constraint::Length(8),
+        ]
+    } else {
         [
             Constraint::Min(8),
             Constraint::Fill(2),
             Constraint::Max(30),
             Constraint::Length(10),
             Constraint::Length(11),
-        ],
-    )
-    .header(header)
-    .block(Block::new().style(Style::new().bg(BG)))
-    .row_highlight_style(highlight_style);
+        ]
+    };
+    let table = Table::new(rows, columns)
+        .header(header)
+        .block(Block::new().style(Style::new().bg(BG)))
+        .row_highlight_style(highlight_style);
 
     let mut visual_state = TableState::default().with_selected(selected);
     frame.render_stateful_widget(table, table_area, &mut visual_state);
