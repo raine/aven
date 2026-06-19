@@ -366,7 +366,7 @@ fn render_tasks(
     };
     let columns = if area.width < 90 {
         [
-            Constraint::Length(9),
+            Constraint::Length(16),
             Constraint::Fill(1),
             Constraint::Max(16),
             Constraint::Length(8),
@@ -374,7 +374,7 @@ fn render_tasks(
         ]
     } else {
         [
-            Constraint::Min(8),
+            Constraint::Length(16),
             Constraint::Fill(2),
             Constraint::Max(30),
             Constraint::Length(10),
@@ -503,14 +503,11 @@ fn group_row(status: &str, count: usize) -> Row<'static> {
         Cell::from(Line::from(vec![
             Span::styled(" ▸ ", Style::new().fg(ACCENT)),
             Span::styled(
-                status.to_uppercase(),
+                format!("{} - {count}", status.to_uppercase()),
                 Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
             ),
         ])),
-        Cell::from(Line::from(Span::styled(
-            format!("- {count}"),
-            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-        ))),
+        Cell::from(""),
         Cell::from(""),
         Cell::from(""),
         Cell::from(""),
