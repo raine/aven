@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{Connection as _, SqliteConnection, SqlitePool};
 use tokio::net::TcpListener;
+use tracing::{debug, error, info, warn};
 
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::cli::{ServerArgs, SyncArgs};
@@ -200,9 +201,16 @@ fn validate_bind_policy(
 pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> Result<()> {
     let scope = BindScope::classify(args.bind.ip());
     let auth_token = config.sync_auth_token().map(str::to_string);
+    let auth_enabled = auth_token.is_some();
     validate_bind_policy(scope, args.unsafe_public_bind, auth_token.as_deref())?;
     let pool = open_db(&args.data).await?;
     let state = ServerState { pool, auth_token };
+    info!(
+        bind = %args.bind,
+        scope = %scope,
+        auth_enabled,
+        "sync server starting"
+    );
     let app = Router::new()
         .route("/sync", post(sync_handler))
         .with_state(state);
@@ -224,11 +232,21 @@ async fn sync_handler(
     Json(request): Json<SyncRequest>,
 ) -> Response {
     if let Err(status) = validate_auth(&state, &headers) {
+        if status == StatusCode::UNAUTHORIZED {
+            warn!(auth_enabled = true, "sync request unauthorized");
+        }
         return status.into_response();
     }
     match handle_sync(state, request).await {
         Ok(response) => Json(response).into_response(),
-        Err(err) => err.into_response(),
+        Err(err) => {
+            if err.0.is_server_error() {
+                error!(status = %err.0, error = %err.1, "sync request failed");
+            } else {
+                warn!(status = %err.0, error = %err.1, "sync request rejected");
+            }
+            err.into_response()
+        }
     }
 }
 
@@ -262,8 +280,14 @@ async fn handle_sync(
 ) -> std::result::Result<SyncResponse, (StatusCode, String)> {
     validate_sync_request_protocol_version(request.protocol_version)
         .map_err(invalid_sync_change)?;
+    let client_id = request.client_id.clone();
+    let after = request.after;
+    let change_count = request.changes.len();
+    info!(client_id = %client_id, after, change_count, "sync request received");
+
     let mut conn = state.pool.acquire().await.map_err(internal_error)?;
     let mut tx = conn.begin().await.map_err(internal_error)?;
+    let mut accepted_count = 0_i64;
     for change in request.changes {
         validate_incoming_change(&change).map_err(invalid_sync_change)?;
         let exists = sqlx::query_scalar!(
@@ -294,17 +318,27 @@ async fn handle_sync(
             .execute(&mut *tx)
             .await
             .map_err(internal_error)?;
+            accepted_count += 1;
         }
     }
     tx.commit().await.map_err(internal_error)?;
-    let changes = load_server_changes_after(&mut conn, request.after)
+    let changes = load_server_changes_after(&mut conn, after)
         .await
         .map_err(internal_error)?;
     let cursor = changes
         .iter()
         .filter_map(|change| change.server_seq)
         .max()
-        .unwrap_or(request.after);
+        .unwrap_or(after);
+    info!(
+        client_id = %client_id,
+        after,
+        incoming = change_count,
+        accepted = accepted_count,
+        returned = changes.len(),
+        cursor,
+        "sync request completed"
+    );
     Ok(SyncResponse {
         protocol_version: SYNC_PROTOCOL_VERSION,
         cursor,
@@ -505,7 +539,9 @@ pub(crate) async fn run_sync_once(
         .unwrap_or_else(|| "0".to_string())
         .parse::<i64>()?;
     let changes = load_unsynced_changes(conn).await?;
-    let pushed = changes.len() as i64;
+    let pending = changes.len();
+    let pushed = pending as i64;
+    info!(server = %server, pending, "sync client starting");
     let url = format!("{}/sync", server.trim_end_matches('/'));
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
@@ -539,6 +575,13 @@ pub(crate) async fn run_sync_once(
     }
     set_meta(&mut tx, "sync_cursor", &response.cursor.to_string()).await?;
     tx.commit().await?;
+    info!(
+        server = %server,
+        pushed,
+        applied,
+        cursor = response.cursor,
+        "sync client finished"
+    );
     Ok(SyncSummary {
         pushed,
         pulled: applied,
@@ -647,6 +690,14 @@ async fn insert_wire_change(conn: &mut SqliteConnection, change: &ChangeWire) ->
 }
 
 async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
+    debug!(
+        change_id = %change.change_id,
+        op_type = %change.op_type,
+        entity_type = %change.entity_type,
+        entity_id = safe_entity_id(change),
+        field = change.field.as_deref().unwrap_or(""),
+        "applying remote change"
+    );
     match change.op_type.as_str() {
         "create_project" => {
             let key = str_payload(&change.payload, "key")?;
@@ -876,6 +927,11 @@ async fn create_conflict(
     )
     .execute(&mut *conn)
     .await?;
+    info!(
+        task_id = safe_entity_id(change),
+        field = %field,
+        "remote change conflict created"
+    );
     Ok(())
 }
 
@@ -902,6 +958,14 @@ fn str_payload(payload: &Value, key: &str) -> Result<String> {
         .and_then(Value::as_str)
         .map(str::to_string)
         .with_context(|| format!("payload missing {key}"))
+}
+
+fn safe_entity_id(change: &ChangeWire) -> &str {
+    if change.entity_type == "task" {
+        &change.entity_id
+    } else {
+        ""
+    }
 }
 
 #[cfg(test)]

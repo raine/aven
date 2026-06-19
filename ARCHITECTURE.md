@@ -8,6 +8,7 @@
 | --- | --- |
 | `src/main.rs` | Tokio entrypoint that calls `atm::run_cli()`. |
 | `src/lib.rs` | Module wiring, command dispatch, database opening, TUI launch, daemon wake after successful CLI mutations. |
+| `src/logging.rs` | Tracing subscriber initialization from `ATM_LOG` and `ATM_LOG_FILE`. |
 | `src/cli.rs` | Clap argument and subcommand definitions. |
 | `src/commands.rs` | User-facing CLI command handlers and output formatting calls. |
 | `src/operations.rs` | Transactional business operations used by CLI and TUI. |
@@ -33,13 +34,14 @@
 
 1. `main` starts the Tokio runtime and calls `run_cli`.
 2. Clap parses `Cli` and `Commands` in `src/cli.rs`.
-3. `src/lib.rs` handles special commands first:
+3. Tracing initializes after CLI parsing and writes to `ATM_LOG_FILE` when set, otherwise `$XDG_STATE_HOME/atm/atm.log` or `~/.local/state/atm/atm.log`. `ATM_LOG` controls the filter and defaults to `atm=info`. Log fields use IDs, counts, operation names, and safe paths, and must not include auth tokens, raw sync payloads, task descriptions, note bodies, user-authored labels or project names, or secret config values.
+4. `src/lib.rs` handles special commands first:
    - `server` starts the Axum sync server.
    - `config` runs without opening the task database.
    - `daemon run` resolves config and starts the daemon.
-4. Other commands resolve configuration, open SQLite, and dispatch to handlers.
-5. `tui` hands the open pool to `tui::run`.
-6. Successful mutating CLI commands wake the daemon when sync is enabled and a loopback wake address is configured.
+5. Other commands resolve configuration, open SQLite, and dispatch to handlers.
+6. `tui` hands the open pool to `tui::run`.
+7. Successful mutating CLI commands wake the daemon when sync is enabled and a loopback wake address is configured.
 
 `--db` has command-specific config behavior. For most commands, passing `--db` skips the config file and uses defaults for the rest. `sync --db` loads config so it can resolve the sync server URL and auth token.
 

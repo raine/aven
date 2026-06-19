@@ -11,6 +11,7 @@ mod fuzzy;
 mod ids;
 mod input;
 mod labels;
+mod logging;
 mod mutation;
 mod operations;
 mod projects;
@@ -35,6 +36,14 @@ use sync::{run_server, sync_client};
 
 pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
+    let log_mode = match &cli.command {
+        Commands::Server(_) => logging::LogMode::Server,
+        Commands::Daemon(_) => logging::LogMode::Daemon,
+        Commands::Tui => logging::LogMode::Tui,
+        _ => logging::LogMode::Cli,
+    };
+    logging::init(log_mode)?;
+
     match cli.command {
         Commands::Server(args) => {
             let config = config::AppConfig::load()?;
@@ -81,6 +90,7 @@ pub async fn run_cli() -> Result<()> {
                 && config.sync.enabled
                 && let Ok(addr) = config.wake_addr()
             {
+                tracing::debug!(wake_addr = %addr, "waking daemon after local mutation");
                 daemon::wake(addr);
             }
             result

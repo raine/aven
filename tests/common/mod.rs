@@ -271,13 +271,27 @@ impl TestProcess {
     }
 
     pub fn start_daemon(env: &TestEnv) -> Self {
-        let child = command()
+        Self::start_daemon_with_env(env, std::iter::empty::<(&str, &str)>())
+    }
+
+    pub fn start_daemon_with_env<I, K, V>(env: &TestEnv, envs: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        let mut command = command();
+        command
             .env(
                 "ATM_CONFIG_DIR",
                 env.config_dir().join("agentic-task-manager"),
             )
             .env_remove("ATM_DB")
-            .env_remove("ATM_SYNC_SERVER")
+            .env_remove("ATM_SYNC_SERVER");
+        for (key, value) in envs {
+            command.env(key, value);
+        }
+        let child = command
             .args(["daemon", "run"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -399,18 +413,38 @@ impl TestServer {
     }
 
     pub fn start_configured(env: &TestEnv, data: &str) -> Self {
+        Self::start_configured_with_env(env, data, std::iter::empty::<(&str, &str)>())
+    }
+
+    pub fn start_configured_with_env<I, K, V>(env: &TestEnv, data: &str, envs: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
         Self::start_with_data_and_config(
             env,
             data,
             Some(env.config_dir().join("agentic-task-manager")),
+            envs,
         )
     }
 
     pub fn start_with_data(env: &TestEnv, data: &str) -> Self {
-        Self::start_with_data_and_config(env, data, None)
+        Self::start_with_data_and_config(env, data, None, std::iter::empty::<(&str, &str)>())
     }
 
-    fn start_with_data_and_config(env: &TestEnv, data: &str, config_dir: Option<PathBuf>) -> Self {
+    fn start_with_data_and_config<I, K, V>(
+        env: &TestEnv,
+        data: &str,
+        config_dir: Option<PathBuf>,
+        envs: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
         let output = Arc::new(Mutex::new(String::new()));
         let (url_tx, url_rx) = mpsc::channel();
         let mut command = command();
@@ -426,6 +460,9 @@ impl TestServer {
                 .env("ATM_CONFIG_DIR", config_dir)
                 .env_remove("ATM_DB")
                 .env_remove("ATM_SYNC_SERVER");
+        }
+        for (key, value) in envs {
+            command.env(key, value);
         }
         let mut child = command
             .stdout(Stdio::piped())

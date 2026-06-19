@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde_json::json;
 use sqlx::{Connection as _, SqliteConnection};
+use tracing::info;
 
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::config;
@@ -182,6 +183,12 @@ pub(crate) async fn create_task(
         set_field_version(&mut tx, &id, field, &change_id).await?;
     }
     tx.commit().await?;
+    info!(
+        task_id = %id,
+        project_key = %project.key,
+        label_count = labels.len(),
+        "task created"
+    );
     Ok(TaskOutcome {
         task: get_task(conn, &id).await?,
     })
@@ -225,6 +232,7 @@ pub(crate) async fn update_task(
         changed = true;
     }
     tx.commit().await?;
+    info!(task_id = %task_id, changed, "task updated");
     Ok(TaskUpdateOutcome {
         task: get_task(conn, task_id).await?,
         changed,
@@ -287,6 +295,14 @@ pub(crate) async fn update_task_labels(
         .await?;
         changed = true;
     }
+    if changed {
+        info!(
+            task_id = %task_id,
+            added = add_labels.len(),
+            removed = remove_labels.len(),
+            "task labels changed"
+        );
+    }
     Ok(changed)
 }
 
@@ -296,6 +312,7 @@ pub(crate) async fn set_task_deleted(
     deleted: bool,
 ) -> Result<TaskOutcome> {
     set_task_field(conn, task_id, "deleted", if deleted { "1" } else { "0" }).await?;
+    info!(task_id = %task_id, deleted, "task deleted flag changed");
     Ok(TaskOutcome {
         task: get_task(conn, task_id).await?,
     })
@@ -330,6 +347,7 @@ pub(crate) async fn add_note(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+    info!(task_id = %task_id, note_id = %note_id, "note added");
     Ok(NoteOutcome {
         task_id: task_id.to_string(),
         note_id,
@@ -362,6 +380,7 @@ pub(crate) async fn create_label_operation(
         None,
     )
     .await?;
+    info!("label created");
     Ok(LabelOutcome { name })
 }
 
@@ -374,6 +393,7 @@ pub(crate) async fn create_project_operation(
     if let Some(path) = path {
         add_project_path_mapping(conn, &project.key, path).await?;
     }
+    info!(project_key = %project.key, "project created");
     Ok(ProjectOutcome { project })
 }
 
@@ -524,6 +544,7 @@ pub(crate) async fn resolve_conflict(
     .await?;
     set_field_version(&mut tx, task_id, field, &change_id).await?;
     tx.commit().await?;
+    info!(task_id = %task_id, field = %field, "conflict resolved");
     Ok(ConflictOutcome {
         task: get_task(conn, task_id).await?,
         field: field.to_string(),

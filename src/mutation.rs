@@ -1,6 +1,7 @@
 use anyhow::{Result, bail};
 use serde_json::json;
 use sqlx::SqliteConnection;
+use tracing::{debug, info};
 
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::db::{conflict_exists, field_version, insert_change, set_field_version};
@@ -66,6 +67,7 @@ pub(crate) async fn set_task_field(
             field
         );
     }
+    debug!(task_id = %task_id, field = %field, "task field mutation started");
     let base = field_version(conn, task_id, field).await?;
     apply_field_value(conn, task_id, field, value).await?;
     let change_id = insert_change(
@@ -79,6 +81,12 @@ pub(crate) async fn set_task_field(
     )
     .await?;
     set_field_version(conn, task_id, field, &change_id).await?;
+    info!(
+        task_id = %task_id,
+        field = %field,
+        change_id = %change_id,
+        "task field mutated"
+    );
     Ok(())
 }
 
