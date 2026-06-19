@@ -49,23 +49,23 @@ format-check:
 
 # Run clippy and fail on any warnings
 clippy:
-    @scripts/quiet-check clippy cargo clippy --all-targets -- -D clippy::all
+    @scripts/quiet-check clippy cargo clippy --all-targets -- -D warnings -D clippy::all
 
 # Auto-fix clippy warnings
 clippy-fix:
-    @scripts/quiet-check clippy-fix cargo clippy --fix --allow-dirty --all-targets -- -W clippy::all
+    @scripts/quiet-check clippy-fix cargo clippy --fix --allow-dirty --all-targets -- -D warnings -W clippy::all
 
 # Build the project
 build:
-    @scripts/quiet-check build cargo build --all --locked
+    @scripts/quiet-check build env RUSTFLAGS="-D warnings" cargo build --all --locked
 
 # Type-check all targets without producing final artifacts
 check-types:
-    @scripts/quiet-check check-types cargo check --all-targets --locked
+    @scripts/quiet-check check-types env RUSTFLAGS="-D warnings" cargo check --all-targets --locked
 
 # Run tests
 test:
-    @scripts/quiet-check test cargo test --all --locked
+    @scripts/quiet-check test env RUSTFLAGS="-D warnings" cargo test --all --locked
 
 # Generate sqlx offline query metadata
 sqlx-prepare:

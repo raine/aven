@@ -2,7 +2,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::query::TaskListItem;
-use crate::tui::theme::{BLUE, CHIP_BG, FG, GREEN, ORANGE, PURPLE, RED};
+use crate::tui::theme::{FG, ORANGE, RED};
 
 pub(crate) fn priority_icon(priority: &str) -> &'static str {
     match priority {
@@ -36,21 +36,4 @@ pub(crate) fn title_cell(item: &TaskListItem) -> Line<'static> {
         ),
     ];
     Line::from(spans)
-}
-
-pub(crate) fn label_pill(label: &str) -> Span<'static> {
-    let color = match label {
-        "bug" => RED,
-        "cleanup" => FG,
-        "agent" => PURPLE,
-        "docs" => GREEN,
-        _ => BLUE,
-    };
-    Span::styled(
-        format!(" {label} "),
-        Style::new()
-            .fg(color)
-            .bg(CHIP_BG)
-            .add_modifier(Modifier::BOLD),
-    )
 }
