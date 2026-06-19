@@ -27,7 +27,16 @@ pub(crate) enum Action {
     CyclePriority(bool),
     Delete,
     Restore,
+    Planned(&'static str),
+    Disabled(&'static str),
     None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandLifecycle {
+    Implemented,
+    Planned { reason: &'static str },
+    Disabled { reason: &'static str },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -43,6 +52,63 @@ pub(crate) struct CommandSpec {
     pub(crate) section: &'static str,
     pub(crate) keys: &'static [KeySequence],
     pub(crate) action: Action,
+    pub(crate) lifecycle: CommandLifecycle,
+}
+
+const PLANNED_FLOW_REASON: &str = "not yet implemented";
+const CONFLICT_OVERLAY_REASON: &str = "requires the conflict overlay";
+
+impl CommandSpec {
+    const fn implemented(
+        name: &'static str,
+        description: &'static str,
+        section: &'static str,
+        keys: &'static [KeySequence],
+        action: Action,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            section,
+            keys,
+            action,
+            lifecycle: CommandLifecycle::Implemented,
+        }
+    }
+
+    const fn planned(
+        name: &'static str,
+        description: &'static str,
+        section: &'static str,
+        keys: &'static [KeySequence],
+        reason: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            section,
+            keys,
+            action: Action::Planned(name),
+            lifecycle: CommandLifecycle::Planned { reason },
+        }
+    }
+
+    const fn disabled(
+        name: &'static str,
+        description: &'static str,
+        section: &'static str,
+        keys: &'static [KeySequence],
+        reason: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            section,
+            keys,
+            action: Action::Disabled(name),
+            lifecycle: CommandLifecycle::Disabled { reason },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,61 +128,61 @@ pub(crate) enum ShortcutLookup {
 }
 
 pub(crate) const COMMANDS: &[CommandSpec] = &[
-    CommandSpec {
-        name: "quit",
-        description: "quit the TUI",
-        section: "General",
-        keys: &[KeySequence {
+    CommandSpec::implemented(
+        "quit",
+        "quit the TUI",
+        "General",
+        &[KeySequence {
             codes: &[KeyCode::Char('q')],
             label: "q",
         }],
-        action: Action::Quit,
-    },
-    CommandSpec {
-        name: "command",
-        description: "open the command panel",
-        section: "General",
-        keys: &[KeySequence {
+        Action::Quit,
+    ),
+    CommandSpec::implemented(
+        "command",
+        "open the command panel",
+        "General",
+        &[KeySequence {
             codes: &[KeyCode::Char(':')],
             label: ":",
         }],
-        action: Action::BeginCommand,
-    },
-    CommandSpec {
-        name: "help",
-        description: "toggle shortcut help",
-        section: "General",
-        keys: &[KeySequence {
+        Action::BeginCommand,
+    ),
+    CommandSpec::implemented(
+        "help",
+        "toggle shortcut help",
+        "General",
+        &[KeySequence {
             codes: &[KeyCode::Char('?')],
             label: "?",
         }],
-        action: Action::ToggleHelp,
-    },
-    CommandSpec {
-        name: "refresh",
-        description: "reload tasks",
-        section: "General",
-        keys: &[KeySequence {
+        Action::ToggleHelp,
+    ),
+    CommandSpec::implemented(
+        "refresh",
+        "reload tasks",
+        "General",
+        &[KeySequence {
             codes: &[KeyCode::Char('r')],
             label: "r",
         }],
-        action: Action::Refresh,
-    },
-    CommandSpec {
-        name: "search",
-        description: "search title and description",
-        section: "General",
-        keys: &[KeySequence {
+        Action::Refresh,
+    ),
+    CommandSpec::implemented(
+        "search",
+        "search title and description",
+        "General",
+        &[KeySequence {
             codes: &[KeyCode::Char('/')],
             label: "/",
         }],
-        action: Action::BeginSearch,
-    },
-    CommandSpec {
-        name: "move-down",
-        description: "move selection down",
-        section: "Navigation",
-        keys: &[
+        Action::BeginSearch,
+    ),
+    CommandSpec::implemented(
+        "move-down",
+        "move selection down",
+        "Navigation",
+        &[
             KeySequence {
                 codes: &[KeyCode::Char('j')],
                 label: "j",
@@ -126,13 +192,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 label: "Down",
             },
         ],
-        action: Action::MoveDown,
-    },
-    CommandSpec {
-        name: "move-up",
-        description: "move selection up",
-        section: "Navigation",
-        keys: &[
+        Action::MoveDown,
+    ),
+    CommandSpec::implemented(
+        "move-up",
+        "move selection up",
+        "Navigation",
+        &[
             KeySequence {
                 codes: &[KeyCode::Char('k')],
                 label: "k",
@@ -142,13 +208,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 label: "Up",
             },
         ],
-        action: Action::MoveUp,
-    },
-    CommandSpec {
-        name: "first",
-        description: "jump to the first item",
-        section: "Navigation",
-        keys: &[
+        Action::MoveUp,
+    ),
+    CommandSpec::implemented(
+        "first",
+        "jump to the first item",
+        "Navigation",
+        &[
             KeySequence {
                 codes: &[KeyCode::Char('g'), KeyCode::Char('g')],
                 label: "g g",
@@ -158,13 +224,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 label: "Home",
             },
         ],
-        action: Action::First,
-    },
-    CommandSpec {
-        name: "last",
-        description: "jump to the last item",
-        section: "Navigation",
-        keys: &[
+        Action::First,
+    ),
+    CommandSpec::implemented(
+        "last",
+        "jump to the last item",
+        "Navigation",
+        &[
             KeySequence {
                 codes: &[KeyCode::Char('G')],
                 label: "G",
@@ -174,13 +240,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 label: "End",
             },
         ],
-        action: Action::Last,
-    },
-    CommandSpec {
-        name: "focus",
-        description: "switch between views and tasks",
-        section: "Navigation",
-        keys: &[
+        Action::Last,
+    ),
+    CommandSpec::implemented(
+        "focus",
+        "switch between views and tasks",
+        "Navigation",
+        &[
             KeySequence {
                 codes: &[KeyCode::Tab],
                 label: "Tab",
@@ -190,13 +256,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 label: "Shift+Tab",
             },
         ],
-        action: Action::ToggleFocus,
-    },
-    CommandSpec {
-        name: "detail",
-        description: "select a view or toggle task detail",
-        section: "Navigation",
-        keys: &[
+        Action::ToggleFocus,
+    ),
+    CommandSpec::implemented(
+        "detail",
+        "select a view or toggle task detail",
+        "Navigation",
+        &[
             KeySequence {
                 codes: &[KeyCode::Enter],
                 label: "Enter",
@@ -206,63 +272,63 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 label: "l",
             },
         ],
-        action: Action::ToggleDetail,
-    },
-    CommandSpec {
-        name: "sort",
-        description: "cycle sort order",
-        section: "Tasks",
-        keys: &[KeySequence {
+        Action::ToggleDetail,
+    ),
+    CommandSpec::implemented(
+        "sort",
+        "cycle sort order",
+        "Tasks",
+        &[KeySequence {
             codes: &[KeyCode::Char('s')],
             label: "s",
         }],
-        action: Action::CycleSort,
-    },
-    CommandSpec {
-        name: "priority-next",
-        description: "cycle priority forward",
-        section: "Tasks",
-        keys: &[KeySequence {
+        Action::CycleSort,
+    ),
+    CommandSpec::implemented(
+        "priority-next",
+        "cycle priority forward",
+        "Tasks",
+        &[KeySequence {
             codes: &[KeyCode::Char('p')],
             label: "p",
         }],
-        action: Action::CyclePriority(false),
-    },
-    CommandSpec {
-        name: "priority-prev",
-        description: "cycle priority backward",
-        section: "Tasks",
-        keys: &[KeySequence {
+        Action::CyclePriority(false),
+    ),
+    CommandSpec::implemented(
+        "priority-prev",
+        "cycle priority backward",
+        "Tasks",
+        &[KeySequence {
             codes: &[KeyCode::Char('P')],
             label: "P",
         }],
-        action: Action::CyclePriority(true),
-    },
-    CommandSpec {
-        name: "delete",
-        description: "delete selected task",
-        section: "Tasks",
-        keys: &[KeySequence {
+        Action::CyclePriority(true),
+    ),
+    CommandSpec::implemented(
+        "delete",
+        "delete selected task",
+        "Tasks",
+        &[KeySequence {
             codes: &[KeyCode::Char('d')],
             label: "d",
         }],
-        action: Action::Delete,
-    },
-    CommandSpec {
-        name: "restore",
-        description: "restore selected task",
-        section: "Tasks",
-        keys: &[KeySequence {
+        Action::Delete,
+    ),
+    CommandSpec::implemented(
+        "restore",
+        "restore selected task",
+        "Tasks",
+        &[KeySequence {
             codes: &[KeyCode::Char('u')],
             label: "u",
         }],
-        action: Action::Restore,
-    },
-    CommandSpec {
-        name: "status-inbox",
-        description: "set status to inbox",
-        section: "Status",
-        keys: &[
+        Action::Restore,
+    ),
+    CommandSpec::implemented(
+        "status-inbox",
+        "set status to inbox",
+        "Status",
+        &[
             KeySequence {
                 codes: &[KeyCode::Char('1')],
                 label: "1",
@@ -272,13 +338,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 label: "m i",
             },
         ],
-        action: Action::SetStatus("inbox"),
-    },
-    CommandSpec {
-        name: "status-backlog",
-        description: "set status to backlog",
-        section: "Status",
-        keys: &[
+        Action::SetStatus("inbox"),
+    ),
+    CommandSpec::implemented(
+        "status-backlog",
+        "set status to backlog",
+        "Status",
+        &[
             KeySequence {
                 codes: &[KeyCode::Char('2')],
                 label: "2",
@@ -288,13 +354,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 label: "m b",
             },
         ],
-        action: Action::SetStatus("backlog"),
-    },
-    CommandSpec {
-        name: "status-todo",
-        description: "set status to todo",
-        section: "Status",
-        keys: &[
+        Action::SetStatus("backlog"),
+    ),
+    CommandSpec::implemented(
+        "status-todo",
+        "set status to todo",
+        "Status",
+        &[
             KeySequence {
                 codes: &[KeyCode::Char('3')],
                 label: "3",
@@ -304,13 +370,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 label: "m t",
             },
         ],
-        action: Action::SetStatus("todo"),
-    },
-    CommandSpec {
-        name: "status-active",
-        description: "set status to active",
-        section: "Status",
-        keys: &[
+        Action::SetStatus("todo"),
+    ),
+    CommandSpec::implemented(
+        "status-active",
+        "set status to active",
+        "Status",
+        &[
             KeySequence {
                 codes: &[KeyCode::Char('4')],
                 label: "4",
@@ -320,13 +386,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 label: "m a",
             },
         ],
-        action: Action::SetStatus("active"),
-    },
-    CommandSpec {
-        name: "status-done",
-        description: "set status to done",
-        section: "Status",
-        keys: &[
+        Action::SetStatus("active"),
+    ),
+    CommandSpec::implemented(
+        "status-done",
+        "set status to done",
+        "Status",
+        &[
             KeySequence {
                 codes: &[KeyCode::Char('5')],
                 label: "5",
@@ -336,13 +402,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 label: "m d",
             },
         ],
-        action: Action::SetStatus("done"),
-    },
-    CommandSpec {
-        name: "status-canceled",
-        description: "set status to canceled",
-        section: "Status",
-        keys: &[
+        Action::SetStatus("done"),
+    ),
+    CommandSpec::implemented(
+        "status-canceled",
+        "set status to canceled",
+        "Status",
+        &[
             KeySequence {
                 codes: &[KeyCode::Char('6')],
                 label: "6",
@@ -352,8 +418,447 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 label: "m x",
             },
         ],
-        action: Action::SetStatus("canceled"),
-    },
+        Action::SetStatus("canceled"),
+    ),
+    // Views
+    CommandSpec::planned(
+        "view-all",
+        "show all tasks",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('a')],
+            label: "g a",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "view-inbox",
+        "show inbox view",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('i')],
+            label: "g i",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "view-backlog",
+        "show backlog view",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('b')],
+            label: "g b",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "view-todo",
+        "show todo view",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('t')],
+            label: "g t",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "view-active",
+        "show active view",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('v')],
+            label: "g v",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "view-project",
+        "show project view",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('p')],
+            label: "g p",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "view-conflicts",
+        "show conflicts view",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('c')],
+            label: "g c",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "view-deleted",
+        "show deleted tasks view",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('x')],
+            label: "g x",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    // Add/Create
+    CommandSpec::planned(
+        "add-task",
+        "add a new task",
+        "Add/Create",
+        &[KeySequence {
+            codes: &[KeyCode::Char('a'), KeyCode::Char('t')],
+            label: "a t",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "add-note",
+        "add a note to selected task",
+        "Add/Create",
+        &[KeySequence {
+            codes: &[KeyCode::Char('a'), KeyCode::Char('n')],
+            label: "a n",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    // Metadata
+    CommandSpec::planned(
+        "add-project",
+        "create a new project",
+        "Metadata",
+        &[KeySequence {
+            codes: &[KeyCode::Char('a'), KeyCode::Char('p')],
+            label: "a p",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "add-label",
+        "create a new label",
+        "Metadata",
+        &[KeySequence {
+            codes: &[KeyCode::Char('a'), KeyCode::Char('l')],
+            label: "a l",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "add-project-path",
+        "add a path to a project",
+        "Metadata",
+        &[KeySequence {
+            codes: &[KeyCode::Char('a'), KeyCode::Char('P')],
+            label: "a P",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    // Edit
+    CommandSpec::planned(
+        "edit-title",
+        "edit selected task title",
+        "Edit",
+        &[KeySequence {
+            codes: &[KeyCode::Char('e'), KeyCode::Char('t')],
+            label: "e t",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "edit-description",
+        "edit selected task description",
+        "Edit",
+        &[KeySequence {
+            codes: &[KeyCode::Char('e'), KeyCode::Char('d')],
+            label: "e d",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "edit-project",
+        "edit selected task project",
+        "Edit",
+        &[KeySequence {
+            codes: &[KeyCode::Char('e'), KeyCode::Char('p')],
+            label: "e p",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "edit-priority",
+        "edit selected task priority",
+        "Edit",
+        &[KeySequence {
+            codes: &[KeyCode::Char('e'), KeyCode::Char('r')],
+            label: "e r",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "edit-labels",
+        "edit selected task labels",
+        "Edit",
+        &[KeySequence {
+            codes: &[KeyCode::Char('e'), KeyCode::Char('l')],
+            label: "e l",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    // Priority
+    CommandSpec::planned(
+        "priority-none",
+        "set priority to none",
+        "Priority",
+        &[KeySequence {
+            codes: &[KeyCode::Char('m'), KeyCode::Char('0')],
+            label: "m 0",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "priority-low",
+        "set priority to low",
+        "Priority",
+        &[KeySequence {
+            codes: &[KeyCode::Char('m'), KeyCode::Char('l')],
+            label: "m l",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "priority-medium",
+        "set priority to medium",
+        "Priority",
+        &[KeySequence {
+            codes: &[KeyCode::Char('m'), KeyCode::Char('m')],
+            label: "m m",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "priority-high",
+        "set priority to high",
+        "Priority",
+        &[KeySequence {
+            codes: &[KeyCode::Char('m'), KeyCode::Char('h')],
+            label: "m h",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "priority-urgent",
+        "set priority to urgent",
+        "Priority",
+        &[KeySequence {
+            codes: &[KeyCode::Char('m'), KeyCode::Char('u')],
+            label: "m u",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    // Filters
+    CommandSpec::planned(
+        "filter-project",
+        "filter by project",
+        "Filters",
+        &[KeySequence {
+            codes: &[KeyCode::Char('f'), KeyCode::Char('p')],
+            label: "f p",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "filter-label",
+        "filter by label",
+        "Filters",
+        &[KeySequence {
+            codes: &[KeyCode::Char('f'), KeyCode::Char('l')],
+            label: "f l",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "filter-status",
+        "filter by status",
+        "Filters",
+        &[KeySequence {
+            codes: &[KeyCode::Char('f'), KeyCode::Char('s')],
+            label: "f s",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "filter-priority",
+        "filter by priority",
+        "Filters",
+        &[KeySequence {
+            codes: &[KeyCode::Char('f'), KeyCode::Char('r')],
+            label: "f r",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "filter-clear",
+        "clear all filters",
+        "Filters",
+        &[KeySequence {
+            codes: &[KeyCode::Char('f'), KeyCode::Char('c')],
+            label: "f c",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "filter-deleted",
+        "filter deleted tasks",
+        "Filters",
+        &[KeySequence {
+            codes: &[KeyCode::Char('f'), KeyCode::Char('x')],
+            label: "f x",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    // Order
+    CommandSpec::planned(
+        "order-queue",
+        "sort by queue order",
+        "Order",
+        &[KeySequence {
+            codes: &[KeyCode::Char('o'), KeyCode::Char('q')],
+            label: "o q",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "order-created",
+        "sort by created date",
+        "Order",
+        &[KeySequence {
+            codes: &[KeyCode::Char('o'), KeyCode::Char('c')],
+            label: "o c",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "order-updated",
+        "sort by updated date",
+        "Order",
+        &[KeySequence {
+            codes: &[KeyCode::Char('o'), KeyCode::Char('u')],
+            label: "o u",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "order-project",
+        "sort by project",
+        "Order",
+        &[KeySequence {
+            codes: &[KeyCode::Char('o'), KeyCode::Char('p')],
+            label: "o p",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "order-title",
+        "sort by title",
+        "Order",
+        &[KeySequence {
+            codes: &[KeyCode::Char('o'), KeyCode::Char('t')],
+            label: "o t",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    // Conflict
+    CommandSpec::planned(
+        "conflict-list",
+        "list or filter conflicts",
+        "Conflict",
+        &[KeySequence {
+            codes: &[KeyCode::Char('c'), KeyCode::Char('l')],
+            label: "c l",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "conflict-show",
+        "show conflict details",
+        "Conflict",
+        &[KeySequence {
+            codes: &[KeyCode::Char('c'), KeyCode::Char('s')],
+            label: "c s",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "conflict-next",
+        "jump to next conflict",
+        "Conflict",
+        &[KeySequence {
+            codes: &[KeyCode::Char('c'), KeyCode::Char('n')],
+            label: "c n",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "conflict-resolve",
+        "resolve selected conflict",
+        "Conflict",
+        &[KeySequence {
+            codes: &[KeyCode::Char('c'), KeyCode::Char('r')],
+            label: "c r",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::disabled(
+        "conflict-use-a",
+        "resolve with variant A",
+        "Conflict",
+        &[KeySequence {
+            codes: &[KeyCode::Char('c'), KeyCode::Char('a')],
+            label: "c a",
+        }],
+        CONFLICT_OVERLAY_REASON,
+    ),
+    CommandSpec::disabled(
+        "conflict-use-b",
+        "resolve with variant B",
+        "Conflict",
+        &[KeySequence {
+            codes: &[KeyCode::Char('c'), KeyCode::Char('b')],
+            label: "c b",
+        }],
+        CONFLICT_OVERLAY_REASON,
+    ),
+    CommandSpec::disabled(
+        "conflict-edit-value",
+        "resolve with manual edit",
+        "Conflict",
+        &[KeySequence {
+            codes: &[KeyCode::Char('c'), KeyCode::Char('e')],
+            label: "c e",
+        }],
+        CONFLICT_OVERLAY_REASON,
+    ),
+    // Config
+    CommandSpec::planned(
+        "config-show",
+        "show configuration",
+        "Config",
+        &[KeySequence {
+            codes: &[KeyCode::Char('C'), KeyCode::Char('s')],
+            label: "C s",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
+    CommandSpec::planned(
+        "config-init",
+        "initialize configuration",
+        "Config",
+        &[KeySequence {
+            codes: &[KeyCode::Char('C'), KeyCode::Char('i')],
+            label: "C i",
+        }],
+        PLANNED_FLOW_REASON,
+    ),
 ];
 
 pub(crate) fn key_label(code: KeyCode) -> String {
@@ -469,6 +974,29 @@ impl Action {
             ShortcutLookup::Prefix | ShortcutLookup::Missing => Self::None,
         }
     }
+}
+
+#[cfg(test)]
+fn implemented_action_is_handled(action: Action) -> bool {
+    matches!(
+        action,
+        Action::Quit
+            | Action::MoveDown
+            | Action::MoveUp
+            | Action::First
+            | Action::Last
+            | Action::ToggleFocus
+            | Action::ToggleDetail
+            | Action::ToggleHelp
+            | Action::BeginSearch
+            | Action::BeginCommand
+            | Action::Refresh
+            | Action::CycleSort
+            | Action::SetStatus(_)
+            | Action::CyclePriority(_)
+            | Action::Delete
+            | Action::Restore
+    )
 }
 
 #[cfg(test)]
@@ -588,16 +1116,16 @@ mod tests {
 
     #[test]
     fn resolves_multi_key_sequences_from_catalog() {
-        let commands = [CommandSpec {
-            name: "test-sequence",
-            description: "test sequence",
-            section: "Test",
-            keys: &[KeySequence {
+        let commands = [CommandSpec::implemented(
+            "test-sequence",
+            "test sequence",
+            "Test",
+            &[KeySequence {
                 codes: &[KeyCode::Char('a'), KeyCode::Char('t')],
                 label: "a t",
             }],
-            action: Action::BeginSearch,
-        }];
+            Action::BeginSearch,
+        )];
 
         assert_eq!(
             resolve_shortcut_in(&commands, &[KeyCode::Char('a')]),
@@ -612,26 +1140,26 @@ mod tests {
     #[test]
     fn resolves_exact_prefix_ambiguity() {
         let commands = [
-            CommandSpec {
-                name: "single-g",
-                description: "single g",
-                section: "Test",
-                keys: &[KeySequence {
+            CommandSpec::implemented(
+                "single-g",
+                "single g",
+                "Test",
+                &[KeySequence {
                     codes: &[KeyCode::Char('g')],
                     label: "g",
                 }],
-                action: Action::First,
-            },
-            CommandSpec {
-                name: "double-g",
-                description: "double g",
-                section: "Test",
-                keys: &[KeySequence {
+                Action::First,
+            ),
+            CommandSpec::implemented(
+                "double-g",
+                "double g",
+                "Test",
+                &[KeySequence {
                     codes: &[KeyCode::Char('g'), KeyCode::Char('g')],
                     label: "g g",
                 }],
-                action: Action::Last,
-            },
+                Action::Last,
+            ),
         ];
 
         assert_eq!(
@@ -643,26 +1171,26 @@ mod tests {
     #[test]
     fn resolves_duplicate_exact_sequences_as_ambiguous() {
         let commands = [
-            CommandSpec {
-                name: "first-q",
-                description: "first q",
-                section: "Test",
-                keys: &[KeySequence {
+            CommandSpec::implemented(
+                "first-q",
+                "first q",
+                "Test",
+                &[KeySequence {
                     codes: &[KeyCode::Char('q')],
                     label: "q",
                 }],
-                action: Action::Quit,
-            },
-            CommandSpec {
-                name: "second-q",
-                description: "second q",
-                section: "Test",
-                keys: &[KeySequence {
+                Action::Quit,
+            ),
+            CommandSpec::implemented(
+                "second-q",
+                "second q",
+                "Test",
+                &[KeySequence {
                     codes: &[KeyCode::Char('q')],
                     label: "q",
                 }],
-                action: Action::Refresh,
-            },
+                Action::Refresh,
+            ),
         ];
 
         assert_eq!(
@@ -743,6 +1271,75 @@ mod tests {
                     command.name
                 );
             }
+        }
+    }
+
+    #[test]
+    fn catalog_lifecycle_matches_action_state() {
+        for command in COMMANDS {
+            match (command.lifecycle, command.action) {
+                (CommandLifecycle::Implemented, action) => {
+                    assert!(
+                        implemented_action_is_handled(action),
+                        "implemented :{} is not handled",
+                        command.name
+                    );
+                }
+                (CommandLifecycle::Planned { reason }, Action::Planned(name)) => {
+                    assert_eq!(name, command.name);
+                    assert!(
+                        !reason.trim().is_empty(),
+                        ":{} planned reason is empty",
+                        command.name
+                    );
+                }
+                (CommandLifecycle::Disabled { reason }, Action::Disabled(name)) => {
+                    assert_eq!(name, command.name);
+                    assert!(
+                        !reason.trim().is_empty(),
+                        ":{} disabled reason is empty",
+                        command.name
+                    );
+                }
+                _ => panic!("lifecycle/action mismatch for :{}", command.name),
+            }
+        }
+    }
+
+    #[test]
+    fn catalog_rejects_duplicate_exact_shortcuts() {
+        let mut seen: Vec<(&[KeyCode], &str, &str)> = Vec::new();
+        for command in COMMANDS {
+            for key in command.keys {
+                if let Some((_, other_command, other_label)) =
+                    seen.iter().find(|(codes, _, _)| *codes == key.codes)
+                {
+                    panic!(
+                        "duplicate shortcut {} for :{} conflicts with {} for :{}",
+                        key.label, command.name, other_label, other_command
+                    );
+                }
+                seen.push((key.codes, command.name, key.label));
+            }
+        }
+    }
+
+    #[test]
+    fn required_action_families_are_present() {
+        for name in [
+            "add-task",
+            "edit-title",
+            "status-active",
+            "filter-project",
+            "order-queue",
+            "conflict-list",
+            "add-project",
+            "config-show",
+        ] {
+            assert!(
+                COMMANDS.iter().any(|command| command.name == name),
+                "missing required command :{name}"
+            );
         }
     }
 }

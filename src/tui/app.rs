@@ -190,6 +190,8 @@ impl App {
             Action::CyclePriority(reverse) => self.update_priority(reverse).await?,
             Action::Delete => self.update_deleted(true).await?,
             Action::Restore => self.update_deleted(false).await?,
+            Action::Planned(name) => self.set_message(format!(":{name} is not yet implemented")),
+            Action::Disabled(name) => self.set_message(format!(":{name} is disabled")),
             Action::AcceptCommand
             | Action::CancelCommand
             | Action::BackspaceCommand
@@ -576,5 +578,24 @@ mod tests {
         app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         assert!(app.pending_shortcut.is_empty());
+    }
+
+    #[tokio::test]
+    async fn planned_shortcut_reports_not_yet_implemented() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        assert_eq!(
+            app.message.as_deref(),
+            Some(":add-task is not yet implemented")
+        );
+    }
+
+    #[tokio::test]
+    async fn disabled_shortcut_reports_disabled() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        assert_eq!(app.message.as_deref(), Some(":conflict-use-a is disabled"));
     }
 }

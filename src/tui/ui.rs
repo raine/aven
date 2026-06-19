@@ -11,7 +11,7 @@ use ratatui::widgets::{
 use crate::query::TaskListItem;
 use crate::render::quote;
 use crate::tui::app::{Focus, WidgetState};
-use crate::tui::event::{COMMANDS, CommandSpec, key_label, matching_commands};
+use crate::tui::event::{COMMANDS, CommandLifecycle, CommandSpec, key_label, matching_commands};
 use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, ORANGE, PINK, RED, SELECTED,
@@ -785,17 +785,28 @@ fn render_detail(frame: &mut Frame, item: &TaskListItem) {
     );
 }
 
+const HELP_COLUMNS: &[&[&str]] = &[
+    &["General", "Navigation", "Tasks", "Status"],
+    &["Views", "Add/Create", "Metadata", "Edit"],
+    &["Priority", "Filters", "Order", "Conflict", "Config"],
+];
+
 fn render_help(frame: &mut Frame) {
-    let area = centered(frame.area(), 82, 16);
+    let area = centered(frame.area(), 96, 20);
     frame.render_widget(Clear, area);
     let inner = overlay_block("Shortcuts");
     let content = inner.inner(area);
     frame.render_widget(inner, area);
-    let [left, right] =
-        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(content);
-
-    render_help_column(frame, left, &["General", "Navigation"]);
-    render_help_column(frame, right, &["Tasks", "Status"]);
+    let columns = Layout::horizontal(
+        HELP_COLUMNS
+            .iter()
+            .map(|_| Constraint::Ratio(1, HELP_COLUMNS.len() as u32))
+            .collect::<Vec<_>>(),
+    )
+    .split(content);
+    for (column, sections) in columns.iter().zip(HELP_COLUMNS.iter()) {
+        render_help_column(frame, *column, sections);
+    }
 }
 
 fn render_help_column(frame: &mut Frame, area: Rect, sections: &[&str]) {
@@ -821,6 +832,26 @@ fn render_help_column(frame: &mut Frame, area: Rect, sections: &[&str]) {
     );
 }
 
+fn command_name_style(command: &CommandSpec) -> Style {
+    match command.lifecycle {
+        CommandLifecycle::Implemented => Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        CommandLifecycle::Planned { .. } => Style::new().fg(FG_MUTED),
+        CommandLifecycle::Disabled { .. } => Style::new().fg(FG_DIM),
+    }
+}
+
+fn lifecycle_badge(lifecycle: CommandLifecycle) -> Option<Span<'static>> {
+    match lifecycle {
+        CommandLifecycle::Implemented => None,
+        CommandLifecycle::Planned { .. } => {
+            Some(Span::styled(" planned ", Style::new().fg(ORANGE)))
+        }
+        CommandLifecycle::Disabled { .. } => {
+            Some(Span::styled(" disabled ", Style::new().fg(FG_DIM)))
+        }
+    }
+}
+
 fn command_line(command: &CommandSpec) -> Line<'static> {
     let keys = command
         .keys
@@ -828,14 +859,18 @@ fn command_line(command: &CommandSpec) -> Line<'static> {
         .map(|key| key.label)
         .collect::<Vec<_>>()
         .join("/");
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(format!("{keys:<10}"), Style::new().fg(FG_MUTED)),
         Span::styled(
             format!(":{:<18}", command.name),
-            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+            command_name_style(command),
         ),
-        Span::styled(command.description, Style::new().fg(FG_DIM)),
-    ])
+    ];
+    if let Some(badge) = lifecycle_badge(command.lifecycle) {
+        spans.push(badge);
+    }
+    spans.push(Span::styled(command.description, Style::new().fg(FG_DIM)));
+    Line::from(spans)
 }
 
 fn render_command(frame: &mut Frame, view: &ViewState) {
@@ -886,17 +921,21 @@ fn prefix_hint_lines(pending: &[String]) -> Vec<Line<'static>> {
                     return None;
                 }
                 let next_key = labels[pending.len()].clone();
-                Some(Line::from(vec![
+                let mut spans = vec![
                     Span::styled(
                         format!(" {:<6} ", next_key),
                         Style::new().fg(FG_MUTED).bg(BG_PANEL),
                     ),
                     Span::styled(
                         format!(":{:<18}", command.name),
-                        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+                        command_name_style(command),
                     ),
-                    Span::styled(command.description, Style::new().fg(FG_DIM)),
-                ]))
+                ];
+                if let Some(badge) = lifecycle_badge(command.lifecycle) {
+                    spans.push(badge);
+                }
+                spans.push(Span::styled(command.description, Style::new().fg(FG_DIM)));
+                Some(Line::from(spans))
             })
         })
         .collect()
@@ -986,5 +1025,46 @@ mod tests {
         let line = command_line(command);
         let rendered = line.to_string();
         assert!(rendered.contains("4/m a"));
+    }
+
+    #[test]
+    fn command_line_marks_planned_actions() {
+        let command = COMMANDS
+            .iter()
+            .find(|command| command.name == "add-task")
+            .unwrap();
+        let rendered = command_line(command).to_string();
+        assert!(rendered.contains("planned"));
+    }
+
+    #[test]
+    fn prefix_hint_lines_mark_planned_actions() {
+        let rendered = prefix_hint_lines(&["a".to_string()])
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains(":add-task"));
+        assert!(rendered.contains("planned"));
+    }
+
+    #[test]
+    fn command_line_marks_disabled_actions() {
+        let command = COMMANDS
+            .iter()
+            .find(|command| command.name == "conflict-use-a")
+            .unwrap();
+        assert!(command_line(command).to_string().contains("disabled"));
+    }
+
+    #[test]
+    fn prefix_hint_lines_mark_disabled_actions() {
+        let rendered = prefix_hint_lines(&["c".to_string()])
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains(":conflict-use-a"));
+        assert!(rendered.contains("disabled"));
     }
 }
