@@ -152,6 +152,7 @@ impl TuiStore {
     }
 
     pub(crate) async fn filter_project(&mut self, project: String) -> Result<Option<usize>> {
+        self.active_view = SidebarTarget::All;
         self.filters.project = Some(project);
         self.filters.include_deleted = false;
         self.filters.conflicts_only = false;
@@ -159,6 +160,7 @@ impl TuiStore {
     }
 
     pub(crate) async fn filter_label(&mut self, label: String) -> Result<Option<usize>> {
+        self.active_view = SidebarTarget::All;
         self.filters.label = Some(label);
         self.filters.include_deleted = false;
         self.filters.conflicts_only = false;
@@ -166,6 +168,7 @@ impl TuiStore {
     }
 
     pub(crate) async fn filter_status(&mut self, status: String) -> Result<Option<usize>> {
+        self.active_view = SidebarTarget::All;
         self.filters.status = Some(status);
         self.filters.include_deleted = false;
         self.filters.conflicts_only = false;
@@ -173,6 +176,7 @@ impl TuiStore {
     }
 
     pub(crate) async fn filter_priority(&mut self, priority: String) -> Result<Option<usize>> {
+        self.active_view = SidebarTarget::All;
         self.filters.priority = Some(priority);
         self.filters.include_deleted = false;
         self.filters.conflicts_only = false;
@@ -180,6 +184,7 @@ impl TuiStore {
     }
 
     pub(crate) async fn toggle_deleted_filter(&mut self) -> Result<Option<usize>> {
+        self.active_view = SidebarTarget::All;
         self.filters.include_deleted = !self.filters.include_deleted;
         self.filters.conflicts_only = false;
         self.refresh(None).await
@@ -1225,10 +1230,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn filter_actions_reset_active_view() {
+        let mut store = test_store().await;
+        store.active_view = SidebarTarget::Conflicts;
+        store.filters.conflicts_only = true;
+
+        store.filter_status("todo".to_string()).await.unwrap();
+
+        assert_eq!(store.active_view, SidebarTarget::All);
+        assert_eq!(store.filters.status.as_deref(), Some("todo"));
+        assert!(!store.filters.conflicts_only);
+    }
+
+    #[tokio::test]
     async fn toggle_deleted_filter_switches_include_deleted() {
         let mut store = test_store().await;
 
         store.toggle_deleted_filter().await.unwrap();
+        assert_eq!(store.active_view, SidebarTarget::All);
         assert!(store.filters.include_deleted);
 
         store.toggle_deleted_filter().await.unwrap();

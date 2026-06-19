@@ -18,6 +18,7 @@ pub(crate) enum OverlayState {
 pub(crate) struct TextPanelState {
     pub(crate) title: String,
     pub(crate) lines: Vec<String>,
+    pub(crate) scroll: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +77,7 @@ pub(crate) enum OverlayView {
 pub(crate) struct TextPanelView {
     pub(crate) title: String,
     pub(crate) lines: Vec<String>,
+    pub(crate) scroll: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,6 +208,7 @@ impl From<&OverlayState> for OverlayView {
             OverlayState::TextPanel(state) => Self::TextPanel(TextPanelView {
                 title: state.title.clone(),
                 lines: state.lines.clone(),
+                scroll: state.scroll,
             }),
         }
     }
@@ -322,8 +325,16 @@ pub(crate) fn handle_generic_overlay_key(key: KeyEvent, overlay: OverlayState) -
             }
             _ => OverlayOutcome::None(OverlayState::Confirm(state)),
         },
-        OverlayState::TextPanel(state) => match key.code {
+        OverlayState::TextPanel(mut state) => match key.code {
             KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
+            KeyCode::Char('j') | KeyCode::Down => {
+                state.scroll = state.scroll.saturating_add(1);
+                OverlayOutcome::None(OverlayState::TextPanel(state))
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                state.scroll = state.scroll.saturating_sub(1);
+                OverlayOutcome::None(OverlayState::TextPanel(state))
+            }
             _ => OverlayOutcome::None(OverlayState::TextPanel(state)),
         },
         other => OverlayOutcome::None(other),
@@ -552,6 +563,7 @@ mod tests {
         let state = TextPanelState {
             title: "Conflicts".to_string(),
             lines: vec!["field=title".to_string()],
+            scroll: 0,
         };
         assert!(matches!(
             handle_generic_overlay_key(key(KeyCode::Enter), OverlayState::TextPanel(state.clone())),
@@ -561,6 +573,27 @@ mod tests {
             handle_generic_overlay_key(key(KeyCode::Esc), OverlayState::TextPanel(state)),
             OverlayOutcome::Cancelled
         ));
+    }
+
+    #[test]
+    fn text_panel_scrolls_with_navigation_keys() {
+        let state = TextPanelState {
+            title: "Conflicts".to_string(),
+            lines: vec!["one".to_string(), "two".to_string()],
+            scroll: 0,
+        };
+        let OverlayOutcome::None(OverlayState::TextPanel(state)) =
+            handle_generic_overlay_key(key(KeyCode::Down), OverlayState::TextPanel(state))
+        else {
+            panic!("expected scrolled text panel");
+        };
+        assert_eq!(state.scroll, 1);
+        let OverlayOutcome::None(OverlayState::TextPanel(state)) =
+            handle_generic_overlay_key(key(KeyCode::Up), OverlayState::TextPanel(state))
+        else {
+            panic!("expected scrolled text panel");
+        };
+        assert_eq!(state.scroll, 0);
     }
 
     #[test]
@@ -597,6 +630,7 @@ mod tests {
             OverlayState::TextPanel(TextPanelState {
                 title: "Panel".to_string(),
                 lines: vec!["line".to_string()],
+                scroll: 0,
             }),
         ];
 

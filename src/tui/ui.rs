@@ -982,14 +982,23 @@ fn render_text_input(frame: &mut Frame, state: &TextInputView) {
 }
 
 fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
-    let height = (state.lines.len() as u16).saturating_add(5).min(16);
+    let visible_rows = 10usize;
+    let content_rows = state.lines.len().min(visible_rows).max(1);
+    let height = (content_rows as u16).saturating_add(5).min(16);
     let area = centered(frame.area(), 60, height);
     frame.render_widget(Clear, area);
+    let start = state.row.saturating_sub(visible_rows.saturating_sub(1));
     let mut lines = vec![Line::from(Span::styled(
         &state.prompt,
         Style::new().fg(FG_DIM),
     ))];
-    for (row_index, line) in state.lines.iter().enumerate() {
+    for (row_index, line) in state
+        .lines
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(visible_rows)
+    {
         let text = if row_index == state.row {
             insert_cursor(line, state.column)
         } else {
@@ -1012,11 +1021,18 @@ fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
 
 fn render_picker(frame: &mut Frame, state: &PickerView) {
     let visible_count = state.visible_indices.len().max(1);
-    let height = (visible_count.min(8) as u16).saturating_add(5);
+    let viewport_rows = 8usize;
+    let height = (visible_count.min(viewport_rows) as u16).saturating_add(5);
     let area = centered(frame.area(), 60, height);
     frame.render_widget(Clear, area);
+    let selected_position = state
+        .visible_indices
+        .iter()
+        .position(|index| *index == state.selected)
+        .unwrap_or(0);
+    let start = selected_position.saturating_sub(viewport_rows.saturating_sub(1));
     let mut lines = vec![Line::from(format!("/{}▌", state.filter)), Line::from("")];
-    for index in state.visible_indices.iter().take(8) {
+    for index in state.visible_indices.iter().skip(start).take(viewport_rows) {
         let item = &state.items[*index];
         let marker = if *index == state.selected {
             "▸ "
@@ -1063,16 +1079,21 @@ fn render_confirm(frame: &mut Frame, state: &ConfirmView) {
 }
 
 fn render_text_panel(frame: &mut Frame, state: &TextPanelView) {
-    let height = (state.lines.len() as u16).saturating_add(4).min(16);
+    let visible_rows = 12usize;
+    let content_rows = state.lines.len().min(visible_rows).max(1);
+    let height = (content_rows as u16).saturating_add(4).min(16);
     let area = centered(frame.area(), 60, height);
     frame.render_widget(Clear, area);
+    let start = (state.scroll as usize).min(state.lines.len().saturating_sub(1));
     let mut lines = state
         .lines
         .iter()
+        .skip(start)
+        .take(visible_rows)
         .map(|line| Line::from(line.as_str()))
         .collect::<Vec<_>>();
     lines.push(Line::from(Span::styled(
-        "Enter/Esc close",
+        "j/k scroll  Enter/Esc close",
         Style::new().fg(FG_MUTED),
     )));
     frame.render_widget(
@@ -1364,6 +1385,7 @@ mod tests {
                 "field=title".to_string(),
                 "local a: local title".to_string(),
             ],
+            scroll: 0,
         }));
         assert!(rendered.contains("Conflict details"));
         assert!(rendered.contains("field=title"));
@@ -1437,6 +1459,38 @@ mod tests {
         assert!(rendered.contains("Project"));
         assert!(rendered.contains("/app"));
         assert!(rendered.contains("Space toggle"));
+    }
+
+    #[test]
+    fn picker_viewport_keeps_selected_item_visible() {
+        let items = (0..12)
+            .map(|index| PickerItem {
+                label: format!("Item {index}"),
+                value: index.to_string(),
+                selected: false,
+            })
+            .collect::<Vec<_>>();
+        let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+            title: "Project".to_string(),
+            filter: String::new(),
+            items,
+            selected: 10,
+            multi: false,
+            visible_indices: (0..12).collect(),
+        }));
+        assert!(rendered.contains("▸ Item 10"));
+        assert!(!rendered.contains("Item 0"));
+    }
+
+    #[test]
+    fn text_panel_scroll_offset_changes_visible_content() {
+        let rendered = render_overlay_view(OverlayView::TextPanel(TextPanelView {
+            title: "Long panel".to_string(),
+            lines: (0..20).map(|index| format!("Line {index}")).collect(),
+            scroll: 8,
+        }));
+        assert!(rendered.contains("Line 8"));
+        assert!(!rendered.contains("Line 0"));
     }
 
     #[test]

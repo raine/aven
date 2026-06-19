@@ -500,26 +500,18 @@ pub(crate) async fn resolve_conflict(
     field: &str,
     value: &str,
 ) -> Result<ConflictOutcome> {
-    let exists = sqlx::query_scalar::<_, i64>(
-        "SELECT id FROM conflicts WHERE task_id = ? AND field = ? AND resolved = 0 LIMIT 1",
-    )
-    .bind(task_id)
-    .bind(field)
-    .fetch_optional(&mut *conn)
-    .await?;
-    if exists.is_none() {
-        bail!("error conflict-not-found task_id={task_id} field={field}");
-    }
-
     let mut tx = conn.begin().await?;
-    apply_field_value(&mut tx, task_id, field, value).await?;
-    sqlx::query!(
+    let result = sqlx::query!(
         "UPDATE conflicts SET resolved = 1 WHERE task_id = ? AND field = ? AND resolved = 0",
         task_id,
         field,
     )
     .execute(&mut *tx)
     .await?;
+    if result.rows_affected() != 1 {
+        bail!("error conflict-not-found task_id={task_id} field={field}");
+    }
+    apply_field_value(&mut tx, task_id, field, value).await?;
     let change_id = insert_change(
         &mut tx,
         "task",

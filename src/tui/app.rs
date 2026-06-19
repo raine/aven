@@ -1377,6 +1377,7 @@ impl App {
         self.overlay = Some(OverlayState::TextPanel(TextPanelState {
             title: CONFLICT_DETAILS_TITLE.to_string(),
             lines,
+            scroll: 0,
         }));
         Ok(())
     }
@@ -1386,6 +1387,7 @@ impl App {
         self.overlay = Some(OverlayState::TextPanel(TextPanelState {
             title: CONFIG_STATUS_TITLE.to_string(),
             lines: self.store.config_status_lines()?,
+            scroll: 0,
         }));
         Ok(())
     }
@@ -1395,6 +1397,7 @@ impl App {
         self.overlay = Some(OverlayState::TextPanel(TextPanelState {
             title: CONFIG_INFO_TITLE.to_string(),
             lines: self.store.config_info_lines()?,
+            scroll: 0,
         }));
         Ok(())
     }
@@ -1404,6 +1407,7 @@ impl App {
         self.overlay = Some(OverlayState::TextPanel(TextPanelState {
             title: CONFIG_PATHS_TITLE.to_string(),
             lines: self.store.config_path_lines()?,
+            scroll: 0,
         }));
         Ok(())
     }
@@ -2381,6 +2385,7 @@ mod tests {
             OverlayState::TextPanel(TextPanelState {
                 title: "Panel".to_string(),
                 lines: vec!["line".to_string()],
+                scroll: 0,
             }),
         ];
 

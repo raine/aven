@@ -66,6 +66,26 @@ default, project-specific sidebar views, queue sorting, task detail, search,
 manual refresh, and triage shortcuts for status, priority, delete, and
 restore.
 
+Direct shortcuts cover frequent actions: j/k or arrows move, Enter opens
+selection detail, / searches, : opens the command panel, ? or h opens help,
+r refreshes, s cycles sorting, 1-6 set status, p/P cycle priority, d deletes,
+u restores, and q quits.
+
+Power-user shortcuts use mnemonic prefix families. Press a prefix to see
+transient hints, then press the next key:
+
+  g  go to views such as all, inbox, backlog, todo, active, project, conflicts
+  a  add tasks, notes, projects, and labels
+  e  edit the selected task title, description, project, priority, or labels
+  m  mark status or exact priority
+  f  filter by project, label, status, priority, deleted tasks, or clear filters
+  o  order by supported sort fields or reverse direction
+  c  inspect and resolve conflicts
+  C  show config, status, paths, or initialize config with confirmation
+
+Esc cancels prefix mode and overlays. The command panel searches the same
+catalog as the prefix hints and help overlay.
+
 Sync server:
 
   atm server --bind 127.0.0.1:0 --data /tmp/atm-server.sqlite
