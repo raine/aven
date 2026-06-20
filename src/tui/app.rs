@@ -1,3 +1,4 @@
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -27,6 +28,7 @@ const ADD_TASK_PRIORITY_TITLE: &str = "Add task: priority";
 const ADD_TASK_LABELS_TITLE: &str = "Add task: labels";
 const ADD_TASK_DESCRIPTION_TITLE: &str = "Add task: description";
 const ADD_NOTE_TITLE: &str = "Add note";
+const EDIT_STATUS_TITLE: &str = "Edit task: status";
 const EDIT_TITLE_TITLE: &str = "Edit task: title";
 const EDIT_DESCRIPTION_TITLE: &str = "Edit task: description";
 const EDIT_PROJECT_TITLE: &str = "Edit task: project";
@@ -80,6 +82,12 @@ enum AuthoringFlow {
 enum ConflictResolutionChoice {
     Local,
     Remote,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskRefKind {
+    Short,
+    Durable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -342,6 +350,14 @@ impl App {
                 let message = self.store.create_label(value).await?;
                 self.set_message(message);
             }
+            OverlaySubmit::Picker { title, values } if title == EDIT_STATUS_TITLE => {
+                if let Some(status) = values.first() {
+                    self.submit_edit_status(status.clone()).await?;
+                } else {
+                    self.set_message("no matching status".to_string());
+                    self.begin_status_picker();
+                }
+            }
             OverlaySubmit::Text { title, value } if title == EDIT_TITLE_TITLE => {
                 self.submit_edit_title(value).await?;
             }
@@ -425,6 +441,10 @@ impl App {
             Action::CancelOverlay => self.cancel_overlay(),
             Action::MoveDown => self.move_selection(1).await?,
             Action::MoveUp => self.move_selection(-1).await?,
+            Action::MoveLeft => self.move_left(),
+            Action::MoveRight => self.move_right(),
+            Action::PreviousItem => self.previous_item(),
+            Action::NextItem => self.next_item(),
             Action::First => self.select_edge(false).await?,
             Action::Last => self.select_edge(true).await?,
             Action::ToggleFocus => self.toggle_focus(),
@@ -447,6 +467,8 @@ impl App {
             Action::SetStatus(status) => self.update_status(status).await?,
             Action::SetPriority(priority) => self.set_exact_priority(priority).await?,
             Action::CyclePriority(reverse) => self.update_priority(reverse).await?,
+            Action::CopyShortRef => self.copy_selected_ref(TaskRefKind::Short),
+            Action::CopyDurableRef => self.copy_selected_ref(TaskRefKind::Durable),
             Action::BeginEditTitle => self.begin_edit_title(),
             Action::BeginEditDescription => self.begin_edit_description(),
             Action::BeginEditProject => self.begin_edit_project(),
@@ -454,6 +476,7 @@ impl App {
             Action::BeginEditLabels => self.begin_edit_labels(),
             Action::Delete => self.update_deleted(true).await?,
             Action::Restore => self.update_deleted(false).await?,
+            Action::BeginStatusPicker => self.begin_status_picker(),
             Action::BeginAddProject => self.begin_add_project(),
             Action::BeginAddLabel => self.begin_add_label(),
             Action::BeginAddTask => self.begin_add_task(),
@@ -578,6 +601,33 @@ impl App {
             }
             Focus::Tasks => Focus::Sidebar,
         };
+    }
+
+    fn move_left(&mut self) {
+        self.focus = Focus::Sidebar;
+        self.widgets.sidebar.select(self.store.sidebar_selection());
+        self.overlay = None;
+    }
+
+    fn move_right(&mut self) {
+        self.focus = Focus::Tasks;
+        self.overlay = None;
+    }
+
+    fn previous_item(&mut self) {
+        if matches!(self.store.active_view, SidebarTarget::Conflicts) || self.store.filters.conflicts_only {
+            self.move_to_conflict(-1);
+        } else {
+            self.set_message("previous item is available in conflict flows".to_string());
+        }
+    }
+
+    fn next_item(&mut self) {
+        if matches!(self.store.active_view, SidebarTarget::Conflicts) || self.store.filters.conflicts_only {
+            self.move_to_conflict(1);
+        } else {
+            self.set_message("next item is available in conflict flows".to_string());
+        }
     }
 
     async fn activate_or_toggle_detail(&mut self) -> Result<()> {
@@ -949,6 +999,21 @@ impl App {
         }
     }
 
+    fn begin_status_picker(&mut self) {
+        let Some(index) = self.guard_selected_task() else {
+            return;
+        };
+        let selected = self
+            .store
+            .selected_task(Some(index))
+            .unwrap()
+            .task
+            .status
+            .as_str();
+        let items = self.store.status_picker_items(Some(selected));
+        self.open_picker_overlay(EDIT_STATUS_TITLE, items, false);
+    }
+
     fn begin_edit_title(&mut self) {
         let Some(index) = self.guard_selected_task() else {
             return;
@@ -1036,6 +1101,30 @@ impl App {
             picker_item.selected = labels.contains(&picker_item.value);
         }
         self.open_picker_overlay(EDIT_LABELS_TITLE, items, true);
+    }
+
+    fn copy_selected_ref(&mut self, kind: TaskRefKind) {
+        let Some(task) = self.store.selected_task(self.widgets.table.selected()) else {
+            self.set_message("no selected task to copy".to_string());
+            return;
+        };
+        let (value, message_ref) = match kind {
+            TaskRefKind::Short => (task.display_ref.clone(), task.display_ref.clone()),
+            TaskRefKind::Durable => (task.task.id.clone(), task.display_ref.clone()),
+        };
+        match copy_to_clipboard(&value) {
+            Ok(()) => self.set_message(format!("copied {message_ref}")),
+            Err(error) => self.set_message(format!("copy failed: {error}")),
+        }
+    }
+
+    async fn submit_edit_status(&mut self, status: String) -> Result<()> {
+        let result = self
+            .store
+            .update_status(self.widgets.table.selected(), &status)
+            .await;
+        self.apply_edit_mutation(result, |app| app.begin_status_picker());
+        Ok(())
     }
 
     async fn submit_edit_title(&mut self, value: String) -> Result<()> {
@@ -1625,6 +1714,21 @@ fn selected_picker_index(items: &[PickerItem]) -> usize {
     items.iter().position(|item| item.selected).unwrap_or(0)
 }
 
+fn copy_to_clipboard(value: &str) -> Result<()> {
+    let mut child = Command::new("pbcopy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin.write_all(value.as_bytes())?;
+    }
+    let status = child.wait()?;
+    if !status.success() {
+        anyhow::bail!("pbcopy exited with {status}");
+    }
+    Ok(())
+}
+
 fn deleted_picker_items(selected: &str) -> Vec<PickerItem> {
     ["0", "1"]
         .into_iter()
@@ -1820,6 +1924,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn add_task_alias_executes_immediately() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        assert!(app.pending_shortcut.is_empty());
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state)) if state.title == ADD_TASK_TITLE_TITLE
+        ));
+    }
+
+    #[tokio::test]
     async fn prefix_is_inactive_while_overlay_captures_input() {
         let mut app = test_app().await;
         app.begin_search();
@@ -1896,8 +2011,19 @@ mod tests {
     #[tokio::test]
     async fn help_key_opens_help_overlay() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('h')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('?')).await.unwrap();
         assert!(matches!(app.overlay, Some(OverlayState::Help)));
+    }
+
+    #[tokio::test]
+    async fn h_and_l_move_between_sidebar_and_tasks() {
+        let mut app = test_app().await;
+        app.focus = Focus::Tasks;
+        app.handle_normal_key(KeyCode::Char('h')).await.unwrap();
+        assert_eq!(app.focus, Focus::Sidebar);
+
+        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+        assert_eq!(app.focus, Focus::Tasks);
     }
 
     #[tokio::test]
@@ -2163,7 +2289,7 @@ mod tests {
     #[tokio::test]
     async fn add_task_shortcut_opens_title_prompt() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
 
         assert!(matches!(
@@ -2184,7 +2310,7 @@ mod tests {
             .await
             .unwrap();
 
-        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
@@ -2233,7 +2359,7 @@ mod tests {
     #[tokio::test]
     async fn add_task_flow_cancels_at_title_step() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
         assert!(app.overlay.is_none());
@@ -2242,7 +2368,7 @@ mod tests {
     #[tokio::test]
     async fn add_task_blank_title_is_rejected() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         assert_eq!(app.message.as_deref(), Some("task title is required"));
@@ -2256,7 +2382,17 @@ mod tests {
     async fn add_note_requires_selected_task() {
         let mut app = test_app().await;
         app.widgets.table.select(None);
-        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(app.message.as_deref(), Some("no selected task for note"));
+    }
+
+    #[tokio::test]
+    async fn add_note_alias_requires_selected_task() {
+        let mut app = test_app().await;
+        app.widgets.table.select(None);
         app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
 
         assert!(app.overlay.is_none());
@@ -2268,7 +2404,7 @@ mod tests {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Note target")).await;
 
-        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
         assert!(matches!(
             &app.overlay,
@@ -2291,7 +2427,7 @@ mod tests {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Note target")).await;
 
-        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
@@ -2585,7 +2721,7 @@ mod tests {
     #[tokio::test]
     async fn add_project_shortcut_opens_prompt_and_creates_project() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
         assert!(matches!(
             &app.overlay,
@@ -2618,7 +2754,7 @@ mod tests {
     #[tokio::test]
     async fn add_label_shortcut_opens_prompt_and_creates_label() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
         assert!(matches!(
             &app.overlay,
@@ -2794,6 +2930,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn status_picker_alias_updates_selected_task() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Status alias")).await;
+
+        app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state)) if state.title == EDIT_STATUS_TITLE
+        ));
+        type_chars(&mut app, "todo").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.status, "todo");
+    }
+
+    #[tokio::test]
+    async fn done_and_cancel_aliases_update_selected_task() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Status alias")).await;
+
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.status, "done");
+
+        app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.status, "canceled");
+    }
+
+    #[tokio::test]
     async fn exact_priority_shortcut_updates_selected_task() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Priority shortcut")).await;
@@ -2803,6 +2970,19 @@ mod tests {
 
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.priority, "urgent");
+    }
+
+    #[tokio::test]
+    async fn priority_alias_opens_picker() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Priority alias")).await;
+
+        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state)) if state.title == EDIT_PRIORITY_TITLE
+        ));
     }
 
     #[tokio::test]
@@ -2858,6 +3038,16 @@ mod tests {
             Some(OverlayState::MultilineInput(state))
                 if state.lines.join("\n") == "old updated"
         ));
+    }
+
+    #[tokio::test]
+    async fn copy_requires_selected_task() {
+        let mut app = test_app().await;
+        app.widgets.table.select(None);
+
+        app.copy_selected_ref(TaskRefKind::Short);
+
+        assert_eq!(app.message.as_deref(), Some("no selected task to copy"));
     }
 
     #[tokio::test]

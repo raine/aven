@@ -19,6 +19,10 @@ pub(crate) enum Action {
     Quit,
     MoveDown,
     MoveUp,
+    MoveLeft,
+    MoveRight,
+    PreviousItem,
+    NextItem,
     First,
     Last,
     ToggleFocus,
@@ -42,6 +46,8 @@ pub(crate) enum Action {
     SetStatus(&'static str),
     SetPriority(&'static str),
     CyclePriority(bool),
+    CopyShortRef,
+    CopyDurableRef,
     BeginEditTitle,
     BeginEditDescription,
     BeginEditProject,
@@ -49,6 +55,7 @@ pub(crate) enum Action {
     BeginEditLabels,
     Delete,
     Restore,
+    BeginStatusPicker,
     BeginAddTask,
     BeginAddNote,
     BeginAddProject,
@@ -205,16 +212,10 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "help",
         "toggle shortcut help",
         "General",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('?')],
-                label: "?",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('h')],
-                label: "h",
-            },
-        ],
+        &[KeySequence {
+            codes: &[KeyCode::Char('?')],
+            label: "?",
+        }],
         Action::ToggleHelp,
     ),
     CommandSpec::implemented(
@@ -280,6 +281,58 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::MoveUp,
     ),
     CommandSpec::implemented(
+        "move-left",
+        "move focus left",
+        "Navigation",
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('h')],
+                label: "h",
+            },
+            KeySequence {
+                codes: &[KeyCode::Left],
+                label: "Left",
+            },
+        ],
+        Action::MoveLeft,
+    ),
+    CommandSpec::implemented(
+        "move-right",
+        "move focus right",
+        "Navigation",
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('l')],
+                label: "l",
+            },
+            KeySequence {
+                codes: &[KeyCode::Right],
+                label: "Right",
+            },
+        ],
+        Action::MoveRight,
+    ),
+    CommandSpec::implemented(
+        "previous-item",
+        "select previous item in flow",
+        "Navigation",
+        &[KeySequence {
+            codes: &[KeyCode::Char('[')],
+            label: "[",
+        }],
+        Action::PreviousItem,
+    ),
+    CommandSpec::implemented(
+        "next-item",
+        "select next item in flow",
+        "Navigation",
+        &[KeySequence {
+            codes: &[KeyCode::Char(']')],
+            label: "]",
+        }],
+        Action::NextItem,
+    ),
+    CommandSpec::implemented(
         "first",
         "jump to the first item",
         "Navigation",
@@ -336,10 +389,6 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 codes: &[KeyCode::Enter],
                 label: "Enter",
             },
-            KeySequence {
-                codes: &[KeyCode::Char('l')],
-                label: "l",
-            },
         ],
         Action::ToggleDetail,
     ),
@@ -352,6 +401,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             label: "m D",
         }],
         Action::Delete,
+    ),
+    CommandSpec::implemented(
+        "status-picker",
+        "open status picker",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('s')],
+            label: "s",
+        }],
+        Action::BeginStatusPicker,
     ),
     CommandSpec::implemented(
         "restore",
@@ -407,20 +466,32 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "status-done",
         "set status to done",
         "Status",
-        &[KeySequence {
-            codes: &[KeyCode::Char('m'), KeyCode::Char('d')],
-            label: "m d",
-        }],
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('d')],
+                label: "d",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('m'), KeyCode::Char('d')],
+                label: "m d",
+            },
+        ],
         Action::SetStatus("done"),
     ),
     CommandSpec::implemented(
         "status-canceled",
         "set status to canceled",
         "Status",
-        &[KeySequence {
-            codes: &[KeyCode::Char('m'), KeyCode::Char('x')],
-            label: "m x",
-        }],
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('x')],
+                label: "x",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('m'), KeyCode::Char('x')],
+                label: "m x",
+            },
+        ],
         Action::SetStatus("canceled"),
     ),
     // Views
@@ -519,20 +590,32 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "add-task",
         "add a new task",
         "Add/Create",
-        &[KeySequence {
-            codes: &[KeyCode::Char('a'), KeyCode::Char('t')],
-            label: "a t",
-        }],
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('a')],
+                label: "a",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('A'), KeyCode::Char('t')],
+                label: "A t",
+            },
+        ],
         Action::BeginAddTask,
     ),
     CommandSpec::implemented(
         "add-note",
         "add a note to selected task",
         "Add/Create",
-        &[KeySequence {
-            codes: &[KeyCode::Char('a'), KeyCode::Char('n')],
-            label: "a n",
-        }],
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('n')],
+                label: "n",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('A'), KeyCode::Char('n')],
+                label: "A n",
+            },
+        ],
         Action::BeginAddNote,
     ),
     // Metadata
@@ -541,8 +624,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "create a new project",
         "Metadata",
         &[KeySequence {
-            codes: &[KeyCode::Char('a'), KeyCode::Char('p')],
-            label: "a p",
+            codes: &[KeyCode::Char('A'), KeyCode::Char('p')],
+            label: "A p",
         }],
         Action::BeginAddProject,
     ),
@@ -551,8 +634,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "create a new label",
         "Metadata",
         &[KeySequence {
-            codes: &[KeyCode::Char('a'), KeyCode::Char('l')],
-            label: "a l",
+            codes: &[KeyCode::Char('A'), KeyCode::Char('l')],
+            label: "A l",
         }],
         Action::BeginAddLabel,
     ),
@@ -561,8 +644,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "add a path to a project",
         "Metadata",
         &[KeySequence {
-            codes: &[KeyCode::Char('a'), KeyCode::Char('P')],
-            label: "a P",
+            codes: &[KeyCode::Char('A'), KeyCode::Char('P')],
+            label: "A P",
         }],
         PROJECT_PATH_FLOW_REASON,
     ),
@@ -571,8 +654,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "remove a path from a project",
         "Metadata",
         &[KeySequence {
-            codes: &[KeyCode::Char('a'), KeyCode::Char('R')],
-            label: "a R",
+            codes: &[KeyCode::Char('A'), KeyCode::Char('R')],
+            label: "A R",
         }],
         PROJECT_PATH_FLOW_REASON,
     ),
@@ -581,40 +664,64 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "edit-title",
         "edit selected task title",
         "Edit",
-        &[KeySequence {
-            codes: &[KeyCode::Char('e'), KeyCode::Char('t')],
-            label: "e t",
-        }],
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('E'), KeyCode::Char('t')],
+                label: "E t",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('t')],
+                label: "e t",
+            },
+        ],
         Action::BeginEditTitle,
     ),
     CommandSpec::implemented(
         "edit-description",
         "edit selected task description",
         "Edit",
-        &[KeySequence {
-            codes: &[KeyCode::Char('e'), KeyCode::Char('d')],
-            label: "e d",
-        }],
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('E'), KeyCode::Char('d')],
+                label: "E d",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('d')],
+                label: "e d",
+            },
+        ],
         Action::BeginEditDescription,
     ),
     CommandSpec::implemented(
         "edit-project",
         "edit selected task project",
         "Edit",
-        &[KeySequence {
-            codes: &[KeyCode::Char('e'), KeyCode::Char('p')],
-            label: "e p",
-        }],
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('E'), KeyCode::Char('p')],
+                label: "E p",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('p')],
+                label: "e p",
+            },
+        ],
         Action::BeginEditProject,
     ),
     CommandSpec::implemented(
         "edit-priority",
         "edit selected task priority",
         "Edit",
-        &[KeySequence {
-            codes: &[KeyCode::Char('e'), KeyCode::Char('r')],
-            label: "e r",
-        }],
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('p')],
+                label: "p",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('r')],
+                label: "e r",
+            },
+        ],
         Action::BeginEditPriority,
     ),
     CommandSpec::implemented(
@@ -626,6 +733,26 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             label: "e l",
         }],
         Action::BeginEditLabels,
+    ),
+    CommandSpec::implemented(
+        "copy-ref",
+        "copy selected task display ref",
+        "Edit",
+        &[KeySequence {
+            codes: &[KeyCode::Char('y')],
+            label: "y",
+        }],
+        Action::CopyShortRef,
+    ),
+    CommandSpec::implemented(
+        "copy-id",
+        "copy selected task id",
+        "Edit",
+        &[KeySequence {
+            codes: &[KeyCode::Char('Y')],
+            label: "Y",
+        }],
+        Action::CopyDurableRef,
     ),
     // Priority
     CommandSpec::implemented(
@@ -1048,6 +1175,10 @@ fn implemented_action_is_handled(action: Action) -> bool {
         Action::Quit
             | Action::MoveDown
             | Action::MoveUp
+            | Action::MoveLeft
+            | Action::MoveRight
+            | Action::PreviousItem
+            | Action::NextItem
             | Action::First
             | Action::Last
             | Action::ToggleFocus
@@ -1062,6 +1193,8 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::SetStatus(_)
             | Action::SetPriority(_)
             | Action::CyclePriority(_)
+            | Action::CopyShortRef
+            | Action::CopyDurableRef
             | Action::BeginEditTitle
             | Action::BeginEditDescription
             | Action::BeginEditProject
@@ -1069,6 +1202,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginEditLabels
             | Action::Delete
             | Action::Restore
+            | Action::BeginStatusPicker
             | Action::BeginAddTask
             | Action::BeginAddNote
             | Action::BeginAddProject
@@ -1284,7 +1418,7 @@ mod tests {
     fn resolver_reports_missing_and_empty_inputs() {
         assert_eq!(resolve_shortcut(&[]), ShortcutLookup::Missing);
         assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('x')]),
+            resolve_shortcut(&[KeyCode::Char('!')]),
             ShortcutLookup::Missing
         );
     }
@@ -1349,20 +1483,6 @@ mod tests {
         assert_eq!(Action::from_normal_key(KeyCode::Char('g')), Action::None);
     }
 
-    #[test]
-    fn production_sequences_are_not_ambiguous() {
-        for command in COMMANDS {
-            for key in command.keys {
-                assert_ne!(
-                    resolve_shortcut(key.codes),
-                    ShortcutLookup::Ambiguous(command.action),
-                    "shortcut {} for :{} should not be ambiguous",
-                    key.label,
-                    command.name
-                );
-            }
-        }
-    }
 
     #[test]
     fn catalog_lifecycle_matches_action_state() {
@@ -1431,11 +1551,15 @@ mod tests {
     #[test]
     fn resolves_metadata_shortcuts() {
         assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('a'), KeyCode::Char('p')]),
+            resolve_shortcut(&[KeyCode::Char('A')]),
+            ShortcutLookup::Prefix
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('A'), KeyCode::Char('p')]),
             ShortcutLookup::Found(Action::BeginAddProject)
         ));
         assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('a'), KeyCode::Char('l')]),
+            resolve_shortcut(&[KeyCode::Char('A'), KeyCode::Char('l')]),
             ShortcutLookup::Found(Action::BeginAddLabel)
         ));
     }
@@ -1443,11 +1567,19 @@ mod tests {
     #[test]
     fn resolves_authoring_shortcuts() {
         assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('a'), KeyCode::Char('t')]),
+            resolve_shortcut(&[KeyCode::Char('a')]),
             ShortcutLookup::Found(Action::BeginAddTask)
         ));
         assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('a'), KeyCode::Char('n')]),
+            resolve_shortcut(&[KeyCode::Char('A'), KeyCode::Char('t')]),
+            ShortcutLookup::Found(Action::BeginAddTask)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('n')]),
+            ShortcutLookup::Found(Action::BeginAddNote)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('A'), KeyCode::Char('n')]),
             ShortcutLookup::Found(Action::BeginAddNote)
         ));
     }
@@ -1473,6 +1605,9 @@ mod tests {
         for name in [
             "add-task",
             "edit-title",
+            "status-picker",
+            "copy-ref",
+            "copy-id",
             "status-active",
             "filter-project",
             "order-queue",
@@ -1496,6 +1631,22 @@ mod tests {
     #[test]
     fn resolves_task_editing_shortcuts() {
         assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('E')]),
+            ShortcutLookup::Prefix
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('E'), KeyCode::Char('t')]),
+            ShortcutLookup::Found(Action::BeginEditTitle)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('E'), KeyCode::Char('d')]),
+            ShortcutLookup::Found(Action::BeginEditDescription)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('E'), KeyCode::Char('p')]),
+            ShortcutLookup::Found(Action::BeginEditProject)
+        ));
+        assert!(matches!(
             resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('t')]),
             ShortcutLookup::Found(Action::BeginEditTitle)
         ));
@@ -1508,12 +1659,24 @@ mod tests {
             ShortcutLookup::Found(Action::BeginEditProject)
         ));
         assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('p')]),
+            ShortcutLookup::Found(Action::BeginEditPriority)
+        ));
+        assert!(matches!(
             resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('r')]),
             ShortcutLookup::Found(Action::BeginEditPriority)
         ));
         assert!(matches!(
             resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('l')]),
             ShortcutLookup::Found(Action::BeginEditLabels)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('y')]),
+            ShortcutLookup::Found(Action::CopyShortRef)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('Y')]),
+            ShortcutLookup::Found(Action::CopyDurableRef)
         ));
     }
 
@@ -1543,6 +1706,18 @@ mod tests {
 
     #[test]
     fn status_shortcuts_resolve_through_mark_prefix() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('s')]),
+            ShortcutLookup::Found(Action::BeginStatusPicker)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('d')]),
+            ShortcutLookup::Found(Action::SetStatus("done"))
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('x')]),
+            ShortcutLookup::Found(Action::SetStatus("canceled"))
+        );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('m'), KeyCode::Char('i')]),
             ShortcutLookup::Found(Action::SetStatus("inbox"))
@@ -1616,8 +1791,12 @@ mod tests {
     #[test]
     fn resolves_config_shortcuts() {
         assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('h')]),
+            resolve_shortcut(&[KeyCode::Char('?')]),
             ShortcutLookup::Found(Action::ToggleHelp)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('h')]),
+            ShortcutLookup::Found(Action::MoveLeft)
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('C')]),

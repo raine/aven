@@ -324,7 +324,7 @@ impl TuiStore {
     pub(crate) async fn update_status(
         &mut self,
         index: Option<usize>,
-        status: &'static str,
+        status: &str,
     ) -> Result<Option<MutationMessage>> {
         if let Some(item) = self.selected_task(index).cloned() {
             let before = item.task.status.clone();
