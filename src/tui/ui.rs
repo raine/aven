@@ -132,7 +132,7 @@ fn header_line(store: &TuiStore, width: u16) -> Paragraph<'static> {
     spans.push(separator());
     spans.extend(header_metrics(store, compact));
     spans.extend(active_filter_spans(store));
-    if !compact {
+    if !compact || width >= 84 {
         spans.extend(active_order_spans(store));
     }
     Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BG))
@@ -1829,7 +1829,7 @@ mod tests {
         assert!(!rendered.contains("workspace default"));
         assert!(!rendered.contains("view queue"));
         assert!(!rendered.contains("conflicts 0"));
-        assert!(!rendered.contains("order queue asc"));
+        assert!(rendered.contains("order queue asc"));
     }
 
     #[test]
