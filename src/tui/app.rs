@@ -718,8 +718,17 @@ impl App {
 
     async fn begin_add_task(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
-        let inferred_project = self.store.inferred_add_project().await?;
+        let active_project = match &self.store.active_view {
+            SidebarTarget::Project(project) => Some(project.clone()),
+            _ => None,
+        };
+        let inferred_project = if active_project.is_none() {
+            self.store.inferred_add_project().await?
+        } else {
+            None
+        };
         self.authoring = Some(AuthoringFlow::AddTask(AddTaskDraftState {
+            project: active_project,
             inferred_project,
             ..AddTaskDraftState::default()
         }));
@@ -2370,6 +2379,31 @@ mod tests {
         assert_eq!(task.task.priority, "none");
         assert_eq!(task.task.description, "");
         assert!(task.labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_task_uses_active_project_view() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        let selected = app
+            .store
+            .show_view(SidebarTarget::Project("mobile-app".to_string()))
+            .await
+            .unwrap();
+        app.apply_filter_selection(selected);
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        let task = &app.store.tasks[selected];
+        assert_eq!(task.task.title, "Write docs");
+        assert_eq!(task.task.project_key, "mobile-app");
+        assert_eq!(app.store.filters.project.as_deref(), Some("mobile-app"));
     }
 
     #[tokio::test]

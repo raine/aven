@@ -19,6 +19,7 @@ use crate::query::{
     ProjectListItem, SidebarCounts, SortDirection, TaskFilters, TaskListItem, TaskSort,
     list_project_items, list_task_items, sidebar_counts,
 };
+use crate::refs::display_ref;
 use crate::tui::overlay::PickerItem;
 use crate::undo::{UndoCommand, UndoPayload, task_field_value, task_snapshot};
 use crate::workspaces::{
@@ -780,6 +781,7 @@ impl TuiStore {
         let mut conn = self.pool.acquire().await?;
         let outcome = create_task_operation(&mut conn, draft).await?;
         let task_id = outcome.task.id.clone();
+        let message_ref = display_ref(&mut conn, &outcome.task).await?;
         let workspace_id = crate::workspaces::active_workspace_id();
         let snapshot = task_snapshot(&mut conn, &workspace_id, &task_id).await?;
         drop(conn);
@@ -798,12 +800,12 @@ impl TuiStore {
         self.refresh(None).await?;
         let created_index = self.tasks.iter().position(|item| item.task.id == task_id);
         if created_index.is_some() {
-            return Ok((format!("created task {task_id}"), created_index));
+            return Ok((format!("created task {message_ref}"), created_index));
         }
 
         let restored = self.restored_task_selection(previous_id.as_deref());
         Ok((
-            format!("created task {task_id} hidden by current filters"),
+            format!("created task {message_ref} hidden by current filters"),
             restored,
         ))
     }
@@ -1146,7 +1148,7 @@ mod tests {
             .create_label("needs-review".to_string())
             .await
             .unwrap();
-        let (_, selected) = store
+        let (message, selected) = store
             .create_task(
                 TaskDraft {
                     title: "Write docs".to_string(),
@@ -1161,6 +1163,10 @@ mod tests {
             .unwrap();
 
         let selected = selected.unwrap();
+        assert_eq!(
+            message,
+            format!("created task {}", store.tasks[selected].display_ref)
+        );
         let task = &store.tasks[selected];
         assert_eq!(task.task.title, "Write docs");
         assert_eq!(task.task.priority, "high");
