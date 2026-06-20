@@ -334,18 +334,10 @@ fn push_sort(query: &mut QueryBuilder<Sqlite>, sort: TaskSort, direction: SortDi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::open_db;
+    use crate::test_support::test_conn;
+    use sqlx::SqliteConnection;
 
-    async fn test_conn() -> (tempfile::TempDir, sqlx::pool::PoolConnection<Sqlite>) {
-        let temp = tempfile::tempdir().unwrap();
-        let pool = open_db(&temp.path().join("test.sqlite")).await.unwrap();
-        let conn = pool.acquire().await.unwrap();
-        (temp, conn)
-    }
-
-    #[tokio::test]
-    async fn queue_sort_orders_status_then_priority_then_created_at() {
-        let (_temp, mut conn) = test_conn().await;
+    async fn seed_default_project(conn: &mut SqliteConnection) {
         sqlx::query(
             "INSERT INTO projects(key, name, prefix, created_at, updated_at)
              VALUES ('app', 'app', 'APP', 't', 't')",
@@ -353,6 +345,39 @@ mod tests {
         .execute(&mut *conn)
         .await
         .unwrap();
+    }
+
+    async fn insert_test_task(
+        conn: &mut SqliteConnection,
+        id: &str,
+        title: &str,
+        status: &str,
+        priority: &str,
+        created_at: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
+             VALUES (?, ?, '', 'app', ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(title)
+        .bind(status)
+        .bind(priority)
+        .bind(created_at)
+        .bind(created_at)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    }
+
+    fn listed_titles(items: &[TaskListItem]) -> Vec<&str> {
+        items.iter().map(|item| item.task.title.as_str()).collect()
+    }
+
+    #[tokio::test]
+    async fn queue_sort_orders_status_then_priority_then_created_at() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
 
         for (id, title, status, priority, created_at) in [
             ("0000000000000001", "done urgent", "done", "urgent", "001"),
@@ -367,19 +392,7 @@ mod tests {
                 "005",
             ),
         ] {
-            sqlx::query(
-                "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
-                 VALUES (?, ?, '', 'app', ?, ?, ?, ?)",
-            )
-            .bind(id)
-            .bind(title)
-            .bind(status)
-            .bind(priority)
-            .bind(created_at)
-            .bind(created_at)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
+            insert_test_task(&mut conn, id, title, status, priority, created_at).await;
         }
 
         let items = list_task_items(
@@ -390,12 +403,8 @@ mod tests {
         )
         .await
         .unwrap();
-        let titles = items
-            .iter()
-            .map(|item| item.task.title.as_str())
-            .collect::<Vec<_>>();
         assert_eq!(
-            titles,
+            listed_titles(&items),
             [
                 "active urgent",
                 "active low",
@@ -409,13 +418,7 @@ mod tests {
     #[tokio::test]
     async fn priority_sort_orders_priority_then_created_at() {
         let (_temp, mut conn) = test_conn().await;
-        sqlx::query(
-            "INSERT INTO projects(key, name, prefix, created_at, updated_at)
-             VALUES ('app', 'app', 'APP', 't', 't')",
-        )
-        .execute(&mut *conn)
-        .await
-        .unwrap();
+        seed_default_project(&mut conn).await;
 
         for (id, title, priority, created_at) in [
             ("0000000000000101", "none old", "none", "001"),
@@ -423,18 +426,7 @@ mod tests {
             ("0000000000000103", "high", "high", "003"),
             ("0000000000000104", "none new", "none", "004"),
         ] {
-            sqlx::query(
-                "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
-                 VALUES (?, ?, '', 'app', 'todo', ?, ?, ?)",
-            )
-            .bind(id)
-            .bind(title)
-            .bind(priority)
-            .bind(created_at)
-            .bind(created_at)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
+            insert_test_task(&mut conn, id, title, "todo", priority, created_at).await;
         }
 
         let items = list_task_items(
@@ -445,39 +437,22 @@ mod tests {
         )
         .await
         .unwrap();
-        let titles = items
-            .iter()
-            .map(|item| item.task.title.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(titles, ["urgent", "high", "none new", "none old"]);
+        assert_eq!(
+            listed_titles(&items),
+            ["urgent", "high", "none new", "none old"]
+        );
     }
 
     #[tokio::test]
     async fn created_sort_respects_direction() {
         let (_temp, mut conn) = test_conn().await;
-        sqlx::query(
-            "INSERT INTO projects(key, name, prefix, created_at, updated_at)
-             VALUES ('app', 'app', 'APP', 't', 't')",
-        )
-        .execute(&mut *conn)
-        .await
-        .unwrap();
+        seed_default_project(&mut conn).await;
 
         for (id, title, created_at) in [
             ("0000000000000201", "first", "001"),
             ("0000000000000202", "second", "002"),
         ] {
-            sqlx::query(
-                "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
-                 VALUES (?, ?, '', 'app', 'todo', 'none', ?, ?)",
-            )
-            .bind(id)
-            .bind(title)
-            .bind(created_at)
-            .bind(created_at)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
+            insert_test_task(&mut conn, id, title, "todo", "none", created_at).await;
         }
 
         let items = list_task_items(
@@ -504,27 +479,13 @@ mod tests {
     #[tokio::test]
     async fn conflicts_only_filter_returns_unresolved_conflicts() {
         let (_temp, mut conn) = test_conn().await;
-        sqlx::query(
-            "INSERT INTO projects(key, name, prefix, created_at, updated_at)
-             VALUES ('app', 'app', 'APP', 't', 't')",
-        )
-        .execute(&mut *conn)
-        .await
-        .unwrap();
+        seed_default_project(&mut conn).await;
 
         for (id, title) in [
             ("0000000000000011", "conflicted"),
             ("0000000000000012", "clean"),
         ] {
-            sqlx::query(
-                "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
-                 VALUES (?, ?, '', 'app', 'todo', 'none', '001', '001')",
-            )
-            .bind(id)
-            .bind(title)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
+            insert_test_task(&mut conn, id, title, "todo", "none", "001").await;
         }
 
         sqlx::query(

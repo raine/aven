@@ -25,6 +25,9 @@ mod tui;
 mod types;
 mod workspaces;
 
+#[cfg(test)]
+mod test_support;
+
 pub use cli::Cli;
 
 use cli::{Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand};
@@ -157,20 +160,13 @@ fn command_should_wake(command: &Commands) -> bool {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use sqlx::Sqlite;
 
     use super::*;
-    use crate::db::{conflict_exists, open_db, set_field_version};
+    use crate::db::{conflict_exists, set_field_version};
     use crate::ids::{BASE32, encode_crockford};
     use crate::projects::{create_project, normalize_key};
     use crate::refs::resolve_task_ref;
-
-    async fn test_conn() -> (tempfile::TempDir, sqlx::pool::PoolConnection<Sqlite>) {
-        let temp = tempfile::tempdir().unwrap();
-        let pool = open_db(&temp.path().join("test.sqlite")).await.unwrap();
-        let conn = pool.acquire().await.unwrap();
-        (temp, conn)
-    }
+    use crate::test_support::test_conn;
 
     #[test]
     fn normalizes_project_keys() {
