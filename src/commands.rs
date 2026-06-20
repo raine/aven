@@ -5,7 +5,7 @@ use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::cli::{
     AddArgs, ConfigCommand, ConfigSubcommand, ConflictCommand, ConflictSubcommand, LabelCommand,
     LabelSubcommand, ListArgs, NoteArgs, ProjectCommand, ProjectPathSubcommand, ProjectSubcommand,
-    RefArgs, SearchArgs, ShowArgs, UpdateArgs,
+    RefArgs, SearchArgs, ShowArgs, UpdateArgs, WorkspaceCommand, WorkspaceSubcommand,
 };
 use crate::input::{read_optional_text, read_required_text};
 use crate::labels::list_labels;
@@ -15,11 +15,12 @@ use crate::operations::{
     remove_project_path_operation, resolve_conflict, set_task_deleted, show_config, task_conflicts,
     update_task,
 };
-use crate::projects::{list_projects, resolve_existing_project};
+use crate::projects::{list_projects, resolve_existing_project_in_workspace};
 use crate::query::{self, SortDirection, TaskFilters, TaskSort};
 use crate::refs::{display_ref, display_suffix, resolve_task_ref};
 use crate::render::quote;
 use crate::task_render::{print_task, print_task_line_item};
+use crate::workspaces::{create_workspace, list_workspaces, rename_workspace};
 
 pub(crate) async fn cmd_add(conn: &mut SqliteConnection, args: AddArgs) -> Result<()> {
     validate_choice("priority", &args.priority, PRIORITIES)?;
@@ -228,11 +229,44 @@ pub(crate) async fn cmd_config(args: ConfigCommand) -> Result<()> {
     Ok(())
 }
 
+pub(crate) async fn cmd_workspace(
+    conn: &mut SqliteConnection,
+    args: WorkspaceCommand,
+) -> Result<()> {
+    match args.command {
+        WorkspaceSubcommand::List => {
+            for workspace in list_workspaces(conn).await? {
+                println!("{} name={}", workspace.key, quote(&workspace.name));
+            }
+        }
+        WorkspaceSubcommand::Create { name } => {
+            let workspace = create_workspace(conn, &name).await?;
+            println!(
+                "created-workspace {} name={}",
+                workspace.key,
+                quote(&workspace.name)
+            );
+        }
+        WorkspaceSubcommand::Rename {
+            workspace,
+            new_name,
+        } => {
+            let workspace = rename_workspace(conn, &workspace, &new_name).await?;
+            println!(
+                "renamed-workspace {} name={}",
+                workspace.key,
+                quote(&workspace.name)
+            );
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictCommand) -> Result<()> {
     match args.command {
         ConflictSubcommand::List { project, field } => {
             let project_key = if let Some(project) = project {
-                Some(resolve_existing_project(conn, &project).await?.key)
+                Some(resolve_existing_project_in_workspace(conn, crate::workspaces::active_workspace_id().as_str(), &project).await?.key)
             } else {
                 None
             };

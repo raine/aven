@@ -3,18 +3,18 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde_json::json;
-use sqlx::{Connection as _, SqliteConnection};
+use sqlx::{Connection as _, Row, SqliteConnection};
 use tracing::info;
 
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::config;
 use crate::db::{insert_change, set_field_version};
 use crate::ids::{new_id, now};
-use crate::labels::{normalize_label, resolve_labels};
-use crate::mutation::{apply_field_value, set_task_field};
+use crate::labels::{normalize_label, resolve_labels_in_workspace};
+use crate::mutation::{apply_field_value_in_workspace, set_task_field};
 use crate::projects::{
-    add_project_path as add_project_path_mapping, create_project, resolve_existing_project,
-    resolve_project_for_add,
+    add_project_path_in_workspace as add_project_path_mapping, create_project_in_workspace,
+    resolve_existing_project_in_workspace, resolve_project_for_add_in_workspace,
 };
 use crate::refs::get_task;
 use crate::types::{Project, Task};
@@ -111,31 +111,43 @@ pub(crate) async fn create_task(
     conn: &mut SqliteConnection,
     draft: TaskDraft,
 ) -> Result<TaskOutcome> {
+    create_task_in_workspace(conn, crate::workspaces::active_workspace_id().as_str(), draft).await
+}
+
+pub(crate) async fn create_task_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    draft: TaskDraft,
+) -> Result<TaskOutcome> {
     validate_choice("priority", &draft.priority, PRIORITIES)?;
     let id = new_id();
     let ts = now();
     let mut tx = conn.begin().await?;
-    let project = resolve_project_for_add(&mut tx, draft.project.as_deref()).await?;
-    let labels = resolve_labels(&mut tx, &draft.labels).await?;
-    sqlx::query!(
-        "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'inbox', ?, ?, ?)",
-        id,
-        draft.title,
-        draft.description,
-        project.key,
-        draft.priority,
-        ts,
-        ts,
+    let project =
+        resolve_project_for_add_in_workspace(&mut tx, workspace_id, draft.project.as_deref())
+            .await?;
+    let labels = resolve_labels_in_workspace(&mut tx, workspace_id, &draft.labels).await?;
+    sqlx::query(
+        "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'inbox', ?, ?, ?)",
     )
+    .bind(workspace_id)
+    .bind(&id)
+    .bind(&draft.title)
+    .bind(&draft.description)
+    .bind(&project.key)
+    .bind(&draft.priority)
+    .bind(&ts)
+    .bind(&ts)
     .execute(&mut *tx)
     .await?;
     for label in &labels {
-        sqlx::query!(
-            "INSERT OR IGNORE INTO task_labels(task_id, label) VALUES (?, ?)",
-            id,
-            label,
+        sqlx::query(
+            "INSERT OR IGNORE INTO task_labels(workspace_id, task_id, label) VALUES (?, ?, ?)",
         )
+        .bind(workspace_id)
+        .bind(&id)
+        .bind(label)
         .execute(&mut *tx)
         .await?;
     }
@@ -146,6 +158,8 @@ pub(crate) async fn create_task(
         None,
         "create_task",
         json!({
+            "workspace_id": workspace_id,
+            "workspace_key": crate::workspaces::active_workspace().key,
             "title": draft.title,
             "description": draft.description,
             "project_key": project.key,
@@ -203,7 +217,7 @@ pub(crate) async fn update_task(
         changed = true;
     }
     if let Some(project) = update.project {
-        let project = resolve_project_for_add(&mut tx, Some(&project)).await?;
+        let project = resolve_project_for_add_in_workspace(&mut tx, crate::workspaces::active_workspace_id().as_str(), Some(&project)).await?;
         update_task_field(&mut tx, task_id, "project", &project.key).await?;
         changed = true;
     }
@@ -215,7 +229,16 @@ pub(crate) async fn update_task(
         update_task_field(&mut tx, task_id, "priority", &priority).await?;
         changed = true;
     }
-    if update_task_labels(&mut tx, task_id, &update.add_labels, &update.remove_labels).await? {
+    let workspace_id = crate::workspaces::active_workspace_id();
+    if update_task_labels_in_workspace(
+        &mut tx,
+        &workspace_id,
+        task_id,
+        &update.add_labels,
+        &update.remove_labels,
+    )
+    .await?
+    {
         changed = true;
     }
     tx.commit().await?;
@@ -235,19 +258,38 @@ pub(crate) async fn update_task_field(
     set_task_field(conn, task_id, field, value).await
 }
 
+#[allow(dead_code)]
 pub(crate) async fn update_task_labels(
     conn: &mut SqliteConnection,
     task_id: &str,
     add_labels: &[String],
     remove_labels: &[String],
 ) -> Result<bool> {
+    update_task_labels_in_workspace(
+        conn,
+        crate::workspaces::active_workspace_id().as_str(),
+        task_id,
+        add_labels,
+        remove_labels,
+    )
+    .await
+}
+
+pub(crate) async fn update_task_labels_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+    add_labels: &[String],
+    remove_labels: &[String],
+) -> Result<bool> {
     let mut changed = false;
-    for label in resolve_labels(conn, add_labels).await? {
-        sqlx::query!(
-            "INSERT OR IGNORE INTO task_labels(task_id, label) VALUES (?, ?)",
-            task_id,
-            label,
+    for label in resolve_labels_in_workspace(conn, workspace_id, add_labels).await? {
+        sqlx::query(
+            "INSERT OR IGNORE INTO task_labels(workspace_id, task_id, label) VALUES (?, ?, ?)",
         )
+        .bind(workspace_id)
+        .bind(task_id)
+        .bind(&label)
         .execute(&mut *conn)
         .await?;
         insert_change(
@@ -256,18 +298,23 @@ pub(crate) async fn update_task_labels(
             task_id,
             Some("labels"),
             "label_add",
-            json!({ "label": label }),
+            json!({
+                "workspace_id": workspace_id,
+                "workspace_key": crate::workspaces::active_workspace().key,
+                "label": label,
+            }),
             None,
         )
         .await?;
         changed = true;
     }
-    for label in resolve_labels(conn, remove_labels).await? {
-        sqlx::query!(
-            "DELETE FROM task_labels WHERE task_id = ? AND label = ?",
-            task_id,
-            label,
+    for label in resolve_labels_in_workspace(conn, workspace_id, remove_labels).await? {
+        sqlx::query(
+            "DELETE FROM task_labels WHERE workspace_id = ? AND task_id = ? AND label = ?",
         )
+        .bind(workspace_id)
+        .bind(task_id)
+        .bind(&label)
         .execute(&mut *conn)
         .await?;
         insert_change(
@@ -276,7 +323,11 @@ pub(crate) async fn update_task_labels(
             task_id,
             Some("labels"),
             "label_remove",
-            json!({ "label": label }),
+            json!({
+                "workspace_id": workspace_id,
+                "workspace_key": crate::workspaces::active_workspace().key,
+                "label": label,
+            }),
             None,
         )
         .await?;
@@ -311,6 +362,7 @@ pub(crate) async fn add_note(
     body: String,
 ) -> Result<NoteOutcome> {
     let note_id = new_id();
+    let workspace_id = crate::workspaces::active_workspace_id();
     let ts = now();
     let mut tx = conn.begin().await?;
     let change_id = insert_change(
@@ -319,18 +371,25 @@ pub(crate) async fn add_note(
         task_id,
         Some("notes"),
         "note_add",
-        json!({ "note_id": note_id, "body": body, "created_at": ts }),
+        json!({
+            "workspace_id": workspace_id,
+            "workspace_key": crate::workspaces::active_workspace().key,
+            "note_id": note_id,
+            "body": body,
+            "created_at": ts,
+        }),
         None,
     )
     .await?;
-    sqlx::query!(
-        "INSERT INTO notes(id, task_id, body, created_at, change_id) VALUES (?, ?, ?, ?, ?)",
-        note_id,
-        task_id,
-        body,
-        ts,
-        change_id,
+    sqlx::query(
+        "INSERT INTO notes(workspace_id, id, task_id, body, created_at, change_id) VALUES (?, ?, ?, ?, ?, ?)",
     )
+    .bind(&workspace_id)
+    .bind(&note_id)
+    .bind(task_id)
+    .bind(&body)
+    .bind(&ts)
+    .bind(&change_id)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -345,16 +404,25 @@ pub(crate) async fn create_label_operation(
     conn: &mut SqliteConnection,
     name: &str,
 ) -> Result<LabelOutcome> {
+    create_label_operation_in_workspace(conn, crate::workspaces::active_workspace_id().as_str(), name).await
+}
+
+pub(crate) async fn create_label_operation_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    name: &str,
+) -> Result<LabelOutcome> {
     let name = normalize_label(name);
     if name.is_empty() {
         bail!("error invalid-label");
     }
     let created_at = now();
-    sqlx::query!(
-        "INSERT OR IGNORE INTO labels(name, created_at) VALUES (?, ?)",
-        name,
-        created_at,
+    sqlx::query(
+        "INSERT OR IGNORE INTO labels(workspace_id, name, created_at) VALUES (?, ?, ?)",
     )
+    .bind(workspace_id)
+    .bind(&name)
+    .bind(&created_at)
     .execute(&mut *conn)
     .await?;
     insert_change(
@@ -363,7 +431,12 @@ pub(crate) async fn create_label_operation(
         &name,
         None,
         "create_label",
-        json!({ "name": name, "created_at": created_at }),
+        json!({
+            "workspace_id": workspace_id,
+            "workspace_key": crate::workspaces::active_workspace().key,
+            "name": name,
+            "created_at": created_at,
+        }),
         None,
     )
     .await?;
@@ -376,9 +449,9 @@ pub(crate) async fn create_project_operation(
     name: &str,
     path: Option<&Path>,
 ) -> Result<ProjectOutcome> {
-    let project = create_project(conn, name).await?;
+    let project = create_project_in_workspace(conn, crate::workspaces::active_workspace_id().as_str(), name).await?;
     if let Some(path) = path {
-        add_project_path_mapping(conn, &project.key, path).await?;
+        add_project_path_mapping(conn, &project.workspace_id, &project.key, path).await?;
     }
     info!(project_key = %project.key, "project created");
     Ok(ProjectOutcome { project })
@@ -395,9 +468,9 @@ pub(crate) async fn add_project_path_operation(
     project: &str,
     path: &Path,
 ) -> Result<ProjectPathOutcome> {
-    let project = resolve_existing_project(conn, project).await?;
+    let project = resolve_existing_project_in_workspace(conn, crate::workspaces::active_workspace_id().as_str(), project).await?;
     let path = canonicalize_project_path(path)?;
-    add_project_path_mapping(conn, &project.key, Path::new(&path)).await?;
+    add_project_path_mapping(conn, &project.workspace_id, &project.key, Path::new(&path)).await?;
     Ok(ProjectPathOutcome { project, path })
 }
 
@@ -406,13 +479,14 @@ pub(crate) async fn remove_project_path_operation(
     project: &str,
     path: &Path,
 ) -> Result<ProjectPathOutcome> {
-    let project = resolve_existing_project(conn, project).await?;
+    let project = resolve_existing_project_in_workspace(conn, crate::workspaces::active_workspace_id().as_str(), project).await?;
     let path = canonicalize_project_path(path)?;
-    sqlx::query!(
-        "DELETE FROM project_paths WHERE project_key = ? AND path = ?",
-        project.key,
-        path,
+    sqlx::query(
+        "DELETE FROM project_paths WHERE workspace_id = ? AND project_key = ? AND path = ?",
     )
+    .bind(&project.workspace_id)
+    .bind(&project.key)
+    .bind(&path)
     .execute(&mut *conn)
     .await?;
     Ok(ProjectPathOutcome { project, path })
@@ -423,33 +497,35 @@ pub(crate) async fn list_conflicts(
     project_key: Option<&str>,
     field: Option<&str>,
 ) -> Result<Vec<ConflictListItem>> {
-    let rows = sqlx::query!(
-        r#"SELECT c.task_id AS "task_id!: String", c.field AS "field!: String",
-                 c.variant_a AS "variant_a!: String", c.variant_b AS "variant_b!: String",
-                 t.title AS "title!: String", p.prefix AS "prefix!: String",
-                 t.project_key AS "project_key!: String"
+    let workspace_id = crate::workspaces::active_workspace_id();
+    let rows = sqlx::query(
+        r#"SELECT c.task_id, c.field, c.variant_a, c.variant_b,
+                 t.title, p.prefix, t.project_key
                  FROM conflicts c
-                 JOIN tasks t ON t.id = c.task_id
-                 JOIN projects p ON p.key = t.project_key
-                 WHERE c.resolved = 0
-                 AND (?1 IS NULL OR t.project_key = ?1)
-                 AND (?2 IS NULL OR c.field = ?2)
+                 JOIN tasks t ON t.workspace_id = c.workspace_id AND t.id = c.task_id
+                 JOIN projects p ON p.workspace_id = t.workspace_id AND p.key = t.project_key
+                 WHERE c.workspace_id = ? AND c.resolved = 0
+                 AND (? IS NULL OR t.project_key = ?)
+                 AND (? IS NULL OR c.field = ?)
                  ORDER BY c.created_at"#,
-        project_key,
-        field,
     )
+    .bind(&workspace_id)
+    .bind(project_key)
+    .bind(project_key)
+    .bind(field)
+    .bind(field)
     .fetch_all(&mut *conn)
     .await?;
     Ok(rows
         .into_iter()
         .map(|row| ConflictListItem {
-            task_id: row.task_id,
-            title: row.title,
-            project_key: row.project_key,
-            project_prefix: row.prefix,
-            field: row.field,
-            variant_a: row.variant_a,
-            variant_b: row.variant_b,
+            task_id: row.get("task_id"),
+            title: row.get("title"),
+            project_key: row.get("project_key"),
+            project_prefix: row.get("prefix"),
+            field: row.get("field"),
+            variant_a: row.get("variant_a"),
+            variant_b: row.get("variant_b"),
         })
         .collect())
 }
@@ -459,27 +535,27 @@ pub(crate) async fn task_conflicts(
     task_id: &str,
     field: Option<&str>,
 ) -> Result<Vec<ConflictDetail>> {
-    let rows = sqlx::query!(
-        r#"SELECT field AS "field!: String", variant_a AS "variant_a!: String",
-         local_value AS "local_value!: String", variant_b AS "variant_b!: String",
-         remote_value AS "remote_value!: String"
+    let workspace_id = crate::workspaces::active_workspace_id();
+    let rows = sqlx::query(
+        r#"SELECT field, variant_a, local_value, variant_b, remote_value
          FROM conflicts
-         WHERE task_id = ? AND resolved = 0 AND (? IS NULL OR field = ?)
+         WHERE workspace_id = ? AND task_id = ? AND resolved = 0 AND (? IS NULL OR field = ?)
          ORDER BY field, id"#,
-        task_id,
-        field,
-        field,
     )
+    .bind(&workspace_id)
+    .bind(task_id)
+    .bind(field)
+    .bind(field)
     .fetch_all(&mut *conn)
     .await?;
     Ok(rows
         .into_iter()
         .map(|row| ConflictDetail {
-            field: row.field,
-            variant_a: row.variant_a,
-            local_value: row.local_value,
-            variant_b: row.variant_b,
-            remote_value: row.remote_value,
+            field: row.get("field"),
+            variant_a: row.get("variant_a"),
+            local_value: row.get("local_value"),
+            variant_b: row.get("variant_b"),
+            remote_value: row.get("remote_value"),
         })
         .collect())
 }
@@ -507,25 +583,31 @@ pub(crate) async fn resolve_conflict(
     field: &str,
     value: &str,
 ) -> Result<ConflictOutcome> {
+    let workspace_id = crate::workspaces::active_workspace_id();
     let mut tx = conn.begin().await?;
-    let result = sqlx::query!(
-        "UPDATE conflicts SET resolved = 1 WHERE task_id = ? AND field = ? AND resolved = 0",
-        task_id,
-        field,
+    let result = sqlx::query(
+        "UPDATE conflicts SET resolved = 1 WHERE workspace_id = ? AND task_id = ? AND field = ? AND resolved = 0",
     )
+    .bind(&workspace_id)
+    .bind(task_id)
+    .bind(field)
     .execute(&mut *tx)
     .await?;
     if result.rows_affected() != 1 {
         bail!("error conflict-not-found task_id={task_id} field={field}");
     }
-    apply_field_value(&mut tx, task_id, field, value).await?;
+    apply_field_value_in_workspace(&mut tx, &workspace_id, task_id, field, value).await?;
     let change_id = insert_change(
         &mut tx,
         "task",
         task_id,
         Some(field),
         "resolve_field",
-        json!({ "value": value }),
+        json!({
+            "workspace_id": workspace_id,
+            "workspace_key": crate::workspaces::active_workspace().key,
+            "value": value,
+        }),
         None,
     )
     .await?;

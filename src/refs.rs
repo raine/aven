@@ -1,74 +1,86 @@
 use std::collections::HashMap;
 
 use anyhow::{Result, bail};
-use sqlx::SqliteConnection;
+use sqlx::{Row, SqliteConnection};
 
 use crate::render::quote;
 use crate::types::Task;
+use crate::workspaces::Workspace;
 
 const DISPLAY_SUFFIX_FLOOR: usize = 4;
 
 pub(crate) async fn get_task(conn: &mut SqliteConnection, id: &str) -> Result<Task> {
-    let row = sqlx::query!(
-        r#"SELECT t.id AS "id!: String", t.title AS "title!: String",
-         t.description AS "description!: String", t.project_key AS "project_key!: String",
-         p.prefix AS "project_prefix!: String", t.status AS "status!: String",
-         t.priority AS "priority!: String", t.created_at AS "created_at!: String",
-         t.updated_at AS "updated_at!: String", t.deleted AS "deleted!: i64"
-         FROM tasks t JOIN projects p ON p.key = t.project_key
-         WHERE t.id = ?"#,
-        id,
+    get_task_scoped(conn, None, id).await
+}
+
+#[allow(dead_code)]
+pub(crate) async fn get_task_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    id: &str,
+) -> Result<Task> {
+    get_task_scoped(conn, Some(&workspace.id), id).await
+}
+
+async fn get_task_scoped(
+    conn: &mut SqliteConnection,
+    workspace_id: Option<&str>,
+    id: &str,
+) -> Result<Task> {
+    let row = sqlx::query(
+        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_key,
+         p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at, t.deleted
+         FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.key = t.project_key
+         WHERE t.id = ? AND (? IS NULL OR t.workspace_id = ?)",
     )
+    .bind(id)
+    .bind(workspace_id)
+    .bind(workspace_id)
     .fetch_one(&mut *conn)
     .await?;
-    Ok(Task {
-        id: row.id,
-        title: row.title,
-        description: row.description,
-        project_key: row.project_key,
-        project_prefix: row.project_prefix,
-        status: row.status,
-        priority: row.priority,
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-        deleted: row.deleted != 0,
-    })
+    task_from_row(row)
 }
 
 pub(crate) async fn resolve_task_ref(conn: &mut SqliteConnection, input: &str) -> Result<Task> {
+    let workspace_id = crate::workspaces::active_workspace_id();
+    resolve_task_ref_scoped(conn, Some(&workspace_id), input).await
+}
+
+#[allow(dead_code)]
+pub(crate) async fn resolve_task_ref_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    input: &str,
+) -> Result<Task> {
+    resolve_task_ref_scoped(conn, Some(&workspace.id), input).await
+}
+
+async fn resolve_task_ref_scoped(
+    conn: &mut SqliteConnection,
+    workspace_id: Option<&str>,
+    input: &str,
+) -> Result<Task> {
     let (hint, suffix) = split_ref(input);
     if suffix.len() < 3 {
         bail!("error ref-too-short input={} minimum=3", input);
     }
     let suffix = suffix.to_ascii_uppercase();
-    let rows = sqlx::query!(
-        r#"SELECT t.id AS "id!: String", t.title AS "title!: String",
-         t.description AS "description!: String", t.project_key AS "project_key!: String",
-         p.prefix AS "project_prefix!: String", t.status AS "status!: String",
-         t.priority AS "priority!: String", t.created_at AS "created_at!: String",
-         t.updated_at AS "updated_at!: String", t.deleted AS "deleted!: i64"
-         FROM tasks t JOIN projects p ON p.key = t.project_key
-         WHERE t.id LIKE ? || '%'
-         ORDER BY t.id"#,
-        suffix,
+    let rows = sqlx::query(
+        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_key,
+         p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at, t.deleted
+         FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.key = t.project_key
+         WHERE t.id LIKE ? || '%' AND (? IS NULL OR t.workspace_id = ?)
+         ORDER BY t.id",
     )
+    .bind(suffix)
+    .bind(workspace_id)
+    .bind(workspace_id)
     .fetch_all(&mut *conn)
     .await?;
     let matches = rows
         .into_iter()
-        .map(|row| Task {
-            id: row.id,
-            title: row.title,
-            description: row.description,
-            project_key: row.project_key,
-            project_prefix: row.project_prefix,
-            status: row.status,
-            priority: row.priority,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-            deleted: row.deleted != 0,
-        })
-        .collect::<Vec<_>>();
+        .map(task_from_row)
+        .collect::<Result<Vec<_>>>()?;
     if matches.is_empty() {
         bail!("error unknown-ref input={}", input);
     }
@@ -97,6 +109,22 @@ pub(crate) async fn resolve_task_ref(conn: &mut SqliteConnection, input: &str) -
     bail!("ambiguous ref");
 }
 
+fn task_from_row(row: sqlx::sqlite::SqliteRow) -> Result<Task> {
+    Ok(Task {
+        id: row.try_get("id")?,
+        workspace_id: row.try_get("workspace_id")?,
+        title: row.try_get("title")?,
+        description: row.try_get("description")?,
+        project_key: row.try_get("project_key")?,
+        project_prefix: row.try_get("project_prefix")?,
+        status: row.try_get("status")?,
+        priority: row.try_get("priority")?,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+        deleted: row.try_get::<i64, _>("deleted")? != 0,
+    })
+}
+
 fn split_ref(input: &str) -> (Option<String>, String) {
     if let Some((prefix, suffix)) = input.split_once('-') {
         (Some(prefix.to_string()), normalize_ref(suffix))
@@ -121,7 +149,7 @@ pub(crate) async fn display_ref(conn: &mut SqliteConnection, task: &Task) -> Res
     Ok(format!(
         "{}-{}",
         task.project_prefix,
-        display_suffix(conn, &task.id).await?
+        display_suffix_for_workspace(conn, &task.workspace_id, &task.id).await?
     ))
 }
 
@@ -129,24 +157,45 @@ pub(crate) async fn display_refs_for_tasks(
     conn: &mut SqliteConnection,
     tasks: &[Task],
 ) -> Result<HashMap<String, String>> {
-    let ids = task_ids(conn).await?;
+    let mut by_workspace = HashMap::<String, Vec<String>>::new();
+    for task in tasks {
+        by_workspace
+            .entry(task.workspace_id.clone())
+            .or_default()
+            .push(task.id.clone());
+    }
+    for (workspace_id, ids) in &mut by_workspace {
+        *ids = task_ids(conn, workspace_id).await?;
+    }
     Ok(tasks
         .iter()
         .map(|task| {
-            let suffix = display_suffix_for_id(&task.id, &ids);
+            let suffix = display_suffix_for_id(&task.id, &by_workspace[&task.workspace_id]);
             (task.id.clone(), format!("{}-{suffix}", task.project_prefix))
         })
         .collect())
 }
 
 pub(crate) async fn display_suffix(conn: &mut SqliteConnection, id: &str) -> Result<String> {
-    let ids = task_ids(conn).await?;
+    let ids = sqlx::query_scalar::<_, String>("SELECT id FROM tasks ORDER BY id")
+        .fetch_all(&mut *conn)
+        .await?;
     Ok(display_suffix_for_id(id, &ids))
 }
 
-async fn task_ids(conn: &mut SqliteConnection) -> Result<Vec<String>> {
+async fn display_suffix_for_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    id: &str,
+) -> Result<String> {
+    let ids = task_ids(conn, workspace_id).await?;
+    Ok(display_suffix_for_id(id, &ids))
+}
+
+async fn task_ids(conn: &mut SqliteConnection, workspace_id: &str) -> Result<Vec<String>> {
     Ok(
-        sqlx::query_scalar::<_, String>("SELECT id FROM tasks ORDER BY id")
+        sqlx::query_scalar::<_, String>("SELECT id FROM tasks WHERE workspace_id = ? ORDER BY id")
+            .bind(workspace_id)
             .fetch_all(&mut *conn)
             .await?,
     )

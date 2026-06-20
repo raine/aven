@@ -18,6 +18,7 @@
 | `src/sync.rs` | HTTP sync client, Axum sync server, wire types, remote change application, and conflict creation. |
 | `src/daemon.rs` | Periodic sync loop and local wake listener. |
 | `src/config.rs` | Config file loading, default paths, and environment or CLI override resolution. |
+| `src/workspaces.rs` | Workspace records, active workspace resolution, routing, and management helpers. |
 | `src/choices.rs` | Canonical task statuses, priorities, and choice validation. |
 | `src/ids.rs` | UTC timestamp helper and 80-bit Crockford Base32 ID generation. |
 | `src/input.rs` | Inline, file, or stdin text input handling for descriptions and notes. |
@@ -40,22 +41,23 @@
    - `config` runs without opening the task database.
    - `daemon run` resolves config and starts the daemon.
 5. Other commands resolve configuration, open SQLite, and dispatch to handlers.
-6. `tui` hands the open pool to `tui::run`.
-7. Successful mutating CLI commands wake the daemon when sync is enabled and a loopback wake address is configured.
+6. Workspace-scoped commands resolve an active workspace before dispatch.
+7. `tui` hands the open pool to `tui::run`.
+8. Successful mutating CLI commands wake the daemon when sync is enabled and a loopback wake address is configured.
 
-`--db` has command-specific config behavior. For most commands, passing `--db` skips the config file and uses defaults for the rest. `sync --db` loads config so it can resolve the sync server URL and auth token.
+`--db` selects the database path but commands still load config so workspace routes, workspace defaults, sync settings, and daemon settings remain available. Active workspace resolution uses `--workspace`, then the longest matching config route, then `workspace.default`, then the only workspace in the database. Commands fail with `workspace-required` when multiple workspaces exist and no active workspace can be inferred.
 
-CLI commands cover task add, show, list, update, note, delete, restore, projects, labels, project paths, conflict list or show or resolve, config, daemon, server, sync, and TUI.
+CLI commands cover task add, show, list, update, note, delete, restore, projects, labels, project paths, workspace management, conflict list or show or resolve, config, daemon, server, sync, and TUI.
 
 ## Persistence model
 
 SQLite is the only persistence layer. `open_db` enables WAL, foreign keys, a single connection, and automatic migrations. The initial migration defines materialized domain tables plus sync bookkeeping:
 
-- Domain tables: `tasks`, `projects`, `labels`, `project_paths`, `task_labels`, `notes`.
+- Domain tables: `workspaces`, `tasks`, `projects`, `labels`, `project_paths`, `task_labels`, `notes`.
 - Sync tables: `changes`, `field_versions`, `conflicts`.
 - Metadata table: `meta` stores `client_id`, `sync_cursor`, `local_seq`, and sync server URL.
 
-`Task` and `Project` in `src/types.rs` are the core records. Task state uses string fields for `status` and `priority` plus a `deleted` boolean. Read paths wrap records into list and sidebar DTOs in `src/query.rs`.
+`Task` and `Project` in `src/types.rs` are the core records. They carry `workspace_id`, and workspace-scoped tables include `workspace_id` in uniqueness and lookup paths. Task state uses string fields for `status` and `priority` plus a `deleted` boolean. Read paths wrap records into list and sidebar DTOs in `src/query.rs`.
 
 Many invariants are application-enforced rather than database-enforced. Do not write domain tables directly unless the operation intentionally bypasses sync and validation. Prefer `operations.rs`, `mutation.rs`, project helpers, label helpers, and ref helpers.
 
@@ -87,9 +89,10 @@ Task creation writes the task, labels, a `create_task` change, and initial field
 
 Important invariants:
 
-- Projects have unique keys and prefixes.
-- `tasks.project_key` should point at a valid project.
-- Task refs must reject ambiguous suffixes.
+- Workspace keys are unique across the database.
+- Projects have unique keys and prefixes within a workspace.
+- `tasks.project_key` should point at a valid project in the same workspace.
+- Task refs must reject ambiguous suffixes within the active workspace.
 - Sync server URL is pinned per database.
 - Local changes have `changes.server_seq IS NULL` until accepted by a server.
 - `sync_cursor` advances only after remote changes are applied.
@@ -100,11 +103,14 @@ The external integration boundary is HTTP sync plus local UDP wake signaling. No
 
 Synced operation-log entities:
 
+- Workspaces: `create_workspace` and workspace scalar field changes.
 - Projects: `create_project`.
 - Labels: `create_label`.
 - Tasks: `create_task`, scalar `set_field`, and `resolve_field`.
 - Task labels: `label_add` and `label_remove`, merged without field-version conflicts.
 - Notes: `note_add`, append-only.
+
+Workspace-scoped sync payloads include `workspace_id` and `workspace_key`. The remote apply path accepts older default-workspace payloads for compatibility and applies scoped records into their owning workspace.
 
 Local-only data:
 

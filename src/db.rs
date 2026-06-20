@@ -10,6 +10,7 @@ use sqlx::{Row, SqliteConnection, SqlitePool};
 
 use crate::ids::{new_id, now};
 use crate::types::Task;
+use crate::workspaces::ensure_default_workspace;
 
 pub(crate) async fn open_db(path: &Path) -> Result<SqlitePool> {
     if let Some(parent) = path.parent() {
@@ -28,6 +29,8 @@ pub(crate) async fn open_db(path: &Path) -> Result<SqlitePool> {
         .with_context(|| format!("could not open {}", path.display()))?;
     sqlx::migrate!("./migrations").run(&pool).await?;
     initialize_meta(&pool).await?;
+    let mut conn = pool.acquire().await?;
+    ensure_default_workspace(&mut conn).await?;
     Ok(pool)
 }
 
@@ -118,16 +121,17 @@ pub(crate) async fn insert_change(
 
 pub(crate) fn task_from_row(row: &SqliteRow) -> Result<Task> {
     Ok(Task {
-        id: row.try_get(0)?,
-        title: row.try_get(1)?,
-        description: row.try_get(2)?,
-        project_key: row.try_get(3)?,
-        project_prefix: row.try_get(4)?,
-        status: row.try_get(5)?,
-        priority: row.try_get(6)?,
-        created_at: row.try_get(7)?,
-        updated_at: row.try_get(8)?,
-        deleted: row.try_get::<i64, _>(9)? != 0,
+        id: row.try_get("id")?,
+        workspace_id: row.try_get("workspace_id")?,
+        title: row.try_get("title")?,
+        description: row.try_get("description")?,
+        project_key: row.try_get("project_key")?,
+        project_prefix: row.try_get("project_prefix")?,
+        status: row.try_get("status")?,
+        priority: row.try_get("priority")?,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+        deleted: row.try_get::<i64, _>("deleted")? != 0,
     })
 }
 
@@ -165,31 +169,34 @@ pub(crate) async fn set_field_version(
     Ok(())
 }
 
-pub(crate) async fn task_has_conflict(conn: &mut SqliteConnection, task_id: &str) -> Result<bool> {
-    Ok(
-        sqlx::query_scalar!(
-            r#"SELECT count(*) AS "count!: i64" FROM conflicts WHERE task_id = ? AND resolved = 0 LIMIT 1"#,
-            task_id,
-        )
-        .fetch_one(&mut *conn)
-        .await?
-            > 0,
+pub(crate) async fn task_has_conflict(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+) -> Result<bool> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM conflicts WHERE workspace_id = ? AND task_id = ? AND resolved = 0 LIMIT 1",
     )
+    .bind(workspace_id)
+    .bind(task_id)
+    .fetch_one(&mut *conn)
+    .await?
+        > 0)
 }
 
 pub(crate) async fn conflict_exists(
     conn: &mut SqliteConnection,
+    workspace_id: &str,
     task_id: &str,
     field: &str,
 ) -> Result<bool> {
-    Ok(
-        sqlx::query_scalar!(
-            r#"SELECT count(*) AS "count!: i64" FROM conflicts WHERE task_id = ? AND field = ? AND resolved = 0 LIMIT 1"#,
-            task_id,
-            field,
-        )
-        .fetch_one(&mut *conn)
-        .await?
-            > 0,
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM conflicts WHERE workspace_id = ? AND task_id = ? AND field = ? AND resolved = 0 LIMIT 1",
     )
+    .bind(workspace_id)
+    .bind(task_id)
+    .bind(field)
+    .fetch_one(&mut *conn)
+    .await?
+        > 0)
 }

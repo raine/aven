@@ -17,6 +17,8 @@ const STYLES: Styles = Styles::styled()
 pub struct Cli {
     #[arg(long, global = true)]
     pub(crate) db: Option<PathBuf>,
+    #[arg(long, global = true)]
+    pub(crate) workspace: Option<String>,
     #[command(subcommand)]
     pub(crate) command: Commands,
 }
@@ -39,6 +41,7 @@ pub(crate) enum Commands {
     Daemon(DaemonCommand),
     Server(ServerArgs),
     Sync(SyncArgs),
+    Workspace(WorkspaceCommand),
     Tui,
 }
 
@@ -158,6 +161,19 @@ pub(crate) enum ProjectSubcommand {
 pub(crate) enum ProjectPathSubcommand {
     Add { project: String, path: PathBuf },
     Remove { project: String, path: PathBuf },
+}
+
+#[derive(Args)]
+pub(crate) struct WorkspaceCommand {
+    #[command(subcommand)]
+    pub(crate) command: WorkspaceSubcommand,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum WorkspaceSubcommand {
+    List,
+    Create { name: String },
+    Rename { workspace: String, new_name: String },
 }
 
 #[derive(Args)]

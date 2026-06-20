@@ -19,11 +19,27 @@ pub struct AppConfig {
     pub sync: SyncConfig,
     #[serde(default)]
     pub daemon: DaemonConfig,
+    #[serde(default)]
+    pub workspace: WorkspaceConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LocalConfig {
     pub db_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkspaceConfig {
+    pub default: Option<String>,
+    #[serde(default)]
+    pub routes: Vec<WorkspaceRouteConfig>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkspaceRouteConfig {
+    pub workspace: String,
+    #[serde(default)]
+    pub paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

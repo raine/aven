@@ -11,7 +11,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{Connection as _, SqliteConnection, SqlitePool};
+use sqlx::{Connection as _, Row, SqliteConnection, SqlitePool};
 use tokio::net::TcpListener;
 use tracing::{debug, error, info, warn};
 
@@ -20,10 +20,11 @@ use crate::cli::{ServerArgs, SyncArgs};
 use crate::config;
 use crate::db::{conflict_exists, field_version, get_meta, open_db, set_field_version, set_meta};
 use crate::ids::{BASE32, now};
-use crate::mutation::apply_field_value;
-use crate::projects::{find_project, prefix_base};
+use crate::mutation::apply_field_value_in_workspace;
+use crate::projects::{find_project_in_workspace, prefix_base};
 use crate::refs::get_task;
 use crate::signals::shutdown_signal;
+use crate::workspaces::{DEFAULT_WORKSPACE_ID, ensure_default_workspace};
 
 pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 1;
 
@@ -361,8 +362,29 @@ fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
     }
 
     match change.op_type.as_str() {
+        "create_workspace" => {
+            ensure_entity_type(change, "workspace")?;
+            ensure_sync_id("entity_id", &change.entity_id)?;
+            required_string_payload("key", &change.payload)?;
+            required_string_payload("name", &change.payload)?;
+            required_string_payload("created_at", &change.payload)?;
+        }
+        "set_workspace_field" => {
+            ensure_entity_type(change, "workspace")?;
+            ensure_sync_id("entity_id", &change.entity_id)?;
+            let field = change
+                .field
+                .as_deref()
+                .filter(|field| !field.trim().is_empty())
+                .context("error invalid-sync-change field missing")?;
+            if !matches!(field, "name" | "key") {
+                bail!("error invalid-sync-change field={field}");
+            }
+            required_string_payload("value", &change.payload)?;
+        }
         "create_project" => {
             ensure_entity_type(change, "project")?;
+            optional_workspace_payload(&change.payload)?;
             required_string_payload("key", &change.payload)?;
             required_string_payload("name", &change.payload)?;
             required_string_payload("prefix", &change.payload)?;
@@ -370,12 +392,14 @@ fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
         }
         "create_label" => {
             ensure_entity_type(change, "label")?;
+            optional_workspace_payload(&change.payload)?;
             required_string_payload("name", &change.payload)?;
             required_string_payload("created_at", &change.payload)?;
         }
         "create_task" => {
             ensure_entity_type(change, "task")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
+            optional_workspace_payload(&change.payload)?;
             required_string_payload("title", &change.payload)?;
             required_string_payload("project_key", &change.payload)?;
             optional_string_payload("description", &change.payload)?;
@@ -393,6 +417,7 @@ fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
         "set_field" | "resolve_field" => {
             ensure_entity_type(change, "task")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
+            optional_workspace_payload(&change.payload)?;
             let field = change
                 .field
                 .as_deref()
@@ -405,11 +430,13 @@ fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
         "label_add" | "label_remove" => {
             ensure_entity_type(change, "task")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
+            optional_workspace_payload(&change.payload)?;
             required_string_payload("label", &change.payload)?;
         }
         "note_add" => {
             ensure_entity_type(change, "task")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
+            optional_workspace_payload(&change.payload)?;
             let note_id = required_string_payload("note_id", &change.payload)?;
             ensure_sync_id("note_id", &note_id)?;
             required_string_payload("body", &change.payload)?;
@@ -480,6 +507,19 @@ fn required_string_payload(key: &str, payload: &Value) -> Result<String> {
         .and_then(Value::as_str)
         .map(str::to_string)
         .with_context(|| format!("error invalid-sync-change payload.{key} missing"))
+}
+
+fn required_workspace_payload(payload: &Value) -> Result<()> {
+    required_string_payload("workspace_id", payload).and_then(|id| ensure_sync_id("workspace_id", &id))?;
+    required_string_payload("workspace_key", payload)?;
+    Ok(())
+}
+
+fn optional_workspace_payload(payload: &Value) -> Result<()> {
+    if payload.get("workspace_id").is_none() && payload.get("workspace_key").is_none() {
+        return Ok(());
+    }
+    required_workspace_payload(payload)
 }
 
 fn optional_string_payload(key: &str, payload: &Value) -> Result<Option<String>> {
@@ -699,78 +739,126 @@ async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWire) -
         "applying remote change"
     );
     match change.op_type.as_str() {
+        "create_workspace" => {
+            let key = str_payload(&change.payload, "key")?;
+            let name = str_payload(&change.payload, "name")?;
+            let created_at = str_payload(&change.payload, "created_at").unwrap_or_else(|_| now());
+            sqlx::query(
+                "INSERT OR IGNORE INTO workspaces(id, key, name, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(&change.entity_id)
+            .bind(key)
+            .bind(name)
+            .bind(&created_at)
+            .bind(&created_at)
+            .execute(&mut *conn)
+            .await?;
+        }
+        "set_workspace_field" => {
+            let field = change
+                .field
+                .as_deref()
+                .context("workspace field change missing field")?;
+            let value = str_payload(&change.payload, "value")?;
+            let ts = now();
+            match field {
+                "name" => {
+                    sqlx::query("UPDATE workspaces SET name = ?, updated_at = ? WHERE id = ?")
+                        .bind(value)
+                        .bind(&ts)
+                        .bind(&change.entity_id)
+                        .execute(&mut *conn)
+                        .await?;
+                }
+                "key" => {
+                    sqlx::query("UPDATE workspaces SET key = ?, updated_at = ? WHERE id = ?")
+                        .bind(value)
+                        .bind(&ts)
+                        .bind(&change.entity_id)
+                        .execute(&mut *conn)
+                        .await?;
+                }
+                _ => bail!("error invalid-sync-change field={field}"),
+            }
+        }
         "create_project" => {
+            let workspace_id = workspace_id_payload(conn, change).await?;
             let key = str_payload(&change.payload, "key")?;
             let name = str_payload(&change.payload, "name")?;
             let prefix = str_payload(&change.payload, "prefix")?;
             let created_at = str_payload(&change.payload, "created_at").unwrap_or_else(|_| now());
-            sqlx::query!(
-                "INSERT OR IGNORE INTO projects(key, name, prefix, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?)",
-                key,
-                name,
-                prefix,
-                created_at,
-                created_at,
+            sqlx::query(
+                "INSERT OR IGNORE INTO projects(workspace_id, key, name, prefix, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
             )
+            .bind(&workspace_id)
+            .bind(key)
+            .bind(name)
+            .bind(prefix)
+            .bind(&created_at)
+            .bind(&created_at)
             .execute(&mut *conn)
             .await?;
         }
         "create_label" => {
+            let workspace_id = workspace_id_payload(conn, change).await?;
             let name = str_payload(&change.payload, "name")?;
             let created_at = str_payload(&change.payload, "created_at").unwrap_or_else(|_| now());
-            sqlx::query!(
-                "INSERT OR IGNORE INTO labels(name, created_at) VALUES (?, ?)",
-                name,
-                created_at,
-            )
-            .execute(&mut *conn)
-            .await?;
+            sqlx::query("INSERT OR IGNORE INTO labels(workspace_id, name, created_at) VALUES (?, ?, ?)")
+                .bind(&workspace_id)
+                .bind(name)
+                .bind(created_at)
+                .execute(&mut *conn)
+                .await?;
         }
         "create_task" => apply_remote_create_task(conn, change).await?,
         "set_field" => apply_remote_set_field(conn, change, false).await?,
         "resolve_field" => apply_remote_set_field(conn, change, true).await?,
         "label_add" => {
+            let workspace_id = workspace_id_payload(conn, change).await?;
             let label = str_payload(&change.payload, "label")?;
-            sqlx::query!(
-                "INSERT OR IGNORE INTO labels(name, created_at) VALUES (?, ?)",
-                label,
-                change.created_at,
+            sqlx::query("INSERT OR IGNORE INTO labels(workspace_id, name, created_at) VALUES (?, ?, ?)")
+                .bind(&workspace_id)
+                .bind(&label)
+                .bind(&change.created_at)
+                .execute(&mut *conn)
+                .await?;
+            sqlx::query(
+                "INSERT OR IGNORE INTO task_labels(workspace_id, task_id, label) VALUES (?, ?, ?)",
             )
-            .execute(&mut *conn)
-            .await?;
-            sqlx::query!(
-                "INSERT OR IGNORE INTO task_labels(task_id, label) VALUES (?, ?)",
-                change.entity_id,
-                label,
-            )
+            .bind(&workspace_id)
+            .bind(&change.entity_id)
+            .bind(&label)
             .execute(&mut *conn)
             .await?;
         }
         "label_remove" => {
+            let workspace_id = workspace_id_payload(conn, change).await?;
             let label = str_payload(&change.payload, "label")?;
-            sqlx::query!(
-                "DELETE FROM task_labels WHERE task_id = ? AND label = ?",
-                change.entity_id,
-                label,
-            )
-            .execute(&mut *conn)
-            .await?;
+            sqlx::query("DELETE FROM task_labels WHERE workspace_id = ? AND task_id = ? AND label = ?")
+                .bind(&workspace_id)
+                .bind(&change.entity_id)
+                .bind(&label)
+                .execute(&mut *conn)
+                .await?;
         }
         "note_add" => {
+            let workspace_id = workspace_id_payload(conn, change).await?;
             let note_id = str_payload(&change.payload, "note_id")?;
             let body = str_payload(&change.payload, "body")?;
             let created_at = str_payload(&change.payload, "created_at")
                 .unwrap_or_else(|_| change.created_at.clone());
-            sqlx::query!(
-                "INSERT OR IGNORE INTO notes(id, task_id, body, created_at, change_id)
-                 VALUES (?, ?, ?, ?, ?)",
-                note_id,
-                change.entity_id,
-                body,
-                created_at,
-                change.change_id,
+            sqlx::query(
+                "INSERT OR IGNORE INTO notes(workspace_id, id, task_id, body, created_at, change_id)
+                 VALUES (?, ?, ?, ?, ?, ?)",
             )
+            .bind(&workspace_id)
+            .bind(&note_id)
+            .bind(&change.entity_id)
+            .bind(&body)
+            .bind(&created_at)
+            .bind(&change.change_id)
             .execute(&mut *conn)
             .await?;
         }
@@ -780,10 +868,12 @@ async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWire) -
 }
 
 async fn apply_remote_create_task(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
-    if sqlx::query_scalar!(
-        r#"SELECT count(*) AS "count!: i64" FROM tasks WHERE id = ?"#,
-        change.entity_id
+    let workspace_id = workspace_id_payload(conn, change).await?;
+    if sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM tasks WHERE workspace_id = ? AND id = ?",
     )
+    .bind(&workspace_id)
+    .bind(&change.entity_id)
     .fetch_one(&mut *conn)
     .await?
         > 0
@@ -791,20 +881,24 @@ async fn apply_remote_create_task(conn: &mut SqliteConnection, change: &ChangeWi
         return Ok(());
     }
     let project_key = str_payload(&change.payload, "project_key")?;
-    if find_project(conn, &project_key).await?.is_none() {
+    if find_project_in_workspace(conn, &workspace_id, &project_key)
+        .await?
+        .is_none()
+    {
         let name =
             str_payload(&change.payload, "project_name").unwrap_or_else(|_| project_key.clone());
         let prefix = str_payload(&change.payload, "project_prefix")
             .unwrap_or_else(|_| prefix_base(&project_key));
-        sqlx::query!(
-            "INSERT OR IGNORE INTO projects(key, name, prefix, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?)",
-            project_key,
-            name,
-            prefix,
-            change.created_at,
-            change.created_at,
+        sqlx::query(
+            "INSERT OR IGNORE INTO projects(workspace_id, key, name, prefix, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
+        .bind(&workspace_id)
+        .bind(&project_key)
+        .bind(&name)
+        .bind(&prefix)
+        .bind(&change.created_at)
+        .bind(&change.created_at)
         .execute(&mut *conn)
         .await?;
     }
@@ -814,34 +908,35 @@ async fn apply_remote_create_task(conn: &mut SqliteConnection, change: &ChangeWi
     let priority = str_payload(&change.payload, "priority").unwrap_or_else(|_| "none".to_string());
     let created_at =
         str_payload(&change.payload, "created_at").unwrap_or_else(|_| change.created_at.clone());
-    sqlx::query!(
-        "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        change.entity_id,
-        title,
-        description,
-        project_key,
-        status,
-        priority,
-        created_at,
-        change.created_at,
+    sqlx::query(
+        "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
+    .bind(&workspace_id)
+    .bind(&change.entity_id)
+    .bind(&title)
+    .bind(&description)
+    .bind(&project_key)
+    .bind(&status)
+    .bind(&priority)
+    .bind(&created_at)
+    .bind(&change.created_at)
     .execute(&mut *conn)
     .await?;
     if let Some(labels) = change.payload.get("labels").and_then(Value::as_array) {
         for label in labels.iter().filter_map(Value::as_str) {
-            sqlx::query!(
-                "INSERT OR IGNORE INTO labels(name, created_at) VALUES (?, ?)",
-                label,
-                change.created_at,
+            sqlx::query("INSERT OR IGNORE INTO labels(workspace_id, name, created_at) VALUES (?, ?, ?)")
+                .bind(&workspace_id)
+                .bind(label)
+                .bind(&change.created_at)
+                .execute(&mut *conn)
+                .await?;
+            sqlx::query(
+                "INSERT OR IGNORE INTO task_labels(workspace_id, task_id, label) VALUES (?, ?, ?)",
             )
-            .execute(&mut *conn)
-            .await?;
-            sqlx::query!(
-                "INSERT OR IGNORE INTO task_labels(task_id, label) VALUES (?, ?)",
-                change.entity_id,
-                label,
-            )
+            .bind(&workspace_id)
+            .bind(&change.entity_id)
+            .bind(label)
             .execute(&mut *conn)
             .await?;
         }
@@ -876,14 +971,16 @@ pub(crate) async fn apply_remote_set_field(
             return Ok(());
         }
     }
-    apply_field_value(conn, &change.entity_id, field, &value).await?;
+    let workspace_id = workspace_id_payload(conn, change).await?;
+    apply_field_value_in_workspace(conn, &workspace_id, &change.entity_id, field, &value).await?;
     set_field_version(conn, &change.entity_id, field, &change.change_id).await?;
     if force {
-        sqlx::query!(
-            "UPDATE conflicts SET resolved = 1 WHERE task_id = ? AND field = ? AND resolved = 0",
-            change.entity_id,
-            field,
+        sqlx::query(
+            "UPDATE conflicts SET resolved = 1 WHERE workspace_id = ? AND task_id = ? AND field = ? AND resolved = 0",
         )
+        .bind(&workspace_id)
+        .bind(&change.entity_id)
+        .bind(field)
         .execute(&mut *conn)
         .await?;
     }
@@ -897,7 +994,8 @@ async fn create_conflict(
     remote_value: &str,
     local_change_id: Option<&str>,
 ) -> Result<()> {
-    if conflict_exists(conn, &change.entity_id, field).await? {
+    let workspace_id = workspace_id_payload(conn, change).await?;
+    if conflict_exists(conn, &workspace_id, &change.entity_id, field).await? {
         return Ok(());
     }
     let local_value = current_field_value(conn, &change.entity_id, field).await?;
@@ -910,21 +1008,22 @@ async fn create_conflict(
             .collect::<String>()
     );
     let variant_b = format!("v{}", change.change_id.chars().take(6).collect::<String>());
-    sqlx::query!(
-        "INSERT OR IGNORE INTO conflicts(task_id, field, base_version, local_value, remote_value,
+    sqlx::query(
+        "INSERT OR IGNORE INTO conflicts(workspace_id, task_id, field, base_version, local_value, remote_value,
          local_change_id, remote_change_id, variant_a, variant_b, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        change.entity_id,
-        field,
-        change.base_version,
-        local_value,
-        remote_value,
-        local_change_id,
-        change.change_id,
-        variant_a,
-        variant_b,
-        change.created_at,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
+    .bind(&workspace_id)
+    .bind(&change.entity_id)
+    .bind(field)
+    .bind(&change.base_version)
+    .bind(&local_value)
+    .bind(remote_value)
+    .bind(local_change_id)
+    .bind(&change.change_id)
+    .bind(&variant_a)
+    .bind(&variant_b)
+    .bind(&change.created_at)
     .execute(&mut *conn)
     .await?;
     info!(
@@ -933,6 +1032,38 @@ async fn create_conflict(
         "remote change conflict created"
     );
     Ok(())
+}
+
+async fn workspace_id_payload(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<String> {
+    if let Some(workspace_id) = change.payload.get("workspace_id").and_then(Value::as_str) {
+        ensure_workspace_exists(conn, workspace_id).await?;
+        return Ok(workspace_id.to_string());
+    }
+    let row = sqlx::query("SELECT workspace_id FROM tasks WHERE id = ?")
+        .bind(&change.entity_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+    if let Some(row) = row {
+        return Ok(row.get("workspace_id"));
+    }
+    let workspace = ensure_default_workspace(conn).await?;
+    Ok(workspace.id)
+}
+
+async fn ensure_workspace_exists(conn: &mut SqliteConnection, workspace_id: &str) -> Result<()> {
+    if sqlx::query_scalar::<_, i64>("SELECT count(*) FROM workspaces WHERE id = ?")
+        .bind(workspace_id)
+        .fetch_one(&mut *conn)
+        .await?
+        > 0
+    {
+        return Ok(());
+    }
+    if workspace_id == DEFAULT_WORKSPACE_ID {
+        ensure_default_workspace(conn).await?;
+        return Ok(());
+    }
+    bail!("error unknown-workspace-id id={workspace_id}")
 }
 
 async fn current_field_value(

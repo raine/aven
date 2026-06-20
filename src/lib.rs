@@ -23,16 +23,18 @@ mod sync;
 mod task_render;
 mod tui;
 mod types;
+mod workspaces;
 
 pub use cli::Cli;
 
 use cli::{Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand};
 use commands::{
     cmd_add, cmd_config, cmd_conflict, cmd_delete_restore, cmd_label, cmd_labels, cmd_list,
-    cmd_note, cmd_project, cmd_projects, cmd_show, cmd_update,
+    cmd_note, cmd_project, cmd_projects, cmd_show, cmd_update, cmd_workspace,
 };
 use db::open_db;
 use sync::{run_server, sync_client};
+use workspaces::{resolve_active_workspace, set_active_workspace};
 
 pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
@@ -63,6 +65,19 @@ pub async fn run_cli() -> Result<()> {
             let config = load_config_for_command(cli.db.is_some(), &command)?;
             let db_path = config::resolve_db_path(cli.db, &config)?;
             let pool = open_db(&db_path).await?;
+            let mut conn = pool.acquire().await?;
+            if command_needs_workspace(&command) {
+                let cwd = std::env::current_dir()?;
+                let workspace = resolve_active_workspace(
+                    &mut conn,
+                    cli.workspace.as_deref(),
+                    &config,
+                    &cwd,
+                )
+                .await?;
+                set_active_workspace(workspace);
+            }
+            drop(conn);
             if matches!(command, Commands::Tui) {
                 return tui::run(pool).await;
             }
@@ -82,6 +97,7 @@ pub async fn run_cli() -> Result<()> {
                 Commands::Restore(args) => cmd_delete_restore(&mut conn, args, false).await,
                 Commands::Conflict(args) => cmd_conflict(&mut conn, args).await,
                 Commands::Sync(args) => sync_client(&mut conn, args, &config).await,
+                Commands::Workspace(args) => cmd_workspace(&mut conn, args).await,
                 Commands::Tui => unreachable!(),
                 Commands::Config(_) | Commands::Daemon(_) | Commands::Server(_) => unreachable!(),
             };
@@ -98,12 +114,27 @@ pub async fn run_cli() -> Result<()> {
     }
 }
 
-fn load_config_for_command(db_flag_set: bool, command: &Commands) -> Result<config::AppConfig> {
-    if db_flag_set && !matches!(command, Commands::Sync(_)) {
-        Ok(config::AppConfig::default())
-    } else {
-        config::AppConfig::load()
-    }
+fn load_config_for_command(_db_flag_set: bool, _command: &Commands) -> Result<config::AppConfig> {
+    config::AppConfig::load()
+}
+
+fn command_needs_workspace(command: &Commands) -> bool {
+    matches!(
+        command,
+        Commands::Add(_)
+            | Commands::Show(_)
+            | Commands::List(_)
+            | Commands::Update(_)
+            | Commands::Note(_)
+            | Commands::Projects(_)
+            | Commands::Labels(_)
+            | Commands::Label(_)
+            | Commands::Project(_)
+            | Commands::Delete(_)
+            | Commands::Restore(_)
+            | Commands::Conflict(_)
+            | Commands::Tui
+    )
 }
 
 fn command_should_wake(command: &Commands) -> bool {
@@ -114,6 +145,7 @@ fn command_should_wake(command: &Commands) -> bool {
             | Commands::Note(_)
             | Commands::Label(_)
             | Commands::Project(_)
+            | Commands::Workspace(_)
             | Commands::Delete(_)
             | Commands::Restore(_)
             | Commands::Conflict(ConflictCommand {
@@ -221,7 +253,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            conflict_exists(&mut conn, "7KQ9A1X4MV2P8D6R", "title")
+            conflict_exists(&mut conn, crate::workspaces::active_workspace_id().as_str(), "7KQ9A1X4MV2P8D6R", "title")
                 .await
                 .unwrap()
         );

@@ -3,11 +3,12 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::db::{task_from_row, task_has_conflict};
-use crate::labels::ensure_label_exists;
+use crate::labels::ensure_label_exists_in_workspace;
 use crate::projects::resolve_existing_project;
 use crate::refs::display_refs_for_tasks;
-use crate::task_render::labels_for_task;
+use crate::task_render::labels_for_task_in_workspace;
 use crate::types::Task;
+use crate::workspaces::active_workspace_id;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TaskSort {
@@ -85,24 +86,28 @@ pub(crate) async fn list_task_items(
         validate_choice("priority", priority, PRIORITIES)?;
     }
 
+    let workspace_id = active_workspace_id();
     let project_key = if let Some(project) = filters.project.as_deref() {
         Some(resolve_existing_project(conn, project).await?.key)
     } else {
         None
     };
     let label = if let Some(label) = filters.label.as_deref() {
-        Some(ensure_label_exists(conn, label).await?)
+        Some(ensure_label_exists_in_workspace(conn, &workspace_id, label).await?)
     } else {
         None
     };
 
     let mut query = QueryBuilder::<Sqlite>::new(
-        "SELECT t.id, t.title, t.description, t.project_key, p.prefix, t.status, t.priority,
-         t.created_at, t.updated_at, t.deleted
-         FROM tasks t JOIN projects p ON p.key = t.project_key",
+        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_key,
+         p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at, t.deleted
+         FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.key = t.project_key",
     );
 
     let mut filters_added = 0;
+    push_filter_prefix(&mut query, &mut filters_added);
+    query.push("t.workspace_id = ");
+    query.push_bind(workspace_id.clone());
     if !filters.include_deleted {
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("t.deleted = 0");
@@ -124,13 +129,13 @@ pub(crate) async fn list_task_items(
     }
     if let Some(label) = label {
         push_filter_prefix(&mut query, &mut filters_added);
-        query.push("EXISTS (SELECT 1 FROM task_labels tl WHERE tl.task_id = t.id AND tl.label = ");
+        query.push("EXISTS (SELECT 1 FROM task_labels tl WHERE tl.workspace_id = t.workspace_id AND tl.task_id = t.id AND tl.label = ");
         query.push_bind(label);
         query.push(")");
     }
     if filters.conflicts_only {
         push_filter_prefix(&mut query, &mut filters_added);
-        query.push("EXISTS (SELECT 1 FROM conflicts c WHERE c.task_id = t.id AND c.resolved = 0)");
+        query.push("EXISTS (SELECT 1 FROM conflicts c WHERE c.workspace_id = t.workspace_id AND c.task_id = t.id AND c.resolved = 0)");
     }
     if let Some(search) = filters.search.filter(|search| !search.is_empty()) {
         push_filter_prefix(&mut query, &mut filters_added);
@@ -155,8 +160,8 @@ pub(crate) async fn list_task_items(
             .get(&task.id)
             .cloned()
             .unwrap_or_else(|| format!("{}-{}", task.project_prefix, task.id));
-        let labels = labels_for_task(conn, &task.id).await?;
-        let has_conflict = task_has_conflict(conn, &task.id).await?;
+        let labels = labels_for_task_in_workspace(conn, &task.workspace_id, &task.id).await?;
+        let has_conflict = task_has_conflict(conn, &task.workspace_id, &task.id).await?;
         items.push(TaskListItem {
             task,
             display_ref,
@@ -170,16 +175,18 @@ pub(crate) async fn list_task_items(
 pub(crate) async fn list_project_items(
     conn: &mut SqliteConnection,
 ) -> Result<Vec<ProjectListItem>> {
+    let workspace_id = active_workspace_id();
     let rows = sqlx::query(
         "SELECT p.key, p.name, p.prefix,
          COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status NOT IN ('done', 'canceled') THEN 1 ELSE 0 END), 0) AS open_count,
          COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'inbox' THEN 1 ELSE 0 END), 0) AS inbox_count
          FROM projects p
-         LEFT JOIN tasks t ON t.project_key = p.key
-         WHERE p.deleted = 0
+         LEFT JOIN tasks t ON t.workspace_id = p.workspace_id AND t.project_key = p.key
+         WHERE p.workspace_id = ? AND p.deleted = 0
          GROUP BY p.key, p.name, p.prefix
          ORDER BY p.key",
     )
+    .bind(workspace_id)
     .fetch_all(&mut *conn)
     .await?;
     Ok(rows
@@ -195,6 +202,7 @@ pub(crate) async fn list_project_items(
 }
 
 pub(crate) async fn sidebar_counts(conn: &mut SqliteConnection) -> Result<SidebarCounts> {
+    let workspace_id = active_workspace_id();
     let row = sqlx::query(
         "SELECT
          COALESCE(SUM(CASE WHEN deleted = 0 THEN 1 ELSE 0 END), 0) AS all_count,
@@ -204,10 +212,13 @@ pub(crate) async fn sidebar_counts(conn: &mut SqliteConnection) -> Result<Sideba
          COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'todo' THEN 1 ELSE 0 END), 0) AS todo_count,
          (SELECT COUNT(DISTINCT c.task_id)
           FROM conflicts c
-          JOIN tasks t ON t.id = c.task_id
-          WHERE c.resolved = 0 AND t.deleted = 0) AS conflicts_count
-         FROM tasks",
+          JOIN tasks t ON t.workspace_id = c.workspace_id AND t.id = c.task_id
+          WHERE c.workspace_id = ? AND c.resolved = 0 AND t.deleted = 0) AS conflicts_count
+         FROM tasks
+         WHERE workspace_id = ?",
     )
+    .bind(&workspace_id)
+    .bind(&workspace_id)
     .fetch_one(&mut *conn)
     .await?;
     Ok(SidebarCounts {
@@ -276,10 +287,10 @@ fn push_sort(query: &mut QueryBuilder<Sqlite>, sort: TaskSort, direction: SortDi
         (TaskSort::Created, SortDirection::Asc) => query.push(" ORDER BY t.created_at ASC"),
         (TaskSort::Created, SortDirection::Desc) => query.push(" ORDER BY t.created_at DESC"),
         (TaskSort::Updated, SortDirection::Asc) => {
-            query.push(" ORDER BY t.updated_at ASC, t.created_at ASC")
+            query.push(" ORDER BY t.updated_at ASC, t.created_at ASC, t.rowid ASC")
         }
         (TaskSort::Updated, SortDirection::Desc) => {
-            query.push(" ORDER BY t.updated_at DESC, t.created_at DESC")
+            query.push(" ORDER BY t.updated_at DESC, t.created_at DESC, t.rowid ASC")
         }
         (TaskSort::Priority, SortDirection::Asc) => query.push(
             " ORDER BY
