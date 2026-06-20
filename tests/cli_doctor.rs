@@ -76,10 +76,7 @@ fn doctor_reports_disabled_sync_without_server_error() {
 
     contains_all(
         &output,
-        &[
-            "enabled            no",
-            "server             not configured",
-        ],
+        &["enabled            no", "server             not configured"],
     );
     assert!(!output.contains("!! server"));
 }
@@ -128,13 +125,7 @@ wake_addr = "not-an-address"
 
     let output = ok(env.atm_config(["doctor"]));
 
-    contains_all(
-        &output,
-        &[
-            "!! daemon wake",
-            "invalid daemon wake address",
-        ],
-    );
+    contains_all(&output, &["!! daemon wake", "invalid daemon wake address"]);
 }
 
 #[test]
@@ -155,14 +146,7 @@ server_url = "not-a-url"
 
     let output = ok(env.atm_config(["doctor"]));
 
-    contains_all(
-        &output,
-        &[
-            "!! server",
-            "not-a-url",
-            "!! daemon server",
-        ],
-    );
+    contains_all(&output, &["!! server", "not-a-url", "!! daemon server"]);
 }
 
 #[test]
@@ -260,10 +244,12 @@ server_url = "http://127.0.0.1:3000"
             .connect()
             .await
             .expect("open db");
-        sqlx::query("INSERT INTO meta(key, value) VALUES ('sync_server_url', 'http://127.0.0.1:4000')")
-            .execute(&mut conn)
-            .await
-            .expect("pin server");
+        sqlx::query(
+            "INSERT INTO meta(key, value) VALUES ('sync_server_url', 'http://127.0.0.1:4000')",
+        )
+        .execute(&mut conn)
+        .await
+        .expect("pin server");
     });
 
     let output = ok(env.atm_config(["doctor"]));
@@ -297,25 +283,11 @@ fn doctor_workspace_flag_affects_active_workspace_and_task_counts() {
     ));
     ok(env.atm(
         &db,
-        [
-            "--workspace",
-            "beta",
-            "add",
-            "beta one",
-            "--project",
-            "app",
-        ],
+        ["--workspace", "beta", "add", "beta one", "--project", "app"],
     ));
     ok(env.atm(
         &db,
-        [
-            "--workspace",
-            "beta",
-            "add",
-            "beta two",
-            "--project",
-            "app",
-        ],
+        ["--workspace", "beta", "add", "beta two", "--project", "app"],
     ));
 
     let alpha = ok(env.atm(&db, ["--workspace", "alpha", "doctor"]));
