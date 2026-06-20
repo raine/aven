@@ -1262,7 +1262,7 @@ fn add_task_title_input_line(input: &str, cursor: usize, width: usize) -> Line<'
     if input.is_empty() {
         return Line::from(vec![
             Span::styled("▌", Style::new().fg(FG)),
-            Span::styled(" title", Style::new().fg(FG_DIM)),
+            Span::styled("title", Style::new().fg(FG_DIM)),
         ]);
     }
     Line::from(visible_text_input(input, cursor, width))
@@ -1928,7 +1928,7 @@ mod tests {
     fn add_task_empty_title_input_shows_placeholder() {
         let line = add_task_title_input_line("", 0, 20);
         assert_eq!(line.spans[0].content.as_ref(), "▌");
-        assert_eq!(line.spans[1].content.as_ref(), " title");
+        assert_eq!(line.spans[1].content.as_ref(), "title");
         assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
     }
 
