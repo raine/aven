@@ -23,7 +23,6 @@ use crate::tui::ui::{self, help_scroll_cap};
 const ADD_PROJECT_TITLE: &str = "Add project";
 const ADD_LABEL_TITLE: &str = "Add label";
 const ADD_TASK_TITLE_TITLE: &str = "Add task";
-const ADD_TASK_PROJECT_TITLE: &str = "Add task: project";
 const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: title project";
 const ADD_TASK_PRIORITY_TITLE: &str = "Add task: priority";
 const ADD_TASK_LABELS_TITLE: &str = "Add task: labels";
@@ -335,12 +334,6 @@ impl App {
                     self.begin_add_task_title();
                 } else if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
                     draft.title = trimmed.to_string();
-                    self.begin_add_task_project().await;
-                }
-            }
-            OverlaySubmit::Picker { title, values } if title == ADD_TASK_PROJECT_TITLE => {
-                if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
-                    draft.project = values.first().filter(|value| !value.is_empty()).cloned();
                     self.begin_add_task_priority();
                 }
             }
@@ -773,15 +766,6 @@ impl App {
             ADD_NOTE_TITLE,
             "note body:",
         )));
-    }
-
-    async fn begin_add_task_project(&mut self) {
-        let selected = match &self.authoring {
-            Some(AuthoringFlow::AddTask(draft)) => draft.project.as_deref(),
-            _ => return,
-        };
-        let items = self.store.project_picker_items(selected);
-        self.open_picker_overlay(ADD_TASK_PROJECT_TITLE, items, false);
     }
 
     fn begin_add_task_title_project(&mut self) {
@@ -2379,6 +2363,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn add_task_alias_skips_project_prompt_after_title() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state)) if state.title == ADD_TASK_PRIORITY_TITLE
+        ));
+    }
+
+    #[tokio::test]
     async fn add_task_flow_creates_task_with_metadata_and_selects_it() {
         let mut app = test_app().await;
         app.store
@@ -2393,13 +2390,14 @@ mod tests {
         app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
-        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::Picker(state)) if state.title == ADD_TASK_PROJECT_TITLE
+            Some(OverlayState::Picker(state)) if state.title == ADD_TASK_TITLE_PROJECT_TITLE
         ));
         type_chars(&mut app, "mobile").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
         assert!(matches!(
