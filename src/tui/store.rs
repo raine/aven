@@ -151,36 +151,57 @@ impl TuiStore {
         self.refresh(None).await
     }
 
-    pub(crate) async fn filter_project(&mut self, project: String) -> Result<Option<usize>> {
+    async fn apply_attribute_filter(
+        &mut self,
+        setter: impl FnOnce(&mut TaskFilters),
+    ) -> Result<Option<usize>> {
         self.active_view = SidebarTarget::All;
-        self.filters.project = Some(project);
         self.filters.include_deleted = false;
         self.filters.conflicts_only = false;
+        setter(&mut self.filters);
         self.refresh(None).await
+    }
+
+    async fn update_selected_task<F>(
+        &mut self,
+        index: Option<usize>,
+        update: TaskUpdate,
+        message: F,
+    ) -> Result<Option<MutationMessage>>
+    where
+        F: FnOnce(&TaskListItem) -> String,
+    {
+        if let Some(item) = self.selected_task(index).cloned() {
+            let mut conn = self.pool.acquire().await?;
+            update_task_operation(&mut conn, &item.task.id, update).await?;
+            drop(conn);
+            let selected = self.refresh(Some(&item.task.id)).await?;
+            return Ok(Some(MutationMessage {
+                message: message(&item),
+                selected,
+            }));
+        }
+        Ok(None)
+    }
+
+    pub(crate) async fn filter_project(&mut self, project: String) -> Result<Option<usize>> {
+        self.apply_attribute_filter(|filters| filters.project = Some(project))
+            .await
     }
 
     pub(crate) async fn filter_label(&mut self, label: String) -> Result<Option<usize>> {
-        self.active_view = SidebarTarget::All;
-        self.filters.label = Some(label);
-        self.filters.include_deleted = false;
-        self.filters.conflicts_only = false;
-        self.refresh(None).await
+        self.apply_attribute_filter(|filters| filters.label = Some(label))
+            .await
     }
 
     pub(crate) async fn filter_status(&mut self, status: String) -> Result<Option<usize>> {
-        self.active_view = SidebarTarget::All;
-        self.filters.status = Some(status);
-        self.filters.include_deleted = false;
-        self.filters.conflicts_only = false;
-        self.refresh(None).await
+        self.apply_attribute_filter(|filters| filters.status = Some(status))
+            .await
     }
 
     pub(crate) async fn filter_priority(&mut self, priority: String) -> Result<Option<usize>> {
-        self.active_view = SidebarTarget::All;
-        self.filters.priority = Some(priority);
-        self.filters.include_deleted = false;
-        self.filters.conflicts_only = false;
-        self.refresh(None).await
+        self.apply_attribute_filter(|filters| filters.priority = Some(priority))
+            .await
     }
 
     pub(crate) async fn toggle_deleted_filter(&mut self) -> Result<Option<usize>> {
@@ -297,25 +318,15 @@ impl TuiStore {
         index: Option<usize>,
         priority: &str,
     ) -> Result<Option<MutationMessage>> {
-        if let Some(item) = self.selected_task(index).cloned() {
-            let mut conn = self.pool.acquire().await?;
-            update_task_operation(
-                &mut conn,
-                &item.task.id,
-                TaskUpdate {
-                    priority: Some(priority.to_string()),
-                    ..TaskUpdate::default()
-                },
-            )
-            .await?;
-            drop(conn);
-            let selected = self.refresh(Some(&item.task.id)).await?;
-            return Ok(Some(MutationMessage {
-                message: format!("set {} priority={priority}", item.display_ref),
-                selected,
-            }));
-        }
-        Ok(None)
+        self.update_selected_task(
+            index,
+            TaskUpdate {
+                priority: Some(priority.to_string()),
+                ..TaskUpdate::default()
+            },
+            |item| format!("set {} priority={priority}", item.display_ref),
+        )
+        .await
     }
 
     pub(crate) async fn update_title(
@@ -324,25 +335,15 @@ impl TuiStore {
         title: String,
     ) -> Result<Option<MutationMessage>> {
         let title = title.trim().to_string();
-        if let Some(item) = self.selected_task(index).cloned() {
-            let mut conn = self.pool.acquire().await?;
-            update_task_operation(
-                &mut conn,
-                &item.task.id,
-                TaskUpdate {
-                    title: Some(title),
-                    ..TaskUpdate::default()
-                },
-            )
-            .await?;
-            drop(conn);
-            let selected = self.refresh(Some(&item.task.id)).await?;
-            return Ok(Some(MutationMessage {
-                message: format!("set {} title", item.display_ref),
-                selected,
-            }));
-        }
-        Ok(None)
+        self.update_selected_task(
+            index,
+            TaskUpdate {
+                title: Some(title),
+                ..TaskUpdate::default()
+            },
+            |item| format!("set {} title", item.display_ref),
+        )
+        .await
     }
 
     pub(crate) async fn update_description(
@@ -350,25 +351,15 @@ impl TuiStore {
         index: Option<usize>,
         description: String,
     ) -> Result<Option<MutationMessage>> {
-        if let Some(item) = self.selected_task(index).cloned() {
-            let mut conn = self.pool.acquire().await?;
-            update_task_operation(
-                &mut conn,
-                &item.task.id,
-                TaskUpdate {
-                    description: Some(description),
-                    ..TaskUpdate::default()
-                },
-            )
-            .await?;
-            drop(conn);
-            let selected = self.refresh(Some(&item.task.id)).await?;
-            return Ok(Some(MutationMessage {
-                message: format!("set {} description", item.display_ref),
-                selected,
-            }));
-        }
-        Ok(None)
+        self.update_selected_task(
+            index,
+            TaskUpdate {
+                description: Some(description),
+                ..TaskUpdate::default()
+            },
+            |item| format!("set {} description", item.display_ref),
+        )
+        .await
     }
 
     pub(crate) async fn update_project(
@@ -376,25 +367,15 @@ impl TuiStore {
         index: Option<usize>,
         project: String,
     ) -> Result<Option<MutationMessage>> {
-        if let Some(item) = self.selected_task(index).cloned() {
-            let mut conn = self.pool.acquire().await?;
-            update_task_operation(
-                &mut conn,
-                &item.task.id,
-                TaskUpdate {
-                    project: Some(project),
-                    ..TaskUpdate::default()
-                },
-            )
-            .await?;
-            drop(conn);
-            let selected = self.refresh(Some(&item.task.id)).await?;
-            return Ok(Some(MutationMessage {
-                message: format!("set {} project", item.display_ref),
-                selected,
-            }));
-        }
-        Ok(None)
+        self.update_selected_task(
+            index,
+            TaskUpdate {
+                project: Some(project),
+                ..TaskUpdate::default()
+            },
+            |item| format!("set {} project", item.display_ref),
+        )
+        .await
     }
 
     pub(crate) async fn update_labels(
@@ -402,37 +383,30 @@ impl TuiStore {
         index: Option<usize>,
         selected_labels: Vec<String>,
     ) -> Result<Option<MutationMessage>> {
-        if let Some(item) = self.selected_task(index).cloned() {
-            let add_labels = selected_labels
-                .iter()
-                .filter(|label| !item.labels.contains(label))
-                .cloned()
-                .collect::<Vec<_>>();
-            let remove_labels = item
-                .labels
-                .iter()
-                .filter(|label| !selected_labels.contains(label))
-                .cloned()
-                .collect::<Vec<_>>();
-            let mut conn = self.pool.acquire().await?;
-            update_task_operation(
-                &mut conn,
-                &item.task.id,
-                TaskUpdate {
-                    add_labels,
-                    remove_labels,
-                    ..TaskUpdate::default()
-                },
-            )
-            .await?;
-            drop(conn);
-            let selected = self.refresh(Some(&item.task.id)).await?;
-            return Ok(Some(MutationMessage {
-                message: format!("set {} labels", item.display_ref),
-                selected,
-            }));
-        }
-        Ok(None)
+        let Some(item) = self.selected_task(index).cloned() else {
+            return Ok(None);
+        };
+        let add_labels = selected_labels
+            .iter()
+            .filter(|label| !item.labels.contains(label))
+            .cloned()
+            .collect::<Vec<_>>();
+        let remove_labels = item
+            .labels
+            .iter()
+            .filter(|label| !selected_labels.contains(label))
+            .cloned()
+            .collect::<Vec<_>>();
+        self.update_selected_task(
+            index,
+            TaskUpdate {
+                add_labels,
+                remove_labels,
+                ..TaskUpdate::default()
+            },
+            |item| format!("set {} labels", item.display_ref),
+        )
+        .await
     }
 
     pub(crate) async fn update_deleted(
