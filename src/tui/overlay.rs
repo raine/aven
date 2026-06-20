@@ -330,7 +330,15 @@ pub(crate) fn handle_generic_overlay_key(key: KeyEvent, overlay: OverlayState) -
                 move_picker_selection(&mut state, 1);
                 OverlayOutcome::None(OverlayState::Picker(state))
             }
+            KeyCode::Char('n') if key.modifiers == KeyModifiers::CONTROL => {
+                move_picker_selection(&mut state, 1);
+                OverlayOutcome::None(OverlayState::Picker(state))
+            }
             KeyCode::Up => {
+                move_picker_selection(&mut state, -1);
+                OverlayOutcome::None(OverlayState::Picker(state))
+            }
+            KeyCode::Char('p') if key.modifiers == KeyModifiers::CONTROL => {
                 move_picker_selection(&mut state, -1);
                 OverlayOutcome::None(OverlayState::Picker(state))
             }
@@ -626,7 +634,40 @@ mod tests {
 
     #[test]
     fn picker_moves_with_arrow_keys() {
-        let state = PickerState {
+        let state = picker_navigation_state();
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_generic_overlay_key(key(KeyCode::Down), OverlayState::Picker(state))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.selected, 1);
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_generic_overlay_key(key(KeyCode::Up), OverlayState::Picker(state))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.selected, 0);
+    }
+
+    #[test]
+    fn picker_moves_with_ctrl_n_and_ctrl_p() {
+        let state = picker_navigation_state();
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_generic_overlay_key(ctrl(KeyCode::Char('n')), OverlayState::Picker(state))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.selected, 1);
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_generic_overlay_key(ctrl(KeyCode::Char('p')), OverlayState::Picker(state))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.selected, 0);
+    }
+
+    fn picker_navigation_state() -> PickerState {
+        PickerState {
             title: "Pick".to_string(),
             filter: String::new(),
             items: vec![
@@ -643,19 +684,7 @@ mod tests {
             ],
             selected: 0,
             multi: false,
-        };
-        let OverlayOutcome::None(OverlayState::Picker(state)) =
-            handle_generic_overlay_key(key(KeyCode::Down), OverlayState::Picker(state))
-        else {
-            panic!("expected picker state");
-        };
-        assert_eq!(state.selected, 1);
-        let OverlayOutcome::None(OverlayState::Picker(state)) =
-            handle_generic_overlay_key(key(KeyCode::Up), OverlayState::Picker(state))
-        else {
-            panic!("expected picker state");
-        };
-        assert_eq!(state.selected, 0);
+        }
     }
 
     #[test]
