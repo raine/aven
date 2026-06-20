@@ -1,8 +1,31 @@
 mod common;
 
+use std::path::PathBuf;
+
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 use common::{TestEnv, contains_all, extract_ref, fail, insert_task_fixtures, ok, suffix};
+
+async fn setup_display_ref_fixtures(
+    db_name: &str,
+    projects: &[&str],
+    fixtures: &[(&str, &str, &str)],
+) -> (TestEnv, PathBuf) {
+    let env = TestEnv::new();
+    let db = env.db(db_name);
+    for project in projects {
+        ok(env.atm(&db, ["project", "create", project]));
+    }
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(SqliteConnectOptions::new().filename(&db))
+        .await
+        .unwrap();
+    insert_task_fixtures(&pool, fixtures).await;
+
+    (env, db)
+}
 
 fn first_tokens(output: &str) -> Vec<&str> {
     output
@@ -39,18 +62,9 @@ fn qualified_ref_prefix_is_a_hint() {
 
 #[tokio::test]
 async fn display_refs_use_project_prefix_and_unique_suffix_floor() {
-    let env = TestEnv::new();
-    let db = env.db("display-floor.sqlite");
-    ok(env.atm(&db, ["project", "create", "app"]));
-    ok(env.atm(&db, ["project", "create", "ops"]));
-
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(SqliteConnectOptions::new().filename(&db))
-        .await
-        .unwrap();
-    insert_task_fixtures(
-        &pool,
+    let (env, db) = setup_display_ref_fixtures(
+        "display-floor.sqlite",
+        &["app", "ops"],
         &[
             ("W3ZX111111111111", "app shared", "app"),
             ("W3ZX222222222222", "ops shared", "ops"),
@@ -65,18 +79,9 @@ async fn display_refs_use_project_prefix_and_unique_suffix_floor() {
 
 #[tokio::test]
 async fn displayed_refs_resolve_after_filtering() {
-    let env = TestEnv::new();
-    let db = env.db("display-visible.sqlite");
-    ok(env.atm(&db, ["project", "create", "app"]));
-    ok(env.atm(&db, ["project", "create", "ops"]));
-
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(SqliteConnectOptions::new().filename(&db))
-        .await
-        .unwrap();
-    insert_task_fixtures(
-        &pool,
+    let (env, db) = setup_display_ref_fixtures(
+        "display-visible.sqlite",
+        &["app", "ops"],
         &[
             ("W3ZX111111111111", "app shared", "app"),
             ("W3ZX222222222222", "ops shared", "ops"),
