@@ -124,6 +124,10 @@ install-dev:
 run *ARGS:
     cargo run -- "$@"
 
+# Run the TUI
+tui:
+    cargo run -- tui
+
 # Internal release helper
 _release bump:
     @cargo-release {{bump}}
