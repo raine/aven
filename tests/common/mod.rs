@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use assert_cmd::cargo::cargo_bin;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use sqlx::{Connection as _, SqliteConnection};
 use tempfile::TempDir;
@@ -199,7 +198,7 @@ wake_addr = "{}"
 }
 
 pub fn bin() -> PathBuf {
-    cargo_bin("atm")
+    PathBuf::from(env!("CARGO_BIN_EXE_atm"))
 }
 
 pub fn command() -> Command {
