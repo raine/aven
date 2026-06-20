@@ -123,7 +123,7 @@ fn header_line(store: &TuiStore, width: u16) -> Paragraph<'static> {
             Style::new().fg(FG).add_modifier(Modifier::BOLD),
         ),
     ];
-    if !compact || !metric_represents_active_view(store) {
+    if show_view_badge(store, compact) {
         spans.extend([separator(), Span::styled("view ", Style::new().fg(FG_DIM))]);
         spans.push(view_badge(store));
     }
@@ -136,10 +136,17 @@ fn header_line(store: &TuiStore, width: u16) -> Paragraph<'static> {
     Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BG))
 }
 
-fn metric_represents_active_view(store: &TuiStore) -> bool {
-    matches!(
+fn show_view_badge(store: &TuiStore, compact: bool) -> bool {
+    if !compact {
+        return true;
+    }
+    !matches!(
         store.active_view,
-        SidebarTarget::All | SidebarTarget::Todo | SidebarTarget::Inbox | SidebarTarget::Conflicts
+        SidebarTarget::All
+            | SidebarTarget::Todo
+            | SidebarTarget::Inbox
+            | SidebarTarget::Conflicts
+            | SidebarTarget::Project(_)
     )
 }
 
@@ -267,7 +274,7 @@ fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
     if store.filters.include_deleted {
         parts.push("include_deleted".to_string());
     }
-    if store.filters.conflicts_only {
+    if store.filters.conflicts_only && store.active_view != SidebarTarget::Conflicts {
         parts.push("conflicts".to_string());
     }
     if let Some(search) = &store.filters.search {
@@ -1613,6 +1620,26 @@ mod tests {
     }
 
     #[test]
+    fn header_hides_conflict_filter_for_conflicts_view() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rendered = rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let pool = crate::db::open_db(&dir.path().join("test.db"))
+                .await
+                .unwrap();
+            let mut store = TuiStore::new(pool).await.unwrap();
+            store.active_view = SidebarTarget::Conflicts;
+            store.filters.conflicts_only = true;
+            active_filter_spans(&store)
+                .into_iter()
+                .map(|span| span.content)
+                .collect::<Vec<_>>()
+                .join("")
+        });
+        assert!(!rendered.contains("conflicts"));
+    }
+
+    #[test]
     fn header_hides_status_filter_for_matching_view() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let rendered = rt.block_on(async {
@@ -1722,6 +1749,28 @@ mod tests {
         assert!(!rendered.contains("view queue"));
         assert!(!rendered.contains("conflicts 0"));
         assert!(!rendered.contains("order queue asc"));
+    }
+
+    #[test]
+    fn compact_header_shows_project_as_filter_instead_of_view() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rendered = rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let pool = crate::db::open_db(&dir.path().join("test.db"))
+                .await
+                .unwrap();
+            let mut store = TuiStore::new(pool).await.unwrap();
+            store.active_view = SidebarTarget::Project("agent-offload".to_string());
+            store.filters.project = Some("agent-offload".to_string());
+            let backend = TestBackend::new(110, 10);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| render_header(frame, &store, frame.area()))
+                .unwrap();
+            buffer_text(terminal.backend())
+        });
+        assert!(!rendered.contains("view project agent-offload"));
+        assert!(rendered.contains("filter project=agent-offload"));
     }
 
     #[test]
