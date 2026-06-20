@@ -676,10 +676,7 @@ fn render_task_row(
     frame.render_widget(Block::new().style(style), area);
     let cells = Layout::horizontal(columns).areas::<6>(area);
     let values = [
-        Line::from(Span::styled(
-            format!(" {}", item.display_ref),
-            Style::new().fg(FG_MUTED),
-        )),
+        task_ref_cell(item),
         title_cell(item, cells[1].width as usize),
         project_cell(item),
         status_chip(&item.task.status),
@@ -694,6 +691,24 @@ fn render_task_row(
     ];
     for (area, value) in cells.into_iter().zip(values) {
         frame.render_widget(Paragraph::new(value).style(style), area);
+    }
+}
+
+fn task_ref_cell(item: &TaskListItem) -> Line<'static> {
+    if let Some((project, suffix)) = item.display_ref.split_once('-') {
+        Line::from(vec![
+            Span::styled(
+                format!(" {project}"),
+                Style::new().fg(theme::project_color(&item.task.project_key)),
+            ),
+            Span::styled("-", Style::new().fg(FG_DIM)),
+            Span::styled(suffix.to_string(), Style::new().fg(FG_MUTED)),
+        ])
+    } else {
+        Line::from(Span::styled(
+            format!(" {}", item.display_ref),
+            Style::new().fg(FG_MUTED),
+        ))
     }
 }
 
