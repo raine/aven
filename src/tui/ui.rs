@@ -883,7 +883,7 @@ fn render_task_row(
     let values = [
         task_ref_cell(item),
         title_cell(item, cells[1].width as usize),
-        project_cell(item),
+        project_cell(item, cells[2].width as usize),
         status_chip(&item.task.status),
         Line::from(Span::styled(
             priority_icon(&item.task.priority),
@@ -937,11 +937,15 @@ fn compact_age(age_seconds: i64) -> String {
     format!("{}mo", days / 30)
 }
 
-fn project_cell(item: &TaskListItem) -> Line<'static> {
-    Line::from(Span::styled(
-        item.task.project_key.clone(),
-        Style::new().fg(theme::project_color(&item.task.project_key)),
-    ))
+fn project_cell(item: &TaskListItem, max_width: usize) -> Line<'static> {
+    let project = truncate_chars(&item.task.project_key, max_width.saturating_sub(1));
+    Line::from(vec![
+        Span::styled(
+            project,
+            Style::new().fg(theme::project_color(&item.task.project_key)),
+        ),
+        Span::raw(" "),
+    ])
 }
 
 fn task_heading_line(item: &TaskListItem) -> Line<'_> {
@@ -1981,6 +1985,33 @@ mod tests {
             buffer_text(terminal.backend())
         });
         assert!(rendered.contains("workspace client-work"));
+    }
+
+    #[test]
+    fn project_cell_truncates_with_status_spacing() {
+        let item = TaskListItem {
+            task: crate::types::Task {
+                id: "task-1".to_string(),
+                workspace_id: "workspace-1".to_string(),
+                title: "Title".to_string(),
+                description: String::new(),
+                project_key: "very-long-project-name".to_string(),
+                project_prefix: "VER".to_string(),
+                status: "todo".to_string(),
+                priority: "none".to_string(),
+                created_at: "2026-06-20T00:00:00Z".to_string(),
+                updated_at: "2026-06-20T00:00:00Z".to_string(),
+                deleted: false,
+            },
+            display_ref: "VER-1".to_string(),
+            labels: Vec::new(),
+            has_conflict: false,
+            queue: Default::default(),
+        };
+
+        let rendered = project_cell(&item, 10).to_string();
+
+        assert_eq!(rendered, "very-lon… ");
     }
 
     #[test]
