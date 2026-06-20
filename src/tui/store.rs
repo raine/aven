@@ -464,11 +464,7 @@ impl TuiStore {
     pub(crate) fn existing_project_picker_items(&self, selected: &str) -> Vec<PickerItem> {
         self.projects
             .iter()
-            .map(|project| PickerItem {
-                label: format!("{} {}", project.prefix, project.name),
-                value: project.key.clone(),
-                selected: project.key == selected,
-            })
+            .map(|project| project_picker_item(project, selected))
             .collect()
     }
 
@@ -479,11 +475,11 @@ impl TuiStore {
             value: String::new(),
             selected: selected.is_empty(),
         }];
-        items.extend(self.projects.iter().map(|project| PickerItem {
-            label: format!("{} {}", project.prefix, project.name),
-            value: project.key.clone(),
-            selected: project.key == selected,
-        }));
+        items.extend(
+            self.projects
+                .iter()
+                .map(|project| project_picker_item(project, selected)),
+        );
         items
     }
 
@@ -705,6 +701,14 @@ impl TuiStore {
     pub(crate) fn init_config(&self) -> Result<String> {
         let outcome = init_config_operation()?;
         Ok(format!("created config {}", outcome.path.display()))
+    }
+}
+
+fn project_picker_item(project: &ProjectListItem, selected: &str) -> PickerItem {
+    PickerItem {
+        label: format!("{} {}", project.prefix, project.name),
+        value: project.key.clone(),
+        selected: project.key == selected,
     }
 }
 

@@ -621,22 +621,18 @@ impl App {
 
     fn begin_add_project(&mut self) {
         self.pending_shortcut.clear();
-        self.overlay = Some(OverlayState::TextInput(TextInputState {
-            title: ADD_PROJECT_TITLE.to_string(),
-            prompt: "project name:".to_string(),
-            input: String::new(),
-            cursor: 0,
-        }));
+        self.overlay = Some(OverlayState::TextInput(TextInputState::blank(
+            ADD_PROJECT_TITLE,
+            "project name:",
+        )));
     }
 
     fn begin_add_label(&mut self) {
         self.pending_shortcut.clear();
-        self.overlay = Some(OverlayState::TextInput(TextInputState {
-            title: ADD_LABEL_TITLE.to_string(),
-            prompt: "label name:".to_string(),
-            input: String::new(),
-            cursor: 0,
-        }));
+        self.overlay = Some(OverlayState::TextInput(TextInputState::blank(
+            ADD_LABEL_TITLE,
+            "label name:",
+        )));
     }
 
     fn begin_add_task(&mut self) {
@@ -650,13 +646,11 @@ impl App {
             Some(AuthoringFlow::AddTask(draft)) => draft.title.clone(),
             _ => return,
         };
-        let cursor = input.len();
-        self.overlay = Some(OverlayState::TextInput(TextInputState {
-            title: ADD_TASK_TITLE_TITLE.to_string(),
-            prompt: "title:".to_string(),
+        self.overlay = Some(OverlayState::TextInput(TextInputState::new(
+            ADD_TASK_TITLE_TITLE,
+            "title:",
             input,
-            cursor,
-        }));
+        )));
     }
 
     fn begin_add_note(&mut self) {
@@ -673,13 +667,10 @@ impl App {
             task_id: item.task.id.clone(),
             display_ref: item.display_ref.clone(),
         });
-        self.overlay = Some(OverlayState::MultilineInput(MultilineInputState {
-            title: ADD_NOTE_TITLE.to_string(),
-            prompt: "note body:".to_string(),
-            lines: vec![String::new()],
-            row: 0,
-            column: 0,
-        }));
+        self.overlay = Some(OverlayState::MultilineInput(MultilineInputState::blank(
+            ADD_NOTE_TITLE,
+            "note body:",
+        )));
     }
 
     fn begin_add_task_project(&mut self) {
@@ -713,13 +704,10 @@ impl App {
     }
 
     fn begin_add_task_description(&mut self) {
-        self.overlay = Some(OverlayState::MultilineInput(MultilineInputState {
-            title: ADD_TASK_DESCRIPTION_TITLE.to_string(),
-            prompt: "description:".to_string(),
-            lines: vec![String::new()],
-            row: 0,
-            column: 0,
-        }));
+        self.overlay = Some(OverlayState::MultilineInput(MultilineInputState::blank(
+            ADD_TASK_DESCRIPTION_TITLE,
+            "description:",
+        )));
     }
 
     async fn submit_add_task(&mut self, description: String) -> Result<()> {
@@ -962,29 +950,17 @@ impl App {
     }
 
     fn open_edit_title_overlay(&mut self, input: String) {
-        let cursor = input.len();
-        self.overlay = Some(OverlayState::TextInput(TextInputState {
-            title: EDIT_TITLE_TITLE.to_string(),
-            prompt: "title:".to_string(),
+        self.overlay = Some(OverlayState::TextInput(TextInputState::new(
+            EDIT_TITLE_TITLE,
+            "title:",
             input,
-            cursor,
-        }));
+        )));
     }
 
     fn open_edit_description_overlay(&mut self, value: String) {
-        let mut lines = value.split('\n').map(str::to_string).collect::<Vec<_>>();
-        if lines.is_empty() {
-            lines.push(String::new());
-        }
-        let row = lines.len() - 1;
-        let column = lines[row].len();
-        self.overlay = Some(OverlayState::MultilineInput(MultilineInputState {
-            title: EDIT_DESCRIPTION_TITLE.to_string(),
-            prompt: "description:".to_string(),
-            lines,
-            row,
-            column,
-        }));
+        self.overlay = Some(OverlayState::MultilineInput(
+            MultilineInputState::from_value(EDIT_DESCRIPTION_TITLE, "description:", value),
+        ));
     }
 
     fn begin_edit_description(&mut self) {
@@ -1297,12 +1273,42 @@ impl App {
         Ok(())
     }
 
-    async fn show_conflict_details(&mut self) -> Result<()> {
-        let Some(targets) = self
-            .store
+    async fn conflict_targets_for_selected(&mut self) -> Result<Option<Vec<ConflictTarget>>> {
+        self.store
             .conflict_targets(self.widgets.table.selected())
-            .await?
-        else {
+            .await
+    }
+
+    async fn load_conflict_targets_for_resolution(
+        &mut self,
+    ) -> Result<Option<Vec<ConflictTarget>>> {
+        let Some(targets) = self.conflict_targets_for_selected().await? else {
+            self.set_message("no selected task for conflict resolution".to_string());
+            return Ok(None);
+        };
+        if targets.is_empty() {
+            self.set_message("selected task has no unresolved conflicts".to_string());
+            return Ok(None);
+        }
+        Ok(Some(targets))
+    }
+
+    fn start_conflict_field_flow(
+        &mut self,
+        targets: Vec<ConflictTarget>,
+        flow: ConflictFlow,
+        on_single: impl FnOnce(&mut Self, ConflictTarget),
+    ) {
+        if targets.len() == 1 {
+            on_single(self, targets[0].clone());
+        } else {
+            self.conflict_flow = Some(flow);
+            self.open_conflict_field_picker(&targets);
+        }
+    }
+
+    async fn show_conflict_details(&mut self) -> Result<()> {
+        let Some(targets) = self.conflict_targets_for_selected().await? else {
             self.set_message("no selected task for conflicts".to_string());
             return Ok(());
         };
@@ -1331,41 +1337,37 @@ impl App {
         if lines.last().is_some_and(String::is_empty) {
             lines.pop();
         }
-        self.overlay = Some(OverlayState::TextPanel(TextPanelState {
-            title: CONFLICT_DETAILS_TITLE.to_string(),
+        self.overlay = Some(OverlayState::TextPanel(TextPanelState::new(
+            CONFLICT_DETAILS_TITLE,
             lines,
-            scroll: 0,
-        }));
+        )));
         Ok(())
     }
 
     fn show_config_status(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
-        self.overlay = Some(OverlayState::TextPanel(TextPanelState {
-            title: CONFIG_STATUS_TITLE.to_string(),
-            lines: self.store.config_status_lines()?,
-            scroll: 0,
-        }));
+        self.overlay = Some(OverlayState::TextPanel(TextPanelState::new(
+            CONFIG_STATUS_TITLE,
+            self.store.config_status_lines()?,
+        )));
         Ok(())
     }
 
     fn show_config_info(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
-        self.overlay = Some(OverlayState::TextPanel(TextPanelState {
-            title: CONFIG_INFO_TITLE.to_string(),
-            lines: self.store.config_info_lines()?,
-            scroll: 0,
-        }));
+        self.overlay = Some(OverlayState::TextPanel(TextPanelState::new(
+            CONFIG_INFO_TITLE,
+            self.store.config_info_lines()?,
+        )));
         Ok(())
     }
 
     fn show_config_paths(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
-        self.overlay = Some(OverlayState::TextPanel(TextPanelState {
-            title: CONFIG_PATHS_TITLE.to_string(),
-            lines: self.store.config_path_lines()?,
-            scroll: 0,
-        }));
+        self.overlay = Some(OverlayState::TextPanel(TextPanelState::new(
+            CONFIG_PATHS_TITLE,
+            self.store.config_path_lines()?,
+        )));
         Ok(())
     }
 
@@ -1406,51 +1408,26 @@ impl App {
     }
 
     async fn begin_conflict_resolution(&mut self, choice: ConflictResolutionChoice) -> Result<()> {
-        let Some(targets) = self
-            .store
-            .conflict_targets(self.widgets.table.selected())
-            .await?
-        else {
-            self.set_message("no selected task for conflict resolution".to_string());
+        let Some(targets) = self.load_conflict_targets_for_resolution().await? else {
             return Ok(());
         };
-        if targets.is_empty() {
-            self.set_message("selected task has no unresolved conflicts".to_string());
-            return Ok(());
-        }
-        if targets.len() == 1 {
-            self.open_conflict_confirm(choice, targets[0].clone());
-            return Ok(());
-        }
-        self.conflict_flow = Some(ConflictFlow::PickVariant {
-            choice,
-            targets: targets.clone(),
-        });
-        self.open_conflict_field_picker(&targets);
+        self.start_conflict_field_flow(
+            targets.clone(),
+            ConflictFlow::PickVariant { choice, targets },
+            |app, target| app.open_conflict_confirm(choice, target),
+        );
         Ok(())
     }
 
     async fn begin_manual_conflict_merge(&mut self) -> Result<()> {
-        let Some(targets) = self
-            .store
-            .conflict_targets(self.widgets.table.selected())
-            .await?
-        else {
-            self.set_message("no selected task for conflict resolution".to_string());
+        let Some(targets) = self.load_conflict_targets_for_resolution().await? else {
             return Ok(());
         };
-        if targets.is_empty() {
-            self.set_message("selected task has no unresolved conflicts".to_string());
-            return Ok(());
-        }
-        if targets.len() == 1 {
-            self.open_manual_conflict_editor(targets[0].clone());
-            return Ok(());
-        }
-        self.conflict_flow = Some(ConflictFlow::PickManual {
-            targets: targets.clone(),
-        });
-        self.open_conflict_field_picker(&targets);
+        self.start_conflict_field_flow(
+            targets.clone(),
+            ConflictFlow::PickManual { targets },
+            |app, target| app.open_manual_conflict_editor(target),
+        );
         Ok(())
     }
 
@@ -1540,33 +1517,20 @@ impl App {
         });
         match target.field.as_str() {
             "description" => {
-                let mut lines = target
-                    .local_value
-                    .split('\n')
-                    .map(str::to_string)
-                    .collect::<Vec<_>>();
-                if lines.is_empty() {
-                    lines.push(String::new());
-                }
-                let row = lines.len() - 1;
-                let column = lines[row].len();
-                self.overlay = Some(OverlayState::MultilineInput(MultilineInputState {
-                    title: CONFLICT_MANUAL_TITLE.to_string(),
-                    prompt: format!("manual value for field={}:", target.field),
-                    lines,
-                    row,
-                    column,
-                }));
+                self.overlay = Some(OverlayState::MultilineInput(
+                    MultilineInputState::from_value(
+                        CONFLICT_MANUAL_TITLE,
+                        format!("manual value for field={}:", target.field),
+                        target.local_value.clone(),
+                    ),
+                ));
             }
             "title" => {
-                let input = target.local_value.clone();
-                let cursor = input.len();
-                self.overlay = Some(OverlayState::TextInput(TextInputState {
-                    title: CONFLICT_MANUAL_TITLE.to_string(),
-                    prompt: format!("manual value for field={}:", target.field),
-                    input,
-                    cursor,
-                }));
+                self.overlay = Some(OverlayState::TextInput(TextInputState::new(
+                    CONFLICT_MANUAL_TITLE,
+                    format!("manual value for field={}:", target.field),
+                    target.local_value.clone(),
+                )));
             }
             "status" => {
                 let items = self

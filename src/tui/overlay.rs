@@ -21,12 +21,38 @@ pub(crate) struct TextPanelState {
     pub(crate) scroll: u16,
 }
 
+impl TextPanelState {
+    pub(crate) fn new(title: impl Into<String>, lines: Vec<String>) -> Self {
+        Self {
+            title: title.into(),
+            lines,
+            scroll: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TextInputState {
     pub(crate) title: String,
     pub(crate) prompt: String,
     pub(crate) input: String,
     pub(crate) cursor: usize,
+}
+
+impl TextInputState {
+    pub(crate) fn new(title: impl Into<String>, prompt: impl Into<String>, input: String) -> Self {
+        let cursor = input.len();
+        Self {
+            title: title.into(),
+            prompt: prompt.into(),
+            input,
+            cursor,
+        }
+    }
+
+    pub(crate) fn blank(title: impl Into<String>, prompt: impl Into<String>) -> Self {
+        Self::new(title, prompt, String::new())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +62,38 @@ pub(crate) struct MultilineInputState {
     pub(crate) lines: Vec<String>,
     pub(crate) row: usize,
     pub(crate) column: usize,
+}
+
+impl MultilineInputState {
+    pub(crate) fn blank(title: impl Into<String>, prompt: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            prompt: prompt.into(),
+            lines: vec![String::new()],
+            row: 0,
+            column: 0,
+        }
+    }
+
+    pub(crate) fn from_value(
+        title: impl Into<String>,
+        prompt: impl Into<String>,
+        value: String,
+    ) -> Self {
+        let mut lines = value.split('\n').map(str::to_string).collect::<Vec<_>>();
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+        let row = lines.len() - 1;
+        let column = lines[row].len();
+        Self {
+            title: title.into(),
+            prompt: prompt.into(),
+            lines,
+            row,
+            column,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,31 +199,13 @@ impl OverlaySubmit {
 
 impl OverlayState {
     pub(crate) fn captures_input(&self) -> bool {
-        matches!(
-            self,
-            Self::Search { .. }
-                | Self::Command { .. }
-                | Self::TextInput(_)
-                | Self::MultilineInput(_)
-                | Self::Picker(_)
-                | Self::Confirm(_)
-                | Self::TextPanel(_)
-        )
+        !matches!(self, Self::Help | Self::Detail)
     }
 }
 
 impl OverlayView {
     pub(crate) fn captures_input(&self) -> bool {
-        matches!(
-            self,
-            Self::Search { .. }
-                | Self::Command { .. }
-                | Self::TextInput(_)
-                | Self::MultilineInput(_)
-                | Self::Picker(_)
-                | Self::Confirm(_)
-                | Self::TextPanel(_)
-        )
+        !matches!(self, Self::Help | Self::Detail)
     }
 }
 
