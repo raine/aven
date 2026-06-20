@@ -16,6 +16,7 @@ mod mutation;
 mod operations;
 mod projects;
 mod query;
+mod queue;
 mod refs;
 mod render;
 mod signals;

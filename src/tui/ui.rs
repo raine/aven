@@ -8,7 +8,8 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap,
 };
 
-use crate::query::TaskListItem;
+use crate::query::{TaskListItem, TaskSort};
+use crate::queue::{QueueBand, now_seconds};
 use crate::render::quote;
 use crate::tui::app::{Focus, WidgetState};
 use crate::tui::event::{COMMANDS, CommandLifecycle, CommandSpec, key_label, matching_commands};
@@ -20,7 +21,9 @@ use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BG_PANEL, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, ORANGE, PINK,
     RED, SELECTED, SELECTED_INACTIVE,
 };
-use crate::tui::widgets::{priority_icon, priority_short, status_chip, status_span, title_cell};
+use crate::tui::widgets::{
+    age_style, priority_icon, priority_short, status_chip, status_span, title_cell,
+};
 
 #[derive(Clone)]
 pub(crate) struct ViewState {
@@ -164,7 +167,7 @@ fn view_badge(store: &TuiStore) -> Span<'static> {
 
 fn active_view_label(store: &TuiStore) -> String {
     match &store.active_view {
-        SidebarTarget::All => "today's queue".to_string(),
+        SidebarTarget::All => "queue".to_string(),
         SidebarTarget::Inbox => "inbox".to_string(),
         SidebarTarget::Active => "active".to_string(),
         SidebarTarget::Backlog => "backlog".to_string(),
@@ -513,7 +516,7 @@ fn sidebar_icon(entry: &crate::tui::store::SidebarEntry) -> &'static str {
 
 fn sidebar_label(entry: &crate::tui::store::SidebarEntry) -> String {
     match entry.target {
-        Some(SidebarTarget::All) => "Today's queue".to_string(),
+        Some(SidebarTarget::All) => "Queue".to_string(),
         Some(SidebarTarget::Inbox) => "Inbox".to_string(),
         Some(SidebarTarget::Active) => "All active".to_string(),
         Some(SidebarTarget::Backlog) => "Backlog".to_string(),
@@ -621,19 +624,39 @@ fn render_task_list(
         .unwrap_or(0);
     let scroll = selected_row.saturating_sub(viewport_rows.saturating_sub(1));
 
+    let now_seconds = now_seconds();
+    let use_queue_groups = store.active_view == SidebarTarget::All && store.sort == TaskSort::Queue;
     let mut row = 1usize;
     let mut visual_row = 0usize;
     let mut last_status: Option<&str> = None;
+    let mut last_queue_band: Option<QueueBand> = None;
     for (task_index, item) in store.tasks.iter().enumerate() {
-        if last_status != Some(item.task.status.as_str()) {
+        let is_new_queue_group = use_queue_groups && last_queue_band != Some(item.queue.band);
+        let is_new_status_group =
+            !use_queue_groups && last_status != Some(item.task.status.as_str());
+        if is_new_queue_group || is_new_status_group {
             last_status = Some(&item.task.status);
+            last_queue_band = Some(item.queue.band);
             if visual_row >= scroll && row < row_areas.len() {
-                let count = store
-                    .tasks
-                    .iter()
-                    .filter(|task| task.task.status == item.task.status)
-                    .count();
-                render_group_row(frame, &item.task.status, count, row_areas[row]);
+                let count = if use_queue_groups {
+                    store
+                        .tasks
+                        .iter()
+                        .filter(|task| task.queue.band == item.queue.band)
+                        .count()
+                } else {
+                    store
+                        .tasks
+                        .iter()
+                        .filter(|task| task.task.status == item.task.status)
+                        .count()
+                };
+                let label = if use_queue_groups {
+                    item.queue.band.label()
+                } else {
+                    &item.task.status
+                };
+                render_group_row(frame, label, count, row_areas[row]);
                 row += 1;
             }
             visual_row += 1;
@@ -646,6 +669,7 @@ fn render_task_list(
                 view.focus == Focus::Tasks,
                 row_areas[row],
                 columns,
+                now_seconds,
             );
             row += 1;
         }
@@ -670,10 +694,16 @@ fn project_column_width(store: &TuiStore, narrow: bool) -> u16 {
 
 fn task_visual_row(store: &TuiStore, selected_task: usize) -> usize {
     let mut row = 0;
+    let use_queue_groups = store.active_view == SidebarTarget::All && store.sort == TaskSort::Queue;
     let mut last_status: Option<&str> = None;
+    let mut last_queue_band: Option<QueueBand> = None;
     for (task_index, item) in store.tasks.iter().enumerate() {
-        if last_status != Some(item.task.status.as_str()) {
+        let is_new_queue_group = use_queue_groups && last_queue_band != Some(item.queue.band);
+        let is_new_status_group =
+            !use_queue_groups && last_status != Some(item.task.status.as_str());
+        if is_new_queue_group || is_new_status_group {
             last_status = Some(&item.task.status);
+            last_queue_band = Some(item.queue.band);
             row += 1;
         }
         if task_index == selected_task {
@@ -720,6 +750,7 @@ fn render_task_row(
     focused: bool,
     area: Rect,
     columns: [Constraint; 6],
+    now_seconds: i64,
 ) {
     let style = if selected {
         if focused { SELECTED } else { SELECTED_INACTIVE }
@@ -739,7 +770,7 @@ fn render_task_row(
         )),
         Line::from(Span::styled(
             task_age(&item.task.created_at),
-            Style::new().fg(FG_DIM),
+            age_style(&item.task.created_at, now_seconds),
         )),
     ];
     for (area, value) in cells.into_iter().zip(values) {

@@ -935,7 +935,7 @@ impl TuiStore {
                 section: true,
             },
             SidebarEntry {
-                label: "All".to_string(),
+                label: "Queue".to_string(),
                 count: self.counts.all,
                 target: Some(SidebarTarget::All),
                 section: false,
@@ -1562,10 +1562,12 @@ mod tests {
 
         assert!(store.tasks.iter().all(|item| item.task.status != "done"));
         assert_eq!(store.counts.done, 1);
-        assert!(store
-            .sidebar_entries
-            .iter()
-            .any(|entry| entry.target == Some(SidebarTarget::Done) && entry.count == 1));
+        assert!(
+            store
+                .sidebar_entries
+                .iter()
+                .any(|entry| entry.target == Some(SidebarTarget::Done) && entry.count == 1)
+        );
     }
 
     #[tokio::test]

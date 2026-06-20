@@ -495,13 +495,20 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     ),
     // Views
     CommandSpec::implemented(
-        "view-all",
-        "show all tasks",
+        "view-queue",
+        "show queue view",
         "Views",
         &[KeySequence {
             codes: &[KeyCode::Char('g'), KeyCode::Char('a')],
             label: "g a",
         }],
+        Action::ShowView(ViewTarget::All),
+    ),
+    CommandSpec::implemented(
+        "view-all",
+        "show queue view",
+        "Views",
+        &[],
         Action::ShowView(ViewTarget::All),
     ),
     CommandSpec::implemented(

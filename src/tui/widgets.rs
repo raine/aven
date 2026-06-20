@@ -2,7 +2,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::query::TaskListItem;
-use crate::tui::theme::{self, FG, ORANGE, RED};
+use crate::queue::unix_seconds;
+use crate::tui::theme::{self, FG, FG_MUTED, GREEN, ORANGE, RED};
 
 pub(crate) fn priority_icon(priority: &str) -> &'static str {
     match priority {
@@ -42,6 +43,29 @@ pub(crate) fn status_span(status: &str) -> Span<'static> {
         label.to_string(),
         theme::status_style(status).add_modifier(Modifier::BOLD),
     )
+}
+
+pub(crate) fn age_style(created_at: &str, now_seconds: i64) -> Style {
+    let days = unix_seconds(created_at)
+        .map(|created| {
+            now_seconds
+                .saturating_sub(created)
+                .max(0)
+                .saturating_div(86_400)
+        })
+        .unwrap_or(0);
+    let color = if days < 1 {
+        GREEN
+    } else if days < 4 {
+        FG_MUTED
+    } else if days < 8 {
+        FG
+    } else if days < 15 {
+        ORANGE
+    } else {
+        RED
+    };
+    Style::new().fg(color)
 }
 
 pub(crate) fn title_cell(item: &TaskListItem, max_width: usize) -> Line<'static> {

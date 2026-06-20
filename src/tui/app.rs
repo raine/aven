@@ -3005,10 +3005,14 @@ mod tests {
         create_and_select_task(&mut app, test_task_draft("Status alias")).await;
 
         app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+        let selected = app.store.show_view(SidebarTarget::Done).await.unwrap();
+        app.widgets.table.select(selected);
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.status, "done");
 
         app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
+        let selected = app.store.show_view(SidebarTarget::All).await.unwrap();
+        app.widgets.table.select(selected);
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.status, "canceled");
     }

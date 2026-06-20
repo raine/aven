@@ -5,6 +5,7 @@ use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::db::{task_from_row, task_has_conflict};
 use crate::labels::ensure_label_exists_in_workspace;
 use crate::projects::resolve_existing_project;
+use crate::queue::{QueueMeta, now_seconds, queue_meta, queue_order};
 use crate::refs::display_refs_for_tasks;
 use crate::task_render::labels_for_task_in_workspace;
 use crate::types::Task;
@@ -53,6 +54,7 @@ pub(crate) struct TaskListItem {
     pub(crate) display_ref: String,
     pub(crate) labels: Vec<String>,
     pub(crate) has_conflict: bool,
+    pub(crate) queue: QueueMeta,
 }
 
 #[derive(Debug, Clone)]
@@ -162,6 +164,7 @@ pub(crate) async fn list_task_items(
         .collect::<Result<Vec<_>>>()?;
     let display_refs = display_refs_for_tasks(conn, &tasks).await?;
     let mut items = Vec::with_capacity(tasks.len());
+    let now_seconds = now_seconds();
     for task in tasks {
         let display_ref = display_refs
             .get(&task.id)
@@ -169,12 +172,20 @@ pub(crate) async fn list_task_items(
             .unwrap_or_else(|| format!("{}-{}", task.project_prefix, task.id));
         let labels = labels_for_task_in_workspace(conn, &task.workspace_id, &task.id).await?;
         let has_conflict = task_has_conflict(conn, &task.workspace_id, &task.id).await?;
+        let queue = queue_meta(&task, has_conflict, now_seconds);
         items.push(TaskListItem {
             task,
             display_ref,
             labels,
             has_conflict,
+            queue,
         });
+    }
+    if sort == TaskSort::Queue {
+        items.sort_by(|a, b| queue_order((&a.task, a.queue), (&b.task, b.queue)));
+        if direction == SortDirection::Desc {
+            items.reverse();
+        }
     }
     Ok(items)
 }
@@ -251,48 +262,7 @@ fn push_filter_prefix(query: &mut QueryBuilder<Sqlite>, filters: &mut usize) {
 
 fn push_sort(query: &mut QueryBuilder<Sqlite>, sort: TaskSort, direction: SortDirection) {
     match (sort, direction) {
-        (TaskSort::Queue, SortDirection::Asc) => query.push(
-            " ORDER BY
-              CASE t.status
-                WHEN 'active' THEN 0
-                WHEN 'todo' THEN 1
-                WHEN 'inbox' THEN 2
-                WHEN 'backlog' THEN 3
-                WHEN 'done' THEN 4
-                WHEN 'canceled' THEN 5
-                ELSE 6
-              END,
-              CASE t.priority
-                WHEN 'urgent' THEN 0
-                WHEN 'high' THEN 1
-                WHEN 'medium' THEN 2
-                WHEN 'low' THEN 3
-                WHEN 'none' THEN 4
-                ELSE 5
-              END,
-              t.created_at ASC",
-        ),
-        (TaskSort::Queue, SortDirection::Desc) => query.push(
-            " ORDER BY
-              CASE t.status
-                WHEN 'canceled' THEN 0
-                WHEN 'done' THEN 1
-                WHEN 'backlog' THEN 2
-                WHEN 'inbox' THEN 3
-                WHEN 'todo' THEN 4
-                WHEN 'active' THEN 5
-                ELSE 6
-              END,
-              CASE t.priority
-                WHEN 'none' THEN 0
-                WHEN 'low' THEN 1
-                WHEN 'medium' THEN 2
-                WHEN 'high' THEN 3
-                WHEN 'urgent' THEN 4
-                ELSE 5
-              END,
-              t.created_at DESC",
-        ),
+        (TaskSort::Queue, _) => query.push(" ORDER BY t.created_at ASC"),
         (TaskSort::Created, SortDirection::Asc) => query.push(" ORDER BY t.created_at ASC"),
         (TaskSort::Created, SortDirection::Desc) => query.push(" ORDER BY t.created_at DESC"),
         (TaskSort::Updated, SortDirection::Asc) => {
@@ -417,7 +387,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             listed_titles(&items),
-            ["active urgent", "active low", "todo urgent", "inbox urgent"]
+            ["active urgent", "todo urgent", "active low", "inbox urgent"]
         );
     }
 
