@@ -704,27 +704,43 @@ fn project_cell(item: &TaskListItem) -> Line<'static> {
     ))
 }
 
+fn task_heading_line(item: &TaskListItem) -> Line<'_> {
+    Line::from(vec![
+        Span::styled(
+            &item.display_ref,
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            &item.task.title,
+            Style::new().fg(FG).add_modifier(Modifier::BOLD),
+        ),
+    ])
+}
+
+fn labels_display(labels: &[String], separator: &str) -> String {
+    if labels.is_empty() {
+        "none".to_string()
+    } else {
+        labels.join(separator)
+    }
+}
+
+fn description_or_placeholder(description: &str) -> String {
+    if description.is_empty() {
+        "(no description)".to_string()
+    } else {
+        description.to_string()
+    }
+}
+
 fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usize>, area: Rect) {
     let Some(item) = store.selected_task(selected) else {
         return;
     };
-    let labels = if item.labels.is_empty() {
-        "none".to_string()
-    } else {
-        item.labels.join(", ")
-    };
+    let labels = labels_display(&item.labels, ", ");
     let text = Text::from(vec![
-        Line::from(vec![
-            Span::styled(
-                &item.display_ref,
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("  "),
-            Span::styled(
-                &item.task.title,
-                Style::new().fg(FG).add_modifier(Modifier::BOLD),
-            ),
-        ]),
+        task_heading_line(item),
         Line::from(vec![
             Span::styled("project ", Style::new().fg(FG_DIM)),
             Span::styled(
@@ -749,11 +765,7 @@ fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usi
             Span::styled(labels, Style::new().fg(FG_MUTED)),
         ]),
         Line::from(""),
-        Line::from(if item.task.description.is_empty() {
-            "(no description)".to_string()
-        } else {
-            item.task.description.clone()
-        }),
+        Line::from(description_or_placeholder(&item.task.description)),
     ]);
     frame.render_widget(
         Paragraph::new(text)
@@ -774,25 +786,10 @@ fn render_detail(frame: &mut Frame, item: &TaskListItem) {
     let width = frame.area().width.saturating_sub(8).min(84);
     let height = frame.area().height.saturating_sub(4).min(18);
     let area = centered(frame.area(), width, height);
-    frame.render_widget(Clear, area);
-    let labels = if item.labels.is_empty() {
-        "none".to_string()
-    } else {
-        item.labels.join(",")
-    };
+    let labels = labels_display(&item.labels, ",");
     let deleted = if item.task.deleted { " yes" } else { " no" };
     let text = Text::from(vec![
-        Line::from(vec![
-            Span::styled(
-                &item.display_ref,
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("  "),
-            Span::styled(
-                &item.task.title,
-                Style::new().fg(FG).add_modifier(Modifier::BOLD),
-            ),
-        ]),
+        task_heading_line(item),
         Line::from(""),
         Line::from(format!(
             "project={} status={} priority={} deleted={}",
@@ -804,20 +801,9 @@ fn render_detail(frame: &mut Frame, item: &TaskListItem) {
         )),
         Line::from(format!("labels={labels}")),
         Line::from(""),
-        Line::from(if item.task.description.is_empty() {
-            "(no description)".to_string()
-        } else {
-            item.task.description.clone()
-        }),
+        Line::from(description_or_placeholder(&item.task.description)),
     ]);
-    let block = overlay_block("Detail");
-    frame.render_widget(
-        Paragraph::new(text)
-            .block(block)
-            .wrap(Wrap { trim: false })
-            .style(Style::new().fg(FG).bg(BG_ALT)),
-        area,
-    );
+    render_overlay_paragraph(frame, area, "Detail", text, true);
 }
 
 const HELP_COLUMNS: &[&[&str]] = &[
@@ -887,15 +873,9 @@ fn lifecycle_badge(lifecycle: CommandLifecycle) -> Option<Span<'static>> {
     }
 }
 
-fn command_line(command: &CommandSpec) -> Line<'static> {
-    let keys = command
-        .keys
-        .iter()
-        .map(|key| key.label)
-        .collect::<Vec<_>>()
-        .join("/");
+fn command_hint_line(leading: Span<'static>, command: &CommandSpec) -> Line<'static> {
     let mut spans = vec![
-        Span::styled(format!("{keys:<10}"), Style::new().fg(FG_MUTED)),
+        leading,
         Span::styled(
             format!(":{:<18}", command.name),
             command_name_style(command),
@@ -908,34 +888,35 @@ fn command_line(command: &CommandSpec) -> Line<'static> {
     Line::from(spans)
 }
 
+fn command_line(command: &CommandSpec) -> Line<'static> {
+    let keys = command
+        .keys
+        .iter()
+        .map(|key| key.label)
+        .collect::<Vec<_>>()
+        .join("/");
+    command_hint_line(
+        Span::styled(format!("{keys:<10}"), Style::new().fg(FG_MUTED)),
+        command,
+    )
+}
+
 fn render_command(frame: &mut Frame, input: &str) {
     let matches = matching_commands(input);
     let height = (matches.len().min(8) as u16).saturating_add(3);
     let area = centered(frame.area(), 72, height);
-    frame.render_widget(Clear, area);
 
     let mut lines = vec![Line::from(format!(":{input}▌"))];
     for command in matches.into_iter().take(8) {
         lines.push(command_line(command));
     }
 
-    frame.render_widget(
-        Paragraph::new(Text::from(lines))
-            .block(overlay_block("Command"))
-            .style(Style::new().fg(FG).bg(BG_ALT)),
-        area,
-    );
+    render_overlay_paragraph(frame, area, "Command", Text::from(lines), false);
 }
 
 fn render_search(frame: &mut Frame, input: &str) {
     let area = centered(frame.area(), 54, 3);
-    frame.render_widget(Clear, area);
-    frame.render_widget(
-        Paragraph::new(format!("/{input}▌"))
-            .block(overlay_block("Search"))
-            .style(Style::new().fg(FG).bg(BG_ALT)),
-        area,
-    );
+    render_overlay_paragraph(frame, area, "Search", format!("/{input}▌"), false);
 }
 
 fn render_overlay(
@@ -963,7 +944,6 @@ fn render_overlay(
 
 fn render_text_input(frame: &mut Frame, state: &TextInputView) {
     let area = centered(frame.area(), 54, 5);
-    frame.render_widget(Clear, area);
     let input = insert_cursor(&state.input, state.cursor);
     let text = Text::from(vec![
         Line::from(Span::styled(&state.prompt, Style::new().fg(FG_DIM))),
@@ -973,12 +953,7 @@ fn render_text_input(frame: &mut Frame, state: &TextInputView) {
             Style::new().fg(FG_MUTED),
         )),
     ]);
-    frame.render_widget(
-        Paragraph::new(text)
-            .block(overlay_block(&state.title))
-            .style(Style::new().fg(FG).bg(BG_ALT)),
-        area,
-    );
+    render_overlay_paragraph(frame, area, &state.title, text, false);
 }
 
 fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
@@ -986,7 +961,6 @@ fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
     let content_rows = state.lines.len().min(visible_rows).max(1);
     let height = (content_rows as u16).saturating_add(5).min(16);
     let area = centered(frame.area(), 60, height);
-    frame.render_widget(Clear, area);
     let start = state.row.saturating_sub(visible_rows.saturating_sub(1));
     let mut lines = vec![Line::from(Span::styled(
         &state.prompt,
@@ -1010,13 +984,7 @@ fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
         "Ctrl+S submit  Esc cancel",
         Style::new().fg(FG_MUTED),
     )));
-    frame.render_widget(
-        Paragraph::new(Text::from(lines))
-            .block(overlay_block(&state.title))
-            .wrap(Wrap { trim: false })
-            .style(Style::new().fg(FG).bg(BG_ALT)),
-        area,
-    );
+    render_overlay_paragraph(frame, area, &state.title, Text::from(lines), true);
 }
 
 fn render_picker(frame: &mut Frame, state: &PickerView) {
@@ -1024,7 +992,6 @@ fn render_picker(frame: &mut Frame, state: &PickerView) {
     let viewport_rows = 8usize;
     let height = (visible_count.min(viewport_rows) as u16).saturating_add(5);
     let area = centered(frame.area(), 60, height);
-    frame.render_widget(Clear, area);
     let selected_position = state
         .visible_indices
         .iter()
@@ -1052,17 +1019,11 @@ fn render_picker(frame: &mut Frame, state: &PickerView) {
         "j/k move  Enter submit  Esc cancel"
     };
     lines.push(Line::from(Span::styled(hints, Style::new().fg(FG_MUTED))));
-    frame.render_widget(
-        Paragraph::new(Text::from(lines))
-            .block(overlay_block(&state.title))
-            .style(Style::new().fg(FG).bg(BG_ALT)),
-        area,
-    );
+    render_overlay_paragraph(frame, area, &state.title, Text::from(lines), false);
 }
 
 fn render_confirm(frame: &mut Frame, state: &ConfirmView) {
     let area = centered(frame.area(), 48, 5);
-    frame.render_widget(Clear, area);
     let text = Text::from(vec![
         Line::from(state.prompt.as_str()),
         Line::from(Span::styled(
@@ -1070,12 +1031,7 @@ fn render_confirm(frame: &mut Frame, state: &ConfirmView) {
             Style::new().fg(FG_MUTED),
         )),
     ]);
-    frame.render_widget(
-        Paragraph::new(text)
-            .block(overlay_block(&state.title))
-            .style(Style::new().fg(FG).bg(BG_ALT)),
-        area,
-    );
+    render_overlay_paragraph(frame, area, &state.title, text, false);
 }
 
 fn render_text_panel(frame: &mut Frame, state: &TextPanelView) {
@@ -1083,7 +1039,6 @@ fn render_text_panel(frame: &mut Frame, state: &TextPanelView) {
     let content_rows = state.lines.len().min(visible_rows).max(1);
     let height = (content_rows as u16).saturating_add(4).min(16);
     let area = centered(frame.area(), 60, height);
-    frame.render_widget(Clear, area);
     let start = (state.scroll as usize).min(state.lines.len().saturating_sub(1));
     let mut lines = state
         .lines
@@ -1096,13 +1051,7 @@ fn render_text_panel(frame: &mut Frame, state: &TextPanelView) {
         "j/k scroll  Enter/Esc close",
         Style::new().fg(FG_MUTED),
     )));
-    frame.render_widget(
-        Paragraph::new(Text::from(lines))
-            .block(overlay_block(&state.title))
-            .wrap(Wrap { trim: false })
-            .style(Style::new().fg(FG).bg(BG_ALT)),
-        area,
-    );
+    render_overlay_paragraph(frame, area, &state.title, Text::from(lines), true);
 }
 
 fn insert_cursor(input: &str, cursor: usize) -> String {
@@ -1119,6 +1068,23 @@ fn overlay_block(title: &str) -> Block<'_> {
         .border_style(Style::new().fg(ACCENT))
         .padding(Padding::horizontal(1))
         .style(Style::new().bg(BG_ALT))
+}
+
+fn render_overlay_paragraph<'a>(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    text: impl Into<Text<'a>>,
+    wrap: bool,
+) {
+    frame.render_widget(Clear, area);
+    let mut paragraph = Paragraph::new(text)
+        .block(overlay_block(title))
+        .style(Style::new().fg(FG).bg(BG_ALT));
+    if wrap {
+        paragraph = paragraph.wrap(Wrap { trim: false });
+    }
+    frame.render_widget(paragraph, area);
 }
 
 fn prefix_hint_lines(pending: &[String]) -> Vec<Line<'static>> {
@@ -1139,21 +1105,13 @@ fn prefix_hint_lines(pending: &[String]) -> Vec<Line<'static>> {
                     return None;
                 }
                 let next_key = labels[pending.len()].clone();
-                let mut spans = vec![
+                Some(command_hint_line(
                     Span::styled(
                         format!(" {:<6} ", next_key),
                         Style::new().fg(FG_MUTED).bg(BG_PANEL),
                     ),
-                    Span::styled(
-                        format!(":{:<18}", command.name),
-                        command_name_style(command),
-                    ),
-                ];
-                if let Some(badge) = lifecycle_badge(command.lifecycle) {
-                    spans.push(badge);
-                }
-                spans.push(Span::styled(command.description, Style::new().fg(FG_DIM)));
-                Some(Line::from(spans))
+                    command,
+                ))
             })
         })
         .collect()
