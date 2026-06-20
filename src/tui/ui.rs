@@ -576,7 +576,7 @@ fn render_task_header(frame: &mut Frame, area: Rect, columns: [Constraint; 6]) {
     frame.render_widget(Block::new().style(style), area);
     for (area, label) in cells
         .into_iter()
-        .zip(["REF", "TITLE", "PROJECT", "STATUS", "P", "AGE"])
+        .zip([" REF", "TITLE", "PROJECT", "STATUS", "P", "AGE"])
     {
         frame.render_widget(Paragraph::new(label).style(style), area);
     }
