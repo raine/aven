@@ -16,6 +16,22 @@ pub(crate) const PINK: Color = Color::Rgb(225, 91, 139);
 pub(crate) const PURPLE: Color = Color::Rgb(137, 124, 232);
 pub(crate) const GREEN: Color = Color::Rgb(137, 199, 82);
 pub(crate) const CHIP_BG: Color = Color::Rgb(48, 48, 45);
+const PROJECT_COLORS: [Color; 14] = [
+    Color::Rgb(174, 127, 255),
+    Color::Rgb(60, 203, 162),
+    Color::Rgb(255, 177, 74),
+    Color::Rgb(255, 116, 92),
+    Color::Rgb(242, 112, 166),
+    Color::Rgb(149, 213, 85),
+    Color::Rgb(92, 181, 255),
+    Color::Rgb(255, 207, 87),
+    Color::Rgb(120, 223, 225),
+    Color::Rgb(199, 143, 255),
+    Color::Rgb(255, 139, 104),
+    Color::Rgb(126, 220, 135),
+    Color::Rgb(123, 156, 255),
+    Color::Rgb(232, 128, 214),
+];
 pub(crate) const SELECTED: Style = Style::new()
     .fg(FG)
     .bg(SELECTED_BG)
@@ -50,12 +66,5 @@ pub(crate) fn project_color(key: &str) -> Color {
     let hash = key
         .bytes()
         .fold(5381usize, |acc, byte| acc.wrapping_mul(33) ^ byte as usize);
-    match hash % 6 {
-        0 => PURPLE,
-        1 => ACCENT,
-        2 => ORANGE,
-        3 => Color::Rgb(234, 99, 64),
-        4 => PINK,
-        _ => GREEN,
-    }
+    PROJECT_COLORS[hash % PROJECT_COLORS.len()]
 }
