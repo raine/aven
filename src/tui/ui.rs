@@ -1282,17 +1282,14 @@ fn add_task_hint_line() -> Line<'static> {
 }
 
 fn add_task_metadata_title(project: &str, priority: &str, width: u16) -> Line<'static> {
-    let metadata_width = (width as usize).saturating_sub(18).max(4);
-    let metadata = format!(
-        "{} {}",
-        truncate_chars(project, metadata_width / 2),
-        truncate_chars(priority, metadata_width / 2)
-    );
+    let value_width = (width as usize).saturating_sub(36).max(4) / 2;
+    let value_style = Style::new().fg(Color::Rgb(194, 174, 255));
     Line::from(vec![
-        Span::styled(
-            format!(" {metadata}"),
-            Style::new().fg(Color::Rgb(194, 174, 255)),
-        ),
+        Span::styled(" project: ", Style::new().fg(FG_MUTED)),
+        Span::styled(truncate_chars(project, value_width), value_style),
+        Span::styled(" · ", Style::new().fg(FG_DIM)),
+        Span::styled("prio: ", Style::new().fg(FG_MUTED)),
+        Span::styled(truncate_chars(priority, value_width), value_style),
         Span::styled("  Tab Ctrl+P ", Style::new().fg(FG_MUTED)),
     ])
 }
@@ -1930,6 +1927,14 @@ mod tests {
         assert_eq!(line.spans[0].content.as_ref(), "▌");
         assert_eq!(line.spans[1].content.as_ref(), "title");
         assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
+    }
+
+    #[test]
+    fn add_task_metadata_title_labels_values() {
+        let rendered = add_task_metadata_title("aven", "none", 60).to_string();
+        assert!(rendered.contains("project: aven"));
+        assert!(rendered.contains("prio: none"));
+        assert!(rendered.contains(" · "));
     }
 
     #[test]
