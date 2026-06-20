@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use sqlx::SqlitePool;
 
 use crate::choices::PRIORITIES;
@@ -20,6 +20,9 @@ use crate::query::{
 };
 use crate::tui::overlay::PickerItem;
 use crate::undo::{UndoCommand, UndoPayload, task_field_value, task_snapshot};
+use crate::workspaces::{
+    Workspace, active_workspace, find_workspace, list_workspaces, set_active_workspace,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MutationMessage {
@@ -62,6 +65,8 @@ pub(crate) struct TuiStore {
     pub(crate) tasks: Vec<TaskListItem>,
     pub(crate) projects: Vec<ProjectListItem>,
     pub(crate) labels: Vec<String>,
+    pub(crate) workspaces: Vec<Workspace>,
+    pub(crate) active_workspace: Workspace,
     pub(crate) counts: SidebarCounts,
     pub(crate) sidebar_entries: Vec<SidebarEntry>,
     pub(crate) active_view: SidebarTarget,
@@ -78,6 +83,8 @@ impl TuiStore {
             tasks: Vec::new(),
             projects: Vec::new(),
             labels: Vec::new(),
+            workspaces: Vec::new(),
+            active_workspace: active_workspace(),
             counts: SidebarCounts::default(),
             sidebar_entries: Vec::new(),
             active_view: SidebarTarget::All,
@@ -105,8 +112,14 @@ impl TuiStore {
         }
     }
 
+    fn activate_workspace(&self) {
+        set_active_workspace(self.active_workspace.clone());
+    }
+
     pub(crate) async fn refresh(&mut self, selected_id: Option<&str>) -> Result<Option<usize>> {
         let mut conn = self.pool.acquire().await?;
+        self.activate_workspace();
+        self.workspaces = list_workspaces(&mut conn).await?;
         self.projects = list_project_items(&mut conn).await?;
         self.labels = list_labels(&mut conn, None).await?;
         self.counts = sidebar_counts(&mut conn).await?;
@@ -164,6 +177,7 @@ impl TuiStore {
     }
 
     async fn record_undo(&self, summary: &str, payload: UndoPayload) -> Result<()> {
+        self.activate_workspace();
         let workspace_id = crate::workspaces::active_workspace_id();
         let mut conn = self.pool.acquire().await?;
         crate::undo::record_tui_undo(&mut conn, &workspace_id, summary, payload).await?;
@@ -171,6 +185,7 @@ impl TuiStore {
     }
 
     pub(crate) async fn undo_last(&mut self) -> Result<Option<MutationMessage>> {
+        self.activate_workspace();
         let workspace_id = crate::workspaces::active_workspace_id();
         let mut conn = self.pool.acquire().await?;
         let Some(outcome) = crate::undo::apply_latest_tui_undo(&mut conn, &workspace_id).await?
@@ -200,6 +215,7 @@ impl TuiStore {
         F: FnOnce(&TaskListItem) -> String,
     {
         if let Some(item) = self.selected_task(index).cloned() {
+            self.activate_workspace();
             let mut conn = self.pool.acquire().await?;
             update_task_operation(&mut conn, &item.task.id, update).await?;
             drop(conn);
@@ -312,6 +328,7 @@ impl TuiStore {
     ) -> Result<Option<MutationMessage>> {
         if let Some(item) = self.selected_task(index).cloned() {
             let before = item.task.status.clone();
+            self.activate_workspace();
             let mut conn = self.pool.acquire().await?;
             set_status(&mut conn, &item.task, status).await?;
             drop(conn);
@@ -343,6 +360,7 @@ impl TuiStore {
     ) -> Result<Option<MutationMessage>> {
         if let Some(item) = self.selected_task(index).cloned() {
             let before = item.task.priority.clone();
+            self.activate_workspace();
             let mut conn = self.pool.acquire().await?;
             let task = cycle_priority(&mut conn, &item.task, reverse).await?;
             drop(conn);
@@ -485,6 +503,7 @@ impl TuiStore {
             return Ok(None);
         };
         let before = item.task.project_key.clone();
+        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
         let outcome =
             update_task_operation(&mut conn, &item.task.id, TaskUpdate {
@@ -565,6 +584,7 @@ impl TuiStore {
     ) -> Result<Option<MutationMessage>> {
         if let Some(item) = self.selected_task(index).cloned() {
             let before = if item.task.deleted { "1" } else { "0" };
+            self.activate_workspace();
             let mut conn = self.pool.acquire().await?;
             set_deleted(&mut conn, &item.task, deleted).await?;
             drop(conn);
@@ -601,6 +621,7 @@ impl TuiStore {
 
     pub(crate) async fn create_project(&mut self, name: String) -> Result<String> {
         let name = name.trim().to_string();
+        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
         let outcome = create_project_operation(&mut conn, &name, None).await?;
         drop(conn);
@@ -624,6 +645,7 @@ impl TuiStore {
 
     pub(crate) async fn create_label(&mut self, name: String) -> Result<String> {
         let name = name.trim().to_string();
+        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
         let outcome = create_label_operation(&mut conn, &name).await?;
         drop(conn);
@@ -688,6 +710,28 @@ impl TuiStore {
             .collect()
     }
 
+    pub(crate) fn workspace_picker_items(&self) -> Vec<PickerItem> {
+        self.workspaces
+            .iter()
+            .map(|workspace| workspace_picker_item(workspace, &self.active_workspace.key))
+            .collect()
+    }
+
+    pub(crate) async fn switch_workspace(&mut self, key: String) -> Result<(String, Option<usize>)> {
+        let mut conn = self.pool.acquire().await?;
+        let workspace = find_workspace(&mut conn, &key)
+            .await?
+            .with_context(|| format!("workspace not found: {key}"))?;
+        drop(conn);
+        let name = workspace.name.clone();
+        let key = workspace.key.clone();
+        self.active_workspace = workspace;
+        self.active_view = SidebarTarget::All;
+        self.filters = TaskFilters::default();
+        let selected = self.refresh(None).await?;
+        Ok((format!("switched workspace to {key} ({name})"), selected))
+    }
+
     pub(crate) async fn create_task(
         &mut self,
         draft: TaskDraft,
@@ -696,6 +740,7 @@ impl TuiStore {
         let previous_id = self
             .selected_task(current_selected_index)
             .map(|item| item.task.id.clone());
+        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
         let outcome = create_task_operation(&mut conn, draft).await?;
         let task_id = outcome.task.id.clone();
@@ -728,6 +773,7 @@ impl TuiStore {
     }
 
     pub(crate) async fn add_note_to_task(&mut self, task_id: &str, body: String) -> Result<String> {
+        self.activate_workspace();
         let workspace_id = crate::workspaces::active_workspace_id();
         let mut conn = self.pool.acquire().await?;
         let outcome = add_note_operation(&mut conn, task_id, body).await?;
@@ -761,6 +807,7 @@ impl TuiStore {
         let Some(item) = self.selected_task(index) else {
             return Ok(None);
         };
+        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
         let details = task_conflicts(&mut conn, &item.task.id, None).await?;
         Ok(Some(
@@ -784,6 +831,7 @@ impl TuiStore {
         target: ConflictTarget,
         value: String,
     ) -> Result<MutationMessage> {
+        self.activate_workspace();
         let workspace_id = crate::workspaces::active_workspace_id();
         let mut conn = self.pool.acquire().await?;
         let before = task_field_value(&mut conn, &workspace_id, &target.task_id, &target.field)
@@ -959,6 +1007,14 @@ fn project_picker_item(project: &ProjectListItem, selected: &str) -> PickerItem 
     }
 }
 
+fn workspace_picker_item(workspace: &Workspace, active_key: &str) -> PickerItem {
+    PickerItem {
+        label: format!("{} ({})", workspace.name, workspace.key),
+        value: workspace.key.clone(),
+        selected: workspace.key == active_key,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -968,7 +1024,16 @@ mod tests {
         let pool = crate::db::open_db(&dir.path().join("test.db"))
             .await
             .unwrap();
+        reset_default_workspace(&pool).await;
         TuiStore::new(pool).await.unwrap()
+    }
+
+    async fn reset_default_workspace(pool: &SqlitePool) {
+        let mut conn = pool.acquire().await.unwrap();
+        let default = crate::workspaces::ensure_default_workspace(&mut conn)
+            .await
+            .unwrap();
+        crate::workspaces::set_active_workspace(default);
     }
 
     #[tokio::test]
@@ -1842,5 +1907,84 @@ mod tests {
         store.undo_last().await.unwrap().unwrap();
         store.undo_last().await.unwrap().unwrap();
         assert!(store.undo_last().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_refreshes_workspace_scoped_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        reset_default_workspace(&pool).await;
+        let mut store = TuiStore::new(pool.clone()).await.unwrap();
+        let (_, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Default workspace task".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(selected.is_some());
+        assert_eq!(store.tasks.len(), 1);
+
+        let mut conn = pool.acquire().await.unwrap();
+        let other = crate::workspaces::create_workspace(&mut conn, "Client Work")
+            .await
+            .unwrap();
+        drop(conn);
+
+        store.active_view = SidebarTarget::Todo;
+        store.filters.status = Some("todo".to_string());
+
+        let (message, selected) = store.switch_workspace(other.key.clone()).await.unwrap();
+
+        assert_eq!(message, "switched workspace to client-work (Client Work)");
+        assert!(selected.is_none());
+        assert_eq!(store.active_workspace.key, "client-work");
+        assert_eq!(store.active_view, SidebarTarget::All);
+        assert!(store.filters.status.is_none());
+        assert!(store.tasks.is_empty());
+        assert!(
+            store
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.key == "client-work")
+        );
+
+        reset_default_workspace(&pool).await;
+    }
+
+    #[tokio::test]
+    async fn workspace_picker_marks_active_workspace_selected() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        reset_default_workspace(&pool).await;
+        let mut store = TuiStore::new(pool.clone()).await.unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        crate::workspaces::create_workspace(&mut conn, "Client Work")
+            .await
+            .unwrap();
+        drop(conn);
+        store.refresh(None).await.unwrap();
+
+        let items = store.workspace_picker_items();
+        assert!(items.iter().any(|item| item.value == "client-work"));
+        assert!(
+            items
+                .iter()
+                .find(|item| item.value == "default")
+                .is_some_and(|item| item.selected)
+        );
+
+        reset_default_workspace(&pool).await;
     }
 }

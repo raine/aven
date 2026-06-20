@@ -57,6 +57,7 @@ pub(crate) enum Action {
     BeginFilterLabel,
     BeginFilterStatus,
     BeginFilterPriority,
+    BeginSwitchWorkspace,
     ClearFilters,
     ToggleDeletedFilter,
     ShowView(ViewTarget),
@@ -492,6 +493,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             label: "g c",
         }],
         Action::ShowView(ViewTarget::Conflicts),
+    ),
+    CommandSpec::implemented(
+        "workspace-switch",
+        "switch active workspace",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('w')],
+            label: "g w",
+        }],
+        Action::BeginSwitchWorkspace,
     ),
     CommandSpec::planned(
         "view-deleted",
@@ -1066,6 +1077,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginFilterLabel
             | Action::BeginFilterStatus
             | Action::BeginFilterPriority
+            | Action::BeginSwitchWorkspace
             | Action::ClearFilters
             | Action::ToggleDeletedFilter
             | Action::ShowView(_)
@@ -1562,6 +1574,10 @@ mod tests {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('c')]),
             ShortcutLookup::Found(Action::ShowView(ViewTarget::Conflicts))
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('w')]),
+            ShortcutLookup::Found(Action::BeginSwitchWorkspace)
         );
     }
 

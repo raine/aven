@@ -103,6 +103,10 @@ fn header_tabs(store: &TuiStore) -> Paragraph<'static> {
     let conflict_count = store.tasks.iter().filter(|task| task.has_conflict).count();
     let mut spans = vec![
         Span::styled("tasks", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("  workspace {}", store.active_workspace.key),
+            Style::new().fg(FG_MUTED),
+        ),
         Span::raw("   "),
         tab(
             "queue",
@@ -1291,6 +1295,26 @@ mod tests {
                 .join("")
         });
         assert!(rendered.contains("order priority desc"));
+    }
+
+    #[test]
+    fn header_shows_active_workspace() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rendered = rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let pool = crate::db::open_db(&dir.path().join("test.db"))
+                .await
+                .unwrap();
+            let mut store = TuiStore::new(pool).await.unwrap();
+            store.active_workspace.key = "client-work".to_string();
+            let backend = TestBackend::new(120, 10);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| render_header(frame, &store, frame.area()))
+                .unwrap();
+            buffer_text(terminal.backend())
+        });
+        assert!(rendered.contains("workspace client-work"));
     }
 
     #[test]

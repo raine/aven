@@ -37,6 +37,7 @@ const FILTER_LABEL_TITLE: &str = "Filter: label";
 const FILTER_STATUS_TITLE: &str = "Filter: status";
 const FILTER_PRIORITY_TITLE: &str = "Filter: priority";
 const VIEW_PROJECT_TITLE: &str = "Go: project";
+const SWITCH_WORKSPACE_TITLE: &str = "Switch workspace";
 const CONFLICT_FIELD_TITLE: &str = "Conflict: field";
 const CONFLICT_CONFIRM_LOCAL_TITLE: &str = "Resolve conflict: local";
 const CONFLICT_CONFIRM_REMOTE_TITLE: &str = "Resolve conflict: remote";
@@ -381,6 +382,9 @@ impl App {
             OverlaySubmit::Picker { title, values } if title == VIEW_PROJECT_TITLE => {
                 self.submit_view_project(values).await?;
             }
+            OverlaySubmit::Picker { title, values } if title == SWITCH_WORKSPACE_TITLE => {
+                self.submit_switch_workspace(values).await?;
+            }
             OverlaySubmit::Picker { title, values } if title == CONFLICT_FIELD_TITLE => {
                 self.submit_conflict_field_picker(values).await?;
             }
@@ -458,6 +462,7 @@ impl App {
             Action::BeginFilterLabel => self.begin_filter_label(),
             Action::BeginFilterStatus => self.begin_filter_status(),
             Action::BeginFilterPriority => self.begin_filter_priority(),
+            Action::BeginSwitchWorkspace => self.begin_switch_workspace().await?,
             Action::ClearFilters => self.clear_filters().await?,
             Action::ToggleDeletedFilter => self.toggle_deleted_filter().await?,
             Action::ShowView(target) => self.show_view(target).await?,
@@ -1136,6 +1141,14 @@ impl App {
         self.open_picker_overlay(FILTER_PRIORITY_TITLE, items, false);
     }
 
+    async fn begin_switch_workspace(&mut self) -> Result<()> {
+        self.pending_shortcut.clear();
+        self.store.refresh(None).await?;
+        let items = self.store.workspace_picker_items();
+        self.open_picker_overlay(SWITCH_WORKSPACE_TITLE, items, false);
+        Ok(())
+    }
+
     fn begin_view_project(&mut self) {
         self.pending_shortcut.clear();
         let selected = match &self.store.active_view {
@@ -1246,6 +1259,17 @@ impl App {
             .await?;
         self.apply_filter_selection(selected);
         self.set_message("project view selected".to_string());
+        Ok(())
+    }
+
+    async fn submit_switch_workspace(&mut self, values: Vec<String>) -> Result<()> {
+        let Some(workspace) = self.require_picker_value(values, "no matching workspace") else {
+            self.begin_switch_workspace().await?;
+            return Ok(());
+        };
+        let (message, selected) = self.store.switch_workspace(workspace).await?;
+        self.apply_filter_selection(selected);
+        self.set_message(message);
         Ok(())
     }
 
@@ -1682,6 +1706,7 @@ mod tests {
         let pool = crate::db::open_db(&dir.path().join("test.db"))
             .await
             .unwrap();
+        reset_default_workspace(&pool).await;
         App::new(pool).await.unwrap()
     }
 
@@ -1707,8 +1732,17 @@ mod tests {
         let pool = crate::db::open_db(&dir.path().join("test.db"))
             .await
             .unwrap();
+        reset_default_workspace(&pool).await;
         let app = App::new(pool.clone()).await.unwrap();
         (dir, pool, app)
+    }
+
+    async fn reset_default_workspace(pool: &SqlitePool) {
+        let mut conn = pool.acquire().await.unwrap();
+        let default = crate::workspaces::ensure_default_workspace(&mut conn)
+            .await
+            .unwrap();
+        crate::workspaces::set_active_workspace(default);
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -1959,6 +1993,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn command_panel_runs_workspace_switch() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        crate::workspaces::create_workspace(&mut conn, "Client Work")
+            .await
+            .unwrap();
+        drop(conn);
+
+        app.begin_command();
+        type_chars(&mut app, "workspace-switch").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(PickerState { title, items, .. }))
+                if title == SWITCH_WORKSPACE_TITLE
+                    && items.iter().any(|item| item.value == "client-work")
+        ));
+
+        reset_default_workspace(&pool).await;
+    }
+
+    #[tokio::test]
     async fn invalid_continuation_shows_message() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
@@ -2019,6 +2076,63 @@ mod tests {
             &app.overlay,
             Some(OverlayState::Picker(PickerState { title, .. })) if title == FILTER_PROJECT_TITLE
         ));
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_shortcut_opens_picker() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        crate::workspaces::create_workspace(&mut conn, "Client Work")
+            .await
+            .unwrap();
+        drop(conn);
+
+        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('w')).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(PickerState { title, .. })) if title == SWITCH_WORKSPACE_TITLE
+        ));
+
+        reset_default_workspace(&pool).await;
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_changes_active_workspace() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        create_and_select_task(&mut app, test_task_draft("Default only")).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        crate::workspaces::create_workspace(&mut conn, "Client Work")
+            .await
+            .unwrap();
+        drop(conn);
+        app.refresh().await.unwrap();
+
+        app.store.filters.status = Some("todo".to_string());
+        app.store.active_view = SidebarTarget::Todo;
+
+        let (message, selected) = app
+            .store
+            .switch_workspace("client-work".to_string())
+            .await
+            .unwrap();
+        app.apply_filter_selection(selected);
+        app.set_message(message);
+
+        assert_eq!(app.store.active_workspace.key, "client-work");
+        assert_eq!(app.store.active_view, SidebarTarget::All);
+        assert!(app.store.filters.status.is_none());
+        assert!(app.store.tasks.is_empty());
+        assert!(app.overlay.is_none());
+        assert!(
+            app.message
+                .as_deref()
+                .is_some_and(|message| message.contains("switched workspace to client-work"))
+        );
+
+        reset_default_workspace(&pool).await;
     }
 
     #[tokio::test]
