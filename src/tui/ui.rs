@@ -1414,15 +1414,48 @@ fn render_picker(frame: &mut Frame, state: &PickerView) {
         } else {
             ""
         };
-        lines.push(Line::from(format!("{marker}{}{check}", item.label)));
+        if state.title == "Edit task: priority" {
+            lines.push(priority_picker_line(item, *index == state.selected));
+        } else {
+            lines.push(Line::from(format!("{marker}{}{check}", item.label)));
+        }
     }
-    let hints = if state.multi {
-        "Up/Down or Ctrl+N/P move  Space toggle  Enter submit  Esc cancel"
-    } else {
-        "Up/Down or Ctrl+N/P move  Enter submit  Esc cancel"
-    };
-    lines.push(Line::from(Span::styled(hints, Style::new().fg(FG_MUTED))));
+    lines.push(picker_hint_line(state.multi, "submit"));
     render_overlay_paragraph(frame, area, &state.title, Text::from(lines), false);
+}
+
+fn priority_picker_line(item: &PickerItem, selected: bool) -> Line<'static> {
+    let marker = if selected { "▸ " } else { "  " };
+    Line::from(vec![
+        Span::raw(marker),
+        Span::styled(
+            format!("{} ", priority_icon(&item.value)),
+            theme::priority_style(&item.value).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(item.label.clone(), theme::priority_style(&item.value)),
+    ])
+}
+
+fn picker_hint_line(multi: bool, submit_label: &'static str) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled("Up/Down", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" move  ", Style::new().fg(FG_MUTED)),
+        Span::styled("Ctrl+N/P", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" move  ", Style::new().fg(FG_MUTED)),
+    ];
+    if multi {
+        spans.extend([
+            Span::styled("Space", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+            Span::styled(" toggle  ", Style::new().fg(FG_MUTED)),
+        ]);
+    }
+    spans.extend([
+        Span::styled("Enter", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" {submit_label}  "), Style::new().fg(FG_MUTED)),
+        Span::styled("Esc", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" cancel", Style::new().fg(FG_MUTED)),
+    ]);
+    Line::from(spans)
 }
 
 fn render_project_picker(frame: &mut Frame, state: &PickerView) {
@@ -1445,6 +1478,7 @@ fn render_project_picker(frame: &mut Frame, state: &PickerView) {
             Span::styled("PROJECT", Style::new().fg(FG_DIM).bg(BG_PANEL)),
         ]),
     ];
+    let list_start = lines.len();
     for index in state.visible_indices.iter().skip(start).take(viewport_rows) {
         lines.push(project_picker_line(
             &state.items[*index],
@@ -1456,6 +1490,9 @@ fn render_project_picker(frame: &mut Frame, state: &PickerView) {
             "  no matching projects",
             Style::new().fg(FG_DIM),
         )));
+    }
+    while lines.len().saturating_sub(list_start) < viewport_rows {
+        lines.push(Line::from(""));
     }
     lines.push(project_picker_hint_line());
     render_overlay_paragraph(frame, area, &state.title, Text::from(lines), false);
@@ -1488,16 +1525,7 @@ fn project_picker_line(item: &PickerItem, selected: bool) -> Line<'static> {
 }
 
 fn project_picker_hint_line() -> Line<'static> {
-    Line::from(vec![
-        Span::styled("Up/Down", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" move  ", Style::new().fg(FG_MUTED)),
-        Span::styled("Ctrl+N/P", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" move  ", Style::new().fg(FG_MUTED)),
-        Span::styled("Enter", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" open  ", Style::new().fg(FG_MUTED)),
-        Span::styled("Esc", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" cancel", Style::new().fg(FG_MUTED)),
-    ])
+    picker_hint_line(false, "open")
 }
 
 fn render_confirm(frame: &mut Frame, state: &ConfirmView) {
@@ -2102,8 +2130,30 @@ mod tests {
         }));
         assert!(rendered.contains("Project"));
         assert!(rendered.contains("/app"));
-        assert!(rendered.contains("Ctrl+N/P move"));
-        assert!(rendered.contains("Space toggle"));
+        assert!(rendered.contains("Ctrl+N/P"));
+        assert!(rendered.contains("Space"));
+        assert!(rendered.contains("toggle"));
+    }
+
+    #[test]
+    fn priority_picker_shows_priority_icons() {
+        let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+            title: "Edit task: priority".to_string(),
+            filter: String::new(),
+            filter_cursor: 0,
+            items: vec![PickerItem {
+                label: "urgent".to_string(),
+                value: "urgent".to_string(),
+                selected: false,
+            }],
+            selected: 0,
+            multi: false,
+            visible_indices: vec![0],
+        }));
+        assert!(rendered.contains(priority_icon("urgent")));
+        assert!(rendered.contains("urgent"));
+        assert!(rendered.contains("Enter"));
+        assert!(rendered.contains("submit"));
     }
 
     #[test]
