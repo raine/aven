@@ -71,6 +71,7 @@ wake_addr = "0.0.0.0:47631"
 #[test]
 fn daemon_refuses_wake_port_that_is_already_bound() {
     let env = TestEnv::new();
+    let db = env.db("daemon.sqlite");
     let wake_addr = env.free_loopback_addr();
     let _socket = UdpSocket::bind(&wake_addr).expect("bind wake addr");
     env.write_config(&format!(
@@ -85,7 +86,7 @@ server_url = "http://127.0.0.1:9"
 [daemon]
 wake_addr = "{}"
 "#,
-        env.db("daemon.sqlite").display(),
+        db.display()
         wake_addr
     ));
 
@@ -217,24 +218,7 @@ auth_token = "secret"
     let client_b = env.db("client-b.sqlite");
     let wake_addr = env.free_loopback_addr();
 
-    env.write_config(&format!(
-        r#"
-[local]
-db_path = "{}"
-
-[sync]
-enabled = true
-server_url = "{}"
-interval_seconds = 3600
-auth_token = "secret"
-
-[daemon]
-wake_addr = "{}"
-"#,
-        client_a.display(),
-        server.url,
-        wake_addr
-    ));
+    env.write_daemon_config_with_auth(&client_a, &server, &wake_addr, 3600, Some("secret"));
 
     let daemon = TestProcess::start_daemon(&env);
     daemon.wait_for_log("daemon-synced", Duration::from_secs(5));

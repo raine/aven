@@ -62,6 +62,21 @@ impl TestEnv {
         wake_addr: &str,
         interval: u64,
     ) {
+        self.write_daemon_config_with_auth(db, server, wake_addr, interval, None);
+    }
+
+    pub fn write_daemon_config_with_auth(
+        &self,
+        db: &Path,
+        server: &TestServer,
+        wake_addr: &str,
+        interval: u64,
+        auth_token: Option<&str>,
+    ) {
+        let auth_line = match auth_token {
+            Some(token) => format!("auth_token = \"{token}\"\n"),
+            None => String::new(),
+        };
         self.write_config(&format!(
             r#"
 [local]
@@ -71,7 +86,7 @@ db_path = "{}"
 enabled = true
 server_url = "{}"
 interval_seconds = {}
-
+{auth_line}
 [daemon]
 wake_addr = "{}"
 "#,

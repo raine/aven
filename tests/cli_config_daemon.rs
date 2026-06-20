@@ -44,23 +44,7 @@ fn daemon_auto_syncs_configured_database() {
     let client_a = env.db("client-a.sqlite");
     let client_b = env.db("client-b.sqlite");
     let wake_addr = env.free_loopback_addr();
-    env.write_config(&format!(
-        r#"
-[local]
-db_path = "{}"
-
-[sync]
-enabled = true
-server_url = "{}"
-interval_seconds = 60
-
-[daemon]
-wake_addr = "{}"
-"#,
-        client_a.display(),
-        server.url,
-        wake_addr
-    ));
+    env.write_daemon_config(&client_a, &server, &wake_addr, 60);
 
     let _daemon = TestProcess::start_daemon(&env);
     let task_ref = extract_ref(&ok(env.atm_config([
