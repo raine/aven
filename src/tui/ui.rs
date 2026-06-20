@@ -344,24 +344,21 @@ fn civil_from_unix_days(days: i64) -> (i64, u32, u32, u32) {
 }
 
 fn footer_bar() -> Paragraph<'static> {
-    let hints = Line::from(vec![
-        key("j/k"),
-        cmd("navigate"),
-        key("Enter"),
-        cmd("detail"),
-        key("a/s/p/l/n/d/x/y"),
-        cmd("task"),
-        key("g/e/m/f/o/c/C"),
-        cmd("prefixes"),
-        key("/"),
-        cmd("search"),
-        key(":"),
-        cmd("command"),
-        key("?"),
-        cmd("help"),
-        key("q"),
-        cmd("quit"),
-    ]);
+    let mut spans = Vec::new();
+    for (keys, label) in [
+        ("j/k", "navigate"),
+        ("Enter", "detail"),
+        ("a/s/p/l/n/d/x/y", "task"),
+        ("g/e/m/f/o/c/C", "prefixes"),
+        ("/", "search"),
+        (":", "command"),
+        ("?", "help"),
+        ("q", "quit"),
+    ] {
+        spans.extend(key(keys));
+        spans.push(cmd(label));
+    }
+    let hints = Line::from(spans);
     Paragraph::new(hints)
         .block(
             Block::new()
@@ -535,14 +532,17 @@ fn render_tasks(
     }
 }
 
-fn key(label: &str) -> Span<'static> {
-    Span::styled(
-        format!(" {label} "),
-        Style::new()
-            .fg(FG_MUTED)
-            .bg(BG_PANEL)
-            .add_modifier(Modifier::BOLD),
-    )
+fn key(label: &str) -> Vec<Span<'static>> {
+    let style = Style::new()
+        .fg(FG_MUTED)
+        .bg(BG_PANEL)
+        .add_modifier(Modifier::BOLD);
+    let edge_style = Style::new().fg(BG_PANEL).bg(BG);
+    vec![
+        Span::styled("".to_string(), edge_style),
+        Span::styled(label.to_string(), style),
+        Span::styled("".to_string(), edge_style),
+    ]
 }
 
 fn cmd(label: &str) -> Span<'static> {
