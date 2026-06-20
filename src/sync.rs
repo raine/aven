@@ -510,7 +510,8 @@ fn required_string_payload(key: &str, payload: &Value) -> Result<String> {
 }
 
 fn required_workspace_payload(payload: &Value) -> Result<()> {
-    required_string_payload("workspace_id", payload).and_then(|id| ensure_sync_id("workspace_id", &id))?;
+    required_string_payload("workspace_id", payload)
+        .and_then(|id| ensure_sync_id("workspace_id", &id))?;
     required_string_payload("workspace_key", payload)?;
     Ok(())
 }
@@ -805,12 +806,14 @@ async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWire) -
             let workspace_id = workspace_id_payload(conn, change).await?;
             let name = str_payload(&change.payload, "name")?;
             let created_at = str_payload(&change.payload, "created_at").unwrap_or_else(|_| now());
-            sqlx::query("INSERT OR IGNORE INTO labels(workspace_id, name, created_at) VALUES (?, ?, ?)")
-                .bind(&workspace_id)
-                .bind(name)
-                .bind(created_at)
-                .execute(&mut *conn)
-                .await?;
+            sqlx::query(
+                "INSERT OR IGNORE INTO labels(workspace_id, name, created_at) VALUES (?, ?, ?)",
+            )
+            .bind(&workspace_id)
+            .bind(name)
+            .bind(created_at)
+            .execute(&mut *conn)
+            .await?;
         }
         "create_task" => apply_remote_create_task(conn, change).await?,
         "set_field" => apply_remote_set_field(conn, change, false).await?,
@@ -818,12 +821,14 @@ async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWire) -
         "label_add" => {
             let workspace_id = workspace_id_payload(conn, change).await?;
             let label = str_payload(&change.payload, "label")?;
-            sqlx::query("INSERT OR IGNORE INTO labels(workspace_id, name, created_at) VALUES (?, ?, ?)")
-                .bind(&workspace_id)
-                .bind(&label)
-                .bind(&change.created_at)
-                .execute(&mut *conn)
-                .await?;
+            sqlx::query(
+                "INSERT OR IGNORE INTO labels(workspace_id, name, created_at) VALUES (?, ?, ?)",
+            )
+            .bind(&workspace_id)
+            .bind(&label)
+            .bind(&change.created_at)
+            .execute(&mut *conn)
+            .await?;
             sqlx::query(
                 "INSERT OR IGNORE INTO task_labels(workspace_id, task_id, label) VALUES (?, ?, ?)",
             )
@@ -836,12 +841,14 @@ async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWire) -
         "label_remove" => {
             let workspace_id = workspace_id_payload(conn, change).await?;
             let label = str_payload(&change.payload, "label")?;
-            sqlx::query("DELETE FROM task_labels WHERE workspace_id = ? AND task_id = ? AND label = ?")
-                .bind(&workspace_id)
-                .bind(&change.entity_id)
-                .bind(&label)
-                .execute(&mut *conn)
-                .await?;
+            sqlx::query(
+                "DELETE FROM task_labels WHERE workspace_id = ? AND task_id = ? AND label = ?",
+            )
+            .bind(&workspace_id)
+            .bind(&change.entity_id)
+            .bind(&label)
+            .execute(&mut *conn)
+            .await?;
         }
         "note_add" => {
             let workspace_id = workspace_id_payload(conn, change).await?;
@@ -869,13 +876,11 @@ async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWire) -
 
 async fn apply_remote_create_task(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     let workspace_id = workspace_id_payload(conn, change).await?;
-    if sqlx::query_scalar::<_, i64>(
-        "SELECT count(*) FROM tasks WHERE workspace_id = ? AND id = ?",
-    )
-    .bind(&workspace_id)
-    .bind(&change.entity_id)
-    .fetch_one(&mut *conn)
-    .await?
+    if sqlx::query_scalar::<_, i64>("SELECT count(*) FROM tasks WHERE workspace_id = ? AND id = ?")
+        .bind(&workspace_id)
+        .bind(&change.entity_id)
+        .fetch_one(&mut *conn)
+        .await?
         > 0
     {
         return Ok(());
@@ -925,12 +930,14 @@ async fn apply_remote_create_task(conn: &mut SqliteConnection, change: &ChangeWi
     .await?;
     if let Some(labels) = change.payload.get("labels").and_then(Value::as_array) {
         for label in labels.iter().filter_map(Value::as_str) {
-            sqlx::query("INSERT OR IGNORE INTO labels(workspace_id, name, created_at) VALUES (?, ?, ?)")
-                .bind(&workspace_id)
-                .bind(label)
-                .bind(&change.created_at)
-                .execute(&mut *conn)
-                .await?;
+            sqlx::query(
+                "INSERT OR IGNORE INTO labels(workspace_id, name, created_at) VALUES (?, ?, ?)",
+            )
+            .bind(&workspace_id)
+            .bind(label)
+            .bind(&change.created_at)
+            .execute(&mut *conn)
+            .await?;
             sqlx::query(
                 "INSERT OR IGNORE INTO task_labels(workspace_id, task_id, label) VALUES (?, ?, ?)",
             )

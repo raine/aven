@@ -16,13 +16,16 @@ fn workspace_commands_manage_names_and_ambiguity() {
     contains_all(&initial, &["default", "name=\"default\""]);
 
     let created = ok(env.atm(&db, ["workspace", "create", "Client Work"]));
-    contains_all(&created, &["created-workspace", "client-work", "name=\"Client Work\""]);
+    contains_all(
+        &created,
+        &["created-workspace", "client-work", "name=\"Client Work\""],
+    );
 
-    let renamed = ok(env.atm(
-        &db,
-        ["workspace", "rename", "client-work", "Consulting"],
-    ));
-    contains_all(&renamed, &["renamed-workspace", "consulting", "name=\"Consulting\""]);
+    let renamed = ok(env.atm(&db, ["workspace", "rename", "client-work", "Consulting"]));
+    contains_all(
+        &renamed,
+        &["renamed-workspace", "consulting", "name=\"Consulting\""],
+    );
 
     let ambiguous = fail(env.atm(&db, ["list"]));
     contains_all(&ambiguous, &["workspace-required", "--workspace"]);
@@ -113,13 +116,7 @@ paths = ["{}"]
         "bug",
     ]));
 
-    ok(env.atm_config([
-        "--workspace",
-        "alpha",
-        "label",
-        "create",
-        "bug",
-    ]));
+    ok(env.atm_config(["--workspace", "alpha", "label", "create", "bug"]));
     ok(env.atm_config([
         "--workspace",
         "alpha",
@@ -161,34 +158,43 @@ fn project_path_remove_only_affects_active_workspace() {
     ok(env.atm(&db, ["workspace", "create", "beta"]));
     ok(env.atm(&db, ["--workspace", "alpha", "project", "create", "app"]));
     ok(env.atm(&db, ["--workspace", "beta", "project", "create", "app"]));
-    ok(env.atm(&db, [
-        "--workspace",
-        "alpha",
-        "project",
-        "path",
-        "add",
-        "app",
-        mapped.to_str().expect("utf8 path"),
-    ]));
-    ok(env.atm(&db, [
-        "--workspace",
-        "beta",
-        "project",
-        "path",
-        "add",
-        "app",
-        mapped.to_str().expect("utf8 path"),
-    ]));
+    ok(env.atm(
+        &db,
+        [
+            "--workspace",
+            "alpha",
+            "project",
+            "path",
+            "add",
+            "app",
+            mapped.to_str().expect("utf8 path"),
+        ],
+    ));
+    ok(env.atm(
+        &db,
+        [
+            "--workspace",
+            "beta",
+            "project",
+            "path",
+            "add",
+            "app",
+            mapped.to_str().expect("utf8 path"),
+        ],
+    ));
 
-    ok(env.atm(&db, [
-        "--workspace",
-        "alpha",
-        "project",
-        "path",
-        "remove",
-        "app",
-        mapped.to_str().expect("utf8 path"),
-    ]));
+    ok(env.atm(
+        &db,
+        [
+            "--workspace",
+            "alpha",
+            "project",
+            "path",
+            "remove",
+            "app",
+            mapped.to_str().expect("utf8 path"),
+        ],
+    ));
 
     let beta_ref = extract_ref(&ok(env.atm_in(
         &db,

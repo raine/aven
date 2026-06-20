@@ -71,13 +71,9 @@ pub async fn run_cli() -> Result<()> {
             let mut conn = pool.acquire().await?;
             if command_needs_workspace(&command) {
                 let cwd = std::env::current_dir()?;
-                let workspace = resolve_active_workspace(
-                    &mut conn,
-                    cli.workspace.as_deref(),
-                    &config,
-                    &cwd,
-                )
-                .await?;
+                let workspace =
+                    resolve_active_workspace(&mut conn, cli.workspace.as_deref(), &config, &cwd)
+                        .await?;
                 set_active_workspace(workspace);
             }
             drop(conn);
@@ -249,9 +245,14 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            conflict_exists(&mut conn, crate::workspaces::active_workspace_id().as_str(), "7KQ9A1X4MV2P8D6R", "title")
-                .await
-                .unwrap()
+            conflict_exists(
+                &mut conn,
+                crate::workspaces::active_workspace_id().as_str(),
+                "7KQ9A1X4MV2P8D6R",
+                "title"
+            )
+            .await
+            .unwrap()
         );
     }
 }

@@ -266,7 +266,15 @@ pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictComm
     match args.command {
         ConflictSubcommand::List { project, field } => {
             let project_key = if let Some(project) = project {
-                Some(resolve_existing_project_in_workspace(conn, crate::workspaces::active_workspace_id().as_str(), &project).await?.key)
+                Some(
+                    resolve_existing_project_in_workspace(
+                        conn,
+                        crate::workspaces::active_workspace_id().as_str(),
+                        &project,
+                    )
+                    .await?
+                    .key,
+                )
             } else {
                 None
             };

@@ -43,7 +43,11 @@ pub(crate) async fn list_labels_in_workspace(
     .await?;
     Ok(labels
         .into_iter()
-        .filter(|label| search.as_deref().is_none_or(|search| label.contains(search)))
+        .filter(|label| {
+            search
+                .as_deref()
+                .is_none_or(|search| label.contains(search))
+        })
         .collect())
 }
 
@@ -61,11 +65,13 @@ pub(crate) async fn ensure_label_exists_in_workspace(
     label: &str,
 ) -> Result<String> {
     let label = normalize_label(label);
-    if sqlx::query_scalar::<_, i64>("SELECT count(*) FROM labels WHERE workspace_id = ? AND name = ?")
-        .bind(workspace_id)
-        .bind(&label)
-        .fetch_one(&mut *conn)
-        .await?
+    if sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM labels WHERE workspace_id = ? AND name = ?",
+    )
+    .bind(workspace_id)
+    .bind(&label)
+    .fetch_one(&mut *conn)
+    .await?
         > 0
     {
         Ok(label)

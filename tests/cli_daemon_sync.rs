@@ -86,7 +86,7 @@ server_url = "http://127.0.0.1:9"
 [daemon]
 wake_addr = "{}"
 "#,
-        db.display()
+        db.display(),
         wake_addr
     ));
 

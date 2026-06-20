@@ -96,22 +96,11 @@ trap cleanup EXIT INT TERM
 
 render_loop() {
   local frame_index=0
-  local detail
-  local width
-  local available
   while true; do
-    detail="$(latest_line)"
-    width="${COLUMNS:-80}"
-    available=$((width - ${#label} - 6))
-    if [[ "$available" -lt 0 ]]; then
-      available=0
-    fi
-    detail="$(truncate_line "$detail" "$available")"
-    printf '%s[2K\r%s %s  %s' \
+    printf '%s[2K\r%s %s' \
       "$esc" \
       "$(dim "${frames[$frame_index]}")" \
-      "$label" \
-      "$(dim "$detail")" >&2
+      "$label" >&2
     line_drawn=1
     frame_index=$(((frame_index + 1) % ${#frames[@]}))
     sleep 0.09

@@ -187,14 +187,16 @@ pub(crate) async fn create_workspace(conn: &mut SqliteConnection, name: &str) ->
     }
     let id = new_id();
     let ts = now();
-    sqlx::query("INSERT INTO workspaces(id, name, key, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-        .bind(&id)
-        .bind(name)
-        .bind(&key)
-        .bind(&ts)
-        .bind(&ts)
-        .execute(&mut *conn)
-        .await?;
+    sqlx::query(
+        "INSERT INTO workspaces(id, name, key, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(name)
+    .bind(&key)
+    .bind(&ts)
+    .bind(&ts)
+    .execute(&mut *conn)
+    .await?;
     insert_change(
         conn,
         "workspace",

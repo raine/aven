@@ -136,7 +136,11 @@ pub(crate) async fn print_conflicts(
         let local_value: String = row.get("local_value");
         let variant_b: String = row.get("variant_b");
         let remote_value: String = row.get("remote_value");
-        println!("conflict {} field={}", display_ref(conn, task).await?, field);
+        println!(
+            "conflict {} field={}",
+            display_ref(conn, task).await?,
+            field
+        );
         println!("variant {} value={}", variant_a, quote(&local_value));
         println!("variant {} value={}", variant_b, quote(&remote_value));
     }

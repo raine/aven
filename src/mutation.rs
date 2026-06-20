@@ -1,4 +1,4 @@
-use anyhow::{ensure, Result, bail};
+use anyhow::{Result, bail, ensure};
 use serde_json::json;
 use sqlx::SqliteConnection;
 use tracing::{debug, info};
@@ -103,7 +103,8 @@ pub(crate) async fn apply_field_value(
     field: &str,
     value: &str,
 ) -> Result<()> {
-    apply_field_value_in_workspace(conn, active_workspace_id().as_str(), task_id, field, value).await
+    apply_field_value_in_workspace(conn, active_workspace_id().as_str(), task_id, field, value)
+        .await
 }
 
 pub(crate) async fn apply_field_value_in_workspace(
@@ -137,7 +138,8 @@ pub(crate) async fn apply_field_value_in_workspace(
         .await?
         .rows_affected(),
         "project" => {
-            let project = resolve_project_for_add_in_workspace(conn, workspace_id, Some(value)).await?;
+            let project =
+                resolve_project_for_add_in_workspace(conn, workspace_id, Some(value)).await?;
             sqlx::query(
                 "UPDATE tasks SET project_key = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
             )

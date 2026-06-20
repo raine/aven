@@ -111,7 +111,12 @@ pub(crate) async fn create_task(
     conn: &mut SqliteConnection,
     draft: TaskDraft,
 ) -> Result<TaskOutcome> {
-    create_task_in_workspace(conn, crate::workspaces::active_workspace_id().as_str(), draft).await
+    create_task_in_workspace(
+        conn,
+        crate::workspaces::active_workspace_id().as_str(),
+        draft,
+    )
+    .await
 }
 
 pub(crate) async fn create_task_in_workspace(
@@ -217,7 +222,12 @@ pub(crate) async fn update_task(
         changed = true;
     }
     if let Some(project) = update.project {
-        let project = resolve_project_for_add_in_workspace(&mut tx, crate::workspaces::active_workspace_id().as_str(), Some(&project)).await?;
+        let project = resolve_project_for_add_in_workspace(
+            &mut tx,
+            crate::workspaces::active_workspace_id().as_str(),
+            Some(&project),
+        )
+        .await?;
         update_task_field(&mut tx, task_id, "project", &project.key).await?;
         changed = true;
     }
@@ -309,14 +319,12 @@ pub(crate) async fn update_task_labels_in_workspace(
         changed = true;
     }
     for label in resolve_labels_in_workspace(conn, workspace_id, remove_labels).await? {
-        sqlx::query(
-            "DELETE FROM task_labels WHERE workspace_id = ? AND task_id = ? AND label = ?",
-        )
-        .bind(workspace_id)
-        .bind(task_id)
-        .bind(&label)
-        .execute(&mut *conn)
-        .await?;
+        sqlx::query("DELETE FROM task_labels WHERE workspace_id = ? AND task_id = ? AND label = ?")
+            .bind(workspace_id)
+            .bind(task_id)
+            .bind(&label)
+            .execute(&mut *conn)
+            .await?;
         insert_change(
             conn,
             "task",
@@ -404,7 +412,12 @@ pub(crate) async fn create_label_operation(
     conn: &mut SqliteConnection,
     name: &str,
 ) -> Result<LabelOutcome> {
-    create_label_operation_in_workspace(conn, crate::workspaces::active_workspace_id().as_str(), name).await
+    create_label_operation_in_workspace(
+        conn,
+        crate::workspaces::active_workspace_id().as_str(),
+        name,
+    )
+    .await
 }
 
 pub(crate) async fn create_label_operation_in_workspace(
@@ -417,14 +430,12 @@ pub(crate) async fn create_label_operation_in_workspace(
         bail!("error invalid-label");
     }
     let created_at = now();
-    sqlx::query(
-        "INSERT OR IGNORE INTO labels(workspace_id, name, created_at) VALUES (?, ?, ?)",
-    )
-    .bind(workspace_id)
-    .bind(&name)
-    .bind(&created_at)
-    .execute(&mut *conn)
-    .await?;
+    sqlx::query("INSERT OR IGNORE INTO labels(workspace_id, name, created_at) VALUES (?, ?, ?)")
+        .bind(workspace_id)
+        .bind(&name)
+        .bind(&created_at)
+        .execute(&mut *conn)
+        .await?;
     insert_change(
         conn,
         "label",
@@ -449,7 +460,12 @@ pub(crate) async fn create_project_operation(
     name: &str,
     path: Option<&Path>,
 ) -> Result<ProjectOutcome> {
-    let project = create_project_in_workspace(conn, crate::workspaces::active_workspace_id().as_str(), name).await?;
+    let project = create_project_in_workspace(
+        conn,
+        crate::workspaces::active_workspace_id().as_str(),
+        name,
+    )
+    .await?;
     if let Some(path) = path {
         add_project_path_mapping(conn, &project.workspace_id, &project.key, path).await?;
     }
@@ -468,7 +484,12 @@ pub(crate) async fn add_project_path_operation(
     project: &str,
     path: &Path,
 ) -> Result<ProjectPathOutcome> {
-    let project = resolve_existing_project_in_workspace(conn, crate::workspaces::active_workspace_id().as_str(), project).await?;
+    let project = resolve_existing_project_in_workspace(
+        conn,
+        crate::workspaces::active_workspace_id().as_str(),
+        project,
+    )
+    .await?;
     let path = canonicalize_project_path(path)?;
     add_project_path_mapping(conn, &project.workspace_id, &project.key, Path::new(&path)).await?;
     Ok(ProjectPathOutcome { project, path })
@@ -479,7 +500,12 @@ pub(crate) async fn remove_project_path_operation(
     project: &str,
     path: &Path,
 ) -> Result<ProjectPathOutcome> {
-    let project = resolve_existing_project_in_workspace(conn, crate::workspaces::active_workspace_id().as_str(), project).await?;
+    let project = resolve_existing_project_in_workspace(
+        conn,
+        crate::workspaces::active_workspace_id().as_str(),
+        project,
+    )
+    .await?;
     let path = canonicalize_project_path(path)?;
     sqlx::query(
         "DELETE FROM project_paths WHERE workspace_id = ? AND project_key = ? AND path = ?",

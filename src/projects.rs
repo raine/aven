@@ -11,7 +11,7 @@ use crate::fuzzy::is_near;
 use crate::ids::now;
 use crate::render::{print_near_error, quote};
 use crate::types::Project;
-use crate::workspaces::{active_workspace_id, Workspace};
+use crate::workspaces::{Workspace, active_workspace_id};
 
 pub(crate) fn normalize_key(input: &str) -> String {
     let mut out = String::new();
