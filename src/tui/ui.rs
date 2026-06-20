@@ -99,11 +99,13 @@ fn render_header(frame: &mut Frame, store: &TuiStore, area: Rect) {
         area,
     );
     let content_area = Rect { height: 1, ..area };
-    if area.width >= 100 {
+    if area.width >= 84 {
+        let status_width = if area.width < 120 { 9 } else { 26 };
         let [left, right] =
-            Layout::horizontal([Constraint::Fill(1), Constraint::Length(26)]).areas(content_area);
+            Layout::horizontal([Constraint::Fill(1), Constraint::Length(status_width)])
+                .areas(content_area);
         frame.render_widget(header_line(store, left.width), left);
-        frame.render_widget(header_status(), right);
+        frame.render_widget(header_status(area.width < 120), right);
     } else {
         frame.render_widget(header_line(store, content_area.width), content_area);
     }
@@ -294,14 +296,20 @@ fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
     }
 }
 
-fn header_status() -> Paragraph<'static> {
-    Paragraph::new(Line::from(vec![
+fn header_status(compact: bool) -> Paragraph<'static> {
+    let mut spans = vec![
         Span::styled("●", Style::new().fg(GREEN)),
         Span::styled(" local", Style::new().fg(FG_DIM)),
-        Span::styled(format!("  {}", today_short()), Style::new().fg(FG_DIM)),
-    ]))
-    .alignment(Alignment::Right)
-    .style(Style::new().fg(FG_DIM).bg(BG))
+    ];
+    if !compact {
+        spans.push(Span::styled(
+            format!("  {}", today_short()),
+            Style::new().fg(FG_DIM),
+        ));
+    }
+    Paragraph::new(Line::from(spans))
+        .alignment(Alignment::Right)
+        .style(Style::new().fg(FG_DIM).bg(BG))
 }
 
 fn today_short() -> String {
@@ -1722,6 +1730,7 @@ mod tests {
             buffer_text(terminal.backend())
         });
         assert!(rendered.contains("inbox 1 "));
+        assert!(rendered.contains("● local"));
     }
 
     #[test]
