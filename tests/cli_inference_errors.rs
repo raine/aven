@@ -3,7 +3,7 @@ mod common;
 use std::fs;
 use std::process::Command;
 
-use common::{TestEnv, contains_all, fail, ok};
+use common::{TestEnv, command, contains_all, fail, ok};
 
 #[test]
 fn infers_project_from_path_mapping() {
@@ -32,21 +32,68 @@ fn infers_project_from_git_root() {
     let env = TestEnv::new();
     let db = env.db("git.sqlite");
     let repo = env.path("git-inferred");
-    fs::create_dir_all(&repo).unwrap();
-    let status = clean_git_command()
-        .args(["init", "-q"])
-        .current_dir(&repo)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_COMMON_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_PREFIX")
-        .status()
-        .expect("git init");
-    assert!(status.success(), "git init failed");
+    init_git_repo(&repo);
 
     let output = ok(env.aven_in(&db, &repo, ["add", "git inference"]));
     contains_all(&output, &["project=git-inferred", "created G"]);
+}
+
+#[test]
+fn infers_project_from_main_worktree_for_linked_worktree() {
+    let env = TestEnv::new();
+    let db = env.db("linked-worktree.sqlite");
+    let repo = env.path("main-project");
+    let linked = env.path("linked-checkout");
+    init_git_repo(&repo);
+    ok_git(
+        clean_git_command()
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(&repo),
+    );
+    ok_git(
+        clean_git_command()
+            .args([
+                "worktree",
+                "add",
+                "--detach",
+                linked.to_str().unwrap(),
+                "HEAD",
+            ])
+            .current_dir(&repo),
+    );
+
+    let output = ok(env.aven_in(&db, &linked, ["add", "linked inference"]));
+    contains_all(&output, &["project=main-project"]);
+}
+
+#[test]
+fn project_override_infers_configured_project() {
+    let env = TestEnv::new();
+    let db = env.db("override.sqlite");
+    let repo = env.path("agentic-task-manager");
+    init_git_repo(&repo);
+    env.write_config(&format!(
+        r#"local:
+  db_path: "{}"
+
+project:
+  overrides:
+    - project: "Aven"
+      paths: ["{}"]
+"#,
+        db.display(),
+        repo.display()
+    ));
+
+    let output = ok(command()
+        .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
+        .env_remove("AVEN_DB")
+        .env_remove("AVEN_SYNC_SERVER")
+        .current_dir(&repo)
+        .args(["add", "override inference"])
+        .output()
+        .expect("run aven with project override"));
+    contains_all(&output, &["project=aven"]);
 }
 
 #[test]
@@ -86,6 +133,27 @@ fn ignores_inherited_git_environment_for_project_inference() {
 
     let error = fail(output);
     contains_all(&error, &["error project-required"]);
+}
+
+fn init_git_repo(repo: &std::path::Path) {
+    fs::create_dir_all(repo).unwrap();
+    ok_git(clean_git_command().args(["init", "-q"]).current_dir(repo));
+}
+
+fn ok_git(command: &mut Command) {
+    let output = command
+        .env("GIT_AUTHOR_NAME", "Aven Tests")
+        .env("GIT_AUTHOR_EMAIL", "tests@example.com")
+        .env("GIT_COMMITTER_NAME", "Aven Tests")
+        .env("GIT_COMMITTER_EMAIL", "tests@example.com")
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 fn clean_git_command() -> Command {

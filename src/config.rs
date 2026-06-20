@@ -21,6 +21,8 @@ pub struct AppConfig {
     pub daemon: DaemonConfig,
     #[serde(default)]
     pub workspace: WorkspaceConfig,
+    #[serde(default)]
+    pub project: ProjectConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -38,6 +40,19 @@ pub struct WorkspaceConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkspaceRouteConfig {
     pub workspace: String,
+    #[serde(default)]
+    pub paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProjectConfig {
+    #[serde(default)]
+    pub overrides: Vec<ProjectOverrideConfig>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProjectOverrideConfig {
+    pub project: String,
     #[serde(default)]
     pub paths: Vec<PathBuf>,
 }

@@ -23,7 +23,7 @@
 | `src/choices.rs` | Canonical task statuses, priorities, and choice validation. |
 | `src/ids.rs` | UTC timestamp helper and 80-bit Crockford Base32 ID generation. |
 | `src/input.rs` | Inline, file, or stdin text input handling for descriptions and notes. |
-| `src/projects.rs` | Project key normalization, prefix generation, lookup, creation, path inference, and path mappings. |
+| `src/projects.rs` | Project key normalization, prefix generation, lookup, creation, path inference, path mappings, and config overrides. |
 | `src/labels.rs` | Label normalization, lookup, creation, and near-match validation. |
 | `src/refs.rs` | Task ref parsing, ref resolution, and display ref generation. |
 | `src/render.rs`, `src/task_render.rs` | Generic text helpers and task-specific CLI rendering. |
@@ -49,7 +49,7 @@
 7. `tui` hands the open pool to `tui::run`.
 8. Successful mutating CLI commands wake the daemon when sync is enabled and a loopback wake address is configured.
 
-`--db` selects the database path but commands still load config so workspace routes, workspace defaults, sync settings, and daemon settings remain available. Active workspace resolution uses `--workspace`, then the longest matching config route, then `workspace.default`, then the built-in default workspace, then the only workspace in the database. Commands fail with `workspace-required` only when the default workspace is unavailable and no active workspace can be inferred.
+`--db` selects the database path but commands still load config so workspace routes, workspace defaults, project overrides, sync settings, and daemon settings remain available. Active workspace resolution uses `--workspace`, then the longest matching config route, then `workspace.default`, then the built-in default workspace, then the only workspace in the database. Commands fail with `workspace-required` only when the default workspace is unavailable and no active workspace can be inferred. Project inference for task creation uses explicit `--project`, then database project path mappings, then the longest matching `project.overrides` config path, then the Git root name. Linked Git worktrees infer from their main worktree root.
 
 CLI commands cover task add, show, list, update, note, delete, restore, projects, labels, project paths, workspace management, conflict list or show or resolve, config, doctor, skill, daemon, server, sync, and TUI.
 
@@ -121,6 +121,7 @@ Local-only data:
 
 - Config files and environment overrides.
 - Project path mappings in `project_paths`.
+- Project directory overrides in config.
 - TUI view, filter, selection, overlay, and sort state.
 - TUI undo entries in `tui_undo_entries`.
 

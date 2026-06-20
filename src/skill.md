@@ -29,8 +29,9 @@
 
 - Use `aven config show` to inspect the active config file and current settings.
 - Use `aven config init` to create a default config file.
-- Useful config fields include `local.db_path`, `workspace.default`, and `workspace.routes`.
+- Useful config fields include `local.db_path`, `workspace.default`, `workspace.routes`, and `project.overrides`.
 - `workspace.routes` maps paths to workspaces so commands run from those directories pick the right workspace.
+- `project.overrides` maps paths to project names for inferred `aven add` tasks when directory names differ from project names.
 
 ## Discovery commands
 
@@ -61,6 +62,7 @@ aven label create bug
 aven project create app --path /path/to/repo
 aven project path add app /path/to/repo
 aven project path remove app /path/to/repo
+aven add "fix inferred project task"
 aven add "fix conflict display" --project app --priority high --label bug
 aven add "write docs" --project app --description-file notes.md
 printf '## Context\nMarkdown works here\n' | aven add "write docs" --project app --description-stdin

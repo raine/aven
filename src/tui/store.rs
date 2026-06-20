@@ -702,8 +702,14 @@ impl TuiStore {
 
     pub(crate) fn project_picker_items(&self, selected: Option<&str>) -> Vec<PickerItem> {
         let selected = selected.unwrap_or_default();
+        let inferred_label = self
+            .projects
+            .iter()
+            .find(|project| project.key == selected)
+            .map(|project| format!("Infer project ({})", project.key))
+            .unwrap_or_else(|| "Infer project".to_string());
         let mut items = vec![PickerItem {
-            label: "Infer project".to_string(),
+            label: inferred_label,
             value: String::new(),
             selected: selected.is_empty(),
         }];
@@ -1120,7 +1126,7 @@ mod tests {
             .unwrap();
 
         let items = store.project_picker_items(None);
-        assert_eq!(items[0].label, "Infer project");
+        assert!(items[0].label.starts_with("Infer project"));
         assert!(items[0].selected);
         assert!(items.iter().any(|item| item.value == "mobile-app"));
     }

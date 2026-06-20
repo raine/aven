@@ -19,7 +19,7 @@ Choose a local database path:
   AVEN_DB=/tmp/client-a.sqlite aven list
 
 If neither is set, aven reads config from the platform config directory,
-for example ~/.config/aven/config.toml on Linux. If the
+for example ~/.config/aven/config.yaml on Linux. If the
 config has no local.db_path, aven stores data under XDG_STATE_HOME, or
 ~/.local/state when XDG_STATE_HOME is unset. The default database path is
 ~/.local/state/aven/db.sqlite.
@@ -30,16 +30,26 @@ Create a default config file:
 
 Example config:
 
-  [local]
-  db_path = "/tmp/client-a.sqlite"
+  local:
+    db_path: "/tmp/client-a.sqlite"
 
-  [sync]
-  enabled = true
-  server_url = "http://127.0.0.1:3000"
-  interval_seconds = 30
+  sync:
+    enabled: true
+    server_url: "http://127.0.0.1:3000"
+    interval_seconds: 30
 
-  [daemon]
-  wake_addr = "127.0.0.1:47631"
+  daemon:
+    wake_addr: "127.0.0.1:47631"
+
+  project:
+    overrides:
+      - project: "Aven"
+        paths: ["/path/to/agentic-task-manager"]
+
+Project overrides map directories or repositories to project names for inferred
+`aven add` tasks. They are useful when a directory basename differs from the
+project name. Project path mappings still take precedence, and Git inference is
+used when no override matches.
 
 Common CLI examples:
 
@@ -103,16 +113,16 @@ proxy. The server prints a warning when a public bind is enabled.
 
 Recommended VPN or private-network setup:
 
-  # server config (~/.config/aven/config.toml)
-  [sync]
-  auth_token = "your-shared-secret"
+  # server config (~/.config/aven/config.yaml)
+  sync:
+    auth_token: "your-shared-secret"
 
   aven server --bind 100.64.0.10:3000 --data /tmp/aven-server.sqlite
 
   # client config
-  [sync]
-  server_url = "http://100.64.0.10:3000"
-  auth_token = "your-shared-secret"
+  sync:
+    server_url: "http://100.64.0.10:3000"
+    auth_token: "your-shared-secret"
 
 Sync a client:
 

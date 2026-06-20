@@ -333,7 +333,7 @@ impl App {
                     self.begin_add_task_title();
                 } else if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
                     draft.title = trimmed.to_string();
-                    self.begin_add_task_project();
+                    self.begin_add_task_project().await;
                 }
             }
             OverlaySubmit::Picker { title, values } if title == ADD_TASK_PROJECT_TITLE => {
@@ -773,7 +773,7 @@ impl App {
         )));
     }
 
-    fn begin_add_task_project(&mut self) {
+    async fn begin_add_task_project(&mut self) {
         let selected = match &self.authoring {
             Some(AuthoringFlow::AddTask(draft)) => draft.project.as_deref(),
             _ => return,

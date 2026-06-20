@@ -6,6 +6,7 @@ use anyhow::{Context, Result, bail};
 use serde_json::json;
 use sqlx::{Row, SqliteConnection};
 
+use crate::config::{AppConfig, ProjectOverrideConfig};
 use crate::db::insert_change;
 use crate::fuzzy::is_near;
 use crate::ids::now;
@@ -36,56 +37,23 @@ pub(crate) async fn resolve_project_for_add(
     resolve_project_for_add_in_workspace(conn, active_workspace_id().as_str(), project).await
 }
 
-pub(crate) async fn inferred_project_key_for_add_in_workspace(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-) -> Result<Option<String>> {
-    if let Some(project) = project_from_path_mapping(conn, workspace_id).await? {
-        return Ok(Some(project.key));
-    }
-    let Some(root_name) = git_root_name()? else {
-        return Ok(None);
-    };
-    if let Some(existing) = find_project_in_workspace(conn, workspace_id, &root_name).await? {
-        return Ok(Some(existing.key));
-    }
-    let key = normalize_key(&root_name);
-    Ok((!key.is_empty()).then_some(key))
-}
-
 pub(crate) async fn resolve_project_for_add_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &str,
     project: Option<&str>,
 ) -> Result<Project> {
     if let Some(project) = project {
-        if let Some(existing) = find_project_in_workspace(conn, workspace_id, project).await? {
-            return Ok(existing);
-        }
-        let choices = near_projects_in_workspace(conn, workspace_id, project).await?;
-        if !choices.is_empty() {
-            print_near_error("project", project, &choices);
-            bail!("near-match project");
-        }
-        return create_project_in_workspace(conn, workspace_id, project)
-            .await
-            .map(|outcome| outcome.project);
+        return resolve_or_create_project(conn, workspace_id, project).await;
     }
     if let Some(project) = project_from_path_mapping(conn, workspace_id).await? {
         return Ok(project);
     }
+    let config = AppConfig::load()?;
+    if let Some(project) = project_from_config_override(conn, workspace_id, &config).await? {
+        return Ok(project);
+    }
     if let Some(root_name) = git_root_name()? {
-        if let Some(existing) = find_project_in_workspace(conn, workspace_id, &root_name).await? {
-            return Ok(existing);
-        }
-        let choices = near_projects_in_workspace(conn, workspace_id, &root_name).await?;
-        if !choices.is_empty() {
-            print_near_error("project", &root_name, &choices);
-            bail!("near-match project");
-        }
-        return create_project_in_workspace(conn, workspace_id, &root_name)
-            .await
-            .map(|outcome| outcome.project);
+        return resolve_or_create_project(conn, workspace_id, &root_name).await;
     }
     bail!("error project-required");
 }
@@ -112,6 +80,20 @@ pub(crate) async fn resolve_existing_project_in_workspace(
         eprintln!("error unknown-project input={}", project);
     }
     bail!("unknown project");
+}
+
+pub(crate) async fn inferred_project_key_for_add_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+) -> Result<Option<String>> {
+    if let Some(project) = project_from_path_mapping(conn, workspace_id).await? {
+        return Ok(Some(project.key));
+    }
+    let config = AppConfig::load()?;
+    if let Some(project) = matching_project_override(&config)? {
+        return Ok(Some(normalize_key(&project)));
+    }
+    Ok(git_root_name()?.map(|name| normalize_key(&name)))
 }
 
 #[allow(dead_code)]
@@ -286,11 +268,30 @@ pub(crate) fn prefix_base(key: &str) -> String {
     out.to_ascii_uppercase()
 }
 
+async fn resolve_or_create_project(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    project: &str,
+) -> Result<Project> {
+    if let Some(existing) = find_project_in_workspace(conn, workspace_id, project).await? {
+        return Ok(existing);
+    }
+    let choices = near_projects_in_workspace(conn, workspace_id, project).await?;
+    if !choices.is_empty() {
+        print_near_error("project", project, &choices);
+        bail!("near-match project");
+    }
+    create_project_in_workspace(conn, workspace_id, project)
+        .await
+        .map(|outcome| outcome.project)
+}
+
 async fn project_from_path_mapping(
     conn: &mut SqliteConnection,
     workspace_id: &str,
 ) -> Result<Option<Project>> {
     let cwd = fs::canonicalize(env::current_dir()?)?;
+    let root = git_root(&cwd)?.unwrap_or_else(|| cwd.clone());
     let rows = sqlx::query(
         "SELECT p.workspace_id, p.key, p.name, p.prefix, pp.path
          FROM project_paths pp
@@ -301,44 +302,142 @@ async fn project_from_path_mapping(
     .bind(workspace_id)
     .fetch_all(&mut *conn)
     .await?;
+    let mut best: Option<(PathMatch, Project)> = None;
     for row in rows {
         let path: String = row.get("path");
         let project = project_from_row(row);
-        if cwd.starts_with(Path::new(&path)) {
-            return Ok(Some(project));
+        let path = Path::new(&path);
+        if let Some(path_match) = matching_path(&cwd, &root, path)
+            && best
+                .as_ref()
+                .is_none_or(|(best_match, _)| path_match.is_better_than(*best_match))
+        {
+            best = Some((path_match, project));
         }
     }
-    Ok(None)
+    Ok(best.map(|(_, project)| project))
+}
+
+async fn project_from_config_override(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    config: &AppConfig,
+) -> Result<Option<Project>> {
+    let Some(project) = matching_project_override(config)? else {
+        return Ok(None);
+    };
+    resolve_or_create_project(conn, workspace_id, &project)
+        .await
+        .map(Some)
+}
+
+fn matching_project_override(config: &AppConfig) -> Result<Option<String>> {
+    let cwd = fs::canonicalize(env::current_dir()?)?;
+    let root = git_root(&cwd)?.unwrap_or_else(|| cwd.clone());
+    let mut best: Option<(PathMatch, &ProjectOverrideConfig)> = None;
+    for project_override in &config.project.overrides {
+        for path in &project_override.paths {
+            let Ok(path) = fs::canonicalize(path) else {
+                continue;
+            };
+            if let Some(path_match) = matching_path(&cwd, &root, &path)
+                && best
+                    .as_ref()
+                    .is_none_or(|(best_match, _)| path_match.is_better_than(*best_match))
+            {
+                best = Some((path_match, project_override));
+            }
+        }
+    }
+    Ok(best.map(|(_, project_override)| project_override.project.clone()))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PathMatch {
+    kind: PathMatchKind,
+    len: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum PathMatchKind {
+    Root,
+    Cwd,
+}
+
+impl PathMatch {
+    fn is_better_than(self, other: Self) -> bool {
+        self.kind > other.kind || self.kind == other.kind && self.len > other.len
+    }
+}
+
+fn matching_path(cwd: &Path, root: &Path, path: &Path) -> Option<PathMatch> {
+    let len = path.components().count();
+    if cwd.starts_with(path) {
+        return Some(PathMatch {
+            kind: PathMatchKind::Cwd,
+            len,
+        });
+    }
+    if root == path || root.starts_with(path) {
+        return Some(PathMatch {
+            kind: PathMatchKind::Root,
+            len,
+        });
+    }
+    None
 }
 
 fn git_root_name() -> Result<Option<String>> {
     let cwd = fs::canonicalize(env::current_dir()?)?;
-    let Some(root) = git_root(&cwd) else {
+    let Some(root) = git_root(&cwd)? else {
         return Ok(None);
     };
-    let project_root = linked_worktree_main_root(&root).unwrap_or(root);
-    Ok(project_root
+    Ok(root
         .file_name()
         .map(|name| name.to_string_lossy().to_string()))
 }
 
-fn linked_worktree_main_root(root: &Path) -> Option<PathBuf> {
+fn git_root(path: &Path) -> Result<Option<PathBuf>> {
+    let Some(root) = path
+        .ancestors()
+        .find(|ancestor| ancestor.join(".git").exists())
+    else {
+        return Ok(None);
+    };
     let git_file = root.join(".git");
-    let gitdir = fs::read_to_string(git_file).ok()?;
-    let gitdir = gitdir.trim().strip_prefix("gitdir: ")?;
-    let marker = format!(
-        "{}worktrees{}",
-        std::path::MAIN_SEPARATOR,
-        std::path::MAIN_SEPARATOR
-    );
-    let common_git_dir = gitdir.split_once(&marker)?.0;
-    Path::new(common_git_dir).parent().map(Path::to_path_buf)
+    if git_file.is_file() {
+        let text = fs::read_to_string(&git_file)
+            .with_context(|| format!("could not read {}", git_file.display()))?;
+        if let Some(path) = text.trim().strip_prefix("gitdir:").map(str::trim) {
+            let git_dir = root.join(path);
+            if let Some(common_dir) = common_git_dir(&git_dir)? {
+                let common_dir = fs::canonicalize(&common_dir)
+                    .with_context(|| format!("could not resolve {}", common_dir.display()))?;
+                if let Some(main_root) = common_dir.parent() {
+                    return fs::canonicalize(main_root)
+                        .map(Some)
+                        .with_context(|| format!("could not resolve {}", main_root.display()));
+                }
+            }
+        }
+    }
+    Ok(Some(root.to_path_buf()))
 }
 
-fn git_root(path: &Path) -> Option<PathBuf> {
-    path.ancestors()
-        .find(|ancestor| ancestor.join(".git").exists())
-        .map(Path::to_path_buf)
+fn common_git_dir(git_dir: &Path) -> Result<Option<PathBuf>> {
+    let common_dir_file = git_dir.join("commondir");
+    if !common_dir_file.is_file() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&common_dir_file)
+        .with_context(|| format!("could not read {}", common_dir_file.display()))?;
+    let path = Path::new(text.trim());
+    let common_dir = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        git_dir.join(path)
+    };
+    Ok(Some(common_dir))
 }
 
 #[allow(dead_code)]
