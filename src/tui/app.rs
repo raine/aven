@@ -688,13 +688,7 @@ impl App {
             _ => return,
         };
         let items = self.store.project_picker_items(selected);
-        self.overlay = Some(OverlayState::Picker(PickerState {
-            title: ADD_TASK_PROJECT_TITLE.to_string(),
-            filter: String::new(),
-            selected: selected_picker_index(&items),
-            items,
-            multi: false,
-        }));
+        self.open_picker_overlay(ADD_TASK_PROJECT_TITLE, items, false);
     }
 
     fn begin_add_task_priority(&mut self) {
@@ -703,13 +697,7 @@ impl App {
             _ => return,
         };
         let items = self.store.priority_picker_items(selected);
-        self.overlay = Some(OverlayState::Picker(PickerState {
-            title: ADD_TASK_PRIORITY_TITLE.to_string(),
-            filter: String::new(),
-            selected: selected_picker_index(&items),
-            items,
-            multi: false,
-        }));
+        self.open_picker_overlay(ADD_TASK_PRIORITY_TITLE, items, false);
     }
 
     fn begin_add_task_labels(&mut self) {
@@ -721,13 +709,7 @@ impl App {
         for item in &mut items {
             item.selected = selected_labels.contains(&item.value);
         }
-        self.overlay = Some(OverlayState::Picker(PickerState {
-            title: ADD_TASK_LABELS_TITLE.to_string(),
-            filter: String::new(),
-            selected: selected_picker_index(&items),
-            items,
-            multi: true,
-        }));
+        self.open_picker_overlay(ADD_TASK_LABELS_TITLE, items, true);
     }
 
     fn begin_add_task_description(&mut self) {
@@ -917,13 +899,66 @@ impl App {
         self.set_message(result.message);
     }
 
-    fn begin_edit_title(&mut self) {
+    fn open_picker_overlay(&mut self, title: &str, items: Vec<PickerItem>, multi: bool) {
+        self.overlay = Some(OverlayState::Picker(PickerState {
+            title: title.to_string(),
+            filter: String::new(),
+            selected: selected_picker_index(&items),
+            items,
+            multi,
+        }));
+    }
+
+    fn guard_selected_task(&mut self) -> Option<usize> {
         self.pending_shortcut.clear();
-        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
+        let index = self.widgets.table.selected();
+        if index.is_some_and(|i| self.store.selected_task(Some(i)).is_some()) {
+            index
+        } else {
             self.set_message("no selected task to edit".to_string());
+            None
+        }
+    }
+
+    fn require_picker_value(&mut self, values: Vec<String>, message: &str) -> Option<String> {
+        match values.first().cloned() {
+            Some(value) => Some(value),
+            None => {
+                self.set_message(message.to_string());
+                None
+            }
+        }
+    }
+
+    fn apply_edit_mutation<F>(
+        &mut self,
+        result: Result<Option<crate::tui::store::MutationMessage>>,
+        on_error: F,
+    ) where
+        F: FnOnce(&mut Self),
+    {
+        match result {
+            Ok(Some(result)) => self.apply_mutation_result(result),
+            Ok(None) => self.set_message("no selected task to edit".to_string()),
+            Err(error) => {
+                self.set_message(format!("error: {error:#}"));
+                on_error(self);
+            }
+        }
+    }
+
+    fn begin_edit_title(&mut self) {
+        let Some(index) = self.guard_selected_task() else {
             return;
         };
-        self.open_edit_title_overlay(item.task.title.clone());
+        let title = self
+            .store
+            .selected_task(Some(index))
+            .unwrap()
+            .task
+            .title
+            .clone();
+        self.open_edit_title_overlay(title);
     }
 
     fn open_edit_title_overlay(&mut self, input: String) {
@@ -936,18 +971,8 @@ impl App {
         }));
     }
 
-    fn begin_edit_description(&mut self) {
-        self.pending_shortcut.clear();
-        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
-            self.set_message("no selected task to edit".to_string());
-            return;
-        };
-        let mut lines = item
-            .task
-            .description
-            .split('\n')
-            .map(str::to_string)
-            .collect::<Vec<_>>();
+    fn open_edit_description_overlay(&mut self, value: String) {
+        let mut lines = value.split('\n').map(str::to_string).collect::<Vec<_>>();
         if lines.is_empty() {
             lines.push(String::new());
         }
@@ -962,58 +987,65 @@ impl App {
         }));
     }
 
-    fn begin_edit_project(&mut self) {
-        self.pending_shortcut.clear();
-        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
-            self.set_message("no selected task to edit".to_string());
+    fn begin_edit_description(&mut self) {
+        let Some(index) = self.guard_selected_task() else {
             return;
         };
-        let selected = item.task.project_key.as_str();
+        let description = self
+            .store
+            .selected_task(Some(index))
+            .unwrap()
+            .task
+            .description
+            .clone();
+        self.open_edit_description_overlay(description);
+    }
+
+    fn begin_edit_project(&mut self) {
+        let Some(index) = self.guard_selected_task() else {
+            return;
+        };
+        let selected = self
+            .store
+            .selected_task(Some(index))
+            .unwrap()
+            .task
+            .project_key
+            .as_str();
         let items = self.store.existing_project_picker_items(selected);
-        self.overlay = Some(OverlayState::Picker(PickerState {
-            title: EDIT_PROJECT_TITLE.to_string(),
-            filter: String::new(),
-            selected: selected_picker_index(&items),
-            items,
-            multi: false,
-        }));
+        self.open_picker_overlay(EDIT_PROJECT_TITLE, items, false);
     }
 
     fn begin_edit_priority(&mut self) {
-        self.pending_shortcut.clear();
-        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
-            self.set_message("no selected task to edit".to_string());
+        let Some(index) = self.guard_selected_task() else {
             return;
         };
-        let items = self
+        let priority = self
             .store
-            .priority_picker_items(item.task.priority.as_str());
-        self.overlay = Some(OverlayState::Picker(PickerState {
-            title: EDIT_PRIORITY_TITLE.to_string(),
-            filter: String::new(),
-            selected: selected_picker_index(&items),
-            items,
-            multi: false,
-        }));
+            .selected_task(Some(index))
+            .unwrap()
+            .task
+            .priority
+            .as_str();
+        let items = self.store.priority_picker_items(priority);
+        self.open_picker_overlay(EDIT_PRIORITY_TITLE, items, false);
     }
 
     fn begin_edit_labels(&mut self) {
-        self.pending_shortcut.clear();
-        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
-            self.set_message("no selected task to edit".to_string());
+        let Some(index) = self.guard_selected_task() else {
             return;
         };
+        let labels = self
+            .store
+            .selected_task(Some(index))
+            .unwrap()
+            .labels
+            .clone();
         let mut items = self.store.label_picker_items();
         for picker_item in &mut items {
-            picker_item.selected = item.labels.contains(&picker_item.value);
+            picker_item.selected = labels.contains(&picker_item.value);
         }
-        self.overlay = Some(OverlayState::Picker(PickerState {
-            title: EDIT_LABELS_TITLE.to_string(),
-            filter: String::new(),
-            selected: selected_picker_index(&items),
-            items,
-            multi: true,
-        }));
+        self.open_picker_overlay(EDIT_LABELS_TITLE, items, true);
     }
 
     async fn submit_edit_title(&mut self, value: String) -> Result<()> {
@@ -1039,78 +1071,38 @@ impl App {
     }
 
     async fn submit_edit_description(&mut self, value: String) -> Result<()> {
-        match self
+        let result = self
             .store
             .update_description(self.widgets.table.selected(), value.clone())
-            .await
-        {
-            Ok(Some(result)) => self.apply_mutation_result(result),
-            Ok(None) => self.set_message("no selected task to edit".to_string()),
-            Err(error) => {
-                self.set_message(format!("error: {error:#}"));
-                let mut lines = value.split('\n').map(str::to_string).collect::<Vec<_>>();
-                if lines.is_empty() {
-                    lines.push(String::new());
-                }
-                let row = lines.len() - 1;
-                let column = lines[row].len();
-                self.overlay = Some(OverlayState::MultilineInput(MultilineInputState {
-                    title: EDIT_DESCRIPTION_TITLE.to_string(),
-                    prompt: "description:".to_string(),
-                    lines,
-                    row,
-                    column,
-                }));
-            }
-        }
+            .await;
+        self.apply_edit_mutation(result, |app| app.open_edit_description_overlay(value));
         Ok(())
     }
 
     async fn submit_edit_project(&mut self, project: String) -> Result<()> {
-        match self
+        let result = self
             .store
             .update_project(self.widgets.table.selected(), project)
-            .await
-        {
-            Ok(Some(result)) => self.apply_mutation_result(result),
-            Ok(None) => self.set_message("no selected task to edit".to_string()),
-            Err(error) => {
-                self.set_message(format!("error: {error:#}"));
-                self.begin_edit_project();
-            }
-        }
+            .await;
+        self.apply_edit_mutation(result, |app| app.begin_edit_project());
         Ok(())
     }
 
     async fn submit_edit_priority(&mut self, priority: String) -> Result<()> {
-        match self
+        let result = self
             .store
             .set_exact_priority(self.widgets.table.selected(), &priority)
-            .await
-        {
-            Ok(Some(result)) => self.apply_mutation_result(result),
-            Ok(None) => self.set_message("no selected task to edit".to_string()),
-            Err(error) => {
-                self.set_message(format!("error: {error:#}"));
-                self.begin_edit_priority();
-            }
-        }
+            .await;
+        self.apply_edit_mutation(result, |app| app.begin_edit_priority());
         Ok(())
     }
 
     async fn submit_edit_labels(&mut self, labels: Vec<String>) -> Result<()> {
-        match self
+        let result = self
             .store
             .update_labels(self.widgets.table.selected(), labels)
-            .await
-        {
-            Ok(Some(result)) => self.apply_mutation_result(result),
-            Ok(None) => self.set_message("no selected task to edit".to_string()),
-            Err(error) => {
-                self.set_message(format!("error: {error:#}"));
-                self.begin_edit_labels();
-            }
-        }
+            .await;
+        self.apply_edit_mutation(result, |app| app.begin_edit_labels());
         Ok(())
     }
 
@@ -1132,13 +1124,7 @@ impl App {
         self.pending_shortcut.clear();
         let selected = self.store.filters.project.as_deref().unwrap_or_default();
         let items = self.store.existing_project_picker_items(selected);
-        self.overlay = Some(OverlayState::Picker(PickerState {
-            title: FILTER_PROJECT_TITLE.to_string(),
-            filter: String::new(),
-            selected: selected_picker_index(&items),
-            items,
-            multi: false,
-        }));
+        self.open_picker_overlay(FILTER_PROJECT_TITLE, items, false);
     }
 
     fn begin_filter_label(&mut self) {
@@ -1147,13 +1133,7 @@ impl App {
         for item in &mut items {
             item.selected = Some(&item.value) == self.store.filters.label.as_ref();
         }
-        self.overlay = Some(OverlayState::Picker(PickerState {
-            title: FILTER_LABEL_TITLE.to_string(),
-            filter: String::new(),
-            selected: selected_picker_index(&items),
-            items,
-            multi: false,
-        }));
+        self.open_picker_overlay(FILTER_LABEL_TITLE, items, false);
     }
 
     fn begin_filter_status(&mut self) {
@@ -1161,26 +1141,14 @@ impl App {
         let items = self
             .store
             .status_picker_items(self.store.filters.status.as_deref());
-        self.overlay = Some(OverlayState::Picker(PickerState {
-            title: FILTER_STATUS_TITLE.to_string(),
-            filter: String::new(),
-            selected: selected_picker_index(&items),
-            items,
-            multi: false,
-        }));
+        self.open_picker_overlay(FILTER_STATUS_TITLE, items, false);
     }
 
     fn begin_filter_priority(&mut self) {
         self.pending_shortcut.clear();
         let selected = self.store.filters.priority.as_deref().unwrap_or_default();
         let items = self.store.priority_picker_items(selected);
-        self.overlay = Some(OverlayState::Picker(PickerState {
-            title: FILTER_PRIORITY_TITLE.to_string(),
-            filter: String::new(),
-            selected: selected_picker_index(&items),
-            items,
-            multi: false,
-        }));
+        self.open_picker_overlay(FILTER_PRIORITY_TITLE, items, false);
     }
 
     fn begin_view_project(&mut self) {
@@ -1190,13 +1158,7 @@ impl App {
             _ => "",
         };
         let items = self.store.existing_project_picker_items(selected);
-        self.overlay = Some(OverlayState::Picker(PickerState {
-            title: VIEW_PROJECT_TITLE.to_string(),
-            filter: String::new(),
-            selected: selected_picker_index(&items),
-            items,
-            multi: false,
-        }));
+        self.open_picker_overlay(VIEW_PROJECT_TITLE, items, false);
     }
 
     async fn show_view(&mut self, target: ViewTarget) -> Result<()> {
@@ -1245,8 +1207,7 @@ impl App {
     }
 
     async fn submit_filter_project(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(project) = values.first().cloned() else {
-            self.set_message("no matching project".to_string());
+        let Some(project) = self.require_picker_value(values, "no matching project") else {
             self.begin_filter_project();
             return Ok(());
         };
@@ -1257,8 +1218,7 @@ impl App {
     }
 
     async fn submit_filter_label(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(label) = values.first().cloned() else {
-            self.set_message("no matching label".to_string());
+        let Some(label) = self.require_picker_value(values, "no matching label") else {
             self.begin_filter_label();
             return Ok(());
         };
@@ -1269,8 +1229,7 @@ impl App {
     }
 
     async fn submit_filter_status(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(status) = values.first().cloned() else {
-            self.set_message("no matching status".to_string());
+        let Some(status) = self.require_picker_value(values, "no matching status") else {
             self.begin_filter_status();
             return Ok(());
         };
@@ -1281,8 +1240,7 @@ impl App {
     }
 
     async fn submit_filter_priority(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(priority) = values.first().cloned() else {
-            self.set_message("no matching priority".to_string());
+        let Some(priority) = self.require_picker_value(values, "no matching priority") else {
             self.begin_filter_priority();
             return Ok(());
         };
@@ -1293,8 +1251,7 @@ impl App {
     }
 
     async fn submit_view_project(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(project) = values.first().cloned() else {
-            self.set_message("no matching project".to_string());
+        let Some(project) = self.require_picker_value(values, "no matching project") else {
             self.begin_view_project();
             return Ok(());
         };
@@ -1506,18 +1463,11 @@ impl App {
                 selected: false,
             })
             .collect();
-        self.overlay = Some(OverlayState::Picker(PickerState {
-            title: CONFLICT_FIELD_TITLE.to_string(),
-            filter: String::new(),
-            selected: 0,
-            items,
-            multi: false,
-        }));
+        self.open_picker_overlay(CONFLICT_FIELD_TITLE, items, false);
     }
 
     async fn submit_conflict_field_picker(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(field) = values.first().cloned() else {
-            self.set_message("no conflict field selected".to_string());
+        let Some(field) = self.require_picker_value(values, "no conflict field selected") else {
             return Ok(());
         };
         let flow = self.conflict_flow.take();
@@ -1622,47 +1572,23 @@ impl App {
                 let items = self
                     .store
                     .status_picker_items(Some(target.local_value.as_str()));
-                self.overlay = Some(OverlayState::Picker(PickerState {
-                    title: CONFLICT_MANUAL_TITLE.to_string(),
-                    filter: String::new(),
-                    selected: selected_picker_index(&items),
-                    items,
-                    multi: false,
-                }));
+                self.open_picker_overlay(CONFLICT_MANUAL_TITLE, items, false);
             }
             "priority" => {
                 let items = self
                     .store
                     .priority_picker_items(target.local_value.as_str());
-                self.overlay = Some(OverlayState::Picker(PickerState {
-                    title: CONFLICT_MANUAL_TITLE.to_string(),
-                    filter: String::new(),
-                    selected: selected_picker_index(&items),
-                    items,
-                    multi: false,
-                }));
+                self.open_picker_overlay(CONFLICT_MANUAL_TITLE, items, false);
             }
             "project" => {
                 let items = self
                     .store
                     .existing_project_picker_items(target.local_value.as_str());
-                self.overlay = Some(OverlayState::Picker(PickerState {
-                    title: CONFLICT_MANUAL_TITLE.to_string(),
-                    filter: String::new(),
-                    selected: selected_picker_index(&items),
-                    items,
-                    multi: false,
-                }));
+                self.open_picker_overlay(CONFLICT_MANUAL_TITLE, items, false);
             }
             "deleted" => {
                 let items = deleted_picker_items(&target.local_value);
-                self.overlay = Some(OverlayState::Picker(PickerState {
-                    title: CONFLICT_MANUAL_TITLE.to_string(),
-                    filter: String::new(),
-                    selected: selected_picker_index(&items),
-                    items,
-                    multi: false,
-                }));
+                self.open_picker_overlay(CONFLICT_MANUAL_TITLE, items, false);
             }
             _ => {
                 self.conflict_flow = None;
@@ -1784,6 +1710,32 @@ mod tests {
             .await
             .unwrap();
         App::new(pool).await.unwrap()
+    }
+
+    fn test_task_draft(title: &str) -> TaskDraft {
+        TaskDraft {
+            title: title.to_string(),
+            description: String::new(),
+            project: None,
+            priority: "none".to_string(),
+            labels: Vec::new(),
+        }
+    }
+
+    async fn create_and_select_task(app: &mut App, draft: TaskDraft) -> usize {
+        let (_, selected) = app.store.create_task(draft, None).await.unwrap();
+        let selected = selected.unwrap();
+        app.widgets.table.select(Some(selected));
+        selected
+    }
+
+    async fn test_app_with_pool() -> (tempfile::TempDir, SqlitePool, App) {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let app = App::new(pool.clone()).await.unwrap();
+        (dir, pool, app)
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -2227,21 +2179,7 @@ mod tests {
     #[tokio::test]
     async fn add_note_flow_creates_note_for_selected_task() {
         let mut app = test_app().await;
-        let (_, selected) = app
-            .store
-            .create_task(
-                TaskDraft {
-                    title: "Note target".to_string(),
-                    description: String::new(),
-                    project: None,
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        app.widgets.table.select(selected);
+        create_and_select_task(&mut app, test_task_draft("Note target")).await;
 
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
@@ -2264,21 +2202,7 @@ mod tests {
     #[tokio::test]
     async fn add_note_blank_body_is_rejected() {
         let mut app = test_app().await;
-        let (_, selected) = app
-            .store
-            .create_task(
-                TaskDraft {
-                    title: "Note target".to_string(),
-                    description: String::new(),
-                    project: None,
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        app.widgets.table.select(selected);
+        create_and_select_task(&mut app, test_task_draft("Note target")).await;
 
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
@@ -2436,27 +2360,8 @@ mod tests {
 
     #[tokio::test]
     async fn conflict_show_opens_text_panel_and_esc_closes() {
-        let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open_db(&dir.path().join("test.db"))
-            .await
-            .unwrap();
-        let mut app = App::new(pool.clone()).await.unwrap();
-        let (_, selected) = app
-            .store
-            .create_task(
-                TaskDraft {
-                    title: "Conflict show".to_string(),
-                    description: String::new(),
-                    project: None,
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        let selected = selected.unwrap();
-        app.widgets.table.select(Some(selected));
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Conflict show")).await;
         insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
 
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
@@ -2473,41 +2378,9 @@ mod tests {
 
     #[tokio::test]
     async fn conflict_next_selects_next_conflicted_task() {
-        let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open_db(&dir.path().join("test.db"))
-            .await
-            .unwrap();
-        let mut app = App::new(pool.clone()).await.unwrap();
-        let (_, first) = app
-            .store
-            .create_task(
-                TaskDraft {
-                    title: "First".to_string(),
-                    description: String::new(),
-                    project: None,
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        let (_, second) = app
-            .store
-            .create_task(
-                TaskDraft {
-                    title: "Second".to_string(),
-                    description: String::new(),
-                    project: None,
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        let first = first.unwrap();
-        let second = second.unwrap();
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let first = create_and_select_task(&mut app, test_task_draft("First")).await;
+        let second = create_and_select_task(&mut app, test_task_draft("Second")).await;
         insert_title_conflict(&pool, &mut app, first, "local one", "remote one").await;
         insert_title_conflict(&pool, &mut app, second, "local two", "remote two").await;
         app.widgets.table.select(Some(first));
@@ -2520,27 +2393,8 @@ mod tests {
 
     #[tokio::test]
     async fn accept_local_conflict_resolves_after_confirmation() {
-        let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open_db(&dir.path().join("test.db"))
-            .await
-            .unwrap();
-        let mut app = App::new(pool.clone()).await.unwrap();
-        let (_, selected) = app
-            .store
-            .create_task(
-                TaskDraft {
-                    title: "Before".to_string(),
-                    description: String::new(),
-                    project: None,
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        let selected = selected.unwrap();
-        app.widgets.table.select(Some(selected));
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
         insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
 
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
@@ -2565,27 +2419,8 @@ mod tests {
 
     #[tokio::test]
     async fn accept_remote_conflict_resolves_after_confirmation() {
-        let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open_db(&dir.path().join("test.db"))
-            .await
-            .unwrap();
-        let mut app = App::new(pool.clone()).await.unwrap();
-        let (_, selected) = app
-            .store
-            .create_task(
-                TaskDraft {
-                    title: "Before".to_string(),
-                    description: String::new(),
-                    project: None,
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        let selected = selected.unwrap();
-        app.widgets.table.select(Some(selected));
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
         insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
 
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
@@ -2600,27 +2435,8 @@ mod tests {
 
     #[tokio::test]
     async fn manual_conflict_merge_resolves_with_submitted_value() {
-        let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open_db(&dir.path().join("test.db"))
-            .await
-            .unwrap();
-        let mut app = App::new(pool.clone()).await.unwrap();
-        let (_, selected) = app
-            .store
-            .create_task(
-                TaskDraft {
-                    title: "Before".to_string(),
-                    description: String::new(),
-                    project: None,
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        let selected = selected.unwrap();
-        app.widgets.table.select(Some(selected));
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
         insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
 
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
@@ -2647,27 +2463,8 @@ mod tests {
 
     #[tokio::test]
     async fn cancel_clears_conflict_flow() {
-        let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open_db(&dir.path().join("test.db"))
-            .await
-            .unwrap();
-        let mut app = App::new(pool.clone()).await.unwrap();
-        let (_, selected) = app
-            .store
-            .create_task(
-                TaskDraft {
-                    title: "Conflict".to_string(),
-                    description: String::new(),
-                    project: None,
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        let selected = selected.unwrap();
-        app.widgets.table.select(Some(selected));
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Conflict")).await;
         insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
 
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
@@ -2761,21 +2558,7 @@ mod tests {
     #[tokio::test]
     async fn edit_title_shortcut_prefills_and_updates_title() {
         let mut app = test_app().await;
-        let (_, selected) = app
-            .store
-            .create_task(
-                TaskDraft {
-                    title: "Old title".to_string(),
-                    description: String::new(),
-                    project: None,
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        app.widgets.table.select(selected);
+        create_and_select_task(&mut app, test_task_draft("Old title")).await;
 
         app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
@@ -2796,21 +2579,17 @@ mod tests {
     #[tokio::test]
     async fn edit_description_prefills_and_ctrl_s_updates() {
         let mut app = test_app().await;
-        let (_, selected) = app
-            .store
-            .create_task(
-                TaskDraft {
-                    title: "Description target".to_string(),
-                    description: "first\nsecond".to_string(),
-                    project: None,
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        app.widgets.table.select(selected);
+        create_and_select_task(
+            &mut app,
+            TaskDraft {
+                title: "Description target".to_string(),
+                description: "first\nsecond".to_string(),
+                project: None,
+                priority: "none".to_string(),
+                labels: Vec::new(),
+            },
+        )
+        .await;
 
         app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
@@ -2839,21 +2618,7 @@ mod tests {
             .create_project("Mobile App".to_string())
             .await
             .unwrap();
-        let (_, selected) = app
-            .store
-            .create_task(
-                TaskDraft {
-                    title: "Project target".to_string(),
-                    description: String::new(),
-                    project: None,
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        app.widgets.table.select(selected);
+        create_and_select_task(&mut app, test_task_draft("Project target")).await;
 
         app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
@@ -2873,21 +2638,17 @@ mod tests {
     #[tokio::test]
     async fn edit_priority_picker_prefills_current_priority() {
         let mut app = test_app().await;
-        let (_, selected) = app
-            .store
-            .create_task(
-                TaskDraft {
-                    title: "Priority target".to_string(),
-                    description: String::new(),
-                    project: None,
-                    priority: "high".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        app.widgets.table.select(selected);
+        create_and_select_task(
+            &mut app,
+            TaskDraft {
+                title: "Priority target".to_string(),
+                description: String::new(),
+                project: None,
+                priority: "high".to_string(),
+                labels: Vec::new(),
+            },
+        )
+        .await;
 
         app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
@@ -2909,21 +2670,17 @@ mod tests {
         let mut app = test_app().await;
         app.store.create_label("Bug".to_string()).await.unwrap();
         app.store.create_label("Docs".to_string()).await.unwrap();
-        let (_, selected) = app
-            .store
-            .create_task(
-                TaskDraft {
-                    title: "Label target".to_string(),
-                    description: String::new(),
-                    project: None,
-                    priority: "none".to_string(),
-                    labels: vec!["bug".to_string()],
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        app.widgets.table.select(selected);
+        create_and_select_task(
+            &mut app,
+            TaskDraft {
+                title: "Label target".to_string(),
+                description: String::new(),
+                project: None,
+                priority: "none".to_string(),
+                labels: vec!["bug".to_string()],
+            },
+        )
+        .await;
 
         app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
@@ -2960,21 +2717,7 @@ mod tests {
     #[tokio::test]
     async fn exact_priority_shortcut_updates_selected_task() {
         let mut app = test_app().await;
-        let (_, selected) = app
-            .store
-            .create_task(
-                TaskDraft {
-                    title: "Priority shortcut".to_string(),
-                    description: String::new(),
-                    project: None,
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        app.widgets.table.select(selected);
+        create_and_select_task(&mut app, test_task_draft("Priority shortcut")).await;
 
         app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
@@ -2997,27 +2740,19 @@ mod tests {
 
     #[tokio::test]
     async fn edit_description_conflict_preserves_overlay() {
-        let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open_db(&dir.path().join("test.db"))
-            .await
-            .unwrap();
-        let mut app = App::new(pool.clone()).await.unwrap();
-        let (_, selected) = app
-            .store
-            .create_task(
-                TaskDraft {
-                    title: "Conflict target".to_string(),
-                    description: "old".to_string(),
-                    project: None,
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        app.widgets.table.select(selected);
-        let task_id = app.store.tasks[selected.unwrap()].task.id.clone();
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                title: "Conflict target".to_string(),
+                description: "old".to_string(),
+                project: None,
+                priority: "none".to_string(),
+                labels: Vec::new(),
+            },
+        )
+        .await;
+        let task_id = app.store.tasks[selected].task.id.clone();
         let mut conn = pool.acquire().await.unwrap();
         sqlx::query(
             "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
