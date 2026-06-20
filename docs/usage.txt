@@ -1,5 +1,5 @@
-atm usage
-=========
+aven usage
+==========
 
 Build:
 
@@ -15,18 +15,18 @@ Run the integration test suite:
 
 Choose a local database path:
 
-  atm --db /tmp/client-a.sqlite list
-  ATM_DB=/tmp/client-a.sqlite atm list
+  aven --db /tmp/client-a.sqlite list
+  AVEN_DB=/tmp/client-a.sqlite aven list
 
-If neither is set, atm reads config from the platform config directory,
-for example ~/.config/agentic-task-manager/config.toml on Linux. If the
-config has no local.db_path, atm stores data under XDG_STATE_HOME, or
+If neither is set, aven reads config from the platform config directory,
+for example ~/.config/aven/config.toml on Linux. If the
+config has no local.db_path, aven stores data under XDG_STATE_HOME, or
 ~/.local/state when XDG_STATE_HOME is unset. The default database path is
-~/.local/state/atm/db.sqlite.
+~/.local/state/aven/db.sqlite.
 
 Create a default config file:
 
-  atm config init
+  aven config init
 
 Example config:
 
@@ -43,25 +43,25 @@ Example config:
 
 Common CLI examples:
 
-  atm label create bug
-  atm project create app --path /path/to/repo
-  atm add "fix sync conflict display" --project app --label bug
+  aven label create bug
+  aven project create app --path /path/to/repo
+  aven add "fix sync conflict display" --project app --label bug
   printf '## Context\nMarkdown works here\n' \
-    | atm add "write docs" --project app --description-stdin
-  atm list --project app
-  atm show APP-7KQ9 --full
-  atm update 7KQ --status active --priority high
-  printf 'handoff note\n' | atm note 7KQ --stdin
-  atm delete 7KQ
-  atm restore 7KQ
-  atm doctor
-  atm tui
+    | aven add "write docs" --project app --description-stdin
+  aven list --project app
+  aven show APP-7KQ9 --full
+  aven update 7KQ --status active --priority high
+  printf 'handoff note\n' | aven note 7KQ --stdin
+  aven delete 7KQ
+  aven restore 7KQ
+  aven doctor
+  aven tui
 
 TUI:
 
-  atm tui
+  aven tui
 
-The TUI uses the same database selection rules as the CLI: --db, ATM_DB,
+The TUI uses the same database selection rules as the CLI: --db, AVEN_DB,
 then config. It opens a keyboard-first task browser with all tasks by
 default, project-specific sidebar views, queue sorting, task detail, search,
 manual refresh, and triage shortcuts for status, priority, delete, and
@@ -88,7 +88,7 @@ catalog as the prefix hints and help overlay.
 
 Sync server:
 
-  atm server --bind 127.0.0.1:0 --data /tmp/atm-server.sqlite
+  aven server --bind 127.0.0.1:0 --data /tmp/aven-server.sqlite
 
 The server prints:
 
@@ -103,11 +103,11 @@ proxy. The server prints a warning when a public bind is enabled.
 
 Recommended VPN or private-network setup:
 
-  # server config (~/.config/agentic-task-manager/config.toml)
+  # server config (~/.config/aven/config.toml)
   [sync]
   auth_token = "your-shared-secret"
 
-  atm server --bind 100.64.0.10:3000 --data /tmp/atm-server.sqlite
+  aven server --bind 100.64.0.10:3000 --data /tmp/aven-server.sqlite
 
   # client config
   [sync]
@@ -116,16 +116,16 @@ Recommended VPN or private-network setup:
 
 Sync a client:
 
-  atm --db /tmp/client-a.sqlite sync --server http://127.0.0.1:<port>
-  atm sync
+  aven --db /tmp/client-a.sqlite sync --server http://127.0.0.1:<port>
+  aven sync
 
-The second form uses sync.server_url from config, or ATM_SYNC_SERVER if set.
+The second form uses sync.server_url from config, or AVEN_SYNC_SERVER if set.
 The server stores an idempotent operation log. Clients push unsynced local
 changes and pull changes after their local server cursor.
 
 Run automatic sync for the configured local database:
 
-  atm daemon run
+  aven daemon run
 
 The daemon uses the same local SQLite database as the CLI. CLI commands still
 work offline and write directly to SQLite. The daemon runs sync in the

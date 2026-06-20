@@ -7,16 +7,16 @@ fn creates_db_and_captures_task() {
     let env = TestEnv::new();
     let implicit = env.db("implicit.sqlite");
     let output = command()
-        .env("ATM_DB", &implicit)
+        .env("AVEN_DB", &implicit)
         .args(["project", "create", "implicit"])
         .output()
-        .expect("run atm with ATM_DB");
+        .expect("run aven with AVEN_DB");
     ok(output);
     assert!(implicit.exists(), "implicit database was not created");
 
     let db = env.db("local.sqlite");
-    ok(env.atm(&db, ["label", "create", "bug"]));
-    let created = ok(env.atm(
+    ok(env.aven(&db, ["label", "create", "bug"]));
+    let created = ok(env.aven(
         &db,
         [
             "add",
@@ -45,13 +45,13 @@ fn creates_db_and_captures_task() {
         ],
     );
 
-    let list = ok(env.atm(&db, ["list"]));
+    let list = ok(env.aven(&db, ["list"]));
     contains_all(
         &list,
         &[&task_ref, "status=inbox", "priority=high", "labels=bug"],
     );
 
-    let shown = ok(env.atm(&db, ["show", &task_ref]));
+    let shown = ok(env.aven(&db, ["show", &task_ref]));
     contains_all(
         &shown,
         &[&task_ref, "status=inbox", "priority=high", "labels=bug"],
@@ -62,9 +62,9 @@ fn creates_db_and_captures_task() {
 fn updates_task_and_preserves_suffix_on_project_move() {
     let env = TestEnv::new();
     let db = env.db("move.sqlite");
-    ok(env.atm(&db, ["label", "create", "bug"]));
-    ok(env.atm(&db, ["label", "create", "sync"]));
-    let created = ok(env.atm(
+    ok(env.aven(&db, ["label", "create", "bug"]));
+    ok(env.aven(&db, ["label", "create", "sync"]));
+    let created = ok(env.aven(
         &db,
         [
             "add",
@@ -78,7 +78,7 @@ fn updates_task_and_preserves_suffix_on_project_move() {
     let original = extract_ref(&created);
     let original_suffix = suffix(&original);
 
-    let updated = ok(env.atm(
+    let updated = ok(env.aven(
         &db,
         [
             "update",
@@ -113,7 +113,7 @@ fn updates_task_and_preserves_suffix_on_project_move() {
         "project move changed suffix"
     );
 
-    let shown = ok(env.atm(&db, ["show", &moved]));
+    let shown = ok(env.aven(&db, ["show", &moved]));
     contains_all(
         &shown,
         &[
@@ -132,11 +132,11 @@ fn delete_restore_and_filters_work() {
     let env = TestEnv::new();
     let db = env.db("filters.sqlite");
     for label in ["bug", "sync", "docs"] {
-        ok(env.atm(&db, ["label", "create", label]));
+        ok(env.aven(&db, ["label", "create", label]));
     }
-    ok(env.atm(&db, ["project", "create", "app"]));
-    ok(env.atm(&db, ["project", "create", "ops"]));
-    let app_bug = extract_ref(&ok(env.atm(
+    ok(env.aven(&db, ["project", "create", "app"]));
+    ok(env.aven(&db, ["project", "create", "ops"]));
+    let app_bug = extract_ref(&ok(env.aven(
         &db,
         [
             "add",
@@ -149,7 +149,7 @@ fn delete_restore_and_filters_work() {
             "high",
         ],
     )));
-    let app_docs = extract_ref(&ok(env.atm(
+    let app_docs = extract_ref(&ok(env.aven(
         &db,
         [
             "add",
@@ -162,7 +162,7 @@ fn delete_restore_and_filters_work() {
             "low",
         ],
     )));
-    let ops_sync = extract_ref(&ok(env.atm(
+    let ops_sync = extract_ref(&ok(env.aven(
         &db,
         [
             "add",
@@ -175,34 +175,34 @@ fn delete_restore_and_filters_work() {
             "urgent",
         ],
     )));
-    ok(env.atm(&db, ["update", &app_docs, "--status", "active"]));
-    ok(env.atm(&db, ["update", &ops_sync, "--status", "done"]));
+    ok(env.aven(&db, ["update", &app_docs, "--status", "active"]));
+    ok(env.aven(&db, ["update", &ops_sync, "--status", "done"]));
 
-    let by_project = ok(env.atm(&db, ["list", "--project", "app"]));
+    let by_project = ok(env.aven(&db, ["list", "--project", "app"]));
     contains_all(&by_project, &["app bug", "app docs"]);
     contains_none(&by_project, &["ops sync"]);
 
-    let by_status = ok(env.atm(&db, ["list", "--status", "active"]));
+    let by_status = ok(env.aven(&db, ["list", "--status", "active"]));
     contains_all(&by_status, &["app docs"]);
     contains_none(&by_status, &["app bug", "ops sync"]);
 
-    let by_priority = ok(env.atm(&db, ["list", "--priority", "urgent"]));
+    let by_priority = ok(env.aven(&db, ["list", "--priority", "urgent"]));
     contains_all(&by_priority, &["ops sync"]);
     contains_none(&by_priority, &["app bug", "app docs"]);
 
-    let by_label = ok(env.atm(&db, ["list", "--label", "bug"]));
+    let by_label = ok(env.aven(&db, ["list", "--label", "bug"]));
     contains_all(&by_label, &["app bug"]);
     contains_none(&by_label, &["app docs", "ops sync"]);
 
-    ok(env.atm(&db, ["delete", &app_bug]));
-    let normal = ok(env.atm(&db, ["list"]));
+    ok(env.aven(&db, ["delete", &app_bug]));
+    let normal = ok(env.aven(&db, ["list"]));
     contains_none(&normal, &[&app_bug, "app bug"]);
 
-    let all = ok(env.atm(&db, ["list", "--all"]));
+    let all = ok(env.aven(&db, ["list", "--all"]));
     contains_all(&all, &[&app_bug, "deleted=yes", "app bug"]);
 
-    ok(env.atm(&db, ["restore", &app_bug]));
-    let restored = ok(env.atm(&db, ["list"]));
+    ok(env.aven(&db, ["restore", &app_bug]));
+    let restored = ok(env.aven(&db, ["list"]));
     contains_all(&restored, &[&app_bug, "app bug"]);
 }
 
@@ -210,7 +210,7 @@ fn delete_restore_and_filters_work() {
 fn invalid_filter_values_fail() {
     let env = TestEnv::new();
     let db = env.db("bad-filter.sqlite");
-    let error = fail(env.atm(&db, ["list", "--status", "blocked"]));
+    let error = fail(env.aven(&db, ["list", "--status", "blocked"]));
     contains_all(
         &error,
         &[

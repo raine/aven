@@ -1,17 +1,17 @@
 # Architecture
 
-`atm` is a local-first task manager implemented as a single Rust crate and binary. It provides a CLI, TUI, SQLite persistence, an HTTP sync server, and a local daemon wake path. This document is a roadmap for coding agents. For operator-facing usage rules, also read `docs/agent-usage.txt`.
+`aven` is a local-first task manager implemented as a single Rust crate and binary. It provides a CLI, TUI, SQLite persistence, an HTTP sync server, and a local daemon wake path. This document is a roadmap for coding agents. For operator-facing usage rules, also read `docs/agent-usage.txt`.
 
 ## Crate layout
 
 | Path | Responsibility |
 | --- | --- |
-| `src/main.rs` | Tokio entrypoint that calls `atm::run_cli()`. |
+| `src/main.rs` | Tokio entrypoint that calls `aven::run_cli()`. |
 | `src/lib.rs` | Module wiring, command dispatch, database opening, TUI launch, daemon wake after successful CLI mutations. |
-| `src/logging.rs` | Tracing subscriber initialization from `ATM_LOG` and `ATM_LOG_FILE`. |
+| `src/logging.rs` | Tracing subscriber initialization from `AVEN_LOG` and `AVEN_LOG_FILE`. |
 | `src/cli.rs` | Clap argument and subcommand definitions. |
 | `src/commands.rs` | User-facing CLI command handlers and output formatting calls. |
-| `src/skill.md` | Agent-facing CLI primer printed by `atm skill`. |
+| `src/skill.md` | Agent-facing CLI primer printed by `aven skill`. |
 | `src/operations.rs` | Transactional business operations used by CLI and TUI. |
 | `src/mutation.rs` | Field-level task mutations, scalar conflict checks, change recording, and field version updates. |
 | `src/db.rs` | SQLite connection setup, migrations, metadata, sync helpers, and conflict helpers. |
@@ -38,7 +38,7 @@
 
 1. `main` starts the Tokio runtime and calls `run_cli`.
 2. Clap parses `Cli` and `Commands` in `src/cli.rs`.
-3. Tracing initializes after CLI parsing and writes to `ATM_LOG_FILE` when set, otherwise `$XDG_STATE_HOME/atm/atm.log` or `~/.local/state/atm/atm.log`. `ATM_LOG` controls the filter and defaults to `atm=info`. Log fields use IDs, counts, operation names, and safe paths, and must not include auth tokens, raw sync payloads, task descriptions, note bodies, user-authored labels or project names, or secret config values.
+3. Tracing initializes after CLI parsing and writes to `AVEN_LOG_FILE` when set, otherwise `$XDG_STATE_HOME/aven/aven.log` or `~/.local/state/aven/aven.log`. `AVEN_LOG` controls the filter and defaults to `aven=info`. Log fields use IDs, counts, operation names, and safe paths, and must not include auth tokens, raw sync payloads, task descriptions, note bodies, user-authored labels or project names, or secret config values.
 4. `src/lib.rs` handles special commands first:
    - `server` starts the Axum sync server.
    - `config` runs without opening the task database.

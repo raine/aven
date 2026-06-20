@@ -3,7 +3,7 @@ mod common;
 use common::{TestEnv, TestServer, contains_all, contains_none, extract_ref, fail, ok};
 
 fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
-    ok(env.atm(db, ["sync", "--server", &server.url]));
+    ok(env.aven(db, ["sync", "--server", &server.url]));
 }
 
 fn synced_task(
@@ -13,7 +13,7 @@ fn synced_task(
 ) -> (std::path::PathBuf, std::path::PathBuf, String) {
     let a = env.db("client-a.sqlite");
     let b = env.db("client-b.sqlite");
-    let task_ref = extract_ref(&ok(env.atm(&a, ["add", title, "--project", "app"])));
+    let task_ref = extract_ref(&ok(env.aven(&a, ["add", title, "--project", "app"])));
     sync(env, &a, server);
     sync(env, &b, server);
     (a, b, task_ref)
@@ -24,8 +24,8 @@ fn title_conflict(
     server: &TestServer,
 ) -> (std::path::PathBuf, std::path::PathBuf, String) {
     let (a, b, task_ref) = synced_task(env, server, "conflict base");
-    ok(env.atm(&a, ["update", &task_ref, "--title", "title from a"]));
-    ok(env.atm(&b, ["update", &task_ref, "--title", "title from b"]));
+    ok(env.aven(&a, ["update", &task_ref, "--title", "title from a"]));
+    ok(env.aven(&b, ["update", &task_ref, "--title", "title from b"]));
     sync(env, &a, server);
     sync(env, &b, server);
     sync(env, &a, server);
@@ -38,9 +38,9 @@ fn same_field_edit_creates_conflict() {
     let server = TestServer::start(&env);
     let (a, _, task_ref) = title_conflict(&env, &server);
 
-    let conflicts = ok(env.atm(&a, ["conflict", "list"]));
+    let conflicts = ok(env.aven(&a, ["conflict", "list"]));
     contains_all(&conflicts, &[&task_ref, "conflict field=title"]);
-    let listed = ok(env.atm(&a, ["list", "--all"]));
+    let listed = ok(env.aven(&a, ["list", "--all"]));
     contains_all(&listed, &[&task_ref, "conflicts=yes"]);
 }
 
@@ -50,11 +50,11 @@ fn conflicted_field_is_protected_but_other_fields_work() {
     let server = TestServer::start(&env);
     let (a, _, task_ref) = title_conflict(&env, &server);
 
-    let error = fail(env.atm(&a, ["update", &task_ref, "--title", "should fail"]));
+    let error = fail(env.aven(&a, ["update", &task_ref, "--title", "should fail"]));
     contains_all(&error, &["error conflicted-field", "field=title"]);
 
-    ok(env.atm(&a, ["update", &task_ref, "--priority", "urgent"]));
-    let shown = ok(env.atm(&a, ["show", &task_ref]));
+    ok(env.aven(&a, ["update", &task_ref, "--priority", "urgent"]));
+    let shown = ok(env.aven(&a, ["show", &task_ref]));
     contains_all(&shown, &["priority=urgent", "conflicts=yes"]);
 }
 
@@ -64,22 +64,22 @@ fn resolve_conflict_by_variant_syncs() {
     let server = TestServer::start(&env);
     let (a, b, task_ref) = title_conflict(&env, &server);
 
-    let shown = ok(env.atm(&a, ["conflict", "show", &task_ref, "--field", "title"]));
+    let shown = ok(env.aven(&a, ["conflict", "show", &task_ref, "--field", "title"]));
     let token = shown
         .lines()
         .find_map(|line| line.strip_prefix("variant "))
         .and_then(|line| line.split_whitespace().next())
         .expect("variant token");
 
-    ok(env.atm(
+    ok(env.aven(
         &a,
         ["conflict", "resolve", &task_ref, "title", "--use", token],
     ));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
 
-    let conflicts_a = ok(env.atm(&a, ["conflict", "list"]));
-    let conflicts_b = ok(env.atm(&b, ["conflict", "list"]));
+    let conflicts_a = ok(env.aven(&a, ["conflict", "list"]));
+    let conflicts_b = ok(env.aven(&b, ["conflict", "list"]));
     contains_none(&conflicts_a, &[&task_ref]);
     contains_none(&conflicts_b, &[&task_ref]);
 }
@@ -90,18 +90,18 @@ fn resolve_conflict_by_stdin_syncs() {
     let server = TestServer::start(&env);
     let (a, b, task_ref) = synced_task(&env, &server, "description conflict");
 
-    ok(env.atm(
+    ok(env.aven(
         &a,
         ["update", &task_ref, "--description", "description from a"],
     ));
-    ok(env.atm(
+    ok(env.aven(
         &b,
         ["update", &task_ref, "--description", "description from b"],
     ));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
 
-    ok(env.atm_stdin(
+    ok(env.aven_stdin(
         &b,
         [
             "conflict",
@@ -115,7 +115,7 @@ fn resolve_conflict_by_stdin_syncs() {
     sync(&env, &b, &server);
     sync(&env, &a, &server);
 
-    let resolved = ok(env.atm(&a, ["show", &task_ref, "--full"]));
+    let resolved = ok(env.aven(&a, ["show", &task_ref, "--full"]));
     contains_all(&resolved, &["resolved description"]);
     contains_none(&resolved, &["conflict ", "field=description"]);
 }

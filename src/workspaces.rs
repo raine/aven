@@ -122,7 +122,7 @@ pub(crate) async fn resolve_required_workspace(
         return Ok(workspace);
     }
     bail!(
-        "error unknown-workspace input={} source={} hint=\"create the workspace with atm workspace create\"",
+        "error unknown-workspace input={} source={} hint=\"create the workspace with aven workspace create\"",
         name_or_key,
         source
     );

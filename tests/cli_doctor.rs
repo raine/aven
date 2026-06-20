@@ -8,12 +8,12 @@ fn doctor_reports_default_database_health() {
     let env = TestEnv::new();
     let db = env.db("doctor.sqlite");
 
-    let output = ok(env.atm(&db, ["doctor"]));
+    let output = ok(env.aven(&db, ["doctor"]));
 
     contains_all(
         &output,
         &[
-            "atm doctor",
+            "aven doctor",
             "Configuration",
             "Database",
             "Workspace",
@@ -36,22 +36,22 @@ fn doctor_reports_configured_paths_and_sync_settings() {
     let wake_addr = env.free_loopback_addr();
     env.write_config(&format!(
         r#"
-[local]
-db_path = "{}"
+local:
+  db_path: "{}"
 
-[sync]
-enabled = true
-server_url = "http://127.0.0.1:3000"
-interval_seconds = 45
+sync:
+  enabled: true
+  server_url: "http://127.0.0.1:3000"
+  interval_seconds: 45
 
-[daemon]
-wake_addr = "{}"
+daemon:
+  wake_addr: "{}"
 "#,
         db.display(),
         wake_addr
     ));
 
-    let output = ok(env.atm_config(["doctor"]));
+    let output = ok(env.aven_config(["doctor"]));
 
     contains_all(
         &output,
@@ -72,7 +72,7 @@ fn doctor_reports_disabled_sync_without_server_error() {
     let env = TestEnv::new();
     let db = env.db("disabled-sync.sqlite");
 
-    let output = ok(env.atm(&db, ["doctor"]));
+    let output = ok(env.aven(&db, ["doctor"]));
 
     contains_all(
         &output,
@@ -87,16 +87,16 @@ fn doctor_reports_enabled_sync_without_server_as_failed_check() {
     let db = env.db("enabled-sync.sqlite");
     env.write_config(&format!(
         r#"
-[local]
-db_path = "{}"
+local:
+  db_path: "{}"
 
-[sync]
-enabled = true
+sync:
+  enabled: true
 "#,
         db.display()
     ));
 
-    let output = ok(env.atm_config(["doctor"]));
+    let output = ok(env.aven_config(["doctor"]));
 
     contains_all(
         &output,
@@ -114,16 +114,16 @@ fn doctor_reports_invalid_daemon_wake_address() {
     let db = env.db("invalid-wake.sqlite");
     env.write_config(&format!(
         r#"
-[local]
-db_path = "{}"
+local:
+  db_path: "{}"
 
-[daemon]
-wake_addr = "not-an-address"
+daemon:
+  wake_addr: "not-an-address"
 "#,
         db.display()
     ));
 
-    let output = ok(env.atm_config(["doctor"]));
+    let output = ok(env.aven_config(["doctor"]));
 
     contains_all(&output, &["!! daemon wake", "invalid daemon wake address"]);
 }
@@ -134,17 +134,17 @@ fn doctor_reports_invalid_sync_server_url() {
     let db = env.db("invalid-server.sqlite");
     env.write_config(&format!(
         r#"
-[local]
-db_path = "{}"
+local:
+  db_path: "{}"
 
-[sync]
-enabled = true
-server_url = "not-a-url"
+sync:
+  enabled: true
+  server_url: "not-a-url"
 "#,
         db.display()
     ));
 
-    let output = ok(env.atm_config(["doctor"]));
+    let output = ok(env.aven_config(["doctor"]));
 
     contains_all(&output, &["!! server", "not-a-url", "!! daemon server"]);
 }
@@ -160,18 +160,18 @@ fn doctor_rejects_sync_server_url_shapes_that_sync_cannot_use() {
     ] {
         env.write_config(&format!(
             r#"
-[local]
-db_path = "{}"
+local:
+  db_path: "{}"
 
-[sync]
-enabled = true
-server_url = "{}"
+sync:
+  enabled: true
+  server_url: "{}"
 "#,
             db.display(),
             server_url
         ));
 
-        let output = ok(env.atm_config(["doctor"]));
+        let output = ok(env.aven_config(["doctor"]));
 
         contains_all(&output, &["!! server", server_url]);
     }
@@ -183,25 +183,22 @@ fn doctor_reports_daemon_server_separately_from_env_server() {
     let db = env.db("env-server.sqlite");
     env.write_config(&format!(
         r#"
-[local]
-db_path = "{}"
+local:
+  db_path: "{}"
 
-[sync]
-enabled = true
+sync:
+  enabled: true
 "#,
         db.display()
     ));
 
     let output = std::process::Command::new(common::bin())
-        .env(
-            "ATM_CONFIG_DIR",
-            env.config_dir().join("agentic-task-manager"),
-        )
-        .env("ATM_SYNC_SERVER", "http://127.0.0.1:3000")
-        .env_remove("ATM_DB")
+        .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
+        .env("AVEN_SYNC_SERVER", "http://127.0.0.1:3000")
+        .env_remove("AVEN_DB")
         .arg("doctor")
         .output()
-        .expect("run atm doctor with env server");
+        .expect("run aven doctor with env server");
     let output = ok(output);
 
     contains_all(
@@ -221,16 +218,16 @@ fn doctor_reports_pinned_server_mismatch() {
     let db = env.db("pinned-server.sqlite");
     env.write_config(&format!(
         r#"
-[local]
-db_path = "{}"
+local:
+  db_path: "{}"
 
-[sync]
-enabled = true
-server_url = "http://127.0.0.1:3000"
+sync:
+  enabled: true
+  server_url: "http://127.0.0.1:3000"
 "#,
         db.display()
     ));
-    ok(env.atm_config(["doctor"]));
+    ok(env.aven_config(["doctor"]));
     assert_eq!(meta_value(&db, "sync_server_url"), None);
 
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -252,7 +249,7 @@ server_url = "http://127.0.0.1:3000"
         .expect("pin server");
     });
 
-    let output = ok(env.atm_config(["doctor"]));
+    let output = ok(env.aven_config(["doctor"]));
 
     contains_all(
         &output,
@@ -268,9 +265,9 @@ fn doctor_workspace_flag_affects_active_workspace_and_task_counts() {
     let env = TestEnv::new();
     let db = env.db("workspace-doctor.sqlite");
 
-    ok(env.atm(&db, ["workspace", "create", "alpha"]));
-    ok(env.atm(&db, ["workspace", "create", "beta"]));
-    ok(env.atm(
+    ok(env.aven(&db, ["workspace", "create", "alpha"]));
+    ok(env.aven(&db, ["workspace", "create", "beta"]));
+    ok(env.aven(
         &db,
         [
             "--workspace",
@@ -281,16 +278,16 @@ fn doctor_workspace_flag_affects_active_workspace_and_task_counts() {
             "app",
         ],
     ));
-    ok(env.atm(
+    ok(env.aven(
         &db,
         ["--workspace", "beta", "add", "beta one", "--project", "app"],
     ));
-    ok(env.atm(
+    ok(env.aven(
         &db,
         ["--workspace", "beta", "add", "beta two", "--project", "app"],
     ));
 
-    let alpha = ok(env.atm(&db, ["--workspace", "alpha", "doctor"]));
+    let alpha = ok(env.aven(&db, ["--workspace", "alpha", "doctor"]));
     contains_all(
         &alpha,
         &[
@@ -299,7 +296,7 @@ fn doctor_workspace_flag_affects_active_workspace_and_task_counts() {
         ],
     );
 
-    let beta = ok(env.atm(&db, ["--workspace", "beta", "doctor"]));
+    let beta = ok(env.aven(&db, ["--workspace", "beta", "doctor"]));
     contains_all(
         &beta,
         &[

@@ -13,7 +13,7 @@ fn infers_project_from_path_mapping() {
     let nested = mapped.join("sub");
     fs::create_dir_all(&nested).unwrap();
 
-    ok(env.atm(
+    ok(env.aven(
         &db,
         [
             "project",
@@ -23,7 +23,7 @@ fn infers_project_from_path_mapping() {
             mapped.to_str().unwrap(),
         ],
     ));
-    let output = ok(env.atm_in(&db, &nested, ["add", "mapped inference"]));
+    let output = ok(env.aven_in(&db, &nested, ["add", "mapped inference"]));
     contains_all(&output, &["project=mapped"]);
 }
 
@@ -45,7 +45,7 @@ fn infers_project_from_git_root() {
         .expect("git init");
     assert!(status.success(), "git init failed");
 
-    let output = ok(env.atm_in(&db, &repo, ["add", "git inference"]));
+    let output = ok(env.aven_in(&db, &repo, ["add", "git inference"]));
     contains_all(&output, &["project=git-inferred", "created G"]);
 }
 
@@ -55,7 +55,7 @@ fn requires_project_without_mapping_or_git() {
     let db = env.db("none.sqlite");
     let cwd = env.path("no-project");
     fs::create_dir_all(&cwd).unwrap();
-    let error = fail(env.atm_in(&db, &cwd, ["add", "no project"]));
+    let error = fail(env.aven_in(&db, &cwd, ["add", "no project"]));
     contains_all(&error, &["error project-required"]);
 }
 
@@ -82,7 +82,7 @@ fn ignores_inherited_git_environment_for_project_inference() {
         .env("GIT_DIR", &git_dir)
         .env("GIT_WORK_TREE", &work_tree)
         .output()
-        .expect("run atm with inherited git env");
+        .expect("run aven with inherited git env");
 
     let error = fail(output);
     contains_all(&error, &["error project-required"]);
@@ -116,9 +116,9 @@ fn clean_git_command() -> Command {
 fn reports_near_project_matches() {
     let env = TestEnv::new();
     let db = env.db("near-project.sqlite");
-    ok(env.atm(&db, ["project", "create", "homelab"]));
+    ok(env.aven(&db, ["project", "create", "homelab"]));
 
-    let error = fail(env.atm(&db, ["add", "near project", "--project", "home-lab"]));
+    let error = fail(env.aven(&db, ["add", "near project", "--project", "home-lab"]));
     contains_all(
         &error,
         &[
@@ -133,9 +133,9 @@ fn reports_near_project_matches() {
 fn reports_unknown_label_choices() {
     let env = TestEnv::new();
     let db = env.db("near-label.sqlite");
-    ok(env.atm(&db, ["label", "create", "bug"]));
+    ok(env.aven(&db, ["label", "create", "bug"]));
 
-    let error = fail(env.atm(
+    let error = fail(env.aven(
         &db,
         ["add", "bad label", "--project", "app", "--label", "bux"],
     ));
@@ -154,7 +154,7 @@ fn rejects_invalid_status_and_priority() {
     let env = TestEnv::new();
     let db = env.db("invalid.sqlite");
 
-    let error = fail(env.atm(
+    let error = fail(env.aven(
         &db,
         [
             "add",
@@ -174,8 +174,8 @@ fn rejects_invalid_status_and_priority() {
     );
 
     let task_ref =
-        common::extract_ref(&ok(env.atm(&db, ["add", "valid task", "--project", "app"])));
-    let error = fail(env.atm(&db, ["update", &task_ref, "--status", "blocked"]));
+        common::extract_ref(&ok(env.aven(&db, ["add", "valid task", "--project", "app"])));
+    let error = fail(env.aven(&db, ["update", &task_ref, "--status", "blocked"]));
     contains_all(
         &error,
         &[

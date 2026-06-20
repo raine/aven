@@ -40,7 +40,7 @@ pub(crate) fn render(
 
     if frame.area().width < 70 || frame.area().height < 18 {
         frame.render_widget(
-            Paragraph::new("terminal too small for atm tui")
+            Paragraph::new("terminal too small for aven tui")
                 .alignment(Alignment::Center)
                 .style(Style::new().fg(FG).bg(BG)),
             frame.area(),
@@ -551,25 +551,14 @@ fn render_task_list(
     }
 
     let project_width = project_column_width(store, area.width < 90);
-    let columns = if area.width < 90 {
-        [
-            Constraint::Length(12),
-            Constraint::Fill(1),
-            Constraint::Length(project_width),
-            Constraint::Length(10),
-            Constraint::Length(3),
-            Constraint::Length(5),
-        ]
-    } else {
-        [
-            Constraint::Length(12),
-            Constraint::Fill(1),
-            Constraint::Length(project_width),
-            Constraint::Length(10),
-            Constraint::Length(3),
-            Constraint::Length(5),
-        ]
-    };
+    let columns = [
+        Constraint::Length(12),
+        Constraint::Fill(1),
+        Constraint::Length(project_width),
+        Constraint::Length(10),
+        Constraint::Length(3),
+        Constraint::Length(5),
+    ];
     let row_areas = Layout::vertical(vec![Constraint::Length(1); area.height as usize]).split(area);
     render_task_header(frame, row_areas[0], columns);
 

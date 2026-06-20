@@ -1,5 +1,5 @@
-atm agent usage
-===============
+aven agent usage
+================
 
 Use refs printed by command output. The stable part is the suffix after the
 project prefix:
@@ -14,15 +14,15 @@ Refs:
   * Use the printed qualified ref when possible.
   * Bare suffix refs work when unambiguous.
   * Typed suffix refs must be at least 3 characters.
-  * Retry with a longer suffix when atm reports error ambiguous-ref.
+  * Retry with a longer suffix when aven reports error ambiguous-ref.
   * Do not assume an old project prefix still names the task.
 
 Sync:
 
   * Normal commands work against the local SQLite database and do not require
     network access.
-  * Use atm sync --server <url> for explicit sync.
-  * If sync.server_url is configured, atm sync can omit --server.
+  * Use aven sync --server <url> for explicit sync.
+  * If sync.server_url is configured, aven sync can omit --server.
   * When sync.auth_token is configured, clients send it automatically as a
     Bearer token on sync requests.
   * Private or public server binds require sync.auth_token on the server and

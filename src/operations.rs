@@ -719,8 +719,8 @@ pub(crate) fn show_config_paths() -> Result<ConfigPathsOutcome> {
     let config_file = config::config_file_path()?;
     let default_db = config::default_db_path()?;
     let effective_db = config::resolve_db_path(None, &config)?;
-    let db_source = if std::env::var_os("ATM_DB").is_some() {
-        "ATM_DB"
+    let db_source = if std::env::var_os("AVEN_DB").is_some() {
+        "AVEN_DB"
     } else if config.local.db_path.is_some() {
         "config local.db_path"
     } else {

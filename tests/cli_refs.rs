@@ -14,7 +14,7 @@ async fn setup_display_ref_fixtures(
     let env = TestEnv::new();
     let db = env.db(db_name);
     for project in projects {
-        ok(env.atm(&db, ["project", "create", project]));
+        ok(env.aven(&db, ["project", "create", project]));
     }
 
     let pool = SqlitePoolOptions::new()
@@ -38,11 +38,11 @@ fn first_tokens(output: &str) -> Vec<&str> {
 fn short_ref_resolves_when_unambiguous() {
     let env = TestEnv::new();
     let db = env.db("short.sqlite");
-    let created = ok(env.atm(&db, ["add", "short ref task", "--project", "app"]));
+    let created = ok(env.aven(&db, ["add", "short ref task", "--project", "app"]));
     let task_ref = extract_ref(&created);
     let short = &suffix(&task_ref)[..3];
 
-    let shown = ok(env.atm(&db, ["show", short]));
+    let shown = ok(env.aven(&db, ["show", short]));
     contains_all(&shown, &[&task_ref, "short ref task"]);
 }
 
@@ -50,13 +50,15 @@ fn short_ref_resolves_when_unambiguous() {
 fn qualified_ref_prefix_is_a_hint() {
     let env = TestEnv::new();
     let db = env.db("hint.sqlite");
-    let original = extract_ref(&ok(env.atm(&db, ["add", "moving task", "--project", "app"])));
+    let original = extract_ref(&ok(
+        env.aven(&db, ["add", "moving task", "--project", "app"])
+    ));
     let stale_ref = original.clone();
     let moved = extract_ref(&ok(
-        env.atm(&db, ["update", &original, "--project", "homelab"])
+        env.aven(&db, ["update", &original, "--project", "homelab"])
     ));
 
-    let shown = ok(env.atm(&db, ["show", &stale_ref]));
+    let shown = ok(env.aven(&db, ["show", &stale_ref]));
     contains_all(&shown, &[&moved, "moving task"]);
 }
 
@@ -73,7 +75,7 @@ async fn display_refs_use_project_prefix_and_unique_suffix_floor() {
     )
     .await;
 
-    let list = ok(env.atm(&db, ["list", "--all"]));
+    let list = ok(env.aven(&db, ["list", "--all"]));
     assert_eq!(first_tokens(&list), ["APP-W3ZX1", "OPS-W3ZX2", "APP-A111"]);
 }
 
@@ -89,10 +91,10 @@ async fn displayed_refs_resolve_after_filtering() {
     )
     .await;
 
-    let list = ok(env.atm(&db, ["list", "--project", "app"]));
+    let list = ok(env.aven(&db, ["list", "--project", "app"]));
     assert_eq!(first_tokens(&list), ["APP-W3ZX1"]);
 
-    let shown = ok(env.atm(&db, ["show", "APP-W3ZX1"]));
+    let shown = ok(env.aven(&db, ["show", "APP-W3ZX1"]));
     contains_all(&shown, &["APP-W3ZX1", "app shared"]);
 }
 
@@ -100,7 +102,7 @@ async fn displayed_refs_resolve_after_filtering() {
 async fn ambiguous_ref_fails_with_choices() {
     let env = TestEnv::new();
     let db = env.db("ambiguous.sqlite");
-    ok(env.atm(&db, ["project", "create", "ambig"]));
+    ok(env.aven(&db, ["project", "create", "ambig"]));
 
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -122,7 +124,7 @@ async fn ambiguous_ref_fails_with_choices() {
         .unwrap();
     }
 
-    let error = fail(env.atm(&db, ["show", "7KQ"]));
+    let error = fail(env.aven(&db, ["show", "7KQ"]));
     contains_all(&error, &["error ambiguous-ref", "retry with longer ref"]);
     let matches = error
         .lines()

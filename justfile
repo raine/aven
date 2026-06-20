@@ -150,7 +150,7 @@ install:
 
 # Install debug binary globally via symlink
 install-dev:
-    cargo build && ln -sf $(pwd)/target/debug/atm ~/.cargo/bin/atm
+    cargo build && ln -sf $(pwd)/target/debug/aven ~/.cargo/bin/aven
 
 # Run the application
 run *ARGS:

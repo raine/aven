@@ -79,7 +79,7 @@ run_check() {
   esac
 }
 
-output_dir="$(mktemp -d -t atm-run-checks.XXXXXX)"
+output_dir="$(mktemp -d -t aven-run-checks.XXXXXX)"
 cleanup() {
   local status=$?
   for pid in "${pids[@]:-}"; do

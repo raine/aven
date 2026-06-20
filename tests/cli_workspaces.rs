@@ -3,7 +3,7 @@ mod common;
 use common::{TestEnv, TestServer, command, contains_all, contains_none, extract_ref, fail, ok};
 
 fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
-    let output = ok(env.atm(db, ["sync", "--server", &server.url]));
+    let output = ok(env.aven(db, ["sync", "--server", &server.url]));
     contains_all(&output, &["synced", "cursor="]);
 }
 
@@ -12,24 +12,24 @@ fn workspace_commands_manage_names_and_ambiguity() {
     let env = TestEnv::new();
     let db = env.db("workspaces.sqlite");
 
-    let initial = ok(env.atm(&db, ["workspace", "list"]));
+    let initial = ok(env.aven(&db, ["workspace", "list"]));
     contains_all(&initial, &["default", "name=\"default\""]);
 
-    let created = ok(env.atm(&db, ["workspace", "create", "Client Work"]));
+    let created = ok(env.aven(&db, ["workspace", "create", "Client Work"]));
     contains_all(
         &created,
         &["created-workspace", "client-work", "name=\"Client Work\""],
     );
 
-    let renamed = ok(env.atm(&db, ["workspace", "rename", "client-work", "Consulting"]));
+    let renamed = ok(env.aven(&db, ["workspace", "rename", "client-work", "Consulting"]));
     contains_all(
         &renamed,
         &["renamed-workspace", "consulting", "name=\"Consulting\""],
     );
 
-    ok(env.atm(&db, ["list"]));
-    ok(env.atm(&db, ["--workspace", "default", "list"]));
-    ok(env.atm(&db, ["--workspace", "consulting", "list"]));
+    ok(env.aven(&db, ["list"]));
+    ok(env.aven(&db, ["--workspace", "default", "list"]));
+    ok(env.aven(&db, ["--workspace", "consulting", "list"]));
 }
 
 #[test]
@@ -37,12 +37,12 @@ fn workspace_scoped_commands_keep_data_isolated() {
     let env = TestEnv::new();
     let db = env.db("scoped.sqlite");
 
-    ok(env.atm(&db, ["workspace", "create", "alpha"]));
-    ok(env.atm(&db, ["workspace", "create", "beta"]));
-    ok(env.atm(&db, ["--workspace", "alpha", "label", "create", "bug"]));
-    ok(env.atm(&db, ["--workspace", "beta", "label", "create", "bug"]));
+    ok(env.aven(&db, ["workspace", "create", "alpha"]));
+    ok(env.aven(&db, ["workspace", "create", "beta"]));
+    ok(env.aven(&db, ["--workspace", "alpha", "label", "create", "bug"]));
+    ok(env.aven(&db, ["--workspace", "beta", "label", "create", "bug"]));
 
-    let alpha_ref = extract_ref(&ok(env.atm(
+    let alpha_ref = extract_ref(&ok(env.aven(
         &db,
         [
             "--workspace",
@@ -55,7 +55,7 @@ fn workspace_scoped_commands_keep_data_isolated() {
             "bug",
         ],
     )));
-    let beta_ref = extract_ref(&ok(env.atm(
+    let beta_ref = extract_ref(&ok(env.aven(
         &db,
         [
             "--workspace",
@@ -69,11 +69,11 @@ fn workspace_scoped_commands_keep_data_isolated() {
         ],
     )));
 
-    let alpha = ok(env.atm(&db, ["--workspace", "alpha", "list"]));
+    let alpha = ok(env.aven(&db, ["--workspace", "alpha", "list"]));
     contains_all(&alpha, &[&alpha_ref, "alpha task", "labels=bug"]);
     contains_none(&alpha, &[&beta_ref, "beta task"]);
 
-    let beta = ok(env.atm(&db, ["--workspace", "beta", "list"]));
+    let beta = ok(env.aven(&db, ["--workspace", "beta", "list"]));
     contains_all(&beta, &[&beta_ref, "beta task", "labels=bug"]);
     contains_none(&beta, &[&alpha_ref, "alpha task"]);
 }
@@ -87,8 +87,8 @@ fn workspace_config_default_and_routes_select_active_workspace() {
     std::fs::create_dir_all(&alpha_dir).expect("create alpha dir");
     std::fs::create_dir_all(&beta_dir).expect("create beta dir");
 
-    ok(env.atm(&db, ["workspace", "create", "alpha"]));
-    ok(env.atm(&db, ["workspace", "create", "beta"]));
+    ok(env.aven(&db, ["workspace", "create", "alpha"]));
+    ok(env.aven(&db, ["workspace", "create", "beta"]));
     env.write_config(&format!(
         r#"local:
   db_path: "{}"
@@ -103,8 +103,8 @@ workspace:
         alpha_dir.display()
     ));
 
-    ok(env.atm_config(["label", "create", "bug"]));
-    ok(env.atm_config([
+    ok(env.aven_config(["label", "create", "bug"]));
+    ok(env.aven_config([
         "add",
         "default beta task",
         "--project",
@@ -113,8 +113,8 @@ workspace:
         "bug",
     ]));
 
-    ok(env.atm_config(["--workspace", "alpha", "label", "create", "bug"]));
-    ok(env.atm_config([
+    ok(env.aven_config(["--workspace", "alpha", "label", "create", "bug"]));
+    ok(env.aven_config([
         "--workspace",
         "alpha",
         "add",
@@ -125,21 +125,18 @@ workspace:
         "bug",
     ]));
 
-    let beta = ok(env.atm_config(["list"]));
+    let beta = ok(env.aven_config(["list"]));
     contains_all(&beta, &["default beta task"]);
     contains_none(&beta, &["routed alpha task"]);
 
     let alpha = ok(command()
-        .env(
-            "ATM_CONFIG_DIR",
-            env.config_dir().join("agentic-task-manager"),
-        )
-        .env_remove("ATM_DB")
-        .env_remove("ATM_SYNC_SERVER")
+        .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
+        .env_remove("AVEN_DB")
+        .env_remove("AVEN_SYNC_SERVER")
         .current_dir(&alpha_dir)
         .args(["list"])
         .output()
-        .expect("run atm in routed cwd"));
+        .expect("run aven in routed cwd"));
     contains_all(&alpha, &["routed alpha task"]);
     contains_none(&alpha, &["default beta task"]);
 }
@@ -151,11 +148,11 @@ fn project_path_remove_only_affects_active_workspace() {
     let mapped = env.path("mapped");
     std::fs::create_dir_all(&mapped).expect("create mapped dir");
 
-    ok(env.atm(&db, ["workspace", "create", "alpha"]));
-    ok(env.atm(&db, ["workspace", "create", "beta"]));
-    ok(env.atm(&db, ["--workspace", "alpha", "project", "create", "app"]));
-    ok(env.atm(&db, ["--workspace", "beta", "project", "create", "app"]));
-    ok(env.atm(
+    ok(env.aven(&db, ["workspace", "create", "alpha"]));
+    ok(env.aven(&db, ["workspace", "create", "beta"]));
+    ok(env.aven(&db, ["--workspace", "alpha", "project", "create", "app"]));
+    ok(env.aven(&db, ["--workspace", "beta", "project", "create", "app"]));
+    ok(env.aven(
         &db,
         [
             "--workspace",
@@ -167,7 +164,7 @@ fn project_path_remove_only_affects_active_workspace() {
             mapped.to_str().expect("utf8 path"),
         ],
     ));
-    ok(env.atm(
+    ok(env.aven(
         &db,
         [
             "--workspace",
@@ -180,7 +177,7 @@ fn project_path_remove_only_affects_active_workspace() {
         ],
     ));
 
-    ok(env.atm(
+    ok(env.aven(
         &db,
         [
             "--workspace",
@@ -193,15 +190,15 @@ fn project_path_remove_only_affects_active_workspace() {
         ],
     ));
 
-    let beta_ref = extract_ref(&ok(env.atm_in(
+    let beta_ref = extract_ref(&ok(env.aven_in(
         &db,
         &mapped,
         ["--workspace", "beta", "add", "beta inferred"],
     )));
-    let beta = ok(env.atm(&db, ["--workspace", "beta", "show", &beta_ref, "--full"]));
+    let beta = ok(env.aven(&db, ["--workspace", "beta", "show", &beta_ref, "--full"]));
     contains_all(&beta, &["project=app"]);
 
-    let alpha_error = fail(env.atm_in(
+    let alpha_error = fail(env.aven_in(
         &db,
         &mapped,
         ["--workspace", "alpha", "add", "alpha inferred"],
@@ -214,8 +211,8 @@ fn display_suffix_ignores_other_workspaces() {
     let env = TestEnv::new();
     let db = env.db("suffixes.sqlite");
 
-    ok(env.atm(&db, ["workspace", "create", "alpha"]));
-    ok(env.atm(&db, ["workspace", "create", "beta"]));
+    ok(env.aven(&db, ["workspace", "create", "alpha"]));
+    ok(env.aven(&db, ["workspace", "create", "beta"]));
     let alpha_id = "ABCD000000000000";
     let beta_id = "ABCDE00000000000";
     let sql = "
@@ -235,7 +232,7 @@ fn display_suffix_ignores_other_workspaces() {
         .expect("seed suffix data");
     assert!(output.status.success(), "sqlite failed");
 
-    let conflicts = ok(env.atm(&db, ["--workspace", "alpha", "conflict", "list"]));
+    let conflicts = ok(env.aven(&db, ["--workspace", "alpha", "conflict", "list"]));
     contains_all(&conflicts, &["APP-ABCD", "alpha task"]);
     contains_none(&conflicts, &["APP-ABCD0", beta_id, alpha_id]);
 }
@@ -245,8 +242,8 @@ fn renamed_default_workspace_still_opens_database() {
     let env = TestEnv::new();
     let db = env.db("renamed-default.sqlite");
 
-    ok(env.atm(&db, ["workspace", "rename", "default", "personal"]));
-    let workspaces = ok(env.atm(&db, ["workspace", "list"]));
+    ok(env.aven(&db, ["workspace", "rename", "default", "personal"]));
+    let workspaces = ok(env.aven(&db, ["workspace", "list"]));
     contains_all(&workspaces, &["personal", "name=\"personal\""]);
 }
 
@@ -255,7 +252,7 @@ fn sync_rejects_field_updates_for_missing_tasks() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let client = env.db("client.sqlite");
-    ok(env.atm(&client, ["workspace", "create", "client"]));
+    ok(env.aven(&client, ["workspace", "create", "client"]));
 
     let workspace_id = {
         let output = std::process::Command::new("sqlite3")
@@ -270,7 +267,7 @@ fn sync_rejects_field_updates_for_missing_tasks() {
             .to_string()
     };
     let server_db = env.path("server.sqlite");
-    ok(env.atm(&server_db, ["workspace", "list"]));
+    ok(env.aven(&server_db, ["workspace", "list"]));
     let sql = format!(
         "INSERT OR IGNORE INTO workspaces(id, key, name, created_at, updated_at) VALUES ('{workspace_id}', 'client', 'client', 't', 't');\
          INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field, op_type, payload, base_version, created_at, server_seq)\
@@ -283,7 +280,7 @@ fn sync_rejects_field_updates_for_missing_tasks() {
         .expect("seed remote change");
     assert!(output.status.success(), "sqlite failed");
 
-    let error = fail(env.atm(&client, ["sync", "--server", &server.url]));
+    let error = fail(env.aven(&client, ["sync", "--server", &server.url]));
     contains_all(&error, &["task-not-found"]);
 }
 
@@ -294,9 +291,9 @@ fn sync_converges_workspace_records_and_scoped_tasks() {
     let a = env.db("client-a.sqlite");
     let b = env.db("client-b.sqlite");
 
-    ok(env.atm(&a, ["workspace", "create", "client"]));
-    ok(env.atm(&a, ["--workspace", "client", "label", "create", "bug"]));
-    let task_ref = extract_ref(&ok(env.atm(
+    ok(env.aven(&a, ["workspace", "create", "client"]));
+    ok(env.aven(&a, ["--workspace", "client", "label", "create", "bug"]));
+    let task_ref = extract_ref(&ok(env.aven(
         &a,
         [
             "--workspace",
@@ -313,12 +310,12 @@ fn sync_converges_workspace_records_and_scoped_tasks() {
     sync(&env, &a, &server);
     sync(&env, &b, &server);
 
-    let workspaces = ok(env.atm(&b, ["workspace", "list"]));
+    let workspaces = ok(env.aven(&b, ["workspace", "list"]));
     contains_all(&workspaces, &["client", "name=\"client\""]);
 
-    let client = ok(env.atm(&b, ["--workspace", "client", "list"]));
+    let client = ok(env.aven(&b, ["--workspace", "client", "list"]));
     contains_all(&client, &[&task_ref, "client task", "labels=bug"]);
 
-    let default = ok(env.atm(&b, ["--workspace", "default", "list"]));
+    let default = ok(env.aven(&b, ["--workspace", "default", "list"]));
     contains_none(&default, &["client task"]);
 }

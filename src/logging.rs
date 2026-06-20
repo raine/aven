@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use tracing_subscriber::EnvFilter;
 
-const APP_DIR: &str = "atm";
-const LOG_FILE: &str = "atm.log";
+const APP_DIR: &str = "aven";
+const LOG_FILE: &str = "aven.log";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LogMode {
@@ -16,9 +16,9 @@ pub(crate) enum LogMode {
 }
 
 pub(crate) fn init(_mode: LogMode) -> Result<()> {
-    let filter = std::env::var("ATM_LOG").unwrap_or_else(|_| "atm=info".to_string());
-    let filter = EnvFilter::try_new(filter).context("invalid ATM_LOG filter")?;
-    let path = std::env::var_os("ATM_LOG_FILE")
+    let filter = std::env::var("AVEN_LOG").unwrap_or_else(|_| "aven=info".to_string());
+    let filter = EnvFilter::try_new(filter).context("invalid AVEN_LOG filter")?;
+    let path = std::env::var_os("AVEN_LOG_FILE")
         .map(PathBuf::from)
         .unwrap_or(default_log_path()?);
     init_file(&path, filter)

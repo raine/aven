@@ -19,7 +19,7 @@ sync:
 "#,
     );
     contains_all(
-        &fail(env.atm_config(["daemon", "run"])),
+        &fail(env.aven_config(["daemon", "run"])),
         &["error sync-disabled"],
     );
 
@@ -31,7 +31,7 @@ sync:
 "#,
     );
     contains_all(
-        &fail(env.atm_config(["daemon", "run"])),
+        &fail(env.aven_config(["daemon", "run"])),
         &["error sync-server-required"],
     );
 
@@ -47,7 +47,7 @@ daemon:
 "#,
     );
     contains_all(
-        &fail(env.atm_config(["daemon", "run"])),
+        &fail(env.aven_config(["daemon", "run"])),
         &["invalid daemon wake address"],
     );
 
@@ -63,7 +63,7 @@ daemon:
 "#,
     );
     contains_all(
-        &fail(env.atm_config(["daemon", "run"])),
+        &fail(env.aven_config(["daemon", "run"])),
         &["error daemon-wake-requires-loopback"],
     );
 }
@@ -90,7 +90,7 @@ daemon:
         wake_addr
     ));
 
-    let error = fail(env.atm_config(["daemon", "run"]));
+    let error = fail(env.aven_config(["daemon", "run"]));
     contains_all(
         &error,
         &[
@@ -113,8 +113,8 @@ fn daemon_wake_syncs_representative_mutations() {
     daemon.wait_for_log("daemon-synced", Duration::from_secs(5));
 
     let mark = daemon.log_mark();
-    ok(env.atm_config(["label", "create", "sync"]));
-    let task_ref = extract_ref(&ok(env.atm_config([
+    ok(env.aven_config(["label", "create", "sync"]));
+    let task_ref = extract_ref(&ok(env.aven_config([
         "add",
         "wake synced task",
         "--project",
@@ -125,14 +125,14 @@ fn daemon_wake_syncs_representative_mutations() {
     daemon.wait_for_log_after(mark, "daemon-synced", Duration::from_secs(5));
 
     let mark = daemon.log_mark();
-    ok(env.atm_config(["update", &task_ref, "--status", "active"]));
-    ok(env.atm_config_stdin(["note", &task_ref, "--stdin"], "wake note\n"));
-    ok(env.atm_config(["delete", &task_ref]));
-    ok(env.atm_config(["restore", &task_ref]));
+    ok(env.aven_config(["update", &task_ref, "--status", "active"]));
+    ok(env.aven_config_stdin(["note", &task_ref, "--stdin"], "wake note\n"));
+    ok(env.aven_config(["delete", &task_ref]));
+    ok(env.aven_config(["restore", &task_ref]));
     daemon.wait_for_log_after(mark, "daemon-synced", Duration::from_secs(5));
 
-    ok(env.atm(&client_b, ["sync", "--server", &server.url]));
-    let shown = ok(env.atm(&client_b, ["show", &task_ref, "--full"]));
+    ok(env.aven(&client_b, ["sync", "--server", &server.url]));
+    let shown = ok(env.aven(&client_b, ["show", &task_ref, "--full"]));
     contains_all(
         &shown,
         &[&task_ref, "wake synced task", "status=active", "wake note"],
@@ -152,14 +152,14 @@ fn daemon_periodic_syncs_without_wake() {
     let daemon = TestProcess::start_daemon(&env);
     daemon.wait_for_log("daemon-synced", Duration::from_secs(5));
     let mark = daemon.log_mark();
-    let task_ref = extract_ref(&ok(env.atm(
+    let task_ref = extract_ref(&ok(env.aven(
         &client_a,
         ["add", "periodic synced task", "--project", "app"],
     )));
 
     daemon.wait_for_log_after(mark, "daemon-synced", Duration::from_secs(5));
-    ok(env.atm(&client_b, ["sync", "--server", &server.url]));
-    let list = ok(env.atm(&client_b, ["list", "--all"]));
+    ok(env.aven(&client_b, ["sync", "--server", &server.url]));
+    let list = ok(env.aven(&client_b, ["list", "--all"]));
     contains_all(&list, &[&task_ref, "periodic synced task"]);
 }
 
@@ -179,13 +179,13 @@ fn two_daemons_converge_bidirectionally() {
     daemon_a.wait_for_log("daemon-synced", Duration::from_secs(5));
     daemon_b.wait_for_log("daemon-synced", Duration::from_secs(5));
 
-    let a_ref = extract_ref(&ok(env_a.atm_config([
+    let a_ref = extract_ref(&ok(env_a.aven_config([
         "add",
         "task from daemon a",
         "--project",
         "app",
     ])));
-    let b_ref = extract_ref(&ok(env_b.atm_config([
+    let b_ref = extract_ref(&ok(env_b.aven_config([
         "add",
         "task from daemon b",
         "--project",
@@ -193,8 +193,8 @@ fn two_daemons_converge_bidirectionally() {
     ])));
 
     eventually(Duration::from_secs(10), || {
-        let list_a = ok(env_a.atm_config(["list", "--all"]));
-        let list_b = ok(env_b.atm_config(["list", "--all"]));
+        let list_a = ok(env_a.aven_config(["list", "--all"]));
+        let list_b = ok(env_b.aven_config(["list", "--all"]));
         list_a.contains(&a_ref)
             && list_a.contains(&b_ref)
             && list_b.contains(&a_ref)
@@ -224,7 +224,7 @@ sync:
     daemon.wait_for_log("daemon-synced", Duration::from_secs(5));
 
     let mark = daemon.log_mark();
-    let task_ref = extract_ref(&ok(env.atm_config([
+    let task_ref = extract_ref(&ok(env.aven_config([
         "add",
         "daemon auth task",
         "--project",
@@ -232,7 +232,7 @@ sync:
     ])));
     daemon.wait_for_log_after(mark, "daemon-synced", Duration::from_secs(5));
 
-    ok(env.atm_config([
+    ok(env.aven_config([
         "--db",
         client_b.to_str().expect("utf8 db path"),
         "sync",
@@ -240,7 +240,7 @@ sync:
         &server.url,
     ]));
     contains_all(
-        &ok(env.atm(&client_b, ["show", &task_ref])),
+        &ok(env.aven(&client_b, ["show", &task_ref])),
         &[&task_ref, "daemon auth task"],
     );
 }

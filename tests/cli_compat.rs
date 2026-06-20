@@ -45,7 +45,7 @@ async fn old_schema_database_can_be_opened_and_read() {
     .unwrap();
     drop(pool);
 
-    let shown = ok(env.atm(&db, ["show", "7KQ"]));
+    let shown = ok(env.aven(&db, ["show", "7KQ"]));
     assert_eq!(first_token(&shown), "APP-7KQ9");
     contains_all(&shown, &["old task"]);
 }

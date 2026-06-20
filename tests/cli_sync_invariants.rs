@@ -7,7 +7,7 @@ use common::{
 };
 
 fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) -> String {
-    ok(env.atm(db, ["sync", "--server", &server.url]))
+    ok(env.aven(db, ["sync", "--server", &server.url]))
 }
 
 #[test]
@@ -17,14 +17,14 @@ fn sync_server_url_is_pinned_and_normalized() {
     let server_b = TestServer::start_with_data(&env, "server-b.sqlite");
     let db = env.db("pinned.sqlite");
 
-    ok(env.atm(&db, ["sync", "--server", &format!("{}/", server_a.url)]));
+    ok(env.aven(&db, ["sync", "--server", &format!("{}/", server_a.url)]));
     assert_eq!(
         meta_value(&db, "sync_server_url"),
         Some(server_a.url.clone())
     );
 
-    ok(env.atm(&db, ["sync", "--server", &server_a.url]));
-    let error = fail(env.atm(&db, ["sync", "--server", &server_b.url]));
+    ok(env.aven(&db, ["sync", "--server", &server_a.url]));
+    let error = fail(env.aven(&db, ["sync", "--server", &server_b.url]));
     contains_all(
         &error,
         &["error sync-server-changed", "use a fresh database"],
@@ -38,8 +38,8 @@ fn repeated_sync_is_idempotent_and_acknowledges_changes() {
     let a = env.db("client-a.sqlite");
     let b = env.db("client-b.sqlite");
 
-    ok(env.atm(&a, ["label", "create", "sync"]));
-    let task_ref = extract_ref(&ok(env.atm(
+    ok(env.aven(&a, ["label", "create", "sync"]));
+    let task_ref = extract_ref(&ok(env.aven(
         &a,
         [
             "add",
@@ -50,7 +50,7 @@ fn repeated_sync_is_idempotent_and_acknowledges_changes() {
             "sync",
         ],
     )));
-    ok(env.atm_stdin(&a, ["note", &task_ref, "--stdin"], "only once\n"));
+    ok(env.aven_stdin(&a, ["note", &task_ref, "--stdin"], "only once\n"));
 
     let first = sync(&env, &a, &server);
     contains_all(&first, &["pushed=4", "pulled=0", "cursor="]);
@@ -92,7 +92,7 @@ sync:
         server_config.url
     ));
 
-    ok(env.atm_config(["sync"]));
+    ok(env.aven_config(["sync"]));
     assert_eq!(
         meta_value(&db, "sync_server_url"),
         Some(server_config.url.clone())
@@ -100,15 +100,12 @@ sync:
 
     let env_db = env.db("env.sqlite");
     let env_output = Command::new(common::bin())
-        .env(
-            "ATM_CONFIG_DIR",
-            env.config_dir().join("agentic-task-manager"),
-        )
-        .env("ATM_DB", &env_db)
-        .env("ATM_SYNC_SERVER", &server_env.url)
+        .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
+        .env("AVEN_DB", &env_db)
+        .env("AVEN_SYNC_SERVER", &server_env.url)
         .arg("sync")
         .output()
-        .expect("run atm with env server");
+        .expect("run aven with env server");
     ok(env_output);
     assert_eq!(
         meta_value(&env_db, "sync_server_url"),
@@ -116,7 +113,7 @@ sync:
     );
 
     let flag_db = env.db("flag.sqlite");
-    ok(env.atm_config([
+    ok(env.aven_config([
         "--db",
         flag_db.to_str().expect("utf8 db path"),
         "sync",
@@ -157,7 +154,7 @@ sync:
         server.url
     ));
 
-    let task_ref = extract_ref(&ok(env.atm_config([
+    let task_ref = extract_ref(&ok(env.aven_config([
         "--db",
         flag_db.to_str().expect("utf8 db path"),
         "add",
@@ -166,13 +163,13 @@ sync:
         "app",
     ])));
 
-    let config_list = ok(env.atm_config(["list", "--all"]));
+    let config_list = ok(env.aven_config(["list", "--all"]));
     contains_none(&config_list, &["flag task"]);
 
-    let flag_list = ok(env.atm(&flag_db, ["list", "--all"]));
+    let flag_list = ok(env.aven(&flag_db, ["list", "--all"]));
     contains_all(&flag_list, &[&task_ref, "flag task"]);
 
-    let sync = ok(env.atm_config(["--db", flag_db.to_str().expect("utf8 db path"), "sync"]));
+    let sync = ok(env.aven_config(["--db", flag_db.to_str().expect("utf8 db path"), "sync"]));
     contains_all(&sync, &["synced", "pushed="]);
     assert_eq!(
         meta_value(&flag_db, "sync_server_url"),

@@ -67,7 +67,7 @@ truncate_line() {
   fi
 }
 
-output_file="$(mktemp -t atm-quiet-check.XXXXXX)"
+output_file="$(mktemp -t aven-quiet-check.XXXXXX)"
 child_pid=""
 spinner_pid=""
 line_drawn=0

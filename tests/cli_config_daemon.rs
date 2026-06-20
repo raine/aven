@@ -24,16 +24,16 @@ sync:
         server.url
     ));
 
-    let task_ref = extract_ref(&ok(env.atm_config([
+    let task_ref = extract_ref(&ok(env.aven_config([
         "add",
         "configured task",
         "--project",
         "app",
     ])));
-    let sync = ok(env.atm_config(["sync"]));
+    let sync = ok(env.aven_config(["sync"]));
     contains_all(&sync, &["synced", "cursor="]);
 
-    let shown = ok(env.atm_config(["show", &task_ref]));
+    let shown = ok(env.aven_config(["show", &task_ref]));
     contains_all(&shown, &[&task_ref, "configured task"]);
 }
 
@@ -47,7 +47,7 @@ fn daemon_auto_syncs_configured_database() {
     env.write_daemon_config(&client_a, &server, &wake_addr, 60);
 
     let _daemon = TestProcess::start_daemon(&env);
-    let task_ref = extract_ref(&ok(env.atm_config([
+    let task_ref = extract_ref(&ok(env.aven_config([
         "add",
         "daemon synced task",
         "--project",
@@ -56,8 +56,8 @@ fn daemon_auto_syncs_configured_database() {
 
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        ok(env.atm(&client_b, ["sync", "--server", &server.url]));
-        let list_b = ok(env.atm(&client_b, ["list", "--all"]));
+        ok(env.aven(&client_b, ["sync", "--server", &server.url]));
+        let list_b = ok(env.aven(&client_b, ["list", "--all"]));
         if list_b.contains(&task_ref) && list_b.contains("daemon synced task") {
             break;
         }

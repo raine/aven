@@ -364,8 +364,8 @@ pub(crate) async fn cmd_doctor(
     let config_file = config::config_file_path();
     let db_source = if db_flag_set {
         "--db"
-    } else if std::env::var_os("ATM_DB").is_some() {
-        "ATM_DB"
+    } else if std::env::var_os("AVEN_DB").is_some() {
+        "AVEN_DB"
     } else if config.local.db_path.is_some() {
         "config local.db_path"
     } else {
@@ -594,7 +594,7 @@ impl DoctorRenderer {
         if self.styled {
             println!(
                 "{}",
-                "atm doctor"
+                "aven doctor"
                     .with(Color::Rgb {
                         r: 45,
                         g: 174,
@@ -603,7 +603,7 @@ impl DoctorRenderer {
                     .bold()
             );
         } else {
-            println!("atm doctor");
+            println!("aven doctor");
         }
         for section in &report.sections {
             println!();

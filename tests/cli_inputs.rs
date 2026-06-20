@@ -9,7 +9,7 @@ fn description_sources_work() {
     let env = TestEnv::new();
     let db = env.db("descriptions.sqlite");
 
-    let inline = extract_ref(&ok(env.atm(
+    let inline = extract_ref(&ok(env.aven(
         &db,
         [
             "add",
@@ -23,7 +23,7 @@ fn description_sources_work() {
 
     let description_file = env.path("description.md");
     fs::write(&description_file, "# File description\n\nwith details\n").unwrap();
-    let from_file = extract_ref(&ok(env.atm(
+    let from_file = extract_ref(&ok(env.aven(
         &db,
         [
             "add",
@@ -35,7 +35,7 @@ fn description_sources_work() {
         ],
     )));
 
-    let from_stdin = extract_ref(&ok(env.atm_stdin(
+    let from_stdin = extract_ref(&ok(env.aven_stdin(
         &db,
         [
             "add",
@@ -48,15 +48,15 @@ fn description_sources_work() {
     )));
 
     contains_all(
-        &ok(env.atm(&db, ["show", &inline, "--full"])),
+        &ok(env.aven(&db, ["show", &inline, "--full"])),
         &["description<<EOF", "inline body"],
     );
     contains_all(
-        &ok(env.atm(&db, ["show", &from_file, "--full"])),
+        &ok(env.aven(&db, ["show", &from_file, "--full"])),
         &["description<<EOF", "# File description", "with details"],
     );
     contains_all(
-        &ok(env.atm(&db, ["show", &from_stdin, "--full"])),
+        &ok(env.aven(&db, ["show", &from_stdin, "--full"])),
         &["description<<EOF", "## Stdin description", "from stdin"],
     );
 }
@@ -65,20 +65,20 @@ fn description_sources_work() {
 fn note_sources_work() {
     let env = TestEnv::new();
     let db = env.db("notes.sqlite");
-    let task_ref = extract_ref(&ok(env.atm(&db, ["add", "noted task", "--project", "app"])));
+    let task_ref = extract_ref(&ok(env.aven(&db, ["add", "noted task", "--project", "app"])));
 
-    ok(env.atm(&db, ["note", &task_ref, "inline note"]));
+    ok(env.aven(&db, ["note", &task_ref, "inline note"]));
 
     let note_file = env.path("note.txt");
     fs::write(&note_file, "file note\n").unwrap();
-    ok(env.atm(
+    ok(env.aven(
         &db,
         ["note", &task_ref, "--file", note_file.to_str().unwrap()],
     ));
 
-    ok(env.atm_stdin(&db, ["note", &task_ref, "--stdin"], "stdin note\n"));
+    ok(env.aven_stdin(&db, ["note", &task_ref, "--stdin"], "stdin note\n"));
 
-    let shown = ok(env.atm(&db, ["show", &task_ref, "--full"]));
+    let shown = ok(env.aven(&db, ["show", &task_ref, "--full"]));
     contains_all(&shown, &["inline note", "file note", "stdin note"]);
 }
 
@@ -89,7 +89,7 @@ fn rejects_multiple_text_sources() {
     let description_file = env.path("description.md");
     fs::write(&description_file, "file body").unwrap();
 
-    let error = fail(env.atm(
+    let error = fail(env.aven(
         &db,
         [
             "add",
@@ -104,8 +104,8 @@ fn rejects_multiple_text_sources() {
     ));
     contains_all(&error, &["multiple-description-sources"]);
 
-    let task_ref = extract_ref(&ok(env.atm(&db, ["add", "noted task", "--project", "app"])));
-    let error = fail(env.atm_stdin(
+    let task_ref = extract_ref(&ok(env.aven(&db, ["add", "noted task", "--project", "app"])));
+    let error = fail(env.aven_stdin(
         &db,
         ["note", &task_ref, "inline note", "--stdin"],
         "stdin note\n",

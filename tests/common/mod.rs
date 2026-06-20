@@ -37,9 +37,7 @@ impl TestEnv {
     }
 
     pub fn config_file(&self) -> PathBuf {
-        self.config_dir()
-            .join("agentic-task-manager")
-            .join("config.yaml")
+        self.config_dir().join("aven").join("config.yaml")
     }
 
     pub fn state_dir(&self) -> PathBuf {
@@ -103,7 +101,7 @@ sync:
         ));
     }
 
-    pub fn atm_config<I, S>(&self, args: I) -> Output
+    pub fn aven_config<I, S>(&self, args: I) -> Output
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -111,16 +109,13 @@ sync:
         let mut command = command();
         self.configure_command(&mut command);
         command
-            .env(
-                "ATM_CONFIG_DIR",
-                self.config_dir().join("agentic-task-manager"),
-            )
-            .env_remove("ATM_DB")
-            .env_remove("ATM_SYNC_SERVER");
-        command.args(args).output().expect("run atm with config")
+            .env("AVEN_CONFIG_DIR", self.config_dir().join("aven"))
+            .env_remove("AVEN_DB")
+            .env_remove("AVEN_SYNC_SERVER");
+        command.args(args).output().expect("run aven with config")
     }
 
-    pub fn atm_config_stdin<I, S>(&self, args: I, input: &str) -> Output
+    pub fn aven_config_stdin<I, S>(&self, args: I, input: &str) -> Output
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -128,37 +123,34 @@ sync:
         let mut child = command();
         self.configure_command(&mut child);
         child
-            .env(
-                "ATM_CONFIG_DIR",
-                self.config_dir().join("agentic-task-manager"),
-            )
-            .env_remove("ATM_DB")
-            .env_remove("ATM_SYNC_SERVER")
+            .env("AVEN_CONFIG_DIR", self.config_dir().join("aven"))
+            .env_remove("AVEN_DB")
+            .env_remove("AVEN_SYNC_SERVER")
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut child = child.spawn().expect("spawn atm with config stdin");
+        let mut child = child.spawn().expect("spawn aven with config stdin");
         child
             .stdin
             .as_mut()
             .expect("stdin pipe")
             .write_all(input.as_bytes())
             .expect("write stdin");
-        child.wait_with_output().expect("wait for atm")
+        child.wait_with_output().expect("wait for aven")
     }
 
-    pub fn atm<I, S>(&self, db: &Path, args: I) -> Output
+    pub fn aven<I, S>(&self, db: &Path, args: I) -> Output
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
         let mut command = command_with_db(db);
         self.configure_command(&mut command);
-        command.args(args).output().expect("run atm")
+        command.args(args).output().expect("run aven")
     }
 
-    pub fn atm_in<I, S>(&self, db: &Path, cwd: &Path, args: I) -> Output
+    pub fn aven_in<I, S>(&self, db: &Path, cwd: &Path, args: I) -> Output
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -169,10 +161,10 @@ sync:
             .current_dir(cwd)
             .args(args)
             .output()
-            .expect("run atm in cwd")
+            .expect("run aven in cwd")
     }
 
-    pub fn atm_stdin<I, S>(&self, db: &Path, args: I, input: &str) -> Output
+    pub fn aven_stdin<I, S>(&self, db: &Path, args: I, input: &str) -> Output
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -185,19 +177,19 @@ sync:
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("spawn atm with stdin");
+            .expect("spawn aven with stdin");
         child
             .stdin
             .as_mut()
             .expect("stdin pipe")
             .write_all(input.as_bytes())
             .expect("write stdin");
-        child.wait_with_output().expect("wait for atm")
+        child.wait_with_output().expect("wait for aven")
     }
 }
 
 pub fn bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_atm"))
+    PathBuf::from(env!("CARGO_BIN_EXE_aven"))
 }
 
 pub fn command() -> Command {
@@ -313,18 +305,15 @@ impl TestProcess {
         let mut command = command();
         env.configure_command(&mut command);
         let child = command
-            .env(
-                "ATM_CONFIG_DIR",
-                env.config_dir().join("agentic-task-manager"),
-            )
-            .env_remove("ATM_DB")
-            .env_remove("ATM_SYNC_SERVER")
+            .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
+            .env_remove("AVEN_DB")
+            .env_remove("AVEN_SYNC_SERVER")
             .arg("server")
             .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("spawn atm server");
+            .expect("spawn aven server");
         Self::capture(child)
     }
 
@@ -341,12 +330,9 @@ impl TestProcess {
         let mut command = command();
         env.configure_command(&mut command);
         command
-            .env(
-                "ATM_CONFIG_DIR",
-                env.config_dir().join("agentic-task-manager"),
-            )
-            .env_remove("ATM_DB")
-            .env_remove("ATM_SYNC_SERVER");
+            .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
+            .env_remove("AVEN_DB")
+            .env_remove("AVEN_SYNC_SERVER");
         for (key, value) in envs {
             command.env(key, value);
         }
@@ -355,7 +341,7 @@ impl TestProcess {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("spawn atm daemon");
+            .expect("spawn aven daemon");
         let process = Self::capture(child);
         process.wait_for_log("daemon db=", Duration::from_secs(10));
         process
@@ -508,12 +494,7 @@ impl TestServer {
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
-        Self::start_with_data_and_config(
-            env,
-            data,
-            Some(env.config_dir().join("agentic-task-manager")),
-            envs,
-        )
+        Self::start_with_data_and_config(env, data, Some(env.config_dir().join("aven")), envs)
     }
 
     pub fn start_with_data(env: &TestEnv, data: &str) -> Self {
@@ -544,9 +525,9 @@ impl TestServer {
         ]);
         if let Some(config_dir) = config_dir {
             command
-                .env("ATM_CONFIG_DIR", config_dir)
-                .env_remove("ATM_DB")
-                .env_remove("ATM_SYNC_SERVER");
+                .env("AVEN_CONFIG_DIR", config_dir)
+                .env_remove("AVEN_DB")
+                .env_remove("AVEN_SYNC_SERVER");
         }
         for (key, value) in envs {
             command.env(key, value);
@@ -555,7 +536,7 @@ impl TestServer {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("spawn atm server");
+            .expect("spawn aven server");
 
         let stdout = child.stdout.take().expect("server stdout");
         let stdout_output = Arc::clone(&output);

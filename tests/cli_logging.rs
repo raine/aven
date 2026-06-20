@@ -10,8 +10,8 @@ fn logging_writes_to_default_state_file_without_affecting_output() {
     let db = env.db("tasks.sqlite");
     let state_home = env.path("state");
     let output = common::command_with_db(&db)
-        .env_remove("ATM_LOG")
-        .env_remove("ATM_LOG_FILE")
+        .env_remove("AVEN_LOG")
+        .env_remove("AVEN_LOG_FILE")
         .env("XDG_STATE_HOME", &state_home)
         .args([
             "add",
@@ -22,15 +22,15 @@ fn logging_writes_to_default_state_file_without_affecting_output() {
             "app",
         ])
         .output()
-        .expect("run atm");
+        .expect("run aven");
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     contains_all(&stdout, &["created", "default log secret title"]);
     assert_eq!(stderr, "");
 
-    let logs =
-        std::fs::read_to_string(state_home.join("atm").join("atm.log")).expect("read default logs");
+    let logs = std::fs::read_to_string(state_home.join("aven").join("aven.log"))
+        .expect("read default logs");
     contains_all(&logs, &["task created", "task_id"]);
     contains_none(
         &logs,
@@ -42,11 +42,11 @@ fn logging_writes_to_default_state_file_without_affecting_output() {
 fn file_logging_records_local_action_without_user_content() {
     let env = TestEnv::new();
     let db = env.db("tasks.sqlite");
-    let log = env.path("atm.log");
+    let log = env.path("aven.log");
     let mut command = common::command_with_db(&db);
     command
-        .env("ATM_LOG", "atm=debug")
-        .env("ATM_LOG_FILE", &log)
+        .env("AVEN_LOG", "aven=debug")
+        .env("AVEN_LOG_FILE", &log)
         .args([
             "add",
             "secret task title",
@@ -55,7 +55,7 @@ fn file_logging_records_local_action_without_user_content() {
             "--project",
             "app",
         ]);
-    let output = command.output().expect("run logged atm");
+    let output = command.output().expect("run logged aven");
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stderr), "");
 
@@ -78,8 +78,8 @@ sync:
         &server_env,
         "server.sqlite",
         [
-            ("ATM_LOG", "atm=debug"),
-            ("ATM_LOG_FILE", server_log.to_str().unwrap()),
+            ("AVEN_LOG", "aven=debug"),
+            ("AVEN_LOG_FILE", server_log.to_str().unwrap()),
         ],
     );
 
@@ -98,7 +98,7 @@ sync:
         db.display(),
         server.url
     ));
-    ok(client_env.atm_config([
+    ok(client_env.aven_config([
         "add",
         "auth log redaction title",
         "--description",
@@ -109,14 +109,11 @@ sync:
 
     let mut command = common::command();
     command
-        .env(
-            "ATM_CONFIG_DIR",
-            client_env.config_dir().join("agentic-task-manager"),
-        )
-        .env_remove("ATM_DB")
-        .env_remove("ATM_SYNC_SERVER")
-        .env("ATM_LOG", "atm=debug")
-        .env("ATM_LOG_FILE", &client_log)
+        .env("AVEN_CONFIG_DIR", client_env.config_dir().join("aven"))
+        .env_remove("AVEN_DB")
+        .env_remove("AVEN_SYNC_SERVER")
+        .env("AVEN_LOG", "aven=debug")
+        .env("AVEN_LOG_FILE", &client_log)
         .args(["sync"]);
     let output = command.output().expect("run logged sync");
     assert!(output.status.success());
@@ -149,14 +146,14 @@ fn daemon_file_logging_records_sync_without_user_content() {
     let daemon = TestProcess::start_daemon_with_env(
         &env,
         [
-            ("ATM_LOG", "atm=debug"),
-            ("ATM_LOG_FILE", log.to_str().unwrap()),
+            ("AVEN_LOG", "aven=debug"),
+            ("AVEN_LOG_FILE", log.to_str().unwrap()),
         ],
     );
     daemon.wait_for_log("daemon-synced", Duration::from_secs(5));
 
     let mark = daemon.log_mark();
-    ok(env.atm_config([
+    ok(env.aven_config([
         "add",
         "daemon log secret title",
         "--description",

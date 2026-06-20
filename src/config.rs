@@ -7,7 +7,7 @@ use std::str::FromStr;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-const APP_DIR: &str = "agentic-task-manager";
+const APP_DIR: &str = "aven";
 const DEFAULT_WAKE_ADDR: &str = "127.0.0.1:47631";
 const DEFAULT_SYNC_INTERVAL_SECONDS: u64 = 30;
 
@@ -121,7 +121,7 @@ impl AppConfig {
 }
 
 pub fn config_dir_path() -> Result<PathBuf> {
-    if let Ok(path) = env::var("ATM_CONFIG_DIR") {
+    if let Ok(path) = env::var("AVEN_CONFIG_DIR") {
         return Ok(PathBuf::from(path));
     }
     let home = dirs::home_dir().context("could not find home directory")?;
@@ -140,7 +140,7 @@ pub fn default_db_path() -> Result<PathBuf> {
         .filter(|path| path.is_absolute())
         .or_else(|| dirs::home_dir().map(|home| home.join(".local/state")))
         .context("could not find state directory")?;
-    dir.push("atm");
+    dir.push("aven");
     dir.push("db.sqlite");
     Ok(dir)
 }
@@ -149,7 +149,7 @@ pub fn resolve_db_path(flag: Option<PathBuf>, config: &AppConfig) -> Result<Path
     if let Some(path) = flag {
         return Ok(path);
     }
-    if let Ok(path) = env::var("ATM_DB") {
+    if let Ok(path) = env::var("AVEN_DB") {
         return Ok(PathBuf::from(path));
     }
     if let Some(path) = &config.local.db_path {
@@ -162,7 +162,7 @@ pub fn resolve_sync_server(flag: Option<&str>, config: &AppConfig) -> Result<Str
     if let Some(server) = flag {
         return Ok(server.to_string());
     }
-    if let Ok(server) = env::var("ATM_SYNC_SERVER") {
+    if let Ok(server) = env::var("AVEN_SYNC_SERVER") {
         return Ok(server);
     }
     if let Some(server) = &config.sync.server_url {

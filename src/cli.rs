@@ -11,7 +11,7 @@ const STYLES: Styles = Styles::styled()
     .placeholder(AnsiColor::Cyan.on_default());
 
 #[derive(Parser)]
-#[command(name = "atm")]
+#[command(name = "aven")]
 #[command(about = "Local-first task manager")]
 #[command(styles = STYLES)]
 pub struct Cli {

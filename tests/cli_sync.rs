@@ -9,7 +9,7 @@ use common::{
 use serde_json::{Value, json};
 
 fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
-    let output = ok(env.atm(db, ["sync", "--server", &server.url]));
+    let output = ok(env.aven(db, ["sync", "--server", &server.url]));
     contains_all(&output, &["synced", "cursor="]);
 }
 
@@ -157,18 +157,18 @@ fn offline_creates_converge() {
     let b = env.db("client-b.sqlite");
 
     let a_ref = extract_ref(&ok(
-        env.atm(&a, ["add", "offline from a", "--project", "app"])
+        env.aven(&a, ["add", "offline from a", "--project", "app"])
     ));
     let b_ref = extract_ref(&ok(
-        env.atm(&b, ["add", "offline from b", "--project", "app"])
+        env.aven(&b, ["add", "offline from b", "--project", "app"])
     ));
 
     sync(&env, &a, &server);
     sync(&env, &b, &server);
     sync(&env, &a, &server);
 
-    let list_a = ok(env.atm(&a, ["list", "--all"]));
-    let list_b = ok(env.atm(&b, ["list", "--all"]));
+    let list_a = ok(env.aven(&a, ["list", "--all"]));
+    let list_b = ok(env.aven(&b, ["list", "--all"]));
     contains_all(
         &list_a,
         &[&a_ref, &b_ref, "offline from a", "offline from b"],
@@ -186,17 +186,19 @@ fn independent_field_edits_converge() {
     let a = env.db("client-a.sqlite");
     let b = env.db("client-b.sqlite");
 
-    let task_ref = extract_ref(&ok(env.atm(&a, ["add", "merge fields", "--project", "app"])));
+    let task_ref = extract_ref(&ok(
+        env.aven(&a, ["add", "merge fields", "--project", "app"])
+    ));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
 
-    ok(env.atm(&a, ["update", &task_ref, "--status", "active"]));
-    ok(env.atm(&b, ["update", &task_ref, "--priority", "high"]));
+    ok(env.aven(&a, ["update", &task_ref, "--status", "active"]));
+    ok(env.aven(&b, ["update", &task_ref, "--priority", "high"]));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
     sync(&env, &a, &server);
 
-    let merged = ok(env.atm(&a, ["show", &task_ref]));
+    let merged = ok(env.aven(&a, ["show", &task_ref]));
     contains_all(&merged, &["status=active", "priority=high"]);
     contains_none(&merged, &["conflicts=yes"]);
 }
@@ -209,32 +211,32 @@ fn notes_and_labels_converge() {
     let b = env.db("client-b.sqlite");
 
     for label in ["docs", "sync", "bug"] {
-        ok(env.atm(&a, ["label", "create", label]));
+        ok(env.aven(&a, ["label", "create", label]));
     }
     let task_ref = extract_ref(&ok(
-        env.atm(&a, ["add", "merge notes and labels", "--project", "app"])
+        env.aven(&a, ["add", "merge notes and labels", "--project", "app"])
     ));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
 
-    ok(env.atm_stdin(&a, ["note", &task_ref, "--stdin"], "note a\n"));
-    ok(env.atm_stdin(&b, ["note", &task_ref, "--stdin"], "note b\n"));
-    ok(env.atm(&a, ["update", &task_ref, "--label", "docs"]));
-    ok(env.atm(&b, ["update", &task_ref, "--label", "sync"]));
+    ok(env.aven_stdin(&a, ["note", &task_ref, "--stdin"], "note a\n"));
+    ok(env.aven_stdin(&b, ["note", &task_ref, "--stdin"], "note b\n"));
+    ok(env.aven(&a, ["update", &task_ref, "--label", "docs"]));
+    ok(env.aven(&b, ["update", &task_ref, "--label", "sync"]));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
     sync(&env, &a, &server);
 
-    let full = ok(env.atm(&a, ["show", &task_ref, "--full"]));
+    let full = ok(env.aven(&a, ["show", &task_ref, "--full"]));
     contains_all(&full, &["note a", "note b", "labels=docs,sync"]);
 
-    ok(env.atm(&a, ["update", &task_ref, "--remove-label", "docs"]));
-    ok(env.atm(&b, ["update", &task_ref, "--label", "bug"]));
+    ok(env.aven(&a, ["update", &task_ref, "--remove-label", "docs"]));
+    ok(env.aven(&b, ["update", &task_ref, "--label", "bug"]));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
     sync(&env, &a, &server);
 
-    let labels = ok(env.atm(&a, ["show", &task_ref]));
+    let labels = ok(env.aven(&a, ["show", &task_ref]));
     contains_all(&labels, &["labels=bug,sync"]);
     contains_none(&labels, &["labels=docs"]);
 }
@@ -247,25 +249,25 @@ fn soft_delete_syncs_and_restores() {
     let b = env.db("client-b.sqlite");
 
     let task_ref = extract_ref(&ok(
-        env.atm(&a, ["add", "temporary task", "--project", "app"])
+        env.aven(&a, ["add", "temporary task", "--project", "app"])
     ));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
 
-    ok(env.atm(&a, ["delete", &task_ref]));
+    ok(env.aven(&a, ["delete", &task_ref]));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
 
-    let normal_b = ok(env.atm(&b, ["list"]));
+    let normal_b = ok(env.aven(&b, ["list"]));
     contains_none(&normal_b, &[&task_ref, "temporary task"]);
-    let all_b = ok(env.atm(&b, ["list", "--all"]));
+    let all_b = ok(env.aven(&b, ["list", "--all"]));
     contains_all(&all_b, &[&task_ref, "temporary task", "deleted=yes"]);
 
-    ok(env.atm(&a, ["restore", &task_ref]));
+    ok(env.aven(&a, ["restore", &task_ref]));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
 
-    let restored_b = ok(env.atm(&b, ["list"]));
+    let restored_b = ok(env.aven(&b, ["list"]));
     contains_all(&restored_b, &[&task_ref, "temporary task"]);
     contains_none(&restored_b, &["deleted=yes"]);
 }
@@ -273,7 +275,7 @@ fn soft_delete_syncs_and_restores() {
 #[test]
 fn sync_auth_config_init_includes_placeholder() {
     let env = TestEnv::new();
-    ok(env.atm_config(["config", "init"]));
+    ok(env.aven_config(["config", "init"]));
 
     let text = std::fs::read_to_string(env.config_file()).expect("read config");
     contains_all(&text, &["sync:", "auth_token: ''"]);
@@ -290,9 +292,9 @@ sync:
     );
     let server = TestServer::start_configured(&server_env, "server.sqlite");
     let client = server_env.db("client.sqlite");
-    ok(server_env.atm(&client, ["add", "auth missing", "--project", "app"]));
+    ok(server_env.aven(&client, ["add", "auth missing", "--project", "app"]));
 
-    let error = fail(server_env.atm(&client, ["sync", "--server", &server.url]));
+    let error = fail(server_env.aven(&client, ["sync", "--server", &server.url]));
     contains_all(&error, &["401"]);
     assert_eq!(
         scalar_i64(
@@ -328,9 +330,9 @@ sync:
         client.display(),
         server.url
     ));
-    ok(client_env.atm_config(["add", "auth wrong", "--project", "app"]));
+    ok(client_env.aven_config(["add", "auth wrong", "--project", "app"]));
 
-    let error = fail(client_env.atm_config(["sync"]));
+    let error = fail(client_env.aven_config(["sync"]));
     contains_all(&error, &["401"]);
     assert_eq!(
         scalar_i64(
@@ -365,16 +367,16 @@ sync:
     ));
 
     let task_ref = extract_ref(&ok(
-        client_env.atm(&a, ["add", "auth synced", "--project", "app"])
+        client_env.aven(&a, ["add", "auth synced", "--project", "app"])
     ));
-    ok(client_env.atm_config([
+    ok(client_env.aven_config([
         "--db",
         a.to_str().expect("utf8 db path"),
         "sync",
         "--server",
         &server.url,
     ]));
-    ok(client_env.atm_config([
+    ok(client_env.aven_config([
         "--db",
         b.to_str().expect("utf8 db path"),
         "sync",
@@ -382,7 +384,7 @@ sync:
         &server.url,
     ]));
 
-    let shown = ok(client_env.atm(&b, ["show", &task_ref]));
+    let shown = ok(client_env.aven(&b, ["show", &task_ref]));
     contains_all(&shown, &[&task_ref, "auth synced"]);
 }
 
@@ -394,12 +396,12 @@ fn sync_auth_loopback_without_token_still_syncs() {
     let b = env.db("client-b.sqlite");
 
     let task_ref = extract_ref(&ok(
-        env.atm(&a, ["add", "local no auth", "--project", "app"])
+        env.aven(&a, ["add", "local no auth", "--project", "app"])
     ));
-    ok(env.atm(&a, ["sync", "--server", &server.url]));
-    ok(env.atm(&b, ["sync", "--server", &server.url]));
+    ok(env.aven(&a, ["sync", "--server", &server.url]));
+    ok(env.aven(&b, ["sync", "--server", &server.url]));
 
-    let shown = ok(env.atm(&b, ["show", &task_ref]));
+    let shown = ok(env.aven(&b, ["show", &task_ref]));
     contains_all(&shown, &[&task_ref, "local no auth"]);
 }
 
@@ -407,7 +409,7 @@ fn sync_auth_loopback_without_token_still_syncs() {
 fn sync_auth_public_bind_requires_token_even_with_unsafe_flag() {
     let env = TestEnv::new();
     let server_db = env.path("server.sqlite");
-    let error = fail(env.atm_config([
+    let error = fail(env.aven_config([
         "server",
         "--bind",
         "0.0.0.0:0",
@@ -437,7 +439,7 @@ fn sync_server_bind_startup_output_includes_scope() {
 #[test]
 fn sync_server_bind_private_requires_token() {
     let env = TestEnv::new();
-    let error = fail(env.atm_config([
+    let error = fail(env.aven_config([
         "server",
         "--bind",
         "100.64.0.1:0",
@@ -457,7 +459,7 @@ fn sync_server_bind_private_requires_token() {
 #[test]
 fn sync_server_bind_public_stays_behind_unsafe_flag() {
     let env = TestEnv::new();
-    let error = fail(env.atm_config([
+    let error = fail(env.aven_config([
         "server",
         "--bind",
         "0.0.0.0:0",
@@ -616,17 +618,17 @@ fn valid_offline_batch_with_related_operations_still_syncs() {
     let a = env.db("client-a.sqlite");
     let b = env.db("client-b.sqlite");
 
-    ok(env.atm(&a, ["label", "create", "offline"]));
+    ok(env.aven(&a, ["label", "create", "offline"]));
     let task_ref = extract_ref(&ok(
-        env.atm(&a, ["add", "offline batch", "--project", "app"])
+        env.aven(&a, ["add", "offline batch", "--project", "app"])
     ));
-    ok(env.atm(&a, ["update", &task_ref, "--label", "offline"]));
-    ok(env.atm_stdin(&a, ["note", &task_ref, "--stdin"], "batch note\n"));
+    ok(env.aven(&a, ["update", &task_ref, "--label", "offline"]));
+    ok(env.aven_stdin(&a, ["note", &task_ref, "--stdin"], "batch note\n"));
 
     sync(&env, &a, &server);
     sync(&env, &b, &server);
 
-    let full = ok(env.atm(&b, ["show", &task_ref, "--full"]));
+    let full = ok(env.aven(&b, ["show", &task_ref, "--full"]));
     contains_all(&full, &["offline batch", "labels=offline", "batch note"]);
 }
 
@@ -638,13 +640,13 @@ fn current_protocol_version_sync_succeeds() {
     let b = env.db("client-b.sqlite");
 
     let task_ref = extract_ref(&ok(
-        env.atm(&a, ["add", "versioned sync", "--project", "app"])
+        env.aven(&a, ["add", "versioned sync", "--project", "app"])
     ));
 
     sync(&env, &a, &server);
     sync(&env, &b, &server);
 
-    let shown = ok(env.atm(&b, ["show", &task_ref]));
+    let shown = ok(env.aven(&b, ["show", &task_ref]));
     contains_all(&shown, &[&task_ref, "versioned sync"]);
 }
 
@@ -715,7 +717,7 @@ fn wrong_response_protocol_version_is_rejected() {
 
     let env = TestEnv::new();
     let db = env.db("client.sqlite");
-    ok(env.atm(&db, ["add", "seed", "--project", "app"]));
+    ok(env.aven(&db, ["add", "seed", "--project", "app"]));
     let changes_before = scalar_i64(&db, "SELECT count(*) FROM changes");
     let sync_cursor_before = meta_value(&db, "sync_cursor");
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake sync server");
@@ -746,7 +748,7 @@ fn wrong_response_protocol_version_is_rejected() {
         .expect("write fake response");
     });
 
-    let error = fail(env.atm(&db, ["sync", "--server", &url]));
+    let error = fail(env.aven(&db, ["sync", "--server", &url]));
     contains_all(
         &error,
         &["error sync-protocol-unsupported client=1 server=0"],
