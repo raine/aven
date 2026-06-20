@@ -505,12 +505,15 @@ impl TuiStore {
         let before = item.task.project_key.clone();
         self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
-        let outcome =
-            update_task_operation(&mut conn, &item.task.id, TaskUpdate {
+        let outcome = update_task_operation(
+            &mut conn,
+            &item.task.id,
+            TaskUpdate {
                 project: Some(project.clone()),
                 ..TaskUpdate::default()
-            })
-            .await?;
+            },
+        )
+        .await?;
         drop(conn);
         self.record_undo(
             &format!("project {}", item.display_ref),
@@ -728,7 +731,10 @@ impl TuiStore {
             .collect()
     }
 
-    pub(crate) async fn switch_workspace(&mut self, key: String) -> Result<(String, Option<usize>)> {
+    pub(crate) async fn switch_workspace(
+        &mut self,
+        key: String,
+    ) -> Result<(String, Option<usize>)> {
         let mut conn = self.pool.acquire().await?;
         let workspace = find_workspace(&mut conn, &key)
             .await?
@@ -845,8 +851,8 @@ impl TuiStore {
         self.activate_workspace();
         let workspace_id = crate::workspaces::active_workspace_id();
         let mut conn = self.pool.acquire().await?;
-        let before = task_field_value(&mut conn, &workspace_id, &target.task_id, &target.field)
-            .await?;
+        let before =
+            task_field_value(&mut conn, &workspace_id, &target.task_id, &target.field).await?;
         let conflict_id =
             crate::undo::conflict_row_id(&mut conn, &workspace_id, &target.task_id, &target.field)
                 .await?;
@@ -1687,10 +1693,7 @@ mod tests {
             .iter()
             .position(|item| item.task.id == task_id)
             .unwrap();
-        store
-            .update_deleted(Some(index), false)
-            .await
-            .unwrap();
+        store.update_deleted(Some(index), false).await.unwrap();
 
         store.undo_last().await.unwrap();
         store.filters.include_deleted = true;

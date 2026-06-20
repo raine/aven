@@ -87,69 +87,60 @@ pub(crate) async fn task_field_value(
 ) -> Result<String> {
     match field {
         "title" => {
-            let row = sqlx::query(
-                "SELECT title FROM tasks WHERE workspace_id = ? AND id = ?",
-            )
-            .bind(workspace_id)
-            .bind(task_id)
-            .fetch_optional(&mut *conn)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
+            let row = sqlx::query("SELECT title FROM tasks WHERE workspace_id = ? AND id = ?")
+                .bind(workspace_id)
+                .bind(task_id)
+                .fetch_optional(&mut *conn)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
             Ok(row.get("title"))
         }
         "description" => {
-            let row = sqlx::query(
-                "SELECT description FROM tasks WHERE workspace_id = ? AND id = ?",
-            )
-            .bind(workspace_id)
-            .bind(task_id)
-            .fetch_optional(&mut *conn)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
+            let row =
+                sqlx::query("SELECT description FROM tasks WHERE workspace_id = ? AND id = ?")
+                    .bind(workspace_id)
+                    .bind(task_id)
+                    .fetch_optional(&mut *conn)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
             Ok(row.get("description"))
         }
         "status" => {
-            let row = sqlx::query(
-                "SELECT status FROM tasks WHERE workspace_id = ? AND id = ?",
-            )
-            .bind(workspace_id)
-            .bind(task_id)
-            .fetch_optional(&mut *conn)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
+            let row = sqlx::query("SELECT status FROM tasks WHERE workspace_id = ? AND id = ?")
+                .bind(workspace_id)
+                .bind(task_id)
+                .fetch_optional(&mut *conn)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
             Ok(row.get("status"))
         }
         "priority" => {
-            let row = sqlx::query(
-                "SELECT priority FROM tasks WHERE workspace_id = ? AND id = ?",
-            )
-            .bind(workspace_id)
-            .bind(task_id)
-            .fetch_optional(&mut *conn)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
+            let row = sqlx::query("SELECT priority FROM tasks WHERE workspace_id = ? AND id = ?")
+                .bind(workspace_id)
+                .bind(task_id)
+                .fetch_optional(&mut *conn)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
             Ok(row.get("priority"))
         }
         "project" => {
-            let row = sqlx::query(
-                "SELECT project_key FROM tasks WHERE workspace_id = ? AND id = ?",
-            )
-            .bind(workspace_id)
-            .bind(task_id)
-            .fetch_optional(&mut *conn)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
+            let row =
+                sqlx::query("SELECT project_key FROM tasks WHERE workspace_id = ? AND id = ?")
+                    .bind(workspace_id)
+                    .bind(task_id)
+                    .fetch_optional(&mut *conn)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
             Ok(row.get("project_key"))
         }
         "deleted" => {
-            let deleted: i64 = sqlx::query_scalar(
-                "SELECT deleted FROM tasks WHERE workspace_id = ? AND id = ?",
-            )
-            .bind(workspace_id)
-            .bind(task_id)
-            .fetch_optional(&mut *conn)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
+            let deleted: i64 =
+                sqlx::query_scalar("SELECT deleted FROM tasks WHERE workspace_id = ? AND id = ?")
+                    .bind(workspace_id)
+                    .bind(task_id)
+                    .fetch_optional(&mut *conn)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
             if deleted != 0 {
                 Ok("1".to_string())
             } else {
@@ -295,13 +286,12 @@ pub(crate) async fn apply_latest_tui_undo(
     let summary: String = row.get("summary");
     let payload_text: String = row.get("payload");
     let undone_at = now();
-    let claimed = sqlx::query(
-        "UPDATE tui_undo_entries SET undone_at = ? WHERE id = ? AND undone_at IS NULL",
-    )
-    .bind(&undone_at)
-    .bind(&entry_id)
-    .execute(&mut *tx)
-    .await?;
+    let claimed =
+        sqlx::query("UPDATE tui_undo_entries SET undone_at = ? WHERE id = ? AND undone_at IS NULL")
+            .bind(&undone_at)
+            .bind(&entry_id)
+            .execute(&mut *tx)
+            .await?;
     ensure!(
         claimed.rows_affected() == 1,
         "error undo-entry-claim-failed id={entry_id}"
@@ -437,14 +427,7 @@ async fn apply_undo_command(
             note_id,
             note_add_change_id,
         } => {
-            delete_created_note(
-                conn,
-                workspace_id,
-                task_id,
-                note_id,
-                note_add_change_id,
-            )
-            .await?;
+            delete_created_note(conn, workspace_id, task_id, note_id, note_add_change_id).await?;
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
@@ -550,12 +533,11 @@ fn label_delta(current: &[String], target: &[String]) -> (Vec<String>, Vec<Strin
 }
 
 async fn change_is_unsynced(conn: &mut SqliteConnection, change_id: &str) -> Result<bool> {
-    let server_seq = sqlx::query_scalar::<_, Option<i64>>(
-        "SELECT server_seq FROM changes WHERE change_id = ?",
-    )
-    .bind(change_id)
-    .fetch_optional(&mut *conn)
-    .await?;
+    let server_seq =
+        sqlx::query_scalar::<_, Option<i64>>("SELECT server_seq FROM changes WHERE change_id = ?")
+            .bind(change_id)
+            .fetch_optional(&mut *conn)
+            .await?;
     Ok(matches!(server_seq, Some(None)))
 }
 
@@ -673,13 +655,12 @@ async fn delete_created_project(
     if !change_is_unsynced(conn, create_change_id).await? {
         bail!("error undo-state-changed project_key={project_key}");
     }
-    let task_refs: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM tasks WHERE workspace_id = ? AND project_key = ?",
-    )
-    .bind(workspace_id)
-    .bind(project_key)
-    .fetch_one(&mut *conn)
-    .await?;
+    let task_refs: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM tasks WHERE workspace_id = ? AND project_key = ?")
+            .bind(workspace_id)
+            .bind(project_key)
+            .fetch_one(&mut *conn)
+            .await?;
     if task_refs > 0 {
         bail!("error undo-state-changed project_key={project_key}");
     }
@@ -711,23 +692,21 @@ async fn delete_created_label(
     label: &str,
     create_change_id: &str,
 ) -> Result<()> {
-    let exists: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM labels WHERE workspace_id = ? AND name = ?",
-    )
-    .bind(workspace_id)
-    .bind(label)
-    .fetch_one(&mut *conn)
-    .await?;
+    let exists: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM labels WHERE workspace_id = ? AND name = ?")
+            .bind(workspace_id)
+            .bind(label)
+            .fetch_one(&mut *conn)
+            .await?;
     if exists == 0 || !change_is_unsynced(conn, create_change_id).await? {
         bail!("error undo-state-changed label={label}");
     }
-    let refs: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM task_labels WHERE workspace_id = ? AND label = ?",
-    )
-    .bind(workspace_id)
-    .bind(label)
-    .fetch_one(&mut *conn)
-    .await?;
+    let refs: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM task_labels WHERE workspace_id = ? AND label = ?")
+            .bind(workspace_id)
+            .bind(label)
+            .fetch_one(&mut *conn)
+            .await?;
     if refs > 0 {
         bail!("error undo-state-changed label={label}");
     }

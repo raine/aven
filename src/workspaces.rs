@@ -148,10 +148,11 @@ pub(crate) async fn resolve_active_workspace(
     {
         return resolve_required_workspace(conn, default, "workspace.default").await;
     }
-    if let Some(workspace) = sqlx::query("SELECT id, key, name FROM workspaces WHERE id = ? AND archived = 0")
-        .bind(DEFAULT_WORKSPACE_ID)
-        .fetch_optional(&mut *conn)
-        .await?
+    if let Some(workspace) =
+        sqlx::query("SELECT id, key, name FROM workspaces WHERE id = ? AND archived = 0")
+            .bind(DEFAULT_WORKSPACE_ID)
+            .fetch_optional(&mut *conn)
+            .await?
     {
         return Ok(Workspace {
             id: workspace.get("id"),

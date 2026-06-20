@@ -495,8 +495,13 @@ pub(crate) async fn create_project_operation(
     )
     .await?;
     if let Some(path) = path {
-        add_project_path_mapping(conn, &outcome.project.workspace_id, &outcome.project.key, path)
-            .await?;
+        add_project_path_mapping(
+            conn,
+            &outcome.project.workspace_id,
+            &outcome.project.key,
+            path,
+        )
+        .await?;
     }
     if outcome.created {
         info!(project_key = %outcome.project.key, "project created");

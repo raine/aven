@@ -384,12 +384,10 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "detail",
         "select a view or toggle task detail",
         "Navigation",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Enter],
-                label: "Enter",
-            },
-        ],
+        &[KeySequence {
+            codes: &[KeyCode::Enter],
+            label: "Enter",
+        }],
         Action::ToggleDetail,
     ),
     CommandSpec::implemented(
@@ -1482,7 +1480,6 @@ mod tests {
         assert_eq!(Action::from_normal_key(KeyCode::Char('z')), Action::Undo);
         assert_eq!(Action::from_normal_key(KeyCode::Char('g')), Action::None);
     }
-
 
     #[test]
     fn catalog_lifecycle_matches_action_state() {

@@ -615,7 +615,9 @@ impl App {
     }
 
     fn previous_item(&mut self) {
-        if matches!(self.store.active_view, SidebarTarget::Conflicts) || self.store.filters.conflicts_only {
+        if matches!(self.store.active_view, SidebarTarget::Conflicts)
+            || self.store.filters.conflicts_only
+        {
             self.move_to_conflict(-1);
         } else {
             self.set_message("previous item is available in conflict flows".to_string());
@@ -623,7 +625,9 @@ impl App {
     }
 
     fn next_item(&mut self) {
-        if matches!(self.store.active_view, SidebarTarget::Conflicts) || self.store.filters.conflicts_only {
+        if matches!(self.store.active_view, SidebarTarget::Conflicts)
+            || self.store.filters.conflicts_only
+        {
             self.move_to_conflict(1);
         } else {
             self.set_message("next item is available in conflict flows".to_string());

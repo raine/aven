@@ -247,7 +247,10 @@ fn render_toast(frame: &mut Frame, message: &str) {
         .clamp(18, frame.area().width.saturating_sub(4));
     let height = 3.min(frame.area().height);
     let x = frame.area().right().saturating_sub(width.saturating_add(2));
-    let y = frame.area().bottom().saturating_sub(height.saturating_add(3));
+    let y = frame
+        .area()
+        .bottom()
+        .saturating_sub(height.saturating_add(3));
     let area = Rect {
         x,
         y,
