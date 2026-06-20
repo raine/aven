@@ -15,6 +15,7 @@ check: pre-commit
 check-fast-readonly: format-check static-analysis
 
 # Run commit-time checks without mutating files
+[parallel]
 pre-commit: check-fast-readonly clippy test sqlx-check
 
 # Run every check, including redundant compile gates
