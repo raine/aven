@@ -234,8 +234,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "undo last TUI mutation",
         "General",
         &[KeySequence {
-            codes: &[KeyCode::Char('z')],
-            label: "z",
+            codes: &[KeyCode::Char('u')],
+            label: "u",
         }],
         Action::Undo,
     ),
@@ -1442,7 +1442,7 @@ mod tests {
     #[test]
     fn resolves_undo_shortcut() {
         assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('z')]),
+            resolve_shortcut(&[KeyCode::Char('u')]),
             ShortcutLookup::Found(Action::Undo)
         );
         assert_eq!(lookup_command("undo"), CommandLookup::Found(Action::Undo));
@@ -1495,7 +1495,8 @@ mod tests {
         }
 
         assert_eq!(Action::from_normal_key(KeyCode::Esc), Action::CancelOverlay);
-        assert_eq!(Action::from_normal_key(KeyCode::Char('z')), Action::Undo);
+        assert_eq!(Action::from_normal_key(KeyCode::Char('u')), Action::Undo);
+        assert_eq!(Action::from_normal_key(KeyCode::Char('z')), Action::None);
         assert_eq!(Action::from_normal_key(KeyCode::Char('g')), Action::None);
     }
 

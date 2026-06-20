@@ -175,7 +175,7 @@ The app loop draws the current view, polls keyboard input every 250 ms, dispatch
 
 The TUI store calls the same operations and mutation helpers as the CLI for mutations, so TUI edits preserve change log, field version, conflict, and validation behavior. TUI query and sort state is separate from CLI list defaults.
 
-TUI undo records one inverse operation per completed TUI mutation in `tui_undo_entries`. Entries are workspace-scoped, persist across TUI restarts, and apply through the same mutation helpers so undo effects follow normal sync semantics. Scalar field and label undos guard against stale state before applying. `:undo` and `z` dispatch to the same undo action.
+TUI undo records one inverse operation per completed TUI mutation in `tui_undo_entries`. Entries are workspace-scoped, persist across TUI restarts, and apply through the same mutation helpers so undo effects follow normal sync semantics. Scalar field and label undos guard against stale state before applying. `:undo` and `u` dispatch to the same undo action.
 
 To add a TUI action:
 

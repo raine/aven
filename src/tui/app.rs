@@ -3159,7 +3159,7 @@ mod tests {
             .unwrap();
         assert_eq!(app.store.tasks[selected].task.title, "After");
 
-        app.handle_normal_key(KeyCode::Char('z')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
         assert_eq!(app.store.tasks[selected].task.title, "Before");
         assert!(app.message.as_ref().unwrap().contains("undid"));
     }
@@ -3187,7 +3187,7 @@ mod tests {
     #[tokio::test]
     async fn undo_reports_nothing_to_undo() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('z')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
         assert_eq!(app.message.as_deref(), Some("nothing to undo"));
     }
 
