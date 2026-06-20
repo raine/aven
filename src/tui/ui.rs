@@ -282,6 +282,7 @@ fn render_sidebar(
     area: Rect,
     overlay: bool,
 ) {
+    let content_width = area.width.saturating_sub(if overlay { 2 } else { 1 }) as usize;
     let mut items: Vec<ListItem> = store
         .sidebar_entries
         .iter()
@@ -306,7 +307,6 @@ fn render_sidebar(
                 sidebar_icon(entry)
             };
             let label = sidebar_label(entry);
-            let label_width = area.width.saturating_sub(6) as usize;
             let is_active_view = entry.target.as_ref() == Some(&store.active_view);
             let color = match &entry.target {
                 Some(SidebarTarget::Project(project)) => theme::project_color(project),
@@ -319,11 +319,15 @@ fn render_sidebar(
             } else {
                 Style::new().fg(FG)
             };
-            let line = Line::from(vec![
-                Span::styled(format!("{marker} "), Style::new().fg(color)),
-                Span::styled(format!("{:<label_width$}", label), label_style),
-                badge(entry.count, is_active_view),
-            ]);
+            let line = sidebar_entry_line(
+                entry,
+                marker,
+                &label,
+                label_style,
+                color,
+                is_active_view,
+                content_width,
+            );
             ListItem::new(line)
         })
         .collect();
@@ -455,6 +459,51 @@ fn sidebar_label(entry: &crate::tui::store::SidebarEntry) -> String {
             .to_string(),
         None => entry.label.clone(),
     }
+}
+
+fn sidebar_entry_line(
+    entry: &crate::tui::store::SidebarEntry,
+    marker: &str,
+    label: &str,
+    label_style: Style,
+    marker_color: Color,
+    active: bool,
+    width: usize,
+) -> Line<'static> {
+    let marker_cell = format!("{marker} ");
+    let count = entry.count.to_string();
+    let reserved_width = marker_cell.chars().count() + count.chars().count() + 1;
+    let label_width = width.saturating_sub(reserved_width);
+    let label = truncate_sidebar_label(label, label_width);
+    let used_width = marker_cell.chars().count() + label.chars().count() + count.chars().count();
+    let spacer_width = width.saturating_sub(used_width).max(1);
+    let count_style = if active {
+        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(FG_MUTED).add_modifier(Modifier::BOLD)
+    };
+    Line::from(vec![
+        Span::styled(marker_cell, Style::new().fg(marker_color)),
+        Span::styled(label, label_style),
+        Span::raw(" ".repeat(spacer_width)),
+        Span::styled(count, count_style),
+    ])
+}
+
+fn truncate_sidebar_label(label: &str, max_width: usize) -> String {
+    let label_len = label.chars().count();
+    if label_len <= max_width {
+        return label.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        return "…".to_string();
+    }
+    let mut truncated = label.chars().take(max_width - 1).collect::<String>();
+    truncated.push('…');
+    truncated
 }
 
 fn filter_item(icon: &str, label: &str, count: i64, color: Color, width: u16) -> ListItem<'static> {
