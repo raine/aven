@@ -187,7 +187,7 @@ fn header_metrics(store: &TuiStore, compact: bool) -> Vec<Span<'static>> {
         if !spans.is_empty() {
             spans.push(Span::raw(" "));
         }
-        spans.push(metric(label, count, color, active));
+        spans.extend(metric(label, count, color, active));
     }
     spans
 }
@@ -230,16 +230,16 @@ fn active_view_status_matches(store: &TuiStore, status: &str) -> bool {
     )
 }
 
-fn metric(label: &str, count: i64, color: Color, active: bool) -> Span<'static> {
-    let style = if active {
-        Style::new().fg(BG).bg(color).add_modifier(Modifier::BOLD)
-    } else {
-        Style::new()
-            .fg(color)
-            .bg(BG_PANEL)
-            .add_modifier(Modifier::BOLD)
-    };
-    Span::styled(format!(" {label} {count} "), style)
+fn metric(label: &str, count: i64, color: Color, active: bool) -> Vec<Span<'static>> {
+    let fill = if active { color } else { BG_PANEL };
+    let fg = if active { BG } else { color };
+    let style = Style::new().fg(fg).bg(fill).add_modifier(Modifier::BOLD);
+    let edge_style = Style::new().fg(fill).bg(BG);
+    vec![
+        Span::styled("".to_string(), edge_style),
+        Span::styled(format!("{label} {count}"), style),
+        Span::styled("".to_string(), edge_style),
+    ]
 }
 
 fn active_order_spans(store: &TuiStore) -> Vec<Span<'static>> {
@@ -1729,7 +1729,7 @@ mod tests {
                 .unwrap();
             buffer_text(terminal.backend())
         });
-        assert!(rendered.contains("inbox 1 "));
+        assert!(rendered.contains("inbox 1"));
         assert!(rendered.contains("● local"));
     }
 
