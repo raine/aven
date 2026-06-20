@@ -102,57 +102,85 @@ fn render_header(frame: &mut Frame, store: &TuiStore, area: Rect) {
     if area.width >= 140 {
         let [left, right] =
             Layout::horizontal([Constraint::Fill(1), Constraint::Length(26)]).areas(content_area);
-        frame.render_widget(header_line(store), left);
+        frame.render_widget(header_line(store, left.width), left);
         frame.render_widget(header_status(), right);
     } else {
-        frame.render_widget(header_line(store), content_area);
+        frame.render_widget(header_line(store, content_area.width), content_area);
     }
 }
 
-fn header_line(store: &TuiStore) -> Paragraph<'static> {
+fn header_line(store: &TuiStore, width: u16) -> Paragraph<'static> {
+    let compact = width < 120;
     let mut spans = vec![
         Span::styled(" aven", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
         separator(),
-        Span::styled("workspace ", Style::new().fg(FG_DIM)),
+        Span::styled(
+            if compact { "ws " } else { "workspace " },
+            Style::new().fg(FG_DIM),
+        ),
         Span::styled(
             store.active_workspace.key.clone(),
             Style::new().fg(FG).add_modifier(Modifier::BOLD),
         ),
-        separator(),
-        Span::styled("view ", Style::new().fg(FG_DIM)),
-        view_badge(store),
-        separator(),
-        metric(
+    ];
+    if !compact || !metric_represents_active_view(store) {
+        spans.extend([separator(), Span::styled("view ", Style::new().fg(FG_DIM))]);
+        spans.push(view_badge(store));
+    }
+    spans.push(separator());
+    spans.extend(header_metrics(store, compact));
+    spans.extend(active_filter_spans(store));
+    if !compact {
+        spans.extend(active_order_spans(store));
+    }
+    Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BG))
+}
+
+fn metric_represents_active_view(store: &TuiStore) -> bool {
+    matches!(
+        store.active_view,
+        SidebarTarget::All | SidebarTarget::Todo | SidebarTarget::Inbox | SidebarTarget::Conflicts
+    )
+}
+
+fn header_metrics(store: &TuiStore, compact: bool) -> Vec<Span<'static>> {
+    let metrics = [
+        (
             "queue",
             store.counts.all,
             ACCENT,
             store.active_view == SidebarTarget::All,
         ),
-        Span::raw(" "),
-        metric(
+        (
             "todo",
             store.counts.todo,
             BLUE,
             store.active_view == SidebarTarget::Todo,
         ),
-        Span::raw(" "),
-        metric(
+        (
             "inbox",
             store.counts.inbox,
             FG_MUTED,
             store.active_view == SidebarTarget::Inbox,
         ),
-        Span::raw(" "),
-        metric(
+        (
             "conflicts",
             store.counts.conflicts,
             PINK,
             store.active_view == SidebarTarget::Conflicts,
         ),
     ];
-    spans.extend(active_filter_spans(store));
-    spans.extend(active_order_spans(store));
-    Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BG))
+    let mut spans = Vec::new();
+    for (label, count, color, active) in metrics {
+        if compact && count == 0 && !active {
+            continue;
+        }
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(metric(label, count, color, active));
+    }
+    spans
 }
 
 fn separator() -> Span<'static> {
@@ -1634,6 +1662,33 @@ mod tests {
             buffer_text(terminal.backend())
         });
         assert!(rendered.contains("inbox 1 "));
+    }
+
+    #[test]
+    fn compact_header_uses_short_workspace_and_drops_redundant_items() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rendered = rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let pool = crate::db::open_db(&dir.path().join("test.db"))
+                .await
+                .unwrap();
+            let mut store = TuiStore::new(pool).await.unwrap();
+            store.counts.all = 34;
+            store.counts.todo = 33;
+            store.counts.inbox = 1;
+            store.counts.conflicts = 0;
+            let backend = TestBackend::new(110, 10);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| render_header(frame, &store, frame.area()))
+                .unwrap();
+            buffer_text(terminal.backend())
+        });
+        assert!(rendered.contains("ws default"));
+        assert!(!rendered.contains("workspace default"));
+        assert!(!rendered.contains("view queue"));
+        assert!(!rendered.contains("conflicts 0"));
+        assert!(!rendered.contains("order queue asc"));
     }
 
     #[test]
