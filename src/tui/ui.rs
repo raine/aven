@@ -370,18 +370,24 @@ fn footer_bar() -> Paragraph<'static> {
 
 fn render_toast(frame: &mut Frame, message: &str) {
     let tone = toast_tone(message);
+    let fill = BG_PANEL;
     let content = Line::from(vec![
-        Span::styled(tone.icon, Style::new().fg(tone.color)),
-        Span::raw(" "),
+        Span::styled("", Style::new().fg(fill).bg(BG)),
+        Span::styled("▌", Style::new().fg(tone.color).bg(fill)),
+        Span::styled(" ", Style::new().bg(fill)),
+        Span::styled(tone.icon, Style::new().fg(tone.color).bg(fill)),
+        Span::styled(" ", Style::new().bg(fill)),
         Span::styled(
             message.to_string(),
-            Style::new().fg(FG).add_modifier(Modifier::BOLD),
+            Style::new().fg(FG).bg(fill).add_modifier(Modifier::BOLD),
         ),
+        Span::styled(" ", Style::new().bg(fill)),
+        Span::styled("", Style::new().fg(fill).bg(BG)),
     ]);
     let width = (message.chars().count() as u16)
         .saturating_add(7)
         .clamp(20, frame.area().width.saturating_sub(5));
-    let height = 3.min(frame.area().height);
+    let height = 1.min(frame.area().height);
     let x = frame.area().right().saturating_sub(width.saturating_add(3));
     let y = frame
         .area()
@@ -393,24 +399,9 @@ fn render_toast(frame: &mut Frame, message: &str) {
         width,
         height,
     };
-    let shadow = Rect {
-        x: area.x.saturating_add(1),
-        y: area.y.saturating_add(1),
-        width: area.width,
-        height: area.height,
-    };
-    frame.render_widget(Clear, shadow);
-    frame.render_widget(Block::new().style(Style::new().bg(BG)), shadow);
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(content)
-            .block(
-                Block::new()
-                    .borders(Borders::LEFT)
-                    .border_style(Style::new().fg(tone.color))
-                    .padding(Padding::horizontal(1)),
-            )
-            .style(Style::new().fg(FG).bg(BG_ALT)),
+        Paragraph::new(content).style(Style::new().fg(FG).bg(BG)),
         area,
     );
 }
@@ -581,16 +572,21 @@ fn render_tasks(
 }
 
 fn key(label: &str) -> Vec<Span<'static>> {
-    let style = Style::new()
+    let key_style = Style::new()
         .fg(FG_MUTED)
         .bg(BG_PANEL)
         .add_modifier(Modifier::BOLD);
+    let separator_style = Style::new().fg(FG_DIM).bg(BG_PANEL);
     let edge_style = Style::new().fg(BG_PANEL).bg(BG);
-    vec![
-        Span::styled("".to_string(), edge_style),
-        Span::styled(label.to_string(), style),
-        Span::styled("".to_string(), edge_style),
-    ]
+    let mut spans = vec![Span::styled("".to_string(), edge_style)];
+    for (index, part) in label.split('/').enumerate() {
+        if index > 0 {
+            spans.push(Span::styled("/".to_string(), separator_style));
+        }
+        spans.push(Span::styled(part.to_string(), key_style));
+    }
+    spans.push(Span::styled("".to_string(), edge_style));
+    spans
 }
 
 fn cmd(label: &str) -> Span<'static> {
