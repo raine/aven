@@ -7,15 +7,12 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Run all checks
-check: clippy-fix check-after-fix
+# Run all checks without changing files
+check: pre-commit
 
 # Run cheap read-only checks in parallel
 [parallel]
 check-fast-readonly: format-check static-analysis
-
-# Run checks that are not covered by clippy-fix
-check-after-fix: check-fast-readonly test sqlx-check
 
 # Run commit-time checks without mutating files
 pre-commit: check-fast-readonly clippy test sqlx-check
