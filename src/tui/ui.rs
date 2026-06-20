@@ -14,7 +14,8 @@ use crate::render::quote;
 use crate::tui::app::{Focus, WidgetState};
 use crate::tui::event::{COMMANDS, CommandLifecycle, CommandSpec, key_label, matching_commands};
 use crate::tui::overlay::{
-    ConfirmView, MultilineInputView, OverlayView, PickerView, TextInputView, TextPanelView,
+    ConfirmView, MultilineInputView, OverlayView, PickerItem, PickerView, TextInputView,
+    TextPanelView,
 };
 use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::theme::{
@@ -1379,6 +1380,11 @@ fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
 }
 
 fn render_picker(frame: &mut Frame, state: &PickerView) {
+    if state.title == "Go: project" {
+        render_project_picker(frame, state);
+        return;
+    }
+
     let visible_count = state.visible_indices.len().max(1);
     let viewport_rows = 8usize;
     let height = (visible_count.min(viewport_rows) as u16).saturating_add(5);
@@ -1417,6 +1423,82 @@ fn render_picker(frame: &mut Frame, state: &PickerView) {
     };
     lines.push(Line::from(Span::styled(hints, Style::new().fg(FG_MUTED))));
     render_overlay_paragraph(frame, area, &state.title, Text::from(lines), false);
+}
+
+fn render_project_picker(frame: &mut Frame, state: &PickerView) {
+    let visible_count = state.visible_indices.len().max(1);
+    let viewport_rows = 10usize;
+    let height = (visible_count.min(viewport_rows) as u16).saturating_add(6);
+    let area = centered(frame.area(), 70, height);
+    let selected_position = state
+        .visible_indices
+        .iter()
+        .position(|index| *index == state.selected)
+        .unwrap_or(0);
+    let start = selected_position.saturating_sub(viewport_rows.saturating_sub(1));
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("/", Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
+            Span::raw(insert_cursor(&state.filter, state.filter_cursor)),
+        ]),
+        Line::from(vec![
+            Span::styled("  PREFIX ", Style::new().fg(FG_DIM).bg(BG_PANEL)),
+            Span::styled("PROJECT", Style::new().fg(FG_DIM).bg(BG_PANEL)),
+        ]),
+    ];
+    for index in state.visible_indices.iter().skip(start).take(viewport_rows) {
+        lines.push(project_picker_line(
+            &state.items[*index],
+            *index == state.selected,
+        ));
+    }
+    if state.visible_indices.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  no matching projects",
+            Style::new().fg(FG_DIM),
+        )));
+    }
+    lines.push(project_picker_hint_line());
+    render_overlay_paragraph(frame, area, &state.title, Text::from(lines), false);
+}
+
+fn project_picker_line(item: &PickerItem, selected: bool) -> Line<'static> {
+    let (prefix, name) = item
+        .label
+        .split_once(' ')
+        .unwrap_or((item.label.as_str(), item.value.as_str()));
+    let marker = if selected { "▸" } else { " " };
+    let row_style = if selected {
+        SELECTED
+    } else {
+        Style::new().bg(BG_ALT)
+    };
+    let project_style = Style::new()
+        .fg(theme::project_color(&item.value))
+        .add_modifier(Modifier::BOLD)
+        .bg(row_style.bg.unwrap_or(BG_ALT));
+    let name_style = Style::new()
+        .fg(if selected { FG } else { FG_MUTED })
+        .bg(row_style.bg.unwrap_or(BG_ALT));
+    Line::from(vec![
+        Span::styled(format!("{marker} "), row_style),
+        Span::styled(format!("{prefix:<7}"), project_style),
+        Span::styled(" ", row_style),
+        Span::styled(name.to_string(), name_style),
+    ])
+}
+
+fn project_picker_hint_line() -> Line<'static> {
+    Line::from(vec![
+        Span::styled("Up/Down", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" move  ", Style::new().fg(FG_MUTED)),
+        Span::styled("Ctrl+N/P", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" move  ", Style::new().fg(FG_MUTED)),
+        Span::styled("Enter", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" open  ", Style::new().fg(FG_MUTED)),
+        Span::styled("Esc", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" cancel", Style::new().fg(FG_MUTED)),
+    ])
 }
 
 fn render_confirm(frame: &mut Frame, state: &ConfirmView) {
@@ -2045,6 +2127,28 @@ mod tests {
         }));
         assert!(rendered.contains("▸ Item 10"));
         assert!(!rendered.contains("Item 0"));
+    }
+
+    #[test]
+    fn project_picker_uses_structured_columns() {
+        let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+            title: "Go: project".to_string(),
+            filter: "claude".to_string(),
+            filter_cursor: 6,
+            items: vec![PickerItem {
+                label: "CC claude-code".to_string(),
+                value: "claude-code".to_string(),
+                selected: false,
+            }],
+            selected: 0,
+            multi: false,
+            visible_indices: vec![0],
+        }));
+        assert!(rendered.contains("PREFIX"));
+        assert!(rendered.contains("PROJECT"));
+        assert!(rendered.contains("CC"));
+        assert!(rendered.contains("claude-code"));
+        assert!(rendered.contains("Enter open"));
     }
 
     #[test]
