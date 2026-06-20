@@ -357,16 +357,28 @@ impl TestProcess {
     }
 }
 
+fn kill_child_and_join_threads(
+    child: &mut Child,
+    stdout_thread: &mut Option<JoinHandle<()>>,
+    stderr_thread: &mut Option<JoinHandle<()>>,
+) {
+    let _ = child.kill();
+    let _ = child.wait();
+    if let Some(thread) = stdout_thread.take() {
+        let _ = thread.join();
+    }
+    if let Some(thread) = stderr_thread.take() {
+        let _ = thread.join();
+    }
+}
+
 impl Drop for TestProcess {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        if let Some(thread) = self.stdout_thread.take() {
-            let _ = thread.join();
-        }
-        if let Some(thread) = self.stderr_thread.take() {
-            let _ = thread.join();
-        }
+        kill_child_and_join_threads(
+            &mut self.child,
+            &mut self.stdout_thread,
+            &mut self.stderr_thread,
+        );
     }
 }
 
@@ -575,13 +587,10 @@ impl TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        if let Some(thread) = self.stdout_thread.take() {
-            let _ = thread.join();
-        }
-        if let Some(thread) = self.stderr_thread.take() {
-            let _ = thread.join();
-        }
+        kill_child_and_join_threads(
+            &mut self.child,
+            &mut self.stdout_thread,
+            &mut self.stderr_thread,
+        );
     }
 }

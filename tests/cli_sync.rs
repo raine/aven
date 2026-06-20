@@ -94,6 +94,22 @@ fn project_change_json(change_id: &str, key: &str) -> serde_json::Value {
     })
 }
 
+fn assert_sync_protocol_rejected(
+    env: &TestEnv,
+    server: &TestServer,
+    body: &str,
+    expected_error: &str,
+) {
+    let (status, text) = post_sync_json(&server.url, body);
+
+    assert_eq!(status, 400);
+    contains_all(&text, &[expected_error]);
+    assert_eq!(
+        scalar_i64(&env.path("server.sqlite"), "SELECT count(*) FROM changes"),
+        0
+    );
+}
+
 fn post_sync_json(url: &str, body: &str) -> (u16, String) {
     use std::io::{Read as _, Write as _};
     use std::net::TcpStream;
@@ -643,16 +659,11 @@ fn missing_request_protocol_version_is_rejected_before_changes_are_stored() {
     })
     .to_string();
 
-    let (status, text) = post_sync_json(&server.url, &body);
-
-    assert_eq!(status, 400);
-    contains_all(
-        &text,
-        &["error sync-protocol-unsupported client=0 server=1"],
-    );
-    assert_eq!(
-        scalar_i64(&env.path("server.sqlite"), "SELECT count(*) FROM changes"),
-        0
+    assert_sync_protocol_rejected(
+        &env,
+        &server,
+        &body,
+        "error sync-protocol-unsupported client=0 server=1",
     );
 }
 
@@ -668,16 +679,11 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
     })
     .to_string();
 
-    let (status, text) = post_sync_json(&server.url, &body);
-
-    assert_eq!(status, 400);
-    contains_all(
-        &text,
-        &["error sync-protocol-unsupported client=0 server=1"],
-    );
-    assert_eq!(
-        scalar_i64(&env.path("server.sqlite"), "SELECT count(*) FROM changes"),
-        0
+    assert_sync_protocol_rejected(
+        &env,
+        &server,
+        &body,
+        "error sync-protocol-unsupported client=0 server=1",
     );
 }
 
@@ -693,16 +699,11 @@ fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
     })
     .to_string();
 
-    let (status, text) = post_sync_json(&server.url, &body);
-
-    assert_eq!(status, 400);
-    contains_all(
-        &text,
-        &["error sync-protocol-unsupported client=2 server=1"],
-    );
-    assert_eq!(
-        scalar_i64(&env.path("server.sqlite"), "SELECT count(*) FROM changes"),
-        0
+    assert_sync_protocol_rejected(
+        &env,
+        &server,
+        &body,
+        "error sync-protocol-unsupported client=2 server=1",
     );
 }
 
