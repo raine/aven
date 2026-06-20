@@ -29,6 +29,7 @@ pub(crate) struct TaskDraft {
 
 pub(crate) struct TaskOutcome {
     pub(crate) task: Task,
+    pub(crate) create_change_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -55,10 +56,14 @@ pub(crate) struct NoteOutcome {
 
 pub(crate) struct LabelOutcome {
     pub(crate) name: String,
+    pub(crate) created: bool,
+    pub(crate) change_id: Option<String>,
 }
 
 pub(crate) struct ProjectOutcome {
     pub(crate) project: Project,
+    pub(crate) created: bool,
+    pub(crate) change_id: Option<String>,
 }
 
 pub(crate) struct ProjectPathOutcome {
@@ -197,6 +202,7 @@ pub(crate) async fn create_task_in_workspace(
     );
     Ok(TaskOutcome {
         task: get_task(conn, &id).await?,
+        create_change_id: Some(change_id),
     })
 }
 
@@ -361,6 +367,7 @@ pub(crate) async fn set_task_deleted(
     info!(task_id = %task_id, deleted, "task deleted flag changed");
     Ok(TaskOutcome {
         task: get_task(conn, task_id).await?,
+        create_change_id: None,
     })
 }
 
@@ -429,6 +436,14 @@ pub(crate) async fn create_label_operation_in_workspace(
     if name.is_empty() {
         bail!("error invalid-label");
     }
+    let existed = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM labels WHERE workspace_id = ? AND name = ?",
+    )
+    .bind(workspace_id)
+    .bind(&name)
+    .fetch_one(&mut *conn)
+    .await?
+        > 0;
     let created_at = now();
     sqlx::query("INSERT OR IGNORE INTO labels(workspace_id, name, created_at) VALUES (?, ?, ?)")
         .bind(workspace_id)
@@ -436,23 +451,36 @@ pub(crate) async fn create_label_operation_in_workspace(
         .bind(&created_at)
         .execute(&mut *conn)
         .await?;
-    insert_change(
-        conn,
-        "label",
-        &name,
-        None,
-        "create_label",
-        json!({
-            "workspace_id": workspace_id,
-            "workspace_key": crate::workspaces::active_workspace().key,
-            "name": name,
-            "created_at": created_at,
-        }),
-        None,
-    )
-    .await?;
-    info!("label created");
-    Ok(LabelOutcome { name })
+    let created = !existed;
+    let change_id = if created {
+        Some(
+            insert_change(
+                conn,
+                "label",
+                &name,
+                None,
+                "create_label",
+                json!({
+                    "workspace_id": workspace_id,
+                    "workspace_key": crate::workspaces::active_workspace().key,
+                    "name": name,
+                    "created_at": created_at,
+                }),
+                None,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    if created {
+        info!("label created");
+    }
+    Ok(LabelOutcome {
+        name,
+        created,
+        change_id,
+    })
 }
 
 pub(crate) async fn create_project_operation(
@@ -460,17 +488,24 @@ pub(crate) async fn create_project_operation(
     name: &str,
     path: Option<&Path>,
 ) -> Result<ProjectOutcome> {
-    let project = create_project_in_workspace(
+    let outcome = create_project_in_workspace(
         conn,
         crate::workspaces::active_workspace_id().as_str(),
         name,
     )
     .await?;
     if let Some(path) = path {
-        add_project_path_mapping(conn, &project.workspace_id, &project.key, path).await?;
+        add_project_path_mapping(conn, &outcome.project.workspace_id, &outcome.project.key, path)
+            .await?;
     }
-    info!(project_key = %project.key, "project created");
-    Ok(ProjectOutcome { project })
+    if outcome.created {
+        info!(project_key = %outcome.project.key, "project created");
+    }
+    Ok(ProjectOutcome {
+        project: outcome.project,
+        created: outcome.created,
+        change_id: outcome.change_id,
+    })
 }
 
 fn canonicalize_project_path(path: &Path) -> Result<String> {

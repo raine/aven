@@ -478,6 +478,7 @@ impl App {
             Action::ShowConfigInfo => self.show_config_info()?,
             Action::ShowConfigPaths => self.show_config_paths()?,
             Action::BeginConfigInit => self.begin_config_init()?,
+            Action::Undo => self.undo_last().await?,
             Action::Planned { name, reason } => {
                 self.set_message(format!(":{name} is not yet implemented: {reason}"));
             }
@@ -877,6 +878,14 @@ impl App {
             self.apply_mutation_result(result);
         } else {
             self.set_message("no selected task to edit".to_string());
+        }
+        Ok(())
+    }
+
+    async fn undo_last(&mut self) -> Result<()> {
+        match self.store.undo_last().await? {
+            Some(result) => self.apply_mutation_result(result),
+            None => self.set_message("nothing to undo".to_string()),
         }
         Ok(())
     }
@@ -2735,6 +2744,48 @@ mod tests {
             Some(OverlayState::MultilineInput(state))
                 if state.lines.join("\n") == "old updated"
         ));
+    }
+
+    #[tokio::test]
+    async fn undo_shortcut_reverts_last_mutation() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
+        app.store
+            .update_title(Some(selected), "After".to_string())
+            .await
+            .unwrap();
+        assert_eq!(app.store.tasks[selected].task.title, "After");
+
+        app.handle_normal_key(KeyCode::Char('z')).await.unwrap();
+        assert_eq!(app.store.tasks[selected].task.title, "Before");
+        assert!(app.message.as_ref().unwrap().contains("undid"));
+    }
+
+    #[tokio::test]
+    async fn undo_command_reverts_last_mutation() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
+        app.store
+            .update_title(Some(selected), "After".to_string())
+            .await
+            .unwrap();
+
+        app.begin_command();
+        for ch in "undo".chars() {
+            app.handle_overlay_key(key(KeyCode::Char(ch)))
+                .await
+                .unwrap();
+        }
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert_eq!(app.store.tasks[selected].task.title, "Before");
+    }
+
+    #[tokio::test]
+    async fn undo_reports_nothing_to_undo() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('z')).await.unwrap();
+        assert_eq!(app.message.as_deref(), Some("nothing to undo"));
     }
 
     #[tokio::test]

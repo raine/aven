@@ -23,6 +23,7 @@ mod sync;
 mod task_render;
 mod tui;
 mod types;
+mod undo;
 mod workspaces;
 
 #[cfg(test)]

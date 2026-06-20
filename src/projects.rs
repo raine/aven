@@ -50,7 +50,9 @@ pub(crate) async fn resolve_project_for_add_in_workspace(
             print_near_error("project", project, &choices);
             bail!("near-match project");
         }
-        return create_project_in_workspace(conn, workspace_id, project).await;
+        return create_project_in_workspace(conn, workspace_id, project)
+            .await
+            .map(|outcome| outcome.project);
     }
     if let Some(project) = project_from_path_mapping(conn, workspace_id).await? {
         return Ok(project);
@@ -64,7 +66,9 @@ pub(crate) async fn resolve_project_for_add_in_workspace(
             print_near_error("project", &root_name, &choices);
             bail!("near-match project");
         }
-        return create_project_in_workspace(conn, workspace_id, &root_name).await;
+        return create_project_in_workspace(conn, workspace_id, &root_name)
+            .await
+            .map(|outcome| outcome.project);
     }
     bail!("error project-required");
 }
@@ -122,7 +126,9 @@ pub(crate) async fn find_project_in_workspace(
 
 #[allow(dead_code)]
 pub(crate) async fn create_project(conn: &mut SqliteConnection, name: &str) -> Result<Project> {
-    create_project_in_workspace(conn, active_workspace_id().as_str(), name).await
+    create_project_in_workspace(conn, active_workspace_id().as_str(), name)
+        .await
+        .map(|outcome| outcome.project)
 }
 
 #[allow(dead_code)]
@@ -131,20 +137,33 @@ pub(crate) async fn create_project_for_workspace(
     workspace: &Workspace,
     name: &str,
 ) -> Result<Project> {
-    create_project_in_workspace(conn, &workspace.id, name).await
+    create_project_in_workspace(conn, &workspace.id, name)
+        .await
+        .map(|outcome| outcome.project)
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ProjectCreateOutcome {
+    pub(crate) project: Project,
+    pub(crate) created: bool,
+    pub(crate) change_id: Option<String>,
 }
 
 pub(crate) async fn create_project_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &str,
     name: &str,
-) -> Result<Project> {
+) -> Result<ProjectCreateOutcome> {
     let key = normalize_key(name);
     if key.is_empty() {
         bail!("error invalid-project input={}", quote(name));
     }
     if let Some(project) = find_project_in_workspace(conn, workspace_id, &key).await? {
-        return Ok(project);
+        return Ok(ProjectCreateOutcome {
+            project,
+            created: false,
+            change_id: None,
+        });
     }
     let prefix = unique_project_prefix(conn, workspace_id, &key).await?;
     let ts = now();
@@ -160,7 +179,7 @@ pub(crate) async fn create_project_in_workspace(
     .bind(&ts)
     .execute(&mut *conn)
     .await?;
-    insert_change(
+    let change_id = insert_change(
         conn,
         "project",
         &key,
@@ -177,11 +196,15 @@ pub(crate) async fn create_project_in_workspace(
         None,
     )
     .await?;
-    Ok(Project {
-        workspace_id: workspace_id.to_string(),
-        key,
-        name: name.to_string(),
-        prefix,
+    Ok(ProjectCreateOutcome {
+        project: Project {
+            workspace_id: workspace_id.to_string(),
+            key,
+            name: name.to_string(),
+            prefix,
+        },
+        created: true,
+        change_id: Some(change_id),
     })
 }
 

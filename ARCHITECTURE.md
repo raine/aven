@@ -28,6 +28,7 @@
 | `src/render.rs`, `src/task_render.rs` | Generic text helpers and task-specific CLI rendering. |
 | `src/signals.rs` | Shutdown signal helper for long-running processes. |
 | `src/tui/` | Ratatui application, input handling, store, rendering, overlays, theme, and widgets. |
+| `src/undo.rs` | Persistent TUI undo journal, guarded inverse payloads, and apply helpers. |
 | `migrations/` | SQLite schema migrations. |
 | `tests/` | Integration-heavy CLI, sync, daemon, conflict, schema, and TUI smoke coverage. |
 
@@ -56,6 +57,7 @@ SQLite is the only persistence layer. `open_db` enables WAL, foreign keys, a sin
 - Domain tables: `workspaces`, `tasks`, `projects`, `labels`, `project_paths`, `task_labels`, `notes`.
 - Sync tables: `changes`, `field_versions`, `conflicts`.
 - Metadata table: `meta` stores `client_id`, `sync_cursor`, `local_seq`, and sync server URL.
+- Local TUI table: `tui_undo_entries` stores inverse operations for TUI mutations.
 
 `Task` and `Project` in `src/types.rs` are the core records. They carry `workspace_id`, and workspace-scoped tables include `workspace_id` in uniqueness and lookup paths. Task state uses string fields for `status` and `priority` plus a `deleted` boolean. Read paths wrap records into list and sidebar DTOs in `src/query.rs`.
 
@@ -117,6 +119,7 @@ Local-only data:
 - Config files and environment overrides.
 - Project path mappings in `project_paths`.
 - TUI view, filter, selection, overlay, and sort state.
+- TUI undo entries in `tui_undo_entries`.
 
 Conflict-protected scalar task fields are `title`, `description`, `project`, `status`, `priority`, and `deleted`. Labels and notes sync through operation records but do not use scalar field conflict protection.
 
@@ -168,6 +171,8 @@ The app loop draws the current view, polls keyboard input every 250 ms, dispatch
 
 The TUI store calls the same operations and mutation helpers as the CLI for mutations, so TUI edits preserve change log, field version, conflict, and validation behavior. TUI query and sort state is separate from CLI list defaults.
 
+TUI undo records one inverse operation per completed TUI mutation in `tui_undo_entries`. Entries are workspace-scoped, persist across TUI restarts, and apply through the same mutation helpers so undo effects follow normal sync semantics. Scalar field and label undos guard against stale state before applying. `:undo` and `z` dispatch to the same undo action.
+
 To add a TUI action:
 
 1. Add an `Action` variant in `src/tui/event.rs`.
@@ -175,7 +180,8 @@ To add a TUI action:
 3. Handle the action in `App::execute` in `src/tui/app.rs`.
 4. Add or reuse overlay state if the action needs user input.
 5. Add `TuiStore` methods for database reads or mutations.
-6. Add tests for shortcut resolution, action dispatch, overlay routing, and store behavior.
+6. Record a TUI undo entry for mutating store methods unless the action is undo itself.
+7. Add tests for shortcut resolution, action dispatch, overlay routing, and store behavior.
 
 Overlay submits are routed by overlay title strings in `App::handle_overlay_submit`. Keep title constants unique, and update tests when adding overlay flows.
 

@@ -19,6 +19,7 @@ use crate::query::{
     list_project_items, list_task_items, sidebar_counts,
 };
 use crate::tui::overlay::PickerItem;
+use crate::undo::{UndoCommand, UndoPayload, task_field_value, task_snapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MutationMessage {
@@ -162,6 +163,33 @@ impl TuiStore {
         self.refresh(None).await
     }
 
+    async fn record_undo(&self, summary: &str, payload: UndoPayload) -> Result<()> {
+        let workspace_id = crate::workspaces::active_workspace_id();
+        let mut conn = self.pool.acquire().await?;
+        crate::undo::record_tui_undo(&mut conn, &workspace_id, summary, payload).await?;
+        Ok(())
+    }
+
+    pub(crate) async fn undo_last(&mut self) -> Result<Option<MutationMessage>> {
+        let workspace_id = crate::workspaces::active_workspace_id();
+        let mut conn = self.pool.acquire().await?;
+        let Some(outcome) = crate::undo::apply_latest_tui_undo(&mut conn, &workspace_id).await?
+        else {
+            return Ok(None);
+        };
+        drop(conn);
+
+        if let Some(include_deleted) = outcome.include_deleted {
+            self.filters.include_deleted = include_deleted;
+        }
+
+        let selected = self.refresh(outcome.task_id.as_deref()).await?;
+        Ok(Some(MutationMessage {
+            message: format!("undid {}", outcome.summary),
+            selected,
+        }))
+    }
+
     async fn update_selected_task<F>(
         &mut self,
         index: Option<usize>,
@@ -283,9 +311,22 @@ impl TuiStore {
         status: &'static str,
     ) -> Result<Option<MutationMessage>> {
         if let Some(item) = self.selected_task(index).cloned() {
+            let before = item.task.status.clone();
             let mut conn = self.pool.acquire().await?;
             set_status(&mut conn, &item.task, status).await?;
             drop(conn);
+            self.record_undo(
+                &format!("status {}", item.display_ref),
+                UndoPayload {
+                    commands: vec![UndoCommand::SetTaskField {
+                        task_id: item.task.id.clone(),
+                        field: "status".to_string(),
+                        before,
+                        after: status.to_string(),
+                    }],
+                },
+            )
+            .await?;
             let selected = self.refresh(Some(&item.task.id)).await?;
             return Ok(Some(MutationMessage {
                 message: format!("set {} status={status}", item.display_ref),
@@ -301,9 +342,22 @@ impl TuiStore {
         reverse: bool,
     ) -> Result<Option<MutationMessage>> {
         if let Some(item) = self.selected_task(index).cloned() {
+            let before = item.task.priority.clone();
             let mut conn = self.pool.acquire().await?;
             let task = cycle_priority(&mut conn, &item.task, reverse).await?;
             drop(conn);
+            self.record_undo(
+                &format!("priority {}", item.display_ref),
+                UndoPayload {
+                    commands: vec![UndoCommand::SetTaskField {
+                        task_id: item.task.id.clone(),
+                        field: "priority".to_string(),
+                        before,
+                        after: task.priority.clone(),
+                    }],
+                },
+            )
+            .await?;
             let selected = self.refresh(Some(&item.task.id)).await?;
             return Ok(Some(MutationMessage {
                 message: format!("set {} priority={}", item.display_ref, task.priority),
@@ -318,15 +372,35 @@ impl TuiStore {
         index: Option<usize>,
         priority: &str,
     ) -> Result<Option<MutationMessage>> {
-        self.update_selected_task(
-            index,
-            TaskUpdate {
-                priority: Some(priority.to_string()),
-                ..TaskUpdate::default()
-            },
-            |item| format!("set {} priority={priority}", item.display_ref),
-        )
-        .await
+        let Some(item) = self.selected_task(index).cloned() else {
+            return Ok(None);
+        };
+        let before = item.task.priority.clone();
+        let outcome = self
+            .update_selected_task(
+                index,
+                TaskUpdate {
+                    priority: Some(priority.to_string()),
+                    ..TaskUpdate::default()
+                },
+                |item| format!("set {} priority={priority}", item.display_ref),
+            )
+            .await?;
+        if outcome.is_some() {
+            self.record_undo(
+                &format!("priority {}", item.display_ref),
+                UndoPayload {
+                    commands: vec![UndoCommand::SetTaskField {
+                        task_id: item.task.id.clone(),
+                        field: "priority".to_string(),
+                        before,
+                        after: priority.to_string(),
+                    }],
+                },
+            )
+            .await?;
+        }
+        Ok(outcome)
     }
 
     pub(crate) async fn update_title(
@@ -335,15 +409,35 @@ impl TuiStore {
         title: String,
     ) -> Result<Option<MutationMessage>> {
         let title = title.trim().to_string();
-        self.update_selected_task(
-            index,
-            TaskUpdate {
-                title: Some(title),
-                ..TaskUpdate::default()
-            },
-            |item| format!("set {} title", item.display_ref),
-        )
-        .await
+        let Some(item) = self.selected_task(index).cloned() else {
+            return Ok(None);
+        };
+        let before = item.task.title.clone();
+        let outcome = self
+            .update_selected_task(
+                index,
+                TaskUpdate {
+                    title: Some(title.clone()),
+                    ..TaskUpdate::default()
+                },
+                |item| format!("set {} title", item.display_ref),
+            )
+            .await?;
+        if outcome.is_some() {
+            self.record_undo(
+                &format!("title {}", item.display_ref),
+                UndoPayload {
+                    commands: vec![UndoCommand::SetTaskField {
+                        task_id: item.task.id.clone(),
+                        field: "title".to_string(),
+                        before,
+                        after: title,
+                    }],
+                },
+            )
+            .await?;
+        }
+        Ok(outcome)
     }
 
     pub(crate) async fn update_description(
@@ -351,15 +445,35 @@ impl TuiStore {
         index: Option<usize>,
         description: String,
     ) -> Result<Option<MutationMessage>> {
-        self.update_selected_task(
-            index,
-            TaskUpdate {
-                description: Some(description),
-                ..TaskUpdate::default()
-            },
-            |item| format!("set {} description", item.display_ref),
-        )
-        .await
+        let Some(item) = self.selected_task(index).cloned() else {
+            return Ok(None);
+        };
+        let before = item.task.description.clone();
+        let outcome = self
+            .update_selected_task(
+                index,
+                TaskUpdate {
+                    description: Some(description.clone()),
+                    ..TaskUpdate::default()
+                },
+                |item| format!("set {} description", item.display_ref),
+            )
+            .await?;
+        if outcome.is_some() {
+            self.record_undo(
+                &format!("description {}", item.display_ref),
+                UndoPayload {
+                    commands: vec![UndoCommand::SetTaskField {
+                        task_id: item.task.id.clone(),
+                        field: "description".to_string(),
+                        before,
+                        after: description,
+                    }],
+                },
+            )
+            .await?;
+        }
+        Ok(outcome)
     }
 
     pub(crate) async fn update_project(
@@ -367,15 +481,35 @@ impl TuiStore {
         index: Option<usize>,
         project: String,
     ) -> Result<Option<MutationMessage>> {
-        self.update_selected_task(
-            index,
-            TaskUpdate {
-                project: Some(project),
+        let Some(item) = self.selected_task(index).cloned() else {
+            return Ok(None);
+        };
+        let before = item.task.project_key.clone();
+        let mut conn = self.pool.acquire().await?;
+        let outcome =
+            update_task_operation(&mut conn, &item.task.id, TaskUpdate {
+                project: Some(project.clone()),
                 ..TaskUpdate::default()
+            })
+            .await?;
+        drop(conn);
+        self.record_undo(
+            &format!("project {}", item.display_ref),
+            UndoPayload {
+                commands: vec![UndoCommand::SetTaskField {
+                    task_id: item.task.id.clone(),
+                    field: "project".to_string(),
+                    before,
+                    after: outcome.task.project_key.clone(),
+                }],
             },
-            |item| format!("set {} project", item.display_ref),
         )
-        .await
+        .await?;
+        let selected = self.refresh(Some(&item.task.id)).await?;
+        Ok(Some(MutationMessage {
+            message: format!("set {} project", item.display_ref),
+            selected,
+        }))
     }
 
     pub(crate) async fn update_labels(
@@ -397,16 +531,31 @@ impl TuiStore {
             .filter(|label| !selected_labels.contains(label))
             .cloned()
             .collect::<Vec<_>>();
-        self.update_selected_task(
-            index,
-            TaskUpdate {
-                add_labels,
-                remove_labels,
-                ..TaskUpdate::default()
-            },
-            |item| format!("set {} labels", item.display_ref),
-        )
-        .await
+        let outcome = self
+            .update_selected_task(
+                index,
+                TaskUpdate {
+                    add_labels,
+                    remove_labels,
+                    ..TaskUpdate::default()
+                },
+                |item| format!("set {} labels", item.display_ref),
+            )
+            .await?;
+        if outcome.is_some() {
+            self.record_undo(
+                &format!("labels {}", item.display_ref),
+                UndoPayload {
+                    commands: vec![UndoCommand::SetTaskLabels {
+                        task_id: item.task.id.clone(),
+                        before: item.labels.clone(),
+                        after: selected_labels,
+                    }],
+                },
+            )
+            .await?;
+        }
+        Ok(outcome)
     }
 
     pub(crate) async fn update_deleted(
@@ -415,9 +564,27 @@ impl TuiStore {
         deleted: bool,
     ) -> Result<Option<MutationMessage>> {
         if let Some(item) = self.selected_task(index).cloned() {
+            let before = if item.task.deleted { "1" } else { "0" };
             let mut conn = self.pool.acquire().await?;
             set_deleted(&mut conn, &item.task, deleted).await?;
             drop(conn);
+            let summary = if deleted {
+                format!("delete {}", item.display_ref)
+            } else {
+                format!("restore {}", item.display_ref)
+            };
+            self.record_undo(
+                &summary,
+                UndoPayload {
+                    commands: vec![UndoCommand::SetTaskField {
+                        task_id: item.task.id.clone(),
+                        field: "deleted".to_string(),
+                        before: before.to_string(),
+                        after: if deleted { "1" } else { "0" }.to_string(),
+                    }],
+                },
+            )
+            .await?;
             self.filters.include_deleted = deleted;
             let selected = self.refresh(Some(&item.task.id)).await?;
             return Ok(Some(MutationMessage {
@@ -437,6 +604,20 @@ impl TuiStore {
         let mut conn = self.pool.acquire().await?;
         let outcome = create_project_operation(&mut conn, &name, None).await?;
         drop(conn);
+        if outcome.created {
+            self.record_undo(
+                &format!("project {}", outcome.project.key),
+                UndoPayload {
+                    commands: vec![UndoCommand::DeleteCreatedProject {
+                        project_key: outcome.project.key.clone(),
+                        create_change_id: outcome.change_id.unwrap_or_default(),
+                        expected_name: outcome.project.name.clone(),
+                        expected_prefix: outcome.project.prefix.clone(),
+                    }],
+                },
+            )
+            .await?;
+        }
         self.refresh(None).await?;
         Ok(format!("created project {}", outcome.project.key))
     }
@@ -445,8 +626,21 @@ impl TuiStore {
         let name = name.trim().to_string();
         let mut conn = self.pool.acquire().await?;
         let outcome = create_label_operation(&mut conn, &name).await?;
-        self.labels = list_labels(&mut conn, None).await?;
         drop(conn);
+        if outcome.created {
+            self.record_undo(
+                &format!("label {}", outcome.name),
+                UndoPayload {
+                    commands: vec![UndoCommand::DeleteCreatedLabel {
+                        label: outcome.name.clone(),
+                        create_change_id: outcome.change_id.unwrap_or_default(),
+                    }],
+                },
+            )
+            .await?;
+        }
+        let mut conn = self.pool.acquire().await?;
+        self.labels = list_labels(&mut conn, None).await?;
         Ok(format!("created label {}", outcome.name))
     }
 
@@ -505,7 +699,20 @@ impl TuiStore {
         let mut conn = self.pool.acquire().await?;
         let outcome = create_task_operation(&mut conn, draft).await?;
         let task_id = outcome.task.id.clone();
+        let workspace_id = crate::workspaces::active_workspace_id();
+        let snapshot = task_snapshot(&mut conn, &workspace_id, &task_id).await?;
         drop(conn);
+        self.record_undo(
+            &format!("task {task_id}"),
+            UndoPayload {
+                commands: vec![UndoCommand::DeleteCreatedTask {
+                    task_id: task_id.clone(),
+                    create_change_id: outcome.create_change_id,
+                    expected: snapshot,
+                }],
+            },
+        )
+        .await?;
 
         self.refresh(None).await?;
         let created_index = self.tasks.iter().position(|item| item.task.id == task_id);
@@ -521,8 +728,29 @@ impl TuiStore {
     }
 
     pub(crate) async fn add_note_to_task(&mut self, task_id: &str, body: String) -> Result<String> {
+        let workspace_id = crate::workspaces::active_workspace_id();
         let mut conn = self.pool.acquire().await?;
         let outcome = add_note_operation(&mut conn, task_id, body).await?;
+        let note_change_id: String = sqlx::query_scalar(
+            "SELECT change_id FROM notes WHERE workspace_id = ? AND id = ? AND task_id = ?",
+        )
+        .bind(&workspace_id)
+        .bind(&outcome.note_id)
+        .bind(task_id)
+        .fetch_one(&mut *conn)
+        .await?;
+        drop(conn);
+        self.record_undo(
+            &format!("note {}", outcome.note_id),
+            UndoPayload {
+                commands: vec![UndoCommand::DeleteCreatedNote {
+                    task_id: task_id.to_string(),
+                    note_id: outcome.note_id.clone(),
+                    note_add_change_id: note_change_id,
+                }],
+            },
+        )
+        .await?;
         Ok(outcome.note_id)
     }
 
@@ -556,9 +784,28 @@ impl TuiStore {
         target: ConflictTarget,
         value: String,
     ) -> Result<MutationMessage> {
+        let workspace_id = crate::workspaces::active_workspace_id();
         let mut conn = self.pool.acquire().await?;
+        let before = task_field_value(&mut conn, &workspace_id, &target.task_id, &target.field)
+            .await?;
+        let conflict_id =
+            crate::undo::conflict_row_id(&mut conn, &workspace_id, &target.task_id, &target.field)
+                .await?;
         let outcome = resolve_conflict(&mut conn, &target.task_id, &target.field, &value).await?;
         drop(conn);
+        self.record_undo(
+            &format!("conflict {} {}", target.display_ref, target.field),
+            UndoPayload {
+                commands: vec![UndoCommand::RestoreConflictResolution {
+                    task_id: target.task_id.clone(),
+                    field: target.field.clone(),
+                    before,
+                    after: value,
+                    conflict_id,
+                }],
+            },
+        )
+        .await?;
         let selected = self.refresh(Some(&outcome.task.id)).await?;
         Ok(MutationMessage {
             message: format!(
@@ -1242,5 +1489,358 @@ mod tests {
 
         store.reverse_sort().await.unwrap();
         assert_eq!(store.sort_direction, SortDirection::Desc);
+    }
+
+    async fn test_store_with_pool() -> (tempfile::TempDir, sqlx::SqlitePool, TuiStore) {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let store = TuiStore::new(pool.clone()).await.unwrap();
+        (dir, pool, store)
+    }
+
+    async fn create_selected_task(store: &mut TuiStore, title: &str) -> (String, usize) {
+        let (_, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: title.to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+        let task_id = store.tasks[selected].task.id.clone();
+        (task_id, selected)
+    }
+
+    #[tokio::test]
+    async fn undo_returns_none_when_empty() {
+        let mut store = test_store().await;
+        assert!(store.undo_last().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn undo_title_edit_survives_store_restart() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (task_id, selected) = create_selected_task(&mut store, "Before").await;
+        store
+            .update_title(Some(selected), "After".to_string())
+            .await
+            .unwrap();
+        assert_eq!(store.tasks[selected].task.title, "After");
+
+        let mut restarted = TuiStore::new(pool).await.unwrap();
+        let outcome = restarted.undo_last().await.unwrap().unwrap();
+        assert!(outcome.message.contains("undid"));
+        let index = restarted
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+        assert_eq!(restarted.tasks[index].task.title, "Before");
+    }
+
+    #[tokio::test]
+    async fn undo_guard_blocks_stale_task_field() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (task_id, selected) = create_selected_task(&mut store, "Before").await;
+        store
+            .update_title(Some(selected), "After".to_string())
+            .await
+            .unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("UPDATE tasks SET title = ? WHERE id = ?")
+            .bind("Changed")
+            .bind(&task_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+
+        let error = store.undo_last().await.unwrap_err();
+        assert!(error.to_string().contains("undo-state-changed"));
+        store.refresh(Some(&task_id)).await.unwrap();
+        let index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+        assert_eq!(store.tasks[index].task.title, "Changed");
+    }
+
+    #[tokio::test]
+    async fn undo_delete_restores_task() {
+        let mut store = test_store().await;
+        let (task_id, selected) = create_selected_task(&mut store, "Keep").await;
+        store.update_deleted(Some(selected), true).await.unwrap();
+        store.filters.include_deleted = true;
+        store.refresh(Some(&task_id)).await.unwrap();
+        let index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+        assert!(store.tasks[index].task.deleted);
+
+        store.undo_last().await.unwrap();
+        store.refresh(Some(&task_id)).await.unwrap();
+        let index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+        assert!(!store.tasks[index].task.deleted);
+    }
+
+    #[tokio::test]
+    async fn undo_restore_redeletes_task() {
+        let mut store = test_store().await;
+        let (task_id, selected) = create_selected_task(&mut store, "Gone").await;
+        store.update_deleted(Some(selected), true).await.unwrap();
+        store.filters.include_deleted = true;
+        store.refresh(Some(&task_id)).await.unwrap();
+        let index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+        store
+            .update_deleted(Some(index), false)
+            .await
+            .unwrap();
+
+        store.undo_last().await.unwrap();
+        store.filters.include_deleted = true;
+        store.refresh(Some(&task_id)).await.unwrap();
+        let index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+        assert!(store.tasks[index].task.deleted);
+    }
+
+    #[tokio::test]
+    async fn undo_create_task_removes_local_unsynced_task() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (task_id, _) = create_selected_task(&mut store, "Temporary").await;
+        store.undo_last().await.unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks WHERE id = ?")
+            .bind(&task_id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn undo_labels_uses_set_comparison() {
+        let mut store = test_store().await;
+        store.create_label("bug".to_string()).await.unwrap();
+        store.create_label("docs".to_string()).await.unwrap();
+        let (task_id, selected) = create_selected_task(&mut store, "Labels").await;
+        store
+            .update_labels(Some(selected), vec!["bug".to_string()])
+            .await
+            .unwrap();
+        store
+            .update_labels(Some(selected), vec!["docs".to_string()])
+            .await
+            .unwrap();
+        let index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+        assert_eq!(store.tasks[index].labels, vec!["docs".to_string()]);
+
+        store.undo_last().await.unwrap();
+        store.refresh(Some(&task_id)).await.unwrap();
+        let index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+        assert_eq!(store.tasks[index].labels, vec!["bug".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn undo_note_create_deletes_only_unsynced_note() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (task_id, selected) = create_selected_task(&mut store, "Notes").await;
+        let note_id = store
+            .add_note_to_task(&task_id, "hello".to_string())
+            .await
+            .unwrap();
+        store.undo_last().await.unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM notes WHERE id = ?")
+            .bind(&note_id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+        drop(conn);
+        store.refresh(Some(&task_id)).await.unwrap();
+        assert_eq!(store.tasks[selected].task.title, "Notes");
+    }
+
+    #[tokio::test]
+    async fn undo_project_create_fails_when_referenced_or_synced() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        store.create_project("Side".to_string()).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let workspace_id = crate::workspaces::active_workspace_id();
+        let project_key = store
+            .projects
+            .iter()
+            .find(|project| project.key == "side")
+            .unwrap()
+            .key
+            .clone();
+        sqlx::query(
+            "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at)
+             VALUES (?, ?, 'Uses project', '', ?, 'inbox', 'none', ?, ?)",
+        )
+        .bind(&workspace_id)
+        .bind(crate::ids::new_id())
+        .bind(&project_key)
+        .bind(crate::ids::now())
+        .bind(crate::ids::now())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        let error = store.undo_last().await.unwrap_err();
+        assert!(error.to_string().contains("undo-state-changed"));
+        store.refresh(None).await.unwrap();
+        assert!(store.projects.iter().any(|project| project.key == "side"));
+    }
+
+    #[tokio::test]
+    async fn undo_label_create_fails_when_referenced_or_synced() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        store.create_label("shared".to_string()).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let workspace_id = crate::workspaces::active_workspace_id();
+        sqlx::query(
+            "INSERT INTO task_labels(workspace_id, task_id, label) VALUES (?, ?, 'shared')",
+        )
+        .bind(&workspace_id)
+        .bind(crate::ids::new_id())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        let error = store.undo_last().await.unwrap_err();
+        assert!(error.to_string().contains("undo-state-changed"));
+        let mut conn = pool.acquire().await.unwrap();
+        store.labels = list_labels(&mut conn, None).await.unwrap();
+        assert!(store.labels.iter().any(|label| label == "shared"));
+    }
+
+    #[tokio::test]
+    async fn undo_conflict_resolution_restores_unresolved_conflict() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (task_id, selected) = create_selected_task(&mut store, "Before").await;
+        let display_ref = store.tasks[selected].display_ref.clone();
+
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
+             local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
+             VALUES (?, 'title', NULL, 'local title', 'remote title', NULL, ?, 'a', 'b', ?, 0)",
+        )
+        .bind(&task_id)
+        .bind(crate::ids::new_id())
+        .bind(crate::ids::now())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+        store.refresh(Some(&task_id)).await.unwrap();
+
+        store
+            .resolve_conflict_value(
+                ConflictTarget {
+                    task_id: task_id.clone(),
+                    display_ref,
+                    field: "title".to_string(),
+                    variant_a: "a".to_string(),
+                    local_value: "local title".to_string(),
+                    variant_b: "b".to_string(),
+                    remote_value: "remote title".to_string(),
+                },
+                "local title".to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(store.tasks[selected].task.title, "local title");
+        assert!(!store.tasks[selected].has_conflict);
+
+        store.undo_last().await.unwrap();
+        store.refresh(Some(&task_id)).await.unwrap();
+        assert_eq!(store.tasks[selected].task.title, "Before");
+        assert!(store.tasks[selected].has_conflict);
+    }
+
+    #[tokio::test]
+    async fn undo_is_workspace_scoped() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (task_id, selected) = create_selected_task(&mut store, "Scoped").await;
+        store
+            .update_title(Some(selected), "Changed".to_string())
+            .await
+            .unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        let other = crate::workspaces::create_workspace(&mut conn, "other")
+            .await
+            .unwrap();
+        drop(conn);
+        crate::workspaces::set_active_workspace(other);
+
+        let mut other_store = TuiStore::new(pool.clone()).await.unwrap();
+        assert!(other_store.undo_last().await.unwrap().is_none());
+
+        crate::workspaces::set_active_workspace(crate::workspaces::Workspace {
+            id: crate::workspaces::DEFAULT_WORKSPACE_ID.to_string(),
+            key: "default".to_string(),
+            name: "default".to_string(),
+        });
+        let mut default_store = TuiStore::new(pool).await.unwrap();
+        default_store.undo_last().await.unwrap().unwrap();
+        default_store.refresh(Some(&task_id)).await.unwrap();
+        let index = default_store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+        assert_eq!(default_store.tasks[index].task.title, "Scoped");
+    }
+
+    #[tokio::test]
+    async fn undo_consumes_entry_once() {
+        let mut store = test_store().await;
+        let (_, selected) = create_selected_task(&mut store, "Once").await;
+        store
+            .update_title(Some(selected), "Changed".to_string())
+            .await
+            .unwrap();
+        store.undo_last().await.unwrap().unwrap();
+        store.undo_last().await.unwrap().unwrap();
+        assert!(store.undo_last().await.unwrap().is_none());
     }
 }

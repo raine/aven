@@ -71,6 +71,7 @@ pub(crate) enum Action {
     ShowConfigInfo,
     ShowConfigPaths,
     BeginConfigInit,
+    Undo,
     Planned {
         name: &'static str,
         reason: &'static str,
@@ -224,6 +225,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             label: "r",
         }],
         Action::Refresh,
+    ),
+    CommandSpec::implemented(
+        "undo",
+        "undo last TUI mutation",
+        "General",
+        &[KeySequence {
+            codes: &[KeyCode::Char('z')],
+            label: "z",
+        }],
+        Action::Undo,
     ),
     CommandSpec::implemented(
         "search",
@@ -1069,6 +1080,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::ShowConfigInfo
             | Action::ShowConfigPaths
             | Action::BeginConfigInit
+            | Action::Undo
     )
 }
 
@@ -1260,9 +1272,18 @@ mod tests {
     fn resolver_reports_missing_and_empty_inputs() {
         assert_eq!(resolve_shortcut(&[]), ShortcutLookup::Missing);
         assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('z')]),
+            resolve_shortcut(&[KeyCode::Char('x')]),
             ShortcutLookup::Missing
         );
+    }
+
+    #[test]
+    fn resolves_undo_shortcut() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('z')]),
+            ShortcutLookup::Found(Action::Undo)
+        );
+        assert_eq!(lookup_command("undo"), CommandLookup::Found(Action::Undo));
     }
 
     #[test]
@@ -1312,7 +1333,7 @@ mod tests {
         }
 
         assert_eq!(Action::from_normal_key(KeyCode::Esc), Action::CancelOverlay);
-        assert_eq!(Action::from_normal_key(KeyCode::Char('z')), Action::None);
+        assert_eq!(Action::from_normal_key(KeyCode::Char('z')), Action::Undo);
         assert_eq!(Action::from_normal_key(KeyCode::Char('g')), Action::None);
     }
 
