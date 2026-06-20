@@ -54,6 +54,7 @@ Common CLI examples:
   printf 'handoff note\n' | atm note 7KQ --stdin
   atm delete 7KQ
   atm restore 7KQ
+  atm doctor
   atm tui
 
 TUI:

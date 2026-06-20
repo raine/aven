@@ -47,7 +47,7 @@
 
 `--db` selects the database path but commands still load config so workspace routes, workspace defaults, sync settings, and daemon settings remain available. Active workspace resolution uses `--workspace`, then the longest matching config route, then `workspace.default`, then the built-in default workspace, then the only workspace in the database. Commands fail with `workspace-required` only when the default workspace is unavailable and no active workspace can be inferred.
 
-CLI commands cover task add, show, list, update, note, delete, restore, projects, labels, project paths, workspace management, conflict list or show or resolve, config, daemon, server, sync, and TUI.
+CLI commands cover task add, show, list, update, note, delete, restore, projects, labels, project paths, workspace management, conflict list or show or resolve, config, doctor, daemon, server, sync, and TUI.
 
 ## Persistence model
 

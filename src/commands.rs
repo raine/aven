@@ -1,5 +1,11 @@
+use std::path::Path;
+
 use anyhow::Result;
 use sqlx::SqliteConnection;
+
+use crate::config::{self, AppConfig};
+use crate::db::get_meta;
+use crate::workspaces::resolve_active_workspace;
 
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::cli::{
@@ -339,4 +345,165 @@ pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictComm
         }
     }
     Ok(())
+}
+
+pub(crate) async fn cmd_doctor(
+    conn: &mut SqliteConnection,
+    config: &AppConfig,
+    db_path: &Path,
+    db_flag_set: bool,
+    workspace_flag: Option<&str>,
+) -> Result<()> {
+    let config_file = config::config_file_path();
+    let db_source = if db_flag_set {
+        "--db"
+    } else if std::env::var_os("ATM_DB").is_some() {
+        "ATM_DB"
+    } else if config.local.db_path.is_some() {
+        "config local.db_path"
+    } else {
+        "default"
+    };
+    let client_id = get_meta(conn, "client_id").await?;
+    let sync_cursor = get_meta(conn, "sync_cursor").await?;
+    let local_seq = get_meta(conn, "local_seq").await?;
+    let pinned_server = get_meta(conn, "sync_server_url").await?;
+    let cwd = std::env::current_dir()?;
+    let workspace = resolve_active_workspace(conn, workspace_flag, config, &cwd).await;
+    let counts = match &workspace {
+        Ok(workspace) => Some(workspace_counts(conn, &workspace.id).await?),
+        Err(_) => None,
+    };
+    let pending_changes: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM changes WHERE server_seq IS NULL",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    let unresolved_conflicts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM conflicts WHERE resolved = 0",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    let sync_server = config::resolve_sync_server(None, config);
+    let wake_addr = config.wake_addr();
+
+    println!("atm doctor");
+    println!();
+    print_section("Configuration");
+    match config_file {
+        Ok(path) if path.exists() => print_check("config file", true, &path.display().to_string()),
+        Ok(path) => print_info("config file", &format!("{} (using defaults)", path.display())),
+        Err(error) => print_check("config file", false, &format!("{error:#}")),
+    }
+    print_info("database source", db_source);
+    print_info("database path", &db_path.display().to_string());
+    println!();
+    print_section("Database");
+    print_check("sqlite", true, "opened successfully");
+    print_check("client id", client_id.is_some(), client_id.as_deref().unwrap_or("missing"));
+    print_info("sync cursor", sync_cursor.as_deref().unwrap_or("missing"));
+    print_info("local sequence", local_seq.as_deref().unwrap_or("missing"));
+    print_info("pinned server", pinned_server.as_deref().unwrap_or("none"));
+    print_info("pending changes", &pending_changes.to_string());
+    print_info("conflicts", &unresolved_conflicts.to_string());
+    println!();
+    print_section("Workspace");
+    match workspace {
+        Ok(workspace) => {
+            print_check(
+                "active workspace",
+                true,
+                &format!("{} ({})", workspace.name, workspace.key),
+            );
+            if let Some((visible_count, all_count)) = counts {
+                print_info("tasks", &format!("{visible_count} visible, {all_count} total"));
+            }
+        }
+        Err(error) => print_check("active workspace", false, &format!("{error:#}")),
+    }
+    println!();
+    print_section("Sync");
+    print_info("enabled", if config.sync.enabled { "yes" } else { "no" });
+    match sync_server {
+        Ok(server) => {
+            print_check("server", sync_server_url_is_valid(&server), &server);
+            if let Some(pinned) = pinned_server.as_deref() {
+                let normalized = server.trim_end_matches('/');
+                print_check(
+                    "server match",
+                    pinned == normalized,
+                    &format!("pinned={pinned} configured={normalized}"),
+                );
+            }
+        }
+        Err(error) => {
+            if config.sync.enabled {
+                print_check("server", false, &format!("{error:#}"));
+            } else {
+                print_info("server", "not configured");
+            }
+        }
+    }
+    match config.sync.server_url.as_deref() {
+        Some(server) => print_check("daemon server", sync_server_url_is_valid(server), server),
+        None if config.sync.enabled => print_check("daemon server", false, "not configured"),
+        None => print_info("daemon server", "not configured"),
+    }
+    print_info(
+        "auth token",
+        if config.sync_auth_token().is_some() {
+            "configured"
+        } else {
+            "not configured"
+        },
+    );
+    print_info("interval", &format!("{} seconds", config.sync_interval_seconds()));
+    match wake_addr {
+        Ok(addr) => print_check("daemon wake", true, &addr.to_string()),
+        Err(error) => print_check("daemon wake", false, &format!("{error:#}")),
+    }
+    Ok(())
+}
+
+fn sync_server_url_is_valid(server: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(server) else {
+        return false;
+    };
+    matches!(url.scheme(), "http" | "https")
+        && url.host_str().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+}
+
+async fn workspace_counts(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+) -> Result<(i64, i64)> {
+    let active = sqlx::query_scalar(
+        "SELECT count(*) FROM tasks WHERE workspace_id = ? AND deleted = 0",
+    )
+    .bind(workspace_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    let all = sqlx::query_scalar("SELECT count(*) FROM tasks WHERE workspace_id = ?")
+        .bind(workspace_id)
+        .fetch_one(&mut *conn)
+        .await?;
+    Ok((active, all))
+}
+
+fn print_section(title: &str) {
+    println!("{title}");
+    println!("{}", "-".repeat(title.len()));
+}
+
+fn print_check(label: &str, ok: bool, value: &str) {
+    let marker = if ok { "ok" } else { "!!" };
+    println!("  {marker} {label:<18} {value}");
+}
+
+fn print_info(label: &str, value: &str) {
+    println!("  .. {label:<18} {value}");
 }

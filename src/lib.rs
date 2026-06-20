@@ -32,8 +32,8 @@ pub use cli::Cli;
 
 use cli::{Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand};
 use commands::{
-    cmd_add, cmd_config, cmd_conflict, cmd_delete_restore, cmd_label, cmd_labels, cmd_list,
-    cmd_note, cmd_project, cmd_projects, cmd_show, cmd_update, cmd_workspace,
+    cmd_add, cmd_config, cmd_conflict, cmd_delete_restore, cmd_doctor, cmd_label, cmd_labels,
+    cmd_list, cmd_note, cmd_project, cmd_projects, cmd_show, cmd_update, cmd_workspace,
 };
 use db::open_db;
 use sync::{run_server, sync_client};
@@ -65,14 +65,16 @@ pub async fn run_cli() -> Result<()> {
             }
         }
         command => {
-            let config = load_config_for_command(cli.db.is_some(), &command)?;
+            let db_flag_set = cli.db.is_some();
+            let workspace = cli.workspace;
+            let config = load_config_for_command(db_flag_set, &command)?;
             let db_path = config::resolve_db_path(cli.db, &config)?;
             let pool = open_db(&db_path).await?;
             let mut conn = pool.acquire().await?;
             if command_needs_workspace(&command) {
                 let cwd = std::env::current_dir()?;
                 let workspace =
-                    resolve_active_workspace(&mut conn, cli.workspace.as_deref(), &config, &cwd)
+                    resolve_active_workspace(&mut conn, workspace.as_deref(), &config, &cwd)
                         .await?;
                 set_active_workspace(workspace);
             }
@@ -97,6 +99,16 @@ pub async fn run_cli() -> Result<()> {
                 Commands::Conflict(args) => cmd_conflict(&mut conn, args).await,
                 Commands::Sync(args) => sync_client(&mut conn, args, &config).await,
                 Commands::Workspace(args) => cmd_workspace(&mut conn, args).await,
+                Commands::Doctor => {
+                    cmd_doctor(
+                        &mut conn,
+                        &config,
+                        &db_path,
+                        db_flag_set,
+                        workspace.as_deref(),
+                    )
+                    .await
+                }
                 Commands::Tui => unreachable!(),
                 Commands::Config(_) | Commands::Daemon(_) | Commands::Server(_) => unreachable!(),
             };
