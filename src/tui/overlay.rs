@@ -275,7 +275,11 @@ pub(crate) fn normalize_picker_selection(state: &mut PickerState) {
         .unwrap_or(0);
 }
 
-pub(crate) fn handle_generic_overlay_key(key: KeyEvent, overlay: OverlayState) -> OverlayOutcome {
+pub(crate) fn handle_generic_overlay_key(
+    key: KeyEvent,
+    overlay: OverlayState,
+    help_scroll_cap: u16,
+) -> OverlayOutcome {
     match overlay {
         OverlayState::TextInput(mut state) => match key.code {
             KeyCode::Esc => OverlayOutcome::Cancelled,
@@ -388,7 +392,7 @@ pub(crate) fn handle_generic_overlay_key(key: KeyEvent, overlay: OverlayState) -
         OverlayState::Help { mut scroll } => match key.code {
             KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
             KeyCode::Char('j') | KeyCode::Down => {
-                scroll = scroll.saturating_add(1);
+                scroll = scroll.saturating_add(1).min(help_scroll_cap);
                 OverlayOutcome::None(OverlayState::Help { scroll })
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -540,6 +544,18 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::CONTROL)
     }
 
+    fn handle(key: KeyEvent, overlay: OverlayState) -> OverlayOutcome {
+        handle_generic_overlay_key(key, overlay, 100)
+    }
+
+    fn handle_with_help_scroll_cap(
+        key: KeyEvent,
+        overlay: OverlayState,
+        help_scroll_cap: u16,
+    ) -> OverlayOutcome {
+        handle_generic_overlay_key(key, overlay, help_scroll_cap)
+    }
+
     #[test]
     fn text_input_edits_at_cursor() {
         let mut state = TextInputState {
@@ -582,10 +598,7 @@ mod tests {
             row: 0,
             column: 4,
         };
-        let outcome = handle_generic_overlay_key(
-            ctrl(KeyCode::Char('s')),
-            OverlayState::MultilineInput(state),
-        );
+        let outcome = handle(ctrl(KeyCode::Char('s')), OverlayState::MultilineInput(state));
         assert!(matches!(
             outcome,
             OverlayOutcome::Submitted(OverlaySubmit::Multiline { .. })
@@ -632,12 +645,12 @@ mod tests {
             multi: false,
         };
         let OverlayOutcome::None(OverlayState::Picker(state)) =
-            handle_generic_overlay_key(key(KeyCode::Char('j')), OverlayState::Picker(state))
+            handle(key(KeyCode::Char('j')), OverlayState::Picker(state))
         else {
             panic!("expected picker state");
         };
         let OverlayOutcome::None(OverlayState::Picker(state)) =
-            handle_generic_overlay_key(key(KeyCode::Char('k')), OverlayState::Picker(state))
+            handle(key(KeyCode::Char('k')), OverlayState::Picker(state))
         else {
             panic!("expected picker state");
         };
@@ -648,13 +661,13 @@ mod tests {
     fn picker_moves_with_arrow_keys() {
         let state = picker_navigation_state();
         let OverlayOutcome::None(OverlayState::Picker(state)) =
-            handle_generic_overlay_key(key(KeyCode::Down), OverlayState::Picker(state))
+            handle(key(KeyCode::Down), OverlayState::Picker(state))
         else {
             panic!("expected picker state");
         };
         assert_eq!(state.selected, 1);
         let OverlayOutcome::None(OverlayState::Picker(state)) =
-            handle_generic_overlay_key(key(KeyCode::Up), OverlayState::Picker(state))
+            handle(key(KeyCode::Up), OverlayState::Picker(state))
         else {
             panic!("expected picker state");
         };
@@ -665,13 +678,13 @@ mod tests {
     fn picker_moves_with_ctrl_n_and_ctrl_p() {
         let state = picker_navigation_state();
         let OverlayOutcome::None(OverlayState::Picker(state)) =
-            handle_generic_overlay_key(ctrl(KeyCode::Char('n')), OverlayState::Picker(state))
+            handle(ctrl(KeyCode::Char('n')), OverlayState::Picker(state))
         else {
             panic!("expected picker state");
         };
         assert_eq!(state.selected, 1);
         let OverlayOutcome::None(OverlayState::Picker(state)) =
-            handle_generic_overlay_key(ctrl(KeyCode::Char('p')), OverlayState::Picker(state))
+            handle(ctrl(KeyCode::Char('p')), OverlayState::Picker(state))
         else {
             panic!("expected picker state");
         };
@@ -707,11 +720,11 @@ mod tests {
             scroll: 0,
         };
         assert!(matches!(
-            handle_generic_overlay_key(key(KeyCode::Enter), OverlayState::TextPanel(state.clone())),
+            handle(key(KeyCode::Enter), OverlayState::TextPanel(state.clone())),
             OverlayOutcome::Cancelled
         ));
         assert!(matches!(
-            handle_generic_overlay_key(key(KeyCode::Esc), OverlayState::TextPanel(state)),
+            handle(key(KeyCode::Esc), OverlayState::TextPanel(state)),
             OverlayOutcome::Cancelled
         ));
     }
@@ -724,13 +737,13 @@ mod tests {
             scroll: 0,
         };
         let OverlayOutcome::None(OverlayState::TextPanel(state)) =
-            handle_generic_overlay_key(key(KeyCode::Down), OverlayState::TextPanel(state))
+            handle(key(KeyCode::Down), OverlayState::TextPanel(state))
         else {
             panic!("expected scrolled text panel");
         };
         assert_eq!(state.scroll, 1);
         let OverlayOutcome::None(OverlayState::TextPanel(state)) =
-            handle_generic_overlay_key(key(KeyCode::Up), OverlayState::TextPanel(state))
+            handle(key(KeyCode::Up), OverlayState::TextPanel(state))
         else {
             panic!("expected scrolled text panel");
         };
@@ -777,10 +790,22 @@ mod tests {
 
         for overlay in overlays {
             assert!(matches!(
-                handle_generic_overlay_key(key(KeyCode::Esc), overlay),
+                handle(key(KeyCode::Esc), overlay),
                 OverlayOutcome::Cancelled
             ));
         }
+    }
+
+    #[test]
+    fn help_scroll_stops_at_cap() {
+        let OverlayOutcome::None(OverlayState::Help { scroll }) = handle_with_help_scroll_cap(
+            key(KeyCode::Down),
+            OverlayState::Help { scroll: 2 },
+            2,
+        ) else {
+            panic!("expected help overlay state");
+        };
+        assert_eq!(scroll, 2);
     }
 
     #[test]
@@ -790,14 +815,14 @@ mod tests {
             prompt: "Sure?".to_string(),
         };
         assert!(matches!(
-            handle_generic_overlay_key(
+            handle(
                 key(KeyCode::Char('y')),
                 OverlayState::Confirm(state.clone())
             ),
             OverlayOutcome::Submitted(_)
         ));
         assert!(matches!(
-            handle_generic_overlay_key(key(KeyCode::Char('n')), OverlayState::Confirm(state)),
+            handle(key(KeyCode::Char('n')), OverlayState::Confirm(state)),
             OverlayOutcome::Cancelled
         ));
     }

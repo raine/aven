@@ -923,6 +923,15 @@ fn help_column_lines(sections: &[&'static str]) -> Vec<Line<'static>> {
     lines
 }
 
+pub(crate) fn help_scroll_cap(frame_height: u16) -> u16 {
+    let visible_rows = frame_height.saturating_sub(4).min(28).saturating_sub(2) as usize;
+    HELP_COLUMNS
+        .iter()
+        .map(|sections| help_column_lines(sections).len().saturating_sub(visible_rows))
+        .max()
+        .unwrap_or(0) as u16
+}
+
 fn command_name_style(command: &CommandSpec) -> Style {
     match command.lifecycle {
         CommandLifecycle::Implemented => Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),

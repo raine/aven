@@ -18,7 +18,7 @@ use crate::tui::overlay::{
     PickerItem, PickerState, TextInputState, TextPanelState,
 };
 use crate::tui::store::{ConflictTarget, SidebarEntry, SidebarTarget, TuiStore};
-use crate::tui::ui;
+use crate::tui::ui::{self, help_scroll_cap};
 
 const ADD_PROJECT_TITLE: &str = "Add project";
 const ADD_LABEL_TITLE: &str = "Add label";
@@ -165,7 +165,7 @@ impl App {
             if event::poll(Duration::from_millis(250))?
                 && let Event::Key(key) = event::read()?
             {
-                let result = self.dispatch_key(key).await;
+                let result = self.dispatch_key(key, terminal.size()?.height).await;
                 if let Err(error) = result {
                     self.set_message(format!("error: {error:#}"));
                 }
@@ -195,9 +195,9 @@ impl App {
         }
     }
 
-    async fn dispatch_key(&mut self, key: KeyEvent) -> Result<()> {
+    async fn dispatch_key(&mut self, key: KeyEvent, terminal_height: u16) -> Result<()> {
         if self.overlay_captures_input() {
-            self.handle_overlay_key(key).await
+            self.handle_overlay_key_at_height(key, terminal_height).await
         } else {
             self.handle_normal_key(key.code).await
         }
@@ -245,6 +245,10 @@ impl App {
     }
 
     pub(crate) async fn handle_overlay_key(&mut self, key: KeyEvent) -> Result<()> {
+        self.handle_overlay_key_at_height(key, 24).await
+    }
+
+    async fn handle_overlay_key_at_height(&mut self, key: KeyEvent, terminal_height: u16) -> Result<()> {
         let Some(overlay) = self.overlay.take() else {
             return Ok(());
         };
@@ -282,7 +286,10 @@ impl App {
                 }
                 _ => self.overlay = Some(OverlayState::Command { input }),
             },
-            overlay => self.handle_generic_overlay_key(key, overlay).await?,
+            overlay => {
+                self.handle_generic_overlay_key(key, overlay, terminal_height)
+                    .await?
+            }
         }
 
         Ok(())
@@ -292,8 +299,10 @@ impl App {
         &mut self,
         key: KeyEvent,
         overlay: OverlayState,
+        terminal_height: u16,
     ) -> Result<()> {
-        let outcome = crate::tui::overlay::handle_generic_overlay_key(key, overlay);
+        let scroll_cap = help_scroll_cap(terminal_height);
+        let outcome = crate::tui::overlay::handle_generic_overlay_key(key, overlay, scroll_cap);
         match outcome {
             OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
             OverlayOutcome::Cancelled => self.cancel_authoring_overlay(),
@@ -2544,7 +2553,7 @@ mod tests {
         for overlay in overlays {
             let mut app = test_app().await;
             app.overlay = Some(overlay);
-            app.dispatch_key(key(KeyCode::Esc)).await.unwrap();
+            app.dispatch_key(key(KeyCode::Esc), 24).await.unwrap();
             assert!(app.overlay.is_none());
             assert!(app.pending_shortcut.is_empty());
         }
