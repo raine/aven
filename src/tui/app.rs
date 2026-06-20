@@ -2582,11 +2582,8 @@ mod tests {
         create_and_select_task(
             &mut app,
             TaskDraft {
-                title: "Description target".to_string(),
                 description: "first\nsecond".to_string(),
-                project: None,
-                priority: "none".to_string(),
-                labels: Vec::new(),
+                ..test_task_draft("Description target")
             },
         )
         .await;
@@ -2641,11 +2638,8 @@ mod tests {
         create_and_select_task(
             &mut app,
             TaskDraft {
-                title: "Priority target".to_string(),
-                description: String::new(),
-                project: None,
                 priority: "high".to_string(),
-                labels: Vec::new(),
+                ..test_task_draft("Priority target")
             },
         )
         .await;
@@ -2673,11 +2667,8 @@ mod tests {
         create_and_select_task(
             &mut app,
             TaskDraft {
-                title: "Label target".to_string(),
-                description: String::new(),
-                project: None,
-                priority: "none".to_string(),
                 labels: vec!["bug".to_string()],
+                ..test_task_draft("Label target")
             },
         )
         .await;
@@ -2744,11 +2735,8 @@ mod tests {
         let selected = create_and_select_task(
             &mut app,
             TaskDraft {
-                title: "Conflict target".to_string(),
                 description: "old".to_string(),
-                project: None,
-                priority: "none".to_string(),
-                labels: Vec::new(),
+                ..test_task_draft("Conflict target")
             },
         )
         .await;
