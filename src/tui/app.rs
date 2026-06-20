@@ -199,7 +199,9 @@ impl App {
     }
 
     async fn dispatch_key(&mut self, key: KeyEvent, terminal_height: u16) -> Result<()> {
-        if key.code == KeyCode::Esc && !self.pending_shortcut.is_empty() {
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.handle(Action::Quit).await
+        } else if key.code == KeyCode::Esc && !self.pending_shortcut.is_empty() {
             self.handle_normal_key(key.code).await
         } else if self.overlay_captures_input() {
             self.handle_overlay_key_at_height(key, terminal_height)
@@ -1915,6 +1917,10 @@ mod tests {
         KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)
     }
 
+    fn ctrl_c() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
+    }
+
     async fn type_chars(app: &mut App, input: &str) {
         for ch in input.chars() {
             app.handle_overlay_key(key(KeyCode::Char(ch)))
@@ -1972,6 +1978,21 @@ mod tests {
     #[test]
     fn wraps_up_from_first_task_to_last_task() {
         assert_eq!(next_index(Some(0), 3, -1, true), Some(2));
+    }
+
+    #[tokio::test]
+    async fn ctrl_c_quits_from_normal_mode() {
+        let mut app = test_app().await;
+        app.dispatch_key(ctrl_c(), 24).await.unwrap();
+        assert!(app.should_quit);
+    }
+
+    #[tokio::test]
+    async fn ctrl_c_quits_while_overlay_captures_input() {
+        let mut app = test_app().await;
+        app.begin_search();
+        app.dispatch_key(ctrl_c(), 24).await.unwrap();
+        assert!(app.should_quit);
     }
 
     #[tokio::test]
