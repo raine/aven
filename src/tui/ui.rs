@@ -876,8 +876,12 @@ fn render_help(frame: &mut Frame, scroll: u16) {
         frame.area().height.saturating_sub(4).min(28),
     );
     frame.render_widget(Clear, area);
-    let inner = overlay_block("Shortcuts");
+    let mut inner = overlay_block("Shortcuts");
     let content = inner.inner(area);
+    if let Some(title) = help_scroll_title(scroll, content.height) {
+        inner = inner
+            .title_top(Line::from(Span::styled(title, Style::new().fg(FG_MUTED))).right_aligned());
+    }
     frame.render_widget(inner, area);
     let [left, _, right] = Layout::horizontal([
         Constraint::Ratio(1, 2),
@@ -903,6 +907,21 @@ fn render_help_column(frame: &mut Frame, area: Rect, sections: &[&'static str], 
     );
 }
 
+fn help_scroll_title(scroll: u16, visible_rows: u16) -> Option<String> {
+    let max_rows = HELP_COLUMNS
+        .iter()
+        .map(|sections| help_column_lines(sections).len())
+        .max()
+        .unwrap_or(0);
+    let visible_rows = visible_rows as usize;
+    if max_rows <= visible_rows {
+        return None;
+    }
+    let total = max_rows.saturating_sub(visible_rows).saturating_add(1);
+    let current = (scroll as usize).saturating_add(1).min(total);
+    Some(format!(" {current}/{total} "))
+}
+
 fn help_column_lines(sections: &[&'static str]) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for section in sections {
@@ -917,7 +936,7 @@ fn help_column_lines(sections: &[&'static str]) -> Vec<Line<'static>> {
             .iter()
             .filter(|command| command.section == *section)
         {
-            lines.push(command_line(command));
+            lines.push(help_command_line(command));
         }
     }
     lines
@@ -964,6 +983,24 @@ fn command_hint_line(leading: Span<'static>, command: &CommandSpec) -> Line<'sta
             command_name_style(command),
         ),
     ];
+    if let Some(badge) = lifecycle_badge(command.lifecycle) {
+        spans.push(badge);
+    }
+    spans.push(Span::styled(command.description, Style::new().fg(FG_DIM)));
+    Line::from(spans)
+}
+
+fn help_command_line(command: &CommandSpec) -> Line<'static> {
+    let keys = command
+        .keys
+        .iter()
+        .map(|key| key.label)
+        .collect::<Vec<_>>()
+        .join("/");
+    let mut spans = vec![Span::styled(
+        format!("{keys:<14}"),
+        Style::new().fg(FG_MUTED),
+    )];
     if let Some(badge) = lifecycle_badge(command.lifecycle) {
         spans.push(badge);
     }
@@ -1465,6 +1502,19 @@ mod tests {
     fn overlay_render_includes_help_title() {
         let rendered = render_overlay_view(OverlayView::Help { scroll: 0 });
         assert!(rendered.contains("Shortcuts"));
+    }
+
+    #[test]
+    fn help_overlay_omits_command_names() {
+        let rendered = render_overlay_view(OverlayView::Help { scroll: 0 });
+        assert!(rendered.contains("quit the TUI"));
+        assert!(!rendered.contains(":quit"));
+    }
+
+    #[test]
+    fn help_overlay_shows_scroll_position() {
+        let rendered = render_overlay_view(OverlayView::Help { scroll: 1 });
+        assert!(rendered.contains("2/"));
     }
 
     #[test]
