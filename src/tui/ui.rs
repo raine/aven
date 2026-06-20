@@ -856,30 +856,54 @@ fn render_detail(frame: &mut Frame, item: &TaskListItem) {
 }
 
 const HELP_COLUMNS: &[&[&str]] = &[
-    &["General", "Navigation", "Tasks", "Status"],
-    &["Views", "Add/Create", "Metadata", "Edit"],
-    &["Priority", "Filters", "Order", "Conflict", "Config"],
+    &["General", "Navigation", "Tasks", "Status", "Priority"],
+    &[
+        "Views",
+        "Add/Create",
+        "Metadata",
+        "Edit",
+        "Filters",
+        "Order",
+        "Conflict",
+        "Config",
+    ],
 ];
 
-fn render_help(frame: &mut Frame) {
-    let area = centered(frame.area(), 96, 20);
+fn render_help(frame: &mut Frame, scroll: u16) {
+    let area = centered(
+        frame.area(),
+        frame.area().width.saturating_sub(6).min(112),
+        frame.area().height.saturating_sub(4).min(28),
+    );
     frame.render_widget(Clear, area);
     let inner = overlay_block("Shortcuts");
     let content = inner.inner(area);
     frame.render_widget(inner, area);
-    let columns = Layout::horizontal(
-        HELP_COLUMNS
-            .iter()
-            .map(|_| Constraint::Ratio(1, HELP_COLUMNS.len() as u32))
-            .collect::<Vec<_>>(),
-    )
-    .split(content);
-    for (column, sections) in columns.iter().zip(HELP_COLUMNS.iter()) {
-        render_help_column(frame, *column, sections);
+    let [left, _, right] = Layout::horizontal([
+        Constraint::Ratio(1, 2),
+        Constraint::Length(4),
+        Constraint::Ratio(1, 2),
+    ])
+    .areas(content);
+    for (column, sections) in [left, right].into_iter().zip(HELP_COLUMNS.iter()) {
+        render_help_column(frame, column, sections, scroll);
     }
 }
 
-fn render_help_column(frame: &mut Frame, area: Rect, sections: &[&str]) {
+fn render_help_column(frame: &mut Frame, area: Rect, sections: &[&'static str], scroll: u16) {
+    let lines = help_column_lines(sections);
+    let visible = lines
+        .into_iter()
+        .skip(scroll as usize)
+        .take(area.height as usize)
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(Text::from(visible)).style(Style::new().fg(FG).bg(BG_ALT)),
+        area,
+    );
+}
+
+fn help_column_lines(sections: &[&'static str]) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for section in sections {
         if !lines.is_empty() {
@@ -896,10 +920,7 @@ fn render_help_column(frame: &mut Frame, area: Rect, sections: &[&str]) {
             lines.push(command_line(command));
         }
     }
-    frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG_ALT)),
-        area,
-    );
+    lines
 }
 
 fn command_name_style(command: &CommandSpec) -> Style {
@@ -970,7 +991,7 @@ fn render_search(frame: &mut Frame, input: &str) {
 
 fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
     match overlay {
-        OverlayView::Help => render_help(frame),
+        OverlayView::Help { scroll } => render_help(frame, *scroll),
         OverlayView::Search { input } => render_search(frame, input),
         OverlayView::Command { input } => render_command(frame, input),
         OverlayView::TextInput(state) => render_text_input(frame, state),
@@ -1429,7 +1450,7 @@ mod tests {
 
     #[test]
     fn overlay_render_includes_help_title() {
-        let rendered = render_overlay_view(OverlayView::Help);
+        let rendered = render_overlay_view(OverlayView::Help { scroll: 0 });
         assert!(rendered.contains("Shortcuts"));
     }
 

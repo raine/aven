@@ -849,10 +849,10 @@ impl App {
     }
 
     fn toggle_help(&mut self) {
-        if matches!(self.overlay, Some(OverlayState::Help)) {
+        if matches!(self.overlay, Some(OverlayState::Help { .. })) {
             self.overlay = None;
         } else {
-            self.overlay = Some(OverlayState::Help);
+            self.overlay = Some(OverlayState::Help { scroll: 0 });
         }
     }
 
@@ -1954,11 +1954,11 @@ mod tests {
     #[tokio::test]
     async fn esc_cancels_prefix_before_overlay() {
         let mut app = test_app().await;
-        app.overlay = Some(OverlayState::Help);
+        app.overlay = Some(OverlayState::Help { scroll: 0 });
         app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
         app.handle_normal_key(KeyCode::Esc).await.unwrap();
         assert!(app.pending_shortcut.is_empty());
-        assert!(matches!(app.overlay, Some(OverlayState::Help)));
+        assert!(matches!(app.overlay, Some(OverlayState::Help { .. })));
 
         app.handle_normal_key(KeyCode::Esc).await.unwrap();
         assert!(app.overlay.is_none());
@@ -1999,7 +1999,7 @@ mod tests {
     #[tokio::test]
     async fn search_replaces_existing_overlay() {
         let mut app = test_app().await;
-        app.overlay = Some(OverlayState::Help);
+        app.overlay = Some(OverlayState::Help { scroll: 0 });
         app.begin_search();
         assert!(matches!(app.overlay, Some(OverlayState::Search { .. })));
     }
@@ -2007,7 +2007,7 @@ mod tests {
     #[tokio::test]
     async fn toggle_help_closes_active_help_overlay() {
         let mut app = test_app().await;
-        app.overlay = Some(OverlayState::Help);
+        app.overlay = Some(OverlayState::Help { scroll: 0 });
         app.toggle_help();
         assert!(app.overlay.is_none());
     }
@@ -2016,7 +2016,7 @@ mod tests {
     async fn help_key_opens_help_overlay() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('?')).await.unwrap();
-        assert!(matches!(app.overlay, Some(OverlayState::Help)));
+        assert!(matches!(app.overlay, Some(OverlayState::Help { .. })));
     }
 
     #[tokio::test]
@@ -2498,7 +2498,7 @@ mod tests {
     #[tokio::test]
     async fn esc_closes_every_overlay_variant() {
         let overlays = vec![
-            OverlayState::Help,
+            OverlayState::Help { scroll: 0 },
             OverlayState::Detail,
             OverlayState::Search {
                 input: "q".to_string(),

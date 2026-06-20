@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayState {
-    Help,
+    Help { scroll: u16 },
     Detail,
     Search { input: String },
     Command { input: String },
@@ -120,7 +120,7 @@ pub(crate) struct ConfirmState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayView {
-    Help,
+    Help { scroll: u16 },
     Detail,
     Search { input: String },
     Command { input: String },
@@ -199,20 +199,20 @@ impl OverlaySubmit {
 
 impl OverlayState {
     pub(crate) fn captures_input(&self) -> bool {
-        !matches!(self, Self::Help | Self::Detail)
+        !matches!(self, Self::Detail)
     }
 }
 
 impl OverlayView {
     pub(crate) fn captures_input(&self) -> bool {
-        !matches!(self, Self::Help | Self::Detail)
+        !matches!(self, Self::Detail)
     }
 }
 
 impl From<&OverlayState> for OverlayView {
     fn from(state: &OverlayState) -> Self {
         match state {
-            OverlayState::Help => Self::Help,
+            OverlayState::Help { scroll } => Self::Help { scroll: *scroll },
             OverlayState::Detail => Self::Detail,
             OverlayState::Search { input } => Self::Search {
                 input: input.clone(),
@@ -384,6 +384,18 @@ pub(crate) fn handle_generic_overlay_key(key: KeyEvent, overlay: OverlayState) -
                 OverlayOutcome::None(OverlayState::TextPanel(state))
             }
             _ => OverlayOutcome::None(OverlayState::TextPanel(state)),
+        },
+        OverlayState::Help { mut scroll } => match key.code {
+            KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
+            KeyCode::Char('j') | KeyCode::Down => {
+                scroll = scroll.saturating_add(1);
+                OverlayOutcome::None(OverlayState::Help { scroll })
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                scroll = scroll.saturating_sub(1);
+                OverlayOutcome::None(OverlayState::Help { scroll })
+            }
+            _ => OverlayOutcome::None(OverlayState::Help { scroll }),
         },
         other => OverlayOutcome::None(other),
     }
