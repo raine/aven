@@ -711,9 +711,14 @@ impl TuiStore {
     }
 
     pub(crate) fn workspace_picker_items(&self) -> Vec<PickerItem> {
+        let selected_key = self
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.key != self.active_workspace.key)
+            .map(|workspace| workspace.key.as_str());
         self.workspaces
             .iter()
-            .map(|workspace| workspace_picker_item(workspace, &self.active_workspace.key))
+            .map(|workspace| workspace_picker_item(workspace, selected_key))
             .collect()
     }
 
@@ -1007,11 +1012,11 @@ fn project_picker_item(project: &ProjectListItem, selected: &str) -> PickerItem 
     }
 }
 
-fn workspace_picker_item(workspace: &Workspace, active_key: &str) -> PickerItem {
+fn workspace_picker_item(workspace: &Workspace, selected_key: Option<&str>) -> PickerItem {
     PickerItem {
         label: format!("{} ({})", workspace.name, workspace.key),
         value: workspace.key.clone(),
-        selected: workspace.key == active_key,
+        selected: selected_key.is_some_and(|key| workspace.key == key),
     }
 }
 
@@ -1961,7 +1966,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workspace_picker_marks_active_workspace_selected() {
+    async fn workspace_picker_selects_first_inactive_workspace() {
         let dir = tempfile::tempdir().unwrap();
         let pool = crate::db::open_db(&dir.path().join("test.db"))
             .await
@@ -1977,11 +1982,16 @@ mod tests {
         store.refresh(None).await.unwrap();
 
         let items = store.workspace_picker_items();
-        assert!(items.iter().any(|item| item.value == "client-work"));
         assert!(
             items
                 .iter()
                 .find(|item| item.value == "default")
+                .is_some_and(|item| !item.selected)
+        );
+        assert!(
+            items
+                .iter()
+                .find(|item| item.value == "client-work")
                 .is_some_and(|item| item.selected)
         );
 
