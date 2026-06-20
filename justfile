@@ -8,7 +8,7 @@ default:
     @just --list
 
 # Run all checks
-check: format clippy-fix pre-commit
+check: clippy-fix pre-commit
 
 # Run cheap read-only checks in parallel
 [parallel]
