@@ -14,8 +14,8 @@ use crate::tui::event::{
     shortcut_label,
 };
 use crate::tui::overlay::{
-    ConfirmState, MultilineInputState, OverlayOutcome, OverlayState, OverlaySubmit, OverlayView,
-    PickerItem, PickerState, TextInputState, TextPanelState,
+    ConfirmState, LineEdit, MultilineInputState, OverlayOutcome, OverlayState, OverlaySubmit,
+    OverlayView, PickerItem, PickerState, TextInputState, TextPanelState,
 };
 use crate::tui::store::{ConflictTarget, SidebarEntry, SidebarTarget, TuiStore};
 use crate::tui::ui::{self, help_scroll_cap};
@@ -268,35 +268,25 @@ impl App {
         match overlay {
             OverlayState::Search { mut input } => match key.code {
                 KeyCode::Esc => {}
-                KeyCode::Enter => self.accept_search_input(input).await?,
-                KeyCode::Backspace => {
-                    input.pop();
+                KeyCode::Enter => self.accept_search_input(input.text).await?,
+                _ => {
+                    input.handle_key(key);
                     self.overlay = Some(OverlayState::Search { input });
                 }
-                KeyCode::Char(ch) => {
-                    input.push(ch);
-                    self.overlay = Some(OverlayState::Search { input });
-                }
-                _ => self.overlay = Some(OverlayState::Search { input }),
             },
             OverlayState::Command { mut input } => match key.code {
                 KeyCode::Esc => {}
                 KeyCode::Enter => {
-                    if let Some(action) = self.accept_command_input(&input) {
+                    if let Some(action) = self.accept_command_input(input.as_str()) {
                         self.execute(action).await?;
                     } else {
                         self.overlay = Some(OverlayState::Command { input });
                     }
                 }
-                KeyCode::Backspace => {
-                    input.pop();
+                _ => {
+                    input.handle_key(key);
                     self.overlay = Some(OverlayState::Command { input });
                 }
-                KeyCode::Char(ch) => {
-                    input.push(ch);
-                    self.overlay = Some(OverlayState::Command { input });
-                }
-                _ => self.overlay = Some(OverlayState::Command { input }),
             },
             overlay => {
                 self.handle_generic_overlay_key(key, overlay, terminal_height)
@@ -318,7 +308,7 @@ impl App {
             && add_task_title_overlay(&state.title)
         {
             if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
-                draft.title = state.input.clone();
+                draft.title = state.input.text.clone();
                 self.begin_add_task_title_project();
             }
             return Ok(());
@@ -699,7 +689,7 @@ impl App {
     pub(crate) fn begin_search(&mut self) {
         self.pending_shortcut.clear();
         self.overlay = Some(OverlayState::Search {
-            input: self.store.filters.search.clone().unwrap_or_default(),
+            input: LineEdit::new(self.store.filters.search.clone().unwrap_or_default()),
         });
     }
 
@@ -713,7 +703,7 @@ impl App {
     pub(crate) fn begin_command(&mut self) {
         self.pending_shortcut.clear();
         self.overlay = Some(OverlayState::Command {
-            input: String::new(),
+            input: LineEdit::blank(),
         });
     }
 
@@ -1017,7 +1007,7 @@ impl App {
     fn open_picker_overlay(&mut self, title: &str, items: Vec<PickerItem>, multi: bool) {
         self.overlay = Some(OverlayState::Picker(PickerState {
             title: title.to_string(),
-            filter: String::new(),
+            filter: LineEdit::blank(),
             selected: selected_picker_index(&items),
             items,
             multi,
@@ -2011,7 +2001,7 @@ mod tests {
         assert!(app.pending_shortcut.is_empty());
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::Search { input }) if input == "m"
+            Some(OverlayState::Search { input }) if input.as_str() == "m"
         ));
     }
 
@@ -2566,17 +2556,12 @@ mod tests {
             OverlayState::Help { scroll: 0 },
             OverlayState::Detail,
             OverlayState::Search {
-                input: "q".to_string(),
+                input: LineEdit::new("q".to_string()),
             },
             OverlayState::Command {
-                input: "ref".to_string(),
+                input: LineEdit::new("ref".to_string()),
             },
-            OverlayState::TextInput(TextInputState {
-                title: "T".to_string(),
-                prompt: "P".to_string(),
-                input: "x".to_string(),
-                cursor: 1,
-            }),
+            OverlayState::TextInput(TextInputState::new("T", "P", "x".to_string())),
             OverlayState::MultilineInput(MultilineInputState {
                 title: "M".to_string(),
                 prompt: "P".to_string(),
@@ -2586,7 +2571,7 @@ mod tests {
             }),
             OverlayState::Picker(PickerState {
                 title: "Pick".to_string(),
-                filter: String::new(),
+                filter: LineEdit::blank(),
                 items: vec![PickerItem {
                     label: "One".to_string(),
                     value: "one".to_string(),
@@ -2776,12 +2761,11 @@ mod tests {
     #[tokio::test]
     async fn generic_text_input_submits_message() {
         let mut app = test_app().await;
-        app.overlay = Some(OverlayState::TextInput(TextInputState {
-            title: "Title".to_string(),
-            prompt: "Enter title".to_string(),
-            input: "done".to_string(),
-            cursor: 4,
-        }));
+        app.overlay = Some(OverlayState::TextInput(TextInputState::new(
+            "Title",
+            "Enter title",
+            "done".to_string(),
+        )));
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         assert!(app.overlay.is_none());
         assert_eq!(app.message.as_deref(), Some("submitted Title"));
@@ -2858,7 +2842,7 @@ mod tests {
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::TextInput(state))
-                if state.title == EDIT_TITLE_TITLE && state.input == "Old title"
+                if state.title == EDIT_TITLE_TITLE && state.input.as_str() == "Old title"
         ));
 
         app.handle_overlay_key(key(KeyCode::End)).await.unwrap();

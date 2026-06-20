@@ -1089,12 +1089,12 @@ fn command_line(command: &CommandSpec) -> Line<'static> {
     )
 }
 
-fn render_command(frame: &mut Frame, input: &str) {
+fn render_command(frame: &mut Frame, input: &str, cursor: usize) {
     let matches = matching_commands(input);
     let height = (matches.len().min(8) as u16).saturating_add(3);
     let area = centered(frame.area(), 72, height);
 
-    let mut lines = vec![Line::from(format!(":{input}▌"))];
+    let mut lines = vec![Line::from(format!(":{}", insert_cursor(input, cursor)))];
     for command in matches.into_iter().take(8) {
         lines.push(command_line(command));
     }
@@ -1102,16 +1102,22 @@ fn render_command(frame: &mut Frame, input: &str) {
     render_overlay_paragraph(frame, area, "Command", Text::from(lines), false);
 }
 
-fn render_search(frame: &mut Frame, input: &str) {
+fn render_search(frame: &mut Frame, input: &str, cursor: usize) {
     let area = centered(frame.area(), 54, 3);
-    render_overlay_paragraph(frame, area, "Search", format!("/{input}▌"), false);
+    render_overlay_paragraph(
+        frame,
+        area,
+        "Search",
+        format!("/{}", insert_cursor(input, cursor)),
+        false,
+    );
 }
 
 fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
     match overlay {
         OverlayView::Help { scroll } => render_help(frame, *scroll),
-        OverlayView::Search { input } => render_search(frame, input),
-        OverlayView::Command { input } => render_command(frame, input),
+        OverlayView::Search { input, cursor } => render_search(frame, input, *cursor),
+        OverlayView::Command { input, cursor } => render_command(frame, input, *cursor),
         OverlayView::TextInput(state) => render_text_input(frame, state),
         OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
         OverlayView::Picker(state) => render_picker(frame, state),
@@ -1245,7 +1251,13 @@ fn render_picker(frame: &mut Frame, state: &PickerView) {
         .position(|index| *index == state.selected)
         .unwrap_or(0);
     let start = selected_position.saturating_sub(viewport_rows.saturating_sub(1));
-    let mut lines = vec![Line::from(format!("/{}▌", state.filter)), Line::from("")];
+    let mut lines = vec![
+        Line::from(format!(
+            "/{}",
+            insert_cursor(&state.filter, state.filter_cursor)
+        )),
+        Line::from(""),
+    ];
     for index in state.visible_indices.iter().skip(start).take(viewport_rows) {
         let item = &state.items[*index];
         let marker = if *index == state.selected {
@@ -1640,6 +1652,7 @@ mod tests {
     fn overlay_render_includes_search_title_and_input() {
         let rendered = render_overlay_view(OverlayView::Search {
             input: "query".to_string(),
+            cursor: 5,
         });
         assert!(rendered.contains("Search"));
         assert!(rendered.contains("/query"));
@@ -1649,6 +1662,7 @@ mod tests {
     fn overlay_render_includes_command_title_and_input() {
         let rendered = render_overlay_view(OverlayView::Command {
             input: "ref".to_string(),
+            cursor: 3,
         });
         assert!(rendered.contains("Command"));
         assert!(rendered.contains(":ref"));
@@ -1704,6 +1718,7 @@ mod tests {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
             title: "Project".to_string(),
             filter: "app".to_string(),
+            filter_cursor: 3,
             items: vec![PickerItem {
                 label: "APP app".to_string(),
                 value: "app".to_string(),
@@ -1731,6 +1746,7 @@ mod tests {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
             title: "Project".to_string(),
             filter: String::new(),
+            filter_cursor: 0,
             items,
             selected: 10,
             multi: false,

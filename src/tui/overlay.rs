@@ -5,8 +5,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 pub(crate) enum OverlayState {
     Help { scroll: u16 },
     Detail,
-    Search { input: String },
-    Command { input: String },
+    Search { input: LineEdit },
+    Command { input: LineEdit },
     TextInput(TextInputState),
     MultilineInput(MultilineInputState),
     Picker(PickerState),
@@ -32,21 +32,113 @@ impl TextPanelState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LineEdit {
+    pub(crate) text: String,
+    pub(crate) cursor: usize,
+}
+
+impl LineEdit {
+    pub(crate) fn new(text: String) -> Self {
+        let cursor = text.len();
+        Self { text, cursor }
+    }
+
+    pub(crate) fn blank() -> Self {
+        Self::new(String::new())
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.text
+    }
+
+    pub(crate) fn handle_key(&mut self, key: KeyEvent) {
+        let cursor = char_boundary_at_or_before(&self.text, self.cursor);
+        match key.code {
+            KeyCode::Left => self.cursor = previous_char_boundary(&self.text, cursor),
+            KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.cursor = previous_char_boundary(&self.text, cursor);
+            }
+            KeyCode::Right => self.cursor = next_char_boundary(&self.text, cursor),
+            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.cursor = next_char_boundary(&self.text, cursor);
+            }
+            KeyCode::Home => self.cursor = 0,
+            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.cursor = 0;
+            }
+            KeyCode::End => self.cursor = self.text.len(),
+            KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.cursor = self.text.len();
+            }
+            KeyCode::Backspace if cursor > 0 => {
+                let previous = previous_char_boundary(&self.text, cursor);
+                self.text.drain(previous..cursor);
+                self.cursor = previous;
+            }
+            KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) && cursor > 0 => {
+                let previous = previous_char_boundary(&self.text, cursor);
+                self.text.drain(previous..cursor);
+                self.cursor = previous;
+            }
+            KeyCode::Delete if cursor < self.text.len() => {
+                let next = next_char_boundary(&self.text, cursor);
+                self.text.drain(cursor..next);
+                self.cursor = cursor;
+            }
+            KeyCode::Char('d')
+                if key.modifiers.contains(KeyModifiers::CONTROL) && cursor < self.text.len() =>
+            {
+                let next = next_char_boundary(&self.text, cursor);
+                self.text.drain(cursor..next);
+                self.cursor = cursor;
+            }
+            KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.text.truncate(cursor);
+                self.cursor = cursor;
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.text.drain(..cursor);
+                self.cursor = 0;
+            }
+            KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let previous = previous_word_start(&self.text, cursor);
+                self.text.drain(previous..cursor);
+                if previous > 0 && next_char_is_whitespace(&self.text, previous) {
+                    let before = previous_char_boundary(&self.text, previous);
+                    if self.text[before..previous].chars().all(char::is_whitespace) {
+                        self.text.drain(before..previous);
+                        self.cursor = before;
+                    } else {
+                        self.cursor = previous;
+                    }
+                } else {
+                    self.cursor = previous;
+                }
+            }
+            KeyCode::Char(ch)
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.text.insert(cursor, ch);
+                self.cursor = cursor + ch.len_utf8();
+            }
+            _ => self.cursor = cursor,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TextInputState {
     pub(crate) title: String,
     pub(crate) prompt: String,
-    pub(crate) input: String,
-    pub(crate) cursor: usize,
+    pub(crate) input: LineEdit,
 }
 
 impl TextInputState {
     pub(crate) fn new(title: impl Into<String>, prompt: impl Into<String>, input: String) -> Self {
-        let cursor = input.len();
         Self {
             title: title.into(),
             prompt: prompt.into(),
-            input,
-            cursor,
+            input: LineEdit::new(input),
         }
     }
 
@@ -99,7 +191,7 @@ impl MultilineInputState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PickerState {
     pub(crate) title: String,
-    pub(crate) filter: String,
+    pub(crate) filter: LineEdit,
     pub(crate) items: Vec<PickerItem>,
     pub(crate) selected: usize,
     pub(crate) multi: bool,
@@ -122,8 +214,8 @@ pub(crate) struct ConfirmState {
 pub(crate) enum OverlayView {
     Help { scroll: u16 },
     Detail,
-    Search { input: String },
-    Command { input: String },
+    Search { input: String, cursor: usize },
+    Command { input: String, cursor: usize },
     TextInput(TextInputView),
     MultilineInput(MultilineInputView),
     Picker(PickerView),
@@ -159,6 +251,7 @@ pub(crate) struct MultilineInputView {
 pub(crate) struct PickerView {
     pub(crate) title: String,
     pub(crate) filter: String,
+    pub(crate) filter_cursor: usize,
     pub(crate) items: Vec<PickerItem>,
     pub(crate) selected: usize,
     pub(crate) multi: bool,
@@ -215,16 +308,18 @@ impl From<&OverlayState> for OverlayView {
             OverlayState::Help { scroll } => Self::Help { scroll: *scroll },
             OverlayState::Detail => Self::Detail,
             OverlayState::Search { input } => Self::Search {
-                input: input.clone(),
+                input: input.text.clone(),
+                cursor: input.cursor,
             },
             OverlayState::Command { input } => Self::Command {
-                input: input.clone(),
+                input: input.text.clone(),
+                cursor: input.cursor,
             },
             OverlayState::TextInput(state) => Self::TextInput(TextInputView {
                 title: state.title.clone(),
                 prompt: state.prompt.clone(),
-                input: state.input.clone(),
-                cursor: state.cursor,
+                input: state.input.text.clone(),
+                cursor: state.input.cursor,
             }),
             OverlayState::MultilineInput(state) => Self::MultilineInput(MultilineInputView {
                 title: state.title.clone(),
@@ -235,7 +330,8 @@ impl From<&OverlayState> for OverlayView {
             }),
             OverlayState::Picker(state) => Self::Picker(PickerView {
                 title: state.title.clone(),
-                filter: state.filter.clone(),
+                filter: state.filter.text.clone(),
+                filter_cursor: state.filter.cursor,
                 items: state.items.clone(),
                 selected: state.selected,
                 multi: state.multi,
@@ -255,7 +351,7 @@ impl From<&OverlayState> for OverlayView {
 }
 
 pub(crate) fn visible_picker_indices(state: &PickerState) -> Vec<usize> {
-    let filter = state.filter.trim().to_ascii_lowercase();
+    let filter = state.filter.as_str().trim().to_ascii_lowercase();
     state
         .items
         .iter()
@@ -285,10 +381,10 @@ pub(crate) fn handle_generic_overlay_key(
             KeyCode::Esc => OverlayOutcome::Cancelled,
             KeyCode::Enter => OverlayOutcome::Submitted(OverlaySubmit::Text {
                 title: state.title.clone(),
-                value: state.input.clone(),
+                value: state.input.text.clone(),
             }),
             _ => {
-                edit_text_input(&mut state, key);
+                state.input.handle_key(key);
                 OverlayOutcome::None(OverlayState::TextInput(state))
             }
         },
@@ -356,17 +452,11 @@ pub(crate) fn handle_generic_overlay_key(
                 }
                 OverlayOutcome::None(OverlayState::Picker(state))
             }
-            KeyCode::Backspace => {
-                state.filter.pop();
+            _ => {
+                state.filter.handle_key(key);
                 normalize_picker_selection(&mut state);
                 OverlayOutcome::None(OverlayState::Picker(state))
             }
-            KeyCode::Char(ch) => {
-                state.filter.push(ch);
-                normalize_picker_selection(&mut state);
-                OverlayOutcome::None(OverlayState::Picker(state))
-            }
-            _ => OverlayOutcome::None(OverlayState::Picker(state)),
         },
         OverlayState::Confirm(state) => match key.code {
             KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => OverlayOutcome::Cancelled,
@@ -402,79 +492,6 @@ pub(crate) fn handle_generic_overlay_key(
             _ => OverlayOutcome::None(OverlayState::Help { scroll }),
         },
         other => OverlayOutcome::None(other),
-    }
-}
-
-fn edit_text_input(state: &mut TextInputState, key: KeyEvent) {
-    let cursor = char_boundary_at_or_before(&state.input, state.cursor);
-    match key.code {
-        KeyCode::Left => state.cursor = previous_char_boundary(&state.input, cursor),
-        KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.cursor = previous_char_boundary(&state.input, cursor);
-        }
-        KeyCode::Right => state.cursor = next_char_boundary(&state.input, cursor),
-        KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.cursor = next_char_boundary(&state.input, cursor);
-        }
-        KeyCode::Home => state.cursor = 0,
-        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => state.cursor = 0,
-        KeyCode::End => state.cursor = state.input.len(),
-        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.cursor = state.input.len();
-        }
-        KeyCode::Backspace if cursor > 0 => {
-            let previous = previous_char_boundary(&state.input, cursor);
-            state.input.drain(previous..cursor);
-            state.cursor = previous;
-        }
-        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) && cursor > 0 => {
-            let previous = previous_char_boundary(&state.input, cursor);
-            state.input.drain(previous..cursor);
-            state.cursor = previous;
-        }
-        KeyCode::Delete if cursor < state.input.len() => {
-            let next = next_char_boundary(&state.input, cursor);
-            state.input.drain(cursor..next);
-            state.cursor = cursor;
-        }
-        KeyCode::Char('d')
-            if key.modifiers.contains(KeyModifiers::CONTROL) && cursor < state.input.len() =>
-        {
-            let next = next_char_boundary(&state.input, cursor);
-            state.input.drain(cursor..next);
-            state.cursor = cursor;
-        }
-        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.input.truncate(cursor);
-            state.cursor = cursor;
-        }
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.input.drain(..cursor);
-            state.cursor = 0;
-        }
-        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let previous = previous_word_start(&state.input, cursor);
-            state.input.drain(previous..cursor);
-            if previous > 0 && next_char_is_whitespace(&state.input, previous) {
-                let before = previous_char_boundary(&state.input, previous);
-                if state.input[before..previous]
-                    .chars()
-                    .all(char::is_whitespace)
-                {
-                    state.input.drain(before..previous);
-                    state.cursor = before;
-                } else {
-                    state.cursor = previous;
-                }
-            } else {
-                state.cursor = previous;
-            }
-        }
-        KeyCode::Char(ch) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
-            state.input.insert(cursor, ch);
-            state.cursor = cursor + ch.len_utf8();
-        }
-        _ => state.cursor = cursor,
     }
 }
 
@@ -618,11 +635,9 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::CONTROL)
     }
 
-    fn text_input(input: &str, cursor: usize) -> TextInputState {
-        TextInputState {
-            title: "Title".to_string(),
-            prompt: "Prompt".to_string(),
-            input: input.to_string(),
+    fn line_edit(input: &str, cursor: usize) -> LineEdit {
+        LineEdit {
+            text: input.to_string(),
             cursor,
         }
     }
@@ -641,52 +656,47 @@ mod tests {
 
     #[test]
     fn text_input_edits_at_cursor() {
-        let mut state = TextInputState {
-            title: "Title".to_string(),
-            prompt: "Prompt".to_string(),
-            input: "ab".to_string(),
-            cursor: 1,
-        };
-        edit_text_input(&mut state, key(KeyCode::Char('x')));
-        assert_eq!(state.input, "axb");
+        let mut state = line_edit("ab", 1);
+        state.handle_key(key(KeyCode::Char('x')));
+        assert_eq!(state.text, "axb");
         assert_eq!(state.cursor, 2);
-        edit_text_input(&mut state, key(KeyCode::Backspace));
-        assert_eq!(state.input, "ab");
+        state.handle_key(key(KeyCode::Backspace));
+        assert_eq!(state.text, "ab");
         assert_eq!(state.cursor, 1);
     }
 
     #[test]
     fn text_input_supports_emacs_navigation() {
-        let mut state = text_input("abc", 1);
-        edit_text_input(&mut state, ctrl(KeyCode::Char('a')));
+        let mut state = line_edit("abc", 1);
+        state.handle_key(ctrl(KeyCode::Char('a')));
         assert_eq!(state.cursor, 0);
-        edit_text_input(&mut state, ctrl(KeyCode::Char('e')));
+        state.handle_key(ctrl(KeyCode::Char('e')));
         assert_eq!(state.cursor, 3);
-        edit_text_input(&mut state, ctrl(KeyCode::Char('b')));
+        state.handle_key(ctrl(KeyCode::Char('b')));
         assert_eq!(state.cursor, 2);
-        edit_text_input(&mut state, ctrl(KeyCode::Char('f')));
+        state.handle_key(ctrl(KeyCode::Char('f')));
         assert_eq!(state.cursor, 3);
     }
 
     #[test]
     fn text_input_supports_emacs_deletion() {
-        let mut state = text_input("one two three", 7);
-        edit_text_input(&mut state, ctrl(KeyCode::Char('w')));
-        assert_eq!(state.input, "one three");
+        let mut state = line_edit("one two three", 7);
+        state.handle_key(ctrl(KeyCode::Char('w')));
+        assert_eq!(state.text, "one three");
         assert_eq!(state.cursor, 3);
-        edit_text_input(&mut state, ctrl(KeyCode::Char('k')));
-        assert_eq!(state.input, "one");
+        state.handle_key(ctrl(KeyCode::Char('k')));
+        assert_eq!(state.text, "one");
         assert_eq!(state.cursor, 3);
-        edit_text_input(&mut state, ctrl(KeyCode::Char('u')));
-        assert_eq!(state.input, "");
+        state.handle_key(ctrl(KeyCode::Char('u')));
+        assert_eq!(state.text, "");
         assert_eq!(state.cursor, 0);
     }
 
     #[test]
     fn text_input_ignores_control_chars_that_are_not_editing_keys() {
-        let mut state = text_input("ab", 1);
-        edit_text_input(&mut state, ctrl(KeyCode::Char('x')));
-        assert_eq!(state.input, "ab");
+        let mut state = line_edit("ab", 1);
+        state.handle_key(ctrl(KeyCode::Char('x')));
+        assert_eq!(state.text, "ab");
         assert_eq!(state.cursor, 1);
     }
 
@@ -730,7 +740,7 @@ mod tests {
     fn picker_filter_and_selection_normalize() {
         let mut state = PickerState {
             title: "Pick".to_string(),
-            filter: String::new(),
+            filter: LineEdit::blank(),
             items: vec![
                 PickerItem {
                     label: "Alpha".to_string(),
@@ -746,7 +756,7 @@ mod tests {
             selected: 1,
             multi: false,
         };
-        state.filter = "alp".to_string();
+        state.filter = LineEdit::new("alp".to_string());
         normalize_picker_selection(&mut state);
         assert_eq!(state.selected, 0);
         assert_eq!(visible_picker_indices(&state), vec![0]);
@@ -756,7 +766,7 @@ mod tests {
     fn picker_types_j_and_k_into_filter() {
         let state = PickerState {
             title: "Pick".to_string(),
-            filter: String::new(),
+            filter: LineEdit::blank(),
             items: vec![PickerItem {
                 label: "jklabs".to_string(),
                 value: "jklabs".to_string(),
@@ -775,7 +785,7 @@ mod tests {
         else {
             panic!("expected picker state");
         };
-        assert_eq!(state.filter, "jk");
+        assert_eq!(state.filter.as_str(), "jk");
     }
 
     #[test]
@@ -815,7 +825,7 @@ mod tests {
     fn picker_navigation_state() -> PickerState {
         PickerState {
             title: "Pick".to_string(),
-            filter: String::new(),
+            filter: LineEdit::blank(),
             items: vec![
                 PickerItem {
                     label: "Alpha".to_string(),
@@ -874,12 +884,7 @@ mod tests {
     #[test]
     fn esc_cancels_all_generic_overlay_variants() {
         let overlays = vec![
-            OverlayState::TextInput(TextInputState {
-                title: "Title".to_string(),
-                prompt: "Prompt".to_string(),
-                input: "value".to_string(),
-                cursor: 5,
-            }),
+            OverlayState::TextInput(TextInputState::new("Title", "Prompt", "value".to_string())),
             OverlayState::MultilineInput(MultilineInputState {
                 title: "Body".to_string(),
                 prompt: "Prompt".to_string(),
@@ -889,7 +894,7 @@ mod tests {
             }),
             OverlayState::Picker(PickerState {
                 title: "Pick".to_string(),
-                filter: String::new(),
+                filter: LineEdit::blank(),
                 items: vec![PickerItem {
                     label: "One".to_string(),
                     value: "one".to_string(),
