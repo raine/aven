@@ -8,15 +8,15 @@ default:
     @just --list
 
 # Run all checks without changing files
-check: pre-commit
+check:
+    @scripts/run-checks format-check static-analysis clippy test sqlx-check
 
 # Run cheap read-only checks in parallel
 [parallel]
 check-fast-readonly: format-check static-analysis
 
 # Run commit-time checks without mutating files
-[parallel]
-pre-commit: check-fast-readonly clippy test sqlx-check
+pre-commit: check
 
 # Run every check, including redundant compile gates
 check-full: check check-types build

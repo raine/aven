@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -eq 0 ]]; then
+  echo "usage: run-checks <check> [<check> ...]" >&2
+  exit 2
+fi
+
+esc="$(printf '\033')"
+use_color=0
+if [[ -z "${NO_COLOR:-}" ]]; then
+  if [[ -n "${FORCE_COLOR:-}" ]]; then
+    [[ "${FORCE_COLOR}" != "0" ]] && use_color=1
+  elif [[ -t 1 ]]; then
+    use_color=1
+  fi
+fi
+
+paint() {
+  local code="$1"
+  local text="$2"
+  if [[ "$use_color" -eq 1 ]]; then
+    printf '%s[%sm%s%s[0m' "$esc" "$code" "$text" "$esc"
+  else
+    printf '%s' "$text"
+  fi
+}
+
+green() { paint 32 "$1"; }
+red() { paint 31 "$1"; }
+dim() { paint 2 "$1"; }
+bold_red() { paint '1;31' "$1"; }
+
+strip_ansi() {
+  sed -E $'s/\x1b\\[[0-9;?]*[ -/]*[@-~]//g; s/\r//g'
+}
+
+elapsed_seconds() {
+  local started="$1"
+  local ended
+  ended="$(date +%s)"
+  printf '%ss' "$((ended - started))"
+}
+
+checks=()
+for check in "$@"; do
+  case "$check" in
+    static-analysis)
+      if command -v cargo-deny >/dev/null 2>&1; then
+        checks+=(cargo-deny)
+      else
+        printf 'skip cargo-deny: not installed\n'
+      fi
+      if command -v cargo-machete >/dev/null 2>&1; then
+        checks+=(cargo-machete)
+      else
+        printf 'skip cargo-machete: not installed\n'
+      fi
+      ;;
+    *) checks+=("$check") ;;
+  esac
+done
+
+if [[ ${#checks[@]} -eq 0 ]]; then
+  echo "no checks to run"
+  exit 0
+fi
+
+run_check() {
+  local check="$1"
+  case "$check" in
+    format-check) cargo fmt --all -- --check ;;
+    cargo-deny) cargo deny check ;;
+    cargo-machete) cargo machete --with-metadata ;;
+    clippy) cargo clippy --all-targets -- -D warnings -D clippy::all ;;
+    test) env RUSTFLAGS="-D warnings" cargo test --all --locked ;;
+    sqlx-check)
+      local db="target/sqlx-check.sqlite"
+      rm -f "$db"
+      env DATABASE_URL="sqlite://$db" cargo sqlx database create
+      env DATABASE_URL="sqlite://$db" cargo sqlx migrate run
+      env DATABASE_URL="sqlite://$db" cargo sqlx prepare --check -- --all-targets
+      ;;
+    *)
+      echo "unknown check: $check" >&2
+      return 2
+      ;;
+  esac
+}
+
+output_dir="$(mktemp -d -t atm-run-checks.XXXXXX)"
+cleanup() {
+  local status=$?
+  for pid in "${pids[@]:-}"; do
+    if [[ -n "$pid" ]]; then
+      kill "$pid" >/dev/null 2>&1 || true
+    fi
+  done
+  if [[ -n "${timer_pid:-}" ]]; then
+    kill "$timer_pid" >/dev/null 2>&1 || true
+  fi
+  if [[ "${cursor_hidden:-0}" -eq 1 ]]; then
+    printf '%s[?25h' "$esc" >&2
+  fi
+  rm -rf "$output_dir"
+  exit "$status"
+}
+trap cleanup EXIT INT TERM
+
+states=()
+codes=()
+started=()
+elapsed=()
+pids=()
+for i in "${!checks[@]}"; do
+  states[i]=run
+  codes[i]=0
+  elapsed[i]=""
+  started[i]="$(date +%s)"
+  (
+    set +e
+    run_check "${checks[$i]}" >"$output_dir/$i.out" 2>&1
+    code=$?
+    printf '%s' "$code" >"$output_dir/$i.code"
+  ) &
+  pids[i]=$!
+done
+
+name_width=0
+for check in "${checks[@]}"; do
+  if [[ ${#check} -gt $name_width ]]; then
+    name_width=${#check}
+  fi
+done
+
+latest_line() {
+  local file="$1"
+  if [[ ! -s "$file" ]]; then
+    return 0
+  fi
+  tail -n 20 "$file" | strip_ansi | grep -v '^[[:space:]]*$' | tail -n 1 || true
+}
+
+render() {
+  local drawn_count="$1"
+  local frame="$2"
+  local cols="${COLUMNS:-80}"
+  local available=$((cols - name_width - 7))
+  if [[ $available -lt 0 ]]; then
+    available=0
+  fi
+  if [[ "$drawn_count" -gt 0 ]]; then
+    printf '%s[%sA' "$esc" "$drawn_count" >&2
+  fi
+  for i in "${!checks[@]}"; do
+    local check="${checks[$i]}"
+    local glyph
+    local detail
+    if [[ "${states[$i]}" == run ]]; then
+      glyph="${frames[$frame]}"
+      detail="$(latest_line "$output_dir/$i.out")"
+    elif [[ "${codes[$i]}" -eq 0 ]]; then
+      glyph="✓"
+      detail="(${elapsed[$i]})"
+    else
+      glyph="✖"
+      detail="(${elapsed[$i]})"
+    fi
+    detail="${detail:0:available}"
+    if [[ "${states[$i]}" == run ]]; then
+      glyph="$(dim "$glyph")"
+    elif [[ "${codes[$i]}" -eq 0 ]]; then
+      glyph="$(green "$glyph")"
+    else
+      glyph="$(red "$glyph")"
+    fi
+    printf '%s[2K%s %-*s  %s\n' \
+      "$esc" \
+      "$glyph" \
+      "$name_width" \
+      "$check" \
+      "$(dim "$detail")" >&2
+  done
+}
+
+frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+frame=0
+drawn=0
+cursor_hidden=0
+if [[ -t 1 ]]; then
+  printf '%s[?25l' "$esc" >&2
+  cursor_hidden=1
+fi
+
+while true; do
+  running=0
+  for i in "${!checks[@]}"; do
+    if [[ "${states[$i]}" == run ]]; then
+      if kill -0 "${pids[$i]}" >/dev/null 2>&1; then
+        running=1
+      else
+        wait "${pids[$i]}" || true
+        if [[ -f "$output_dir/$i.code" ]]; then
+          codes[i]="$(<"$output_dir/$i.code")"
+        else
+          codes[i]=1
+        fi
+        states[i]=complete
+        elapsed[i]="$(elapsed_seconds "${started[$i]}")"
+      fi
+    fi
+  done
+  if [[ -t 1 ]]; then
+    render "$drawn" "$frame"
+    drawn=${#checks[@]}
+  fi
+  [[ "$running" -eq 0 ]] && break
+  frame=$(((frame + 1) % ${#frames[@]}))
+  sleep 0.09
+done
+
+if [[ "$cursor_hidden" -eq 1 ]]; then
+  printf '%s[?25h' "$esc" >&2
+  cursor_hidden=0
+fi
+
+failed=0
+if [[ ! -t 1 ]]; then
+  for i in "${!checks[@]}"; do
+    if [[ "${codes[$i]}" -eq 0 ]]; then
+      printf '%s %s  %s\n' "$(green ✓)" "${checks[$i]}" "$(dim "(${elapsed[$i]})")"
+    else
+      printf '%s %s  %s\n' "$(red ✖)" "${checks[$i]}" "$(dim "(${elapsed[$i]})")"
+    fi
+  done
+fi
+
+for i in "${!checks[@]}"; do
+  if [[ "${codes[$i]}" -ne 0 ]]; then
+    failed=$((failed + 1))
+    printf '\n%s\n' "$(bold_red "✖ ${checks[$i]}")" >&2
+    cat "$output_dir/$i.out" >&2
+  fi
+done
+
+if [[ "$failed" -gt 0 ]]; then
+  printf '%s %s/%s checks failed\n' "$(red ✖)" "$failed" "${#checks[@]}" >&2
+  exit 1
+fi
