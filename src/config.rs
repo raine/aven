@@ -124,9 +124,8 @@ pub fn config_dir_path() -> Result<PathBuf> {
     if let Ok(path) = env::var("ATM_CONFIG_DIR") {
         return Ok(PathBuf::from(path));
     }
-    let mut dir = dirs::config_dir().context("could not find config directory")?;
-    dir.push(APP_DIR);
-    Ok(dir)
+    let home = dirs::home_dir().context("could not find home directory")?;
+    Ok(home.join(".config").join(APP_DIR))
 }
 
 pub fn config_file_path() -> Result<PathBuf> {
