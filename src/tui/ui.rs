@@ -169,6 +169,7 @@ fn active_view_label(store: &TuiStore) -> String {
         SidebarTarget::Active => "active".to_string(),
         SidebarTarget::Backlog => "backlog".to_string(),
         SidebarTarget::Todo => "todo".to_string(),
+        SidebarTarget::Done => "done".to_string(),
         SidebarTarget::Conflicts => "conflicts".to_string(),
         SidebarTarget::Project(project) => format!("project {project}"),
     }
@@ -503,6 +504,7 @@ fn sidebar_icon(entry: &crate::tui::store::SidebarEntry) -> &'static str {
         Some(SidebarTarget::Todo) => "□",
         Some(SidebarTarget::Active) => "●",
         Some(SidebarTarget::Backlog) => "◌",
+        Some(SidebarTarget::Done) => "✓",
         Some(SidebarTarget::Conflicts) => "!",
         Some(SidebarTarget::Project(_)) => "●",
         None => " ",
@@ -516,6 +518,7 @@ fn sidebar_label(entry: &crate::tui::store::SidebarEntry) -> String {
         Some(SidebarTarget::Active) => "All active".to_string(),
         Some(SidebarTarget::Backlog) => "Backlog".to_string(),
         Some(SidebarTarget::Todo) => "All todo".to_string(),
+        Some(SidebarTarget::Done) => "Done".to_string(),
         Some(SidebarTarget::Conflicts) => "Conflicts".to_string(),
         Some(SidebarTarget::Project(_)) => entry
             .label
@@ -1452,6 +1455,7 @@ mod tests {
                 status: Some("todo".to_string()),
                 priority: Some("high".to_string()),
                 include_deleted: true,
+                hide_done: false,
                 conflicts_only: true,
                 search: Some("needle".to_string()),
             };

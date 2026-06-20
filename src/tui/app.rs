@@ -1277,6 +1277,7 @@ impl App {
             ViewTarget::Active => SidebarTarget::Active,
             ViewTarget::Backlog => SidebarTarget::Backlog,
             ViewTarget::Todo => SidebarTarget::Todo,
+            ViewTarget::Done => SidebarTarget::Done,
             ViewTarget::Conflicts => SidebarTarget::Conflicts,
             ViewTarget::Project => {
                 self.begin_view_project();

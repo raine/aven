@@ -9,6 +9,7 @@ pub(crate) enum ViewTarget {
     Backlog,
     Todo,
     Active,
+    Done,
     Project,
     Conflicts,
 }
@@ -542,6 +543,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             label: "g v",
         }],
         Action::ShowView(ViewTarget::Active),
+    ),
+    CommandSpec::implemented(
+        "view-done",
+        "show done view",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('d')],
+            label: "g d",
+        }],
+        Action::ShowView(ViewTarget::Done),
     ),
     CommandSpec::implemented(
         "view-project",

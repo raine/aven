@@ -48,6 +48,7 @@ pub(crate) enum SidebarTarget {
     Active,
     Backlog,
     Todo,
+    Done,
     Conflicts,
     Project(String),
 }
@@ -93,6 +94,7 @@ impl TuiStore {
             sort_direction: SortDirection::Asc,
             last_refresh: Instant::now(),
         };
+        store.apply_active_view_filters();
         store.refresh(None).await?;
         Ok(store)
     }
@@ -161,7 +163,10 @@ impl TuiStore {
 
     pub(crate) async fn clear_filters(&mut self) -> Result<Option<usize>> {
         self.active_view = SidebarTarget::All;
-        self.filters = TaskFilters::default();
+        self.filters = TaskFilters {
+            hide_done: true,
+            ..TaskFilters::default()
+        };
         self.refresh(None).await
     }
 
@@ -262,11 +267,12 @@ impl TuiStore {
             ..TaskFilters::default()
         };
         match &self.active_view {
-            SidebarTarget::All => {}
+            SidebarTarget::All => self.filters.hide_done = true,
             SidebarTarget::Inbox => self.filters.status = Some("inbox".to_string()),
             SidebarTarget::Active => self.filters.status = Some("active".to_string()),
             SidebarTarget::Backlog => self.filters.status = Some("backlog".to_string()),
             SidebarTarget::Todo => self.filters.status = Some("todo".to_string()),
+            SidebarTarget::Done => self.filters.status = Some("done".to_string()),
             SidebarTarget::Conflicts => self.filters.conflicts_only = true,
             SidebarTarget::Project(project) => self.filters.project = Some(project.clone()),
         }
@@ -952,6 +958,12 @@ impl TuiStore {
                 section: false,
             },
             SidebarEntry {
+                label: "Done".to_string(),
+                count: self.counts.done,
+                target: Some(SidebarTarget::Done),
+                section: false,
+            },
+            SidebarEntry {
                 label: "Conflicts".to_string(),
                 count: self.counts.conflicts,
                 target: Some(SidebarTarget::Conflicts),
@@ -1519,6 +1531,60 @@ mod tests {
 
         assert_eq!(store.active_view, SidebarTarget::Conflicts);
         assert!(store.filters.conflicts_only);
+    }
+
+    #[tokio::test]
+    async fn queue_view_hides_done_tasks() {
+        let mut store = test_store().await;
+        let (_, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Finished".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        store.update_status(selected, "done").await.unwrap();
+
+        store.show_view(SidebarTarget::All).await.unwrap();
+
+        assert!(store.tasks.iter().all(|item| item.task.status != "done"));
+        assert_eq!(store.counts.done, 1);
+        assert!(store
+            .sidebar_entries
+            .iter()
+            .any(|entry| entry.target == Some(SidebarTarget::Done) && entry.count == 1));
+    }
+
+    #[tokio::test]
+    async fn done_view_shows_done_tasks() {
+        let mut store = test_store().await;
+        let (_, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Finished".to_string(),
+                    description: String::new(),
+                    project: None,
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+        store.update_status(Some(selected), "done").await.unwrap();
+
+        store.show_view(SidebarTarget::Done).await.unwrap();
+
+        assert_eq!(store.filters.status.as_deref(), Some("done"));
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.title, "Finished");
     }
 
     #[tokio::test]

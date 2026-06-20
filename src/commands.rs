@@ -75,6 +75,7 @@ pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Res
         priority: args.priority,
         label: args.label,
         include_deleted: args.all,
+        hide_done: false,
         conflicts_only: false,
         search: None,
     };

@@ -42,6 +42,7 @@ pub(crate) struct TaskFilters {
     pub(crate) priority: Option<String>,
     pub(crate) label: Option<String>,
     pub(crate) include_deleted: bool,
+    pub(crate) hide_done: bool,
     pub(crate) conflicts_only: bool,
     pub(crate) search: Option<String>,
 }
@@ -71,6 +72,7 @@ pub(crate) struct SidebarCounts {
     pub(crate) backlog: i64,
     pub(crate) todo: i64,
     pub(crate) conflicts: i64,
+    pub(crate) done: i64,
 }
 
 pub(crate) async fn list_task_items(
@@ -82,6 +84,7 @@ pub(crate) async fn list_task_items(
     if let Some(status) = filters.status.as_deref() {
         validate_choice("status", status, STATUSES)?;
     }
+    let hide_done = filters.hide_done && filters.status.is_none();
     if let Some(priority) = filters.priority.as_deref() {
         validate_choice("priority", priority, PRIORITIES)?;
     }
@@ -111,6 +114,10 @@ pub(crate) async fn list_task_items(
     if !filters.include_deleted {
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("t.deleted = 0");
+    }
+    if hide_done {
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push("t.status != 'done'");
     }
     if let Some(project_key) = project_key {
         push_filter_prefix(&mut query, &mut filters_added);
@@ -205,11 +212,12 @@ pub(crate) async fn sidebar_counts(conn: &mut SqliteConnection) -> Result<Sideba
     let workspace_id = active_workspace_id();
     let row = sqlx::query(
         "SELECT
-         COALESCE(SUM(CASE WHEN deleted = 0 THEN 1 ELSE 0 END), 0) AS all_count,
+         COALESCE(SUM(CASE WHEN deleted = 0 AND status != 'done' THEN 1 ELSE 0 END), 0) AS all_count,
          COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'inbox' THEN 1 ELSE 0 END), 0) AS inbox_count,
          COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'active' THEN 1 ELSE 0 END), 0) AS active_count,
          COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'backlog' THEN 1 ELSE 0 END), 0) AS backlog_count,
          COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'todo' THEN 1 ELSE 0 END), 0) AS todo_count,
+         COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'done' THEN 1 ELSE 0 END), 0) AS done_count,
          (SELECT COUNT(DISTINCT c.task_id)
           FROM conflicts c
           JOIN tasks t ON t.workspace_id = c.workspace_id AND t.id = c.task_id
@@ -228,6 +236,7 @@ pub(crate) async fn sidebar_counts(conn: &mut SqliteConnection) -> Result<Sideba
         backlog: row.get("backlog_count"),
         todo: row.get("todo_count"),
         conflicts: row.get("conflicts_count"),
+        done: row.get("done_count"),
     })
 }
 
@@ -397,7 +406,10 @@ mod tests {
 
         let items = list_task_items(
             &mut conn,
-            TaskFilters::default(),
+            TaskFilters {
+                hide_done: true,
+                ..TaskFilters::default()
+            },
             TaskSort::Queue,
             SortDirection::Asc,
         )
@@ -405,13 +417,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             listed_titles(&items),
-            [
-                "active urgent",
-                "active low",
-                "todo urgent",
-                "inbox urgent",
-                "done urgent"
-            ]
+            ["active urgent", "active low", "todo urgent", "inbox urgent"]
         );
     }
 
