@@ -66,10 +66,9 @@ default, project-specific sidebar views, queue sorting, task detail, search,
 manual refresh, and triage shortcuts for status, priority, delete, and
 restore.
 
-Direct shortcuts cover frequent actions: j/k or arrows move, Enter opens
-selection detail, / searches, : opens the command panel, ? or h opens help,
-r refreshes, s cycles sorting, 1-6 set status, p/P cycle priority, d deletes,
-u restores, and q quits.
+Direct shortcuts cover navigation and app controls: j/k or arrows move,
+Enter opens selection detail, / searches, : opens the command panel, ? or h
+opens help, r refreshes, Tab switches focus, and q quits.
 
 Power-user shortcuts use mnemonic prefix families. Press a prefix to see
 transient hints, then press the next key:
@@ -77,7 +76,7 @@ transient hints, then press the next key:
   g  go to views such as all, inbox, backlog, todo, active, project, conflicts
   a  add tasks, notes, projects, and labels
   e  edit the selected task title, description, project, priority, or labels
-  m  mark status or exact priority
+  m  mark status, set exact priority, delete with m D, or restore with m r
   f  filter by project, label, status, priority, deleted tasks, or clear filters
   o  order by supported sort fields or reverse direction
   c  inspect and resolve conflicts

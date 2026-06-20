@@ -2219,14 +2219,15 @@ mod tests {
         let mut app = test_app().await;
         app.widgets.table.select(None);
 
-        for code in [
-            KeyCode::Char('1'),
-            KeyCode::Char('p'),
-            KeyCode::Char('d'),
-            KeyCode::Char('u'),
+        for sequence in [
+            [KeyCode::Char('m'), KeyCode::Char('i')],
+            [KeyCode::Char('m'), KeyCode::Char('h')],
+            [KeyCode::Char('m'), KeyCode::Char('D')],
+            [KeyCode::Char('m'), KeyCode::Char('r')],
         ] {
             app.message = None;
-            app.handle_normal_key(code).await.unwrap();
+            app.handle_normal_key(sequence[0]).await.unwrap();
+            app.handle_normal_key(sequence[1]).await.unwrap();
             assert_eq!(app.message.as_deref(), Some("no selected task to edit"));
         }
     }

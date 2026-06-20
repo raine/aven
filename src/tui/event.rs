@@ -332,42 +332,12 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ToggleDetail,
     ),
     CommandSpec::implemented(
-        "sort",
-        "cycle sort order",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('s')],
-            label: "s",
-        }],
-        Action::CycleSort,
-    ),
-    CommandSpec::implemented(
-        "priority-next",
-        "cycle priority forward",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('p')],
-            label: "p",
-        }],
-        Action::CyclePriority(false),
-    ),
-    CommandSpec::implemented(
-        "priority-prev",
-        "cycle priority backward",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('P')],
-            label: "P",
-        }],
-        Action::CyclePriority(true),
-    ),
-    CommandSpec::implemented(
         "delete",
         "delete selected task",
         "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('d')],
-            label: "d",
+            codes: &[KeyCode::Char('m'), KeyCode::Char('D')],
+            label: "m D",
         }],
         Action::Delete,
     ),
@@ -376,8 +346,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "restore selected task",
         "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('u')],
-            label: "u",
+            codes: &[KeyCode::Char('m'), KeyCode::Char('r')],
+            label: "m r",
         }],
         Action::Restore,
     ),
@@ -385,96 +355,60 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "status-inbox",
         "set status to inbox",
         "Status",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('1')],
-                label: "1",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('m'), KeyCode::Char('i')],
-                label: "m i",
-            },
-        ],
+        &[KeySequence {
+            codes: &[KeyCode::Char('m'), KeyCode::Char('i')],
+            label: "m i",
+        }],
         Action::SetStatus("inbox"),
     ),
     CommandSpec::implemented(
         "status-backlog",
         "set status to backlog",
         "Status",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('2')],
-                label: "2",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('m'), KeyCode::Char('b')],
-                label: "m b",
-            },
-        ],
+        &[KeySequence {
+            codes: &[KeyCode::Char('m'), KeyCode::Char('b')],
+            label: "m b",
+        }],
         Action::SetStatus("backlog"),
     ),
     CommandSpec::implemented(
         "status-todo",
         "set status to todo",
         "Status",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('3')],
-                label: "3",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('m'), KeyCode::Char('t')],
-                label: "m t",
-            },
-        ],
+        &[KeySequence {
+            codes: &[KeyCode::Char('m'), KeyCode::Char('t')],
+            label: "m t",
+        }],
         Action::SetStatus("todo"),
     ),
     CommandSpec::implemented(
         "status-active",
         "set status to active",
         "Status",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('4')],
-                label: "4",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('m'), KeyCode::Char('a')],
-                label: "m a",
-            },
-        ],
+        &[KeySequence {
+            codes: &[KeyCode::Char('m'), KeyCode::Char('a')],
+            label: "m a",
+        }],
         Action::SetStatus("active"),
     ),
     CommandSpec::implemented(
         "status-done",
         "set status to done",
         "Status",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('5')],
-                label: "5",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('m'), KeyCode::Char('d')],
-                label: "m d",
-            },
-        ],
+        &[KeySequence {
+            codes: &[KeyCode::Char('m'), KeyCode::Char('d')],
+            label: "m d",
+        }],
         Action::SetStatus("done"),
     ),
     CommandSpec::implemented(
         "status-canceled",
         "set status to canceled",
         "Status",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('6')],
-                label: "6",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('m'), KeyCode::Char('x')],
-                label: "m x",
-            },
-        ],
+        &[KeySequence {
+            codes: &[KeyCode::Char('m'), KeyCode::Char('x')],
+            label: "m x",
+        }],
         Action::SetStatus("canceled"),
     ),
     // Views
@@ -1154,22 +1088,6 @@ mod tests {
     }
 
     #[test]
-    fn maps_status_keys() {
-        assert_eq!(
-            Action::from_normal_key(KeyCode::Char('1')),
-            Action::SetStatus("inbox")
-        );
-        assert_eq!(
-            Action::from_normal_key(KeyCode::Char('4')),
-            Action::SetStatus("active")
-        );
-        assert_eq!(
-            Action::from_normal_key(KeyCode::Char('6')),
-            Action::SetStatus("canceled")
-        );
-    }
-
-    #[test]
     fn search_mode_captures_text_keys() {
         assert_eq!(
             Action::from_search_key(KeyCode::Char('q')),
@@ -1377,7 +1295,7 @@ mod tests {
     }
 
     #[test]
-    fn preserves_existing_shortcuts() {
+    fn current_single_key_shortcuts_match_catalog() {
         for command in COMMANDS {
             for key in command.keys {
                 if key.codes.len() != 1 {
@@ -1591,14 +1509,14 @@ mod tests {
     }
 
     #[test]
-    fn status_shortcuts_still_resolve() {
+    fn status_shortcuts_resolve_through_mark_prefix() {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('m'), KeyCode::Char('i')]),
             ShortcutLookup::Found(Action::SetStatus("inbox"))
         );
         assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('1')]),
-            ShortcutLookup::Found(Action::SetStatus("inbox"))
+            resolve_shortcut(&[KeyCode::Char('m'), KeyCode::Char('d')]),
+            ShortcutLookup::Found(Action::SetStatus("done"))
         );
     }
 

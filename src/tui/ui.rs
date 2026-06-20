@@ -229,18 +229,12 @@ fn footer_bar(view: &ViewState) -> Paragraph<'static> {
         cmd("navigate"),
         key("Enter"),
         cmd("detail"),
-        key("s"),
-        cmd("sort"),
-        key("1-6"),
-        cmd("status"),
-        key("p"),
-        cmd("priority"),
+        key("g/a/e/m/f/o/c/C"),
+        cmd("prefixes"),
         key("/"),
         cmd("search"),
         key(":"),
         cmd("command"),
-        key("d"),
-        cmd("delete"),
         key("?"),
         cmd("help"),
         key("q"),
@@ -1214,7 +1208,7 @@ mod tests {
             .unwrap();
         let line = command_line(command);
         let rendered = line.to_string();
-        assert!(rendered.contains("4/m a"));
+        assert!(rendered.contains("m a"));
     }
 
     #[test]
