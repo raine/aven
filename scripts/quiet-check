@@ -9,17 +9,148 @@ fi
 label="$1"
 shift
 
-output_file="$(mktemp -t atm-quiet-check.XXXXXX)"
-cleanup() {
-  rm -f "$output_file"
-}
-trap cleanup EXIT
+esc="$(printf '\033')"
+use_color=0
+if [[ -z "${NO_COLOR:-}" ]]; then
+  if [[ -n "${FORCE_COLOR:-}" ]]; then
+    [[ "${FORCE_COLOR}" != "0" ]] && use_color=1
+  elif [[ -t 1 ]]; then
+    use_color=1
+  fi
+fi
 
-if "$@" >"$output_file" 2>&1; then
-  printf 'ok %s\n' "$label"
+is_tty=0
+[[ -t 1 ]] && is_tty=1
+
+paint() {
+  local code="$1"
+  local text="$2"
+  if [[ "$use_color" -eq 1 ]]; then
+    printf '%s[%sm%s%s[0m' "$esc" "$code" "$text" "$esc"
+  else
+    printf '%s' "$text"
+  fi
+}
+
+green() { paint 32 "$1"; }
+red() { paint 31 "$1"; }
+dim() { paint 2 "$1"; }
+bold_red() { paint '1;31' "$1"; }
+
+strip_ansi() {
+  sed -E $'s/\x1b\\[[0-9;?]*[ -/]*[@-~]//g; s/\r//g'
+}
+
+elapsed_seconds() {
+  local started="$1"
+  local ended
+  ended="$(date +%s)"
+  printf '%ss' "$((ended - started))"
+}
+
+latest_line() {
+  if [[ ! -s "$output_file" ]]; then
+    return 0
+  fi
+  local line
+  line="$(tail -n 20 "$output_file" | strip_ansi | grep -v '^[[:space:]]*$' | tail -n 1 || true)"
+  printf '%s' "$line"
+}
+
+truncate_line() {
+  local text="$1"
+  local max_width="$2"
+  if [[ "${#text}" -le "$max_width" ]]; then
+    printf '%s' "$text"
+  else
+    printf '%s' "${text:0:max_width}"
+  fi
+}
+
+output_file="$(mktemp -t atm-quiet-check.XXXXXX)"
+child_pid=""
+spinner_pid=""
+line_drawn=0
+cursor_hidden=0
+started_at="$(date +%s)"
+frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+
+cleanup() {
+  local status=$?
+  if [[ -n "$spinner_pid" ]]; then
+    kill "$spinner_pid" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$child_pid" ]]; then
+    kill "$child_pid" >/dev/null 2>&1 || true
+  fi
+  if [[ "$is_tty" -eq 1 && "$line_drawn" -eq 1 ]]; then
+    printf '%s[2K\r' "$esc" >&2
+  fi
+  if [[ "$cursor_hidden" -eq 1 ]]; then
+    printf '%s[?25h' "$esc" >&2
+  fi
+  rm -f "$output_file"
+  exit "$status"
+}
+trap cleanup EXIT INT TERM
+
+render_loop() {
+  local frame_index=0
+  local detail
+  local width
+  local available
+  while true; do
+    detail="$(latest_line)"
+    width="${COLUMNS:-80}"
+    available=$((width - ${#label} - 6))
+    if [[ "$available" -lt 0 ]]; then
+      available=0
+    fi
+    detail="$(truncate_line "$detail" "$available")"
+    printf '%s[2K\r%s %s  %s' \
+      "$esc" \
+      "$(dim "${frames[$frame_index]}")" \
+      "$label" \
+      "$(dim "$detail")" >&2
+    line_drawn=1
+    frame_index=$(((frame_index + 1) % ${#frames[@]}))
+    sleep 0.09
+  done
+}
+
+if [[ "$is_tty" -eq 1 ]]; then
+  printf '%s[?25l' "$esc" >&2
+  cursor_hidden=1
+  render_loop &
+  spinner_pid=$!
+fi
+
+set +e
+"$@" >"$output_file" 2>&1 &
+child_pid=$!
+wait "$child_pid"
+status=$?
+child_pid=""
+set -e
+
+if [[ -n "$spinner_pid" ]]; then
+  kill "$spinner_pid" >/dev/null 2>&1 || true
+  wait "$spinner_pid" >/dev/null 2>&1 || true
+  spinner_pid=""
+fi
+
+elapsed="$(elapsed_seconds "$started_at")"
+if [[ "$is_tty" -eq 1 ]]; then
+  printf '%s[2K\r' "$esc" >&2
+  line_drawn=0
+  printf '%s[?25h' "$esc" >&2
+  cursor_hidden=0
+fi
+
+if [[ "$status" -eq 0 ]]; then
+  printf '%s %s  %s\n' "$(green ✓)" "$label" "$(dim "($elapsed)")"
 else
-  status=$?
-  printf 'error %s\n' "$label" >&2
+  printf '%s %s  %s\n' "$(bold_red ✖)" "$label" "$(dim "($elapsed)")" >&2
   cat "$output_file" >&2
   exit "$status"
 fi
