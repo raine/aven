@@ -224,7 +224,7 @@ The repository uses `just` as the main development entrypoint:
 
 - `just pre-commit`: read-only validation gate for formatting, static analysis, clippy, and tests.
 - `just check`: local read-only validation gate, equivalent to `just pre-commit`.
-- `just pre-merge`: deferred validation gate for SQLx metadata and build output.
+- `just pre-merge`: deferred validation gate for build output and SQLx metadata when SQLx inputs differ from the merge target.
 - `just check-full`: local read-only gate plus deferred merge checks.
 - `just clippy-fix`: explicit opt-in command for machine-applicable clippy fixes.
 - `just test`: Rust test suite through `cargo nextest`, plus Rust doctests.

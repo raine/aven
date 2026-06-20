@@ -18,7 +18,7 @@ check-fast-readonly:
 pre-commit: check
 
 # Run checks that are deferred until workmux merge
-pre-merge: sqlx-check build
+pre-merge: sqlx-check-if-needed build
 
 # Run every check, including redundant compile gates
 check-full: check pre-merge
@@ -90,6 +90,38 @@ sqlx-check:
     scripts/quiet-check sqlx-create env DATABASE_URL="sqlite://$db" cargo sqlx database create
     scripts/quiet-check sqlx-migrate env DATABASE_URL="sqlite://$db" cargo sqlx migrate run
     scripts/quiet-check sqlx-check env DATABASE_URL="sqlite://$db" cargo sqlx prepare --check -- --all-targets --locked
+
+# Check sqlx offline query metadata when SQLx inputs changed
+sqlx-check-if-needed:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    target="${WM_TARGET_BRANCH:-main}"
+    if ! git rev-parse --verify --quiet "$target^{commit}" >/dev/null; then
+      echo "run sqlx-check: target ref '$target' not found"
+      just sqlx-check
+      exit 0
+    fi
+    mapfile -t merge_bases < <(git merge-base --all HEAD "$target" 2>/dev/null || true)
+    if [[ "${#merge_bases[@]}" -ne 1 ]]; then
+      echo "run sqlx-check: expected one merge base with '$target', got ${#merge_bases[@]}"
+      just sqlx-check
+      exit 0
+    fi
+    sqlx_paths=(
+      Cargo.lock
+      Cargo.toml
+      ':(glob)**/Cargo.toml'
+      build.rs
+      ':(glob)**/build.rs'
+      migrations
+      .sqlx
+      ':(glob)**/*.rs'
+    )
+    if git diff --quiet "${merge_bases[0]}" HEAD -- "${sqlx_paths[@]}"; then
+      echo "skip sqlx-check: SQLx inputs unchanged against $target"
+      exit 0
+    fi
+    just sqlx-check
 
 # Run installed static analysis tools
 static-analysis:
