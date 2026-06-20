@@ -192,7 +192,7 @@ fn validate_bind_policy(
                 bail!("error public-bind-requires --unsafe-public-bind");
             }
             if auth_token.is_none() {
-                bail!("error sync-auth-token-required hint=\"set sync.auth_token in config.toml\"");
+                bail!("error sync-auth-token-required hint=\"set sync.auth_token in config.yaml\"");
             }
             Ok(())
         }
@@ -1165,7 +1165,7 @@ mod tests {
             validate_bind_policy(BindScope::Public, true, None)
                 .unwrap_err()
                 .to_string(),
-            "error sync-auth-token-required hint=\"set sync.auth_token in config.toml\""
+            "error sync-auth-token-required hint=\"set sync.auth_token in config.yaml\""
         );
     }
 }

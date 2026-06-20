@@ -39,7 +39,7 @@ impl TestEnv {
     pub fn config_file(&self) -> PathBuf {
         self.config_dir()
             .join("agentic-task-manager")
-            .join("config.toml")
+            .join("config.yaml")
     }
 
     pub fn state_dir(&self) -> PathBuf {
@@ -81,21 +81,20 @@ impl TestEnv {
         auth_token: Option<&str>,
     ) {
         let auth_line = match auth_token {
-            Some(token) => format!("auth_token = \"{token}\"\n"),
+            Some(token) => format!("  auth_token: \"{token}\"\n"),
             None => String::new(),
         };
         self.write_config(&format!(
             r#"
-[local]
-db_path = "{}"
+local:
+  db_path: "{}"
 
-[sync]
-enabled = true
-server_url = "{}"
-interval_seconds = {}
-{auth_line}
-[daemon]
-wake_addr = "{}"
+sync:
+  enabled: true
+  server_url: "{}"
+  interval_seconds: {}
+{auth_line}daemon:
+  wake_addr: "{}"
 "#,
             db.display(),
             server.url,

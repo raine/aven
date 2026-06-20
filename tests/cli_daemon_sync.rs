@@ -13,9 +13,9 @@ fn daemon_reports_startup_configuration_errors() {
     let env = TestEnv::new();
     env.write_config(
         r#"
-[sync]
-enabled = false
-server_url = "http://127.0.0.1:9"
+sync:
+  enabled: false
+  server_url: "http://127.0.0.1:9"
 "#,
     );
     contains_all(
@@ -26,8 +26,8 @@ server_url = "http://127.0.0.1:9"
     let env = TestEnv::new();
     env.write_config(
         r#"
-[sync]
-enabled = true
+sync:
+  enabled: true
 "#,
     );
     contains_all(
@@ -38,12 +38,12 @@ enabled = true
     let env = TestEnv::new();
     env.write_config(
         r#"
-[sync]
-enabled = true
-server_url = "http://127.0.0.1:9"
+sync:
+  enabled: true
+  server_url: "http://127.0.0.1:9"
 
-[daemon]
-wake_addr = "not-an-address"
+daemon:
+  wake_addr: "not-an-address"
 "#,
     );
     contains_all(
@@ -54,12 +54,12 @@ wake_addr = "not-an-address"
     let env = TestEnv::new();
     env.write_config(
         r#"
-[sync]
-enabled = true
-server_url = "http://127.0.0.1:9"
+sync:
+  enabled: true
+  server_url: "http://127.0.0.1:9"
 
-[daemon]
-wake_addr = "0.0.0.0:47631"
+daemon:
+  wake_addr: "0.0.0.0:47631"
 "#,
     );
     contains_all(
@@ -76,15 +76,15 @@ fn daemon_refuses_wake_port_that_is_already_bound() {
     let _socket = UdpSocket::bind(&wake_addr).expect("bind wake addr");
     env.write_config(&format!(
         r#"
-[local]
-db_path = "{}"
+local:
+  db_path: "{}"
 
-[sync]
-enabled = true
-server_url = "http://127.0.0.1:9"
+sync:
+  enabled: true
+  server_url: "http://127.0.0.1:9"
 
-[daemon]
-wake_addr = "{}"
+daemon:
+  wake_addr: "{}"
 "#,
         db.display(),
         wake_addr
@@ -207,8 +207,8 @@ fn sync_auth_daemon_sends_token() {
     let server_env = TestEnv::new();
     server_env.write_config(
         r#"
-[sync]
-auth_token = "secret"
+sync:
+  auth_token: "secret"
 "#,
     );
     let server = TestServer::start_configured(&server_env, "server.sqlite");

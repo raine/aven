@@ -87,7 +87,7 @@ impl AppConfig {
         }
         let text = fs::read_to_string(path)
             .with_context(|| format!("could not read {}", path.display()))?;
-        toml::from_str(&text).with_context(|| format!("could not parse {}", path.display()))
+        serde_yaml::from_str(&text).with_context(|| format!("could not parse {}", path.display()))
     }
 
     pub fn sync_interval_seconds(&self) -> u64 {
@@ -130,7 +130,7 @@ pub fn config_dir_path() -> Result<PathBuf> {
 
 pub fn config_file_path() -> Result<PathBuf> {
     let mut path = config_dir_path()?;
-    path.push("config.toml");
+    path.push("config.yaml");
     Ok(path)
 }
 
@@ -181,7 +181,7 @@ pub fn write_default_config(path: &Path) -> Result<()> {
     }
     let mut config = AppConfig::default();
     config.sync.auth_token = Some(String::new());
-    let text = toml::to_string_pretty(&config)?;
+    let text = serde_yaml::to_string(&config)?;
     fs::write(path, text).with_context(|| format!("could not write {}", path.display()))?;
     Ok(())
 }

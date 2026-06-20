@@ -20,14 +20,14 @@ pub struct DaemonRunArgs {
 
 pub async fn run(args: DaemonRunArgs) -> Result<()> {
     if !args.config.sync.enabled {
-        bail!("error sync-disabled hint=\"set sync.enabled = true in config.toml\"");
+        bail!("error sync-disabled hint=\"set sync.enabled = true in config.yaml\"");
     }
     let server = args
         .config
         .sync
         .server_url
         .clone()
-        .context("error sync-server-required hint=\"set sync.server_url in config.toml\"")?;
+        .context("error sync-server-required hint=\"set sync.server_url in config.yaml\"")?;
     let wake_addr = args.config.wake_addr()?;
     let interval_seconds = args.config.sync_interval_seconds();
     let pool = open_db(&args.db_path).await?;

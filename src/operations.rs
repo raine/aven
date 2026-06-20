@@ -649,7 +649,7 @@ pub(crate) async fn resolve_conflict(
 pub(crate) fn show_config() -> Result<ConfigShowOutcome> {
     let path = config::config_file_path()?;
     let config = config::AppConfig::load()?;
-    let text = toml::to_string_pretty(&config)?;
+    let text = serde_yaml::to_string(&config)?;
     Ok(ConfigShowOutcome { path, text })
 }
 

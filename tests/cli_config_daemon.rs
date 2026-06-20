@@ -12,13 +12,13 @@ fn config_db_path_and_sync_server_are_used() {
     let db = env.db("configured.sqlite");
     env.write_config(&format!(
         r#"
-[local]
-db_path = "{}"
+local:
+  db_path: "{}"
 
-[sync]
-enabled = true
-server_url = "{}"
-interval_seconds = 30
+sync:
+  enabled: true
+  server_url: "{}"
+  interval_seconds: 30
 "#,
         db.display(),
         server.url

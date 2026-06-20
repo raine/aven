@@ -81,12 +81,12 @@ fn config_env_and_flag_precedence_for_sync_server() {
     let db = env.db("precedence.sqlite");
     env.write_config(&format!(
         r#"
-[local]
-db_path = "{}"
+local:
+  db_path: "{}"
 
-[sync]
-enabled = true
-server_url = "{}"
+sync:
+  enabled: true
+  server_url: "{}"
 "#,
         db.display(),
         server_config.url
@@ -134,8 +134,8 @@ fn db_flag_bypasses_config_except_for_sync_settings() {
     let server_env = TestEnv::new();
     server_env.write_config(
         r#"
-[sync]
-auth_token = "secret"
+sync:
+  auth_token: "secret"
 "#,
     );
     let server = TestServer::start_configured(&server_env, "server.sqlite");
@@ -145,13 +145,13 @@ auth_token = "secret"
     let flag_db = env.db("flag.sqlite");
     env.write_config(&format!(
         r#"
-[local]
-db_path = "{}"
+local:
+  db_path: "{}"
 
-[sync]
-enabled = true
-server_url = "{}"
-auth_token = "secret"
+sync:
+  enabled: true
+  server_url: "{}"
+  auth_token: "secret"
 "#,
         config_db.display(),
         server.url

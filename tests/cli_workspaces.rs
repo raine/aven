@@ -92,15 +92,14 @@ fn workspace_config_default_and_routes_select_active_workspace() {
     ok(env.atm(&db, ["workspace", "create", "alpha"]));
     ok(env.atm(&db, ["workspace", "create", "beta"]));
     env.write_config(&format!(
-        r#"[local]
-db_path = "{}"
+        r#"local:
+  db_path: "{}"
 
-[workspace]
-default = "beta"
-
-[[workspace.routes]]
-workspace = "alpha"
-paths = ["{}"]
+workspace:
+  default: "beta"
+  routes:
+    - workspace: "alpha"
+      paths: ["{}"]
 "#,
         db.display(),
         alpha_dir.display()

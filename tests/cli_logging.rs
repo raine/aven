@@ -70,8 +70,8 @@ fn sync_logging_does_not_print_auth_token() {
     let server_log = server_env.path("server.log");
     server_env.write_config(
         r#"
-[sync]
-auth_token = "super-secret-token"
+sync:
+  auth_token: "super-secret-token"
 "#,
     );
     let server = TestServer::start_configured_with_env(
@@ -88,12 +88,12 @@ auth_token = "super-secret-token"
     let db = client_env.db("client.sqlite");
     client_env.write_config(&format!(
         r#"
-[local]
-db_path = "{}"
+local:
+  db_path: "{}"
 
-[sync]
-server_url = "{}"
-auth_token = "super-secret-token"
+sync:
+  server_url: "{}"
+  auth_token: "super-secret-token"
 "#,
         db.display(),
         server.url

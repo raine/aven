@@ -276,7 +276,7 @@ fn sync_auth_config_init_includes_placeholder() {
     ok(env.atm_config(["config", "init"]));
 
     let text = std::fs::read_to_string(env.config_file()).expect("read config");
-    contains_all(&text, &["[sync]", "auth_token = \"\""]);
+    contains_all(&text, &["sync:", "auth_token: ''"]);
 }
 
 #[test]
@@ -284,8 +284,8 @@ fn sync_auth_missing_token_is_rejected() {
     let server_env = TestEnv::new();
     server_env.write_config(
         r#"
-[sync]
-auth_token = "secret"
+sync:
+  auth_token: "secret"
 "#,
     );
     let server = TestServer::start_configured(&server_env, "server.sqlite");
@@ -308,8 +308,8 @@ fn sync_auth_wrong_token_is_rejected() {
     let server_env = TestEnv::new();
     server_env.write_config(
         r#"
-[sync]
-auth_token = "secret"
+sync:
+  auth_token: "secret"
 "#,
     );
     let server = TestServer::start_configured(&server_env, "server.sqlite");
@@ -318,12 +318,12 @@ auth_token = "secret"
     let client = client_env.db("client.sqlite");
     client_env.write_config(&format!(
         r#"
-[local]
-db_path = "{}"
+local:
+  db_path: "{}"
 
-[sync]
-server_url = "{}"
-auth_token = "wrong"
+sync:
+  server_url: "{}"
+  auth_token: "wrong"
 "#,
         client.display(),
         server.url
@@ -346,8 +346,8 @@ fn sync_auth_correct_token_syncs() {
     let server_env = TestEnv::new();
     server_env.write_config(
         r#"
-[sync]
-auth_token = "secret"
+sync:
+  auth_token: "secret"
 "#,
     );
     let server = TestServer::start_configured(&server_env, "server.sqlite");
@@ -357,9 +357,9 @@ auth_token = "secret"
     let b = client_env.db("client-b.sqlite");
     client_env.write_config(&format!(
         r#"
-[sync]
-server_url = "{}"
-auth_token = "secret"
+sync:
+  server_url: "{}"
+  auth_token: "secret"
 "#,
         server.url
     ));
@@ -420,7 +420,7 @@ fn sync_auth_public_bind_requires_token_even_with_unsafe_flag() {
         &error,
         &[
             "error sync-auth-token-required",
-            "set sync.auth_token in config.toml",
+            "set sync.auth_token in config.yaml",
         ],
     );
 }
@@ -473,8 +473,8 @@ fn sync_server_bind_public_warns_when_enabled() {
     let env = TestEnv::new();
     env.write_config(
         r#"
-[sync]
-auth_token = "secret"
+sync:
+  auth_token: "secret"
 "#,
     );
     let process = TestProcess::start_server(
