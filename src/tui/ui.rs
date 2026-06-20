@@ -369,11 +369,20 @@ fn footer_bar() -> Paragraph<'static> {
 }
 
 fn render_toast(frame: &mut Frame, message: &str) {
+    let tone = toast_tone(message);
+    let content = Line::from(vec![
+        Span::styled(tone.icon, Style::new().fg(tone.color)),
+        Span::raw(" "),
+        Span::styled(
+            message.to_string(),
+            Style::new().fg(FG).add_modifier(Modifier::BOLD),
+        ),
+    ]);
     let width = (message.chars().count() as u16)
-        .saturating_add(4)
-        .clamp(18, frame.area().width.saturating_sub(4));
+        .saturating_add(7)
+        .clamp(20, frame.area().width.saturating_sub(5));
     let height = 3.min(frame.area().height);
-    let x = frame.area().right().saturating_sub(width.saturating_add(2));
+    let x = frame.area().right().saturating_sub(width.saturating_add(3));
     let y = frame
         .area()
         .bottom()
@@ -384,19 +393,58 @@ fn render_toast(frame: &mut Frame, message: &str) {
         width,
         height,
     };
+    let shadow = Rect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(1),
+        width: area.width,
+        height: area.height,
+    };
+    frame.render_widget(Clear, shadow);
+    frame.render_widget(Block::new().style(Style::new().bg(BG)), shadow);
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(message.to_string())
+        Paragraph::new(content)
             .block(
                 Block::new()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::new().fg(ORANGE))
+                    .borders(Borders::LEFT)
+                    .border_style(Style::new().fg(tone.color))
                     .padding(Padding::horizontal(1)),
             )
-            .style(Style::new().fg(FG).bg(BG_PANEL)),
+            .style(Style::new().fg(FG).bg(BG_ALT)),
         area,
     );
+}
+
+struct ToastTone {
+    icon: &'static str,
+    color: Color,
+}
+
+fn toast_tone(message: &str) -> ToastTone {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("error")
+        || lower.contains("failed")
+        || lower.contains("invalid")
+        || lower.contains("unknown")
+        || lower.contains("required")
+        || lower.starts_with("no ")
+        || lower.starts_with("nothing")
+    {
+        ToastTone {
+            icon: "!",
+            color: RED,
+        }
+    } else if lower.contains("ambiguous") || lower.contains("conflict") {
+        ToastTone {
+            icon: "•",
+            color: ORANGE,
+        }
+    } else {
+        ToastTone {
+            icon: "✓",
+            color: GREEN,
+        }
+    }
 }
 
 fn render_sidebar_overlay(
@@ -1608,6 +1656,17 @@ mod tests {
         assert!(rendered.contains(":config-paths"));
         assert!(rendered.contains(":config-init"));
         assert!(!rendered.contains("planned"));
+    }
+
+    #[test]
+    fn toast_uses_icon_and_message() {
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_toast(frame, "filters cleared"))
+            .unwrap();
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains("✓ filters cleared"));
     }
 
     #[test]
