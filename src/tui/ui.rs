@@ -619,7 +619,7 @@ fn render_task_row(
             format!(" {}", item.display_ref),
             Style::new().fg(FG_MUTED),
         )),
-        title_cell(item),
+        title_cell(item, cells[1].width as usize),
         project_cell(item),
         Line::from(Span::styled(
             format!(" {} ", item.task.status),

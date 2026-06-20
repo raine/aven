@@ -24,16 +24,35 @@ pub(crate) fn priority_short(priority: &str) -> &'static str {
     }
 }
 
-pub(crate) fn title_cell(item: &TaskListItem) -> Line<'static> {
+pub(crate) fn title_cell(item: &TaskListItem, max_width: usize) -> Line<'static> {
     let marker = if item.has_conflict { "⚡ " } else { "" };
     let deleted = if item.task.deleted { "deleted " } else { "" };
+    let content_width = max_width.saturating_sub(1);
+    let prefix_width = marker.chars().count() + deleted.chars().count();
+    let title_width = content_width.saturating_sub(prefix_width);
     let spans = vec![
         Span::styled(marker.to_string(), Style::new().fg(ORANGE)),
         Span::styled(deleted.to_string(), Style::new().fg(RED)),
         Span::styled(
-            item.task.title.clone(),
+            truncate_title(&item.task.title, title_width),
             Style::new().fg(FG).add_modifier(Modifier::BOLD),
         ),
     ];
     Line::from(spans)
+}
+
+fn truncate_title(title: &str, max_width: usize) -> String {
+    let title_len = title.chars().count();
+    if title_len <= max_width {
+        return title.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        return "…".to_string();
+    }
+    let mut truncated = title.chars().take(max_width - 1).collect::<String>();
+    truncated.push('…');
+    truncated
 }
