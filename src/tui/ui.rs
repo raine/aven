@@ -1426,9 +1426,8 @@ fn render_picker(frame: &mut Frame, state: &PickerView) {
 }
 
 fn render_project_picker(frame: &mut Frame, state: &PickerView) {
-    let visible_count = state.visible_indices.len().max(1);
     let viewport_rows = 10usize;
-    let height = (visible_count.min(viewport_rows) as u16).saturating_add(6);
+    let height = (viewport_rows as u16).saturating_add(6);
     let area = centered(frame.area(), 70, height);
     let selected_position = state
         .visible_indices
