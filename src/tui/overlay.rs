@@ -352,13 +352,22 @@ impl From<&OverlayState> for OverlayView {
 
 pub(crate) fn visible_picker_indices(state: &PickerState) -> Vec<usize> {
     let filter = state.filter.as_str().trim().to_ascii_lowercase();
+    let dashless_filter = filter.replace('-', "");
     state
         .items
         .iter()
         .enumerate()
-        .filter(|(_, item)| filter.is_empty() || item.label.to_ascii_lowercase().contains(&filter))
+        .filter(|(_, item)| picker_item_matches(item, &filter, &dashless_filter))
         .map(|(index, _)| index)
         .collect()
+}
+
+fn picker_item_matches(item: &PickerItem, filter: &str, dashless_filter: &str) -> bool {
+    if filter.is_empty() {
+        return true;
+    }
+    let label = item.label.to_ascii_lowercase();
+    label.contains(filter) || label.replace('-', "").contains(dashless_filter)
 }
 
 pub(crate) fn normalize_picker_selection(state: &mut PickerState) {
@@ -759,6 +768,40 @@ mod tests {
         state.filter = LineEdit::new("alp".to_string());
         normalize_picker_selection(&mut state);
         assert_eq!(state.selected, 0);
+        assert_eq!(visible_picker_indices(&state), vec![0]);
+    }
+
+    #[test]
+    fn picker_filter_ignores_dashes_in_labels() {
+        let state = PickerState {
+            title: "Go: project".to_string(),
+            filter: LineEdit::new("gitsur".to_string()),
+            items: vec![PickerItem {
+                label: "GS git-surgeon".to_string(),
+                value: "git-surgeon".to_string(),
+                selected: false,
+            }],
+            selected: 0,
+            multi: false,
+        };
+
+        assert_eq!(visible_picker_indices(&state), vec![0]);
+    }
+
+    #[test]
+    fn picker_filter_preserves_dash_matching() {
+        let state = PickerState {
+            title: "Pick".to_string(),
+            filter: LineEdit::new("git-sur".to_string()),
+            items: vec![PickerItem {
+                label: "GS git-surgeon".to_string(),
+                value: "git-surgeon".to_string(),
+                selected: false,
+            }],
+            selected: 0,
+            multi: false,
+        };
+
         assert_eq!(visible_picker_indices(&state), vec![0]);
     }
 
