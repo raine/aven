@@ -53,7 +53,7 @@ pub(crate) fn render(
     let [header, body, footer] = Layout::vertical([
         Constraint::Length(2),
         Constraint::Fill(1),
-        Constraint::Length(3),
+        Constraint::Length(2),
     ])
     .areas(inner);
 
@@ -69,7 +69,7 @@ pub(crate) fn render(
         render_sidebar(frame, store, widgets, view, sidebar, false);
         render_tasks(frame, store, widgets, view, main);
     }
-    frame.render_widget(footer_bar(view), footer);
+    frame.render_widget(footer_bar(), footer);
 
     if !view.pending_shortcut.is_empty()
         && !view
@@ -78,6 +78,9 @@ pub(crate) fn render(
             .is_some_and(OverlayView::captures_input)
     {
         render_prefix_hints(frame, view);
+    }
+    if let Some(message) = &view.message {
+        render_toast(frame, message);
     }
     if let Some(overlay) = &view.overlay {
         render_overlay(frame, store, widgets, overlay);
@@ -210,25 +213,8 @@ fn civil_from_unix_days(days: i64) -> (i64, u32, u32, u32) {
     (year, month as u32, day as u32, weekday as u32)
 }
 
-fn footer_bar(view: &ViewState) -> Paragraph<'static> {
-    let focus = match view.focus {
-        Focus::Sidebar => "sidebar",
-        Focus::Tasks => "tasks",
-    };
-    let message = if let Some(message) = &view.message {
-        format!("  {message}")
-    } else if !view.pending_shortcut.is_empty() {
-        format!("  pending: {}", view.pending_shortcut.join(" "))
-    } else {
-        String::new()
-    };
-    let first = Line::from(vec![
-        Span::styled("atm", Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
-        Span::raw("  "),
-        Span::styled(format!("focus {focus}"), Style::new().fg(FG_MUTED)),
-        Span::styled(message, Style::new().fg(ORANGE)),
-    ]);
-    let second = Line::from(vec![
+fn footer_bar() -> Paragraph<'static> {
+    let hints = Line::from(vec![
         key("j/k"),
         cmd("navigate"),
         key("Enter"),
@@ -246,13 +232,41 @@ fn footer_bar(view: &ViewState) -> Paragraph<'static> {
         key("q"),
         cmd("quit"),
     ]);
-    Paragraph::new(Text::from(vec![first, second]))
+    Paragraph::new(hints)
         .block(
             Block::new()
                 .borders(Borders::TOP)
                 .border_style(Style::new().fg(BORDER)),
         )
         .style(Style::new().fg(FG).bg(BG))
+}
+
+fn render_toast(frame: &mut Frame, message: &str) {
+    let width = (message.chars().count() as u16)
+        .saturating_add(4)
+        .clamp(18, frame.area().width.saturating_sub(4));
+    let height = 3.min(frame.area().height);
+    let x = frame.area().right().saturating_sub(width.saturating_add(2));
+    let y = frame.area().bottom().saturating_sub(height.saturating_add(3));
+    let area = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(message.to_string())
+            .block(
+                Block::new()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::new().fg(ORANGE))
+                    .padding(Padding::horizontal(1)),
+            )
+            .style(Style::new().fg(FG).bg(BG_PANEL)),
+        area,
+    );
 }
 
 fn render_sidebar_overlay(

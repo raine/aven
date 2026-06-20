@@ -167,7 +167,7 @@ The TUI is split into these layers:
 - `widgets.rs`: small cell helpers such as priority icons and title conflict markers.
 - `theme.rs`: colors and style helpers.
 
-The app loop draws the current view, polls keyboard input every 250 ms, dispatches keys, refreshes store data every 5 seconds, and clears expired messages. Normal keys resolve through the command catalog. Capturing overlays handle their own input before normal shortcuts. Multi-key prefixes are stored in `pending_shortcut` and rendered as hints. Single-key shortcuts execute immediately, so compatibility chords that would conflict with bare actions use shifted prefixes such as `A t`, `A n`, `A p`, and `A l`. Help remains catalog-driven and `?` is the help shortcut, which leaves `h` and `l` available for left and right navigation.
+The app loop draws the current view, polls keyboard input every 250 ms, dispatches keys, refreshes store data every 5 seconds, and clears expired messages. Normal keys resolve through the command catalog. Capturing overlays handle their own input before normal shortcuts. Multi-key prefixes are stored in `pending_shortcut` and rendered as hints, while alerts render as floating bottom-right toasts. Single-key shortcuts execute immediately, so compatibility chords that would conflict with bare actions use shifted prefixes such as `A t`, `A n`, `A p`, and `A l`. Help remains catalog-driven and `?` is the help shortcut, which leaves `h` and `l` available for left and right navigation.
 
 The TUI store calls the same operations and mutation helpers as the CLI for mutations, so TUI edits preserve change log, field version, conflict, and validation behavior. TUI query and sort state is separate from CLI list defaults.
 
