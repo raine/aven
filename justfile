@@ -66,7 +66,7 @@ check-types:
 
 # Run tests
 test:
-    @scripts/quiet-check test env RUSTFLAGS="-D warnings" cargo test --all --locked
+    @scripts/quiet-check test env SQLX_OFFLINE=true RUSTFLAGS="-D warnings" cargo test --all --locked
 
 # Generate sqlx offline query metadata
 sqlx-prepare:

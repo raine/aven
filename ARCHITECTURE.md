@@ -215,7 +215,7 @@ The repository uses `just` as the main development entrypoint:
 
 - `just pre-commit`: read-only validation gate for formatting, clippy, tests, and SQLx metadata.
 - `just check`: mutating cleanup path because it runs `clippy-fix`.
-- `just test`: Rust test suite.
+- `just test`: Rust test suite using checked-in SQLx metadata.
 - `just sqlx-prepare`: regenerate SQLx offline query metadata after migrations or query shape changes.
 - `just sqlx-check`: verify SQLx offline query metadata.
 - `just run -- ...`: run the application.
