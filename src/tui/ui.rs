@@ -17,8 +17,8 @@ use crate::tui::overlay::{
 };
 use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::theme::{
-    self, ACCENT, BG, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, GREEN, ORANGE, PINK, RED,
-    SELECTED, SELECTED_INACTIVE,
+    self, ACCENT, BG, BG_ALT, BG_PANEL, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, ORANGE, PINK,
+    RED, SELECTED, SELECTED_INACTIVE,
 };
 use crate::tui::widgets::{priority_icon, priority_short, status_chip, status_span, title_cell};
 
@@ -98,45 +98,107 @@ fn render_header(frame: &mut Frame, store: &TuiStore, area: Rect) {
     let [left, right] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(26)])
         .areas(Rect { height: 1, ..area });
 
-    frame.render_widget(header_tabs(store), left);
+    frame.render_widget(header_line(store), left);
     frame.render_widget(header_status(), right);
 }
 
-fn header_tabs(store: &TuiStore) -> Paragraph<'static> {
-    let conflict_count = store.tasks.iter().filter(|task| task.has_conflict).count();
+fn header_line(store: &TuiStore) -> Paragraph<'static> {
     let mut spans = vec![
-        Span::styled("tasks", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" aven", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        separator(),
+        Span::styled("workspace ", Style::new().fg(FG_DIM)),
         Span::styled(
-            format!("  workspace {}", store.active_workspace.key),
-            Style::new().fg(FG_MUTED),
+            store.active_workspace.key.clone(),
+            Style::new().fg(FG).add_modifier(Modifier::BOLD),
         ),
-        Span::raw("   "),
-        tab(
+        separator(),
+        Span::styled("view ", Style::new().fg(FG_DIM)),
+        view_badge(store),
+        separator(),
+        metric(
             "queue",
-            Some(store.tasks.len()),
-            store.sort_label() == "queue",
+            store.counts.all,
+            ACCENT,
+            store.active_view == SidebarTarget::All,
         ),
-        Span::raw("   "),
-        tab("projects", None, false),
-        Span::raw("   "),
-        tab("triage", Some(store.counts.inbox as usize), false),
-        Span::raw("   "),
-        tab("conflicts", Some(conflict_count), false),
+        Span::raw(" "),
+        metric(
+            "todo",
+            store.counts.todo,
+            BLUE,
+            store.active_view == SidebarTarget::Todo,
+        ),
+        Span::raw(" "),
+        metric(
+            "inbox",
+            store.counts.inbox,
+            FG_MUTED,
+            store.active_view == SidebarTarget::Inbox,
+        ),
+        Span::raw(" "),
+        metric(
+            "conflicts",
+            store.counts.conflicts,
+            PINK,
+            store.active_view == SidebarTarget::Conflicts,
+        ),
     ];
-    spans.extend(active_order_spans(store));
     spans.extend(active_filter_spans(store));
+    spans.extend(active_order_spans(store));
     Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BG))
 }
 
+fn separator() -> Span<'static> {
+    Span::styled(" │ ", Style::new().fg(BORDER))
+}
+
+fn view_badge(store: &TuiStore) -> Span<'static> {
+    Span::styled(
+        format!(" {} ", active_view_label(store)),
+        Style::new()
+            .fg(FG)
+            .bg(BG_PANEL)
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+fn active_view_label(store: &TuiStore) -> String {
+    match &store.active_view {
+        SidebarTarget::All => "today's queue".to_string(),
+        SidebarTarget::Inbox => "inbox".to_string(),
+        SidebarTarget::Active => "active".to_string(),
+        SidebarTarget::Backlog => "backlog".to_string(),
+        SidebarTarget::Todo => "todo".to_string(),
+        SidebarTarget::Conflicts => "conflicts".to_string(),
+        SidebarTarget::Project(project) => format!("project {project}"),
+    }
+}
+
+fn metric(label: &str, count: i64, color: Color, active: bool) -> Span<'static> {
+    let style = if active {
+        Style::new().fg(BG).bg(color).add_modifier(Modifier::BOLD)
+    } else {
+        Style::new()
+            .fg(color)
+            .bg(BG_PANEL)
+            .add_modifier(Modifier::BOLD)
+    };
+    Span::styled(format!(" {label} {count} "), style)
+}
+
 fn active_order_spans(store: &TuiStore) -> Vec<Span<'static>> {
-    vec![Span::styled(
-        format!(
-            "  order {} {}",
+    vec![
+        separator(),
+        Span::styled("order ", Style::new().fg(FG_DIM)),
+        Span::styled(
             store.sort_label(),
-            store.sort_direction_label()
+            Style::new().fg(FG_MUTED).add_modifier(Modifier::BOLD),
         ),
-        Style::new().fg(FG_MUTED),
-    )]
+        Span::styled(
+            format!(" {}", store.sort_direction_label()),
+            Style::new().fg(FG_DIM),
+        ),
+    ]
 }
 
 fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
@@ -165,10 +227,14 @@ fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
     if parts.is_empty() {
         Vec::new()
     } else {
-        vec![Span::styled(
-            format!("  filter {}", parts.join(" ")),
-            Style::new().fg(FG_MUTED),
-        )]
+        vec![
+            separator(),
+            Span::styled("filter ", Style::new().fg(FG_DIM)),
+            Span::styled(
+                parts.join(" "),
+                Style::new().fg(FG_MUTED).add_modifier(Modifier::BOLD),
+            ),
+        ]
     }
 }
 
@@ -403,22 +469,6 @@ fn render_tasks(
     if preview_area.height > 0 {
         render_task_preview(frame, store, widgets.table.selected(), preview_area);
     }
-}
-
-fn tab(label: &str, count: Option<usize>, active: bool) -> Span<'static> {
-    let text = match count {
-        Some(count) if count > 0 => format!(" {label} {count} "),
-        _ => format!(" {label} "),
-    };
-    let style = if active {
-        Style::new()
-            .fg(FG)
-            .bg(BG_PANEL)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::new().fg(FG_MUTED)
-    };
-    Span::styled(text, style)
 }
 
 fn key(label: &str) -> Span<'static> {
@@ -1438,6 +1488,29 @@ mod tests {
                 .join("")
         });
         assert!(rendered.contains("order priority desc"));
+    }
+
+    #[test]
+    fn header_queue_count_ignores_filtered_tasks() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rendered = rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let pool = crate::db::open_db(&dir.path().join("test.db"))
+                .await
+                .unwrap();
+            let mut store = TuiStore::new(pool).await.unwrap();
+            store.counts.all = 177;
+            store.counts.todo = 34;
+            store.tasks.clear();
+            let backend = TestBackend::new(120, 10);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| render_header(frame, &store, frame.area()))
+                .unwrap();
+            buffer_text(terminal.backend())
+        });
+        assert!(rendered.contains("queue 177"));
+        assert!(rendered.contains("todo 34"));
     }
 
     #[test]
