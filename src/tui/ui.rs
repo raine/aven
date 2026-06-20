@@ -17,8 +17,8 @@ use crate::tui::overlay::{
 };
 use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::theme::{
-    self, ACCENT, BG, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, ORANGE, PINK, RED, SELECTED,
-    SELECTED_INACTIVE,
+    self, ACCENT, BG, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, GREEN, ORANGE, PINK, RED,
+    SELECTED, SELECTED_INACTIVE,
 };
 use crate::tui::widgets::{priority_icon, priority_short, status_chip, status_span, title_cell};
 
@@ -174,7 +174,7 @@ fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
 
 fn header_status() -> Paragraph<'static> {
     Paragraph::new(Line::from(vec![
-        Span::styled("●", Style::new().fg(ACCENT)),
+        Span::styled("●", Style::new().fg(GREEN)),
         Span::styled(" local", Style::new().fg(FG_DIM)),
         Span::styled(format!("  {}", today_short()), Style::new().fg(FG_DIM)),
     ]))
@@ -927,7 +927,11 @@ pub(crate) fn help_scroll_cap(frame_height: u16) -> u16 {
     let visible_rows = frame_height.saturating_sub(4).min(28).saturating_sub(2) as usize;
     HELP_COLUMNS
         .iter()
-        .map(|sections| help_column_lines(sections).len().saturating_sub(visible_rows))
+        .map(|sections| {
+            help_column_lines(sections)
+                .len()
+                .saturating_sub(visible_rows)
+        })
         .max()
         .unwrap_or(0) as u16
 }

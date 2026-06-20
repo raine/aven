@@ -598,7 +598,10 @@ mod tests {
             row: 0,
             column: 4,
         };
-        let outcome = handle(ctrl(KeyCode::Char('s')), OverlayState::MultilineInput(state));
+        let outcome = handle(
+            ctrl(KeyCode::Char('s')),
+            OverlayState::MultilineInput(state),
+        );
         assert!(matches!(
             outcome,
             OverlayOutcome::Submitted(OverlaySubmit::Multiline { .. })
@@ -798,11 +801,9 @@ mod tests {
 
     #[test]
     fn help_scroll_stops_at_cap() {
-        let OverlayOutcome::None(OverlayState::Help { scroll }) = handle_with_help_scroll_cap(
-            key(KeyCode::Down),
-            OverlayState::Help { scroll: 2 },
-            2,
-        ) else {
+        let OverlayOutcome::None(OverlayState::Help { scroll }) =
+            handle_with_help_scroll_cap(key(KeyCode::Down), OverlayState::Help { scroll: 2 }, 2)
+        else {
             panic!("expected help overlay state");
         };
         assert_eq!(scroll, 2);

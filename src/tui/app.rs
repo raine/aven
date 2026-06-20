@@ -196,8 +196,11 @@ impl App {
     }
 
     async fn dispatch_key(&mut self, key: KeyEvent, terminal_height: u16) -> Result<()> {
-        if self.overlay_captures_input() {
-            self.handle_overlay_key_at_height(key, terminal_height).await
+        if key.code == KeyCode::Esc && !self.pending_shortcut.is_empty() {
+            self.handle_normal_key(key.code).await
+        } else if self.overlay_captures_input() {
+            self.handle_overlay_key_at_height(key, terminal_height)
+                .await
         } else {
             self.handle_normal_key(key.code).await
         }
@@ -210,7 +213,9 @@ impl App {
     }
 
     async fn handle_normal_key(&mut self, code: KeyCode) -> Result<()> {
-        if self.overlay_captures_input() {
+        if self.overlay_captures_input()
+            && (code != KeyCode::Esc || self.pending_shortcut.is_empty())
+        {
             return self
                 .handle_overlay_key(KeyEvent::new(code, KeyModifiers::NONE))
                 .await;
@@ -248,7 +253,11 @@ impl App {
         self.handle_overlay_key_at_height(key, 24).await
     }
 
-    async fn handle_overlay_key_at_height(&mut self, key: KeyEvent, terminal_height: u16) -> Result<()> {
+    async fn handle_overlay_key_at_height(
+        &mut self,
+        key: KeyEvent,
+        terminal_height: u16,
+    ) -> Result<()> {
         let Some(overlay) = self.overlay.take() else {
             return Ok(());
         };
@@ -1963,11 +1972,11 @@ mod tests {
     #[tokio::test]
     async fn esc_cancels_prefix_before_overlay() {
         let mut app = test_app().await;
-        app.overlay = Some(OverlayState::Help { scroll: 0 });
+        app.overlay = Some(OverlayState::Detail);
         app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
         app.handle_normal_key(KeyCode::Esc).await.unwrap();
         assert!(app.pending_shortcut.is_empty());
-        assert!(matches!(app.overlay, Some(OverlayState::Help { .. })));
+        assert!(matches!(app.overlay, Some(OverlayState::Detail)));
 
         app.handle_normal_key(KeyCode::Esc).await.unwrap();
         assert!(app.overlay.is_none());
