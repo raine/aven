@@ -2,7 +2,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::query::TaskListItem;
-use crate::tui::theme::{FG, ORANGE, RED};
+use crate::tui::theme::{self, FG, ORANGE, RED};
 
 pub(crate) fn priority_icon(priority: &str) -> &'static str {
     match priority {
@@ -22,6 +22,26 @@ pub(crate) fn priority_short(priority: &str) -> &'static str {
         "low" => "◌ low",
         _ => "─ none",
     }
+}
+
+pub(crate) fn status_chip(status: &str) -> Line<'static> {
+    Line::from(status_span(status))
+}
+
+pub(crate) fn status_span(status: &str) -> Span<'static> {
+    let label = match status {
+        "active" => "● active",
+        "todo" => "□ todo",
+        "inbox" => "▣ inbox",
+        "backlog" => "◌ back",
+        "done" => "✓ done",
+        "canceled" => "× cancel",
+        _ => status,
+    };
+    Span::styled(
+        format!(" {label} "),
+        theme::status_style(status).add_modifier(Modifier::BOLD),
+    )
 }
 
 pub(crate) fn title_cell(item: &TaskListItem, max_width: usize) -> Line<'static> {

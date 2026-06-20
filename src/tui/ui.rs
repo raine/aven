@@ -20,7 +20,7 @@ use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, ORANGE, PINK, RED, SELECTED,
     SELECTED_INACTIVE,
 };
-use crate::tui::widgets::{priority_icon, priority_short, title_cell};
+use crate::tui::widgets::{priority_icon, priority_short, status_chip, status_span, title_cell};
 
 #[derive(Clone)]
 pub(crate) struct ViewState {
@@ -484,7 +484,7 @@ fn render_task_list(
             Constraint::Length(12),
             Constraint::Fill(1),
             Constraint::Length(project_width),
-            Constraint::Length(8),
+            Constraint::Length(10),
             Constraint::Length(3),
             Constraint::Length(5),
         ]
@@ -621,10 +621,7 @@ fn render_task_row(
         )),
         title_cell(item, cells[1].width as usize),
         project_cell(item),
-        Line::from(Span::styled(
-            format!(" {} ", item.task.status),
-            theme::status_style(&item.task.status).add_modifier(Modifier::BOLD),
-        )),
+        status_chip(&item.task.status),
         Line::from(Span::styled(
             priority_icon(&item.task.priority),
             theme::priority_style(&item.task.priority).add_modifier(Modifier::BOLD),
@@ -744,10 +741,7 @@ fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usi
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled("  status ", Style::new().fg(FG_DIM)),
-            Span::styled(
-                format!(" {} ", item.task.status),
-                theme::status_style(&item.task.status).add_modifier(Modifier::BOLD),
-            ),
+            status_span(&item.task.status),
             Span::styled("  priority ", Style::new().fg(FG_DIM)),
             Span::styled(
                 priority_short(&item.task.priority),
