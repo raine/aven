@@ -919,19 +919,9 @@ fn render_search(frame: &mut Frame, input: &str) {
     render_overlay_paragraph(frame, area, "Search", format!("/{input}▌"), false);
 }
 
-fn render_overlay(
-    frame: &mut Frame,
-    store: &TuiStore,
-    widgets: &mut WidgetState,
-    overlay: &OverlayView,
-) {
+fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
     match overlay {
         OverlayView::Help => render_help(frame),
-        OverlayView::Detail => {
-            if let Some(task) = store.selected_task(widgets.table.selected()) {
-                render_detail(frame, task);
-            }
-        }
         OverlayView::Search { input } => render_search(frame, input),
         OverlayView::Command { input } => render_command(frame, input),
         OverlayView::TextInput(state) => render_text_input(frame, state),
@@ -939,7 +929,23 @@ fn render_overlay(
         OverlayView::Picker(state) => render_picker(frame, state),
         OverlayView::Confirm(state) => render_confirm(frame, state),
         OverlayView::TextPanel(state) => render_text_panel(frame, state),
+        OverlayView::Detail => {}
     }
+}
+
+fn render_overlay(
+    frame: &mut Frame,
+    store: &TuiStore,
+    widgets: &mut WidgetState,
+    overlay: &OverlayView,
+) {
+    if matches!(overlay, OverlayView::Detail) {
+        if let Some(task) = store.selected_task(widgets.table.selected()) {
+            render_detail(frame, task);
+        }
+        return;
+    }
+    render_overlay_content(frame, overlay);
 }
 
 fn render_text_input(frame: &mut Frame, state: &TextInputView) {
@@ -1126,13 +1132,7 @@ fn render_prefix_hints(frame: &mut Frame, view: &ViewState) {
     let area = centered(frame.area(), 72, height);
     frame.render_widget(Clear, area);
     let title = format!("{} …", view.pending_shortcut.join(" "));
-    let block = Block::new()
-        .title(Line::from(title))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(ACCENT))
-        .padding(Padding::horizontal(1))
-        .style(Style::new().bg(BG_ALT));
+    let block = overlay_block(&title);
     frame.render_widget(
         Paragraph::new(Text::from(lines.into_iter().take(8).collect::<Vec<_>>()))
             .block(block)
@@ -1176,17 +1176,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| match &overlay {
-                OverlayView::Help => render_help(frame),
-                OverlayView::Search { input } => render_search(frame, input),
-                OverlayView::Command { input } => render_command(frame, input),
-                OverlayView::TextInput(state) => render_text_input(frame, state),
-                OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
-                OverlayView::Picker(state) => render_picker(frame, state),
-                OverlayView::Confirm(state) => render_confirm(frame, state),
-                OverlayView::TextPanel(state) => render_text_panel(frame, state),
-                OverlayView::Detail => {}
-            })
+            .draw(|frame| render_overlay_content(frame, &overlay))
             .unwrap();
         buffer_text(terminal.backend())
     }
