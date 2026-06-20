@@ -616,7 +616,7 @@ fn render_task_row(
     let cells = Layout::horizontal(columns).areas::<6>(area);
     let values = [
         Line::from(Span::styled(
-            item.display_ref.clone(),
+            format!(" {}", item.display_ref),
             Style::new().fg(FG_MUTED),
         )),
         title_cell(item),
