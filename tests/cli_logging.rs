@@ -137,33 +137,6 @@ auth_token = "super-secret-token"
     );
 }
 
-fn write_daemon_config(
-    env: &TestEnv,
-    db: &std::path::Path,
-    server: &TestServer,
-    wake_addr: &str,
-    interval: u64,
-) {
-    env.write_config(&format!(
-        r#"
-[local]
-db_path = "{}"
-
-[sync]
-enabled = true
-server_url = "{}"
-interval_seconds = {}
-
-[daemon]
-wake_addr = "{}"
-"#,
-        db.display(),
-        server.url,
-        interval,
-        wake_addr
-    ));
-}
-
 #[test]
 fn daemon_file_logging_records_sync_without_user_content() {
     let env = TestEnv::new();
@@ -171,7 +144,7 @@ fn daemon_file_logging_records_sync_without_user_content() {
     let db = env.db("client.sqlite");
     let wake_addr = env.free_loopback_addr();
     let log = env.path("daemon.log");
-    write_daemon_config(&env, &db, &server, &wake_addr, 3600);
+    env.write_daemon_config(&db, &server, &wake_addr, 3600);
 
     let daemon = TestProcess::start_daemon_with_env(
         &env,

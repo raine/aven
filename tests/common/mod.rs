@@ -55,6 +55,33 @@ impl TestEnv {
         std::fs::write(path, text).expect("write config");
     }
 
+    pub fn write_daemon_config(
+        &self,
+        db: &Path,
+        server: &TestServer,
+        wake_addr: &str,
+        interval: u64,
+    ) {
+        self.write_config(&format!(
+            r#"
+[local]
+db_path = "{}"
+
+[sync]
+enabled = true
+server_url = "{}"
+interval_seconds = {}
+
+[daemon]
+wake_addr = "{}"
+"#,
+            db.display(),
+            server.url,
+            interval,
+            wake_addr
+        ));
+    }
+
     pub fn atm_config<I, S>(&self, args: I) -> Output
     where
         I: IntoIterator<Item = S>,
@@ -385,6 +412,21 @@ fn test_runtime() -> tokio::runtime::Runtime {
         .enable_all()
         .build()
         .expect("create tokio runtime")
+}
+
+pub async fn insert_task_fixtures(pool: &sqlx::SqlitePool, fixtures: &[(&str, &str, &str)]) {
+    for (id, title, project_key) in fixtures {
+        sqlx::query(
+            "INSERT INTO tasks(id,title,description,project_key,status,priority,created_at,updated_at)
+             VALUES (?, ?, '', ?, 'inbox', 'none', 't', 't')",
+        )
+        .bind(id)
+        .bind(title)
+        .bind(project_key)
+        .execute(pool)
+        .await
+        .expect("insert task fixture");
+    }
 }
 
 async fn open_test_db(db: &Path) -> SqliteConnection {

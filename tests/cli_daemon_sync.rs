@@ -8,33 +8,6 @@ use common::{
     ok,
 };
 
-fn write_daemon_config(
-    env: &TestEnv,
-    db: &std::path::Path,
-    server: &TestServer,
-    wake_addr: &str,
-    interval: u64,
-) {
-    env.write_config(&format!(
-        r#"
-[local]
-db_path = "{}"
-
-[sync]
-enabled = true
-server_url = "{}"
-interval_seconds = {}
-
-[daemon]
-wake_addr = "{}"
-"#,
-        db.display(),
-        server.url,
-        interval,
-        wake_addr
-    ));
-}
-
 #[test]
 fn daemon_reports_startup_configuration_errors() {
     let env = TestEnv::new();
@@ -133,7 +106,7 @@ fn daemon_wake_syncs_representative_mutations() {
     let client_a = env.db("client-a.sqlite");
     let client_b = env.db("client-b.sqlite");
     let wake_addr = env.free_loopback_addr();
-    write_daemon_config(&env, &client_a, &server, &wake_addr, 3600);
+    env.write_daemon_config(&client_a, &server, &wake_addr, 3600);
 
     let daemon = TestProcess::start_daemon(&env);
     daemon.wait_for_log("daemon-synced", Duration::from_secs(5));
@@ -173,7 +146,7 @@ fn daemon_periodic_syncs_without_wake() {
     let client_a = env.db("client-a.sqlite");
     let client_b = env.db("client-b.sqlite");
     let wake_addr = env.free_loopback_addr();
-    write_daemon_config(&env, &client_a, &server, &wake_addr, 1);
+    env.write_daemon_config(&client_a, &server, &wake_addr, 1);
 
     let daemon = TestProcess::start_daemon(&env);
     daemon.wait_for_log("daemon-synced", Duration::from_secs(5));
@@ -197,8 +170,8 @@ fn two_daemons_converge_bidirectionally() {
     let server = TestServer::start(&root);
     let client_a = env_a.db("client-a.sqlite");
     let client_b = env_b.db("client-b.sqlite");
-    write_daemon_config(&env_a, &client_a, &server, &env_a.free_loopback_addr(), 1);
-    write_daemon_config(&env_b, &client_b, &server, &env_b.free_loopback_addr(), 1);
+    env_a.write_daemon_config(&client_a, &server, &env_a.free_loopback_addr(), 1);
+    env_b.write_daemon_config(&client_b, &server, &env_b.free_loopback_addr(), 1);
 
     let daemon_a = TestProcess::start_daemon(&env_a);
     let daemon_b = TestProcess::start_daemon(&env_b);

@@ -2,7 +2,7 @@ mod common;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
-use common::{TestEnv, contains_all, extract_ref, fail, ok, suffix};
+use common::{TestEnv, contains_all, extract_ref, fail, insert_task_fixtures, ok, suffix};
 
 fn first_tokens(output: &str) -> Vec<&str> {
     output
@@ -49,22 +49,15 @@ async fn display_refs_use_project_prefix_and_unique_suffix_floor() {
         .connect_with(SqliteConnectOptions::new().filename(&db))
         .await
         .unwrap();
-    for (id, title, project) in [
-        ("W3ZX111111111111", "app shared", "app"),
-        ("W3ZX222222222222", "ops shared", "ops"),
-        ("A111111111111111", "short unique", "app"),
-    ] {
-        sqlx::query(
-            "INSERT INTO tasks(id,title,description,project_key,status,priority,created_at,updated_at)
-             VALUES (?, ?, '', ?, 'inbox', 'none', 't', 't')",
-        )
-        .bind(id)
-        .bind(title)
-        .bind(project)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
+    insert_task_fixtures(
+        &pool,
+        &[
+            ("W3ZX111111111111", "app shared", "app"),
+            ("W3ZX222222222222", "ops shared", "ops"),
+            ("A111111111111111", "short unique", "app"),
+        ],
+    )
+    .await;
 
     let list = ok(env.atm(&db, ["list", "--all"]));
     assert_eq!(first_tokens(&list), ["APP-W3ZX1", "OPS-W3ZX2", "APP-A111"]);
@@ -82,21 +75,14 @@ async fn displayed_refs_resolve_after_filtering() {
         .connect_with(SqliteConnectOptions::new().filename(&db))
         .await
         .unwrap();
-    for (id, title, project) in [
-        ("W3ZX111111111111", "app shared", "app"),
-        ("W3ZX222222222222", "ops shared", "ops"),
-    ] {
-        sqlx::query(
-            "INSERT INTO tasks(id,title,description,project_key,status,priority,created_at,updated_at)
-             VALUES (?, ?, '', ?, 'inbox', 'none', 't', 't')",
-        )
-        .bind(id)
-        .bind(title)
-        .bind(project)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
+    insert_task_fixtures(
+        &pool,
+        &[
+            ("W3ZX111111111111", "app shared", "app"),
+            ("W3ZX222222222222", "ops shared", "ops"),
+        ],
+    )
+    .await;
 
     let list = ok(env.atm(&db, ["list", "--project", "app"]));
     assert_eq!(first_tokens(&list), ["APP-W3ZX1"]);
