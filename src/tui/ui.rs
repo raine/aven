@@ -99,7 +99,7 @@ fn render_header(frame: &mut Frame, store: &TuiStore, area: Rect) {
         area,
     );
     let content_area = Rect { height: 1, ..area };
-    if area.width >= 140 {
+    if area.width >= 100 {
         let [left, right] =
             Layout::horizontal([Constraint::Fill(1), Constraint::Length(26)]).areas(content_area);
         frame.render_widget(header_line(store, left.width), left);
@@ -210,6 +210,17 @@ fn active_view_label(store: &TuiStore) -> String {
     }
 }
 
+fn active_view_status_matches(store: &TuiStore, status: &str) -> bool {
+    matches!(
+        (&store.active_view, status),
+        (SidebarTarget::Inbox, "inbox")
+            | (SidebarTarget::Active, "active")
+            | (SidebarTarget::Backlog, "backlog")
+            | (SidebarTarget::Todo, "todo")
+            | (SidebarTarget::Done, "done")
+    )
+}
+
 fn metric(label: &str, count: i64, color: Color, active: bool) -> Span<'static> {
     let style = if active {
         Style::new().fg(BG).bg(color).add_modifier(Modifier::BOLD)
@@ -245,7 +256,9 @@ fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
     if let Some(label) = &store.filters.label {
         parts.push(format!("label={label}"));
     }
-    if let Some(status) = &store.filters.status {
+    if let Some(status) = &store.filters.status
+        && !active_view_status_matches(store, status)
+    {
         parts.push(format!("status={status}"));
     }
     if let Some(priority) = &store.filters.priority {
@@ -1600,6 +1613,26 @@ mod tests {
     }
 
     #[test]
+    fn header_hides_status_filter_for_matching_view() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rendered = rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let pool = crate::db::open_db(&dir.path().join("test.db"))
+                .await
+                .unwrap();
+            let mut store = TuiStore::new(pool).await.unwrap();
+            store.active_view = SidebarTarget::Backlog;
+            store.filters.status = Some("backlog".to_string());
+            active_filter_spans(&store)
+                .into_iter()
+                .map(|span| span.content)
+                .collect::<Vec<_>>()
+                .join("")
+        });
+        assert!(!rendered.contains("status=backlog"));
+    }
+
+    #[test]
     fn header_shows_active_ordering() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let rendered = rt.block_on(async {
@@ -1701,7 +1734,7 @@ mod tests {
                 .unwrap();
             let mut store = TuiStore::new(pool).await.unwrap();
             store.active_workspace.key = "client-work".to_string();
-            let backend = TestBackend::new(120, 10);
+            let backend = TestBackend::new(150, 10);
             let mut terminal = Terminal::new(backend).unwrap();
             terminal
                 .draw(|frame| render_header(frame, &store, frame.area()))
