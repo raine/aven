@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::{ensure, Result, bail};
 use serde_json::json;
 use sqlx::SqliteConnection;
 use tracing::{debug, info};
@@ -115,7 +115,7 @@ pub(crate) async fn apply_field_value_in_workspace(
 ) -> Result<()> {
     let ts = now();
     let deleted_value = value.parse::<i64>().unwrap_or(0);
-    match field {
+    let rows_affected = match field {
         "title" => sqlx::query(
             "UPDATE tasks SET title = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
         )
@@ -187,5 +187,11 @@ pub(crate) async fn apply_field_value_in_workspace(
         .rows_affected(),
         _ => bail!("error unknown-field field={field}"),
     };
+    ensure!(
+        rows_affected == 1,
+        "error task-not-found task_id={} workspace_id={}",
+        task_id,
+        workspace_id
+    );
     Ok(())
 }

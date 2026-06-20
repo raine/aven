@@ -46,8 +46,16 @@ pub(crate) fn active_workspace_id() -> String {
 }
 
 pub(crate) async fn ensure_default_workspace(conn: &mut SqliteConnection) -> Result<Workspace> {
-    if let Some(workspace) = find_workspace(conn, "default").await? {
-        return Ok(workspace);
+    if let Some(row) = sqlx::query("SELECT id, key, name FROM workspaces WHERE id = ?")
+        .bind(DEFAULT_WORKSPACE_ID)
+        .fetch_optional(&mut *conn)
+        .await?
+    {
+        return Ok(Workspace {
+            id: row.get("id"),
+            key: row.get("key"),
+            name: row.get("name"),
+        });
     }
     let id = DEFAULT_WORKSPACE_ID.to_string();
     let ts = now();

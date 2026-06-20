@@ -177,10 +177,8 @@ pub(crate) async fn display_refs_for_tasks(
 }
 
 pub(crate) async fn display_suffix(conn: &mut SqliteConnection, id: &str) -> Result<String> {
-    let ids = sqlx::query_scalar::<_, String>("SELECT id FROM tasks ORDER BY id")
-        .fetch_all(&mut *conn)
-        .await?;
-    Ok(display_suffix_for_id(id, &ids))
+    let workspace_id = crate::workspaces::active_workspace_id();
+    display_suffix_for_workspace(conn, &workspace_id, id).await
 }
 
 async fn display_suffix_for_workspace(

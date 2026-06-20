@@ -151,6 +151,140 @@ paths = ["{}"]
 }
 
 #[test]
+fn project_path_remove_only_affects_active_workspace() {
+    let env = TestEnv::new();
+    let db = env.db("paths.sqlite");
+    let mapped = env.path("mapped");
+    std::fs::create_dir_all(&mapped).expect("create mapped dir");
+
+    ok(env.atm(&db, ["workspace", "create", "alpha"]));
+    ok(env.atm(&db, ["workspace", "create", "beta"]));
+    ok(env.atm(&db, ["--workspace", "alpha", "project", "create", "app"]));
+    ok(env.atm(&db, ["--workspace", "beta", "project", "create", "app"]));
+    ok(env.atm(&db, [
+        "--workspace",
+        "alpha",
+        "project",
+        "path",
+        "add",
+        "app",
+        mapped.to_str().expect("utf8 path"),
+    ]));
+    ok(env.atm(&db, [
+        "--workspace",
+        "beta",
+        "project",
+        "path",
+        "add",
+        "app",
+        mapped.to_str().expect("utf8 path"),
+    ]));
+
+    ok(env.atm(&db, [
+        "--workspace",
+        "alpha",
+        "project",
+        "path",
+        "remove",
+        "app",
+        mapped.to_str().expect("utf8 path"),
+    ]));
+
+    let beta_ref = extract_ref(&ok(env.atm_in(
+        &db,
+        &mapped,
+        ["--workspace", "beta", "add", "beta inferred"],
+    )));
+    let beta = ok(env.atm(&db, ["--workspace", "beta", "show", &beta_ref, "--full"]));
+    contains_all(&beta, &["project=app"]);
+
+    let alpha_error = fail(env.atm_in(
+        &db,
+        &mapped,
+        ["--workspace", "alpha", "add", "alpha inferred"],
+    ));
+    contains_all(&alpha_error, &["project-required"]);
+}
+
+#[test]
+fn display_suffix_ignores_other_workspaces() {
+    let env = TestEnv::new();
+    let db = env.db("suffixes.sqlite");
+
+    ok(env.atm(&db, ["workspace", "create", "alpha"]));
+    ok(env.atm(&db, ["workspace", "create", "beta"]));
+    let alpha_id = "ABCD000000000000";
+    let beta_id = "ABCDE00000000000";
+    let sql = "
+        INSERT INTO projects(workspace_id, key, name, prefix, created_at, updated_at)
+        SELECT id, 'app', 'app', 'APP', 't', 't' FROM workspaces WHERE key IN ('alpha', 'beta');
+        INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at)
+        SELECT id, 'ABCD000000000000', 'alpha task', '', 'app', 'inbox', 'none', 't', 't' FROM workspaces WHERE key = 'alpha';
+        INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at)
+        SELECT id, 'ABCDE00000000000', 'beta task', '', 'app', 'inbox', 'none', 't', 't' FROM workspaces WHERE key = 'beta';
+        INSERT INTO conflicts(workspace_id, task_id, field, local_value, remote_value, remote_change_id, variant_a, variant_b, created_at)
+        SELECT id, 'ABCD000000000000', 'title', 'local', 'remote', 'REMOTECHANGE0000', 'a', 'b', 't' FROM workspaces WHERE key = 'alpha';
+    ";
+    let output = std::process::Command::new("sqlite3")
+        .arg(&db)
+        .arg(sql)
+        .output()
+        .expect("seed suffix data");
+    assert!(output.status.success(), "sqlite failed");
+
+    let conflicts = ok(env.atm(&db, ["--workspace", "alpha", "conflict", "list"]));
+    contains_all(&conflicts, &["APP-ABCD", "alpha task"]);
+    contains_none(&conflicts, &["APP-ABCD0", beta_id, alpha_id]);
+}
+
+#[test]
+fn renamed_default_workspace_still_opens_database() {
+    let env = TestEnv::new();
+    let db = env.db("renamed-default.sqlite");
+
+    ok(env.atm(&db, ["workspace", "rename", "default", "personal"]));
+    let workspaces = ok(env.atm(&db, ["workspace", "list"]));
+    contains_all(&workspaces, &["personal", "name=\"personal\""]);
+}
+
+#[test]
+fn sync_rejects_field_updates_for_missing_tasks() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let client = env.db("client.sqlite");
+    ok(env.atm(&client, ["workspace", "create", "client"]));
+
+    let workspace_id = {
+        let output = std::process::Command::new("sqlite3")
+            .arg(&client)
+            .arg("SELECT id FROM workspaces WHERE key = 'client'")
+            .output()
+            .expect("read workspace id");
+        assert!(output.status.success(), "sqlite failed");
+        String::from_utf8(output.stdout)
+            .expect("utf8 workspace id")
+            .trim()
+            .to_string()
+    };
+    let server_db = env.path("server.sqlite");
+    ok(env.atm(&server_db, ["workspace", "list"]));
+    let sql = format!(
+        "INSERT OR IGNORE INTO workspaces(id, key, name, created_at, updated_at) VALUES ('{workspace_id}', 'client', 'client', 't', 't');\
+         INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field, op_type, payload, base_version, created_at, server_seq)\
+         VALUES ('REMOTECHANGE0002', 'remote', 1, 'task', '0123456789ABCDE0', 'title', 'set_field', json_object('workspace_id', '{workspace_id}', 'workspace_key', 'client', 'value', 'ghost'), NULL, 't', 1);"
+    );
+    let output = std::process::Command::new("sqlite3")
+        .arg(&server_db)
+        .arg(sql)
+        .output()
+        .expect("seed remote change");
+    assert!(output.status.success(), "sqlite failed");
+
+    let error = fail(env.atm(&client, ["sync", "--server", &server.url]));
+    contains_all(&error, &["task-not-found"]);
+}
+
+#[test]
 fn sync_converges_workspace_records_and_scoped_tasks() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
