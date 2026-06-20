@@ -27,9 +27,7 @@ fn workspace_commands_manage_names_and_ambiguity() {
         &["renamed-workspace", "consulting", "name=\"Consulting\""],
     );
 
-    let ambiguous = fail(env.atm(&db, ["list"]));
-    contains_all(&ambiguous, &["workspace-required", "--workspace"]);
-
+    ok(env.atm(&db, ["list"]));
     ok(env.atm(&db, ["--workspace", "default", "list"]));
     ok(env.atm(&db, ["--workspace", "consulting", "list"]));
 }

@@ -45,7 +45,7 @@
 7. `tui` hands the open pool to `tui::run`.
 8. Successful mutating CLI commands wake the daemon when sync is enabled and a loopback wake address is configured.
 
-`--db` selects the database path but commands still load config so workspace routes, workspace defaults, sync settings, and daemon settings remain available. Active workspace resolution uses `--workspace`, then the longest matching config route, then `workspace.default`, then the only workspace in the database. Commands fail with `workspace-required` when multiple workspaces exist and no active workspace can be inferred.
+`--db` selects the database path but commands still load config so workspace routes, workspace defaults, sync settings, and daemon settings remain available. Active workspace resolution uses `--workspace`, then the longest matching config route, then `workspace.default`, then the built-in default workspace, then the only workspace in the database. Commands fail with `workspace-required` only when the default workspace is unavailable and no active workspace can be inferred.
 
 CLI commands cover task add, show, list, update, note, delete, restore, projects, labels, project paths, workspace management, conflict list or show or resolve, config, daemon, server, sync, and TUI.
 
