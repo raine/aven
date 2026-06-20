@@ -213,14 +213,17 @@ Use `src/input.rs` so inline, file, and stdin sources remain mutually exclusive 
 
 The repository uses `just` as the main development entrypoint:
 
-- `just pre-commit`: read-only validation gate for formatting, clippy, tests, and SQLx metadata.
-- `just check`: mutating cleanup path because it runs `clippy-fix`.
-- `just test`: Rust test suite using checked-in SQLx metadata.
+- `just pre-commit`: read-only validation gate for formatting, static analysis, clippy, and tests.
+- `just check`: local read-only validation gate, equivalent to `just pre-commit`.
+- `just pre-merge`: deferred validation gate for SQLx metadata and build output.
+- `just check-full`: local read-only gate plus deferred merge checks.
+- `just clippy-fix`: explicit opt-in command for machine-applicable clippy fixes.
+- `just test`: Rust test suite through `cargo nextest`, plus Rust doctests.
 - `just sqlx-prepare`: regenerate SQLx offline query metadata after migrations or query shape changes.
 - `just sqlx-check`: verify SQLx offline query metadata.
 - `just run -- ...`: run the application.
 
-The pre-commit hook also runs `git-format-staged` before `just clippy-fix pre-commit`. Local project instructions say cargo format and tests run automatically on commit.
+The pre-commit hook runs `git-format-staged`, hides unstaged changes while validation runs, and suggests `just clippy-fix` if clippy reports fixable lints. Workmux runs `just pre-merge` before merging. Local project instructions say cargo format and tests run automatically on commit.
 
 Tests live mostly in `tests/` and use `tests/common/mod.rs` for temp directories, config files, databases, spawned daemons or servers, and stdout or stderr assertions. There is no dedicated fixtures directory; tests usually create data programmatically or through temp files.
 

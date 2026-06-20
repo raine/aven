@@ -18,7 +18,7 @@ check-fast-readonly:
 pre-commit: check
 
 # Run checks that are deferred until workmux merge
-pre-merge: sqlx-check check-types build
+pre-merge: sqlx-check build
 
 # Run every check, including redundant compile gates
 check-full: check pre-merge
@@ -29,7 +29,7 @@ install-hooks:
 
 # Install local tools used by quality gates
 install-quality-tools:
-    cargo install cargo-deny cargo-machete cargo-nextest
+    cargo install cargo-deny cargo-machete cargo-nextest sqlx-cli
 
 # Run the full gate and fail if there are uncommitted changes
 check-ci: check-full
@@ -69,6 +69,7 @@ check-types:
 # Run tests
 test:
     @scripts/quiet-check test env SQLX_OFFLINE=true cargo nextest run --all-targets --locked --no-fail-fast
+    @scripts/quiet-check doc-test env SQLX_OFFLINE=true cargo test --doc --locked
 
 # Generate sqlx offline query metadata
 sqlx-prepare:

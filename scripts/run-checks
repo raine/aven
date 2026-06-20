@@ -72,15 +72,6 @@ run_check() {
     format-check) cargo fmt --all -- --check ;;
     cargo-deny) cargo deny check ;;
     cargo-machete) cargo machete --with-metadata ;;
-    clippy) cargo clippy --all-targets -- -D warnings -D clippy::all ;;
-    test) env SQLX_OFFLINE=true cargo nextest run --all-targets --locked --no-fail-fast ;;
-    sqlx-check)
-      local db="target/sqlx-check.sqlite"
-      rm -f "$db"
-      env DATABASE_URL="sqlite://$db" cargo sqlx database create
-      env DATABASE_URL="sqlite://$db" cargo sqlx migrate run
-      env DATABASE_URL="sqlite://$db" cargo sqlx prepare --check -- --all-targets --locked
-      ;;
     *)
       echo "unknown check: $check" >&2
       return 2
@@ -96,9 +87,6 @@ cleanup() {
       kill "$pid" >/dev/null 2>&1 || true
     fi
   done
-  if [[ -n "${timer_pid:-}" ]]; then
-    kill "$timer_pid" >/dev/null 2>&1 || true
-  fi
   if [[ "${cursor_hidden:-0}" -eq 1 ]]; then
     printf '%s[?25h' "$esc" >&2
   fi

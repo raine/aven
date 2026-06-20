@@ -7,7 +7,31 @@ if ! command -v git-format-staged >/dev/null 2>&1; then
   exit 1
 fi
 
+stash_created=0
+
+restore_unstaged() {
+  local status=$?
+  if [[ "$stash_created" -eq 1 ]]; then
+    if ! git stash pop --quiet; then
+      echo "error: failed to restore unstaged changes after pre-commit checks" >&2
+      echo "resolve the stash conflict, then run git stash drop when finished" >&2
+      status=1
+    fi
+  fi
+  exit "$status"
+}
+trap restore_unstaged EXIT
+
+hide_unstaged_changes() {
+  if git diff --quiet --ignore-submodules -- && [[ -z "$(git ls-files --others --exclude-standard)" ]]; then
+    return 0
+  fi
+  git stash push --quiet --keep-index --include-untracked -m "pre-commit unstaged changes"
+  stash_created=1
+}
+
 git-format-staged
+hide_unstaged_changes
 
 if ! just pre-commit; then
   echo "pre-commit checks failed" >&2
