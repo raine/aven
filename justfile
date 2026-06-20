@@ -7,19 +7,21 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Run all checks without changing files
-check:
-    @scripts/run-checks format-check static-analysis clippy test sqlx-check
+# Run the local read-only check set
+check: check-fast-readonly clippy test
 
 # Run cheap read-only checks in parallel
-[parallel]
-check-fast-readonly: format-check static-analysis
+check-fast-readonly:
+    @scripts/run-checks format-check static-analysis
 
 # Run commit-time checks without mutating files
 pre-commit: check
 
+# Run checks that are deferred until workmux merge
+pre-merge: sqlx-check check-types build
+
 # Run every check, including redundant compile gates
-check-full: check check-types build
+check-full: check pre-merge
 
 # Configure Git to use the repository hooks
 install-hooks:
@@ -27,10 +29,10 @@ install-hooks:
 
 # Install local tools used by quality gates
 install-quality-tools:
-    cargo install cargo-deny cargo-machete
+    cargo install cargo-deny cargo-machete cargo-nextest
 
-# Run check and fail if there are uncommitted changes (for CI)
-check-ci: check
+# Run the full gate and fail if there are uncommitted changes
+check-ci: check-full
     #!/usr/bin/env bash
     set -euo pipefail
     if ! git diff --quiet || ! git diff --cached --quiet; then
@@ -58,15 +60,15 @@ clippy-fix:
 
 # Build the project
 build:
-    @scripts/quiet-check build env RUSTFLAGS="-D warnings" cargo build --all --locked
+    @scripts/quiet-check build cargo build --all --locked
 
 # Type-check all targets without producing final artifacts
 check-types:
-    @scripts/quiet-check check-types env RUSTFLAGS="-D warnings" cargo check --all-targets --locked
+    @scripts/quiet-check check-types cargo check --all-targets --locked
 
 # Run tests
 test:
-    @scripts/quiet-check test env SQLX_OFFLINE=true RUSTFLAGS="-D warnings" cargo test --all --locked
+    @scripts/quiet-check test env SQLX_OFFLINE=true cargo nextest run --all-targets --locked --no-fail-fast
 
 # Generate sqlx offline query metadata
 sqlx-prepare:
@@ -86,7 +88,7 @@ sqlx-check:
     rm -f "$db"
     scripts/quiet-check sqlx-create env DATABASE_URL="sqlite://$db" cargo sqlx database create
     scripts/quiet-check sqlx-migrate env DATABASE_URL="sqlite://$db" cargo sqlx migrate run
-    scripts/quiet-check sqlx-check env DATABASE_URL="sqlite://$db" cargo sqlx prepare --check -- --all-targets
+    scripts/quiet-check sqlx-check env DATABASE_URL="sqlite://$db" cargo sqlx prepare --check -- --all-targets --locked
 
 # Run installed static analysis tools
 static-analysis:

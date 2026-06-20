@@ -1,3 +1,6 @@
 files:
   symlink:
     - CLAUDE.local.md
+
+pre_merge:
+  - just pre-merge

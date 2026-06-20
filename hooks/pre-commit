@@ -7,79 +7,11 @@ if ! command -v git-format-staged >/dev/null 2>&1; then
   exit 1
 fi
 
-staged_paths=()
-while IFS= read -r -d '' path; do
-  staged_paths+=("$path")
-done < <(git diff --cached --name-only -z --diff-filter=ACMR -- '*.rs')
-
-stash_created=0
-
-restore_unstaged() {
-  local status=$?
-  if [[ "$stash_created" -eq 1 ]]; then
-    if ! git stash pop --quiet; then
-      echo "error: failed to restore unstaged changes after pre-commit checks" >&2
-      echo "resolve the stash conflict, then run git stash drop when finished" >&2
-      status=1
-    fi
-  fi
-  exit "$status"
-}
-trap restore_unstaged EXIT
-
-path_is_staged() {
-  local candidate="$1"
-  local path
-  for path in "${staged_paths[@]}"; do
-    if [[ "$path" == "$candidate" ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-hide_unstaged_changes() {
-  if git diff --quiet --ignore-submodules --; then
-    return 0
-  fi
-  git stash push --quiet --keep-index -m "pre-commit unstaged changes"
-  stash_created=1
-}
-
-run_clippy_fix() {
-  if [[ ${#staged_paths[@]} -eq 0 ]]; then
-    return 0
-  fi
-
-  just clippy-fix
-
-  changed_paths=()
-  while IFS= read -r -d '' path; do
-    changed_paths+=("$path")
-  done < <(git diff --name-only -z)
-
-  if [[ ${#changed_paths[@]} -eq 0 ]]; then
-    return 0
-  fi
-
-  unexpected_paths=()
-  for path in "${changed_paths[@]}"; do
-    if ! path_is_staged "$path"; then
-      unexpected_paths+=("$path")
-    fi
-  done
-
-  if [[ ${#unexpected_paths[@]} -gt 0 ]]; then
-    echo "error: clippy fixed files that were not staged:" >&2
-    printf '  %s\n' "${unexpected_paths[@]}" >&2
-    echo "stage those fixes explicitly before committing" >&2
-    return 1
-  fi
-
-  git add -- "${changed_paths[@]}"
-}
-
 git-format-staged
-hide_unstaged_changes
-run_clippy_fix
-just pre-commit
+
+if ! just pre-commit; then
+  echo "pre-commit checks failed" >&2
+  echo "if clippy reported fixable lints, run: just clippy-fix" >&2
+  echo "review and stage any fixes, then commit again" >&2
+  exit 1
+fi

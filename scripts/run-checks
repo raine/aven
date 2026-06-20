@@ -73,13 +73,13 @@ run_check() {
     cargo-deny) cargo deny check ;;
     cargo-machete) cargo machete --with-metadata ;;
     clippy) cargo clippy --all-targets -- -D warnings -D clippy::all ;;
-    test) env RUSTFLAGS="-D warnings" cargo test --all --locked ;;
+    test) env SQLX_OFFLINE=true cargo nextest run --all-targets --locked --no-fail-fast ;;
     sqlx-check)
       local db="target/sqlx-check.sqlite"
       rm -f "$db"
       env DATABASE_URL="sqlite://$db" cargo sqlx database create
       env DATABASE_URL="sqlite://$db" cargo sqlx migrate run
-      env DATABASE_URL="sqlite://$db" cargo sqlx prepare --check -- --all-targets
+      env DATABASE_URL="sqlite://$db" cargo sqlx prepare --check -- --all-targets --locked
       ;;
     *)
       echo "unknown check: $check" >&2
