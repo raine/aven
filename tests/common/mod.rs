@@ -43,6 +43,14 @@ impl TestEnv {
             .join("config.toml")
     }
 
+    pub fn state_dir(&self) -> PathBuf {
+        self.path("state")
+    }
+
+    fn configure_command(&self, command: &mut Command) {
+        command.env("XDG_STATE_HOME", self.state_dir());
+    }
+
     pub fn free_loopback_addr(&self) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind free loopback port");
         let addr = listener.local_addr().expect("free loopback addr");
@@ -103,6 +111,7 @@ wake_addr = "{}"
         S: AsRef<OsStr>,
     {
         let mut command = command();
+        self.configure_command(&mut command);
         command
             .env(
                 "ATM_CONFIG_DIR",
@@ -119,6 +128,7 @@ wake_addr = "{}"
         S: AsRef<OsStr>,
     {
         let mut child = command();
+        self.configure_command(&mut child);
         child
             .env(
                 "ATM_CONFIG_DIR",
@@ -145,7 +155,9 @@ wake_addr = "{}"
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        command_with_db(db).args(args).output().expect("run atm")
+        let mut command = command_with_db(db);
+        self.configure_command(&mut command);
+        command.args(args).output().expect("run atm")
     }
 
     pub fn atm_in<I, S>(&self, db: &Path, cwd: &Path, args: I) -> Output
@@ -153,7 +165,9 @@ wake_addr = "{}"
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        command_with_db(db)
+        let mut command = command_with_db(db);
+        self.configure_command(&mut command);
+        command
             .current_dir(cwd)
             .args(args)
             .output()
@@ -165,7 +179,9 @@ wake_addr = "{}"
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let mut child = command_with_db(db)
+        let mut command = command_with_db(db);
+        self.configure_command(&mut command);
+        let mut child = command
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -296,7 +312,9 @@ impl TestProcess {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let child = command()
+        let mut command = command();
+        env.configure_command(&mut command);
+        let child = command
             .env(
                 "ATM_CONFIG_DIR",
                 env.config_dir().join("agentic-task-manager"),
@@ -323,6 +341,7 @@ impl TestProcess {
         V: AsRef<OsStr>,
     {
         let mut command = command();
+        env.configure_command(&mut command);
         command
             .env(
                 "ATM_CONFIG_DIR",
@@ -517,6 +536,7 @@ impl TestServer {
         let output = Arc::new(Mutex::new(String::new()));
         let (url_tx, url_rx) = mpsc::channel();
         let mut command = command();
+        env.configure_command(&mut command);
         command.args([
             "server",
             "--bind",
