@@ -1227,13 +1227,7 @@ fn render_text_input(frame: &mut Frame, state: &TextInputView) {
             state.cursor,
             area.width.saturating_sub(4) as usize,
         );
-        let text = Text::from(vec![
-            Line::from(input),
-            Line::from(Span::styled(
-                "Enter create  Tab project  Ctrl+P priority  Esc cancel",
-                Style::new().fg(FG_MUTED),
-            )),
-        ]);
+        let text = Text::from(vec![Line::from(input), add_task_hint_line()]);
         frame.render_widget(Clear, area);
         let block = overlay_block("Add task")
             .title_top(add_task_metadata_title(project, priority, area.width).right_aligned());
@@ -1262,6 +1256,19 @@ fn render_text_input(frame: &mut Frame, state: &TextInputView) {
 fn add_task_title_metadata(title: &str) -> Option<(&str, &str)> {
     let value = title.strip_prefix("Add task  project=")?;
     value.split_once(" priority=")
+}
+
+fn add_task_hint_line() -> Line<'static> {
+    Line::from(vec![
+        Span::styled("Enter", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" create  ", Style::new().fg(FG_MUTED)),
+        Span::styled("Tab", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" project  ", Style::new().fg(FG_MUTED)),
+        Span::styled("Ctrl+P", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" priority  ", Style::new().fg(FG_MUTED)),
+        Span::styled("Esc", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" cancel", Style::new().fg(FG_MUTED)),
+    ])
 }
 
 fn add_task_metadata_title(project: &str, priority: &str, width: u16) -> Line<'static> {
@@ -1893,6 +1900,18 @@ mod tests {
         assert!(rendered.contains("Edit title"));
         assert!(rendered.contains("New title"));
         assert!(rendered.contains("Enter submit"));
+    }
+
+    #[test]
+    fn add_task_hint_styles_keys() {
+        let line = add_task_hint_line();
+        let keys = line
+            .spans
+            .iter()
+            .filter(|span| span.style.fg == Some(FG))
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>();
+        assert_eq!(keys, vec!["Enter", "Tab", "Ctrl+P", "Esc"]);
     }
 
     #[test]
