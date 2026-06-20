@@ -24,9 +24,7 @@ const ADD_PROJECT_TITLE: &str = "Add project";
 const ADD_LABEL_TITLE: &str = "Add label";
 const ADD_TASK_TITLE_TITLE: &str = "Add task";
 const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: title project";
-const ADD_TASK_PRIORITY_TITLE: &str = "Add task: priority";
-const ADD_TASK_LABELS_TITLE: &str = "Add task: labels";
-const ADD_TASK_DESCRIPTION_TITLE: &str = "Add task: description";
+const ADD_TASK_TITLE_PRIORITY_TITLE: &str = "Add task: title priority";
 const ADD_NOTE_TITLE: &str = "Add note";
 const EDIT_STATUS_TITLE: &str = "Edit task: status";
 const EDIT_TITLE_TITLE: &str = "Edit task: title";
@@ -56,7 +54,6 @@ struct AddTaskDraftState {
     project: Option<String>,
     inferred_project: Option<String>,
     priority: String,
-    labels: Vec<String>,
 }
 
 impl Default for AddTaskDraftState {
@@ -66,7 +63,6 @@ impl Default for AddTaskDraftState {
             project: None,
             inferred_project: None,
             priority: "none".to_string(),
-            labels: Vec::new(),
         }
     }
 }
@@ -304,6 +300,18 @@ impl App {
         overlay: OverlayState,
         terminal_height: u16,
     ) -> Result<()> {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.code == KeyCode::Char('p')
+            && let OverlayState::TextInput(state) = &overlay
+            && add_task_title_overlay(&state.title)
+        {
+            if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
+                draft.title = state.input.text.clone();
+                self.begin_add_task_title_priority();
+            }
+            return Ok(());
+        }
+
         if key.code == KeyCode::Tab
             && let OverlayState::TextInput(state) = &overlay
             && add_task_title_overlay(&state.title)
@@ -332,9 +340,8 @@ impl App {
                 if trimmed.is_empty() {
                     self.set_message("task title is required".to_string());
                     self.begin_add_task_title();
-                } else if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
-                    draft.title = trimmed.to_string();
-                    self.begin_add_task_priority();
+                } else {
+                    self.submit_add_task_with_title(trimmed.to_string()).await?;
                 }
             }
             OverlaySubmit::Picker { title, values } if title == ADD_TASK_TITLE_PROJECT_TITLE => {
@@ -343,23 +350,14 @@ impl App {
                     self.begin_add_task_title();
                 }
             }
-            OverlaySubmit::Picker { title, values } if title == ADD_TASK_PRIORITY_TITLE => {
+            OverlaySubmit::Picker { title, values } if title == ADD_TASK_TITLE_PRIORITY_TITLE => {
                 if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
                     draft.priority = values
                         .first()
                         .cloned()
                         .unwrap_or_else(|| "none".to_string());
-                    self.begin_add_task_labels();
+                    self.begin_add_task_title();
                 }
-            }
-            OverlaySubmit::Picker { title, values } if title == ADD_TASK_LABELS_TITLE => {
-                if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
-                    draft.labels = values;
-                    self.begin_add_task_description();
-                }
-            }
-            OverlaySubmit::Multiline { title, value } if title == ADD_TASK_DESCRIPTION_TITLE => {
-                self.submit_add_task(value).await?;
             }
             OverlaySubmit::Multiline { title, value } if title == ADD_NOTE_TITLE => {
                 self.submit_add_note(value).await?;
@@ -730,19 +728,23 @@ impl App {
     }
 
     fn begin_add_task_title(&mut self) {
-        let (input, project) = match &self.authoring {
+        let (input, project, priority) = match &self.authoring {
             Some(AuthoringFlow::AddTask(draft)) => {
                 let project = draft
                     .project
                     .as_deref()
                     .or(draft.inferred_project.as_deref())
                     .unwrap_or("no project");
-                (draft.title.clone(), project.to_string())
+                (
+                    draft.title.clone(),
+                    project.to_string(),
+                    draft.priority.clone(),
+                )
             }
             _ => return,
         };
         self.overlay = Some(OverlayState::TextInput(TextInputState::new(
-            format!("Add task  project={project}"),
+            format!("Add task  project={project} priority={priority}"),
             "",
             input,
         )));
@@ -777,35 +779,23 @@ impl App {
         self.open_picker_overlay(ADD_TASK_TITLE_PROJECT_TITLE, items, false);
     }
 
-    fn begin_add_task_priority(&mut self) {
+    fn begin_add_task_title_priority(&mut self) {
         let selected = match &self.authoring {
             Some(AuthoringFlow::AddTask(draft)) => draft.priority.as_str(),
             _ => return,
         };
         let items = self.store.priority_picker_items(selected);
-        self.open_picker_overlay(ADD_TASK_PRIORITY_TITLE, items, false);
+        self.open_picker_overlay(ADD_TASK_TITLE_PRIORITY_TITLE, items, false);
     }
 
-    fn begin_add_task_labels(&mut self) {
-        let selected_labels = match &self.authoring {
-            Some(AuthoringFlow::AddTask(draft)) => draft.labels.clone(),
-            _ => return,
-        };
-        let mut items = self.store.label_picker_items();
-        for item in &mut items {
-            item.selected = selected_labels.contains(&item.value);
+    async fn submit_add_task_with_title(&mut self, title: String) -> Result<()> {
+        if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
+            draft.title = title;
         }
-        self.open_picker_overlay(ADD_TASK_LABELS_TITLE, items, true);
+        self.submit_add_task().await
     }
 
-    fn begin_add_task_description(&mut self) {
-        self.overlay = Some(OverlayState::MultilineInput(MultilineInputState::blank(
-            ADD_TASK_DESCRIPTION_TITLE,
-            "description:",
-        )));
-    }
-
-    async fn submit_add_task(&mut self, description: String) -> Result<()> {
+    async fn submit_add_task(&mut self) -> Result<()> {
         let Some(AuthoringFlow::AddTask(draft)) = self.authoring.take() else {
             return Ok(());
         };
@@ -815,10 +805,10 @@ impl App {
             .create_task(
                 TaskDraft {
                     title: draft.title,
-                    description,
+                    description: String::new(),
                     project: draft.project,
                     priority: draft.priority,
-                    labels: draft.labels,
+                    labels: Vec::new(),
                 },
                 current_selected,
             )
@@ -1905,6 +1895,10 @@ mod tests {
         KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
     }
 
+    fn ctrl_p() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)
+    }
+
     async fn type_chars(app: &mut App, input: &str) {
         for ch in input.chars() {
             app.handle_overlay_key(key(KeyCode::Char(ch)))
@@ -2363,27 +2357,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn add_task_alias_skips_project_prompt_after_title() {
+    async fn add_task_alias_creates_task_after_title() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-        assert!(matches!(
-            &app.overlay,
-            Some(OverlayState::Picker(state)) if state.title == ADD_TASK_PRIORITY_TITLE
-        ));
+        assert!(app.overlay.is_none());
+        let selected = app.widgets.table.selected().unwrap();
+        let task = &app.store.tasks[selected];
+        assert_eq!(task.task.title, "Write docs");
+        assert_eq!(task.task.priority, "none");
+        assert_eq!(task.task.description, "");
+        assert!(task.labels.is_empty());
     }
 
     #[tokio::test]
-    async fn add_task_flow_creates_task_with_metadata_and_selects_it() {
+    async fn add_task_flow_configures_project_and_priority_from_title() {
         let mut app = test_app().await;
         app.store
             .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
-        app.store
-            .create_label("Needs Review".to_string())
             .await
             .unwrap();
 
@@ -2398,31 +2391,15 @@ mod tests {
         ));
         type_chars(&mut app, "mobile").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        app.handle_overlay_key(ctrl_p()).await.unwrap();
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::Picker(state)) if state.title == ADD_TASK_PRIORITY_TITLE
+            Some(OverlayState::Picker(state)) if state.title == ADD_TASK_TITLE_PRIORITY_TITLE
         ));
         type_chars(&mut app, "high").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-
-        assert!(matches!(
-            &app.overlay,
-            Some(OverlayState::Picker(state)) if state.title == ADD_TASK_LABELS_TITLE
-        ));
-        type_chars(&mut app, "needs").await;
-        app.handle_overlay_key(key(KeyCode::Char(' ')))
-            .await
-            .unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-
-        assert!(matches!(
-            &app.overlay,
-            Some(OverlayState::MultilineInput(state)) if state.title == ADD_TASK_DESCRIPTION_TITLE
-        ));
-        type_chars(&mut app, "Long description").await;
-        app.handle_overlay_key(ctrl_s()).await.unwrap();
 
         assert!(app.overlay.is_none());
         let selected = app.widgets.table.selected().unwrap();
@@ -2430,8 +2407,8 @@ mod tests {
         assert_eq!(task.task.title, "Write docs");
         assert_eq!(task.task.project_key, "mobile-app");
         assert_eq!(task.task.priority, "high");
-        assert_eq!(task.task.description, "Long description");
-        assert!(task.labels.iter().any(|label| label == "needs-review"));
+        assert_eq!(task.task.description, "");
+        assert!(task.labels.is_empty());
     }
 
     #[tokio::test]

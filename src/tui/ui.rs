@@ -1220,8 +1220,8 @@ fn render_overlay(
 }
 
 fn render_text_input(frame: &mut Frame, state: &TextInputView) {
-    if let Some(project) = add_task_title_project(&state.title) {
-        let area = centered(frame.area(), 54, 4);
+    if let Some((project, priority)) = add_task_title_metadata(&state.title) {
+        let area = centered(frame.area(), 60, 4);
         let input = visible_text_input(
             &state.input,
             state.cursor,
@@ -1230,13 +1230,13 @@ fn render_text_input(frame: &mut Frame, state: &TextInputView) {
         let text = Text::from(vec![
             Line::from(input),
             Line::from(Span::styled(
-                "Enter submit  Esc cancel",
+                "Enter create  Tab project  Ctrl+P priority  Esc cancel",
                 Style::new().fg(FG_MUTED),
             )),
         ]);
         frame.render_widget(Clear, area);
         let block = overlay_block("Add task")
-            .title_top(add_task_project_title(project, area.width).right_aligned());
+            .title_top(add_task_metadata_title(project, priority, area.width).right_aligned());
         frame.render_widget(
             Paragraph::new(text)
                 .block(block)
@@ -1259,18 +1259,24 @@ fn render_text_input(frame: &mut Frame, state: &TextInputView) {
     render_overlay_paragraph(frame, area, &state.title, text, false);
 }
 
-fn add_task_title_project(title: &str) -> Option<&str> {
-    title.strip_prefix("Add task  project=")
+fn add_task_title_metadata(title: &str) -> Option<(&str, &str)> {
+    let value = title.strip_prefix("Add task  project=")?;
+    value.split_once(" priority=")
 }
 
-fn add_task_project_title(project: &str, width: u16) -> Line<'static> {
-    let project_width = (width as usize).saturating_sub(20).max(4);
+fn add_task_metadata_title(project: &str, priority: &str, width: u16) -> Line<'static> {
+    let metadata_width = (width as usize).saturating_sub(18).max(4);
+    let metadata = format!(
+        "{} {}",
+        truncate_chars(project, metadata_width / 2),
+        truncate_chars(priority, metadata_width / 2)
+    );
     Line::from(vec![
         Span::styled(
-            format!(" {}", truncate_chars(project, project_width)),
+            format!(" {metadata}"),
             Style::new().fg(Color::Rgb(194, 174, 255)),
         ),
-        Span::styled("  Tab ", Style::new().fg(FG_MUTED)),
+        Span::styled("  Tab Ctrl+P ", Style::new().fg(FG_MUTED)),
     ])
 }
 
