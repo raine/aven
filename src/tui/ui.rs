@@ -1222,12 +1222,12 @@ fn render_overlay(
 fn render_text_input(frame: &mut Frame, state: &TextInputView) {
     if let Some((project, priority)) = add_task_title_metadata(&state.title) {
         let area = centered(frame.area(), 60, 4);
-        let input = visible_text_input(
+        let input = add_task_title_input_line(
             &state.input,
             state.cursor,
             area.width.saturating_sub(4) as usize,
         );
-        let text = Text::from(vec![Line::from(input), add_task_hint_line()]);
+        let text = Text::from(vec![input, add_task_hint_line()]);
         frame.render_widget(Clear, area);
         let block = overlay_block("Add task")
             .title_top(add_task_metadata_title(project, priority, area.width).right_aligned());
@@ -1256,6 +1256,16 @@ fn render_text_input(frame: &mut Frame, state: &TextInputView) {
 fn add_task_title_metadata(title: &str) -> Option<(&str, &str)> {
     let value = title.strip_prefix("Add task  project=")?;
     value.split_once(" priority=")
+}
+
+fn add_task_title_input_line(input: &str, cursor: usize, width: usize) -> Line<'static> {
+    if input.is_empty() {
+        return Line::from(vec![
+            Span::styled("▌", Style::new().fg(FG)),
+            Span::styled(" title", Style::new().fg(FG_DIM)),
+        ]);
+    }
+    Line::from(visible_text_input(input, cursor, width))
 }
 
 fn add_task_hint_line() -> Line<'static> {
@@ -1912,6 +1922,14 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect::<Vec<_>>();
         assert_eq!(keys, vec!["Enter", "Tab", "Ctrl+P", "Esc"]);
+    }
+
+    #[test]
+    fn add_task_empty_title_input_shows_placeholder() {
+        let line = add_task_title_input_line("", 0, 20);
+        assert_eq!(line.spans[0].content.as_ref(), "▌");
+        assert_eq!(line.spans[1].content.as_ref(), " title");
+        assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
     }
 
     #[test]
