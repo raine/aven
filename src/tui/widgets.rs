@@ -39,7 +39,7 @@ pub(crate) fn status_span(status: &str) -> Span<'static> {
         _ => status,
     };
     Span::styled(
-        format!(" {label} "),
+        label.to_string(),
         theme::status_style(status).add_modifier(Modifier::BOLD),
     )
 }
