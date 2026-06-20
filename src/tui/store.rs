@@ -14,6 +14,7 @@ use crate::operations::{
     show_config_status as show_config_status_operation, task_conflicts,
     update_task as update_task_operation,
 };
+use crate::projects::inferred_project_key_for_add_in_workspace;
 use crate::query::{
     ProjectListItem, SidebarCounts, SortDirection, TaskFilters, TaskListItem, TaskSort,
     list_project_items, list_task_items, sidebar_counts,
@@ -691,6 +692,12 @@ impl TuiStore {
             .iter()
             .map(|project| project_picker_item(project, selected))
             .collect()
+    }
+
+    pub(crate) async fn inferred_add_project(&self) -> Result<Option<String>> {
+        self.activate_workspace();
+        let mut conn = self.pool.acquire().await?;
+        inferred_project_key_for_add_in_workspace(&mut conn, &self.active_workspace.id).await
     }
 
     pub(crate) fn project_picker_items(&self, selected: Option<&str>) -> Vec<PickerItem> {

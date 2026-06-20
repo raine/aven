@@ -409,10 +409,25 @@ fn edit_text_input(state: &mut TextInputState, key: KeyEvent) {
     let cursor = char_boundary_at_or_before(&state.input, state.cursor);
     match key.code {
         KeyCode::Left => state.cursor = previous_char_boundary(&state.input, cursor),
+        KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.cursor = previous_char_boundary(&state.input, cursor);
+        }
         KeyCode::Right => state.cursor = next_char_boundary(&state.input, cursor),
+        KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.cursor = next_char_boundary(&state.input, cursor);
+        }
         KeyCode::Home => state.cursor = 0,
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => state.cursor = 0,
         KeyCode::End => state.cursor = state.input.len(),
+        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.cursor = state.input.len();
+        }
         KeyCode::Backspace if cursor > 0 => {
+            let previous = previous_char_boundary(&state.input, cursor);
+            state.input.drain(previous..cursor);
+            state.cursor = previous;
+        }
+        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) && cursor > 0 => {
             let previous = previous_char_boundary(&state.input, cursor);
             state.input.drain(previous..cursor);
             state.cursor = previous;
@@ -422,7 +437,40 @@ fn edit_text_input(state: &mut TextInputState, key: KeyEvent) {
             state.input.drain(cursor..next);
             state.cursor = cursor;
         }
-        KeyCode::Char(ch) => {
+        KeyCode::Char('d')
+            if key.modifiers.contains(KeyModifiers::CONTROL) && cursor < state.input.len() =>
+        {
+            let next = next_char_boundary(&state.input, cursor);
+            state.input.drain(cursor..next);
+            state.cursor = cursor;
+        }
+        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.input.truncate(cursor);
+            state.cursor = cursor;
+        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.input.drain(..cursor);
+            state.cursor = 0;
+        }
+        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let previous = previous_word_start(&state.input, cursor);
+            state.input.drain(previous..cursor);
+            if previous > 0 && next_char_is_whitespace(&state.input, previous) {
+                let before = previous_char_boundary(&state.input, previous);
+                if state.input[before..previous]
+                    .chars()
+                    .all(char::is_whitespace)
+                {
+                    state.input.drain(before..previous);
+                    state.cursor = before;
+                } else {
+                    state.cursor = previous;
+                }
+            } else {
+                state.cursor = previous;
+            }
+        }
+        KeyCode::Char(ch) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
             state.input.insert(cursor, ch);
             state.cursor = cursor + ch.len_utf8();
         }
@@ -511,6 +559,32 @@ fn next_char_boundary(input: &str, index: usize) -> usize {
     index
 }
 
+fn previous_word_start(input: &str, index: usize) -> usize {
+    let mut index = char_boundary_at_or_before(input, index);
+    while index > 0 {
+        let previous = previous_char_boundary(input, index);
+        if !input[previous..index].chars().all(char::is_whitespace) {
+            break;
+        }
+        index = previous;
+    }
+    while index > 0 {
+        let previous = previous_char_boundary(input, index);
+        if input[previous..index].chars().all(char::is_whitespace) {
+            break;
+        }
+        index = previous;
+    }
+    index
+}
+
+fn next_char_is_whitespace(input: &str, index: usize) -> bool {
+    input[index..]
+        .chars()
+        .next()
+        .is_some_and(char::is_whitespace)
+}
+
 fn move_picker_selection(state: &mut PickerState, delta: isize) {
     let visible = visible_picker_indices(state);
     if visible.is_empty() {
@@ -544,6 +618,15 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::CONTROL)
     }
 
+    fn text_input(input: &str, cursor: usize) -> TextInputState {
+        TextInputState {
+            title: "Title".to_string(),
+            prompt: "Prompt".to_string(),
+            input: input.to_string(),
+            cursor,
+        }
+    }
+
     fn handle(key: KeyEvent, overlay: OverlayState) -> OverlayOutcome {
         handle_generic_overlay_key(key, overlay, 100)
     }
@@ -568,6 +651,41 @@ mod tests {
         assert_eq!(state.input, "axb");
         assert_eq!(state.cursor, 2);
         edit_text_input(&mut state, key(KeyCode::Backspace));
+        assert_eq!(state.input, "ab");
+        assert_eq!(state.cursor, 1);
+    }
+
+    #[test]
+    fn text_input_supports_emacs_navigation() {
+        let mut state = text_input("abc", 1);
+        edit_text_input(&mut state, ctrl(KeyCode::Char('a')));
+        assert_eq!(state.cursor, 0);
+        edit_text_input(&mut state, ctrl(KeyCode::Char('e')));
+        assert_eq!(state.cursor, 3);
+        edit_text_input(&mut state, ctrl(KeyCode::Char('b')));
+        assert_eq!(state.cursor, 2);
+        edit_text_input(&mut state, ctrl(KeyCode::Char('f')));
+        assert_eq!(state.cursor, 3);
+    }
+
+    #[test]
+    fn text_input_supports_emacs_deletion() {
+        let mut state = text_input("one two three", 7);
+        edit_text_input(&mut state, ctrl(KeyCode::Char('w')));
+        assert_eq!(state.input, "one three");
+        assert_eq!(state.cursor, 3);
+        edit_text_input(&mut state, ctrl(KeyCode::Char('k')));
+        assert_eq!(state.input, "one");
+        assert_eq!(state.cursor, 3);
+        edit_text_input(&mut state, ctrl(KeyCode::Char('u')));
+        assert_eq!(state.input, "");
+        assert_eq!(state.cursor, 0);
+    }
+
+    #[test]
+    fn text_input_ignores_control_chars_that_are_not_editing_keys() {
+        let mut state = text_input("ab", 1);
+        edit_text_input(&mut state, ctrl(KeyCode::Char('x')));
         assert_eq!(state.input, "ab");
         assert_eq!(state.cursor, 1);
     }

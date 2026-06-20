@@ -22,8 +22,9 @@ use crate::tui::ui::{self, help_scroll_cap};
 
 const ADD_PROJECT_TITLE: &str = "Add project";
 const ADD_LABEL_TITLE: &str = "Add label";
-const ADD_TASK_TITLE_TITLE: &str = "Add task: title";
+const ADD_TASK_TITLE_TITLE: &str = "Add task";
 const ADD_TASK_PROJECT_TITLE: &str = "Add task: project";
+const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: title project";
 const ADD_TASK_PRIORITY_TITLE: &str = "Add task: priority";
 const ADD_TASK_LABELS_TITLE: &str = "Add task: labels";
 const ADD_TASK_DESCRIPTION_TITLE: &str = "Add task: description";
@@ -54,6 +55,7 @@ const CONFIG_INIT_TITLE: &str = "Initialize configuration";
 struct AddTaskDraftState {
     title: String,
     project: Option<String>,
+    inferred_project: Option<String>,
     priority: String,
     labels: Vec<String>,
 }
@@ -63,6 +65,7 @@ impl Default for AddTaskDraftState {
         Self {
             title: String::new(),
             project: None,
+            inferred_project: None,
             priority: "none".to_string(),
             labels: Vec::new(),
         }
@@ -310,6 +313,17 @@ impl App {
         overlay: OverlayState,
         terminal_height: u16,
     ) -> Result<()> {
+        if key.code == KeyCode::Tab
+            && let OverlayState::TextInput(state) = &overlay
+            && add_task_title_overlay(&state.title)
+        {
+            if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
+                draft.title = state.input.clone();
+                self.begin_add_task_title_project();
+            }
+            return Ok(());
+        }
+
         let scroll_cap = help_scroll_cap(terminal_height);
         let outcome = crate::tui::overlay::handle_generic_overlay_key(key, overlay, scroll_cap);
         match outcome {
@@ -322,7 +336,7 @@ impl App {
 
     async fn handle_overlay_submit(&mut self, submit: OverlaySubmit) -> Result<()> {
         match submit {
-            OverlaySubmit::Text { title, value } if title == ADD_TASK_TITLE_TITLE => {
+            OverlaySubmit::Text { title, value } if add_task_title_overlay(&title) => {
                 let trimmed = value.trim();
                 if trimmed.is_empty() {
                     self.set_message("task title is required".to_string());
@@ -336,6 +350,12 @@ impl App {
                 if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
                     draft.project = values.first().filter(|value| !value.is_empty()).cloned();
                     self.begin_add_task_priority();
+                }
+            }
+            OverlaySubmit::Picker { title, values } if title == ADD_TASK_TITLE_PROJECT_TITLE => {
+                if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
+                    draft.project = values.first().filter(|value| !value.is_empty()).cloned();
+                    self.begin_add_task_title();
                 }
             }
             OverlaySubmit::Picker { title, values } if title == ADD_TASK_PRIORITY_TITLE => {
@@ -497,7 +517,7 @@ impl App {
             Action::BeginStatusPicker => self.begin_status_picker(),
             Action::BeginAddProject => self.begin_add_project(),
             Action::BeginAddLabel => self.begin_add_label(),
-            Action::BeginAddTask => self.begin_add_task(),
+            Action::BeginAddTask => self.begin_add_task().await?,
             Action::BeginAddNote => self.begin_add_note(),
             Action::BeginFilterProject => self.begin_filter_project(),
             Action::BeginFilterLabel => self.begin_filter_label(),
@@ -713,20 +733,32 @@ impl App {
         )));
     }
 
-    fn begin_add_task(&mut self) {
+    async fn begin_add_task(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
-        self.authoring = Some(AuthoringFlow::AddTask(AddTaskDraftState::default()));
+        let inferred_project = self.store.inferred_add_project().await?;
+        self.authoring = Some(AuthoringFlow::AddTask(AddTaskDraftState {
+            inferred_project,
+            ..AddTaskDraftState::default()
+        }));
         self.begin_add_task_title();
+        Ok(())
     }
 
     fn begin_add_task_title(&mut self) {
-        let input = match &self.authoring {
-            Some(AuthoringFlow::AddTask(draft)) => draft.title.clone(),
+        let (input, project) = match &self.authoring {
+            Some(AuthoringFlow::AddTask(draft)) => {
+                let project = draft
+                    .project
+                    .as_deref()
+                    .or(draft.inferred_project.as_deref())
+                    .unwrap_or("no project");
+                (draft.title.clone(), project.to_string())
+            }
             _ => return,
         };
         self.overlay = Some(OverlayState::TextInput(TextInputState::new(
-            ADD_TASK_TITLE_TITLE,
-            "title:",
+            format!("Add task  project={project}"),
+            "",
             input,
         )));
     }
@@ -758,6 +790,15 @@ impl App {
         };
         let items = self.store.project_picker_items(selected);
         self.open_picker_overlay(ADD_TASK_PROJECT_TITLE, items, false);
+    }
+
+    fn begin_add_task_title_project(&mut self) {
+        let selected = match &self.authoring {
+            Some(AuthoringFlow::AddTask(draft)) => draft.project.as_deref(),
+            _ => return,
+        };
+        let items = self.store.project_picker_items(selected);
+        self.open_picker_overlay(ADD_TASK_TITLE_PROJECT_TITLE, items, false);
     }
 
     fn begin_add_task_priority(&mut self) {
@@ -1733,6 +1774,10 @@ impl App {
     }
 }
 
+fn add_task_title_overlay(title: &str) -> bool {
+    title == ADD_TASK_TITLE_TITLE || title.starts_with("Add task  project=")
+}
+
 fn selected_picker_index(items: &[PickerItem]) -> usize {
     items.iter().position(|item| item.selected).unwrap_or(0)
 }
@@ -1953,7 +1998,7 @@ mod tests {
         assert!(app.pending_shortcut.is_empty());
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::TextInput(state)) if state.title == ADD_TASK_TITLE_TITLE
+            Some(OverlayState::TextInput(state)) if add_task_title_overlay(&state.title)
         ));
     }
 
@@ -2317,7 +2362,8 @@ mod tests {
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::TextInput(state)) if state.prompt == "title:"
+            Some(OverlayState::TextInput(state))
+                if add_task_title_overlay(&state.title) && state.prompt.is_empty()
         ));
     }
 
@@ -2397,7 +2443,7 @@ mod tests {
         assert_eq!(app.message.as_deref(), Some("task title is required"));
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::TextInput(state)) if state.title == ADD_TASK_TITLE_TITLE
+            Some(OverlayState::TextInput(state)) if add_task_title_overlay(&state.title)
         ));
     }
 

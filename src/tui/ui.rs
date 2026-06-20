@@ -1137,6 +1137,32 @@ fn render_overlay(
 }
 
 fn render_text_input(frame: &mut Frame, state: &TextInputView) {
+    if let Some(project) = add_task_title_project(&state.title) {
+        let area = centered(frame.area(), 54, 4);
+        let input = visible_text_input(
+            &state.input,
+            state.cursor,
+            area.width.saturating_sub(4) as usize,
+        );
+        let text = Text::from(vec![
+            Line::from(input),
+            Line::from(Span::styled(
+                "Enter submit  Esc cancel",
+                Style::new().fg(FG_MUTED),
+            )),
+        ]);
+        frame.render_widget(Clear, area);
+        let block = overlay_block("Add task")
+            .title_top(add_task_project_title(project, area.width).right_aligned());
+        frame.render_widget(
+            Paragraph::new(text)
+                .block(block)
+                .style(Style::new().fg(FG).bg(BG_ALT)),
+            area,
+        );
+        return;
+    }
+
     let area = centered(frame.area(), 54, 5);
     let input = insert_cursor(&state.input, state.cursor);
     let text = Text::from(vec![
@@ -1148,6 +1174,33 @@ fn render_text_input(frame: &mut Frame, state: &TextInputView) {
         )),
     ]);
     render_overlay_paragraph(frame, area, &state.title, text, false);
+}
+
+fn add_task_title_project(title: &str) -> Option<&str> {
+    title.strip_prefix("Add task  project=")
+}
+
+fn add_task_project_title(project: &str, width: u16) -> Line<'static> {
+    let project_width = (width as usize).saturating_sub(20).max(4);
+    Line::from(vec![
+        Span::styled(
+            format!(" {}", truncate_chars(project, project_width)),
+            Style::new().fg(Color::Rgb(194, 174, 255)),
+        ),
+        Span::styled("  Tab ", Style::new().fg(FG_MUTED)),
+    ])
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    if max_chars <= 1 {
+        return "…".to_string();
+    }
+    let mut truncated = value.chars().take(max_chars - 1).collect::<String>();
+    truncated.push('…');
+    truncated
 }
 
 fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
@@ -1246,6 +1299,17 @@ fn render_text_panel(frame: &mut Frame, state: &TextPanelView) {
         Style::new().fg(FG_MUTED),
     )));
     render_overlay_paragraph(frame, area, &state.title, Text::from(lines), true);
+}
+
+fn visible_text_input(input: &str, cursor: usize, width: usize) -> String {
+    let cursor = cursor.min(input.len());
+    let (before, after) = input.split_at(cursor);
+    let value = format!("{before}▌{after}");
+    let len = value.chars().count();
+    if len <= width {
+        return value;
+    }
+    value.chars().skip(len.saturating_sub(width)).collect()
 }
 
 fn insert_cursor(input: &str, cursor: usize) -> String {

@@ -36,6 +36,23 @@ pub(crate) async fn resolve_project_for_add(
     resolve_project_for_add_in_workspace(conn, active_workspace_id().as_str(), project).await
 }
 
+pub(crate) async fn inferred_project_key_for_add_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+) -> Result<Option<String>> {
+    if let Some(project) = project_from_path_mapping(conn, workspace_id).await? {
+        return Ok(Some(project.key));
+    }
+    let Some(root_name) = git_root_name()? else {
+        return Ok(None);
+    };
+    if let Some(existing) = find_project_in_workspace(conn, workspace_id, &root_name).await? {
+        return Ok(Some(existing.key));
+    }
+    let key = normalize_key(&root_name);
+    Ok((!key.is_empty()).then_some(key))
+}
+
 pub(crate) async fn resolve_project_for_add_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &str,
@@ -299,9 +316,23 @@ fn git_root_name() -> Result<Option<String>> {
     let Some(root) = git_root(&cwd) else {
         return Ok(None);
     };
-    Ok(root
+    let project_root = linked_worktree_main_root(&root).unwrap_or(root);
+    Ok(project_root
         .file_name()
         .map(|name| name.to_string_lossy().to_string()))
+}
+
+fn linked_worktree_main_root(root: &Path) -> Option<PathBuf> {
+    let git_file = root.join(".git");
+    let gitdir = fs::read_to_string(git_file).ok()?;
+    let gitdir = gitdir.trim().strip_prefix("gitdir: ")?;
+    let marker = format!(
+        "{}worktrees{}",
+        std::path::MAIN_SEPARATOR,
+        std::path::MAIN_SEPARATOR
+    );
+    let common_git_dir = gitdir.split_once(&marker)?.0;
+    Path::new(common_git_dir).parent().map(Path::to_path_buf)
 }
 
 fn git_root(path: &Path) -> Option<PathBuf> {
