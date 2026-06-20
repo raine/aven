@@ -98,11 +98,15 @@ fn render_header(frame: &mut Frame, store: &TuiStore, area: Rect) {
             .style(Style::new().bg(BG)),
         area,
     );
-    let [left, right] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(26)])
-        .areas(Rect { height: 1, ..area });
-
-    frame.render_widget(header_line(store), left);
-    frame.render_widget(header_status(), right);
+    let content_area = Rect { height: 1, ..area };
+    if area.width >= 140 {
+        let [left, right] =
+            Layout::horizontal([Constraint::Fill(1), Constraint::Length(26)]).areas(content_area);
+        frame.render_widget(header_line(store), left);
+        frame.render_widget(header_status(), right);
+    } else {
+        frame.render_widget(header_line(store), content_area);
+    }
 }
 
 fn header_line(store: &TuiStore) -> Paragraph<'static> {
@@ -1608,6 +1612,28 @@ mod tests {
         });
         assert!(rendered.contains("queue 177"));
         assert!(rendered.contains("todo 34"));
+    }
+
+    #[test]
+    fn header_preserves_metric_padding_on_narrow_widths() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rendered = rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let pool = crate::db::open_db(&dir.path().join("test.db"))
+                .await
+                .unwrap();
+            let mut store = TuiStore::new(pool).await.unwrap();
+            store.counts.all = 34;
+            store.counts.todo = 33;
+            store.counts.inbox = 1;
+            let backend = TestBackend::new(96, 10);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| render_header(frame, &store, frame.area()))
+                .unwrap();
+            buffer_text(terminal.backend())
+        });
+        assert!(rendered.contains("inbox 1 "));
     }
 
     #[test]
