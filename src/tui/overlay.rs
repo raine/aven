@@ -326,11 +326,11 @@ pub(crate) fn handle_generic_overlay_key(key: KeyEvent, overlay: OverlayState) -
                     values,
                 })
             }
-            KeyCode::Char('j') | KeyCode::Down => {
+            KeyCode::Down => {
                 move_picker_selection(&mut state, 1);
                 OverlayOutcome::None(OverlayState::Picker(state))
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::Up => {
                 move_picker_selection(&mut state, -1);
                 OverlayOutcome::None(OverlayState::Picker(state))
             }
@@ -596,6 +596,66 @@ mod tests {
         normalize_picker_selection(&mut state);
         assert_eq!(state.selected, 0);
         assert_eq!(visible_picker_indices(&state), vec![0]);
+    }
+
+    #[test]
+    fn picker_types_j_and_k_into_filter() {
+        let state = PickerState {
+            title: "Pick".to_string(),
+            filter: String::new(),
+            items: vec![PickerItem {
+                label: "jklabs".to_string(),
+                value: "jklabs".to_string(),
+                selected: false,
+            }],
+            selected: 0,
+            multi: false,
+        };
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_generic_overlay_key(key(KeyCode::Char('j')), OverlayState::Picker(state))
+        else {
+            panic!("expected picker state");
+        };
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_generic_overlay_key(key(KeyCode::Char('k')), OverlayState::Picker(state))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.filter, "jk");
+    }
+
+    #[test]
+    fn picker_moves_with_arrow_keys() {
+        let state = PickerState {
+            title: "Pick".to_string(),
+            filter: String::new(),
+            items: vec![
+                PickerItem {
+                    label: "Alpha".to_string(),
+                    value: "a".to_string(),
+                    selected: false,
+                },
+                PickerItem {
+                    label: "Beta".to_string(),
+                    value: "b".to_string(),
+                    selected: false,
+                },
+            ],
+            selected: 0,
+            multi: false,
+        };
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_generic_overlay_key(key(KeyCode::Down), OverlayState::Picker(state))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.selected, 1);
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_generic_overlay_key(key(KeyCode::Up), OverlayState::Picker(state))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.selected, 0);
     }
 
     #[test]

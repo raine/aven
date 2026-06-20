@@ -1014,9 +1014,9 @@ fn render_picker(frame: &mut Frame, state: &PickerView) {
         lines.push(Line::from(format!("{marker}{}{check}", item.label)));
     }
     let hints = if state.multi {
-        "j/k move  Space toggle  Enter submit  Esc cancel"
+        "Up/Down move  Space toggle  Enter submit  Esc cancel"
     } else {
-        "j/k move  Enter submit  Esc cancel"
+        "Up/Down move  Enter submit  Esc cancel"
     };
     lines.push(Line::from(Span::styled(hints, Style::new().fg(FG_MUTED))));
     render_overlay_paragraph(frame, area, &state.title, Text::from(lines), false);
@@ -1420,6 +1420,7 @@ mod tests {
         }));
         assert!(rendered.contains("Project"));
         assert!(rendered.contains("/app"));
+        assert!(rendered.contains("Up/Down move"));
         assert!(rendered.contains("Space toggle"));
     }
 
