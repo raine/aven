@@ -2608,13 +2608,23 @@ mod tests {
         remote: &str,
     ) {
         let task_id = app.store.tasks[selected].task.id.clone();
+        insert_title_conflict_for_task_id(pool, app, &task_id, local, remote).await;
+    }
+
+    async fn insert_title_conflict_for_task_id(
+        pool: &SqlitePool,
+        app: &mut App,
+        task_id: &str,
+        local: &str,
+        remote: &str,
+    ) {
         let mut conn = pool.acquire().await.unwrap();
         sqlx::query(
             "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
              local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
              VALUES (?, 'title', NULL, ?, ?, NULL, ?, 'a', 'b', ?, 0)",
         )
-        .bind(&task_id)
+        .bind(task_id)
         .bind(local)
         .bind(remote)
         .bind(crate::ids::new_id())
@@ -2657,10 +2667,42 @@ mod tests {
     #[tokio::test]
     async fn conflict_next_selects_next_conflicted_task() {
         let (_dir, pool, mut app) = test_app_with_pool().await;
-        let first = create_and_select_task(&mut app, test_task_draft("First")).await;
-        let second = create_and_select_task(&mut app, test_task_draft("Second")).await;
-        insert_title_conflict(&pool, &mut app, first, "local one", "remote one").await;
-        insert_title_conflict(&pool, &mut app, second, "local two", "remote two").await;
+        create_and_select_task(&mut app, test_task_draft("First")).await;
+        create_and_select_task(&mut app, test_task_draft("Second")).await;
+        let first_id = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.title == "First")
+            .unwrap()
+            .task
+            .id
+            .clone();
+        let second_id = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.title == "Second")
+            .unwrap()
+            .task
+            .id
+            .clone();
+        insert_title_conflict_for_task_id(&pool, &mut app, &first_id, "local one", "remote one")
+            .await;
+        insert_title_conflict_for_task_id(&pool, &mut app, &second_id, "local two", "remote two")
+            .await;
+        let first = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == first_id)
+            .unwrap();
+        let second = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == second_id)
+            .unwrap();
         app.widgets.table.select(Some(first));
 
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
