@@ -85,15 +85,112 @@ project:
         repo.display()
     ));
 
-    let output = ok(command()
-        .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
-        .env_remove("AVEN_DB")
-        .env_remove("AVEN_SYNC_SERVER")
-        .current_dir(&repo)
-        .args(["add", "override inference"])
-        .output()
-        .expect("run aven with project override"));
+    let output = ok(aven_config_in(&env, &repo, ["add", "override inference"]));
     contains_all(&output, &["project=aven"]);
+}
+
+#[test]
+fn project_mapping_takes_precedence_over_override() {
+    let env = TestEnv::new();
+    let db = env.db("mapping-before-override.sqlite");
+    let repo = env.path("repo");
+    init_git_repo(&repo);
+    env.write_config(&format!(
+        r#"local:
+  db_path: "{}"
+
+project:
+  overrides:
+    - project: "Override"
+      paths: ["{}"]
+"#,
+        db.display(),
+        repo.display()
+    ));
+
+    ok(env.aven_config([
+        "project",
+        "create",
+        "Mapped",
+        "--path",
+        repo.to_str().unwrap(),
+    ]));
+    let output = ok(aven_config_in(&env, &repo, ["add", "mapping precedence"]));
+    contains_all(&output, &["project=mapped"]);
+}
+
+#[test]
+fn project_override_takes_precedence_over_git_root() {
+    let env = TestEnv::new();
+    let db = env.db("override-before-git.sqlite");
+    let repo = env.path("repo-name");
+    init_git_repo(&repo);
+    env.write_config(&format!(
+        r#"local:
+  db_path: "{}"
+
+project:
+  overrides:
+    - project: "Override"
+      paths: ["{}"]
+"#,
+        db.display(),
+        repo.display()
+    ));
+
+    let output = ok(aven_config_in(&env, &repo, ["add", "override precedence"]));
+    contains_all(&output, &["project=override"]);
+}
+
+#[test]
+fn longest_matching_project_override_wins() {
+    let env = TestEnv::new();
+    let db = env.db("longest-override.sqlite");
+    let repo = env.path("repo");
+    let nested = repo.join("nested");
+    init_git_repo(&repo);
+    fs::create_dir_all(&nested).unwrap();
+    env.write_config(&format!(
+        r#"local:
+  db_path: "{}"
+
+project:
+  overrides:
+    - project: "Outer"
+      paths: ["{}"]
+    - project: "Inner"
+      paths: ["{}"]
+"#,
+        db.display(),
+        repo.display(),
+        nested.display()
+    ));
+
+    let output = ok(aven_config_in(&env, &nested, ["add", "nested override"]));
+    contains_all(&output, &["project=inner"]);
+}
+
+#[test]
+fn missing_project_override_paths_are_skipped() {
+    let env = TestEnv::new();
+    let db = env.db("missing-override.sqlite");
+    let repo = env.path("git-fallback");
+    init_git_repo(&repo);
+    env.write_config(&format!(
+        r#"local:
+  db_path: "{}"
+
+project:
+  overrides:
+    - project: "Missing"
+      paths: ["{}"]
+"#,
+        db.display(),
+        env.path("missing").display()
+    ));
+
+    let output = ok(aven_config_in(&env, &repo, ["add", "git fallback"]));
+    contains_all(&output, &["project=git-fallback"]);
 }
 
 #[test]
@@ -133,6 +230,21 @@ fn ignores_inherited_git_environment_for_project_inference() {
 
     let error = fail(output);
     contains_all(&error, &["error project-required"]);
+}
+
+fn aven_config_in<I, S>(env: &TestEnv, cwd: &std::path::Path, args: I) -> std::process::Output
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    command()
+        .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
+        .env_remove("AVEN_DB")
+        .env_remove("AVEN_SYNC_SERVER")
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .expect("run aven with config in cwd")
 }
 
 fn init_git_repo(repo: &std::path::Path) {
