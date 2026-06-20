@@ -270,6 +270,11 @@ pub(crate) async fn cmd_workspace(
     Ok(())
 }
 
+pub(crate) async fn cmd_skill() -> Result<()> {
+    print!("{}", include_str!("skill.md"));
+    Ok(())
+}
+
 pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictCommand) -> Result<()> {
     match args.command {
         ConflictSubcommand::List { project, field } => {

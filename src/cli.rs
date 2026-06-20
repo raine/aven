@@ -42,6 +42,7 @@ pub(crate) enum Commands {
     Server(ServerArgs),
     Sync(SyncArgs),
     Workspace(WorkspaceCommand),
+    Skill,
     Doctor,
     Tui,
 }

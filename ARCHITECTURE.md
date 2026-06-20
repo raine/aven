@@ -11,6 +11,7 @@
 | `src/logging.rs` | Tracing subscriber initialization from `ATM_LOG` and `ATM_LOG_FILE`. |
 | `src/cli.rs` | Clap argument and subcommand definitions. |
 | `src/commands.rs` | User-facing CLI command handlers and output formatting calls. |
+| `src/skill.md` | Agent-facing CLI primer printed by `atm skill`. |
 | `src/operations.rs` | Transactional business operations used by CLI and TUI. |
 | `src/mutation.rs` | Field-level task mutations, scalar conflict checks, change recording, and field version updates. |
 | `src/db.rs` | SQLite connection setup, migrations, metadata, sync helpers, and conflict helpers. |
@@ -31,6 +32,7 @@
 | `src/undo.rs` | Persistent TUI undo journal, guarded inverse payloads, and apply helpers. |
 | `migrations/` | SQLite schema migrations. |
 | `tests/` | Integration-heavy CLI, sync, daemon, conflict, schema, and TUI smoke coverage. |
+| `.claude/skills/` | Agent-facing operational primers for repository-specific workflows. |
 
 ## Command flow
 
@@ -41,6 +43,7 @@
    - `server` starts the Axum sync server.
    - `config` runs without opening the task database.
    - `daemon run` resolves config and starts the daemon.
+   - `skill` prints the embedded agent-facing CLI primer.
 5. Other commands resolve configuration, open SQLite, and dispatch to handlers.
 6. Workspace-scoped commands resolve an active workspace before dispatch.
 7. `tui` hands the open pool to `tui::run`.
@@ -48,7 +51,7 @@
 
 `--db` selects the database path but commands still load config so workspace routes, workspace defaults, sync settings, and daemon settings remain available. Active workspace resolution uses `--workspace`, then the longest matching config route, then `workspace.default`, then the built-in default workspace, then the only workspace in the database. Commands fail with `workspace-required` only when the default workspace is unavailable and no active workspace can be inferred.
 
-CLI commands cover task add, show, list, update, note, delete, restore, projects, labels, project paths, workspace management, conflict list or show or resolve, config, doctor, daemon, server, sync, and TUI.
+CLI commands cover task add, show, list, update, note, delete, restore, projects, labels, project paths, workspace management, conflict list or show or resolve, config, doctor, skill, daemon, server, sync, and TUI.
 
 ## Persistence model
 

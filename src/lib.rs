@@ -34,7 +34,7 @@ pub use cli::Cli;
 use cli::{Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand};
 use commands::{
     cmd_add, cmd_config, cmd_conflict, cmd_delete_restore, cmd_doctor, cmd_label, cmd_labels,
-    cmd_list, cmd_note, cmd_project, cmd_projects, cmd_show, cmd_update, cmd_workspace,
+    cmd_list, cmd_note, cmd_project, cmd_projects, cmd_show, cmd_skill, cmd_update, cmd_workspace,
 };
 use db::open_db;
 use sync::{run_server, sync_client};
@@ -55,6 +55,7 @@ pub async fn run_cli() -> Result<()> {
             let config = config::AppConfig::load()?;
             run_server(args, config).await
         }
+        Commands::Skill => cmd_skill().await,
         Commands::Config(args) => cmd_config(args).await,
         Commands::Daemon(args) => {
             let config = config::AppConfig::load()?;
@@ -111,7 +112,10 @@ pub async fn run_cli() -> Result<()> {
                     .await
                 }
                 Commands::Tui => unreachable!(),
-                Commands::Config(_) | Commands::Daemon(_) | Commands::Server(_) => unreachable!(),
+                Commands::Config(_)
+                | Commands::Daemon(_)
+                | Commands::Server(_)
+                | Commands::Skill => unreachable!(),
             };
             if result.is_ok()
                 && should_wake
