@@ -55,7 +55,7 @@ pub(crate) fn title_cell(item: &TaskListItem, max_width: usize) -> Line<'static>
         Span::styled(deleted.to_string(), Style::new().fg(RED)),
         Span::styled(
             truncate_title(&item.task.title, title_width),
-            Style::new().fg(FG).add_modifier(Modifier::BOLD),
+            Style::new().fg(FG),
         ),
     ];
     Line::from(spans)
