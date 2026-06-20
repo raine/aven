@@ -9,7 +9,7 @@ use ratatui::widgets::{
 };
 
 use crate::query::{TaskListItem, TaskSort};
-use crate::queue::{QueueBand, now_seconds};
+use crate::queue::{QueueBand, now_seconds, unix_seconds};
 use crate::render::quote;
 use crate::tui::app::{Focus, WidgetState};
 use crate::tui::event::{COMMANDS, CommandLifecycle, CommandSpec, key_label, matching_commands};
@@ -665,11 +665,14 @@ fn render_task_list(
             render_task_row(
                 frame,
                 item,
-                selected_task == Some(task_index),
-                view.focus == Focus::Tasks,
+                row_style(
+                    selected_task == Some(task_index),
+                    view.focus == Focus::Tasks,
+                ),
                 row_areas[row],
                 columns,
                 now_seconds,
+                use_queue_groups,
             );
             row += 1;
         }
@@ -743,22 +746,35 @@ fn render_group_row(frame: &mut Frame, status: &str, count: usize, area: Rect) {
     );
 }
 
-fn render_task_row(
-    frame: &mut Frame,
-    item: &TaskListItem,
-    selected: bool,
-    focused: bool,
-    area: Rect,
-    columns: [Constraint; 6],
-    now_seconds: i64,
-) {
-    let style = if selected {
+fn row_style(selected: bool, focused: bool) -> Style {
+    if selected {
         if focused { SELECTED } else { SELECTED_INACTIVE }
     } else {
         Style::new().bg(BG)
-    };
+    }
+}
+
+fn render_task_row(
+    frame: &mut Frame,
+    item: &TaskListItem,
+    style: Style,
+    area: Rect,
+    columns: [Constraint; 6],
+    now_seconds: i64,
+    use_queue_groups: bool,
+) {
     frame.render_widget(Block::new().style(style), area);
     let cells = Layout::horizontal(columns).areas::<6>(area);
+    let age_seconds = if use_queue_groups {
+        item.queue.idle_seconds()
+    } else {
+        task_seconds_since(&item.task.created_at, now_seconds)
+    };
+    let age_style_input = if use_queue_groups {
+        &item.task.updated_at
+    } else {
+        &item.task.created_at
+    };
     let values = [
         task_ref_cell(item),
         title_cell(item, cells[1].width as usize),
@@ -769,8 +785,8 @@ fn render_task_row(
             theme::priority_style(&item.task.priority).add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
-            task_age(&item.task.created_at),
-            age_style(&item.task.created_at, now_seconds),
+            age_seconds.map(compact_age).unwrap_or_default(),
+            age_style(age_style_input, now_seconds),
         )),
     ];
     for (area, value) in cells.into_iter().zip(values) {
@@ -796,15 +812,8 @@ fn task_ref_cell(item: &TaskListItem) -> Line<'static> {
     }
 }
 
-fn task_age(created_at: &str) -> String {
-    let Some(created_seconds) = unix_seconds(created_at) else {
-        return String::new();
-    };
-    let now_seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs() as i64)
-        .unwrap_or(created_seconds);
-    compact_age(now_seconds.saturating_sub(created_seconds))
+fn task_seconds_since(value: &str, now_seconds: i64) -> Option<i64> {
+    unix_seconds(value).map(|seconds| now_seconds.saturating_sub(seconds).max(0))
 }
 
 fn compact_age(age_seconds: i64) -> String {
@@ -821,29 +830,6 @@ fn compact_age(age_seconds: i64) -> String {
         return format!("{weeks}w");
     }
     format!("{}mo", days / 30)
-}
-
-fn unix_seconds(value: &str) -> Option<i64> {
-    let (date, time) = value.trim_end_matches('Z').split_once('T')?;
-    let mut date = date.split('-');
-    let year = date.next()?.parse::<i64>().ok()?;
-    let month = date.next()?.parse::<u32>().ok()?;
-    let day = date.next()?.parse::<u32>().ok()?;
-    let mut time = time.split(':');
-    let hour = time.next()?.parse::<i64>().ok()?;
-    let minute = time.next()?.parse::<i64>().ok()?;
-    let second = time.next()?.parse::<i64>().ok()?;
-    Some(unix_days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second)
-}
-
-fn unix_days_from_civil(year: i64, month: u32, day: u32) -> i64 {
-    let year = year - if month <= 2 { 1 } else { 0 };
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let yoe = year - era * 400;
-    let month = month as i64;
-    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day as i64 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
 }
 
 fn project_cell(item: &TaskListItem) -> Line<'static> {

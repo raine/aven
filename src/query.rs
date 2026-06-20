@@ -119,7 +119,7 @@ pub(crate) async fn list_task_items(
     }
     if hide_done {
         push_filter_prefix(&mut query, &mut filters_added);
-        query.push("t.status != 'done'");
+        query.push("t.status NOT IN ('done', 'canceled')");
     }
     if let Some(project_key) = project_key {
         push_filter_prefix(&mut query, &mut filters_added);
@@ -223,7 +223,7 @@ pub(crate) async fn sidebar_counts(conn: &mut SqliteConnection) -> Result<Sideba
     let workspace_id = active_workspace_id();
     let row = sqlx::query(
         "SELECT
-         COALESCE(SUM(CASE WHEN deleted = 0 AND status != 'done' THEN 1 ELSE 0 END), 0) AS all_count,
+         COALESCE(SUM(CASE WHEN deleted = 0 AND status NOT IN ('done', 'canceled') THEN 1 ELSE 0 END), 0) AS all_count,
          COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'inbox' THEN 1 ELSE 0 END), 0) AS inbox_count,
          COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'active' THEN 1 ELSE 0 END), 0) AS active_count,
          COALESCE(SUM(CASE WHEN deleted = 0 AND status = 'backlog' THEN 1 ELSE 0 END), 0) AS backlog_count,
@@ -389,6 +389,37 @@ mod tests {
             listed_titles(&items),
             ["active urgent", "todo urgent", "active low", "inbox urgent"]
         );
+    }
+
+    #[tokio::test]
+    async fn queue_view_hides_done_and_canceled_tasks() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+
+        for (id, title, status) in [
+            ("0000000000000111", "todo task", "todo"),
+            ("0000000000000112", "done task", "done"),
+            ("0000000000000113", "canceled task", "canceled"),
+        ] {
+            insert_test_task(&mut conn, id, title, status, "none", "001").await;
+        }
+
+        let items = list_task_items(
+            &mut conn,
+            TaskFilters {
+                hide_done: true,
+                ..TaskFilters::default()
+            },
+            TaskSort::Queue,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed_titles(&items), ["todo task"]);
+
+        let counts = sidebar_counts(&mut conn).await.unwrap();
+        assert_eq!(counts.all, 1);
+        assert_eq!(counts.done, 1);
     }
 
     #[tokio::test]

@@ -19,6 +19,12 @@ pub(crate) struct QueueMeta {
     pub(crate) idle_days: Option<i64>,
 }
 
+impl QueueMeta {
+    pub(crate) fn idle_seconds(self) -> Option<i64> {
+        self.idle_days.map(|days| days.saturating_mul(86_400))
+    }
+}
+
 impl QueueBand {
     pub(crate) fn label(self) -> &'static str {
         match self {
@@ -130,8 +136,8 @@ fn idle_score(status: &str, idle_days: i64) -> i32 {
         "active" if idle_days >= 7 => 15,
         "todo" if idle_days >= 30 => 15,
         "todo" if idle_days >= 14 => 10,
-        "inbox" if idle_days >= 14 => -10,
-        "inbox" if idle_days >= 7 => -5,
+        "inbox" if idle_days >= 14 => 10,
+        "inbox" if idle_days >= 7 => 5,
         _ => 0,
     }
 }
@@ -199,5 +205,14 @@ mod tests {
             queue_meta(&task("active", "none", "0"), false, 8 * 86_400).band,
             QueueBand::NeedsAction
         );
+    }
+
+    #[test]
+    fn old_inbox_tasks_gain_triage_weight() {
+        let old = queue_meta(&task("inbox", "none", "0"), false, 14 * 86_400);
+        let fresh = queue_meta(&task("inbox", "none", "0"), false, 0);
+
+        assert_eq!(old.band, QueueBand::Triage);
+        assert!(old.score > fresh.score);
     }
 }

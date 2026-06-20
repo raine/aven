@@ -3011,7 +3011,11 @@ mod tests {
         assert_eq!(app.store.tasks[selected].task.status, "done");
 
         app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
-        let selected = app.store.show_view(SidebarTarget::All).await.unwrap();
+        let selected = app
+            .store
+            .filter_status("canceled".to_string())
+            .await
+            .unwrap();
         app.widgets.table.select(selected);
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.status, "canceled");
