@@ -2,9 +2,7 @@ mod common;
 
 use std::time::Duration;
 
-use common::{
-    TestEnv, TestProcess, TestServer, contains_all, contains_none, ok,
-};
+use common::{TestEnv, TestProcess, TestServer, contains_all, contains_none, ok};
 
 #[test]
 fn logging_writes_to_default_state_file_without_affecting_output() {
@@ -31,10 +29,13 @@ fn logging_writes_to_default_state_file_without_affecting_output() {
     contains_all(&stdout, &["created", "default log secret title"]);
     assert_eq!(stderr, "");
 
-    let logs = std::fs::read_to_string(state_home.join("atm").join("atm.log"))
-        .expect("read default logs");
+    let logs =
+        std::fs::read_to_string(state_home.join("atm").join("atm.log")).expect("read default logs");
     contains_all(&logs, &["task created", "task_id"]);
-    contains_none(&logs, &["default log secret title", "default log secret body"]);
+    contains_none(
+        &logs,
+        &["default log secret title", "default log secret body"],
+    );
 }
 
 #[test]
@@ -125,10 +126,7 @@ auth_token = "super-secret-token"
         std::fs::read_to_string(server_log).expect("read server logs"),
         std::fs::read_to_string(client_log).expect("read client logs"),
     );
-    contains_all(
-        &logs,
-        &["auth_enabled=true", "sync request", "sync client"],
-    );
+    contains_all(&logs, &["auth_enabled=true", "sync request", "sync client"]);
     contains_none(
         &logs,
         &[
@@ -198,7 +196,12 @@ fn daemon_file_logging_records_sync_without_user_content() {
     let logs = std::fs::read_to_string(log).expect("read daemon logs");
     contains_all(
         &logs,
-        &["daemon starting", "daemon sync completed", "pushed", "cursor"],
+        &[
+            "daemon starting",
+            "daemon sync completed",
+            "pushed",
+            "cursor",
+        ],
     );
     contains_none(
         &logs,

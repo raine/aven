@@ -31,6 +31,7 @@ pub(crate) struct TaskOutcome {
     pub(crate) task: Task,
 }
 
+#[derive(Default)]
 pub(crate) struct TaskUpdate {
     pub(crate) title: Option<String>,
     pub(crate) description: Option<String>,
@@ -39,20 +40,6 @@ pub(crate) struct TaskUpdate {
     pub(crate) priority: Option<String>,
     pub(crate) add_labels: Vec<String>,
     pub(crate) remove_labels: Vec<String>,
-}
-
-impl Default for TaskUpdate {
-    fn default() -> Self {
-        Self {
-            title: None,
-            description: None,
-            project: None,
-            status: None,
-            priority: None,
-            add_labels: Vec::new(),
-            remove_labels: Vec::new(),
-        }
-    }
 }
 
 pub(crate) struct TaskUpdateOutcome {
@@ -561,7 +548,7 @@ pub(crate) fn show_config() -> Result<ConfigShowOutcome> {
 pub(crate) fn show_config_status() -> Result<ConfigStatusOutcome> {
     let config = config::AppConfig::load()?;
     let sync_server = config::resolve_sync_server(None, &config)
-        .map_or_else(|error| format!("unavailable ({error:#})"), |server| server);
+        .unwrap_or_else(|error| format!("unavailable ({error:#})"));
     let wake_addr = config.wake_addr().map_or_else(
         |error| format!("invalid ({error:#})"),
         |addr| addr.to_string(),

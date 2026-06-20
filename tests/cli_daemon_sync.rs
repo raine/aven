@@ -102,6 +102,9 @@ fn daemon_refuses_wake_port_that_is_already_bound() {
     let _socket = UdpSocket::bind(&wake_addr).expect("bind wake addr");
     env.write_config(&format!(
         r#"
+[local]
+db_path = "{}"
+
 [sync]
 enabled = true
 server_url = "http://127.0.0.1:9"
@@ -109,6 +112,7 @@ server_url = "http://127.0.0.1:9"
 [daemon]
 wake_addr = "{}"
 "#,
+        env.db("daemon.sqlite").display(),
         wake_addr
     ));
 
