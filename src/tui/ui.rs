@@ -895,9 +895,7 @@ fn compact_age(age_seconds: i64) -> String {
 fn project_cell(item: &TaskListItem) -> Line<'static> {
     Line::from(Span::styled(
         item.task.project_key.clone(),
-        Style::new()
-            .fg(theme::project_color(&item.task.project_key))
-            .add_modifier(Modifier::BOLD),
+        Style::new().fg(theme::project_color(&item.task.project_key)),
     ))
 }
 
