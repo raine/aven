@@ -1459,7 +1459,7 @@ fn picker_hint_line(multi: bool, submit_label: &'static str) -> Line<'static> {
 
 fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'static str) {
     let viewport_rows = 10usize;
-    let height = (viewport_rows as u16).saturating_add(7);
+    let height = (viewport_rows as u16).saturating_add(6);
     let area = centered(frame.area(), 70, height);
     let selected_position = state
         .visible_indices
