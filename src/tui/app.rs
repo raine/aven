@@ -1084,7 +1084,9 @@ impl App {
         } else {
             None
         };
-        let items = self.store.existing_project_picker_items(selected.as_deref().unwrap_or_default());
+        let items = self
+            .store
+            .existing_project_picker_items(selected.as_deref().unwrap_or_default());
         self.open_picker_overlay(DELETE_PROJECT_TITLE, items, false);
     }
 
@@ -3332,7 +3334,9 @@ mod tests {
             .store
             .sidebar_entries
             .iter()
-            .position(|entry| entry.target == Some(SidebarTarget::Project("mobile-app".to_string())))
+            .position(|entry| {
+                entry.target == Some(SidebarTarget::Project("mobile-app".to_string()))
+            })
             .unwrap();
         app.widgets.sidebar.select(Some(project_index));
 

@@ -180,7 +180,7 @@ pub(crate) async fn list_task_items_in_workspace(
         .collect::<Result<Vec<_>>>()?;
     let display_refs = display_refs_for_tasks(conn, &tasks).await?;
     let task_ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
-    let mut enrichment = load_task_enrichment(conn, &workspace_id, &task_ids).await?;
+    let mut enrichment = load_task_enrichment(conn, workspace_id, &task_ids).await?;
     let mut items = Vec::with_capacity(tasks.len());
     let now_seconds = now_seconds();
     for task in tasks {
@@ -273,8 +273,8 @@ pub(crate) async fn sidebar_counts_in_workspace(
          FROM tasks
          WHERE workspace_id = ?",
     )
-    .bind(&workspace_id)
-    .bind(&workspace_id)
+    .bind(workspace_id)
+    .bind(workspace_id)
     .fetch_one(&mut *conn)
     .await?;
     Ok(SidebarCounts {
@@ -474,6 +474,7 @@ mod tests {
             .unwrap();
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn seed_workspace_task(
         conn: &mut SqliteConnection,
         workspace_id: &str,

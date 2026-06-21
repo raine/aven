@@ -1382,8 +1382,8 @@ fn multiline_hint_line() -> Line<'static> {
 }
 
 fn render_picker(frame: &mut Frame, state: &PickerView) {
-    if state.title == "Go: project" {
-        render_project_picker(frame, state);
+    if let Some(submit_label) = project_picker_submit_label(&state.title) {
+        render_project_picker(frame, state, submit_label);
         return;
     }
 
@@ -1457,9 +1457,9 @@ fn picker_hint_line(multi: bool, submit_label: &'static str) -> Line<'static> {
     Line::from(spans)
 }
 
-fn render_project_picker(frame: &mut Frame, state: &PickerView) {
+fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'static str) {
     let viewport_rows = 10usize;
-    let height = (viewport_rows as u16).saturating_add(6);
+    let height = (viewport_rows as u16).saturating_add(7);
     let area = centered(frame.area(), 70, height);
     let selected_position = state
         .visible_indices
@@ -1494,8 +1494,17 @@ fn render_project_picker(frame: &mut Frame, state: &PickerView) {
     while lines.len().saturating_sub(list_start) < viewport_rows {
         lines.push(Line::from(""));
     }
-    lines.push(project_picker_hint_line());
+    lines.push(Line::from(""));
+    lines.push(project_picker_hint_line(submit_label));
     render_overlay_paragraph(frame, area, &state.title, Text::from(lines), false);
+}
+
+fn project_picker_submit_label(title: &str) -> Option<&'static str> {
+    match title {
+        "Go: project" => Some("open"),
+        "Delete project" => Some("delete"),
+        _ => None,
+    }
 }
 
 fn project_picker_line(item: &PickerItem, selected: bool) -> Line<'static> {
@@ -1524,8 +1533,8 @@ fn project_picker_line(item: &PickerItem, selected: bool) -> Line<'static> {
     ])
 }
 
-fn project_picker_hint_line() -> Line<'static> {
-    picker_hint_line(false, "open")
+fn project_picker_hint_line(submit_label: &'static str) -> Line<'static> {
+    picker_hint_line(false, submit_label)
 }
 
 fn render_confirm(frame: &mut Frame, state: &ConfirmView) {

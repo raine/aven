@@ -372,13 +372,13 @@ fn matching_project_override(
             let Ok(path) = fs::canonicalize(path) else {
                 continue;
             };
-            if let Some(path_match) = matching_path(&cwd, &root, &path) {
-                if best.as_ref().is_none_or(|(best_match, best_scoped, _)| {
+            if let Some(path_match) = matching_path(&cwd, &root, &path)
+                && best.as_ref().is_none_or(|(best_match, best_scoped, _)| {
                     path_match.is_better_than(*best_match)
                         || path_match == *best_match && scoped && !*best_scoped
-                }) {
-                    best = Some((path_match, scoped, project_override));
-                }
+                })
+            {
+                best = Some((path_match, scoped, project_override));
             }
         }
     }

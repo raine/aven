@@ -39,11 +39,12 @@ async fn labels_for_tasks(
         );
         query.push_bind(workspace_id);
         query.push(" AND task_id IN (");
-        let mut separated = query.separated(", ");
-        for task_id in chunk {
-            separated.push_bind(task_id);
+        {
+            let mut separated = query.separated(", ");
+            for task_id in chunk {
+                separated.push_bind(task_id);
+            }
         }
-        drop(separated);
         query.push(") ORDER BY task_id, label");
 
         for row in query.build().fetch_all(&mut *conn).await? {
@@ -76,11 +77,12 @@ async fn tasks_with_unresolved_conflicts(
         );
         query.push_bind(workspace_id);
         query.push(" AND resolved = 0 AND task_id IN (");
-        let mut separated = query.separated(", ");
-        for task_id in chunk {
-            separated.push_bind(task_id);
+        {
+            let mut separated = query.separated(", ");
+            for task_id in chunk {
+                separated.push_bind(task_id);
+            }
         }
-        drop(separated);
         query.push(")");
 
         for row in query.build().fetch_all(&mut *conn).await? {
