@@ -1811,10 +1811,10 @@ fn add_note_input_line(line: &str, cursor: Option<usize>) -> Line<'static> {
             Span::styled("note body", Style::new().fg(FG_DIM)),
         ]);
     }
-    Line::from(match cursor {
-        Some(cursor) => insert_cursor(line, cursor),
-        None => line.to_string(),
-    })
+    match cursor {
+        Some(cursor) => Line::from(input_cursor_spans(line, cursor, InputWidth::Full)),
+        None => Line::from(line.to_string()),
+    }
 }
 
 fn multiline_hint_line() -> Line<'static> {
