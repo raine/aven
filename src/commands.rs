@@ -20,8 +20,8 @@ use crate::labels::list_labels;
 use crate::operations::{
     TaskDraft, TaskUpdate, add_note, add_project_path_operation, conflict_variant_value,
     create_label_operation, create_project_operation, create_task, init_config, list_conflicts,
-    remove_project_path_operation, resolve_conflict, set_task_deleted, show_config, task_conflicts,
-    update_task,
+    list_project_paths_operation, remove_project_path_operation, resolve_conflict,
+    set_task_deleted, show_config, task_conflicts, update_task,
 };
 use crate::projects::{list_projects, resolve_existing_project_in_workspace};
 use crate::query::{self, SortDirection, TaskFilters, TaskSort};
@@ -200,6 +200,12 @@ pub(crate) async fn cmd_project(conn: &mut SqliteConnection, args: ProjectComman
                     quote(&outcome.path),
                     quote(&outcome.config_path.display().to_string())
                 );
+            }
+            ProjectPathSubcommand::List { project } => {
+                let paths = list_project_paths_operation(conn, project.as_deref()).await?;
+                for item in paths {
+                    println!("{} path={}", item.project.key, quote(&item.path));
+                }
             }
         },
     }

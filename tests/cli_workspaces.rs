@@ -223,6 +223,123 @@ where
 }
 
 #[test]
+fn project_path_list_scopes_and_filters_by_active_workspace() {
+    let env = TestEnv::new();
+    let db = env.db("path-list.sqlite");
+    let app_path = env.path("client app");
+    let docs_path = env.path("docs");
+    let beta_path = env.path("beta-app");
+    std::fs::create_dir_all(&app_path).expect("create app dir");
+    std::fs::create_dir_all(&docs_path).expect("create docs dir");
+    std::fs::create_dir_all(&beta_path).expect("create beta dir");
+    env.write_config(&format!(
+        r#"local:
+  db_path: "{}"
+"#,
+        db.display()
+    ));
+
+    ok(env.aven_config(["workspace", "create", "alpha"]));
+    ok(env.aven_config(["workspace", "create", "beta"]));
+    ok(env.aven_config([
+        "--workspace",
+        "alpha",
+        "project",
+        "create",
+        "Client App",
+    ]));
+    ok(env.aven_config(["--workspace", "alpha", "project", "create", "docs"]));
+    ok(env.aven_config(["--workspace", "beta", "project", "create", "app"]));
+    ok(env.aven_config([
+        "--workspace",
+        "alpha",
+        "project",
+        "path",
+        "add",
+        "client-app",
+        app_path.to_str().expect("utf8 app path"),
+    ]));
+    ok(env.aven_config([
+        "--workspace",
+        "alpha",
+        "project",
+        "path",
+        "add",
+        "docs",
+        docs_path.to_str().expect("utf8 docs path"),
+    ]));
+    ok(env.aven_config([
+        "--workspace",
+        "beta",
+        "project",
+        "path",
+        "add",
+        "app",
+        beta_path.to_str().expect("utf8 beta path"),
+    ]));
+
+    let app_path = std::fs::canonicalize(app_path).expect("canonical app path");
+    let docs_path = std::fs::canonicalize(docs_path).expect("canonical docs path");
+    let beta_path = std::fs::canonicalize(beta_path).expect("canonical beta path");
+
+    let all = ok(env.aven_config(["--workspace", "alpha", "project", "path", "list"]));
+    let expected_all = format!(
+        "client-app path={}\ndocs path={}\n",
+        serde_json::to_string(app_path.to_str().expect("utf8 app path")).expect("quote app path"),
+        serde_json::to_string(docs_path.to_str().expect("utf8 docs path"))
+            .expect("quote docs path")
+    );
+    assert_eq!(all, expected_all);
+    contains_none(&all, &[beta_path.to_str().expect("utf8 beta path")]);
+
+    let app = ok(env.aven_config([
+        "--workspace",
+        "alpha",
+        "project",
+        "path",
+        "list",
+        "Client App",
+    ]));
+    let expected_app = format!(
+        "client-app path={}\n",
+        serde_json::to_string(app_path.to_str().expect("utf8 app path")).expect("quote app path")
+    );
+    assert_eq!(app, expected_app);
+
+    let docs = ok(env.aven_config([
+        "--workspace",
+        "alpha",
+        "project",
+        "path",
+        "list",
+        "docs",
+    ]));
+    contains_all(&docs, &[docs_path.to_str().expect("utf8 docs path")]);
+    contains_none(&docs, &[app_path.to_str().expect("utf8 app path")]);
+
+    let missing = fail(env.aven_config([
+        "--workspace",
+        "alpha",
+        "project",
+        "path",
+        "list",
+        "missing",
+    ]));
+    contains_all(&missing, &["error unknown-project input=missing"]);
+
+    ok(env.aven_config(["--workspace", "alpha", "project", "create", "empty"]));
+    let no_paths = ok(env.aven_config([
+        "--workspace",
+        "alpha",
+        "project",
+        "path",
+        "list",
+        "empty",
+    ]));
+    assert!(no_paths.is_empty(), "expected no output\n{no_paths}");
+}
+
+#[test]
 fn display_suffix_ignores_other_workspaces() {
     let env = TestEnv::new();
     let db = env.db("suffixes.sqlite");

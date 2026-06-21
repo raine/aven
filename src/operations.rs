@@ -612,6 +612,48 @@ pub(crate) async fn remove_project_path_operation(
     })
 }
 
+pub(crate) async fn list_project_paths_operation(
+    conn: &mut SqliteConnection,
+    project: Option<&str>,
+) -> Result<Vec<ProjectPathOutcome>> {
+    let workspace = crate::workspaces::active_workspace();
+    let project = if let Some(project) = project {
+        Some(resolve_existing_project_in_workspace(conn, &workspace.id, project).await?)
+    } else {
+        None
+    };
+    let project_key = project.as_ref().map(|project| project.key.as_str());
+    let config_path = config::config_file_path()?;
+    let config = config::AppConfig::load_from_path(&config_path)?;
+    let mut paths = Vec::new();
+    for project_override in config.project.overrides {
+        if !project_override.matches_workspace(Some(&workspace.id), Some(&workspace.key)) {
+            continue;
+        }
+        if project_key.is_some_and(|key| project_override.project_key() != key) {
+            continue;
+        }
+        let project = resolve_existing_project_in_workspace(
+            conn,
+            &workspace.id,
+            &project_override.project_key(),
+        )
+        .await?;
+        paths.extend(project_override.paths.into_iter().map(|path| ProjectPathOutcome {
+            project: project.clone(),
+            path: path.display().to_string(),
+            config_path: config_path.clone(),
+        }));
+    }
+    paths.sort_by(|left, right| {
+        left.project
+            .key
+            .cmp(&right.project.key)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    Ok(paths)
+}
+
 pub(crate) async fn list_conflicts(
     conn: &mut SqliteConnection,
     project_key: Option<&str>,

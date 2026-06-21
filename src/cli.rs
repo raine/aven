@@ -163,6 +163,7 @@ pub(crate) enum ProjectSubcommand {
 pub(crate) enum ProjectPathSubcommand {
     Add { project: String, path: PathBuf },
     Remove { project: String, path: PathBuf },
+    List { project: Option<String> },
 }
 
 #[derive(Args)]

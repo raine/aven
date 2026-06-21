@@ -46,6 +46,8 @@ aven show APP-7KQ9
 aven show APP-7KQ9 --full
 aven projects
 aven projects --search app
+aven project path list
+aven project path list app
 aven labels
 aven labels --search bug
 aven workspace list
