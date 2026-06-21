@@ -5,6 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 pub(crate) enum OverlayState {
     Help { scroll: u16 },
     Detail,
+    DetailHelp { scroll: u16 },
     Search { input: LineEdit },
     Command { input: LineEdit },
     TextInput(TextInputState),
@@ -214,6 +215,7 @@ pub(crate) struct ConfirmState {
 pub(crate) enum OverlayView {
     Help { scroll: u16 },
     Detail,
+    DetailHelp { scroll: u16 },
     Search { input: String, cursor: usize },
     Command { input: String, cursor: usize },
     TextInput(TextInputView),
@@ -307,6 +309,7 @@ impl From<&OverlayState> for OverlayView {
         match state {
             OverlayState::Help { scroll } => Self::Help { scroll: *scroll },
             OverlayState::Detail => Self::Detail,
+            OverlayState::DetailHelp { scroll } => Self::DetailHelp { scroll: *scroll },
             OverlayState::Search { input } => Self::Search {
                 input: input.text.clone(),
                 cursor: input.cursor,
@@ -499,6 +502,18 @@ pub(crate) fn handle_generic_overlay_key(
                 OverlayOutcome::None(OverlayState::Help { scroll })
             }
             _ => OverlayOutcome::None(OverlayState::Help { scroll }),
+        },
+        OverlayState::DetailHelp { mut scroll } => match key.code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') => OverlayOutcome::Cancelled,
+            KeyCode::Char('j') | KeyCode::Down => {
+                scroll = scroll.saturating_add(1).min(help_scroll_cap);
+                OverlayOutcome::None(OverlayState::DetailHelp { scroll })
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                scroll = scroll.saturating_sub(1);
+                OverlayOutcome::None(OverlayState::DetailHelp { scroll })
+            }
+            _ => OverlayOutcome::None(OverlayState::DetailHelp { scroll }),
         },
         other => OverlayOutcome::None(other),
     }

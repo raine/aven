@@ -18,7 +18,7 @@ use crate::tui::overlay::{
     OverlayView, PickerItem, PickerState, TextInputState, TextPanelState,
 };
 use crate::tui::store::{ConflictTarget, SidebarEntry, SidebarTarget, TuiStore};
-use crate::tui::ui::{self, help_scroll_cap};
+use crate::tui::ui::{self, detail_help_scroll_cap, help_scroll_cap};
 
 const ADD_PROJECT_TITLE: &str = "Add project";
 const DELETE_PROJECT_TITLE: &str = "Delete project";
@@ -205,6 +205,9 @@ impl App {
         } else if self.overlay_captures_input() {
             self.handle_overlay_key_at_height(key, terminal_height)
                 .await
+        } else if key.code == KeyCode::Char('?') {
+            self.toggle_help_at_height(terminal_height);
+            Ok(())
         } else {
             self.handle_normal_key(key.code).await
         }
@@ -327,10 +330,17 @@ impl App {
             return Ok(());
         }
 
-        let scroll_cap = help_scroll_cap(terminal_height);
+        let scroll_cap = match overlay {
+            OverlayState::DetailHelp { .. } => detail_help_scroll_cap(terminal_height),
+            _ => help_scroll_cap(terminal_height),
+        };
+        let was_detail_help = matches!(overlay, OverlayState::DetailHelp { .. });
         let outcome = crate::tui::overlay::handle_generic_overlay_key(key, overlay, scroll_cap);
         match outcome {
             OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
+            OverlayOutcome::Cancelled if was_detail_help => {
+                self.overlay = Some(OverlayState::Detail)
+            }
             OverlayOutcome::Cancelled => self.cancel_authoring_overlay(),
             OverlayOutcome::Submitted(submit) => self.handle_overlay_submit(submit).await?,
         }
@@ -480,7 +490,7 @@ impl App {
             Action::Last => self.select_edge(true).await?,
             Action::ToggleFocus => self.toggle_focus(),
             Action::ToggleDetail => self.activate_or_toggle_detail().await?,
-            Action::ToggleHelp => self.toggle_help(),
+            Action::ToggleHelp => self.toggle_help_at_height(24),
             Action::BeginSearch => self.begin_search(),
             Action::BeginCommand => self.begin_command(),
             Action::Refresh => self.refresh().await?,
@@ -918,11 +928,14 @@ impl App {
         }
     }
 
-    fn toggle_help(&mut self) {
-        if matches!(self.overlay, Some(OverlayState::Help { .. })) {
-            self.overlay = None;
-        } else {
-            self.overlay = Some(OverlayState::Help { scroll: 0 });
+    fn toggle_help_at_height(&mut self, _terminal_height: u16) {
+        match self.overlay {
+            Some(OverlayState::Help { .. }) => self.overlay = None,
+            Some(OverlayState::DetailHelp { .. }) => self.overlay = Some(OverlayState::Detail),
+            Some(OverlayState::Detail) => {
+                self.overlay = Some(OverlayState::DetailHelp { scroll: 0 })
+            }
+            _ => self.overlay = Some(OverlayState::Help { scroll: 0 }),
         }
     }
 
@@ -2175,7 +2188,7 @@ mod tests {
     async fn toggle_help_closes_active_help_overlay() {
         let mut app = test_app().await;
         app.overlay = Some(OverlayState::Help { scroll: 0 });
-        app.toggle_help();
+        app.toggle_help_at_height(24);
         assert!(app.overlay.is_none());
     }
 
@@ -2184,6 +2197,39 @@ mod tests {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('?')).await.unwrap();
         assert!(matches!(app.overlay, Some(OverlayState::Help { .. })));
+    }
+
+    #[tokio::test]
+    async fn help_key_opens_detail_help_from_detail_overlay() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail help target")).await;
+        app.overlay = Some(OverlayState::Detail);
+
+        app.dispatch_key(key(KeyCode::Char('?')), 24).await.unwrap();
+
+        assert!(matches!(app.overlay, Some(OverlayState::DetailHelp { .. })));
+        assert_eq!(app.focus, Focus::Tasks);
+        assert!(app.widgets.table.selected().is_some());
+    }
+
+    #[tokio::test]
+    async fn closing_detail_help_returns_to_detail_overlay() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::DetailHelp { scroll: 0 });
+
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(matches!(app.overlay, Some(OverlayState::Detail)));
+    }
+
+    #[tokio::test]
+    async fn second_help_key_returns_from_detail_help_to_detail_overlay() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::DetailHelp { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Char('?')), 24).await.unwrap();
+
+        assert!(matches!(app.overlay, Some(OverlayState::Detail)));
     }
 
     #[tokio::test]
@@ -2736,6 +2782,7 @@ mod tests {
         let overlays = vec![
             OverlayState::Help { scroll: 0 },
             OverlayState::Detail,
+            OverlayState::DetailHelp { scroll: 0 },
             OverlayState::Search {
                 input: LineEdit::new("q".to_string()),
             },
@@ -2773,10 +2820,15 @@ mod tests {
         ];
 
         for overlay in overlays {
+            let detail_help = matches!(overlay, OverlayState::DetailHelp { .. });
             let mut app = test_app().await;
             app.overlay = Some(overlay);
             app.dispatch_key(key(KeyCode::Esc), 24).await.unwrap();
-            assert!(app.overlay.is_none());
+            if detail_help {
+                assert!(matches!(app.overlay, Some(OverlayState::Detail)));
+            } else {
+                assert!(app.overlay.is_none());
+            }
             assert!(app.pending_shortcut.is_empty());
         }
     }

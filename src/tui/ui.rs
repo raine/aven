@@ -43,7 +43,10 @@ enum FooterMode {
 
 impl ViewState {
     fn footer_mode(&self) -> FooterMode {
-        if matches!(self.overlay, Some(OverlayView::Detail)) {
+        if matches!(
+            self.overlay,
+            Some(OverlayView::Detail | OverlayView::DetailHelp { .. })
+        ) {
             FooterMode::Detail
         } else {
             FooterMode::List
@@ -381,7 +384,8 @@ fn footer_bar(mode: FooterMode) -> Paragraph<'static> {
             ("s", "status"),
             ("p", "priority"),
             ("l", "labels"),
-            ("y/Y", "copy ref/link"),
+            ("y/Y", "copy ref/id"),
+            ("?", "help"),
             ("Esc", "back"),
         ],
     };
@@ -1325,6 +1329,72 @@ const HELP_COLUMNS: &[&[&str]] = &[
     ],
 ];
 
+const DETAIL_HELP_SECTIONS: &[&str] = &["General", "Task detail", "Edit", "Status", "Priority"];
+
+struct HelpTopic {
+    keys: &'static str,
+    description: &'static str,
+    section: &'static str,
+}
+
+const DETAIL_HELP_TOPICS: &[HelpTopic] = &[
+    HelpTopic {
+        keys: "Esc/Enter",
+        description: "return to the task list",
+        section: "General",
+    },
+    HelpTopic {
+        keys: "?",
+        description: "toggle task detail help",
+        section: "General",
+    },
+    HelpTopic {
+        keys: "j/k",
+        description: "move selection in the task list",
+        section: "Task detail",
+    },
+    HelpTopic {
+        keys: "n",
+        description: "add a note to this task",
+        section: "Task detail",
+    },
+    HelpTopic {
+        keys: "y/Y",
+        description: "copy display ref or task id",
+        section: "Task detail",
+    },
+    HelpTopic {
+        keys: "e t/d/p/l",
+        description: "edit title, description, project, labels",
+        section: "Edit",
+    },
+    HelpTopic {
+        keys: "s",
+        description: "open status picker",
+        section: "Status",
+    },
+    HelpTopic {
+        keys: "d/x",
+        description: "set status to done or canceled",
+        section: "Status",
+    },
+    HelpTopic {
+        keys: "m i/b/t/a",
+        description: "set inbox, backlog, todo, active",
+        section: "Status",
+    },
+    HelpTopic {
+        keys: "p",
+        description: "open priority picker",
+        section: "Priority",
+    },
+    HelpTopic {
+        keys: "m 0/l/m/h/u",
+        description: "set none, low, medium, high, urgent",
+        section: "Priority",
+    },
+];
+
 fn render_help(frame: &mut Frame, scroll: u16) {
     let area = centered(
         frame.area(),
@@ -1361,6 +1431,68 @@ fn render_help_column(frame: &mut Frame, area: Rect, sections: &[&'static str], 
         Paragraph::new(Text::from(visible)).style(Style::new().fg(FG).bg(BG_ALT)),
         area,
     );
+}
+
+fn render_detail_help(frame: &mut Frame, scroll: u16) {
+    let area = centered(frame.area(), 72, 18);
+    frame.render_widget(Clear, area);
+    let mut block = overlay_block("Task detail shortcuts");
+    let content = block.inner(area);
+    if let Some(title) = detail_help_scroll_title(scroll, content.height) {
+        block = block
+            .title_top(Line::from(Span::styled(title, Style::new().fg(FG_MUTED))).right_aligned());
+    }
+    frame.render_widget(block, area);
+    let lines = detail_help_lines();
+    let visible = lines
+        .into_iter()
+        .skip(scroll as usize)
+        .take(content.height as usize)
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(Text::from(visible)).style(Style::new().fg(FG).bg(BG_ALT)),
+        content,
+    );
+}
+
+fn detail_help_lines() -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    for section in DETAIL_HELP_SECTIONS {
+        let mut section_lines = DETAIL_HELP_TOPICS
+            .iter()
+            .filter(|topic| topic.section == *section)
+            .peekable();
+        if section_lines.peek().is_none() {
+            continue;
+        }
+        if !lines.is_empty() {
+            lines.push(Line::from(""));
+        }
+        lines.push(Line::from(Span::styled(
+            *section,
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )));
+        lines.extend(section_lines.map(detail_help_line));
+    }
+    lines
+}
+
+fn detail_help_line(topic: &HelpTopic) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{:<18}", topic.keys), Style::new().fg(FG_MUTED)),
+        Span::styled(topic.description, Style::new().fg(FG_DIM)),
+    ])
+}
+
+fn detail_help_scroll_title(scroll: u16, visible_rows: u16) -> Option<String> {
+    let max_rows = detail_help_lines().len();
+    let visible_rows = visible_rows as usize;
+    if max_rows <= visible_rows {
+        return None;
+    }
+    let total = max_rows.saturating_sub(visible_rows).saturating_add(1);
+    let current = (scroll as usize).saturating_add(1).min(total);
+    Some(format!(" {current}/{total} "))
 }
 
 fn help_scroll_title(scroll: u16, visible_rows: u16) -> Option<String> {
@@ -1409,6 +1541,11 @@ pub(crate) fn help_scroll_cap(frame_height: u16) -> u16 {
         })
         .max()
         .unwrap_or(0) as u16
+}
+
+pub(crate) fn detail_help_scroll_cap(frame_height: u16) -> u16 {
+    let visible_rows = frame_height.min(18).saturating_sub(2) as usize;
+    detail_help_lines().len().saturating_sub(visible_rows) as u16
 }
 
 fn command_name_style(command: &CommandSpec) -> Style {
@@ -1498,6 +1635,7 @@ fn render_search(frame: &mut Frame, input: &str, cursor: usize) {
 fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
     match overlay {
         OverlayView::Help { scroll } => render_help(frame, *scroll),
+        OverlayView::DetailHelp { scroll } => render_detail_help(frame, *scroll),
         OverlayView::Search { input, cursor } => render_search(frame, input, *cursor),
         OverlayView::Command { input, cursor } => render_command(frame, input, *cursor),
         OverlayView::TextInput(state) => render_text_input(frame, state),
@@ -1515,9 +1653,15 @@ fn render_overlay(
     widgets: &mut WidgetState,
     overlay: &OverlayView,
 ) {
-    if matches!(overlay, OverlayView::Detail) {
+    if matches!(
+        overlay,
+        OverlayView::Detail | OverlayView::DetailHelp { .. }
+    ) {
         if let Some(task) = store.selected_task(widgets.table.selected()) {
             render_detail(frame, task);
+        }
+        if matches!(overlay, OverlayView::DetailHelp { .. }) {
+            render_overlay_content(frame, overlay);
         }
         return;
     }
@@ -2519,6 +2663,34 @@ mod tests {
     fn overlay_render_includes_help_title() {
         let rendered = render_overlay_view(OverlayView::Help { scroll: 0 });
         assert!(rendered.contains("Shortcuts"));
+    }
+
+    #[test]
+    fn detail_help_overlay_shows_detail_shortcuts() {
+        let rendered = render_overlay_view(OverlayView::DetailHelp { scroll: 0 });
+        assert!(rendered.contains("Task detail shortcuts"));
+        assert!(rendered.contains("return to the task list"));
+        assert!(rendered.contains("add a note to this task"));
+        assert!(!rendered.contains("view updated"));
+    }
+
+    #[test]
+    fn detail_help_compacts_repeated_prefixes() {
+        let rendered = detail_help_lines()
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("e t/d/p/l"));
+        assert!(rendered.contains("m i/b/t/a"));
+        assert!(rendered.contains("m 0/l/m/h/u"));
+        assert!(!rendered.contains("m 0/m l/m m/m h/m u"));
+    }
+
+    #[test]
+    fn detail_help_scroll_cap_uses_detail_rows() {
+        assert!(detail_help_scroll_cap(10) > 0);
     }
 
     #[test]
