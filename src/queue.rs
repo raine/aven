@@ -215,4 +215,9 @@ mod tests {
         assert_eq!(old.band, QueueBand::Triage);
         assert!(old.score > fresh.score);
     }
+
+    #[test]
+    fn unix_seconds_parses_utc_timestamp() {
+        assert_eq!(unix_seconds("1970-01-02T01:02:03Z"), Some(90_123));
+    }
 }
