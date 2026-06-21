@@ -1944,7 +1944,10 @@ mod tests {
             .set_exact_priority(Some(selected), "high")
             .await
             .unwrap();
-        store.update_project(Some(selected), "side".to_string()).await.unwrap();
+        store
+            .update_project(Some(selected), "side".to_string())
+            .await
+            .unwrap();
         store
             .update_labels(Some(selected), vec!["bug".to_string()])
             .await
@@ -1958,10 +1961,7 @@ mod tests {
             .unwrap();
 
         store.update_status(Some(index), "todo").await.unwrap();
-        store
-            .set_exact_priority(Some(index), "high")
-            .await
-            .unwrap();
+        store.set_exact_priority(Some(index), "high").await.unwrap();
         store
             .update_title(Some(index), "Changed".to_string())
             .await
@@ -1970,7 +1970,10 @@ mod tests {
             .update_description(Some(index), "details".to_string())
             .await
             .unwrap();
-        store.update_project(Some(index), "side".to_string()).await.unwrap();
+        store
+            .update_project(Some(index), "side".to_string())
+            .await
+            .unwrap();
         store
             .update_labels(Some(index), vec!["bug".to_string()])
             .await
@@ -2237,20 +2240,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn undo_consumes_noop_status_before_previous_mutation() {
-        let mut store = test_store().await;
+    async fn undo_skips_noop_status_before_previous_mutation() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) = create_selected_task(&mut store, "Noop status").await;
         store.update_status(Some(selected), "todo").await.unwrap();
+        let undo_count_after_change = pending_undo_count(&pool).await;
         store.update_status(Some(selected), "todo").await.unwrap();
-
-        store.undo_last().await.unwrap().unwrap();
-        store.refresh(Some(&task_id)).await.unwrap();
-        let index = store
-            .tasks
-            .iter()
-            .position(|item| item.task.id == task_id)
-            .unwrap();
-        assert_eq!(store.tasks[index].task.status, "todo");
+        assert_eq!(pending_undo_count(&pool).await, undo_count_after_change);
 
         store.undo_last().await.unwrap().unwrap();
         store.refresh(Some(&task_id)).await.unwrap();
@@ -2260,6 +2256,7 @@ mod tests {
             .position(|item| item.task.id == task_id)
             .unwrap();
         assert_eq!(store.tasks[index].task.status, "inbox");
+        assert_eq!(pending_undo_count(&pool).await, 1);
     }
 
     #[tokio::test]
