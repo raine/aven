@@ -222,6 +222,60 @@ where
         .expect("run aven with config in cwd")
 }
 
+fn sqlite_scalar(db: &std::path::Path, sql: &str) -> String {
+    let output = Command::new("sqlite3")
+        .arg(db)
+        .arg(sql)
+        .output()
+        .expect("read sqlite scalar");
+    assert!(output.status.success(), "sqlite failed");
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+fn workspace_id(db: &std::path::Path, key: &str) -> String {
+    let sql = format!("SELECT id FROM workspaces WHERE key = '{key}'");
+    sqlite_scalar(db, &sql)
+}
+
+fn latest_payload(db: &std::path::Path, op_type: &str) -> String {
+    let sql = format!(
+        "SELECT payload FROM changes WHERE op_type = '{op_type}' ORDER BY local_seq DESC LIMIT 1"
+    );
+    sqlite_scalar(db, &sql)
+}
+
+#[test]
+fn project_create_path_writes_active_workspace_id_and_key_to_config() {
+    let env = TestEnv::new();
+    let db = env.db("path-create-config.sqlite");
+    let mapped = env.path("mapped");
+    std::fs::create_dir_all(&mapped).expect("create mapped dir");
+    env.write_config(&format!("local:\n  db_path: \"{}\"\n", db.display()));
+
+    ok(env.aven_config(["workspace", "create", "alpha"]));
+    ok(env.aven_config([
+        "--workspace",
+        "alpha",
+        "project",
+        "create",
+        "app",
+        "--path",
+        mapped.to_str().expect("utf8 path"),
+    ]));
+
+    let alpha_id = workspace_id(&db, "alpha");
+    let config = std::fs::read_to_string(env.config_file()).expect("read config");
+    contains_all(
+        &config,
+        &[
+            "# aven-managed project path mapping",
+            &format!("workspace_id: {alpha_id}"),
+            "workspace: alpha",
+            "project: app",
+        ],
+    );
+}
+
 #[test]
 fn project_path_list_scopes_and_filters_by_active_workspace() {
     let env = TestEnv::new();
@@ -312,6 +366,92 @@ fn project_path_list_scopes_and_filters_by_active_workspace() {
     let no_paths =
         ok(env.aven_config(["--workspace", "alpha", "project", "path", "list", "empty"]));
     assert!(no_paths.is_empty(), "expected no output\n{no_paths}");
+}
+
+#[test]
+fn active_workspace_payloads_pair_id_and_key_for_writes() {
+    let env = TestEnv::new();
+    let db = env.db("active-payloads.sqlite");
+    ok(env.aven(&db, ["workspace", "create", "client"]));
+    let task_ref = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "--workspace",
+            "client",
+            "add",
+            "client task",
+            "--project",
+            "app",
+        ],
+    )));
+    let client_id = workspace_id(&db, "client");
+
+    ok(env.aven(
+        &db,
+        [
+            "--workspace",
+            "client",
+            "update",
+            &task_ref,
+            "--title",
+            "renamed",
+        ],
+    ));
+    let set_field = latest_payload(&db, "set_field");
+    contains_all(
+        &set_field,
+        &[
+            &format!("\"workspace_id\":\"{client_id}\""),
+            "\"workspace_key\":\"client\"",
+        ],
+    );
+
+    ok(env.aven(
+        &db,
+        ["--workspace", "client", "note", &task_ref, "scoped note"],
+    ));
+    let note_add = latest_payload(&db, "note_add");
+    contains_all(
+        &note_add,
+        &[
+            &format!("\"workspace_id\":\"{client_id}\""),
+            "\"workspace_key\":\"client\"",
+        ],
+    );
+
+    let sql = format!(
+        "INSERT INTO conflicts(workspace_id, task_id, field, base_version, local_value, remote_value,
+         local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
+         SELECT '{client_id}', id, 'priority', NULL, 'none', 'urgent', NULL, 'REMOTECHANGE0001', 'local', 'remote', 't', 0
+         FROM tasks WHERE workspace_id = '{client_id}'"
+    );
+    let output = Command::new("sqlite3")
+        .arg(&db)
+        .arg(sql)
+        .output()
+        .expect("seed conflict");
+    assert!(output.status.success(), "sqlite failed");
+    ok(env.aven(
+        &db,
+        [
+            "--workspace",
+            "client",
+            "conflict",
+            "resolve",
+            &task_ref,
+            "priority",
+            "--value",
+            "urgent",
+        ],
+    ));
+    let resolve_field = latest_payload(&db, "resolve_field");
+    contains_all(
+        &resolve_field,
+        &[
+            &format!("\"workspace_id\":\"{client_id}\""),
+            "\"workspace_key\":\"client\"",
+        ],
+    );
 }
 
 #[test]

@@ -122,12 +122,12 @@ pub(crate) async fn resolve_conflict(
     field: &str,
     value: &str,
 ) -> Result<ConflictOutcome> {
-    let workspace_id = crate::workspaces::active_workspace_id();
+    let workspace = crate::workspaces::active_workspace();
     let mut tx = conn.begin().await?;
     let result = sqlx::query(
         "UPDATE conflicts SET resolved = 1 WHERE workspace_id = ? AND task_id = ? AND field = ? AND resolved = 0",
     )
-    .bind(&workspace_id)
+    .bind(&workspace.id)
     .bind(task_id)
     .bind(field)
     .execute(&mut *tx)
@@ -135,7 +135,7 @@ pub(crate) async fn resolve_conflict(
     if result.rows_affected() != 1 {
         bail!("error conflict-not-found task_id={task_id} field={field}");
     }
-    apply_field_value_in_workspace(&mut tx, &workspace_id, task_id, field, value).await?;
+    apply_field_value_in_workspace(&mut tx, &workspace.id, task_id, field, value).await?;
     let change_id = insert_change(
         &mut tx,
         "task",
@@ -143,8 +143,8 @@ pub(crate) async fn resolve_conflict(
         Some(field),
         "resolve_field",
         json!({
-            "workspace_id": workspace_id,
-            "workspace_key": crate::workspaces::active_workspace().key,
+            "workspace_id": &workspace.id,
+            "workspace_key": &workspace.key,
             "value": value,
         }),
         None,

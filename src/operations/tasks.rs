@@ -307,7 +307,7 @@ pub(crate) async fn add_note(
     body: String,
 ) -> Result<NoteOutcome> {
     let note_id = new_id();
-    let workspace_id = crate::workspaces::active_workspace_id();
+    let workspace = crate::workspaces::active_workspace();
     let ts = now();
     let mut tx = conn.begin().await?;
     let change_id = insert_change(
@@ -317,8 +317,8 @@ pub(crate) async fn add_note(
         Some("notes"),
         "note_add",
         json!({
-            "workspace_id": workspace_id,
-            "workspace_key": crate::workspaces::active_workspace().key,
+            "workspace_id": &workspace.id,
+            "workspace_key": &workspace.key,
             "note_id": note_id,
             "body": body,
             "created_at": ts,
@@ -329,7 +329,7 @@ pub(crate) async fn add_note(
     sqlx::query(
         "INSERT INTO notes(workspace_id, id, task_id, body, created_at, change_id) VALUES (?, ?, ?, ?, ?, ?)",
     )
-    .bind(&workspace_id)
+    .bind(&workspace.id)
     .bind(&note_id)
     .bind(task_id)
     .bind(&body)

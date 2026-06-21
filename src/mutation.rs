@@ -10,7 +10,7 @@ use crate::projects::resolve_project_for_add_in_workspace;
 use crate::refs::get_task;
 use crate::task_fields::TaskField;
 use crate::types::Task;
-use crate::workspaces::active_workspace_id;
+use crate::workspaces::{active_workspace, active_workspace_id};
 
 pub(crate) async fn set_status(
     conn: &mut SqliteConnection,
@@ -62,8 +62,8 @@ pub(crate) async fn set_task_field(
     field: &str,
     value: &str,
 ) -> Result<()> {
-    let workspace_id = active_workspace_id();
-    if conflict_exists(conn, &workspace_id, task_id, field).await? {
+    let workspace = active_workspace();
+    if conflict_exists(conn, &workspace.id, task_id, field).await? {
         bail!(
             "error conflicted-field ref={} field={} hint=\"use conflict resolve\"",
             task_id,
@@ -72,7 +72,7 @@ pub(crate) async fn set_task_field(
     }
     debug!(task_id = %task_id, field = %field, "task field mutation started");
     let base = field_version(conn, task_id, field).await?;
-    apply_field_value_in_workspace(conn, &workspace_id, task_id, field, value).await?;
+    apply_field_value_in_workspace(conn, &workspace.id, task_id, field, value).await?;
     let change_id = insert_change(
         conn,
         "task",
@@ -80,8 +80,8 @@ pub(crate) async fn set_task_field(
         Some(field),
         "set_field",
         json!({
-            "workspace_id": workspace_id,
-            "workspace_key": crate::workspaces::active_workspace().key,
+            "workspace_id": &workspace.id,
+            "workspace_key": &workspace.key,
             "value": value,
         }),
         base.as_deref(),

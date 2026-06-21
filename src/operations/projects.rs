@@ -42,6 +42,7 @@ pub(crate) struct ProjectDeleteOutcome {
 }
 
 struct ProjectPathTarget {
+    workspace: Workspace,
     project: Project,
     path: PathBuf,
 }
@@ -119,15 +120,11 @@ pub(crate) async fn create_project_operation(
     name: &str,
     path: Option<&Path>,
 ) -> Result<ProjectOutcome> {
+    let workspace = crate::workspaces::active_workspace();
     let path = path.map(canonicalize_project_path).transpose()?;
-    let outcome = create_project_in_workspace(
-        conn,
-        crate::workspaces::active_workspace_id().as_str(),
-        name,
-    )
-    .await?;
+    let outcome = create_project_in_workspace(conn, &workspace.id, name).await?;
     if let Some(path) = path {
-        save_project_path_mapping(&outcome.project, path)?;
+        save_project_path_mapping(&workspace, &outcome.project, path)?;
     }
     if outcome.created {
         info!(project_key = %outcome.project.key, "project created");
@@ -209,19 +206,22 @@ async fn resolve_project_path_target(
     project: &str,
     path: &Path,
 ) -> Result<ProjectPathTarget> {
-    let project = resolve_existing_project_in_workspace(
-        conn,
-        crate::workspaces::active_workspace_id().as_str(),
-        project,
-    )
-    .await?;
+    let workspace = crate::workspaces::active_workspace();
+    let project = resolve_existing_project_in_workspace(conn, &workspace.id, project).await?;
     let path = canonicalize_project_path(path)?;
-    Ok(ProjectPathTarget { project, path })
+    Ok(ProjectPathTarget {
+        workspace,
+        project,
+        path,
+    })
 }
 
-fn save_project_path_mapping(project: &Project, path: PathBuf) -> Result<ProjectPathOutcome> {
+fn save_project_path_mapping(
+    workspace: &Workspace,
+    project: &Project,
+    path: PathBuf,
+) -> Result<ProjectPathOutcome> {
     let config_path = config::config_file_path()?;
-    let workspace = crate::workspaces::active_workspace();
     config_edit::add_project_path(
         &config_path,
         ProjectPathMappingEdit {
@@ -244,7 +244,7 @@ pub(crate) async fn add_project_path_operation(
     path: &Path,
 ) -> Result<ProjectPathOutcome> {
     let target = resolve_project_path_target(conn, project, path).await?;
-    save_project_path_mapping(&target.project, target.path)
+    save_project_path_mapping(&target.workspace, &target.project, target.path)
 }
 
 pub(crate) async fn remove_project_path_operation(
@@ -252,14 +252,9 @@ pub(crate) async fn remove_project_path_operation(
     project: &str,
     path: &Path,
 ) -> Result<ProjectPathOutcome> {
-    let project = resolve_existing_project_in_workspace(
-        conn,
-        crate::workspaces::active_workspace_id().as_str(),
-        project,
-    )
-    .await?;
-    let config_path = config::config_file_path()?;
     let workspace = crate::workspaces::active_workspace();
+    let project = resolve_existing_project_in_workspace(conn, &workspace.id, project).await?;
+    let config_path = config::config_file_path()?;
     let remove_paths = project_path_remove_candidates(path);
     config_edit::remove_project_path(&config_path, &workspace.id, &project.key, &remove_paths)?;
     for path in &remove_paths {
