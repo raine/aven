@@ -53,8 +53,15 @@ pub(crate) struct TaskListItem {
     pub(crate) task: Task,
     pub(crate) display_ref: String,
     pub(crate) labels: Vec<String>,
+    pub(crate) notes: Vec<TaskNote>,
     pub(crate) has_conflict: bool,
     pub(crate) queue: QueueMeta,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TaskNote {
+    pub(crate) body: String,
+    pub(crate) created_at: String,
 }
 
 #[derive(Debug, Clone)]
@@ -192,12 +199,14 @@ pub(crate) async fn list_task_items_in_workspace(
             .labels_by_task
             .remove(&task.id)
             .unwrap_or_default();
+        let notes = notes_for_task(conn, &task.workspace_id, &task.id).await?;
         let has_conflict = enrichment.conflicted_task_ids.contains(&task.id);
         let queue = queue_meta(&task, has_conflict, now_seconds);
         items.push(TaskListItem {
             task,
             display_ref,
             labels,
+            notes,
             has_conflict,
             queue,
         });
@@ -286,6 +295,28 @@ pub(crate) async fn sidebar_counts_in_workspace(
         conflicts: row.get("conflicts_count"),
         done: row.get("done_count"),
     })
+}
+
+async fn notes_for_task(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+) -> Result<Vec<TaskNote>> {
+    let rows = sqlx::query(
+        "SELECT body, created_at FROM notes
+         WHERE workspace_id = ? AND task_id = ? ORDER BY created_at DESC, id DESC",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| TaskNote {
+            body: row.get("body"),
+            created_at: row.get("created_at"),
+        })
+        .collect())
 }
 
 fn push_filter_prefix(query: &mut QueryBuilder<Sqlite>, filters: &mut usize) {

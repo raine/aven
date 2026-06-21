@@ -5,7 +5,8 @@ use ratatui::layout::{Alignment, Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
-    Block, BorderType, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap,
+    Block, BorderType, Borders, Clear, List, ListItem, Padding, Paragraph, Scrollbar,
+    ScrollbarOrientation, ScrollbarState, Wrap,
 };
 
 use crate::query::{TaskListItem, TaskSort};
@@ -32,6 +33,22 @@ pub(crate) struct ViewState {
     pub(crate) overlay: Option<OverlayView>,
     pub(crate) message: Option<String>,
     pub(crate) pending_shortcut: Vec<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FooterMode {
+    List,
+    Detail,
+}
+
+impl ViewState {
+    fn footer_mode(&self) -> FooterMode {
+        if matches!(self.overlay, Some(OverlayView::Detail)) {
+            FooterMode::Detail
+        } else {
+            FooterMode::List
+        }
+    }
 }
 
 pub(crate) fn render(
@@ -73,7 +90,7 @@ pub(crate) fn render(
         render_sidebar(frame, store, widgets, view, sidebar, false);
         render_tasks(frame, store, widgets, view, main);
     }
-    frame.render_widget(footer_bar(), footer);
+    frame.render_widget(footer_bar(view.footer_mode()), footer);
 
     if !view.pending_shortcut.is_empty()
         && !view
@@ -344,18 +361,31 @@ fn civil_from_unix_days(days: i64) -> (i64, u32, u32, u32) {
     (year, month as u32, day as u32, weekday as u32)
 }
 
-fn footer_bar() -> Paragraph<'static> {
+fn footer_bar(mode: FooterMode) -> Paragraph<'static> {
     let mut spans = Vec::new();
-    for (keys, label) in [
-        ("j/k", "navigate"),
-        ("Enter", "detail"),
-        ("a/s/p/l/n/d/x/y", "task"),
-        ("g/e/m/f/o/c/C", "prefixes"),
-        ("/", "search"),
-        (":", "command"),
-        ("?", "help"),
-        ("q", "quit"),
-    ] {
+    let hints: &[(&str, &str)] = match mode {
+        FooterMode::List => &[
+            ("j/k", "navigate"),
+            ("Enter", "detail"),
+            ("a/s/p/l/n/d/x/y", "task"),
+            ("g/e/m/f/o/c/C", "prefixes"),
+            ("/", "search"),
+            (":", "command"),
+            ("?", "help"),
+            ("q", "quit"),
+        ],
+        FooterMode::Detail => &[
+            ("e", "edit field"),
+            ("n", "add note"),
+            ("d", "done"),
+            ("s", "status"),
+            ("p", "priority"),
+            ("l", "labels"),
+            ("y/Y", "copy ref/link"),
+            ("Esc", "back"),
+        ],
+    };
+    for (keys, label) in hints {
         spans.extend(key(keys));
         spans.push(cmd(label));
     }
@@ -1024,27 +1054,244 @@ fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usi
 }
 
 fn render_detail(frame: &mut Frame, item: &TaskListItem) {
-    let width = frame.area().width.saturating_sub(8).min(84);
-    let height = frame.area().height.saturating_sub(4).min(18);
-    let area = centered(frame.area(), width, height);
-    let labels = labels_display(&item.labels, ",");
-    let deleted = if item.task.deleted { " yes" } else { " no" };
-    let text = Text::from(vec![
-        task_heading_line(item),
-        Line::from(""),
-        Line::from(format!(
-            "project={} status={} priority={} deleted={}",
-            item.task.project_key, item.task.status, item.task.priority, deleted
+    let area = frame.area();
+    let [_, body, _] = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Fill(1),
+        Constraint::Length(2),
+    ])
+    .areas(area);
+    frame.render_widget(Clear, body);
+    frame.render_widget(Block::new().style(Style::new().bg(BG)), body);
+    if body.width == 0 || body.height == 0 {
+        return;
+    }
+
+    let [content_area, metadata_area] = if body.width >= 96 {
+        Layout::horizontal([Constraint::Fill(1), Constraint::Length(34)]).areas(body)
+    } else {
+        [body, Rect::default()]
+    };
+    let content_area = content_area.inner(ratatui::layout::Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    render_detail_content(frame, item, content_area);
+    if metadata_area.width > 0 {
+        render_detail_metadata(frame, item, metadata_area);
+    }
+}
+
+fn keycap_style() -> Style {
+    Style::new()
+        .fg(FG)
+        .bg(BG_PANEL)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn render_detail_content(frame: &mut Frame, item: &TaskListItem, area: Rect) {
+    let lines = detail_content_lines(item, area.width as usize);
+    let visible = area.height as usize;
+    let content_height = lines.len().max(1);
+    let start = 0;
+    frame.render_widget(
+        Paragraph::new(Text::from(lines.into_iter().skip(start).collect::<Vec<_>>()))
+            .style(Style::new().fg(FG).bg(BG)),
+        area,
+    );
+    if content_height > visible {
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .style(Style::new().fg(FG_DIM).bg(BG))
+                .thumb_style(Style::new().fg(FG_MUTED)),
+            area,
+            &mut ScrollbarState::new(content_height).position(start),
+        );
+    }
+}
+
+fn detail_content_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(
+                format!("{}  ", item.display_ref),
+                Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+            ),
+            status_span(&item.task.status),
+            Span::raw("  "),
+            Span::styled(
+                priority_short(&item.task.priority),
+                theme::priority_style(&item.task.priority).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(Span::styled(
+            item.task.title.clone(),
+            Style::new().fg(FG).add_modifier(Modifier::BOLD),
         )),
-        Line::from(format!(
-            "created={} updated={}",
-            item.task.created_at, item.task.updated_at
-        )),
-        Line::from(format!("labels={labels}")),
         Line::from(""),
-        Line::from(description_or_placeholder(&item.task.description)),
-    ]);
-    render_overlay_paragraph(frame, area, "Detail", text, true);
+    ];
+    lines.extend(quoted_block_lines(
+        &description_or_placeholder(&item.task.description),
+        width,
+        Style::new().fg(FG_MUTED),
+    ));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("NOTES", Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD)),
+        Span::styled(" (", Style::new().fg(FG_DIM)),
+        Span::styled("n", keycap_style()),
+        Span::styled(" add)", Style::new().fg(FG_DIM)),
+    ]));
+    if item.notes.is_empty() {
+        lines.push(Line::from(Span::styled("none", Style::new().fg(FG_MUTED))));
+    } else {
+        for note in &item.notes {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled(note.created_at.clone(), Style::new().fg(FG_DIM)),
+                Span::styled("  you", Style::new().fg(ACCENT)),
+            ]));
+            lines.extend(note_card_lines(&note.body, width));
+        }
+    }
+    lines
+}
+
+fn quoted_block_lines(body: &str, width: usize, style: Style) -> Vec<Line<'static>> {
+    let content_width = width.saturating_sub(3).max(1);
+    wrapped_lines(body, content_width)
+        .into_iter()
+        .map(|line| {
+            Line::from(vec![
+                Span::styled("│ ", Style::new().fg(BORDER)),
+                Span::styled(line, style),
+            ])
+        })
+        .collect()
+}
+
+fn note_card_lines(body: &str, width: usize) -> Vec<Line<'static>> {
+    let content_width = width.saturating_sub(4).max(1);
+    wrapped_lines(body, content_width)
+        .into_iter()
+        .map(|line| {
+            Line::from(vec![
+                Span::styled("  ", Style::new().bg(BG_PANEL)),
+                Span::styled(line, Style::new().fg(FG).bg(BG_PANEL)),
+                Span::styled("  ", Style::new().bg(BG_PANEL)),
+            ])
+        })
+        .collect()
+}
+
+fn wrapped_lines(body: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    for source_line in body.lines() {
+        let mut current = String::new();
+        for word in source_line.split_whitespace() {
+            let separator = if current.is_empty() { 0 } else { 1 };
+            if current.chars().count() + separator + word.chars().count() > width
+                && !current.is_empty()
+            {
+                lines.push(current);
+                current = String::new();
+            }
+            if !current.is_empty() {
+                current.push(' ');
+            }
+            current.push_str(word);
+        }
+        if current.is_empty() {
+            lines.push(String::new());
+        } else {
+            lines.push(current);
+        }
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+fn render_detail_metadata(frame: &mut Frame, item: &TaskListItem, area: Rect) {
+    let block = Block::new()
+        .borders(Borders::LEFT)
+        .border_style(Style::new().fg(BORDER))
+        .padding(Padding::horizontal(1))
+        .style(Style::new().bg(BG));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(
+        Paragraph::new(Text::from(detail_metadata_lines(item))).style(Style::new().fg(FG).bg(BG)),
+        inner,
+    );
+}
+
+fn detail_metadata_lines(item: &TaskListItem) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(Span::styled(
+            " TASK ",
+            Style::new()
+                .fg(BG)
+                .bg(BORDER)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        metadata_label("PROJECT"),
+        Line::from(vec![
+            Span::styled("● ", Style::new().fg(theme::project_color(&item.task.project_key))),
+            Span::styled(
+                item.task.project_key.clone(),
+                Style::new().fg(FG).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+        metadata_label("STATUS"),
+        status_chip(&item.task.status),
+        Line::from(""),
+        metadata_label("PRIORITY"),
+        Line::from(Span::styled(
+            priority_short(&item.task.priority),
+            theme::priority_style(&item.task.priority).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        metadata_label("LABELS"),
+        Line::from(labels_display(&item.labels, ", ")),
+        Line::from(""),
+        metadata_label("REF"),
+        Line::from(Span::styled(
+            item.display_ref.clone(),
+            Style::new().fg(FG).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        metadata_label("CREATED"),
+        Line::from(Span::styled(item.task.created_at.clone(), Style::new().fg(FG_MUTED))),
+        Line::from(""),
+        metadata_label("UPDATED"),
+        Line::from(Span::styled(item.task.updated_at.clone(), Style::new().fg(FG_MUTED))),
+    ];
+    if item.has_conflict {
+        lines.extend([
+            Line::from(""),
+            metadata_label("CONFLICTS"),
+            Line::from(Span::styled("yes", Style::new().fg(ORANGE).add_modifier(Modifier::BOLD))),
+        ]);
+    }
+    if item.task.deleted {
+        lines.extend([
+            Line::from(""),
+            metadata_label("DELETED"),
+            Line::from(Span::styled("yes", Style::new().fg(RED).add_modifier(Modifier::BOLD))),
+        ]);
+    }
+    lines
+}
+
+fn metadata_label(label: &'static str) -> Line<'static> {
+    Line::from(Span::styled(
+        label,
+        Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+    ))
 }
 
 const HELP_COLUMNS: &[&[&str]] = &[
@@ -2078,6 +2325,7 @@ mod tests {
             },
             display_ref: "VER-1".to_string(),
             labels: Vec::new(),
+            notes: Vec::new(),
             has_conflict: false,
             queue: Default::default(),
         };
@@ -2085,6 +2333,62 @@ mod tests {
         let rendered = project_cell(&item, 10).to_string();
 
         assert_eq!(rendered, "very-lon… ");
+    }
+
+    #[test]
+    fn detail_content_includes_notes() {
+        let item = detail_test_item();
+        let rendered = detail_content_lines(&item, 60)
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Fix token refresh race"));
+        assert!(rendered.contains("Confirmed race in useTokenRefresh.ts"));
+        assert!(rendered.contains("2026-06-20T12:00:00Z"));
+    }
+
+    #[test]
+    fn detail_metadata_includes_operational_fields() {
+        let item = detail_test_item();
+        let rendered = detail_metadata_lines(&item)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("PROJECT\n● app"));
+        assert!(rendered.contains("STATUS\n● active"));
+        assert!(rendered.contains("PRIORITY\n▲ urgent"));
+        assert!(rendered.contains("LABELS\nbug, mobile"));
+        assert!(rendered.contains("CONFLICTS\nyes"));
+    }
+
+    fn detail_test_item() -> TaskListItem {
+        TaskListItem {
+            task: crate::types::Task {
+                id: "7KQ9A1X".to_string(),
+                workspace_id: "workspace-1".to_string(),
+                title: "Fix token refresh race".to_string(),
+                description: "Two token refresh requests fire together.".to_string(),
+                project_key: "app".to_string(),
+                project_prefix: "APP".to_string(),
+                status: "active".to_string(),
+                priority: "urgent".to_string(),
+                created_at: "2026-06-19T12:00:00Z".to_string(),
+                updated_at: "2026-06-20T12:00:00Z".to_string(),
+                deleted: false,
+            },
+            display_ref: "APP-7KQ9A1X".to_string(),
+            labels: vec!["bug".to_string(), "mobile".to_string()],
+            notes: vec![crate::query::TaskNote {
+                body: "Confirmed race in useTokenRefresh.ts".to_string(),
+                created_at: "2026-06-20T12:00:00Z".to_string(),
+            }],
+            has_conflict: true,
+            queue: Default::default(),
+        }
     }
 
     #[test]
