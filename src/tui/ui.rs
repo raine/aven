@@ -1,7 +1,20 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod dialog;
+mod input;
+mod toast;
+mod truncate;
+
+use self::dialog::{Dialog, dialog_hint_line};
+use self::input::{
+    InputWidth, clipped_input_line, cursor_cell, input_cursor_spans, input_line,
+    prefixed_input_line,
+};
+use self::toast::render_toast;
+use self::truncate::truncate_chars;
+
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Flex, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
@@ -416,76 +429,6 @@ fn footer_bar(mode: FooterMode) -> Paragraph<'static> {
         .style(Style::new().fg(FG).bg(BG))
 }
 
-fn render_toast(frame: &mut Frame, message: &str) {
-    let tone = toast_tone(message);
-    let fill = BG_PANEL;
-    let content = Line::from(vec![
-        Span::styled("", Style::new().fg(fill).bg(BG)),
-        Span::styled("▌", Style::new().fg(tone.color).bg(fill)),
-        Span::styled(" ", Style::new().bg(fill)),
-        Span::styled(tone.icon, Style::new().fg(tone.color).bg(fill)),
-        Span::styled(" ", Style::new().bg(fill)),
-        Span::styled(
-            message.to_string(),
-            Style::new().fg(FG).bg(fill).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" ", Style::new().bg(fill)),
-        Span::styled("", Style::new().fg(fill).bg(BG)),
-    ]);
-    let width = (message.chars().count() as u16)
-        .saturating_add(7)
-        .clamp(20, frame.area().width.saturating_sub(5));
-    let height = 1.min(frame.area().height);
-    let x = frame.area().right().saturating_sub(width.saturating_add(3));
-    let y = frame
-        .area()
-        .bottom()
-        .saturating_sub(height.saturating_add(3));
-    let area = Rect {
-        x,
-        y,
-        width,
-        height,
-    };
-    frame.render_widget(Clear, area);
-    frame.render_widget(
-        Paragraph::new(content).style(Style::new().fg(FG).bg(BG)),
-        area,
-    );
-}
-
-struct ToastTone {
-    icon: &'static str,
-    color: Color,
-}
-
-fn toast_tone(message: &str) -> ToastTone {
-    let lower = message.to_ascii_lowercase();
-    if lower.contains("error")
-        || lower.contains("failed")
-        || lower.contains("invalid")
-        || lower.contains("unknown")
-        || lower.contains("required")
-        || lower.starts_with("no ")
-        || lower.starts_with("nothing")
-    {
-        ToastTone {
-            icon: "!",
-            color: RED,
-        }
-    } else if lower.contains("ambiguous") || lower.contains("conflict") {
-        ToastTone {
-            icon: "•",
-            color: ORANGE,
-        }
-    } else {
-        ToastTone {
-            icon: "✓",
-            color: GREEN,
-        }
-    }
-}
-
 fn render_sidebar_overlay(
     frame: &mut Frame,
     store: &TuiStore,
@@ -699,7 +642,7 @@ fn sidebar_entry_line(
     let count = entry.count.to_string();
     let reserved_width = marker_cell.chars().count() + count.chars().count() + 1;
     let label_width = width.saturating_sub(reserved_width);
-    let label = truncate_sidebar_label(label, label_width);
+    let label = truncate_chars(label, label_width);
     let used_width = marker_cell.chars().count() + label.chars().count() + count.chars().count();
     let spacer_width = width.saturating_sub(used_width).max(1);
     let count_style = if active {
@@ -713,22 +656,6 @@ fn sidebar_entry_line(
         Span::raw(" ".repeat(spacer_width)),
         Span::styled(count, count_style),
     ])
-}
-
-fn truncate_sidebar_label(label: &str, max_width: usize) -> String {
-    let label_len = label.chars().count();
-    if label_len <= max_width {
-        return label.to_string();
-    }
-    if max_width == 0 {
-        return String::new();
-    }
-    if max_width == 1 {
-        return "…".to_string();
-    }
-    let mut truncated = label.chars().take(max_width - 1).collect::<String>();
-    truncated.push('…');
-    truncated
 }
 
 fn filter_item(icon: &str, label: &str, count: i64, color: Color, width: u16) -> ListItem<'static> {
@@ -1738,18 +1665,6 @@ fn add_task_metadata_title(project: &str, priority: &str, width: u16) -> Line<'s
     ])
 }
 
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    if max_chars <= 1 {
-        return "…".to_string();
-    }
-    let mut truncated = value.chars().take(max_chars - 1).collect::<String>();
-    truncated.push('…');
-    truncated
-}
-
 fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
     if state.title == "Add note" {
         render_add_note_input(frame, state);
@@ -2007,162 +1922,6 @@ fn render_text_panel(frame: &mut Frame, state: &TextPanelView) {
         .render_text(frame, Text::from(lines));
 }
 
-fn input_line(prefix: &'static str, input: &str, cursor: usize) -> Line<'static> {
-    if prefix.is_empty() {
-        return Line::from(input_cursor_spans(input, cursor, InputWidth::Full));
-    }
-    prefixed_input_line(Span::raw(prefix), input, cursor)
-}
-
-fn prefixed_input_line(prefix: Span<'static>, input: &str, cursor: usize) -> Line<'static> {
-    let mut spans = vec![prefix];
-    spans.extend(input_cursor_spans(input, cursor, InputWidth::Full));
-    Line::from(spans)
-}
-
-fn clipped_input_line(input: &str, cursor: usize, width: usize) -> Line<'static> {
-    Line::from(input_cursor_spans(
-        input,
-        cursor,
-        InputWidth::Clipped(width),
-    ))
-}
-
-#[derive(Clone, Copy)]
-enum InputWidth {
-    Full,
-    Clipped(usize),
-}
-
-fn input_cursor_spans(input: &str, cursor: usize, width: InputWidth) -> Vec<Span<'static>> {
-    let cursor = char_boundary_at_or_before(input, cursor);
-    let input_chars = input.chars().count();
-    let max_width = match width {
-        InputWidth::Full => input_chars.saturating_add(1),
-        InputWidth::Clipped(width) => width,
-    };
-    let Some(cursor_char) = input[cursor..].chars().next() else {
-        let before = input
-            .chars()
-            .skip(input_chars.saturating_sub(max_width.saturating_sub(1)))
-            .collect::<String>();
-        return vec![Span::raw(before), cursor_cell(" ")];
-    };
-    let cursor_end = cursor + cursor_char.len_utf8();
-    let before = &input[..cursor];
-    let after = &input[cursor_end..];
-    let after_chars = after.chars().count();
-    let value_width = input_chars.saturating_add(1).min(max_width);
-    let before_visible = value_width.saturating_sub(1 + after_chars);
-    let before = before
-        .chars()
-        .skip(before.chars().count().saturating_sub(before_visible))
-        .collect::<String>();
-    vec![
-        Span::raw(before),
-        cursor_cell(cursor_char.to_string()),
-        Span::raw(
-            after
-                .chars()
-                .take(max_width.saturating_sub(1))
-                .collect::<String>(),
-        ),
-    ]
-}
-
-fn cursor_cell(content: impl Into<std::borrow::Cow<'static, str>>) -> Span<'static> {
-    Span::styled(content, Style::new().fg(BG_ALT).bg(FG))
-}
-
-fn char_boundary_at_or_before(input: &str, cursor: usize) -> usize {
-    let mut cursor = cursor.min(input.len());
-    while cursor > 0 && !input.is_char_boundary(cursor) {
-        cursor -= 1;
-    }
-    cursor
-}
-
-struct Dialog<'a> {
-    title: &'a str,
-    width: u16,
-    height: u16,
-    wrap: bool,
-    right_title: Option<Line<'a>>,
-}
-
-impl<'a> Dialog<'a> {
-    fn new(title: &'a str, width: u16, height: u16) -> Self {
-        Self {
-            title,
-            width,
-            height,
-            wrap: false,
-            right_title: None,
-        }
-    }
-
-    fn wrap(mut self) -> Self {
-        self.wrap = true;
-        self
-    }
-
-    fn right_title(mut self, title: Line<'a>) -> Self {
-        self.right_title = Some(title);
-        self
-    }
-
-    fn area(&self, frame: &Frame) -> Rect {
-        centered(frame.area(), self.width, self.height)
-    }
-
-    fn render_block(self, frame: &mut Frame) -> Rect {
-        let area = self.area(frame);
-        frame.render_widget(Clear, area);
-        let mut block = overlay_block(self.title);
-        if let Some(title) = self.right_title {
-            block = block.title_top(title.right_aligned());
-        }
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-        inner
-    }
-
-    fn render_text<'text>(self, frame: &mut Frame, text: impl Into<Text<'text>>) {
-        let wrap = self.wrap;
-        let inner = self.render_block(frame);
-        let mut paragraph = Paragraph::new(text).style(Style::new().fg(FG).bg(BG_ALT));
-        if wrap {
-            paragraph = paragraph.wrap(Wrap { trim: false });
-        }
-        frame.render_widget(paragraph, inner);
-    }
-}
-
-fn overlay_block(title: &str) -> Block<'_> {
-    Block::new()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(ACCENT))
-        .padding(Padding::horizontal(1))
-        .style(Style::new().bg(BG_ALT))
-}
-
-fn dialog_hint_line(items: &[(&str, &str)]) -> Line<'static> {
-    let mut spans = Vec::new();
-    for (index, (key, label)) in items.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::styled("  ", Style::new().fg(FG_MUTED)));
-        }
-        spans.push(Span::styled(
-            key.to_string(),
-            Style::new().fg(FG).add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled(format!(" {label}"), Style::new().fg(FG_MUTED)));
-    }
-    Line::from(spans)
-}
-
 fn prefix_hint_lines(pending: &[String]) -> Vec<Line<'static>> {
     COMMANDS
         .iter()
@@ -2204,18 +1963,6 @@ fn render_prefix_hints(frame: &mut Frame, view: &ViewState) {
         frame,
         Text::from(lines.into_iter().take(8).collect::<Vec<_>>()),
     );
-}
-
-fn centered(area: Rect, width: u16, height: u16) -> Rect {
-    let [area] = Layout::horizontal([Constraint::Length(width.min(area.width.saturating_sub(2)))])
-        .flex(Flex::Center)
-        .areas(area);
-    let [area] = Layout::vertical([Constraint::Length(
-        height.min(area.height.saturating_sub(2)),
-    )])
-    .flex(Flex::Center)
-    .areas(area);
-    area
 }
 
 #[cfg(test)]
@@ -2330,17 +2077,6 @@ mod tests {
         assert!(rendered.contains(":config-paths"));
         assert!(rendered.contains(":config-init"));
         assert!(!rendered.contains("planned"));
-    }
-
-    #[test]
-    fn toast_uses_icon_and_message() {
-        let backend = TestBackend::new(60, 20);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| render_toast(frame, "filters cleared"))
-            .unwrap();
-        let rendered = buffer_text(terminal.backend());
-        assert!(rendered.contains("✓ filters cleared"));
     }
 
     #[test]
@@ -2871,10 +2607,6 @@ mod tests {
 
         let confirm_keys = styled_key_contents(confirm_hint_line());
         assert_eq!(confirm_keys, vec!["y", "n", "Esc"]);
-
-        let dialog_keys =
-            styled_key_contents(dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]));
-        assert_eq!(dialog_keys, vec!["Enter", "Esc"]);
     }
 
     fn styled_key_contents(line: Line<'static>) -> Vec<String> {
@@ -2918,14 +2650,6 @@ mod tests {
         let line = add_task_title_input_line("abcdef", 5, 4);
         assert_eq!(line.spans[0].content.as_ref(), "cde");
         assert_eq!(line.spans[1].content.as_ref(), "f");
-    }
-
-    #[test]
-    fn input_cursor_handles_byte_indexed_unicode_cursor() {
-        let line = input_line("", "aéz", 3);
-        assert_eq!(line.spans[0].content.as_ref(), "aé");
-        assert_eq!(line.spans[1].content.as_ref(), "z");
-        assert_eq!(line.spans[1].style.bg, Some(FG));
     }
 
     #[test]
