@@ -422,6 +422,9 @@ impl App {
             OverlaySubmit::Picker { title, values } if title == VIEW_PROJECT_TITLE => {
                 self.submit_view_project(values).await?;
             }
+            OverlaySubmit::Picker { title, values } if title == DELETE_PROJECT_TITLE => {
+                self.submit_delete_project_picker(values);
+            }
             OverlaySubmit::Picker { title, values } if title == SWITCH_WORKSPACE_TITLE => {
                 self.submit_switch_workspace(values).await?;
             }
@@ -1076,12 +1079,17 @@ impl App {
 
     fn begin_delete_project(&mut self) {
         self.pending_shortcut.clear();
-        if self.focus != Focus::Sidebar {
-            self.set_message("select a project in the sidebar to delete it".to_string());
-            return;
-        }
-        let Some(project) = self
-            .widgets
+        let selected = if self.focus == Focus::Sidebar {
+            self.selected_sidebar_project()
+        } else {
+            None
+        };
+        let items = self.store.existing_project_picker_items(selected.as_deref().unwrap_or_default());
+        self.open_picker_overlay(DELETE_PROJECT_TITLE, items, false);
+    }
+
+    fn selected_sidebar_project(&self) -> Option<String> {
+        self.widgets
             .sidebar
             .selected()
             .and_then(|index| self.store.sidebar_entries.get(index))
@@ -1090,16 +1098,6 @@ impl App {
                 SidebarTarget::Project(project) => Some(project.clone()),
                 _ => None,
             })
-        else {
-            self.set_message("select a project in the sidebar to delete it".to_string());
-            return;
-        };
-
-        self.pending_delete_project = Some(project.clone());
-        self.overlay = Some(OverlayState::Confirm(ConfirmState {
-            title: DELETE_PROJECT_TITLE.to_string(),
-            prompt: format!("Delete project {project}?"),
-        }));
     }
 
     fn begin_edit_title(&mut self) {
@@ -1602,6 +1600,18 @@ impl App {
         let message = self.store.init_config()?;
         self.set_message(message);
         Ok(())
+    }
+
+    fn submit_delete_project_picker(&mut self, values: Vec<String>) {
+        let Some(project) = self.require_picker_value(values, "no matching project") else {
+            self.begin_delete_project();
+            return;
+        };
+        self.pending_delete_project = Some(project.clone());
+        self.overlay = Some(OverlayState::Confirm(ConfirmState {
+            title: DELETE_PROJECT_TITLE.to_string(),
+            prompt: format!("Delete project {project}?"),
+        }));
     }
 
     async fn submit_delete_project(&mut self) -> Result<()> {
@@ -3294,19 +3304,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_project_requires_sidebar_project_selection() {
+    async fn delete_project_opens_project_picker_from_task_focus() {
         let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
         app.execute(Action::BeginDeleteProject).await.unwrap();
 
-        assert_eq!(
-            app.message.as_deref(),
-            Some("select a project in the sidebar to delete it")
-        );
-        assert!(app.overlay.is_none());
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Picker(PickerState { ref title, .. })) if title == DELETE_PROJECT_TITLE
+        ));
+        assert!(app.message.is_none());
     }
 
     #[tokio::test]
-    async fn delete_project_confirmation_removes_sidebar_project() {
+    async fn delete_project_picker_preselects_sidebar_project() {
         let mut app = test_app().await;
         app.store
             .create_project("Mobile App".to_string())
@@ -3317,13 +3332,28 @@ mod tests {
             .store
             .sidebar_entries
             .iter()
-            .position(|entry| {
-                entry.target == Some(SidebarTarget::Project("mobile-app".to_string()))
-            })
+            .position(|entry| entry.target == Some(SidebarTarget::Project("mobile-app".to_string())))
             .unwrap();
         app.widgets.sidebar.select(Some(project_index));
 
         app.execute(Action::BeginDeleteProject).await.unwrap();
+
+        let Some(OverlayState::Picker(state)) = &app.overlay else {
+            panic!("expected project picker");
+        };
+        assert_eq!(state.items[state.selected].value, "mobile-app");
+    }
+
+    #[tokio::test]
+    async fn delete_project_confirmation_removes_selected_project() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
+        app.execute(Action::BeginDeleteProject).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
         assert!(matches!(
             app.overlay,
@@ -3362,6 +3392,7 @@ mod tests {
         app.widgets.sidebar.select(Some(project_index));
 
         app.execute(Action::BeginDeleteProject).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         assert_eq!(app.pending_delete_project.as_deref(), Some("mobile-app"));
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
 
