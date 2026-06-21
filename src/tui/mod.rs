@@ -3,6 +3,7 @@ use sqlx::SqlitePool;
 
 mod app;
 mod event;
+mod markdown;
 mod overlay;
 mod store;
 mod theme;

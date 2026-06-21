@@ -14,6 +14,7 @@ use crate::queue::{QueueBand, now_seconds, unix_seconds};
 use crate::render::quote;
 use crate::tui::app::{Focus, WidgetState};
 use crate::tui::event::{COMMANDS, CommandLifecycle, CommandSpec, key_label, matching_commands};
+use crate::tui::markdown::render_markdown;
 use crate::tui::overlay::{
     ConfirmView, MultilineInputView, OverlayView, PickerItem, PickerView, TextInputView,
     TextPanelView,
@@ -1172,58 +1173,34 @@ fn detail_content_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>>
 
 fn quoted_block_lines(body: &str, width: usize, style: Style) -> Vec<Line<'static>> {
     let content_width = width.saturating_sub(3).max(1);
-    wrapped_lines(body, content_width)
+    render_markdown(body, content_width)
         .into_iter()
         .map(|line| {
-            Line::from(vec![
-                Span::styled("│ ", Style::new().fg(BORDER)),
-                Span::styled(line, style),
-            ])
+            let mut spans = line_with_base_style(line, style).spans;
+            spans.insert(0, Span::styled("│ ", Style::new().fg(BORDER)));
+            Line::from(spans)
         })
         .collect()
 }
 
 fn note_card_lines(body: &str, width: usize) -> Vec<Line<'static>> {
     let content_width = width.saturating_sub(4).max(1);
-    wrapped_lines(body, content_width)
+    render_markdown(body, content_width)
         .into_iter()
         .map(|line| {
-            Line::from(vec![
-                Span::styled("  ", Style::new().bg(BG_PANEL)),
-                Span::styled(line, Style::new().fg(FG).bg(BG_PANEL)),
-                Span::styled("  ", Style::new().bg(BG_PANEL)),
-            ])
+            let mut spans = line_with_base_style(line, Style::new().fg(FG).bg(BG_PANEL)).spans;
+            spans.insert(0, Span::styled("  ", Style::new().bg(BG_PANEL)));
+            spans.push(Span::styled("  ", Style::new().bg(BG_PANEL)));
+            Line::from(spans)
         })
         .collect()
 }
 
-fn wrapped_lines(body: &str, width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    for source_line in body.lines() {
-        let mut current = String::new();
-        for word in source_line.split_whitespace() {
-            let separator = if current.is_empty() { 0 } else { 1 };
-            if current.chars().count() + separator + word.chars().count() > width
-                && !current.is_empty()
-            {
-                lines.push(current);
-                current = String::new();
-            }
-            if !current.is_empty() {
-                current.push(' ');
-            }
-            current.push_str(word);
-        }
-        if current.is_empty() {
-            lines.push(String::new());
-        } else {
-            lines.push(current);
-        }
+fn line_with_base_style(mut line: Line<'static>, base: Style) -> Line<'static> {
+    for span in &mut line.spans {
+        span.style = base.patch(span.style);
     }
-    if lines.is_empty() {
-        lines.push(String::new());
-    }
-    lines
+    line
 }
 
 fn render_detail_metadata(frame: &mut Frame, item: &TaskListItem, area: Rect) {
@@ -2568,6 +2545,77 @@ mod tests {
         assert!(rendered.contains("Fix token refresh race"));
         assert!(rendered.contains("Confirmed race in useTokenRefresh.ts"));
         assert!(rendered.contains("2026-06-20T12:00:00Z"));
+    }
+
+    #[test]
+    fn detail_content_renders_markdown_description_and_notes() {
+        let mut item = detail_test_item();
+        item.task.description = "## Context\n- **One** item".to_string();
+        item.notes[0].body = "Use `aven show` after edits".to_string();
+
+        let rendered = detail_content_lines(&item, 60)
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Context"));
+        assert!(rendered.contains("- One item"));
+        assert!(rendered.contains("aven show"));
+    }
+
+    #[test]
+    fn detail_description_lines_keep_quote_rail() {
+        let mut item = detail_test_item();
+        item.task.description = "## Context\nsecond line".to_string();
+        let lines = detail_content_lines(&item, 60);
+        let description_lines: Vec<_> = lines
+            .into_iter()
+            .filter(|line| {
+                let text = line.to_string();
+                text.contains("Context") || text.contains("second")
+            })
+            .collect();
+        assert!(!description_lines.is_empty());
+        for line in description_lines {
+            assert!(
+                line.spans
+                    .first()
+                    .is_some_and(|span| span.content.as_ref() == "│ "),
+                "missing quote rail: {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn detail_note_lines_keep_card_background() {
+        let mut item = detail_test_item();
+        item.notes[0].body = "Use `aven` here".to_string();
+        let lines = detail_content_lines(&item, 60);
+        let note_lines: Vec<_> = lines
+            .into_iter()
+            .filter(|line| line.to_string().contains("aven"))
+            .collect();
+        assert_eq!(note_lines.len(), 1);
+        let line = &note_lines[0];
+        assert!(
+            line.spans
+                .first()
+                .is_some_and(|span| span.style.bg == Some(BG_PANEL)),
+            "missing left card padding background"
+        );
+        assert!(
+            line.spans
+                .last()
+                .is_some_and(|span| span.style.bg == Some(BG_PANEL)),
+            "missing right card padding background"
+        );
+        assert!(
+            line.spans
+                .iter()
+                .any(|span| span.content.as_ref() == "aven" && span.style.bg == Some(BG_PANEL)),
+            "note body span missing card background"
+        );
     }
 
     #[test]

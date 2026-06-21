@@ -24,8 +24,10 @@ serde_json = "1.0"
 serde_yaml = "0.9"
 anyhow = "1.0"
 crossterm = "0.29"
+pulldown-cmark = "0.13"
 ratatui = "0.30"
 tokio = { version = "1.45", features = ["macros", "rt-multi-thread", "signal", "net", "time"] }
+unicode-width = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
