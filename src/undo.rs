@@ -324,10 +324,12 @@ async fn apply_undo_command(
             if current != *after {
                 bail!("error undo-state-changed task_id={task_id} field={field}");
             }
-            if field == "project" && !project_exists(conn, workspace_id, before).await? {
-                bail!("error undo-state-changed task_id={task_id} field={field}");
+            if before != after {
+                if field == "project" && !project_exists(conn, workspace_id, before).await? {
+                    bail!("error undo-state-changed task_id={task_id} field={field}");
+                }
+                set_task_field(conn, task_id, field, before).await?;
             }
-            set_task_field(conn, task_id, field, before).await?;
             let include_deleted = if field == "deleted" {
                 Some(before == "1")
             } else {

@@ -637,20 +637,21 @@ impl TuiStore {
         let mut conn = self.pool.acquire().await?;
         let outcome = create_project_operation(&mut conn, &name, None).await?;
         drop(conn);
-        if outcome.created {
-            self.record_undo(
-                &format!("project {}", outcome.project.key),
-                UndoPayload {
-                    commands: vec![UndoCommand::DeleteCreatedProject {
-                        project_key: outcome.project.key.clone(),
-                        create_change_id: outcome.change_id.unwrap_or_default(),
-                        expected_name: outcome.project.name.clone(),
-                        expected_prefix: outcome.project.prefix.clone(),
-                    }],
-                },
-            )
-            .await?;
-        }
+        let commands = if outcome.created {
+            vec![UndoCommand::DeleteCreatedProject {
+                project_key: outcome.project.key.clone(),
+                create_change_id: outcome.change_id.unwrap_or_default(),
+                expected_name: outcome.project.name.clone(),
+                expected_prefix: outcome.project.prefix.clone(),
+            }]
+        } else {
+            Vec::new()
+        };
+        self.record_undo(
+            &format!("project {}", outcome.project.key),
+            UndoPayload { commands },
+        )
+        .await?;
         self.refresh(None).await?;
         Ok(format!("created project {}", outcome.project.key))
     }
@@ -661,21 +662,18 @@ impl TuiStore {
         let mut conn = self.pool.acquire().await?;
         let outcome = create_label_operation(&mut conn, &name).await?;
         drop(conn);
-        if outcome.created {
-            self.record_undo(
-                &format!("label {}", outcome.name),
-                UndoPayload {
-                    commands: vec![UndoCommand::DeleteCreatedLabel {
-                        label: outcome.name.clone(),
-                        create_change_id: outcome.change_id.unwrap_or_default(),
-                    }],
-                },
-            )
+        let commands = if outcome.created {
+            vec![UndoCommand::DeleteCreatedLabel {
+                label: outcome.name.clone(),
+                create_change_id: outcome.change_id.unwrap_or_default(),
+            }]
+        } else {
+            Vec::new()
+        };
+        self.record_undo(&format!("label {}", outcome.name), UndoPayload { commands })
             .await?;
-        }
         let mut conn = self.pool.acquire().await?;
-        self.labels =
-            list_labels_in_workspace(&mut conn, &self.active_workspace.id, None).await?;
+        self.labels = list_labels_in_workspace(&mut conn, &self.active_workspace.id, None).await?;
         Ok(format!("created label {}", outcome.name))
     }
 
@@ -1916,10 +1914,9 @@ mod tests {
         let error = store.undo_last().await.unwrap_err();
         assert!(error.to_string().contains("undo-state-changed"));
         let mut conn = pool.acquire().await.unwrap();
-        store.labels =
-            list_labels_in_workspace(&mut conn, &store.active_workspace.id, None)
-                .await
-                .unwrap();
+        store.labels = list_labels_in_workspace(&mut conn, &store.active_workspace.id, None)
+            .await
+            .unwrap();
         assert!(store.labels.iter().any(|label| label == "shared"));
     }
 
@@ -2014,6 +2011,32 @@ mod tests {
         store.undo_last().await.unwrap().unwrap();
         store.undo_last().await.unwrap().unwrap();
         assert!(store.undo_last().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn undo_consumes_noop_status_before_previous_mutation() {
+        let mut store = test_store().await;
+        let (task_id, selected) = create_selected_task(&mut store, "Noop status").await;
+        store.update_status(Some(selected), "todo").await.unwrap();
+        store.update_status(Some(selected), "todo").await.unwrap();
+
+        store.undo_last().await.unwrap().unwrap();
+        store.refresh(Some(&task_id)).await.unwrap();
+        let index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+        assert_eq!(store.tasks[index].task.status, "todo");
+
+        store.undo_last().await.unwrap().unwrap();
+        store.refresh(Some(&task_id)).await.unwrap();
+        let index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+        assert_eq!(store.tasks[index].task.status, "inbox");
     }
 
     #[tokio::test]
@@ -2132,11 +2155,13 @@ mod tests {
         .execute(&mut *conn)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO labels(workspace_id, name, created_at) VALUES (?, 'client-label', 't')")
-            .bind(&other.id)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO labels(workspace_id, name, created_at) VALUES (?, 'client-label', 't')",
+        )
+        .bind(&other.id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at)
              VALUES (?, ?, 'Client workspace task', '', 'client', 'todo', 'none', 't', 't')",
@@ -2155,10 +2180,7 @@ mod tests {
         assert_eq!(crate::workspaces::active_workspace_id(), default.id);
         assert_eq!(store.tasks.len(), 1);
         assert_eq!(store.tasks[0].task.title, "Client workspace task");
-        assert!(store
-            .projects
-            .iter()
-            .any(|project| project.key == "client"));
+        assert!(store.projects.iter().any(|project| project.key == "client"));
         assert_eq!(store.labels, vec!["client-label".to_string()]);
         assert_eq!(store.counts.all, 1);
         assert_eq!(store.counts.todo, 1);
