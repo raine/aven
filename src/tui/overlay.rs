@@ -294,13 +294,13 @@ impl OverlaySubmit {
 
 impl OverlayState {
     pub(crate) fn captures_input(&self) -> bool {
-        !matches!(self, Self::Detail)
+        true
     }
 }
 
 impl OverlayView {
     pub(crate) fn captures_input(&self) -> bool {
-        !matches!(self, Self::Detail)
+        true
     }
 }
 
@@ -514,6 +514,10 @@ pub(crate) fn handle_generic_overlay_key(
                 OverlayOutcome::None(OverlayState::DetailHelp { scroll })
             }
             _ => OverlayOutcome::None(OverlayState::DetailHelp { scroll }),
+        },
+        OverlayState::Detail => match key.code {
+            KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
+            _ => OverlayOutcome::None(OverlayState::Detail),
         },
         other => OverlayOutcome::None(other),
     }

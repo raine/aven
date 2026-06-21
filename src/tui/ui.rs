@@ -31,6 +31,7 @@ use crate::tui::widgets::{
 pub(crate) struct ViewState {
     pub(crate) focus: Focus,
     pub(crate) overlay: Option<OverlayView>,
+    pub(crate) detail_underlay: bool,
     pub(crate) message: Option<String>,
     pub(crate) pending_shortcut: Vec<String>,
 }
@@ -105,6 +106,9 @@ pub(crate) fn render(
     }
     if let Some(message) = &view.message {
         render_toast(frame, message);
+    }
+    if view.detail_underlay {
+        render_detail_underlay(frame, store, widgets);
     }
     if let Some(overlay) = &view.overlay {
         render_overlay(frame, store, widgets, overlay);
@@ -1647,6 +1651,12 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
     }
 }
 
+fn render_detail_underlay(frame: &mut Frame, store: &TuiStore, widgets: &mut WidgetState) {
+    if let Some(task) = store.selected_task(widgets.table.selected()) {
+        render_detail(frame, task);
+    }
+}
+
 fn render_overlay(
     frame: &mut Frame,
     store: &TuiStore,
@@ -1657,9 +1667,7 @@ fn render_overlay(
         overlay,
         OverlayView::Detail | OverlayView::DetailHelp { .. }
     ) {
-        if let Some(task) = store.selected_task(widgets.table.selected()) {
-            render_detail(frame, task);
-        }
+        render_detail_underlay(frame, store, widgets);
         if matches!(overlay, OverlayView::DetailHelp { .. }) {
             render_overlay_content(frame, overlay);
         }

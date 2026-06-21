@@ -128,6 +128,7 @@ pub(crate) struct App {
     pub(crate) message: Option<String>,
     pub(crate) message_at: Option<Instant>,
     pending_shortcut: Vec<KeyCode>,
+    detail_context: bool,
     authoring: Option<AuthoringFlow>,
     conflict_flow: Option<ConflictFlow>,
     pending_delete_project: Option<String>,
@@ -148,6 +149,7 @@ impl App {
             message: None,
             message_at: None,
             pending_shortcut: Vec::new(),
+            detail_context: false,
             authoring: None,
             conflict_flow: None,
             pending_delete_project: None,
@@ -188,6 +190,7 @@ impl App {
         ui::ViewState {
             focus: self.focus,
             overlay: self.overlay.as_ref().map(OverlayView::from),
+            detail_underlay: self.detail_underlay(),
             message: self.message.clone(),
             pending_shortcut: self
                 .pending_shortcut
@@ -203,8 +206,14 @@ impl App {
         } else if key.code == KeyCode::Esc && !self.pending_shortcut.is_empty() {
             self.handle_normal_key(key.code).await
         } else if self.overlay_captures_input() {
-            self.handle_overlay_key_at_height(key, terminal_height)
-                .await
+            if key.code == KeyCode::Char('?') && matches!(self.overlay, Some(OverlayState::Detail))
+            {
+                self.toggle_help_at_height(terminal_height);
+                Ok(())
+            } else {
+                self.handle_overlay_key_at_height(key, terminal_height)
+                    .await
+            }
         } else if key.code == KeyCode::Char('?') {
             self.toggle_help_at_height(terminal_height);
             Ok(())
@@ -217,6 +226,21 @@ impl App {
         self.overlay
             .as_ref()
             .is_some_and(OverlayState::captures_input)
+    }
+
+    fn detail_underlay(&self) -> bool {
+        self.detail_context
+            || matches!(
+                self.overlay,
+                Some(OverlayState::Detail | OverlayState::DetailHelp { .. })
+            )
+            || matches!(
+                self.authoring,
+                Some(AuthoringFlow::AddNote {
+                    return_to_detail: true,
+                    ..
+                })
+            )
     }
 
     async fn handle_normal_key(&mut self, code: KeyCode) -> Result<()> {
@@ -307,6 +331,17 @@ impl App {
         overlay: OverlayState,
         terminal_height: u16,
     ) -> Result<()> {
+        if matches!(overlay, OverlayState::Detail)
+            && let Some(action) = detail_action(key)
+        {
+            self.detail_context = true;
+            self.execute(action).await?;
+            if self.detail_context && self.overlay.is_none() {
+                self.restore_detail_overlay(true);
+            }
+            return Ok(());
+        }
+
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && key.code == KeyCode::Char('p')
             && let OverlayState::TextInput(state) = &overlay
@@ -790,12 +825,14 @@ impl App {
             self.set_message("no selected task for note".to_string());
             return;
         };
-        let return_to_detail = matches!(self.overlay, Some(OverlayState::Detail));
+        let return_to_detail =
+            self.detail_context || matches!(self.overlay, Some(OverlayState::Detail));
         self.authoring = Some(AuthoringFlow::AddNote {
             task_id: item.task.id.clone(),
             display_ref: item.display_ref.clone(),
             return_to_detail,
         });
+        self.detail_context = return_to_detail;
         self.overlay = Some(OverlayState::MultilineInput(MultilineInputState::blank(
             ADD_NOTE_TITLE,
             "note body:",
@@ -893,6 +930,7 @@ impl App {
         self.authoring = None;
         self.conflict_flow = None;
         self.pending_delete_project = None;
+        self.detail_context = false;
         self.restore_detail_overlay(return_to_detail);
     }
 
@@ -903,6 +941,7 @@ impl App {
                 .selected_task(self.widgets.table.selected())
                 .is_some()
         {
+            self.detail_context = false;
             self.overlay = Some(OverlayState::Detail);
         }
     }
@@ -945,6 +984,7 @@ impl App {
         self.conflict_flow = None;
         self.pending_delete_project = None;
         let had_overlay = self.overlay.take().is_some();
+        self.detail_context = false;
         if !had_overlay && self.focus == Focus::Sidebar {
             self.focus = Focus::Tasks;
             self.widgets.sidebar.select(self.store.sidebar_selection());
@@ -1867,6 +1907,24 @@ impl App {
     }
 }
 
+fn detail_action(key: KeyEvent) -> Option<Action> {
+    if !key.modifiers.is_empty() {
+        return None;
+    }
+
+    match key.code {
+        KeyCode::Char('e') => Some(Action::BeginEditTitle),
+        KeyCode::Char('n') => Some(Action::BeginAddNote),
+        KeyCode::Char('d') => Some(Action::SetStatus("done")),
+        KeyCode::Char('s') => Some(Action::BeginStatusPicker),
+        KeyCode::Char('p') => Some(Action::BeginEditPriority),
+        KeyCode::Char('l') => Some(Action::BeginEditLabels),
+        KeyCode::Char('y') => Some(Action::CopyShortRef),
+        KeyCode::Char('Y') => Some(Action::CopyDurableRef),
+        _ => None,
+    }
+}
+
 fn add_task_title_overlay(title: &str) -> bool {
     title == ADD_TASK_TITLE_TITLE || title.starts_with("Add task  project=")
 }
@@ -2135,12 +2193,12 @@ mod tests {
     async fn esc_cancels_prefix_before_overlay() {
         let mut app = test_app().await;
         app.overlay = Some(OverlayState::Detail);
-        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
-        app.handle_normal_key(KeyCode::Esc).await.unwrap();
+        app.pending_shortcut.push(KeyCode::Char('m'));
+        app.dispatch_key(key(KeyCode::Esc), 24).await.unwrap();
         assert!(app.pending_shortcut.is_empty());
         assert!(matches!(app.overlay, Some(OverlayState::Detail)));
 
-        app.handle_normal_key(KeyCode::Esc).await.unwrap();
+        app.dispatch_key(key(KeyCode::Esc), 24).await.unwrap();
         assert!(app.overlay.is_none());
     }
 
@@ -2668,11 +2726,12 @@ mod tests {
         create_and_select_task(&mut app, test_task_draft("Note target")).await;
         app.overlay = Some(OverlayState::Detail);
 
-        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        app.dispatch_key(key(KeyCode::Char('n')), 24).await.unwrap();
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::MultilineInput(state)) if state.title == ADD_NOTE_TITLE
         ));
+        assert!(app.view().detail_underlay);
 
         type_chars(&mut app, "Important detail").await;
         app.handle_overlay_key(ctrl_s()).await.unwrap();
@@ -2683,12 +2742,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn detail_shortcuts_do_not_leave_detail_before_opening_overlay() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail target")).await;
+        app.overlay = Some(OverlayState::Detail);
+
+        app.dispatch_key(key(KeyCode::Char('p')), 24).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(PickerState { title, .. })) if title == EDIT_PRIORITY_TITLE
+        ));
+        assert!(app.view().detail_underlay);
+    }
+
+    #[tokio::test]
+    async fn ignored_keys_stay_in_detail() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail target")).await;
+        app.overlay = Some(OverlayState::Detail);
+
+        app.dispatch_key(key(KeyCode::Char('a')), 24).await.unwrap();
+
+        assert!(matches!(app.overlay, Some(OverlayState::Detail)));
+        assert!(app.authoring.is_none());
+    }
+
+    #[tokio::test]
     async fn cancel_add_note_from_detail_returns_to_detail() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Note target")).await;
         app.overlay = Some(OverlayState::Detail);
 
-        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        app.dispatch_key(key(KeyCode::Char('n')), 24).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
 
         assert!(matches!(app.overlay, Some(OverlayState::Detail)));
@@ -2701,7 +2787,7 @@ mod tests {
         create_and_select_task(&mut app, test_task_draft("Note target")).await;
         app.overlay = Some(OverlayState::Detail);
 
-        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        app.dispatch_key(key(KeyCode::Char('n')), 24).await.unwrap();
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
         assert!(matches!(app.overlay, Some(OverlayState::Detail)));
