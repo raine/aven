@@ -1790,8 +1790,7 @@ fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
 fn render_add_note_input(frame: &mut Frame, state: &MultilineInputView) {
     let visible_rows = 8usize;
     let content_rows = state.lines.len().min(visible_rows).max(1);
-    let height = (content_rows as u16).saturating_add(3).min(12);
-    let area = centered(frame.area(), 60, height);
+    let height = (content_rows as u16).saturating_add(4).min(13);
     let start = state.row.saturating_sub(visible_rows.saturating_sub(1));
     let mut lines = Vec::new();
     for (row_index, line) in state
@@ -1810,22 +1809,18 @@ fn render_add_note_input(frame: &mut Frame, state: &MultilineInputView) {
             },
         ));
     }
+    lines.push(Line::from(""));
     lines.push(multiline_hint_line());
-    frame.render_widget(Clear, area);
-    frame.render_widget(
-        Paragraph::new(Text::from(lines))
-            .block(overlay_block("Add note"))
-            .wrap(Wrap { trim: false })
-            .style(Style::new().fg(FG).bg(BG_ALT)),
-        area,
-    );
+    Dialog::new("Add note", 60, height)
+        .wrap()
+        .render_text(frame, Text::from(lines));
 }
 
 fn add_note_input_line(line: &str, cursor: Option<usize>) -> Line<'static> {
     if line.is_empty() && cursor.is_some() {
         return Line::from(vec![
-            Span::styled("▌", Style::new().fg(FG)),
-            Span::styled("note body", Style::new().fg(FG_DIM)),
+            cursor_cell("n"),
+            Span::styled("ote body", Style::new().fg(FG_DIM)),
         ]);
     }
     match cursor {
@@ -2252,6 +2247,21 @@ mod tests {
             .draw(|frame| render_overlay_content(frame, &overlay))
             .unwrap();
         buffer_text(terminal.backend())
+    }
+
+    fn overlay_buffer(overlay: OverlayView) -> ratatui::buffer::Buffer {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_overlay_content(frame, &overlay))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn buffer_row(buffer: &ratatui::buffer::Buffer, row: u16) -> String {
+        (0..buffer.area.width)
+            .map(|column| buffer[(column, row)].symbol())
+            .collect()
     }
 
     #[test]
@@ -2947,8 +2957,10 @@ mod tests {
     #[test]
     fn add_note_empty_input_shows_placeholder() {
         let line = add_note_input_line("", Some(0));
-        assert_eq!(line.spans[0].content.as_ref(), "▌");
-        assert_eq!(line.spans[1].content.as_ref(), "note body");
+        assert_eq!(line.spans[0].content.as_ref(), "n");
+        assert_eq!(line.spans[0].style.fg, Some(BG_ALT));
+        assert_eq!(line.spans[0].style.bg, Some(FG));
+        assert_eq!(line.spans[1].content.as_ref(), "ote body");
         assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
     }
 
@@ -2965,17 +2977,30 @@ mod tests {
     }
 
     #[test]
-    fn add_note_overlay_uses_placeholder_and_key_styles() {
-        let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+    fn add_note_overlay_uses_placeholder_key_styles_and_spacing() {
+        let overlay = OverlayView::MultilineInput(MultilineInputView {
             title: "Add note".to_string(),
             prompt: "note body:".to_string(),
             lines: vec![String::new()],
             row: 0,
             column: 0,
-        }));
+        });
+        let rendered = render_overlay_view(overlay.clone());
         assert!(rendered.contains("Add note"));
         assert!(rendered.contains("note body"));
         assert!(rendered.contains("Ctrl+S submit"));
+
+        let buffer = overlay_buffer(overlay);
+        let hint_row = (0..buffer.area.height)
+            .find(|row| buffer_row(&buffer, *row).contains("Ctrl+S submit"))
+            .unwrap();
+        let blank_row = buffer_row(&buffer, hint_row.saturating_sub(1));
+        assert!(
+            blank_row
+                .trim_matches(|ch| ch == ' ' || ch == '│')
+                .is_empty(),
+            "expected blank row above key hints: {blank_row:?}"
+        );
     }
 
     #[test]
