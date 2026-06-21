@@ -658,7 +658,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     ),
     CommandSpec::implemented(
         "delete-project",
-        "delete selected sidebar project",
+        "delete a project",
         "Metadata",
         &[KeySequence {
             codes: &[KeyCode::Char('A'), KeyCode::Char('d')],
