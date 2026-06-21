@@ -39,7 +39,7 @@ impl TuiStore {
         value: String,
     ) -> Result<MutationMessage> {
         self.activate_workspace();
-        let workspace_id = crate::workspaces::active_workspace_id();
+        let workspace_id = self.active_workspace.id.clone();
         let mut conn = self.pool.acquire().await?;
         let before =
             task_field_value(&mut conn, &workspace_id, &target.task_id, &target.field).await?;

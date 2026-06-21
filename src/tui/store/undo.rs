@@ -7,8 +7,7 @@ use super::TuiStore;
 
 impl TuiStore {
     pub(super) async fn record_undo(&self, summary: &str, payload: UndoPayload) -> Result<()> {
-        self.activate_workspace();
-        let workspace_id = crate::workspaces::active_workspace_id();
+        let workspace_id = self.active_workspace.id.clone();
         let mut conn = self.pool.acquire().await?;
         crate::undo::record_tui_undo(&mut conn, &workspace_id, summary, payload).await?;
         Ok(())
@@ -16,7 +15,7 @@ impl TuiStore {
 
     pub(crate) async fn undo_last(&mut self) -> Result<Option<MutationMessage>> {
         self.activate_workspace();
-        let workspace_id = crate::workspaces::active_workspace_id();
+        let workspace_id = self.active_workspace.id.clone();
         let mut conn = self.pool.acquire().await?;
         let Some(outcome) = crate::undo::apply_latest_tui_undo(&mut conn, &workspace_id).await?
         else {

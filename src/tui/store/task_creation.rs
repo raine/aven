@@ -22,7 +22,7 @@ impl TuiStore {
         let outcome = create_task_operation(&mut conn, draft).await?;
         let task_id = outcome.task.id.clone();
         let message_ref = display_ref(&mut conn, &outcome.task).await?;
-        let workspace_id = crate::workspaces::active_workspace_id();
+        let workspace_id = self.active_workspace.id.clone();
         let snapshot = task_snapshot(&mut conn, &workspace_id, &task_id).await?;
         drop(conn);
         self.record_undo(
@@ -52,7 +52,7 @@ impl TuiStore {
 
     pub(crate) async fn add_note_to_task(&mut self, task_id: &str, body: String) -> Result<String> {
         self.activate_workspace();
-        let workspace_id = crate::workspaces::active_workspace_id();
+        let workspace_id = self.active_workspace.id.clone();
         let mut conn = self.pool.acquire().await?;
         let outcome = add_note_operation(&mut conn, task_id, body).await?;
         let note_change_id: String = sqlx::query_scalar(

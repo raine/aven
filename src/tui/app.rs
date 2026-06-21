@@ -1958,13 +1958,15 @@ impl App {
             ConflictSubmit::Resolve { target, value } => {
                 match self
                     .store
-                    .resolve_conflict_value(target.clone(), value)
+                    .resolve_conflict_value(target.clone(), value.clone())
                     .await
                 {
                     Ok(result) => self.apply_mutation_result(result),
                     Err(error) => {
                         self.set_message(format!("error: {error:#}"));
-                        let transition = self.conflict_flow.retry_manual_edit(target);
+                        let mut retry_target = target;
+                        retry_target.local_value = value;
+                        let transition = self.conflict_flow.retry_manual_edit(retry_target);
                         self.apply_conflict_transition(transition);
                     }
                 }
@@ -3130,6 +3132,40 @@ mod tests {
 
         assert_eq!(app.store.tasks[selected].task.title, "local title merged");
         assert!(!app.store.tasks[selected].has_conflict);
+    }
+
+    #[tokio::test]
+    async fn manual_conflict_retry_preserves_submitted_text_after_error() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        type_chars(&mut app, " merged").await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("DELETE FROM conflicts WHERE task_id = ? AND field = 'title'")
+            .bind(&task_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(
+            app.message
+                .as_deref()
+                .is_some_and(|message| message.contains("conflict-not-found"))
+        );
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state))
+                if state.route == OverlayRoute::ConflictManual
+                    && state.input.as_str() == "local title merged"
+        ));
     }
 
     #[tokio::test]

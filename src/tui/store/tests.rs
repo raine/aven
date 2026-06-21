@@ -750,6 +750,7 @@ async fn test_store_with_pool() -> (tempfile::TempDir, sqlx::SqlitePool, TuiStor
     let pool = crate::db::open_db(&dir.path().join("test.db"))
         .await
         .unwrap();
+    reset_default_workspace(&pool).await;
     let store = TuiStore::new(pool.clone()).await.unwrap();
     (dir, pool, store)
 }
@@ -773,8 +774,7 @@ async fn create_selected_task(store: &mut TuiStore, title: &str) -> (String, usi
     (task_id, selected)
 }
 
-async fn pending_undo_count(pool: &sqlx::SqlitePool) -> i64 {
-    let workspace_id = crate::workspaces::active_workspace_id();
+async fn pending_undo_count(pool: &sqlx::SqlitePool, workspace_id: &str) -> i64 {
     let mut conn = pool.acquire().await.unwrap();
     sqlx::query_scalar(
         "SELECT count(*) FROM tui_undo_entries WHERE workspace_id = ? AND undone_at IS NULL",
@@ -870,7 +870,8 @@ async fn repeated_delete_does_not_add_noop_undo_entry() {
     let (_dir, pool, mut store) = test_store_with_pool().await;
     let (task_id, selected) = create_selected_task(&mut store, "Keep once").await;
     store.update_deleted(Some(selected), true).await.unwrap();
-    let undo_count_after_delete = pending_undo_count(&pool).await;
+    let workspace_id = store.active_workspace.id.clone();
+    let undo_count_after_delete = pending_undo_count(&pool, &workspace_id).await;
     let index = store
         .tasks
         .iter()
@@ -878,7 +879,10 @@ async fn repeated_delete_does_not_add_noop_undo_entry() {
         .unwrap();
     store.update_deleted(Some(index), true).await.unwrap();
 
-    assert_eq!(pending_undo_count(&pool).await, undo_count_after_delete);
+    assert_eq!(
+        pending_undo_count(&pool, &workspace_id).await,
+        undo_count_after_delete
+    );
     store.undo_last().await.unwrap().unwrap();
     store.refresh(Some(&task_id)).await.unwrap();
     let index = store
@@ -916,7 +920,8 @@ async fn noop_task_field_updates_do_not_add_undo_entries() {
         .await
         .unwrap();
     store.update_status(Some(selected), "todo").await.unwrap();
-    let undo_count_after_changes = pending_undo_count(&pool).await;
+    let workspace_id = store.active_workspace.id.clone();
+    let undo_count_after_changes = pending_undo_count(&pool, &workspace_id).await;
     let index = store
         .tasks
         .iter()
@@ -942,7 +947,10 @@ async fn noop_task_field_updates_do_not_add_undo_entries() {
         .await
         .unwrap();
 
-    assert_eq!(pending_undo_count(&pool).await, undo_count_after_changes);
+    assert_eq!(
+        pending_undo_count(&pool, &workspace_id).await,
+        undo_count_after_changes
+    );
 }
 
 #[tokio::test]
@@ -950,12 +958,16 @@ async fn duplicate_project_and_label_do_not_add_undo_entries() {
     let (_dir, pool, mut store) = test_store_with_pool().await;
     store.create_project("Side".to_string()).await.unwrap();
     store.create_label("bug".to_string()).await.unwrap();
-    let undo_count_after_creates = pending_undo_count(&pool).await;
+    let workspace_id = store.active_workspace.id.clone();
+    let undo_count_after_creates = pending_undo_count(&pool, &workspace_id).await;
 
     store.create_project("Side".to_string()).await.unwrap();
     store.create_label("bug".to_string()).await.unwrap();
 
-    assert_eq!(pending_undo_count(&pool).await, undo_count_after_creates);
+    assert_eq!(
+        pending_undo_count(&pool, &workspace_id).await,
+        undo_count_after_creates
+    );
 }
 
 #[tokio::test]
@@ -1056,7 +1068,7 @@ async fn undo_project_create_fails_when_referenced_or_synced() {
     let (_dir, pool, mut store) = test_store_with_pool().await;
     store.create_project("Side".to_string()).await.unwrap();
     let mut conn = pool.acquire().await.unwrap();
-    let workspace_id = crate::workspaces::active_workspace_id();
+    let workspace_id = store.active_workspace.id.clone();
     let project_key = store
         .projects
         .iter()
@@ -1089,7 +1101,7 @@ async fn undo_label_create_fails_when_referenced_or_synced() {
     let (_dir, pool, mut store) = test_store_with_pool().await;
     store.create_label("shared".to_string()).await.unwrap();
     let mut conn = pool.acquire().await.unwrap();
-    let workspace_id = crate::workspaces::active_workspace_id();
+    let workspace_id = store.active_workspace.id.clone();
     sqlx::query("INSERT INTO task_labels(workspace_id, task_id, label) VALUES (?, ?, 'shared')")
         .bind(&workspace_id)
         .bind(crate::ids::new_id())
@@ -1205,9 +1217,13 @@ async fn undo_skips_noop_status_before_previous_mutation() {
     let (_dir, pool, mut store) = test_store_with_pool().await;
     let (task_id, selected) = create_selected_task(&mut store, "Noop status").await;
     store.update_status(Some(selected), "todo").await.unwrap();
-    let undo_count_after_change = pending_undo_count(&pool).await;
+    let workspace_id = store.active_workspace.id.clone();
+    let undo_count_after_change = pending_undo_count(&pool, &workspace_id).await;
     store.update_status(Some(selected), "todo").await.unwrap();
-    assert_eq!(pending_undo_count(&pool).await, undo_count_after_change);
+    assert_eq!(
+        pending_undo_count(&pool, &workspace_id).await,
+        undo_count_after_change
+    );
 
     store.undo_last().await.unwrap().unwrap();
     store.refresh(Some(&task_id)).await.unwrap();
@@ -1217,7 +1233,7 @@ async fn undo_skips_noop_status_before_previous_mutation() {
         .position(|item| item.task.id == task_id)
         .unwrap();
     assert_eq!(store.tasks[index].task.status, "inbox");
-    assert_eq!(pending_undo_count(&pool).await, 1);
+    assert_eq!(pending_undo_count(&pool, &workspace_id).await, 1);
 }
 
 #[tokio::test]

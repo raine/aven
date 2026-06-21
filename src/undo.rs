@@ -1,20 +1,22 @@
 use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Result, bail, ensure};
 use sqlx::{Connection as _, Row, SqliteConnection};
 
+use crate::db::{conflict_exists, field_version, insert_change, set_field_version};
 use crate::ids::{new_id, now};
-use crate::mutation::set_task_field;
+use crate::mutation::apply_field_value_in_workspace;
 use crate::operations::update_task_labels_in_workspace;
 use crate::projects::project_has_config_mapping;
 use crate::task_fields::TaskField;
 use crate::workspaces::workspace_key_for_id;
 
-static APPLYING_UNDO: AtomicBool = AtomicBool::new(false);
+tokio::task_local! {
+    static APPLYING_UNDO: ();
+}
 
 pub(crate) fn is_applying_undo() -> bool {
-    APPLYING_UNDO.load(Ordering::SeqCst)
+    APPLYING_UNDO.try_with(|_| ()).is_ok()
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -275,9 +277,12 @@ pub(crate) async fn apply_latest_tui_undo(
         "error undo-entry-claim-failed id={entry_id}"
     );
     let payload: UndoPayload = serde_json::from_str(&payload_text)?;
-    APPLYING_UNDO.store(true, Ordering::SeqCst);
-    let apply_result = apply_undo_commands(&mut tx, workspace_id, &payload.commands).await;
-    APPLYING_UNDO.store(false, Ordering::SeqCst);
+    let apply_result = APPLYING_UNDO
+        .scope(
+            (),
+            apply_undo_commands(&mut tx, workspace_id, &payload.commands),
+        )
+        .await;
     match apply_result {
         Ok(outcome) => {
             tx.commit().await?;
@@ -341,7 +346,7 @@ async fn apply_undo_command(
                 if field == "project" && !project_exists(conn, workspace_id, before).await? {
                     bail!("error undo-state-changed task_id={task_id} field={field}");
                 }
-                set_task_field(conn, task_id, field, before).await?;
+                set_task_field_in_workspace(conn, workspace_id, task_id, field, before).await?;
             }
             let include_deleted = if field == "deleted" {
                 Some(before == "1")
@@ -396,7 +401,7 @@ async fn apply_undo_command(
                     });
                 }
             }
-            set_task_field(conn, task_id, "deleted", "1").await?;
+            set_task_field_in_workspace(conn, workspace_id, task_id, "deleted", "1").await?;
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
@@ -454,7 +459,7 @@ async fn apply_undo_command(
             if current != *after {
                 bail!("error undo-state-changed task_id={task_id} field={field}");
             }
-            set_task_field(conn, task_id, field, before).await?;
+            set_task_field_in_workspace(conn, workspace_id, task_id, field, before).await?;
             let restored = sqlx::query(
                 "UPDATE conflicts SET resolved = 0 WHERE id = ? AND workspace_id = ? AND resolved = 1",
             )
@@ -488,6 +493,41 @@ async fn project_exists(
     .fetch_one(&mut *conn)
     .await?
         > 0)
+}
+
+async fn set_task_field_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+    field: &str,
+    value: &str,
+) -> Result<()> {
+    if conflict_exists(conn, workspace_id, task_id, field).await? {
+        bail!(
+            "error conflicted-field ref={} field={} hint=\"use conflict resolve\"",
+            task_id,
+            field
+        );
+    }
+    let base = field_version(conn, task_id, field).await?;
+    apply_field_value_in_workspace(conn, workspace_id, task_id, field, value).await?;
+    let workspace_key = workspace_key_for_id(conn, workspace_id).await?;
+    let change_id = insert_change(
+        conn,
+        "task",
+        task_id,
+        Some(field),
+        "set_field",
+        serde_json::json!({
+            "workspace_id": workspace_id,
+            "workspace_key": workspace_key,
+            "value": value,
+        }),
+        base.as_deref(),
+    )
+    .await?;
+    set_field_version(conn, task_id, field, &change_id).await?;
+    Ok(())
 }
 
 fn label_sets_equal(left: &[String], right: &[String]) -> bool {
