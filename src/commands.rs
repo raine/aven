@@ -367,6 +367,21 @@ pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> R
         println!();
     }
     println!();
+    println!("## Issue Workflow");
+    println!();
+    println!("- Inspect an issue with `aven show <ref> --full` before changing it.");
+    println!(
+        "- Mark picked-up work with `aven update <ref> --status active` before making changes."
+    );
+    println!(
+        "- Add durable handoff context with `aven note <ref> ...` for blockers, decisions, or partial progress."
+    );
+    println!("- Leave blocked or unfinished work open and report the current state.");
+    println!(
+        "- Mark complete with `aven update <ref> --status done` only after the requested work is complete and required code changes are committed."
+    );
+    println!("- Use `canceled` only when the user says the issue is no longer needed.");
+    println!();
     println!("## Open Issues");
     println!();
 
@@ -404,7 +419,8 @@ pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> R
         conflicts_only: false,
         search: None,
     };
-    let items = query::list_task_items(conn, filters, TaskSort::Updated, SortDirection::Desc).await?;
+    let items =
+        query::list_task_items(conn, filters, TaskSort::Updated, SortDirection::Desc).await?;
     if items.is_empty() {
         println!("No open issues.");
         return Ok(());

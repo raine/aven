@@ -62,6 +62,10 @@ fn prime_prints_skill_primer_and_inferred_project_open_issues() {
         &output,
         &[
             "# Aven CLI Primer",
+            "## Issue Workflow",
+            "aven update <ref> --status active",
+            "aven note <ref> ...",
+            "aven update <ref> --status done",
             "## Open Issues",
             "project=prime-app",
             "status=inbox priority=high labels=bug title=\"fix active issue\"",
