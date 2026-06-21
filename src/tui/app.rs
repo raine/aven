@@ -9,15 +9,23 @@ use sqlx::SqlitePool;
 
 use crate::operations::TaskDraft;
 use crate::query::TaskSort;
+use crate::tui::config_overlay::{
+    CONFIG_INIT_TITLE, config_info_overlay, config_init_overlay, config_paths_overlay,
+    config_status_overlay,
+};
 use crate::tui::event::{
     Action, CommandLookup, ShortcutLookup, ViewTarget, lookup_command, resolve_shortcut,
     shortcut_label,
+};
+use crate::tui::navigation::{
+    detail_action, detail_task_delta, handle_detail_overlay_key, next_index,
+    next_selectable_sidebar,
 };
 use crate::tui::overlay::{
     ConfirmState, LineEdit, MultilineInputState, OverlayOutcome, OverlayState, OverlaySubmit,
     OverlayView, PickerItem, PickerState, TextInputState, TextPanelState,
 };
-use crate::tui::store::{ConflictTarget, SidebarEntry, SidebarTarget, TuiStore};
+use crate::tui::store::{ConflictTarget, SidebarTarget, TuiStore};
 use crate::tui::ui::{self, detail_help_scroll_cap, help_scroll_cap};
 
 const ADD_PROJECT_TITLE: &str = "Add project";
@@ -44,10 +52,6 @@ const CONFLICT_CONFIRM_LOCAL_TITLE: &str = "Resolve conflict: local";
 const CONFLICT_CONFIRM_REMOTE_TITLE: &str = "Resolve conflict: remote";
 const CONFLICT_MANUAL_TITLE: &str = "Resolve conflict: manual";
 const CONFLICT_DETAILS_TITLE: &str = "Conflict details";
-const CONFIG_STATUS_TITLE: &str = "Config status";
-const CONFIG_INFO_TITLE: &str = "Configuration";
-const CONFIG_PATHS_TITLE: &str = "Config paths";
-const CONFIG_INIT_TITLE: &str = "Initialize configuration";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AddTaskDraftState {
@@ -1674,38 +1678,25 @@ impl App {
 
     fn show_config_status(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
-        self.overlay = Some(OverlayState::TextPanel(TextPanelState::new(
-            CONFIG_STATUS_TITLE,
-            self.store.config_status_lines()?,
-        )));
+        self.overlay = Some(config_status_overlay(&self.store)?);
         Ok(())
     }
 
     fn show_config_info(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
-        self.overlay = Some(OverlayState::TextPanel(TextPanelState::new(
-            CONFIG_INFO_TITLE,
-            self.store.config_info_lines()?,
-        )));
+        self.overlay = Some(config_info_overlay(&self.store)?);
         Ok(())
     }
 
     fn show_config_paths(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
-        self.overlay = Some(OverlayState::TextPanel(TextPanelState::new(
-            CONFIG_PATHS_TITLE,
-            self.store.config_path_lines()?,
-        )));
+        self.overlay = Some(config_paths_overlay(&self.store)?);
         Ok(())
     }
 
     fn begin_config_init(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
-        let path = crate::config::config_file_path()?;
-        self.overlay = Some(OverlayState::Confirm(ConfirmState {
-            title: CONFIG_INIT_TITLE.to_string(),
-            prompt: format!("Create default config at {}?", path.display()),
-        }));
+        self.overlay = Some(config_init_overlay()?);
         Ok(())
     }
 
@@ -1940,78 +1931,6 @@ impl App {
     }
 }
 
-fn handle_detail_overlay_key(
-    key: KeyEvent,
-    overlay: OverlayState,
-    terminal_height: u16,
-) -> OverlayOutcome {
-    let OverlayState::Detail { mut scroll } = overlay else {
-        return OverlayOutcome::None(overlay);
-    };
-    let page = detail_page_scroll_rows(terminal_height);
-    match key.code {
-        KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
-        KeyCode::Char('j') | KeyCode::Down => {
-            scroll = scroll.saturating_add(1);
-            OverlayOutcome::None(OverlayState::Detail { scroll })
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            scroll = scroll.saturating_sub(1);
-            OverlayOutcome::None(OverlayState::Detail { scroll })
-        }
-        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            scroll = scroll.saturating_add(page);
-            OverlayOutcome::None(OverlayState::Detail { scroll })
-        }
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            scroll = scroll.saturating_sub(page);
-            OverlayOutcome::None(OverlayState::Detail { scroll })
-        }
-        KeyCode::PageDown => {
-            scroll = scroll.saturating_add(page);
-            OverlayOutcome::None(OverlayState::Detail { scroll })
-        }
-        KeyCode::PageUp => {
-            scroll = scroll.saturating_sub(page);
-            OverlayOutcome::None(OverlayState::Detail { scroll })
-        }
-        _ => OverlayOutcome::None(OverlayState::Detail { scroll }),
-    }
-}
-
-fn detail_page_scroll_rows(terminal_height: u16) -> u16 {
-    terminal_height.saturating_sub(6).max(1)
-}
-
-fn detail_task_delta(key: KeyEvent) -> Option<isize> {
-    if !key.modifiers.is_empty() {
-        return None;
-    }
-    match key.code {
-        KeyCode::Char(']') => Some(1),
-        KeyCode::Char('[') => Some(-1),
-        _ => None,
-    }
-}
-
-fn detail_action(key: KeyEvent) -> Option<Action> {
-    if !key.modifiers.is_empty() {
-        return None;
-    }
-
-    match key.code {
-        KeyCode::Char('e') => Some(Action::BeginEditTitle),
-        KeyCode::Char('n') => Some(Action::BeginAddNote),
-        KeyCode::Char('d') => Some(Action::SetStatus("done")),
-        KeyCode::Char('s') => Some(Action::BeginStatusPicker),
-        KeyCode::Char('p') => Some(Action::BeginEditPriority),
-        KeyCode::Char('l') => Some(Action::BeginEditLabels),
-        KeyCode::Char('y') => Some(Action::CopyShortRef),
-        KeyCode::Char('Y') => Some(Action::CopyDurableRef),
-        _ => None,
-    }
-}
-
 fn add_task_title_overlay(title: &str) -> bool {
     title == ADD_TASK_TITLE_TITLE || title.starts_with("Add task  project=")
 }
@@ -2058,54 +1977,12 @@ fn truncate_value_preview(value: &str, max_chars: usize) -> String {
     format!("{truncated}…")
 }
 
-fn next_index(selected: Option<usize>, len: usize, delta: isize, wrap: bool) -> Option<usize> {
-    if len == 0 {
-        return None;
-    }
-    let current = selected.unwrap_or(0);
-    let next = current as isize + delta;
-    if (0..len as isize).contains(&next) {
-        Some(next as usize)
-    } else if wrap && delta > 0 {
-        Some(0)
-    } else if wrap && delta < 0 {
-        Some(len - 1)
-    } else {
-        Some(current)
-    }
-}
-
-fn next_selectable_sidebar(
-    selected: Option<usize>,
-    entries: &[SidebarEntry],
-    delta: isize,
-    wrap: bool,
-) -> Option<usize> {
-    if entries.is_empty() || entries.iter().all(|entry| entry.target.is_none()) {
-        return None;
-    }
-    let mut index = selected.unwrap_or(0);
-    for _ in 0..entries.len() {
-        let next = index as isize + delta;
-        index = if (0..entries.len() as isize).contains(&next) {
-            next as usize
-        } else if wrap && delta > 0 {
-            0
-        } else if wrap && delta < 0 {
-            entries.len() - 1
-        } else {
-            index
-        };
-        if entries[index].target.is_some() {
-            return Some(index);
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::config_overlay::{
+        CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PATHS_TITLE, CONFIG_STATUS_TITLE,
+    };
     use crate::tui::overlay::{
         ConfirmState, MultilineInputState, PickerState, TextInputState, TextPanelState,
     };
@@ -2185,57 +2062,6 @@ mod tests {
                 .await
                 .unwrap();
         }
-    }
-
-    fn section(label: &str) -> SidebarEntry {
-        SidebarEntry {
-            label: label.to_string(),
-            count: 0,
-            target: None,
-            section: true,
-        }
-    }
-
-    fn item(label: &str) -> SidebarEntry {
-        SidebarEntry {
-            label: label.to_string(),
-            count: 0,
-            target: Some(SidebarTarget::All),
-            section: false,
-        }
-    }
-
-    #[test]
-    fn wraps_up_from_first_sidebar_item_to_last_item() {
-        let entries = [
-            section("Smart Views"),
-            item("All"),
-            section("Projects"),
-            item("APP app"),
-        ];
-
-        let selected = next_selectable_sidebar(Some(1), &entries, -1, true);
-
-        assert_eq!(selected, Some(3));
-    }
-
-    #[test]
-    fn wraps_down_from_last_sidebar_item_to_first_item() {
-        let entries = [
-            section("Smart Views"),
-            item("All"),
-            section("Projects"),
-            item("APP app"),
-        ];
-
-        let selected = next_selectable_sidebar(Some(3), &entries, 1, true);
-
-        assert_eq!(selected, Some(1));
-    }
-
-    #[test]
-    fn wraps_up_from_first_task_to_last_task() {
-        assert_eq!(next_index(Some(0), 3, -1, true), Some(2));
     }
 
     #[tokio::test]

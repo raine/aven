@@ -2,8 +2,10 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 
 mod app;
+mod config_overlay;
 mod event;
 mod markdown;
+mod navigation;
 mod overlay;
 mod store;
 mod theme;
