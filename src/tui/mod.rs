@@ -2,6 +2,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 
 mod app;
+mod app_edit;
 mod authoring;
 mod config_overlay;
 mod conflict_flow;

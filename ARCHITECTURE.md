@@ -166,6 +166,7 @@ If a remote scalar change base version does not match the current field version,
 The TUI is split into these layers:
 
 - `app.rs`: application state, event loop, focus, selection, action execution, refresh cadence, and the top-level coordination of extracted flows.
+- `app_edit.rs`: task edit overlay orchestration and direct edit mutation coordination for status, title, description, project, priority, labels, delete, restore, and undo.
 - `authoring.rs`: durable state and submit transitions for task and note authoring flows.
 - `conflict_flow.rs`: conflict resolution flow state, field selection transitions, confirmation submissions, and manual merge submissions.
 - `config_overlay.rs`: config status, config info, config path, and config init overlay construction.
