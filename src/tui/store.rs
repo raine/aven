@@ -670,8 +670,7 @@ impl TuiStore {
     pub(crate) async fn delete_project(&mut self, project: &str) -> Result<MutationMessage> {
         self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
-        let outcome =
-            delete_project_operation(&mut conn, &self.active_workspace.id, project).await?;
+        let outcome = delete_project_operation(&mut conn, &self.active_workspace, project).await?;
         drop(conn);
 
         if self.active_view == SidebarTarget::Project(outcome.project.key.clone()) {

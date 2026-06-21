@@ -21,6 +21,7 @@ use crate::projects::{
 use crate::refs::get_task;
 use crate::task_fields::TaskField;
 use crate::types::{Project, Task};
+use crate::workspaces::Workspace;
 
 pub(crate) struct TaskDraft {
     pub(crate) title: String,
@@ -517,11 +518,12 @@ pub(crate) async fn create_project_operation(
 
 pub(crate) async fn delete_project_operation(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace: &Workspace,
     project: &str,
 ) -> Result<ProjectDeleteOutcome> {
-    let project = resolve_existing_project_in_workspace(conn, workspace_id, project).await?;
-    let config_mapping = project_has_config_mapping(workspace_id, &project.key).unwrap_or(false);
+    let project = resolve_existing_project_in_workspace(conn, &workspace.id, project).await?;
+    let config_mapping =
+        project_has_config_mapping(&workspace.id, &workspace.key, &project.key).unwrap_or(false);
     let mut tx = conn.begin().await?;
     let task_refs: i64 =
         sqlx::query_scalar("SELECT count(*) FROM tasks WHERE workspace_id = ? AND project_key = ?")

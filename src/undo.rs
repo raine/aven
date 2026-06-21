@@ -9,6 +9,7 @@ use crate::mutation::set_task_field;
 use crate::operations::update_task_labels_in_workspace;
 use crate::projects::project_has_config_mapping;
 use crate::task_fields::TaskField;
+use crate::workspaces::workspace_key_for_id;
 
 static APPLYING_UNDO: AtomicBool = AtomicBool::new(false);
 
@@ -650,7 +651,8 @@ async fn delete_created_project(
     .bind(project_key)
     .fetch_one(&mut *conn)
     .await?;
-    if path_refs > 0 || project_has_config_mapping(workspace_id, project_key)? {
+    let workspace_key = workspace_key_for_id(conn, workspace_id).await?;
+    if path_refs > 0 || project_has_config_mapping(workspace_id, &workspace_key, project_key)? {
         bail!("error undo-state-changed project_key={project_key}");
     }
     sqlx::query("DELETE FROM projects WHERE workspace_id = ? AND key = ?")

@@ -338,13 +338,83 @@ async fn project_from_config_override(
         .map(Some)
 }
 
-pub(crate) fn project_has_config_mapping(workspace_id: &str, project_key: &str) -> Result<bool> {
+pub(crate) fn project_has_config_mapping(
+    workspace_id: &str,
+    workspace_key: &str,
+    project_key: &str,
+) -> Result<bool> {
     let config = AppConfig::load()?;
-    let workspace = crate::workspaces::active_workspace();
-    Ok(
-        config.has_project_override(Some(workspace_id), Some(&workspace.key), project_key)
-            || config.has_project_override(None, None, project_key),
-    )
+    Ok(project_has_config_mapping_in_config(
+        &config,
+        workspace_id,
+        workspace_key,
+        project_key,
+    ))
+}
+
+fn project_has_config_mapping_in_config(
+    config: &AppConfig,
+    workspace_id: &str,
+    workspace_key: &str,
+    project_key: &str,
+) -> bool {
+    config.has_project_override(Some(workspace_id), Some(workspace_key), project_key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ProjectConfig;
+
+    #[test]
+    fn config_mapping_detection_uses_supplied_workspace_key() {
+        let config = AppConfig {
+            project: ProjectConfig {
+                overrides: vec![ProjectOverrideConfig {
+                    workspace_id: None,
+                    workspace: Some("client-work".to_string()),
+                    project: "Mobile App".to_string(),
+                    paths: Vec::new(),
+                }],
+            },
+            ..AppConfig::default()
+        };
+
+        assert!(project_has_config_mapping_in_config(
+            &config,
+            "workspace-id",
+            "client-work",
+            "mobile-app",
+        ));
+        assert!(!project_has_config_mapping_in_config(
+            &config,
+            "workspace-id",
+            "default",
+            "mobile-app",
+        ));
+    }
+
+    #[test]
+    fn config_mapping_detection_preserves_unscoped_overrides() {
+        let config = AppConfig {
+            project: ProjectConfig {
+                overrides: vec![ProjectOverrideConfig {
+                    workspace_id: None,
+                    workspace: None,
+                    project: "Mobile App".to_string(),
+                    paths: Vec::new(),
+                }],
+            },
+            ..AppConfig::default()
+        };
+
+        assert!(project_has_config_mapping_in_config(
+            &config,
+            "workspace-id",
+            "client-work",
+            "mobile-app",
+        ));
+    }
 }
 
 fn matching_project_override(

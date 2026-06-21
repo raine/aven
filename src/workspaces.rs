@@ -99,11 +99,26 @@ pub(crate) async fn find_workspace(
     .bind(name_or_key)
     .fetch_optional(&mut *conn)
     .await?;
-    Ok(row.map(|row| Workspace {
+    Ok(row.map(workspace_from_row))
+}
+
+pub(crate) async fn workspace_key_for_id(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+) -> Result<String> {
+    let row = sqlx::query("SELECT id, key, name FROM workspaces WHERE id = ? AND archived = 0")
+        .bind(workspace_id)
+        .fetch_one(&mut *conn)
+        .await?;
+    Ok(workspace_from_row(row).key)
+}
+
+fn workspace_from_row(row: sqlx::sqlite::SqliteRow) -> Workspace {
+    Workspace {
         id: row.get("id"),
         key: row.get("key"),
         name: row.get("name"),
-    }))
+    }
 }
 
 pub(crate) async fn resolve_workspace(
