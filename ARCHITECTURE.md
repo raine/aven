@@ -167,7 +167,19 @@ The TUI is split into these layers:
 
 - `app.rs`: application state, event loop, focus, selection, overlays, authoring flows, conflict flows, action execution, and refresh cadence.
 - `event.rs`: shared command catalog, key sequences, command lookup, shortcut resolution, action lifecycle, and help metadata.
-- `store.rs`: database-backed TUI state and operations. It owns task lists, projects, labels, sidebar counts, filters, sorting, active view, and refresh time.
+- `store.rs` and `store/`: database-backed TUI state and operations. `store.rs` is the facade that owns task lists, projects, labels, workspaces, active workspace, sidebar counts, filters, sorting, active view, refresh time, construction, workspace activation, and refresh. Focused store submodules hold concern logic:
+  - `config.rs`: config status, config display, config path display, and config initialization.
+  - `conflicts.rs`: conflict target lookup, conflict resolution, and conflict navigation.
+  - `domain.rs`: project and label mutations plus inferred project lookup.
+  - `pickers.rs`: overlay picker item construction.
+  - `sidebar.rs`: sidebar section and project entry construction.
+  - `sort.rs`: sort labels and sort state changes.
+  - `task_commands.rs`: selected task field, label, delete, and restore mutations.
+  - `task_creation.rs`: task and note creation flows.
+  - `types.rs`: store DTOs shared with the app and UI layers.
+  - `undo.rs`: persistent TUI undo recording and application.
+  - `view.rs`: active view, filters, search, and selection restoration.
+  - `workspaces.rs`: TUI workspace switching, active workspace updates, and related filter/view reset.
 - `overlay.rs`: reusable text input, multiline input, picker, confirm, search, command, detail, help, and text panel state machines.
 - `ui.rs`: top-level Ratatui render orchestration for header, footer, overlays, command palette, help, and prefix hints. Region modules live under `ui/` for sidebar, task list, task display helpers, detail rendering, dialogs, and toasts. Overlay dialogs share frame, clear, background, and footer hint styling through dialog helpers.
 - `widgets.rs`: small cell helpers such as priority icons and title conflict markers.
