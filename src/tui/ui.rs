@@ -1435,15 +1435,12 @@ fn render_help_column(frame: &mut Frame, area: Rect, sections: &[&'static str], 
 }
 
 fn render_detail_help(frame: &mut Frame, scroll: u16) {
-    let area = centered(frame.area(), 72, 18);
-    frame.render_widget(Clear, area);
-    let mut block = overlay_block("Task detail shortcuts");
-    let content = block.inner(area);
-    if let Some(title) = detail_help_scroll_title(scroll, content.height) {
-        block = block
-            .title_top(Line::from(Span::styled(title, Style::new().fg(FG_MUTED))).right_aligned());
+    let mut dialog = Dialog::new("Task detail shortcuts", 72, 18);
+    let visible_rows = dialog.area(frame).height.saturating_sub(2);
+    if let Some(title) = detail_help_scroll_title(scroll, visible_rows) {
+        dialog = dialog.right_title(Line::from(Span::styled(title, Style::new().fg(FG_MUTED))));
     }
-    frame.render_widget(block, area);
+    let content = dialog.render_block(frame);
     let lines = detail_help_lines();
     let visible = lines
         .into_iter()
