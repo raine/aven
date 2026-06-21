@@ -103,12 +103,16 @@ pub(super) fn render_multiline_input(frame: &mut Frame, state: &MultilineInputVi
 
     let visible_rows = 10usize;
     let content_rows = state.lines.len().min(visible_rows).max(1);
-    let height = (content_rows as u16).saturating_add(5).min(16);
+    let prompt_rows = usize::from(!state.prompt.is_empty());
+    let height = (content_rows + prompt_rows + 4).min(16) as u16;
     let start = state.row.saturating_sub(visible_rows.saturating_sub(1));
-    let mut lines = vec![Line::from(Span::styled(
-        &state.prompt,
-        Style::new().fg(FG_DIM),
-    ))];
+    let mut lines = Vec::new();
+    if !state.prompt.is_empty() {
+        lines.push(Line::from(Span::styled(
+            &state.prompt,
+            Style::new().fg(FG_DIM),
+        )));
+    }
     for (row_index, line) in state
         .lines
         .iter()
@@ -124,7 +128,7 @@ pub(super) fn render_multiline_input(frame: &mut Frame, state: &MultilineInputVi
     }
     lines.push(Line::from(""));
     lines.push(multiline_hint_line());
-    Dialog::new(&state.title, 60, height.saturating_add(1))
+    Dialog::new(&state.title, 60, height)
         .wrap()
         .render_text(frame, Text::from(lines));
 }
@@ -282,6 +286,7 @@ fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'
 fn project_picker_submit_label(title: &str) -> Option<&'static str> {
     match title {
         "Go: project" => Some("open"),
+        "Edit project" => Some("submit"),
         "Delete project" => Some("delete"),
         _ => None,
     }
@@ -547,6 +552,22 @@ mod tests {
             column: 4,
         }));
         assert!(rendered.contains("Description"));
+        assert!(rendered.contains("Body"));
+        assert!(rendered.contains("Ctrl+S submit"));
+    }
+
+    #[test]
+    fn overlay_render_omits_empty_multiline_prompt() {
+        let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+            title: "Edit description".to_string(),
+            prompt: String::new(),
+            lines: vec!["line one".to_string()],
+            row: 0,
+            column: 4,
+        }));
+        assert!(rendered.contains("Edit description"));
+        assert!(rendered.contains("line one"));
+        assert!(!rendered.contains("description:"));
         assert!(rendered.contains("Ctrl+S submit"));
     }
 
@@ -684,6 +705,28 @@ mod tests {
         assert!(rendered.contains("CC"));
         assert!(rendered.contains("claude-code"));
         assert!(rendered.contains("Enter open"));
+    }
+
+    #[test]
+    fn edit_project_uses_structured_project_picker() {
+        let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+            title: "Edit project".to_string(),
+            filter: "claude".to_string(),
+            filter_cursor: 6,
+            items: vec![PickerItem {
+                label: "CC claude-code".to_string(),
+                value: "claude-code".to_string(),
+                selected: false,
+            }],
+            selected: 0,
+            multi: false,
+            visible_indices: vec![0],
+        }));
+        assert!(rendered.contains("PREFIX"));
+        assert!(rendered.contains("PROJECT"));
+        assert!(rendered.contains("CC"));
+        assert!(rendered.contains("claude-code"));
+        assert!(rendered.contains("Enter submit"));
     }
 
     #[test]

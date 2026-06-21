@@ -41,8 +41,8 @@ const DELETE_PROJECT_TITLE: &str = "Delete project";
 const ADD_LABEL_TITLE: &str = "Add label";
 const EDIT_STATUS_TITLE: &str = "Edit task: status";
 const EDIT_TITLE_TITLE: &str = "Edit title";
-const EDIT_DESCRIPTION_TITLE: &str = "Edit task: description";
-const EDIT_PROJECT_TITLE: &str = "Edit task: project";
+const EDIT_DESCRIPTION_TITLE: &str = "Edit description";
+const EDIT_PROJECT_TITLE: &str = "Edit project";
 const EDIT_PRIORITY_TITLE: &str = "Edit task: priority";
 const EDIT_LABELS_TITLE: &str = "Edit task: labels";
 const FILTER_PROJECT_TITLE: &str = "Filter: project";
@@ -1272,7 +1272,7 @@ impl App {
             MultilineInputState::from_value(
                 OverlayRoute::EditDescription,
                 EDIT_DESCRIPTION_TITLE,
-                "description:",
+                "",
                 value,
             ),
         ));
@@ -3310,6 +3310,7 @@ mod tests {
             &app.overlay,
             Some(OverlayState::MultilineInput(state))
                 if state.title == EDIT_DESCRIPTION_TITLE
+                    && state.prompt.is_empty()
                     && state.lines == vec!["first".to_string(), "second".to_string()]
         ));
 
