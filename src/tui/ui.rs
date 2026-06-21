@@ -1530,8 +1530,12 @@ fn project_picker_hint_line() -> Line<'static> {
 
 fn render_confirm(frame: &mut Frame, state: &ConfirmView) {
     let width = state.prompt.chars().count().saturating_add(4).max(32) as u16;
-    let area = centered(frame.area(), width, 5);
-    let text = Text::from(vec![Line::from(state.prompt.as_str()), confirm_hint_line()]);
+    let area = centered(frame.area(), width, 6);
+    let text = Text::from(vec![
+        Line::from(state.prompt.as_str()),
+        Line::from(""),
+        confirm_hint_line(),
+    ]);
     render_overlay_paragraph(frame, area, &state.title, text, false);
 }
 
