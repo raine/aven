@@ -34,7 +34,7 @@
 | `src/undo.rs` | Persistent TUI undo journal, guarded inverse payloads, and apply helpers. |
 | `migrations/` | SQLite schema migrations named as `YYYYMMDDHHMMSS_lower_snake.sql`. |
 | `tests/` | Integration-heavy CLI, sync, daemon, conflict, schema, and TUI smoke coverage. |
-| `.claude/skills/` | Agent-facing operational primers for repository-specific workflows. |
+| `skills/` | Agent-facing operational primers for repository-specific workflows. |
 
 ## Command flow
 
