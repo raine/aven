@@ -12,18 +12,28 @@ fn infers_project_from_path_mapping() {
     let mapped = env.path("mapped");
     let nested = mapped.join("sub");
     fs::create_dir_all(&nested).unwrap();
-
-    ok(env.aven(
-        &db,
-        [
-            "project",
-            "create",
-            "mapped",
-            "--path",
-            mapped.to_str().unwrap(),
-        ],
+    env.write_config(&format!(
+        r#"local:
+  db_path: "{}"
+"#,
+        db.display()
     ));
-    let output = ok(env.aven_in(&db, &nested, ["add", "mapped inference"]));
+
+    let create = ok(env.aven_config([
+        "project",
+        "create",
+        "mapped",
+        "--path",
+        mapped.to_str().unwrap(),
+    ]));
+    contains_all(&create, &["created-project mapped"]);
+    let config = fs::read_to_string(env.config_file()).unwrap();
+    contains_all(
+        &config,
+        &["workspace: default", "project: mapped", mapped.to_str().unwrap()],
+    );
+
+    let output = ok(aven_config_in(&env, &nested, ["add", "mapped inference"]));
     contains_all(&output, &["project=mapped"]);
 }
 
@@ -90,7 +100,7 @@ project:
 }
 
 #[test]
-fn project_mapping_takes_precedence_over_override() {
+fn project_path_command_remaps_same_path_in_config() {
     let env = TestEnv::new();
     let db = env.db("mapping-before-override.sqlite");
     let repo = env.path("repo");
@@ -108,6 +118,7 @@ project:
         repo.display()
     ));
 
+    ok(env.aven_config(["project", "create", "Override"]));
     ok(env.aven_config([
         "project",
         "create",
@@ -117,6 +128,8 @@ project:
     ]));
     let output = ok(aven_config_in(&env, &repo, ["add", "mapping precedence"]));
     contains_all(&output, &["project=mapped"]);
+    let config = fs::read_to_string(env.config_file()).unwrap();
+    contains_all(&config, &["workspace: default", "project: mapped"]);
 }
 
 #[test]
@@ -237,7 +250,9 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
-    command()
+    let mut command = command();
+    command
+        .env("XDG_STATE_HOME", env.state_dir())
         .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
         .env_remove("AVEN_DB")
         .env_remove("AVEN_SYNC_SERVER")

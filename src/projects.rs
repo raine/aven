@@ -45,11 +45,11 @@ pub(crate) async fn resolve_project_for_add_in_workspace(
     if let Some(project) = project {
         return resolve_or_create_project(conn, workspace_id, project).await;
     }
-    if let Some(project) = project_from_path_mapping(conn, workspace_id).await? {
-        return Ok(project);
-    }
     let config = AppConfig::load()?;
     if let Some(project) = project_from_config_override(conn, workspace_id, &config).await? {
+        return Ok(project);
+    }
+    if let Some(project) = project_from_path_mapping(conn, workspace_id).await? {
         return Ok(project);
     }
     if let Some(root_name) = git_root_name()? {
@@ -87,12 +87,15 @@ pub(crate) async fn inferred_project_key_for_add_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &str,
 ) -> Result<Option<String>> {
+    let config = AppConfig::load()?;
+    let workspace = crate::workspaces::active_workspace();
+    if let Some(project) =
+        matching_project_override(&config, Some(&workspace.id), Some(&workspace.key))?
+    {
+        return Ok(Some(normalize_key(&project)));
+    }
     if let Some(project) = project_from_path_mapping(conn, workspace_id).await? {
         return Ok(Some(project.key));
-    }
-    let config = AppConfig::load()?;
-    if let Some(project) = matching_project_override(&config)? {
-        return Ok(Some(normalize_key(&project)));
     }
     Ok(git_root_name()?.map(|name| normalize_key(&name)))
 }
@@ -324,7 +327,10 @@ async fn project_from_config_override(
     workspace_id: &str,
     config: &AppConfig,
 ) -> Result<Option<Project>> {
-    let Some(project) = matching_project_override(config)? else {
+    let workspace = crate::workspaces::active_workspace();
+    let Some(project) =
+        matching_project_override(config, Some(&workspace.id), Some(&workspace.key))?
+    else {
         return Ok(None);
     };
     resolve_or_create_project(conn, workspace_id, &project)
@@ -332,25 +338,51 @@ async fn project_from_config_override(
         .map(Some)
 }
 
-fn matching_project_override(config: &AppConfig) -> Result<Option<String>> {
+pub(crate) fn project_has_config_mapping(workspace_id: &str, project_key: &str) -> Result<bool> {
+    let config = AppConfig::load()?;
+    let workspace = crate::workspaces::active_workspace();
+    Ok(
+        config.has_project_override(Some(workspace_id), Some(&workspace.key), project_key)
+            || config.has_project_override(None, None, project_key),
+    )
+}
+
+fn matching_project_override(
+    config: &AppConfig,
+    workspace_id: Option<&str>,
+    workspace: Option<&str>,
+) -> Result<Option<String>> {
     let cwd = fs::canonicalize(env::current_dir()?)?;
     let root = git_root(&cwd)?.unwrap_or_else(|| cwd.clone());
-    let mut best: Option<(PathMatch, &ProjectOverrideConfig)> = None;
+    let mut best: Option<(PathMatch, bool, &ProjectOverrideConfig)> = None;
     for project_override in &config.project.overrides {
+        let scoped =
+            project_override.workspace_id.is_some() || project_override.workspace.is_some();
+        let matches_workspace = match project_override.workspace_id.as_deref() {
+            Some(id) => Some(id) == workspace_id,
+            None => project_override
+                .workspace
+                .as_deref()
+                .is_none_or(|key| Some(key) == workspace),
+        };
+        if !matches_workspace {
+            continue;
+        }
         for path in &project_override.paths {
             let Ok(path) = fs::canonicalize(path) else {
                 continue;
             };
-            if let Some(path_match) = matching_path(&cwd, &root, &path)
-                && best
-                    .as_ref()
-                    .is_none_or(|(best_match, _)| path_match.is_better_than(*best_match))
-            {
-                best = Some((path_match, project_override));
+            if let Some(path_match) = matching_path(&cwd, &root, &path) {
+                if best.as_ref().is_none_or(|(best_match, best_scoped, _)| {
+                    path_match.is_better_than(*best_match)
+                        || path_match == *best_match && scoped && !*best_scoped
+                }) {
+                    best = Some((path_match, scoped, project_override));
+                }
             }
         }
     }
-    Ok(best.map(|(_, project_override)| project_override.project.clone()))
+    Ok(best.map(|(_, _, project_override)| project_override.project.clone()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,5 +1,7 @@
 mod common;
 
+use std::process::Command;
+
 use common::{TestEnv, TestServer, command, contains_all, contains_none, extract_ref, fail, ok};
 
 fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
@@ -147,63 +149,77 @@ fn project_path_remove_only_affects_active_workspace() {
     let db = env.db("paths.sqlite");
     let mapped = env.path("mapped");
     std::fs::create_dir_all(&mapped).expect("create mapped dir");
-
-    ok(env.aven(&db, ["workspace", "create", "alpha"]));
-    ok(env.aven(&db, ["workspace", "create", "beta"]));
-    ok(env.aven(&db, ["--workspace", "alpha", "project", "create", "app"]));
-    ok(env.aven(&db, ["--workspace", "beta", "project", "create", "app"]));
-    ok(env.aven(
-        &db,
-        [
-            "--workspace",
-            "alpha",
-            "project",
-            "path",
-            "add",
-            "app",
-            mapped.to_str().expect("utf8 path"),
-        ],
-    ));
-    ok(env.aven(
-        &db,
-        [
-            "--workspace",
-            "beta",
-            "project",
-            "path",
-            "add",
-            "app",
-            mapped.to_str().expect("utf8 path"),
-        ],
+    env.write_config(&format!(
+        r#"local:
+  db_path: "{}"
+"#,
+        db.display()
     ));
 
-    ok(env.aven(
-        &db,
-        [
-            "--workspace",
-            "alpha",
-            "project",
-            "path",
-            "remove",
-            "app",
-            mapped.to_str().expect("utf8 path"),
-        ],
-    ));
+    ok(env.aven_config(["workspace", "create", "alpha"]));
+    ok(env.aven_config(["workspace", "create", "beta"]));
+    ok(env.aven_config(["--workspace", "alpha", "project", "create", "app"]));
+    ok(env.aven_config(["--workspace", "beta", "project", "create", "app"]));
+    ok(env.aven_config([
+        "--workspace",
+        "alpha",
+        "project",
+        "path",
+        "add",
+        "app",
+        mapped.to_str().expect("utf8 path"),
+    ]));
+    ok(env.aven_config([
+        "--workspace",
+        "beta",
+        "project",
+        "path",
+        "add",
+        "app",
+        mapped.to_str().expect("utf8 path"),
+    ]));
 
-    let beta_ref = extract_ref(&ok(env.aven_in(
-        &db,
+    ok(env.aven_config([
+        "--workspace",
+        "alpha",
+        "project",
+        "path",
+        "remove",
+        "app",
+        mapped.to_str().expect("utf8 path"),
+    ]));
+
+    let beta_ref = extract_ref(&ok(aven_config_in(
+        &env,
         &mapped,
         ["--workspace", "beta", "add", "beta inferred"],
     )));
-    let beta = ok(env.aven(&db, ["--workspace", "beta", "show", &beta_ref, "--full"]));
+    let beta = ok(env.aven_config(["--workspace", "beta", "show", &beta_ref, "--full"]));
     contains_all(&beta, &["project=app"]);
 
-    let alpha_error = fail(env.aven_in(
-        &db,
+    let alpha_error = fail(aven_config_in(
+        &env,
         &mapped,
         ["--workspace", "alpha", "add", "alpha inferred"],
     ));
     contains_all(&alpha_error, &["project-required"]);
+}
+
+fn aven_config_in<I, S>(env: &TestEnv, cwd: &std::path::Path, args: I) -> std::process::Output
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let mut command = Command::new(common::bin());
+    command
+        .env("XDG_STATE_HOME", env.state_dir())
+        .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
+        .env_remove("AVEN_DB")
+        .env_remove("AVEN_SYNC_SERVER")
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .expect("run aven with config in cwd")
 }
 
 #[test]

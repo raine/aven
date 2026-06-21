@@ -52,6 +52,10 @@ pub struct ProjectConfig {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProjectOverrideConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
     pub project: String,
     #[serde(default)]
     pub paths: Vec<PathBuf>,
@@ -90,6 +94,26 @@ impl Default for DaemonConfig {
     }
 }
 
+impl ProjectOverrideConfig {
+    fn project_key(&self) -> String {
+        crate::projects::normalize_key(&self.project)
+    }
+
+    fn matches_exact_workspace(&self, workspace_id: Option<&str>, workspace: Option<&str>) -> bool {
+        self.workspace_id.as_deref() == workspace_id && self.workspace.as_deref() == workspace
+    }
+
+    fn matches_workspace(&self, workspace_id: Option<&str>, workspace: Option<&str>) -> bool {
+        match self.workspace_id.as_deref() {
+            Some(id) => Some(id) == workspace_id,
+            None => self
+                .workspace
+                .as_deref()
+                .is_none_or(|key| Some(key) == workspace),
+        }
+    }
+}
+
 impl AppConfig {
     pub fn load() -> Result<Self> {
         let path = config_file_path()?;
@@ -103,6 +127,71 @@ impl AppConfig {
         let text = fs::read_to_string(path)
             .with_context(|| format!("could not read {}", path.display()))?;
         serde_yaml::from_str(&text).with_context(|| format!("could not parse {}", path.display()))
+    }
+
+    pub fn has_project_override(
+        &self,
+        workspace_id: Option<&str>,
+        workspace: Option<&str>,
+        project_key: &str,
+    ) -> bool {
+        self.project.overrides.iter().any(|project_override| {
+            project_override.matches_workspace(workspace_id, workspace)
+                && project_override.project_key() == project_key
+        })
+    }
+
+    pub fn add_project_override_path(
+        &mut self,
+        workspace_id: Option<&str>,
+        workspace: Option<&str>,
+        project: &str,
+        path: PathBuf,
+    ) {
+        for project_override in &mut self.project.overrides {
+            if project_override.matches_workspace(workspace_id, workspace) {
+                project_override.paths.retain(|existing| existing != &path);
+            }
+        }
+        self.project
+            .overrides
+            .retain(|project_override| !project_override.paths.is_empty());
+        if let Some(project_override) = self.project.overrides.iter_mut().find(|project_override| {
+            project_override.matches_exact_workspace(workspace_id, workspace)
+                && project_override.project_key() == project
+        }) {
+            project_override.paths.push(path);
+            return;
+        }
+        self.project.overrides.push(ProjectOverrideConfig {
+            workspace_id: workspace_id.map(str::to_string),
+            workspace: workspace.map(str::to_string),
+            project: project.to_string(),
+            paths: vec![path],
+        });
+    }
+
+    pub fn remove_project_override_path(
+        &mut self,
+        workspace_id: Option<&str>,
+        workspace: Option<&str>,
+        project: &str,
+        paths: &[PathBuf],
+    ) -> bool {
+        let mut removed = false;
+        self.project.overrides.retain_mut(|project_override| {
+            if project_override.matches_workspace(workspace_id, workspace)
+                && project_override.project_key() == project
+            {
+                let before = project_override.paths.len();
+                project_override
+                    .paths
+                    .retain(|existing| !paths.iter().any(|path| existing == path));
+                removed |= project_override.paths.len() != before;
+            }
+            !project_override.paths.is_empty()
+        });
+        removed
     }
 
     pub fn sync_interval_seconds(&self) -> u64 {
@@ -186,17 +275,30 @@ pub fn resolve_sync_server(flag: Option<&str>, config: &AppConfig) -> Result<Str
     bail!("error sync-server-required hint=\"pass --server or configure sync.server_url\"")
 }
 
-pub fn write_default_config(path: &Path) -> Result<()> {
+pub fn write_config(path: &Path, config: &AppConfig) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;
     }
+    let text = serde_yaml::to_string(config)?;
+    let tmp_path = path.with_extension("yaml.tmp");
+    fs::write(&tmp_path, text)
+        .with_context(|| format!("could not write {}", tmp_path.display()))?;
+    fs::rename(&tmp_path, path).with_context(|| {
+        format!(
+            "could not replace {} with {}",
+            path.display(),
+            tmp_path.display()
+        )
+    })?;
+    Ok(())
+}
+
+pub fn write_default_config(path: &Path) -> Result<()> {
     if path.exists() {
         bail!("error config-exists path={}", path.display());
     }
     let mut config = AppConfig::default();
     config.sync.auth_token = Some(String::new());
-    let text = serde_yaml::to_string(&config)?;
-    fs::write(path, text).with_context(|| format!("could not write {}", path.display()))?;
-    Ok(())
+    write_config(path, &config)
 }

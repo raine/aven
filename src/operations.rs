@@ -1,3 +1,4 @@
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -13,8 +14,8 @@ use crate::ids::{new_id, now};
 use crate::labels::{normalize_label, resolve_labels_in_workspace};
 use crate::mutation::{apply_field_value_in_workspace, set_task_field};
 use crate::projects::{
-    add_project_path_in_workspace as add_project_path_mapping, create_project_in_workspace,
-    resolve_existing_project_in_workspace, resolve_project_for_add_in_workspace,
+    create_project_in_workspace, resolve_existing_project_in_workspace,
+    resolve_project_for_add_in_workspace,
 };
 use crate::refs::get_task;
 use crate::task_fields::TaskField;
@@ -70,11 +71,12 @@ pub(crate) struct ProjectOutcome {
 pub(crate) struct ProjectPathOutcome {
     pub(crate) project: Project,
     pub(crate) path: String,
+    pub(crate) config_path: PathBuf,
 }
 
 struct ProjectPathTarget {
     project: Project,
-    path: String,
+    path: PathBuf,
 }
 
 pub(crate) struct ConflictListItem {
@@ -487,6 +489,7 @@ pub(crate) async fn create_project_operation(
     name: &str,
     path: Option<&Path>,
 ) -> Result<ProjectOutcome> {
+    let path = path.map(canonicalize_project_path).transpose()?;
     let outcome = create_project_in_workspace(
         conn,
         crate::workspaces::active_workspace_id().as_str(),
@@ -494,13 +497,7 @@ pub(crate) async fn create_project_operation(
     )
     .await?;
     if let Some(path) = path {
-        add_project_path_mapping(
-            conn,
-            &outcome.project.workspace_id,
-            &outcome.project.key,
-            path,
-        )
-        .await?;
+        save_project_path_mapping(&outcome.project, path)?;
     }
     if outcome.created {
         info!(project_key = %outcome.project.key, "project created");
@@ -512,10 +509,26 @@ pub(crate) async fn create_project_operation(
     })
 }
 
-fn canonicalize_project_path(path: &Path) -> Result<String> {
-    let path =
-        fs::canonicalize(path).with_context(|| format!("could not resolve {}", path.display()))?;
-    Ok(path.display().to_string())
+fn canonicalize_project_path(path: &Path) -> Result<PathBuf> {
+    fs::canonicalize(path).with_context(|| format!("could not resolve {}", path.display()))
+}
+
+fn project_path_remove_candidates(path: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Ok(path) = fs::canonicalize(path) {
+        paths.push(path);
+    }
+    let supplied = if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Ok(cwd) = env::current_dir() {
+        cwd.join(path)
+    } else {
+        path.to_path_buf()
+    };
+    if !paths.iter().any(|path| path == &supplied) {
+        paths.push(supplied);
+    }
+    paths
 }
 
 async fn resolve_project_path_target(
@@ -533,23 +546,31 @@ async fn resolve_project_path_target(
     Ok(ProjectPathTarget { project, path })
 }
 
+fn save_project_path_mapping(project: &Project, path: PathBuf) -> Result<ProjectPathOutcome> {
+    let config_path = config::config_file_path()?;
+    let mut app_config = config::AppConfig::load_from_path(&config_path)?;
+    let workspace = crate::workspaces::active_workspace();
+    app_config.add_project_override_path(
+        Some(&workspace.id),
+        Some(&workspace.key),
+        &project.key,
+        path.clone(),
+    );
+    config::write_config(&config_path, &app_config)?;
+    Ok(ProjectPathOutcome {
+        project: project.clone(),
+        path: path.display().to_string(),
+        config_path,
+    })
+}
+
 pub(crate) async fn add_project_path_operation(
     conn: &mut SqliteConnection,
     project: &str,
     path: &Path,
 ) -> Result<ProjectPathOutcome> {
     let target = resolve_project_path_target(conn, project, path).await?;
-    add_project_path_mapping(
-        conn,
-        &target.project.workspace_id,
-        &target.project.key,
-        Path::new(&target.path),
-    )
-    .await?;
-    Ok(ProjectPathOutcome {
-        project: target.project,
-        path: target.path,
-    })
+    save_project_path_mapping(&target.project, target.path)
 }
 
 pub(crate) async fn remove_project_path_operation(
@@ -557,18 +578,42 @@ pub(crate) async fn remove_project_path_operation(
     project: &str,
     path: &Path,
 ) -> Result<ProjectPathOutcome> {
-    let target = resolve_project_path_target(conn, project, path).await?;
-    sqlx::query(
-        "DELETE FROM project_paths WHERE workspace_id = ? AND project_key = ? AND path = ?",
+    let project = resolve_existing_project_in_workspace(
+        conn,
+        crate::workspaces::active_workspace_id().as_str(),
+        project,
     )
-    .bind(&target.project.workspace_id)
-    .bind(&target.project.key)
-    .bind(&target.path)
-    .execute(&mut *conn)
     .await?;
+    let config_path = config::config_file_path()?;
+    let mut app_config = config::AppConfig::load_from_path(&config_path)?;
+    let workspace = crate::workspaces::active_workspace();
+    let remove_paths = project_path_remove_candidates(path);
+    app_config.remove_project_override_path(
+        Some(&workspace.id),
+        Some(&workspace.key),
+        &project.key,
+        &remove_paths,
+    );
+    for path in &remove_paths {
+        sqlx::query(
+            "DELETE FROM project_paths WHERE workspace_id = ? AND project_key = ? AND path = ?",
+        )
+        .bind(&project.workspace_id)
+        .bind(&project.key)
+        .bind(path.display().to_string())
+        .execute(&mut *conn)
+        .await?;
+    }
+    config::write_config(&config_path, &app_config)?;
+    let path = remove_paths
+        .first()
+        .unwrap_or(&path.to_path_buf())
+        .display()
+        .to_string();
     Ok(ProjectPathOutcome {
-        project: target.project,
-        path: target.path,
+        project,
+        path,
+        config_path,
     })
 }
 

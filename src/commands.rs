@@ -186,17 +186,19 @@ pub(crate) async fn cmd_project(conn: &mut SqliteConnection, args: ProjectComman
             ProjectPathSubcommand::Add { project, path } => {
                 let outcome = add_project_path_operation(conn, &project, &path).await?;
                 println!(
-                    "added-project-path {} path={}",
+                    "added-project-path {} path={} config={}",
                     outcome.project.key,
-                    quote(&outcome.path)
+                    quote(&outcome.path),
+                    quote(&outcome.config_path.display().to_string())
                 );
             }
             ProjectPathSubcommand::Remove { project, path } => {
                 let outcome = remove_project_path_operation(conn, &project, &path).await?;
                 println!(
-                    "removed-project-path {} path={}",
+                    "removed-project-path {} path={} config={}",
                     outcome.project.key,
-                    quote(&outcome.path)
+                    quote(&outcome.path),
+                    quote(&outcome.config_path.display().to_string())
                 );
             }
         },

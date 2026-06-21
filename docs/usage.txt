@@ -48,8 +48,9 @@ Example config:
 
 Project overrides map directories or repositories to project names for inferred
 `aven add` tasks. They are useful when a directory basename differs from the
-project name. Project path mappings still take precedence, and Git inference is
-used when no override matches.
+project name. `aven project create --path`, `aven project path add`, and
+`aven project path remove` edit this config section. Git inference is used when
+no override matches.
 
 Common CLI examples:
 

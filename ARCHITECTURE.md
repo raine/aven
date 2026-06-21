@@ -25,7 +25,7 @@
 | `src/choices.rs` | Canonical task statuses, priorities, and choice validation. |
 | `src/ids.rs` | UTC timestamp helper and 80-bit Crockford Base32 ID generation. |
 | `src/input.rs` | Inline, file, or stdin text input handling for descriptions and notes. |
-| `src/projects.rs` | Project key normalization, prefix generation, lookup, creation, path inference, path mappings, and config overrides. |
+| `src/projects.rs` | Project key normalization, prefix generation, lookup, creation, path inference, and config path mappings. |
 | `src/labels.rs` | Label normalization, lookup, creation, and near-match validation. |
 | `src/refs.rs` | Task ref parsing, ref resolution, and display ref generation. |
 | `src/render.rs`, `src/task_render.rs` | Generic text helpers and task-specific CLI rendering. |
@@ -51,15 +51,15 @@
 7. `tui` hands the open pool to `tui::run`.
 8. Successful mutating CLI commands wake the daemon when sync is enabled and a loopback wake address is configured.
 
-`--db` selects the database path but commands still load config so workspace routes, workspace defaults, project overrides, sync settings, and daemon settings remain available. Active workspace resolution uses `--workspace`, then the longest matching config route, then `workspace.default`, then the built-in default workspace, then the only workspace in the database. Commands fail with `workspace-required` only when the default workspace is unavailable and no active workspace can be inferred. Project inference for task creation uses explicit `--project`, then database project path mappings, then the longest matching `project.overrides` config path, then the Git root name. Linked Git worktrees infer from their main worktree root.
+`--db` selects the database path but commands still load config so workspace routes, workspace defaults, project overrides, sync settings, and daemon settings remain available. Active workspace resolution uses `--workspace`, then the longest matching config route, then `workspace.default`, then the built-in default workspace, then the only workspace in the database. Commands fail with `workspace-required` only when the default workspace is unavailable and no active workspace can be inferred. Project inference for task creation uses explicit `--project`, then the longest matching `project.overrides` config path, then deprecated database project path mappings, then the Git root name. Linked Git worktrees infer from their main worktree root.
 
 CLI commands cover task add, show, list, update, note, delete, restore, projects, labels, project paths, workspace management, conflict list or show or resolve, config, doctor, skill, daemon, server, sync, and TUI.
 
 ## Persistence model
 
-SQLite is the only persistence layer. `open_db` enables WAL, foreign keys, a single connection, and automatic migrations. The initial migration defines materialized domain tables plus sync bookkeeping:
+SQLite stores synced task data and local UI state. Config stores local routing and service settings. `open_db` enables WAL, foreign keys, a single connection, and automatic migrations. The initial migration defines materialized domain tables plus sync bookkeeping:
 
-- Domain tables: `workspaces`, `tasks`, `projects`, `labels`, `project_paths`, `task_labels`, `notes`.
+- Domain tables: `workspaces`, `tasks`, `projects`, `labels`, `task_labels`, `notes`.
 - Sync tables: `changes`, `field_versions`, `conflicts`.
 - Metadata table: `meta` stores `client_id`, `sync_cursor`, `local_seq`, and sync server URL.
 - Local TUI table: `tui_undo_entries` stores inverse operations for TUI mutations.
@@ -122,8 +122,8 @@ Workspace-scoped sync payloads include `workspace_id` and `workspace_key`. The r
 Local-only data:
 
 - Config files and environment overrides.
-- Project path mappings in `project_paths`.
-- Project directory overrides in config.
+- Project path mappings and directory overrides in config.
+- Deprecated project path rows in `project_paths`.
 - TUI view, filter, selection, overlay, and sort state.
 - TUI undo entries in `tui_undo_entries`.
 

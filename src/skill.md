@@ -31,7 +31,7 @@
 - Use `aven config init` to create a default config file.
 - Useful config fields include `local.db_path`, `workspace.default`, `workspace.routes`, and `project.overrides`.
 - `workspace.routes` maps paths to workspaces so commands run from those directories pick the right workspace.
-- `project.overrides` maps paths to project names for inferred `aven add` tasks when directory names differ from project names.
+- `project.overrides` maps paths to project names for inferred `aven add` tasks. `aven project create --path` and `aven project path` edit this config section.
 
 ## Discovery commands
 
