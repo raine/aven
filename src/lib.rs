@@ -38,8 +38,8 @@ pub use cli::Cli;
 use cli::{Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand};
 use commands::{
     cmd_add, cmd_bulk_update, cmd_config, cmd_conflict, cmd_delete_restore, cmd_doctor, cmd_label,
-    cmd_labels, cmd_list, cmd_note, cmd_project, cmd_projects, cmd_show, cmd_skill, cmd_update,
-    cmd_workspace,
+    cmd_labels, cmd_list, cmd_note, cmd_prime, cmd_project, cmd_projects, cmd_show, cmd_skill,
+    cmd_update, cmd_workspace,
 };
 use db::open_db;
 use sync::{run_server, sync_client};
@@ -96,6 +96,7 @@ pub async fn run_cli() -> Result<()> {
                 Commands::Show(args) => cmd_show(&mut conn, args).await,
                 Commands::List(args) => cmd_list(&mut conn, args).await,
                 Commands::BulkUpdate(args) => cmd_bulk_update(&mut conn, args).await,
+                Commands::Prime(args) => cmd_prime(&mut conn, args).await,
                 Commands::Update(args) => cmd_update(&mut conn, args).await,
                 Commands::Note(args) => cmd_note(&mut conn, args).await,
                 Commands::Projects(args) => cmd_projects(&mut conn, args).await,
@@ -147,6 +148,7 @@ fn command_needs_workspace(command: &Commands) -> bool {
             | Commands::Show(_)
             | Commands::List(_)
             | Commands::BulkUpdate(_)
+            | Commands::Prime(_)
             | Commands::Update(_)
             | Commands::Note(_)
             | Commands::Projects(_)

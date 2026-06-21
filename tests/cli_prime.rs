@@ -1,0 +1,179 @@
+mod common;
+
+use std::fs;
+
+use common::{TestEnv, command, contains_all, contains_none, ok};
+
+#[test]
+fn prime_prints_skill_primer_and_inferred_project_open_issues() {
+    let env = TestEnv::new();
+    let db = env.db("prime.sqlite");
+    let repo = env.path("prime-app");
+    init_git_repo(&repo);
+
+    ok(aven_in_clean_git(
+        &env,
+        &db,
+        &repo,
+        ["label", "create", "bug"],
+    ));
+    ok(aven_in_clean_git(
+        &env,
+        &db,
+        &repo,
+        [
+            "add",
+            "fix active issue",
+            "--priority",
+            "high",
+            "--label",
+            "bug",
+        ],
+    ));
+    let done = ok(aven_in_clean_git(
+        &env,
+        &db,
+        &repo,
+        ["add", "finished issue"],
+    ));
+    let done_ref = done.split_whitespace().nth(1).unwrap();
+    ok(aven_in_clean_git(
+        &env,
+        &db,
+        &repo,
+        ["update", done_ref, "--status", "done"],
+    ));
+    let canceled = ok(aven_in_clean_git(
+        &env,
+        &db,
+        &repo,
+        ["add", "canceled issue"],
+    ));
+    let canceled_ref = canceled.split_whitespace().nth(1).unwrap();
+    ok(aven_in_clean_git(
+        &env,
+        &db,
+        &repo,
+        ["update", canceled_ref, "--status", "canceled"],
+    ));
+
+    let output = ok(aven_in_clean_git(&env, &db, &repo, ["prime"]));
+    contains_all(
+        &output,
+        &[
+            "# Aven CLI Primer",
+            "## Open Issues",
+            "project=prime-app",
+            "status=inbox priority=high labels=bug title=\"fix active issue\"",
+        ],
+    );
+    contains_none(&output, &["finished issue", "canceled issue"]);
+}
+
+#[test]
+fn prime_accepts_explicit_project() {
+    let env = TestEnv::new();
+    let db = env.db("prime-project.sqlite");
+    ok(env.aven(&db, ["add", "app issue", "--project", "app"]));
+    ok(env.aven(&db, ["add", "other issue", "--project", "other"]));
+
+    let output = ok(env.aven(&db, ["prime", "--project", "app"]));
+    contains_all(&output, &["# Aven CLI Primer", "project=app", "app issue"]);
+    contains_none(&output, &["other issue"]);
+}
+
+#[test]
+fn prime_handles_no_current_project() {
+    let env = TestEnv::new();
+    let db = env.db("prime-none.sqlite");
+    let cwd = env.path("plain");
+    fs::create_dir_all(&cwd).unwrap();
+
+    let output = ok(env.aven_in(&db, &cwd, ["prime"]));
+    contains_all(
+        &output,
+        &[
+            "# Aven CLI Primer",
+            "## Open Issues",
+            "No current project could be inferred. Run with --project <project>.",
+        ],
+    );
+}
+
+#[test]
+fn prime_handles_no_open_issues() {
+    let env = TestEnv::new();
+    let db = env.db("prime-empty.sqlite");
+    let repo = env.path("empty-app");
+    init_git_repo(&repo);
+    ok(aven_in_clean_git(
+        &env,
+        &db,
+        &repo,
+        ["project", "create", "empty-app"],
+    ));
+
+    let output = ok(aven_in_clean_git(&env, &db, &repo, ["prime"]));
+    contains_all(
+        &output,
+        &["# Aven CLI Primer", "project=empty-app", "No open issues."],
+    );
+}
+
+fn aven_in_clean_git<I, S>(
+    env: &TestEnv,
+    db: &std::path::Path,
+    cwd: &std::path::Path,
+    args: I,
+) -> std::process::Output
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let mut command = command();
+    command
+        .arg("--db")
+        .arg(db)
+        .env("XDG_STATE_HOME", env.state_dir())
+        .env_remove("AVEN_SYNC_SERVER")
+        .current_dir(cwd)
+        .args(args);
+    clean_git_env(&mut command);
+    command.output().expect("run aven in cwd")
+}
+
+fn init_git_repo(repo: &std::path::Path) {
+    fs::create_dir_all(repo).unwrap();
+    let mut command = std::process::Command::new("git");
+    command.args(["init", "-q"]).current_dir(repo);
+    clean_git_env(&mut command);
+    let output = command.output().expect("run git init");
+    assert!(
+        output.status.success(),
+        "git init failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn clean_git_env(command: &mut std::process::Command) {
+    for name in [
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_GRAFT_FILE",
+        "GIT_INDEX_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_PREFIX",
+        "GIT_SHALLOW_FILE",
+        "GIT_COMMON_DIR",
+    ] {
+        command.env_remove(name);
+    }
+}

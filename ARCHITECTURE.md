@@ -11,7 +11,7 @@
 | `src/logging.rs` | Tracing subscriber initialization from `AVEN_LOG` and `AVEN_LOG_FILE`. |
 | `src/cli.rs` | Clap argument and subcommand definitions. |
 | `src/commands.rs` | User-facing CLI command handlers and output formatting calls. |
-| `src/skill.md` | Agent-facing CLI primer printed by `aven skill`. |
+| `src/skill.md` | Agent-facing CLI primer printed by `aven skill` and embedded in `aven prime`. |
 | `src/operations.rs` | Transactional business operations used by CLI and TUI. |
 | `src/mutation.rs` | Field-level task mutations, scalar conflict checks, change recording, and field version updates. |
 | `src/task_fields.rs` | Shared metadata for versioned scalar task fields and value validation. |
@@ -53,7 +53,7 @@
 
 `--db` selects the database path but commands still load config so workspace routes, workspace defaults, project overrides, sync settings, and daemon settings remain available. Active workspace resolution uses `--workspace`, then the longest matching config route, then `workspace.default`, then the built-in default workspace, then the only workspace in the database. Commands fail with `workspace-required` only when the default workspace is unavailable and no active workspace can be inferred. Project inference for task creation uses explicit `--project`, then the longest matching `project.overrides` config path, then deprecated database project path mappings, then the Git root name. Linked Git worktrees infer from their main worktree root.
 
-CLI commands cover task add, show, list, update, note, delete, restore, projects, labels, project paths, workspace management, conflict list or show or resolve, config, doctor, skill, daemon, server, sync, and TUI.
+CLI commands cover task add, show, list, prime, update, note, delete, restore, projects, labels, project paths, workspace management, conflict list or show or resolve, config, doctor, skill, daemon, server, sync, and TUI.
 
 ## Persistence model
 

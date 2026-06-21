@@ -56,7 +56,7 @@ aven config show
 aven doctor
 ```
 
-Use `show --full` before making decisions that depend on description, labels, notes, deletion state, or conflicts.
+Use `prime` to print this primer plus open issues for the inferred current project. Open issues are tasks that are not done, not canceled, and not deleted. Use `show --full` before making decisions that depend on description, labels, notes, deletion state, or conflicts.
 
 ## Mutating commands
 

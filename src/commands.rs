@@ -14,9 +14,9 @@ use crate::workspaces::resolve_active_workspace;
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::cli::{
     AddArgs, BulkUpdateArgs, ConfigCommand, ConfigSubcommand, ConflictCommand, ConflictSubcommand,
-    LabelCommand, LabelSubcommand, ListArgs, NoteArgs, ProjectCommand, ProjectPathSubcommand,
-    ProjectSubcommand, RefArgs, SearchArgs, ShowArgs, UpdateArgs, WorkspaceCommand,
-    WorkspaceSubcommand,
+    LabelCommand, LabelSubcommand, ListArgs, NoteArgs, PrimeArgs, ProjectCommand,
+    ProjectPathSubcommand, ProjectSubcommand, RefArgs, SearchArgs, ShowArgs, UpdateArgs,
+    WorkspaceCommand, WorkspaceSubcommand,
 };
 use crate::input::{read_optional_text, read_required_text};
 use crate::labels::list_labels;
@@ -27,7 +27,10 @@ use crate::operations::{
     list_project_paths_operation, remove_project_path_operation, resolve_conflict,
     set_task_deleted, show_config, task_conflicts, update_task,
 };
-use crate::projects::{list_projects, resolve_existing_project_in_workspace};
+use crate::projects::{
+    find_project_in_workspace, inferred_project_key_for_add_in_workspace, list_projects,
+    resolve_existing_project_in_workspace,
+};
 use crate::query::{self, SortDirection, TaskFilters, TaskSort};
 use crate::refs::{display_ref, display_suffix, resolve_task_ref};
 use crate::render::quote;
@@ -354,6 +357,60 @@ async fn ensure_bulk_field_clear(
 ) -> Result<()> {
     if conflict_exists(conn, workspace_id, task_id, field).await? {
         bail!("error bulk-update-conflicted-field ref={display_ref} field={field}");
+    }
+    Ok(())
+}
+
+pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> Result<()> {
+    print!("{}", include_str!("skill.md"));
+    if !include_str!("skill.md").ends_with('\n') {
+        println!();
+    }
+    println!();
+    println!("## Open Issues");
+    println!();
+
+    let workspace_id = crate::workspaces::active_workspace_id();
+    let project = if let Some(project) = args.project {
+        Some(
+            resolve_existing_project_in_workspace(conn, workspace_id.as_str(), &project)
+                .await?
+                .key,
+        )
+    } else {
+        inferred_project_key_for_add_in_workspace(conn, workspace_id.as_str()).await?
+    };
+
+    let Some(project) = project else {
+        println!("No current project could be inferred. Run with --project <project>.");
+        return Ok(());
+    };
+    if find_project_in_workspace(conn, workspace_id.as_str(), &project)
+        .await?
+        .is_none()
+    {
+        println!("No open issues.");
+        return Ok(());
+    }
+
+    println!("project={project}");
+    let filters = TaskFilters {
+        project: Some(project),
+        status: None,
+        priority: None,
+        label: None,
+        include_deleted: false,
+        hide_done: true,
+        conflicts_only: false,
+        search: None,
+    };
+    let items = query::list_task_items(conn, filters, TaskSort::Updated, SortDirection::Desc).await?;
+    if items.is_empty() {
+        println!("No open issues.");
+        return Ok(());
+    }
+    for item in items {
+        print_task_line_item(&item).await?;
     }
     Ok(())
 }

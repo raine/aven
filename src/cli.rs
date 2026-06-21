@@ -29,6 +29,7 @@ pub(crate) enum Commands {
     Show(ShowArgs),
     List(ListArgs),
     BulkUpdate(BulkUpdateArgs),
+    Prime(PrimeArgs),
     Update(UpdateArgs),
     Note(NoteArgs),
     Projects(SearchArgs),
@@ -112,6 +113,12 @@ pub(crate) struct BulkUpdateArgs {
     pub(crate) label: Vec<String>,
     #[arg(long)]
     pub(crate) remove_label: Vec<String>,
+}
+
+#[derive(Args)]
+pub(crate) struct PrimeArgs {
+    #[arg(long)]
+    pub(crate) project: Option<String>,
 }
 
 #[derive(Args)]
