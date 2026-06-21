@@ -1262,13 +1262,13 @@ fn render_overlay(
 
 fn render_text_input(frame: &mut Frame, state: &TextInputView) {
     if let Some((project, priority)) = add_task_title_metadata(&state.title) {
-        let area = centered(frame.area(), 60, 4);
+        let area = centered(frame.area(), 60, 5);
         let input = add_task_title_input_line(
             &state.input,
             state.cursor,
             area.width.saturating_sub(4) as usize,
         );
-        let text = Text::from(vec![input, add_task_hint_line()]);
+        let text = Text::from(vec![input, Line::from(""), add_task_hint_line()]);
         frame.render_widget(Clear, area);
         let block = overlay_block("Add task")
             .title_top(add_task_metadata_title(project, priority, area.width).right_aligned());
@@ -1568,7 +1568,11 @@ fn prefixed_input_line(prefix: Span<'static>, input: &str, cursor: usize) -> Lin
 }
 
 fn clipped_input_line(input: &str, cursor: usize, width: usize) -> Line<'static> {
-    Line::from(input_cursor_spans(input, cursor, InputWidth::Clipped(width)))
+    Line::from(input_cursor_spans(
+        input,
+        cursor,
+        InputWidth::Clipped(width),
+    ))
 }
 
 #[derive(Clone, Copy)]
@@ -1604,7 +1608,12 @@ fn input_cursor_spans(input: &str, cursor: usize, width: InputWidth) -> Vec<Span
     vec![
         Span::raw(before),
         cursor_cell(cursor_char.to_string()),
-        Span::raw(after.chars().take(max_width.saturating_sub(1)).collect::<String>()),
+        Span::raw(
+            after
+                .chars()
+                .take(max_width.saturating_sub(1))
+                .collect::<String>(),
+        ),
     ]
 }
 
