@@ -36,6 +36,10 @@ const READ_PATH_INDEXES: &[(&str, &str)] = &[
         "idx_conflicts_workspace_resolved_task",
         "CREATE INDEX idx_conflicts_workspace_resolved_task ON conflicts(workspace_id, resolved, task_id)",
     ),
+    (
+        "idx_task_labels_workspace_label_task",
+        "CREATE INDEX idx_task_labels_workspace_label_task ON task_labels(workspace_id, label, task_id)",
+    ),
 ];
 
 const READ_PATH_INDEX_MIGRATION: &str = include_str!("../migrations/20260621000000_read_path_indexes.sql");
@@ -249,6 +253,21 @@ fn common_read_filters_have_workspace_scoped_query_plans() {
              ORDER BY t.updated_at DESC, t.created_at DESC",
             &["0000000000000000", "app"],
             "idx_tasks_workspace_project_deleted_updated",
+        )
+        .await;
+
+        assert_plan_uses(
+            &mut conn,
+            "EXPLAIN QUERY PLAN
+             SELECT t.id FROM tasks t
+             WHERE t.workspace_id = ? AND t.deleted = 0
+             AND t.id IN (
+                 SELECT tl.task_id FROM task_labels tl INDEXED BY idx_task_labels_workspace_label_task
+                 WHERE tl.workspace_id = ? AND tl.label = ?
+             )
+             ORDER BY t.updated_at DESC, t.created_at DESC",
+            &["0000000000000000", "0000000000000000", "bug"],
+            "idx_task_labels_workspace_label_task",
         )
         .await;
 

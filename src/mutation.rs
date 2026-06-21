@@ -117,10 +117,10 @@ pub(crate) async fn apply_field_value_in_workspace(
 ) -> Result<()> {
     let task_field = TaskField::parse(field)
         .ok_or_else(|| anyhow::anyhow!("error unknown-field field={field}"))?;
-    task_field.validate_mutation_value(value)?;
+    task_field.validate_value(value)?;
 
     let ts = now();
-    let deleted_value = value.parse::<i64>().unwrap_or(0);
+    let deleted_value = i64::from(value == "1");
     let rows_affected = match task_field {
         TaskField::Title => sqlx::query(
             "UPDATE tasks SET title = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",

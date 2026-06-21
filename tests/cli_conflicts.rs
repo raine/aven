@@ -32,6 +32,18 @@ fn title_conflict(
     (a, b, task_ref)
 }
 
+fn deleted_conflict(
+    env: &TestEnv,
+    server: &TestServer,
+) -> (std::path::PathBuf, std::path::PathBuf, String) {
+    let (a, b, task_ref) = synced_task(env, server, "deleted conflict");
+    ok(env.aven(&b, ["delete", &task_ref]));
+    ok(env.aven(&a, ["restore", &task_ref]));
+    sync(env, &b, server);
+    sync(env, &a, server);
+    (a, b, task_ref)
+}
+
 #[test]
 fn same_field_edit_creates_conflict() {
     let env = TestEnv::new();
@@ -118,4 +130,33 @@ fn resolve_conflict_by_stdin_syncs() {
     let resolved = ok(env.aven(&a, ["show", &task_ref, "--full"]));
     contains_all(&resolved, &["resolved description"]);
     contains_none(&resolved, &["conflict ", "field=description"]);
+}
+
+#[test]
+fn invalid_deleted_conflict_resolution_preserves_task_and_change_log() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let (a, _, task_ref) = deleted_conflict(&env, &server);
+    let changes_before = common::scalar_i64(&a, "SELECT count(*) FROM changes");
+
+    let error = fail(env.aven(
+        &a,
+        [
+            "conflict",
+            "resolve",
+            &task_ref,
+            "deleted",
+            "--value",
+            "true",
+        ],
+    ));
+
+    contains_all(&error, &["error invalid-deleted"]);
+    assert_eq!(
+        common::scalar_i64(&a, "SELECT count(*) FROM tasks WHERE deleted = 1"),
+        0
+    );
+    assert_eq!(common::scalar_i64(&a, "SELECT count(*) FROM changes"), changes_before);
+    let conflicts = ok(env.aven(&a, ["conflict", "list"]));
+    contains_all(&conflicts, &[&task_ref, "conflict field=deleted"]);
 }

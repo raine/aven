@@ -152,7 +152,9 @@ pub(crate) async fn list_task_items_in_workspace(
     }
     if let Some(label) = label {
         push_filter_prefix(&mut query, &mut filters_added);
-        query.push("EXISTS (SELECT 1 FROM task_labels tl WHERE tl.workspace_id = t.workspace_id AND tl.task_id = t.id AND tl.label = ");
+        query.push("t.id IN (SELECT tl.task_id FROM task_labels tl INDEXED BY idx_task_labels_workspace_label_task WHERE tl.workspace_id = ");
+        query.push_bind(workspace_id);
+        query.push(" AND tl.label = ");
         query.push_bind(label);
         query.push(")");
     }

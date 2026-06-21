@@ -46,10 +46,12 @@ impl TaskField {
         }
     }
 
-    pub(crate) fn validate_mutation_value(self, value: &str) -> Result<()> {
+    pub(crate) fn validate_value(self, value: &str) -> Result<()> {
         match self {
             Self::Status => validate_choice("status", value, STATUSES),
             Self::Priority => validate_choice("priority", value, PRIORITIES),
+            Self::Deleted if matches!(value, "0" | "1") => Ok(()),
+            Self::Deleted => anyhow::bail!("error invalid-deleted value={value}"),
             _ => Ok(()),
         }
     }

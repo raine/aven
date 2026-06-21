@@ -15,7 +15,6 @@ use sqlx::{Connection as _, Row, SqliteConnection, SqlitePool};
 use tokio::net::TcpListener;
 use tracing::{debug, error, info, warn};
 
-use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::cli::{ServerArgs, SyncArgs};
 use crate::config;
 use crate::db::{conflict_exists, field_version, get_meta, open_db, set_field_version, set_meta};
@@ -450,15 +449,9 @@ fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
 }
 
 fn validate_sync_task_field_value(field: TaskField, value: &str) -> Result<()> {
-    match field {
-        TaskField::Status => validate_choice("status", value, STATUSES)
-            .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}")),
-        TaskField::Priority => validate_choice("priority", value, PRIORITIES)
-            .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}")),
-        TaskField::Deleted if matches!(value, "0" | "1") => Ok(()),
-        TaskField::Deleted => bail!("error invalid-sync-change deleted value={value}"),
-        _ => Ok(()),
-    }
+    field
+        .validate_value(value)
+        .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))
 }
 
 fn ensure_entity_type(change: &ChangeWire, expected: &str) -> Result<()> {

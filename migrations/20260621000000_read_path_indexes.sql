@@ -18,3 +18,6 @@ ON conflicts(workspace_id, resolved, created_at, task_id);
 
 CREATE INDEX IF NOT EXISTS idx_conflicts_workspace_resolved_task
 ON conflicts(workspace_id, resolved, task_id);
+
+CREATE INDEX IF NOT EXISTS idx_task_labels_workspace_label_task
+ON task_labels(workspace_id, label, task_id);

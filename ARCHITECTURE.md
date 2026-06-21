@@ -14,8 +14,10 @@
 | `src/skill.md` | Agent-facing CLI primer printed by `aven skill`. |
 | `src/operations.rs` | Transactional business operations used by CLI and TUI. |
 | `src/mutation.rs` | Field-level task mutations, scalar conflict checks, change recording, and field version updates. |
+| `src/task_fields.rs` | Shared metadata for versioned scalar task fields and value validation. |
 | `src/db.rs` | SQLite connection setup, migrations, metadata, sync helpers, and conflict helpers. |
 | `src/query.rs` | Read models for task lists, project lists, sidebar counts, filters, sorting, and conflicts. |
+| `src/task_enrichment.rs` | Batched task-list label and unresolved-conflict enrichment. |
 | `src/sync.rs` | HTTP sync client, Axum sync server, wire types, remote change application, and conflict creation. |
 | `src/daemon.rs` | Periodic sync loop and local wake listener. |
 | `src/config.rs` | Config file loading, default paths, and environment or CLI override resolution. |
@@ -62,7 +64,7 @@ SQLite is the only persistence layer. `open_db` enables WAL, foreign keys, a sin
 - Metadata table: `meta` stores `client_id`, `sync_cursor`, `local_seq`, and sync server URL.
 - Local TUI table: `tui_undo_entries` stores inverse operations for TUI mutations.
 
-`Task` and `Project` in `src/types.rs` are the core records. They carry `workspace_id`, and workspace-scoped tables include `workspace_id` in uniqueness and lookup paths. Task state uses string fields for `status` and `priority` plus a `deleted` boolean. Read paths wrap records into list and sidebar DTOs in `src/query.rs`.
+`Task` and `Project` in `src/types.rs` are the core records. They carry `workspace_id`, and workspace-scoped tables include `workspace_id` in uniqueness and lookup paths. Task state uses string fields for `status` and `priority` plus a `deleted` boolean. Read paths wrap records into list and sidebar DTOs in `src/query.rs`. Task lists batch label and unresolved-conflict enrichment through `src/task_enrichment.rs` so CLI and TUI list refreshes avoid per-task enrichment queries.
 
 Many invariants are application-enforced rather than database-enforced. Do not write domain tables directly unless the operation intentionally bypasses sync and validation. Prefer `operations.rs`, `mutation.rs`, project helpers, label helpers, and ref helpers.
 
@@ -83,7 +85,7 @@ Many invariants are application-enforced rather than database-enforced. Do not w
 
 Scalar task field mutations flow through `src/mutation.rs` or higher-level operations in `src/operations.rs`:
 
-1. Validate fixed-choice fields such as status and priority.
+1. Validate versioned scalar fields through `src/task_fields.rs`.
 2. Reject writes to scalar fields with unresolved conflicts.
 3. Read the current field version.
 4. Apply the field update to `tasks`.
@@ -173,7 +175,7 @@ The TUI is split into these layers:
 
 The app loop draws the current view, polls keyboard input every 250 ms, dispatches keys, refreshes store data every 5 seconds, and clears expired messages. Normal keys resolve through the command catalog. Capturing overlays handle their own input before normal shortcuts. Multi-key prefixes are stored in `pending_shortcut` and rendered as hints, while alerts render as floating bottom-right toasts. Single-key shortcuts execute immediately, so compatibility chords that would conflict with bare actions use shifted prefixes such as `A t`, `A n`, `A p`, and `A l`. Help remains catalog-driven and `?` is the help shortcut, which leaves `h` and `l` available for left and right navigation.
 
-The TUI store calls the same operations and mutation helpers as the CLI for mutations, so TUI edits preserve change log, field version, conflict, and validation behavior. TUI query and sort state is separate from CLI list defaults.
+The TUI store calls the same operations and mutation helpers as the CLI for mutations, so TUI edits preserve change log, field version, conflict, and validation behavior. TUI refresh reads pass the store workspace explicitly instead of depending on global active workspace state. TUI query and sort state is separate from CLI list defaults.
 
 TUI undo records one inverse operation per completed TUI mutation in `tui_undo_entries`. Entries are workspace-scoped, persist across TUI restarts, and apply through the same mutation helpers so undo effects follow normal sync semantics. Scalar field and label undos guard against stale state before applying. `:undo` and `u` dispatch to the same undo action.
 
