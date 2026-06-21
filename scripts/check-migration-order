@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+migrations_dir="$repo_root/migrations"
+target_ref="${WM_TARGET_BRANCH:-main}"
+
+error() {
+  printf 'error: %s\n' "$*" >&2
+}
+
+migration_timestamp() {
+  local path="$1"
+  local name
+  name="$(basename "$path")"
+  printf '%s' "${name%%_*}"
+}
+
+if [[ ! -d "$migrations_dir" ]]; then
+  error "missing migrations directory: $migrations_dir"
+  exit 1
+fi
+
+mapfile -t migration_paths < <(find "$migrations_dir" -maxdepth 1 -type f -name '*.sql' -print | sort)
+
+previous_timestamp=""
+previous_path=""
+for path in "${migration_paths[@]}"; do
+  name="$(basename "$path")"
+  if [[ ! "$name" =~ ^[0-9]{14}_[a-z0-9]+(_[a-z0-9]+)*\.sql$ ]]; then
+    error "migration filename must match YYYYMMDDHHMMSS_lower_snake.sql: migrations/$name"
+    exit 1
+  fi
+
+  timestamp="$(migration_timestamp "$path")"
+  if [[ -n "$previous_timestamp" && "$timestamp" == "$previous_timestamp" ]]; then
+    error "duplicate migration timestamp: $timestamp"
+    error "  migrations/$(basename "$previous_path")"
+    error "  migrations/$name"
+    exit 1
+  fi
+  previous_timestamp="$timestamp"
+  previous_path="$path"
+done
+
+if ! git -C "$repo_root" rev-parse --verify --quiet "$target_ref^{commit}" >/dev/null; then
+  printf 'skip migration target-order check: target ref %s not found\n' "$target_ref" >&2
+  exit 0
+fi
+
+mapfile -t merge_bases < <(git -C "$repo_root" merge-base --all HEAD "$target_ref" 2>/dev/null || true)
+if [[ "${#merge_bases[@]}" -ne 1 ]]; then
+  printf 'skip migration target-order check: expected one merge base with %s, got %s\n' \
+    "$target_ref" \
+    "${#merge_bases[@]}" >&2
+  exit 0
+fi
+merge_base="${merge_bases[0]}"
+
+mapfile -t target_migrations < <(git -C "$repo_root" ls-tree -r --name-only "$target_ref" -- migrations '*.sql' | sort)
+latest_target_timestamp=""
+for path in "${target_migrations[@]}"; do
+  name="$(basename "$path")"
+  if [[ "$name" =~ ^[0-9]{14}_.*\.sql$ ]]; then
+    timestamp="${name%%_*}"
+    if [[ -z "$latest_target_timestamp" || "$timestamp" > "$latest_target_timestamp" ]]; then
+      latest_target_timestamp="$timestamp"
+    fi
+  fi
+done
+
+if [[ -z "$latest_target_timestamp" ]]; then
+  exit 0
+fi
+
+mapfile -t added_migrations < <(
+  {
+    git -C "$repo_root" diff --name-status --diff-filter=AR "$merge_base" -- migrations \
+      | awk '$1 == "A" { print $2 } $1 ~ /^R/ { print $3 }'
+    git -C "$repo_root" ls-files --others --exclude-standard -- 'migrations/*.sql'
+  } | sort -u
+)
+
+for path in "${added_migrations[@]}"; do
+  [[ "$path" == migrations/*.sql ]] || continue
+  [[ -f "$repo_root/$path" ]] || continue
+  timestamp="$(migration_timestamp "$path")"
+  if [[ "$timestamp" < "$latest_target_timestamp" || "$timestamp" == "$latest_target_timestamp" ]]; then
+    error "migration is not after latest $target_ref migration: $path"
+    error "latest $target_ref migration timestamp is $latest_target_timestamp"
+    error "create migrations with: just migration-new <name>"
+    exit 1
+  fi
+done

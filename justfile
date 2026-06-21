@@ -8,11 +8,19 @@ default:
     @just --list
 
 # Run the local read-only check set
-check: check-fast-readonly clippy test
+check: check-fast-readonly migration-order clippy test
 
 # Run cheap read-only checks in parallel
 check-fast-readonly:
     @scripts/run-checks format-check static-analysis
+
+# Check migration filenames and branch ordering
+migration-order:
+    @scripts/quiet-check migration-order scripts/check-migration-order
+
+# Create a SQLx migration with the next safe timestamp
+migration-new name:
+    @scripts/new-migration {{name}}
 
 # Run commit-time checks without mutating files
 pre-commit: check

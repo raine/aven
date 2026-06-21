@@ -32,7 +32,7 @@
 | `src/signals.rs` | Shutdown signal helper for long-running processes. |
 | `src/tui/` | Ratatui application, input handling, store, rendering, overlays, theme, and widgets. |
 | `src/undo.rs` | Persistent TUI undo journal, guarded inverse payloads, and apply helpers. |
-| `migrations/` | SQLite schema migrations. |
+| `migrations/` | SQLite schema migrations named as `YYYYMMDDHHMMSS_lower_snake.sql`. |
 | `tests/` | Integration-heavy CLI, sync, daemon, conflict, schema, and TUI smoke coverage. |
 | `.claude/skills/` | Agent-facing operational primers for repository-specific workflows. |
 
@@ -232,7 +232,8 @@ Overlay submits route through `OverlayRoute` in `App::handle_overlay_submit`. Ti
 7. Update list filters, sort, or display models in `src/query.rs` if needed.
 8. Update CLI rendering and TUI rendering or overlays.
 9. Add tests for local mutation, sync, conflict behavior, and TUI behavior if exposed there.
-10. Run `just sqlx-prepare` after changing migrations or `sqlx::query!` shapes.
+10. Create migrations with `just migration-new <lower_snake_name>` so timestamps stay after the latest migration.
+11. Run `just sqlx-prepare` after changing migrations or `sqlx::query!` shapes.
 
 ### Add text input to a command
 
@@ -242,8 +243,10 @@ Use `src/input.rs` so inline, file, and stdin sources remain mutually exclusive 
 
 The repository uses `just` as the main development entrypoint:
 
-- `just pre-commit`: read-only validation gate for formatting, static analysis, clippy, and tests.
+- `just pre-commit`: read-only validation gate for formatting, static analysis, migration order, clippy, and tests.
 - `just check`: local read-only validation gate, equivalent to `just pre-commit`.
+- `just migration-order`: validate migration filenames and branch-relative migration order.
+- `just migration-new <lower_snake_name>`: create the next SQLx migration filename safely.
 - `just pre-merge`: deferred validation gate for build output and SQLx metadata when SQLx inputs differ from the merge target.
 - `just check-full`: local read-only gate plus deferred merge checks.
 - `just clippy-fix`: explicit opt-in command for machine-applicable clippy fixes.

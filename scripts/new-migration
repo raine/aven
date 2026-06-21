@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+migrations_dir="$repo_root/migrations"
+target_ref="${WM_TARGET_BRANCH:-main}"
+
+usage() {
+  printf 'usage: %s <lower-snake-name>\n' "$(basename "$0")" >&2
+}
+
+error() {
+  printf 'error: %s\n' "$*" >&2
+}
+
+if [[ $# -ne 1 ]]; then
+  usage
+  exit 2
+fi
+
+name="$1"
+if [[ ! "$name" =~ ^[a-z0-9]+(_[a-z0-9]+)*$ ]]; then
+  error "migration name must be lower snake case"
+  usage
+  exit 2
+fi
+
+mkdir -p "$migrations_dir"
+
+timestamp="$(date -u +%Y%m%d%H%M%S)"
+
+latest_timestamp=""
+record_latest_timestamp() {
+  local file_name="$1"
+  local candidate
+  if [[ "$file_name" =~ ^[0-9]{14}_.*\.sql$ ]]; then
+    candidate="${file_name%%_*}"
+    if [[ -z "$latest_timestamp" || "$candidate" > "$latest_timestamp" ]]; then
+      latest_timestamp="$candidate"
+    fi
+  fi
+}
+
+while IFS= read -r path; do
+  record_latest_timestamp "$(basename "$path")"
+done < <(find "$migrations_dir" -maxdepth 1 -type f -name '*.sql' -print)
+
+if git -C "$repo_root" rev-parse --verify --quiet "$target_ref^{commit}" >/dev/null; then
+  while IFS= read -r path; do
+    record_latest_timestamp "$(basename "$path")"
+  done < <(git -C "$repo_root" ls-tree -r --name-only "$target_ref" -- migrations '*.sql')
+fi
+
+if [[ -n "$latest_timestamp" ]]; then
+  attempts=0
+  while [[ "$timestamp" < "$latest_timestamp" || "$timestamp" == "$latest_timestamp" ]]; do
+    if [[ "$attempts" -ge 5 ]]; then
+      error "current UTC timestamp is not after latest migration: $latest_timestamp"
+      exit 1
+    fi
+    sleep 1
+    timestamp="$(date -u +%Y%m%d%H%M%S)"
+    attempts=$((attempts + 1))
+  done
+fi
+
+path="$migrations_dir/${timestamp}_${name}.sql"
+relative_path="${path#"$repo_root"/}"
+if [[ -e "$path" ]]; then
+  error "migration already exists: $relative_path"
+  exit 1
+fi
+
+: >"$path"
+printf '%s\n' "$relative_path"
