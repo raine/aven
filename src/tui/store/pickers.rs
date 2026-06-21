@@ -95,6 +95,21 @@ fn project_picker_item(project: &ProjectListItem, selected: &str) -> PickerItem 
     }
 }
 
+pub(crate) fn deleted_picker_items(selected: &str) -> Vec<PickerItem> {
+    ["0", "1"]
+        .into_iter()
+        .map(|value| PickerItem {
+            label: if value == "1" {
+                "deleted".to_string()
+            } else {
+                "not deleted".to_string()
+            },
+            value: value.to_string(),
+            selected: value == selected,
+        })
+        .collect()
+}
+
 fn workspace_picker_item(workspace: &Workspace, selected_key: Option<&str>) -> PickerItem {
     PickerItem {
         label: format!("{} ({})", workspace.name, workspace.key),

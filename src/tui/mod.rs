@@ -2,7 +2,9 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 
 mod app;
+mod authoring;
 mod config_overlay;
+mod conflict_flow;
 mod event;
 mod markdown;
 mod navigation;

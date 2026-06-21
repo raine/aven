@@ -9,8 +9,16 @@ use sqlx::SqlitePool;
 
 use crate::operations::TaskDraft;
 use crate::query::TaskSort;
+use crate::tui::authoring::{
+    ADD_NOTE_TITLE, ADD_TASK_TITLE_PRIORITY_TITLE, ADD_TASK_TITLE_PROJECT_TITLE, AddNoteSubmit,
+    AddTaskTitleSubmit, AuthoringState,
+};
 use crate::tui::config_overlay::{
     config_info_overlay, config_init_overlay, config_paths_overlay, config_status_overlay,
+};
+use crate::tui::conflict_flow::{
+    ConflictFlowState, ConflictResolutionChoice, ConflictSubmit, ConflictTransition,
+    truncate_value_preview,
 };
 use crate::tui::event::{
     Action, CommandLookup, ShortcutLookup, ViewTarget, lookup_command, resolve_shortcut,
@@ -24,15 +32,13 @@ use crate::tui::overlay::{
     ConfirmState, LineEdit, MultilineInputState, OverlayOutcome, OverlayRoute, OverlayState,
     OverlaySubmit, OverlayView, PickerItem, PickerState, TextInputState, TextPanelState,
 };
+use crate::tui::store::deleted_picker_items;
 use crate::tui::store::{ConflictTarget, SidebarTarget, TuiStore};
 use crate::tui::ui::{self, detail_help_scroll_cap, help_scroll_cap};
 
 const ADD_PROJECT_TITLE: &str = "Add project";
 const DELETE_PROJECT_TITLE: &str = "Delete project";
 const ADD_LABEL_TITLE: &str = "Add label";
-const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: title project";
-const ADD_TASK_TITLE_PRIORITY_TITLE: &str = "Add task: title priority";
-const ADD_NOTE_TITLE: &str = "Add note";
 const EDIT_STATUS_TITLE: &str = "Edit task: status";
 const EDIT_TITLE_TITLE: &str = "Edit task: title";
 const EDIT_DESCRIPTION_TITLE: &str = "Edit task: description";
@@ -51,63 +57,10 @@ const CONFLICT_CONFIRM_REMOTE_TITLE: &str = "Resolve conflict: remote";
 const CONFLICT_MANUAL_TITLE: &str = "Resolve conflict: manual";
 const CONFLICT_DETAILS_TITLE: &str = "Conflict details";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct AddTaskDraftState {
-    title: String,
-    project: Option<String>,
-    inferred_project: Option<String>,
-    priority: String,
-}
-
-impl Default for AddTaskDraftState {
-    fn default() -> Self {
-        Self {
-            title: String::new(),
-            project: None,
-            inferred_project: None,
-            priority: "none".to_string(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum AuthoringFlow {
-    AddTask(AddTaskDraftState),
-    AddNote {
-        task_id: String,
-        display_ref: String,
-        return_to_detail: bool,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConflictResolutionChoice {
-    Local,
-    Remote,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TaskRefKind {
     Short,
     Durable,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ConflictFlow {
-    PickVariant {
-        choice: ConflictResolutionChoice,
-        targets: Vec<ConflictTarget>,
-    },
-    ConfirmVariant {
-        choice: ConflictResolutionChoice,
-        target: ConflictTarget,
-    },
-    PickManual {
-        targets: Vec<ConflictTarget>,
-    },
-    EditManual {
-        target: ConflictTarget,
-    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,8 +84,8 @@ pub(crate) struct App {
     pub(crate) message_at: Option<Instant>,
     pending_shortcut: Vec<KeyCode>,
     detail_context: bool,
-    authoring: Option<AuthoringFlow>,
-    conflict_flow: Option<ConflictFlow>,
+    authoring: AuthoringState,
+    conflict_flow: ConflictFlowState,
     pending_delete_project: Option<String>,
 }
 
@@ -152,8 +105,8 @@ impl App {
             message_at: None,
             pending_shortcut: Vec::new(),
             detail_context: false,
-            authoring: None,
-            conflict_flow: None,
+            authoring: AuthoringState::default(),
+            conflict_flow: ConflictFlowState::default(),
             pending_delete_project: None,
         };
         app.widgets.sidebar.select(app.store.sidebar_selection());
@@ -237,13 +190,7 @@ impl App {
                 self.overlay,
                 Some(OverlayState::Detail { .. } | OverlayState::DetailHelp { .. })
             )
-            || matches!(
-                self.authoring,
-                Some(AuthoringFlow::AddNote {
-                    return_to_detail: true,
-                    ..
-                })
-            )
+            || self.authoring.detail_underlay()
     }
 
     async fn handle_normal_key(&mut self, code: KeyCode) -> Result<()> {
@@ -365,8 +312,10 @@ impl App {
             && let OverlayState::TextInput(state) = &overlay
             && state.route == OverlayRoute::AddTaskTitle
         {
-            if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
-                draft.title = state.input.text.clone();
+            if self
+                .authoring
+                .capture_add_task_title(state.input.text.clone())
+            {
                 self.begin_add_task_title_priority();
             }
             return Ok(());
@@ -376,8 +325,10 @@ impl App {
             && let OverlayState::TextInput(state) = &overlay
             && state.route == OverlayRoute::AddTaskTitle
         {
-            if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
-                draft.title = state.input.text.clone();
+            if self
+                .authoring
+                .capture_add_task_title(state.input.text.clone())
+            {
                 self.begin_add_task_title_project();
             }
             return Ok(());
@@ -406,22 +357,22 @@ impl App {
                 route: OverlayRoute::AddTaskTitle,
                 value,
                 ..
-            } => {
-                let trimmed = value.trim();
-                if trimmed.is_empty() {
-                    self.set_message("task title is required".to_string());
+            } => match self.authoring.submit_add_task_title(value) {
+                AddTaskTitleSubmit::ReopenTitle { message } => {
+                    self.set_message(message.to_string());
                     self.begin_add_task_title();
-                } else {
-                    self.submit_add_task_with_title(trimmed.to_string()).await?;
                 }
-            }
+                AddTaskTitleSubmit::Create(draft) => {
+                    self.submit_created_task(draft).await?;
+                }
+                AddTaskTitleSubmit::Inactive => {}
+            },
             OverlaySubmit::Picker {
                 route: OverlayRoute::AddTaskTitleProject,
                 values,
                 ..
             } => {
-                if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
-                    draft.project = values.first().filter(|value| !value.is_empty()).cloned();
+                if self.authoring.apply_add_task_project(values) {
                     self.begin_add_task_title();
                 }
             }
@@ -430,11 +381,7 @@ impl App {
                 values,
                 ..
             } => {
-                if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
-                    draft.priority = values
-                        .first()
-                        .cloned()
-                        .unwrap_or_else(|| "none".to_string());
+                if self.authoring.apply_add_task_priority(values) {
                     self.begin_add_task_title();
                 }
             }
@@ -916,36 +863,24 @@ impl App {
         } else {
             None
         };
-        self.authoring = Some(AuthoringFlow::AddTask(AddTaskDraftState {
-            project: active_project,
-            inferred_project,
-            ..AddTaskDraftState::default()
-        }));
+        self.authoring
+            .begin_add_task(active_project, inferred_project);
         self.begin_add_task_title();
         Ok(())
     }
 
     fn begin_add_task_title(&mut self) {
-        let (input, project, priority) = match &self.authoring {
-            Some(AuthoringFlow::AddTask(draft)) => {
-                let project = draft
-                    .project
-                    .as_deref()
-                    .or(draft.inferred_project.as_deref())
-                    .unwrap_or("no project");
-                (
-                    draft.title.clone(),
-                    project.to_string(),
-                    draft.priority.clone(),
-                )
-            }
-            _ => return,
+        let Some(context) = self.authoring.add_task_title_context() else {
+            return;
         };
         self.overlay = Some(OverlayState::TextInput(TextInputState::new(
             OverlayRoute::AddTaskTitle,
-            format!("Add task  project={project} priority={priority}"),
+            format!(
+                "Add task  project={} priority={}",
+                context.project, context.priority
+            ),
             "",
-            input,
+            context.title,
         )));
     }
 
@@ -961,11 +896,11 @@ impl App {
         };
         let return_to_detail =
             self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. }));
-        self.authoring = Some(AuthoringFlow::AddNote {
-            task_id: item.task.id.clone(),
-            display_ref: item.display_ref.clone(),
+        self.authoring.begin_add_note(
+            item.task.id.clone(),
+            item.display_ref.clone(),
             return_to_detail,
-        });
+        );
         self.detail_context = return_to_detail;
         self.overlay = Some(OverlayState::MultilineInput(MultilineInputState::blank(
             OverlayRoute::AddNote,
@@ -975,11 +910,10 @@ impl App {
     }
 
     fn begin_add_task_title_project(&mut self) {
-        let selected = match &self.authoring {
-            Some(AuthoringFlow::AddTask(draft)) => draft.project.as_deref(),
-            _ => return,
+        let Some(selected) = self.authoring.selected_add_task_project() else {
+            return;
         };
-        let items = self.store.project_picker_items(selected);
+        let items = self.store.project_picker_items(selected.as_deref());
         self.open_picker_overlay(
             OverlayRoute::AddTaskTitleProject,
             ADD_TASK_TITLE_PROJECT_TITLE,
@@ -989,11 +923,10 @@ impl App {
     }
 
     fn begin_add_task_title_priority(&mut self) {
-        let selected = match &self.authoring {
-            Some(AuthoringFlow::AddTask(draft)) => draft.priority.as_str(),
-            _ => return,
+        let Some(selected) = self.authoring.selected_add_task_priority() else {
+            return;
         };
-        let items = self.store.priority_picker_items(selected);
+        let items = self.store.priority_picker_items(&selected);
         self.open_picker_overlay(
             OverlayRoute::AddTaskTitlePriority,
             ADD_TASK_TITLE_PRIORITY_TITLE,
@@ -1002,31 +935,9 @@ impl App {
         );
     }
 
-    async fn submit_add_task_with_title(&mut self, title: String) -> Result<()> {
-        if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
-            draft.title = title;
-        }
-        self.submit_add_task().await
-    }
-
-    async fn submit_add_task(&mut self) -> Result<()> {
-        let Some(AuthoringFlow::AddTask(draft)) = self.authoring.take() else {
-            return Ok(());
-        };
+    async fn submit_created_task(&mut self, draft: TaskDraft) -> Result<()> {
         let current_selected = self.widgets.table.selected();
-        let (message, selected) = self
-            .store
-            .create_task(
-                TaskDraft {
-                    title: draft.title,
-                    description: String::new(),
-                    project: draft.project,
-                    priority: draft.priority,
-                    labels: Vec::new(),
-                },
-                current_selected,
-            )
-            .await?;
+        let (message, selected) = self.store.create_task(draft, current_selected).await?;
         self.widgets.table.select(selected);
         self.widgets.sidebar.select(self.store.sidebar_selection());
         if selected.is_none() {
@@ -1037,43 +948,37 @@ impl App {
     }
 
     async fn submit_add_note(&mut self, body: String) -> Result<()> {
-        let trimmed = body.trim();
-        let Some(AuthoringFlow::AddNote {
-            task_id,
-            display_ref,
-            return_to_detail,
-        }) = self.authoring.take()
-        else {
-            self.set_message("no selected task for note".to_string());
-            return Ok(());
-        };
-        if trimmed.is_empty() {
-            self.restore_detail_overlay(return_to_detail);
-            self.set_message("note body is required".to_string());
-            return Ok(());
+        match self.authoring.submit_add_note(body) {
+            AddNoteSubmit::Create {
+                task_id,
+                display_ref,
+                body,
+                return_to_detail,
+            } => {
+                let note_id = self.store.add_note_to_task(&task_id, body).await?;
+                self.refresh().await?;
+                self.restore_detail_overlay(return_to_detail);
+                self.set_message(format!("added note {note_id} to {display_ref}"));
+            }
+            AddNoteSubmit::Blank {
+                return_to_detail,
+                message,
+            } => {
+                self.restore_detail_overlay(return_to_detail);
+                self.set_message(message.to_string());
+            }
+            AddNoteSubmit::Inactive { message } => {
+                self.set_message(message.to_string());
+            }
         }
-        let note_id = self
-            .store
-            .add_note_to_task(&task_id, trimmed.to_string())
-            .await?;
-        self.refresh().await?;
-        self.restore_detail_overlay(return_to_detail);
-        self.set_message(format!("added note {note_id} to {display_ref}"));
         Ok(())
     }
 
     fn cancel_authoring_overlay(&mut self) {
         self.pending_shortcut.clear();
-        let return_to_detail = matches!(
-            self.authoring,
-            Some(AuthoringFlow::AddNote {
-                return_to_detail: true,
-                ..
-            })
-        );
+        let return_to_detail = self.authoring.cancel();
         self.overlay = None;
-        self.authoring = None;
-        self.conflict_flow = None;
+        self.conflict_flow.clear();
         self.pending_delete_project = None;
         self.detail_context = false;
         self.restore_detail_overlay(return_to_detail);
@@ -1127,8 +1032,8 @@ impl App {
 
     fn cancel_overlay(&mut self) {
         self.pending_shortcut.clear();
-        self.authoring = None;
-        self.conflict_flow = None;
+        self.authoring.clear();
+        self.conflict_flow.clear();
         self.pending_delete_project = None;
         let had_overlay = self.overlay.take().is_some();
         self.detail_context = false;
@@ -1778,20 +1683,6 @@ impl App {
         Ok(Some(targets))
     }
 
-    fn start_conflict_field_flow(
-        &mut self,
-        targets: Vec<ConflictTarget>,
-        flow: ConflictFlow,
-        on_single: impl FnOnce(&mut Self, ConflictTarget),
-    ) {
-        if targets.len() == 1 {
-            on_single(self, targets[0].clone());
-        } else {
-            self.conflict_flow = Some(flow);
-            self.open_conflict_field_picker(&targets);
-        }
-    }
-
     async fn show_conflict_details(&mut self) -> Result<()> {
         let Some(targets) = self.conflict_targets_for_selected().await? else {
             self.set_message("no selected task for conflicts".to_string());
@@ -1904,15 +1795,23 @@ impl App {
         self.set_message(message.to_string());
     }
 
+    fn apply_conflict_transition(&mut self, transition: ConflictTransition) {
+        match transition {
+            ConflictTransition::PickField { targets } => self.open_conflict_field_picker(&targets),
+            ConflictTransition::Confirm { choice, target } => {
+                self.open_conflict_confirm(choice, target)
+            }
+            ConflictTransition::EditManual { target } => self.open_manual_conflict_editor(target),
+            ConflictTransition::Message(message) => self.set_message(message),
+        }
+    }
+
     async fn begin_conflict_resolution(&mut self, choice: ConflictResolutionChoice) -> Result<()> {
         let Some(targets) = self.load_conflict_targets_for_resolution().await? else {
             return Ok(());
         };
-        self.start_conflict_field_flow(
-            targets.clone(),
-            ConflictFlow::PickVariant { choice, targets },
-            |app, target| app.open_conflict_confirm(choice, target),
-        );
+        let transition = self.conflict_flow.begin_resolution(choice, targets);
+        self.apply_conflict_transition(transition);
         Ok(())
     }
 
@@ -1920,11 +1819,8 @@ impl App {
         let Some(targets) = self.load_conflict_targets_for_resolution().await? else {
             return Ok(());
         };
-        self.start_conflict_field_flow(
-            targets.clone(),
-            ConflictFlow::PickManual { targets },
-            |app, target| app.open_manual_conflict_editor(target),
-        );
+        let transition = self.conflict_flow.begin_manual(targets);
+        self.apply_conflict_transition(transition);
         Ok(())
     }
 
@@ -1946,27 +1842,8 @@ impl App {
     }
 
     async fn submit_conflict_field_picker(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(field) = self.require_picker_value(values, "no conflict field selected") else {
-            return Ok(());
-        };
-        let flow = self.conflict_flow.take();
-        match flow {
-            Some(ConflictFlow::PickVariant { choice, targets }) => {
-                let Some(target) = targets.into_iter().find(|target| target.field == field) else {
-                    self.set_message(format!("no conflict for field={field}"));
-                    return Ok(());
-                };
-                self.open_conflict_confirm(choice, target);
-            }
-            Some(ConflictFlow::PickManual { targets }) => {
-                let Some(target) = targets.into_iter().find(|target| target.field == field) else {
-                    self.set_message(format!("no conflict for field={field}"));
-                    return Ok(());
-                };
-                self.open_manual_conflict_editor(target);
-            }
-            _ => self.set_message("conflict field picker is not active".to_string()),
-        }
+        let transition = self.conflict_flow.submit_field(values);
+        self.apply_conflict_transition(transition);
         Ok(())
     }
 
@@ -1979,10 +1856,6 @@ impl App {
             ConflictResolutionChoice::Local => CONFLICT_CONFIRM_LOCAL_TITLE,
             ConflictResolutionChoice::Remote => CONFLICT_CONFIRM_REMOTE_TITLE,
         };
-        self.conflict_flow = Some(ConflictFlow::ConfirmVariant {
-            choice,
-            target: target.clone(),
-        });
         self.overlay = Some(OverlayState::Confirm(ConfirmState {
             route: OverlayRoute::ConflictConfirm,
             title: title.to_string(),
@@ -1995,29 +1868,19 @@ impl App {
     }
 
     async fn submit_confirmed_conflict_resolution(&mut self) -> Result<()> {
-        let Some(ConflictFlow::ConfirmVariant { choice, target }) = self.conflict_flow.take()
-        else {
-            self.set_message("conflict confirmation is not active".to_string());
-            return Ok(());
-        };
-        let value = match choice {
-            ConflictResolutionChoice::Local => target.local_value.clone(),
-            ConflictResolutionChoice::Remote => target.remote_value.clone(),
-        };
-        match self.store.resolve_conflict_value(target, value).await {
-            Ok(result) => {
-                self.conflict_flow = None;
-                self.apply_mutation_result(result);
+        match self.conflict_flow.submit_confirmed_variant() {
+            ConflictSubmit::Resolve { target, value } => {
+                match self.store.resolve_conflict_value(target, value).await {
+                    Ok(result) => self.apply_mutation_result(result),
+                    Err(error) => self.set_message(format!("error: {error:#}")),
+                }
             }
-            Err(error) => self.set_message(format!("error: {error:#}")),
+            ConflictSubmit::Inactive { message } => self.set_message(message.to_string()),
         }
         Ok(())
     }
 
     fn open_manual_conflict_editor(&mut self, target: ConflictTarget) {
-        self.conflict_flow = Some(ConflictFlow::EditManual {
-            target: target.clone(),
-        });
         match target.field.as_str() {
             "description" => {
                 self.overlay = Some(OverlayState::MultilineInput(
@@ -2080,7 +1943,7 @@ impl App {
                 );
             }
             _ => {
-                self.conflict_flow = None;
+                self.conflict_flow.clear();
                 self.overlay = None;
                 self.set_message(format!(
                     "manual merge is not supported for field={}",
@@ -2091,23 +1954,22 @@ impl App {
     }
 
     async fn submit_manual_conflict_value(&mut self, value: String) -> Result<()> {
-        let Some(ConflictFlow::EditManual { target }) = self.conflict_flow.take() else {
-            self.set_message("manual conflict edit is not active".to_string());
-            return Ok(());
-        };
-        match self
-            .store
-            .resolve_conflict_value(target.clone(), value)
-            .await
-        {
-            Ok(result) => {
-                self.conflict_flow = None;
-                self.apply_mutation_result(result);
+        match self.conflict_flow.submit_manual_value(value) {
+            ConflictSubmit::Resolve { target, value } => {
+                match self
+                    .store
+                    .resolve_conflict_value(target.clone(), value)
+                    .await
+                {
+                    Ok(result) => self.apply_mutation_result(result),
+                    Err(error) => {
+                        self.set_message(format!("error: {error:#}"));
+                        let transition = self.conflict_flow.retry_manual_edit(target);
+                        self.apply_conflict_transition(transition);
+                    }
+                }
             }
-            Err(error) => {
-                self.set_message(format!("error: {error:#}"));
-                self.open_manual_conflict_editor(target);
-            }
+            ConflictSubmit::Inactive { message } => self.set_message(message.to_string()),
         }
         Ok(())
     }
@@ -2130,29 +1992,6 @@ fn copy_to_clipboard(value: &str) -> Result<()> {
         anyhow::bail!("pbcopy exited with {status}");
     }
     Ok(())
-}
-
-fn deleted_picker_items(selected: &str) -> Vec<PickerItem> {
-    ["0", "1"]
-        .into_iter()
-        .map(|value| PickerItem {
-            label: if value == "1" {
-                "deleted".to_string()
-            } else {
-                "not deleted".to_string()
-            },
-            value: value.to_string(),
-            selected: value == selected,
-        })
-        .collect()
-}
-
-fn truncate_value_preview(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    let truncated: String = value.chars().take(max_chars).collect();
-    format!("{truncated}…")
 }
 
 #[cfg(test)]
@@ -2954,7 +2793,7 @@ mod tests {
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
         ));
-        assert!(app.authoring.is_none());
+        assert!(app.authoring.is_idle());
     }
 
     #[tokio::test]
@@ -2970,7 +2809,7 @@ mod tests {
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
         ));
-        assert!(app.authoring.is_none());
+        assert!(app.authoring.is_idle());
     }
 
     #[tokio::test]
@@ -3314,15 +3153,9 @@ mod tests {
 
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-        assert!(app.conflict_flow.is_some());
+        assert!(app.conflict_flow.is_active());
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
-        assert!(app.conflict_flow.is_none());
-    }
-
-    #[test]
-    fn truncate_value_preview_uses_character_count() {
-        assert_eq!(truncate_value_preview("abc", 5), "abc");
-        assert_eq!(truncate_value_preview("abcdef", 3), "abc…");
+        assert!(app.conflict_flow.is_idle());
     }
 
     #[tokio::test]

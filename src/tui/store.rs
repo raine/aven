@@ -19,6 +19,7 @@ use std::time::Instant;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
+pub(crate) use pickers::deleted_picker_items;
 pub(crate) use types::{ConflictTarget, MutationMessage, SidebarEntry, SidebarTarget};
 
 use crate::labels::list_labels_in_workspace;
