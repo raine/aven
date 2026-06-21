@@ -1377,19 +1377,16 @@ const DETAIL_HELP_TOPICS: &[HelpTopic] = &[
 ];
 
 fn render_help(frame: &mut Frame, scroll: u16) {
-    let area = centered(
-        frame.area(),
-        frame.area().width.saturating_sub(6).min(112),
-        frame.area().height.saturating_sub(4).min(28),
-    );
-    frame.render_widget(Clear, area);
-    let mut inner = overlay_block("Shortcuts");
-    let content = inner.inner(area);
-    if let Some(title) = help_scroll_title(scroll, content.height) {
-        inner = inner
-            .title_top(Line::from(Span::styled(title, Style::new().fg(FG_MUTED))).right_aligned());
-    }
-    frame.render_widget(inner, area);
+    let width = frame.area().width.saturating_sub(6).min(112);
+    let height = frame.area().height.saturating_sub(4).min(28);
+    let visible_rows = height.saturating_sub(2);
+    let dialog = if let Some(title) = help_scroll_title(scroll, visible_rows) {
+        Dialog::new("Shortcuts", width, height)
+            .right_title(Line::from(Span::styled(title, Style::new().fg(FG_MUTED))))
+    } else {
+        Dialog::new("Shortcuts", width, height)
+    };
+    let content = dialog.render_block(frame);
     let [left, _, right] = Layout::horizontal([
         Constraint::Ratio(1, 2),
         Constraint::Length(4),
@@ -1598,19 +1595,17 @@ fn command_line(command: &CommandSpec) -> Line<'static> {
 fn render_command(frame: &mut Frame, input: &str, cursor: usize) {
     let matches = matching_commands(input);
     let height = (matches.len().min(8) as u16).saturating_add(3);
-    let area = centered(frame.area(), 72, height);
 
     let mut lines = vec![input_line(":", input, cursor)];
     for command in matches.into_iter().take(8) {
         lines.push(command_line(command));
     }
 
-    render_overlay_paragraph(frame, area, "Command", Text::from(lines), false);
+    Dialog::new("Command", 72, height).render_text(frame, Text::from(lines));
 }
 
 fn render_search(frame: &mut Frame, input: &str, cursor: usize) {
-    let area = centered(frame.area(), 54, 3);
-    render_overlay_paragraph(frame, area, "Search", input_line("/", input, cursor), false);
+    Dialog::new("Search", 54, 3).render_text(frame, input_line("/", input, cursor));
 }
 
 fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
@@ -1655,35 +1650,26 @@ fn render_overlay(
 
 fn render_text_input(frame: &mut Frame, state: &TextInputView) {
     if let Some((project, priority)) = add_task_title_metadata(&state.title) {
-        let area = centered(frame.area(), 60, 5);
-        let input = add_task_title_input_line(
-            &state.input,
-            state.cursor,
-            area.width.saturating_sub(4) as usize,
-        );
+        let dialog = Dialog::new("Add task", 60, 5);
+        let width = dialog.area(frame).width;
+        let dialog = dialog.right_title(add_task_metadata_title(project, priority, width));
+        let content = dialog.render_block(frame);
+        let input = add_task_title_input_line(&state.input, state.cursor, content.width as usize);
         let text = Text::from(vec![input, Line::from(""), add_task_hint_line()]);
-        frame.render_widget(Clear, area);
-        let block = overlay_block("Add task")
-            .title_top(add_task_metadata_title(project, priority, area.width).right_aligned());
         frame.render_widget(
-            Paragraph::new(text)
-                .block(block)
-                .style(Style::new().fg(FG).bg(BG_ALT)),
-            area,
+            Paragraph::new(text).style(Style::new().fg(FG).bg(BG_ALT)),
+            content,
         );
         return;
     }
 
-    let area = centered(frame.area(), 54, 5);
     let text = Text::from(vec![
         Line::from(Span::styled(&state.prompt, Style::new().fg(FG_DIM))),
         input_line("", &state.input, state.cursor),
-        Line::from(Span::styled(
-            "Enter submit  Esc cancel",
-            Style::new().fg(FG_MUTED),
-        )),
+        Line::from(""),
+        dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
     ]);
-    render_overlay_paragraph(frame, area, &state.title, text, false);
+    Dialog::new(&state.title, 54, 6).render_text(frame, text);
 }
 
 fn add_task_title_metadata(title: &str) -> Option<(&str, &str)> {
@@ -1702,15 +1688,11 @@ fn add_task_title_input_line(input: &str, cursor: usize, width: usize) -> Line<'
 }
 
 fn add_task_hint_line() -> Line<'static> {
-    Line::from(vec![
-        Span::styled("Enter", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" create  ", Style::new().fg(FG_MUTED)),
-        Span::styled("Tab", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" project  ", Style::new().fg(FG_MUTED)),
-        Span::styled("Ctrl+P", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" priority  ", Style::new().fg(FG_MUTED)),
-        Span::styled("Esc", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" cancel", Style::new().fg(FG_MUTED)),
+    dialog_hint_line(&[
+        ("Enter", "create"),
+        ("Tab", "project"),
+        ("Ctrl+P", "priority"),
+        ("Esc", "cancel"),
     ])
 }
 
@@ -1747,7 +1729,6 @@ fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
     let visible_rows = 10usize;
     let content_rows = state.lines.len().min(visible_rows).max(1);
     let height = (content_rows as u16).saturating_add(5).min(16);
-    let area = centered(frame.area(), 60, height);
     let start = state.row.saturating_sub(visible_rows.saturating_sub(1));
     let mut lines = vec![Line::from(Span::styled(
         &state.prompt,
@@ -1766,8 +1747,11 @@ fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
             lines.push(Line::from(line.clone()));
         }
     }
+    lines.push(Line::from(""));
     lines.push(multiline_hint_line());
-    render_overlay_paragraph(frame, area, &state.title, Text::from(lines), true);
+    Dialog::new(&state.title, 60, height.saturating_add(1))
+        .wrap()
+        .render_text(frame, Text::from(lines));
 }
 
 fn render_add_note_input(frame: &mut Frame, state: &MultilineInputView) {
@@ -1818,12 +1802,7 @@ fn add_note_input_line(line: &str, cursor: Option<usize>) -> Line<'static> {
 }
 
 fn multiline_hint_line() -> Line<'static> {
-    Line::from(vec![
-        Span::styled("Ctrl+S", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" submit  ", Style::new().fg(FG_MUTED)),
-        Span::styled("Esc", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" cancel", Style::new().fg(FG_MUTED)),
-    ])
+    dialog_hint_line(&[("Ctrl+S", "submit"), ("Esc", "cancel")])
 }
 
 fn render_picker(frame: &mut Frame, state: &PickerView) {
@@ -1835,7 +1814,6 @@ fn render_picker(frame: &mut Frame, state: &PickerView) {
     let visible_count = state.visible_indices.len().max(1);
     let viewport_rows = 8usize;
     let height = (visible_count.min(viewport_rows) as u16).saturating_add(5);
-    let area = centered(frame.area(), 60, height);
     let selected_position = state
         .visible_indices
         .iter()
@@ -1864,8 +1842,9 @@ fn render_picker(frame: &mut Frame, state: &PickerView) {
             lines.push(Line::from(format!("{marker}{}{check}", item.label)));
         }
     }
+    lines.push(Line::from(""));
     lines.push(picker_hint_line(state.multi, "submit"));
-    render_overlay_paragraph(frame, area, &state.title, Text::from(lines), false);
+    Dialog::new(&state.title, 60, height.saturating_add(1)).render_text(frame, Text::from(lines));
 }
 
 fn priority_picker_line(item: &PickerItem, selected: bool) -> Line<'static> {
@@ -1880,32 +1859,18 @@ fn priority_picker_line(item: &PickerItem, selected: bool) -> Line<'static> {
     ])
 }
 
-fn picker_hint_line(multi: bool, submit_label: &'static str) -> Line<'static> {
-    let mut spans = vec![
-        Span::styled("Up/Down", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" move  ", Style::new().fg(FG_MUTED)),
-        Span::styled("Ctrl+N/P", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" move  ", Style::new().fg(FG_MUTED)),
-    ];
+fn picker_hint_line(multi: bool, submit_label: &str) -> Line<'static> {
+    let mut items = vec![("Up/Down", "move"), ("Ctrl+N/P", "move")];
     if multi {
-        spans.extend([
-            Span::styled("Space", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-            Span::styled(" toggle  ", Style::new().fg(FG_MUTED)),
-        ]);
+        items.push(("Space", "toggle"));
     }
-    spans.extend([
-        Span::styled("Enter", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(format!(" {submit_label}  "), Style::new().fg(FG_MUTED)),
-        Span::styled("Esc", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" cancel", Style::new().fg(FG_MUTED)),
-    ]);
-    Line::from(spans)
+    items.extend([("Enter", submit_label), ("Esc", "cancel")]);
+    dialog_hint_line(&items)
 }
 
 fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'static str) {
     let viewport_rows = 10usize;
     let height = (viewport_rows as u16).saturating_add(6);
-    let area = centered(frame.area(), 70, height);
     let selected_position = state
         .visible_indices
         .iter()
@@ -1941,7 +1906,7 @@ fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'
     }
     lines.push(Line::from(""));
     lines.push(project_picker_hint_line(submit_label));
-    render_overlay_paragraph(frame, area, &state.title, Text::from(lines), false);
+    Dialog::new(&state.title, 70, height).render_text(frame, Text::from(lines));
 }
 
 fn project_picker_submit_label(title: &str) -> Option<&'static str> {
@@ -1984,31 +1949,22 @@ fn project_picker_hint_line(submit_label: &'static str) -> Line<'static> {
 
 fn render_confirm(frame: &mut Frame, state: &ConfirmView) {
     let width = state.prompt.chars().count().saturating_add(4).max(32) as u16;
-    let area = centered(frame.area(), width, 5);
     let text = Text::from(vec![
         Line::from(state.prompt.as_str()),
         Line::from(""),
         confirm_hint_line(),
     ]);
-    render_overlay_paragraph(frame, area, &state.title, text, false);
+    Dialog::new(&state.title, width, 5).render_text(frame, text);
 }
 
 fn confirm_hint_line() -> Line<'static> {
-    Line::from(vec![
-        Span::styled("y", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" yes  ", Style::new().fg(FG_MUTED)),
-        Span::styled("n", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" no  ", Style::new().fg(FG_MUTED)),
-        Span::styled("Esc", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" cancel", Style::new().fg(FG_MUTED)),
-    ])
+    dialog_hint_line(&[("y", "yes"), ("n", "no"), ("Esc", "cancel")])
 }
 
 fn render_text_panel(frame: &mut Frame, state: &TextPanelView) {
     let visible_rows = 12usize;
     let content_rows = state.lines.len().min(visible_rows).max(1);
     let height = (content_rows as u16).saturating_add(4).min(16);
-    let area = centered(frame.area(), 60, height);
     let start = (state.scroll as usize).min(state.lines.len().saturating_sub(1));
     let mut lines = state
         .lines
@@ -2017,11 +1973,13 @@ fn render_text_panel(frame: &mut Frame, state: &TextPanelView) {
         .take(visible_rows)
         .map(|line| Line::from(line.as_str()))
         .collect::<Vec<_>>();
-    lines.push(Line::from(Span::styled(
-        "j/k scroll  Enter/Esc close",
-        Style::new().fg(FG_MUTED),
-    )));
-    render_overlay_paragraph(frame, area, &state.title, Text::from(lines), true);
+    lines.push(dialog_hint_line(&[
+        ("j/k", "scroll"),
+        ("Enter/Esc", "close"),
+    ]));
+    Dialog::new(&state.title, 60, height)
+        .wrap()
+        .render_text(frame, Text::from(lines));
 }
 
 fn input_line(prefix: &'static str, input: &str, cursor: usize) -> Line<'static> {
@@ -2099,6 +2057,62 @@ fn char_boundary_at_or_before(input: &str, cursor: usize) -> usize {
     cursor
 }
 
+struct Dialog<'a> {
+    title: &'a str,
+    width: u16,
+    height: u16,
+    wrap: bool,
+    right_title: Option<Line<'a>>,
+}
+
+impl<'a> Dialog<'a> {
+    fn new(title: &'a str, width: u16, height: u16) -> Self {
+        Self {
+            title,
+            width,
+            height,
+            wrap: false,
+            right_title: None,
+        }
+    }
+
+    fn wrap(mut self) -> Self {
+        self.wrap = true;
+        self
+    }
+
+    fn right_title(mut self, title: Line<'a>) -> Self {
+        self.right_title = Some(title);
+        self
+    }
+
+    fn area(&self, frame: &Frame) -> Rect {
+        centered(frame.area(), self.width, self.height)
+    }
+
+    fn render_block(self, frame: &mut Frame) -> Rect {
+        let area = self.area(frame);
+        frame.render_widget(Clear, area);
+        let mut block = overlay_block(self.title);
+        if let Some(title) = self.right_title {
+            block = block.title_top(title.right_aligned());
+        }
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        inner
+    }
+
+    fn render_text<'text>(self, frame: &mut Frame, text: impl Into<Text<'text>>) {
+        let wrap = self.wrap;
+        let inner = self.render_block(frame);
+        let mut paragraph = Paragraph::new(text).style(Style::new().fg(FG).bg(BG_ALT));
+        if wrap {
+            paragraph = paragraph.wrap(Wrap { trim: false });
+        }
+        frame.render_widget(paragraph, inner);
+    }
+}
+
 fn overlay_block(title: &str) -> Block<'_> {
     Block::new()
         .title(title)
@@ -2109,21 +2123,19 @@ fn overlay_block(title: &str) -> Block<'_> {
         .style(Style::new().bg(BG_ALT))
 }
 
-fn render_overlay_paragraph<'a>(
-    frame: &mut Frame,
-    area: Rect,
-    title: &str,
-    text: impl Into<Text<'a>>,
-    wrap: bool,
-) {
-    frame.render_widget(Clear, area);
-    let mut paragraph = Paragraph::new(text)
-        .block(overlay_block(title))
-        .style(Style::new().fg(FG).bg(BG_ALT));
-    if wrap {
-        paragraph = paragraph.wrap(Wrap { trim: false });
+fn dialog_hint_line(items: &[(&str, &str)]) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (index, (key, label)) in items.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled("  ", Style::new().fg(FG_MUTED)));
+        }
+        spans.push(Span::styled(
+            key.to_string(),
+            Style::new().fg(FG).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(format!(" {label}"), Style::new().fg(FG_MUTED)));
     }
-    frame.render_widget(paragraph, area);
+    Line::from(spans)
 }
 
 fn prefix_hint_lines(pending: &[String]) -> Vec<Line<'static>> {
@@ -2162,15 +2174,10 @@ fn render_prefix_hints(frame: &mut Frame, view: &ViewState) {
         return;
     }
     let height = (lines.len().min(8) as u16).saturating_add(2);
-    let area = centered(frame.area(), 72, height);
-    frame.render_widget(Clear, area);
     let title = format!("{} …", view.pending_shortcut.join(" "));
-    let block = overlay_block(&title);
-    frame.render_widget(
-        Paragraph::new(Text::from(lines.into_iter().take(8).collect::<Vec<_>>()))
-            .block(block)
-            .style(Style::new().fg(FG).bg(BG_ALT)),
-        area,
+    Dialog::new(&title, 72, height).render_text(
+        frame,
+        Text::from(lines.into_iter().take(8).collect::<Vec<_>>()),
     );
 }
 
@@ -2776,6 +2783,21 @@ mod tests {
     }
 
     #[test]
+    fn add_task_overlay_renders_metadata_title_and_footer() {
+        let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
+            title: "Add task  project=aven priority=high".to_string(),
+            prompt: "Title".to_string(),
+            input: "ship dialogs".to_string(),
+            cursor: 12,
+        }));
+        assert!(rendered.contains("Add task"));
+        assert!(rendered.contains("project: aven"));
+        assert!(rendered.contains("prio: high"));
+        assert!(rendered.contains("ship dialogs"));
+        assert!(rendered.contains("Ctrl+P priority"));
+    }
+
+    #[test]
     fn hint_lines_style_keys() {
         let add_task_keys = styled_key_contents(add_task_hint_line());
         assert_eq!(add_task_keys, vec!["Enter", "Tab", "Ctrl+P", "Esc"]);
@@ -2785,6 +2807,10 @@ mod tests {
 
         let confirm_keys = styled_key_contents(confirm_hint_line());
         assert_eq!(confirm_keys, vec!["y", "n", "Esc"]);
+
+        let dialog_keys =
+            styled_key_contents(dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]));
+        assert_eq!(dialog_keys, vec!["Enter", "Esc"]);
     }
 
     fn styled_key_contents(line: Line<'static>) -> Vec<String> {
