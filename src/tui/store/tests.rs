@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::choices::PRIORITIES;
+use crate::operations::TaskDraft;
 
 async fn test_store() -> TuiStore {
     let dir = tempfile::tempdir().unwrap();
