@@ -1305,7 +1305,7 @@ fn add_task_title_input_line(input: &str, cursor: usize, width: usize) -> Line<'
             Span::styled("title", Style::new().fg(FG_DIM)),
         ]);
     }
-    visible_text_input(input, cursor, width)
+    clipped_input_line(input, cursor, width)
 }
 
 fn add_task_hint_line() -> Line<'static> {
@@ -1555,39 +1555,48 @@ fn render_text_panel(frame: &mut Frame, state: &TextPanelView) {
 }
 
 fn input_line(prefix: &'static str, input: &str, cursor: usize) -> Line<'static> {
+    if prefix.is_empty() {
+        return Line::from(input_cursor_spans(input, cursor, InputWidth::Full));
+    }
     prefixed_input_line(Span::raw(prefix), input, cursor)
 }
 
 fn prefixed_input_line(prefix: Span<'static>, input: &str, cursor: usize) -> Line<'static> {
     let mut spans = vec![prefix];
-    spans.extend(input_cursor_spans(input, cursor, None));
+    spans.extend(input_cursor_spans(input, cursor, InputWidth::Full));
     Line::from(spans)
 }
 
-fn visible_text_input(input: &str, cursor: usize, width: usize) -> Line<'static> {
-    Line::from(input_cursor_spans(input, cursor, Some(width)))
+fn clipped_input_line(input: &str, cursor: usize, width: usize) -> Line<'static> {
+    Line::from(input_cursor_spans(input, cursor, InputWidth::Clipped(width)))
 }
 
-fn input_cursor_spans(input: &str, cursor: usize, width: Option<usize>) -> Vec<Span<'static>> {
+#[derive(Clone, Copy)]
+enum InputWidth {
+    Full,
+    Clipped(usize),
+}
+
+fn input_cursor_spans(input: &str, cursor: usize, width: InputWidth) -> Vec<Span<'static>> {
     let cursor = char_boundary_at_or_before(input, cursor);
+    let input_chars = input.chars().count();
+    let max_width = match width {
+        InputWidth::Full => input_chars.saturating_add(1),
+        InputWidth::Clipped(width) => width,
+    };
     let Some(cursor_char) = input[cursor..].chars().next() else {
         let before = input
             .chars()
-            .skip(
-                input
-                    .chars()
-                    .count()
-                    .saturating_sub(width.unwrap_or(usize::MAX).saturating_sub(1)),
-            )
+            .skip(input_chars.saturating_sub(max_width.saturating_sub(1)))
             .collect::<String>();
         return vec![Span::raw(before), cursor_cell(" ")];
     };
     let cursor_end = cursor + cursor_char.len_utf8();
     let before = &input[..cursor];
     let after = &input[cursor_end..];
-    let width = width.unwrap_or(usize::MAX);
-    let value_width = input.chars().count().saturating_add(1).min(width);
-    let before_visible = value_width.saturating_sub(1 + after.chars().count());
+    let after_chars = after.chars().count();
+    let value_width = input_chars.saturating_add(1).min(max_width);
+    let before_visible = value_width.saturating_sub(1 + after_chars);
     let before = before
         .chars()
         .skip(before.chars().count().saturating_sub(before_visible))
@@ -1595,12 +1604,7 @@ fn input_cursor_spans(input: &str, cursor: usize, width: Option<usize>) -> Vec<S
     vec![
         Span::raw(before),
         cursor_cell(cursor_char.to_string()),
-        Span::raw(
-            after
-                .chars()
-                .take(width.saturating_sub(1))
-                .collect::<String>(),
-        ),
+        Span::raw(after.chars().take(max_width.saturating_sub(1)).collect::<String>()),
     ]
 }
 
@@ -2181,6 +2185,14 @@ mod tests {
         let line = add_task_title_input_line("abcdef", 5, 4);
         assert_eq!(line.spans[0].content.as_ref(), "cde");
         assert_eq!(line.spans[1].content.as_ref(), "f");
+    }
+
+    #[test]
+    fn input_cursor_handles_byte_indexed_unicode_cursor() {
+        let line = input_line("", "aéz", 3);
+        assert_eq!(line.spans[0].content.as_ref(), "aé");
+        assert_eq!(line.spans[1].content.as_ref(), "z");
+        assert_eq!(line.spans[1].style.bg, Some(FG));
     }
 
     #[test]
