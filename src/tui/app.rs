@@ -3756,6 +3756,108 @@ mod tests {
             })) if title == DELETE_PROJECT_TITLE
         ));
     }
+
+    #[test]
+    fn overlay_submit_routes_are_all_handled() {
+        use crate::tui::overlay::OverlaySubmitKind;
+
+        fn handled(submit: OverlaySubmit) -> bool {
+            matches!(
+                submit,
+                OverlaySubmit::Text {
+                    route: OverlayRoute::AddTaskTitle
+                        | OverlayRoute::AddProject
+                        | OverlayRoute::AddLabel
+                        | OverlayRoute::EditTitle
+                        | OverlayRoute::ConflictManual,
+                    ..
+                } | OverlaySubmit::Multiline {
+                    route: OverlayRoute::AddNote
+                        | OverlayRoute::EditDescription
+                        | OverlayRoute::ConflictManual,
+                    ..
+                } | OverlaySubmit::Picker {
+                    route: OverlayRoute::AddTaskTitleProject
+                        | OverlayRoute::AddTaskTitlePriority
+                        | OverlayRoute::EditStatus
+                        | OverlayRoute::EditProject
+                        | OverlayRoute::EditPriority
+                        | OverlayRoute::EditLabels
+                        | OverlayRoute::FilterProject
+                        | OverlayRoute::FilterLabel
+                        | OverlayRoute::FilterStatus
+                        | OverlayRoute::FilterPriority
+                        | OverlayRoute::ViewProject
+                        | OverlayRoute::DeleteProjectPicker
+                        | OverlayRoute::SwitchWorkspace
+                        | OverlayRoute::ConflictField
+                        | OverlayRoute::ConflictManual,
+                    ..
+                } | OverlaySubmit::Confirm {
+                    route: OverlayRoute::ConflictConfirm
+                        | OverlayRoute::ConfigInit
+                        | OverlayRoute::DeleteProjectConfirm,
+                    ..
+                }
+            )
+        }
+
+        let routes = [
+            OverlayRoute::MessageOnly,
+            OverlayRoute::AddTaskTitle,
+            OverlayRoute::AddTaskTitleProject,
+            OverlayRoute::AddTaskTitlePriority,
+            OverlayRoute::AddNote,
+            OverlayRoute::AddProject,
+            OverlayRoute::AddLabel,
+            OverlayRoute::EditStatus,
+            OverlayRoute::EditTitle,
+            OverlayRoute::EditDescription,
+            OverlayRoute::EditProject,
+            OverlayRoute::EditPriority,
+            OverlayRoute::EditLabels,
+            OverlayRoute::FilterProject,
+            OverlayRoute::FilterLabel,
+            OverlayRoute::FilterStatus,
+            OverlayRoute::FilterPriority,
+            OverlayRoute::ViewProject,
+            OverlayRoute::DeleteProjectPicker,
+            OverlayRoute::DeleteProjectConfirm,
+            OverlayRoute::SwitchWorkspace,
+            OverlayRoute::ConflictField,
+            OverlayRoute::ConflictConfirm,
+            OverlayRoute::ConflictManual,
+            OverlayRoute::ConfigInit,
+        ];
+
+        for route in routes {
+            for kind in route.submit_kinds() {
+                let submit = match kind {
+                    OverlaySubmitKind::Text => OverlaySubmit::Text {
+                        route,
+                        title: "Title".to_string(),
+                        value: "value".to_string(),
+                    },
+                    OverlaySubmitKind::Multiline => OverlaySubmit::Multiline {
+                        route,
+                        title: "Title".to_string(),
+                        value: "value".to_string(),
+                    },
+                    OverlaySubmitKind::Picker => OverlaySubmit::Picker {
+                        route,
+                        title: "Title".to_string(),
+                        values: vec!["value".to_string()],
+                    },
+                    OverlaySubmitKind::Confirm => OverlaySubmit::Confirm {
+                        route,
+                        title: "Title".to_string(),
+                    },
+                };
+                assert!(handled(submit), "unhandled {kind:?} route {route:?}");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn generic_confirm_submits_on_y() {
         let mut app = test_app().await;

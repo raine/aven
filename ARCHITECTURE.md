@@ -165,7 +165,11 @@ If a remote scalar change base version does not match the current field version,
 
 The TUI is split into these layers:
 
-- `app.rs`: application state, event loop, focus, selection, overlays, authoring flows, conflict flows, action execution, and refresh cadence.
+- `app.rs`: application state, event loop, focus, selection, action execution, refresh cadence, and the top-level coordination of extracted flows.
+- `authoring.rs`: durable state and submit transitions for task and note authoring flows.
+- `conflict_flow.rs`: conflict resolution flow state, field selection transitions, confirmation submissions, and manual merge submissions.
+- `config_overlay.rs`: config status, config info, config path, and config init overlay construction.
+- `navigation.rs`: detail overlay commands, detail task navigation, and sidebar navigation helpers.
 - `event.rs`: shared command catalog, key sequences, command lookup, shortcut resolution, action lifecycle, and help metadata.
 - `store.rs` and `store/`: database-backed TUI state and operations. `store.rs` is the facade that owns task lists, projects, labels, workspaces, active workspace, sidebar counts, filters, sorting, active view, refresh time, construction, workspace activation, and refresh. Focused store submodules hold concern logic:
   - `config.rs`: config status, config display, config path display, and config initialization.
@@ -180,7 +184,7 @@ The TUI is split into these layers:
   - `undo.rs`: persistent TUI undo recording and application.
   - `view.rs`: active view, filters, search, and selection restoration.
   - `workspaces.rs`: TUI workspace switching, active workspace updates, and related filter/view reset.
-- `overlay.rs`: reusable text input, multiline input, picker, confirm, search, command, detail, help, and text panel state machines.
+- `overlay.rs`: reusable text input, multiline input, picker, confirm, search, command, detail, help, and text panel state machines. Input overlays carry an `OverlayRoute` that identifies the destination flow independently from display titles.
 - `ui.rs`: top-level Ratatui render orchestration for header, footer, overlays, command palette, help, and prefix hints. Region modules live under `ui/` for sidebar, task list, task display helpers, detail rendering, dialogs, and toasts. Overlay dialogs share frame, clear, background, and footer hint styling through dialog helpers.
 - `widgets.rs`: small cell helpers such as priority icons and title conflict markers.
 - `theme.rs`: colors and style helpers.
@@ -196,12 +200,13 @@ To add a TUI action:
 1. Add an `Action` variant in `src/tui/event.rs`.
 2. Register it in the `COMMANDS` catalog with key sequences, section, lifecycle, and description.
 3. Handle the action in `App::execute` in `src/tui/app.rs`.
-4. Add or reuse overlay state if the action needs user input.
-5. Add `TuiStore` methods for database reads or mutations.
-6. Record a TUI undo entry for mutating store methods unless the action is undo itself.
-7. Add tests for shortcut resolution, action dispatch, overlay routing, and store behavior.
+4. Add or reuse overlay state if the action needs user input, and assign the correct `OverlayRoute`.
+5. Add flow-state helpers in `authoring.rs`, `conflict_flow.rs`, `config_overlay.rs`, or another focused module when a flow spans multiple submits.
+6. Add `TuiStore` facade methods and place database reads or mutations in the focused store submodule.
+7. Record a TUI undo entry for mutating store methods unless the action is undo itself.
+8. Add tests for shortcut resolution, action dispatch, overlay route propagation, and store behavior.
 
-Overlay submits are routed by overlay title strings in `App::handle_overlay_submit`. Keep title constants unique, and update tests when adding overlay flows.
+Overlay submits route through `OverlayRoute` in `App::handle_overlay_submit`. Titles are display text only, so tests should keep passing if an overlay title changes without changing its route.
 
 ## Feature checklists
 

@@ -157,6 +157,43 @@ pub(crate) enum OverlayRoute {
     ConfigInit,
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OverlaySubmitKind {
+    Text,
+    Multiline,
+    Picker,
+    Confirm,
+}
+
+#[cfg(test)]
+impl OverlayRoute {
+    pub(crate) fn submit_kinds(self) -> &'static [OverlaySubmitKind] {
+        use OverlaySubmitKind::{Confirm, Multiline, Picker, Text};
+        match self {
+            Self::MessageOnly => &[],
+            Self::AddTaskTitle => &[Text],
+            Self::AddTaskTitleProject | Self::AddTaskTitlePriority => &[Picker],
+            Self::AddNote => &[Multiline],
+            Self::AddProject | Self::AddLabel | Self::EditTitle => &[Text],
+            Self::EditStatus | Self::EditProject | Self::EditPriority | Self::EditLabels => {
+                &[Picker]
+            }
+            Self::EditDescription => &[Multiline],
+            Self::FilterProject
+            | Self::FilterLabel
+            | Self::FilterStatus
+            | Self::FilterPriority
+            | Self::ViewProject
+            | Self::DeleteProjectPicker
+            | Self::SwitchWorkspace
+            | Self::ConflictField => &[Picker],
+            Self::DeleteProjectConfirm | Self::ConflictConfirm | Self::ConfigInit => &[Confirm],
+            Self::ConflictManual => &[Text, Multiline, Picker],
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TextInputState {
     pub(crate) route: OverlayRoute,
