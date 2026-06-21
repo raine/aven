@@ -1098,7 +1098,7 @@ impl App {
         self.pending_delete_project = Some(project.clone());
         self.overlay = Some(OverlayState::Confirm(ConfirmState {
             title: DELETE_PROJECT_TITLE.to_string(),
-            prompt: format!("Delete project {project}? This only works when no tasks use it."),
+            prompt: format!("Delete project {project}?"),
         }));
     }
 

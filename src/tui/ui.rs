@@ -1368,11 +1368,17 @@ fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
             lines.push(Line::from(line.clone()));
         }
     }
-    lines.push(Line::from(Span::styled(
-        "Ctrl+S submit  Esc cancel",
-        Style::new().fg(FG_MUTED),
-    )));
+    lines.push(multiline_hint_line());
     render_overlay_paragraph(frame, area, &state.title, Text::from(lines), true);
+}
+
+fn multiline_hint_line() -> Line<'static> {
+    Line::from(vec![
+        Span::styled("Ctrl+S", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" submit  ", Style::new().fg(FG_MUTED)),
+        Span::styled("Esc", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" cancel", Style::new().fg(FG_MUTED)),
+    ])
 }
 
 fn render_picker(frame: &mut Frame, state: &PickerView) {
@@ -1523,15 +1529,21 @@ fn project_picker_hint_line() -> Line<'static> {
 }
 
 fn render_confirm(frame: &mut Frame, state: &ConfirmView) {
-    let area = centered(frame.area(), 48, 5);
-    let text = Text::from(vec![
-        Line::from(state.prompt.as_str()),
-        Line::from(Span::styled(
-            "y yes  n no  Esc cancel",
-            Style::new().fg(FG_MUTED),
-        )),
-    ]);
+    let width = state.prompt.chars().count().saturating_add(4).max(32) as u16;
+    let area = centered(frame.area(), width, 5);
+    let text = Text::from(vec![Line::from(state.prompt.as_str()), confirm_hint_line()]);
     render_overlay_paragraph(frame, area, &state.title, text, false);
+}
+
+fn confirm_hint_line() -> Line<'static> {
+    Line::from(vec![
+        Span::styled("y", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" yes  ", Style::new().fg(FG_MUTED)),
+        Span::styled("n", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" no  ", Style::new().fg(FG_MUTED)),
+        Span::styled("Esc", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" cancel", Style::new().fg(FG_MUTED)),
+    ])
 }
 
 fn render_text_panel(frame: &mut Frame, state: &TextPanelView) {
@@ -2150,15 +2162,23 @@ mod tests {
     }
 
     #[test]
-    fn add_task_hint_styles_keys() {
-        let line = add_task_hint_line();
-        let keys = line
-            .spans
+    fn hint_lines_style_keys() {
+        let add_task_keys = styled_key_contents(add_task_hint_line());
+        assert_eq!(add_task_keys, vec!["Enter", "Tab", "Ctrl+P", "Esc"]);
+
+        let multiline_keys = styled_key_contents(multiline_hint_line());
+        assert_eq!(multiline_keys, vec!["Ctrl+S", "Esc"]);
+
+        let confirm_keys = styled_key_contents(confirm_hint_line());
+        assert_eq!(confirm_keys, vec!["y", "n", "Esc"]);
+    }
+
+    fn styled_key_contents(line: Line<'static>) -> Vec<String> {
+        line.spans
             .iter()
             .filter(|span| span.style.fg == Some(FG))
-            .map(|span| span.content.as_ref())
-            .collect::<Vec<_>>();
-        assert_eq!(keys, vec!["Enter", "Tab", "Ctrl+P", "Esc"]);
+            .map(|span| span.content.to_string())
+            .collect()
     }
 
     #[test]
