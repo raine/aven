@@ -1020,6 +1020,19 @@ impl App {
         }
     }
 
+    fn filter_value_or_reopen(
+        &mut self,
+        values: Vec<String>,
+        empty_message: &str,
+        reopen: fn(&mut Self),
+    ) -> Option<String> {
+        let Some(value) = self.require_picker_value(values, empty_message) else {
+            reopen(self);
+            return None;
+        };
+        Some(value)
+    }
+
     fn apply_edit_mutation<F>(
         &mut self,
         result: Result<Option<crate::tui::store::MutationMessage>>,
@@ -1333,8 +1346,9 @@ impl App {
     }
 
     async fn submit_filter_project(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(project) = self.require_picker_value(values, "no matching project") else {
-            self.begin_filter_project();
+        let Some(project) =
+            self.filter_value_or_reopen(values, "no matching project", Self::begin_filter_project)
+        else {
             return Ok(());
         };
         let selected = self.store.filter_project(project).await?;
@@ -1344,8 +1358,9 @@ impl App {
     }
 
     async fn submit_filter_label(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(label) = self.require_picker_value(values, "no matching label") else {
-            self.begin_filter_label();
+        let Some(label) =
+            self.filter_value_or_reopen(values, "no matching label", Self::begin_filter_label)
+        else {
             return Ok(());
         };
         let selected = self.store.filter_label(label).await?;
@@ -1355,8 +1370,9 @@ impl App {
     }
 
     async fn submit_filter_status(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(status) = self.require_picker_value(values, "no matching status") else {
-            self.begin_filter_status();
+        let Some(status) =
+            self.filter_value_or_reopen(values, "no matching status", Self::begin_filter_status)
+        else {
             return Ok(());
         };
         let selected = self.store.filter_status(status).await?;
@@ -1366,8 +1382,11 @@ impl App {
     }
 
     async fn submit_filter_priority(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(priority) = self.require_picker_value(values, "no matching priority") else {
-            self.begin_filter_priority();
+        let Some(priority) = self.filter_value_or_reopen(
+            values,
+            "no matching priority",
+            Self::begin_filter_priority,
+        ) else {
             return Ok(());
         };
         let selected = self.store.filter_priority(priority).await?;
