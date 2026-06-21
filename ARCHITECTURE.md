@@ -10,7 +10,7 @@
 | `src/lib.rs` | Module wiring, command dispatch, database opening, TUI launch, daemon wake after successful CLI mutations. |
 | `src/logging.rs` | Tracing subscriber initialization from `AVEN_LOG` and `AVEN_LOG_FILE`. |
 | `src/cli.rs` | Clap argument and subcommand definitions. |
-| `src/commands.rs` | User-facing CLI command handlers and output formatting calls. |
+| `src/commands.rs`, `src/commands/doctor.rs` | User-facing CLI command handlers, focused doctor report rendering, and output formatting calls. |
 | `src/skill.md` | Agent-facing CLI primer printed by `aven skill` and embedded in `aven prime`. |
 | `src/operations.rs` | Transactional business operations used by CLI and TUI. |
 | `src/mutation.rs` | Field-level task mutations, scalar conflict checks, change recording, and field version updates. |
