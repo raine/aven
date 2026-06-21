@@ -687,11 +687,16 @@ pub(crate) async fn list_project_paths_operation(
             &project_override.project_key(),
         )
         .await?;
-        paths.extend(project_override.paths.into_iter().map(|path| ProjectPathOutcome {
-            project: project.clone(),
-            path: path.display().to_string(),
-            config_path: config_path.clone(),
-        }));
+        paths.extend(
+            project_override
+                .paths
+                .into_iter()
+                .map(|path| ProjectPathOutcome {
+                    project: project.clone(),
+                    path: path.display().to_string(),
+                    config_path: config_path.clone(),
+                }),
+        );
     }
     paths.sort_by(|left, right| {
         left.project

@@ -241,13 +241,7 @@ fn project_path_list_scopes_and_filters_by_active_workspace() {
 
     ok(env.aven_config(["workspace", "create", "alpha"]));
     ok(env.aven_config(["workspace", "create", "beta"]));
-    ok(env.aven_config([
-        "--workspace",
-        "alpha",
-        "project",
-        "create",
-        "Client App",
-    ]));
+    ok(env.aven_config(["--workspace", "alpha", "project", "create", "Client App"]));
     ok(env.aven_config(["--workspace", "alpha", "project", "create", "docs"]));
     ok(env.aven_config(["--workspace", "beta", "project", "create", "app"]));
     ok(env.aven_config([
@@ -306,36 +300,17 @@ fn project_path_list_scopes_and_filters_by_active_workspace() {
     );
     assert_eq!(app, expected_app);
 
-    let docs = ok(env.aven_config([
-        "--workspace",
-        "alpha",
-        "project",
-        "path",
-        "list",
-        "docs",
-    ]));
+    let docs = ok(env.aven_config(["--workspace", "alpha", "project", "path", "list", "docs"]));
     contains_all(&docs, &[docs_path.to_str().expect("utf8 docs path")]);
     contains_none(&docs, &[app_path.to_str().expect("utf8 app path")]);
 
-    let missing = fail(env.aven_config([
-        "--workspace",
-        "alpha",
-        "project",
-        "path",
-        "list",
-        "missing",
-    ]));
+    let missing =
+        fail(env.aven_config(["--workspace", "alpha", "project", "path", "list", "missing"]));
     contains_all(&missing, &["error unknown-project input=missing"]);
 
     ok(env.aven_config(["--workspace", "alpha", "project", "create", "empty"]));
-    let no_paths = ok(env.aven_config([
-        "--workspace",
-        "alpha",
-        "project",
-        "path",
-        "list",
-        "empty",
-    ]));
+    let no_paths =
+        ok(env.aven_config(["--workspace", "alpha", "project", "path", "list", "empty"]));
     assert!(no_paths.is_empty(), "expected no output\n{no_paths}");
 }
 
