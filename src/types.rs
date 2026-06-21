@@ -10,6 +10,7 @@ pub(crate) struct Task {
     pub(crate) priority: String,
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
+    pub(crate) queue_activity_at: String,
     pub(crate) deleted: bool,
 }
 

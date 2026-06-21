@@ -386,6 +386,93 @@ async fn update_task_fields_refresh_selected_task() {
 }
 
 #[tokio::test]
+async fn title_edit_keeps_queue_activity_timestamp() {
+    let (_dir, pool, mut store) = test_store_with_pool().await;
+    let (_, selected) = store
+        .create_task(
+            TaskDraft {
+                title: "Old".to_string(),
+                description: String::new(),
+                project: None,
+                priority: "none".to_string(),
+                labels: Vec::new(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let selected = selected.unwrap();
+    let task_id = store.tasks[selected].task.id.clone();
+    let workspace_id = store.active_workspace.id.clone();
+    let old_activity = "1970-01-01T00:00:00Z";
+    let old_updated = "1970-01-02T00:00:00Z";
+    let mut conn = pool.acquire().await.unwrap();
+    sqlx::query(
+        "UPDATE tasks SET updated_at = ?, queue_activity_at = ? WHERE workspace_id = ? AND id = ?",
+    )
+    .bind(old_updated)
+    .bind(old_activity)
+    .bind(&workspace_id)
+    .bind(&task_id)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    drop(conn);
+    store.refresh(Some(&task_id)).await.unwrap();
+
+    store
+        .update_title(Some(selected), "New".to_string())
+        .await
+        .unwrap();
+
+    let task = &store.tasks[selected].task;
+    assert_eq!(task.title, "New");
+    assert_ne!(task.updated_at, old_updated);
+    assert_eq!(task.queue_activity_at, old_activity);
+}
+
+#[tokio::test]
+async fn priority_edit_refreshes_queue_activity_timestamp() {
+    let (_dir, pool, mut store) = test_store_with_pool().await;
+    let (_, selected) = store
+        .create_task(
+            TaskDraft {
+                title: "Old".to_string(),
+                description: String::new(),
+                project: None,
+                priority: "none".to_string(),
+                labels: Vec::new(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let selected = selected.unwrap();
+    let task_id = store.tasks[selected].task.id.clone();
+    let workspace_id = store.active_workspace.id.clone();
+    let old_activity = "1970-01-01T00:00:00Z";
+    let mut conn = pool.acquire().await.unwrap();
+    sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
+        .bind(old_activity)
+        .bind(&workspace_id)
+        .bind(&task_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    drop(conn);
+    store.refresh(Some(&task_id)).await.unwrap();
+
+    store
+        .set_exact_priority(Some(selected), "high")
+        .await
+        .unwrap();
+
+    let task = &store.tasks[selected].task;
+    assert_eq!(task.priority, "high");
+    assert_ne!(task.queue_activity_at, old_activity);
+}
+
+#[tokio::test]
 async fn update_labels_adds_and_removes_labels() {
     let mut store = test_store().await;
     store.create_label("bug".to_string()).await.unwrap();

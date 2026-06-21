@@ -390,6 +390,7 @@ mod tests {
                 priority: "urgent".to_string(),
                 created_at: "2026-06-19T12:00:00Z".to_string(),
                 updated_at: "2026-06-20T12:00:00Z".to_string(),
+                queue_activity_at: "2026-06-20T12:00:00Z".to_string(),
                 deleted: false,
             },
             display_ref: "APP-7KQ9A1X".to_string(),

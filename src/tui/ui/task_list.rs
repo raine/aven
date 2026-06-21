@@ -161,7 +161,7 @@ fn render_task_header(frame: &mut Frame, area: Rect, columns: [Constraint; 6]) {
     frame.render_widget(Block::new().style(style), area);
     for (area, label) in cells
         .into_iter()
-        .zip([" REF", "TITLE", "PROJECT", "STATUS", "P", "AGE"])
+        .zip([" REF", "TITLE", "PROJECT", "STATUS", "P", "IDLE"])
     {
         frame.render_widget(Paragraph::new(label).style(style), area);
     }
@@ -209,7 +209,7 @@ fn render_task_row(
         task_seconds_since(&item.task.created_at, now_seconds)
     };
     let age_style_input = if use_queue_groups {
-        &item.task.updated_at
+        &item.task.queue_activity_at
     } else {
         &item.task.created_at
     };
@@ -366,6 +366,7 @@ mod tests {
                 priority: "none".to_string(),
                 created_at: "2026-06-20T00:00:00Z".to_string(),
                 updated_at: "2026-06-20T00:00:00Z".to_string(),
+                queue_activity_at: "2026-06-20T00:00:00Z".to_string(),
                 deleted: false,
             },
             display_ref: "VER-1".to_string(),

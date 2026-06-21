@@ -126,7 +126,8 @@ pub(crate) async fn list_task_items_in_workspace(
 
     let mut query = QueryBuilder::<Sqlite>::new(
         "SELECT t.id, t.workspace_id, t.title, t.description, t.project_key,
-         p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at, t.deleted
+         p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
+         t.queue_activity_at, t.deleted
          FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.key = t.project_key",
     );
 
@@ -403,13 +404,14 @@ mod tests {
         created_at: &str,
     ) {
         sqlx::query(
-            "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
-             VALUES (?, ?, '', 'app', ?, ?, ?, ?)",
+            "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at, queue_activity_at)
+             VALUES (?, ?, '', 'app', ?, ?, ?, ?, ?)",
         )
         .bind(id)
         .bind(title)
         .bind(status)
         .bind(priority)
+        .bind(created_at)
         .bind(created_at)
         .bind(created_at)
         .execute(&mut *conn)
@@ -517,8 +519,8 @@ mod tests {
         created_at: &str,
     ) {
         sqlx::query(
-            "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at)
-             VALUES (?, ?, ?, '', ?, ?, ?, ?, ?)",
+            "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at, queue_activity_at)
+             VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?)",
         )
         .bind(workspace_id)
         .bind(id)
@@ -526,6 +528,7 @@ mod tests {
         .bind(project_key)
         .bind(status)
         .bind(priority)
+        .bind(created_at)
         .bind(created_at)
         .bind(created_at)
         .execute(&mut *conn)

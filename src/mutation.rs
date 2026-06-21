@@ -120,23 +120,30 @@ pub(crate) async fn apply_field_value_in_workspace(
     task_field.validate_value(value)?;
 
     let ts = now();
+    let activity_at = if task_field.updates_queue_activity() {
+        ts.as_str()
+    } else {
+        ""
+    };
     let deleted_value = i64::from(value == "1");
     let rows_affected = match task_field {
         TaskField::Title => sqlx::query(
-            "UPDATE tasks SET title = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
+            "UPDATE tasks SET title = ?, updated_at = ?, queue_activity_at = COALESCE(NULLIF(?, ''), queue_activity_at) WHERE workspace_id = ? AND id = ?",
         )
         .bind(value)
         .bind(&ts)
+        .bind(activity_at)
         .bind(workspace_id)
         .bind(task_id)
         .execute(&mut *conn)
         .await?
         .rows_affected(),
         TaskField::Description => sqlx::query(
-            "UPDATE tasks SET description = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
+            "UPDATE tasks SET description = ?, updated_at = ?, queue_activity_at = COALESCE(NULLIF(?, ''), queue_activity_at) WHERE workspace_id = ? AND id = ?",
         )
         .bind(value)
         .bind(&ts)
+        .bind(activity_at)
         .bind(workspace_id)
         .bind(task_id)
         .execute(&mut *conn)
@@ -146,10 +153,11 @@ pub(crate) async fn apply_field_value_in_workspace(
             let project =
                 resolve_project_for_add_in_workspace(conn, workspace_id, Some(value)).await?;
             sqlx::query(
-                "UPDATE tasks SET project_key = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
+                "UPDATE tasks SET project_key = ?, updated_at = ?, queue_activity_at = COALESCE(NULLIF(?, ''), queue_activity_at) WHERE workspace_id = ? AND id = ?",
             )
             .bind(project.key)
             .bind(&ts)
+            .bind(activity_at)
             .bind(workspace_id)
             .bind(task_id)
             .execute(&mut *conn)
@@ -157,30 +165,33 @@ pub(crate) async fn apply_field_value_in_workspace(
             .rows_affected()
         }
         TaskField::Status => sqlx::query(
-            "UPDATE tasks SET status = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
+            "UPDATE tasks SET status = ?, updated_at = ?, queue_activity_at = COALESCE(NULLIF(?, ''), queue_activity_at) WHERE workspace_id = ? AND id = ?",
         )
         .bind(value)
         .bind(&ts)
+        .bind(activity_at)
         .bind(workspace_id)
         .bind(task_id)
         .execute(&mut *conn)
         .await?
         .rows_affected(),
         TaskField::Priority => sqlx::query(
-            "UPDATE tasks SET priority = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
+            "UPDATE tasks SET priority = ?, updated_at = ?, queue_activity_at = COALESCE(NULLIF(?, ''), queue_activity_at) WHERE workspace_id = ? AND id = ?",
         )
         .bind(value)
         .bind(&ts)
+        .bind(activity_at)
         .bind(workspace_id)
         .bind(task_id)
         .execute(&mut *conn)
         .await?
         .rows_affected(),
         TaskField::Deleted => sqlx::query(
-            "UPDATE tasks SET deleted = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
+            "UPDATE tasks SET deleted = ?, updated_at = ?, queue_activity_at = COALESCE(NULLIF(?, ''), queue_activity_at) WHERE workspace_id = ? AND id = ?",
         )
         .bind(deleted_value)
         .bind(&ts)
+        .bind(activity_at)
         .bind(workspace_id)
         .bind(task_id)
         .execute(&mut *conn)

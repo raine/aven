@@ -46,9 +46,9 @@ impl QueueBand {
 }
 
 pub(crate) fn queue_meta(task: &Task, has_conflict: bool, now_seconds: i64) -> QueueMeta {
-    let idle_days = unix_seconds(&task.updated_at).map(|updated| {
+    let idle_days = unix_seconds(&task.queue_activity_at).map(|activity| {
         now_seconds
-            .saturating_sub(updated)
+            .saturating_sub(activity)
             .max(0)
             .saturating_div(86_400)
     });
@@ -156,7 +156,7 @@ fn unix_days_from_civil(year: i64, month: u32, day: u32) -> i64 {
 mod tests {
     use super::*;
 
-    fn task(status: &str, priority: &str, updated_at: &str) -> Task {
+    fn task(status: &str, priority: &str, queue_activity_at: &str) -> Task {
         Task {
             id: format!("{status}-{priority}"),
             workspace_id: "workspace".to_string(),
@@ -166,8 +166,9 @@ mod tests {
             project_prefix: "APP".to_string(),
             status: status.to_string(),
             priority: priority.to_string(),
-            created_at: updated_at.to_string(),
-            updated_at: updated_at.to_string(),
+            created_at: queue_activity_at.to_string(),
+            updated_at: queue_activity_at.to_string(),
+            queue_activity_at: queue_activity_at.to_string(),
             deleted: false,
         }
     }

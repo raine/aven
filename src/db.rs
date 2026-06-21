@@ -131,6 +131,7 @@ pub(crate) fn task_from_row(row: &SqliteRow) -> Result<Task> {
         priority: row.try_get("priority")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
+        queue_activity_at: row.try_get("queue_activity_at")?,
         deleted: row.try_get::<i64, _>("deleted")? != 0,
     })
 }

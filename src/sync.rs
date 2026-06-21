@@ -849,6 +849,12 @@ async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWire) -
             .bind(&change.change_id)
             .execute(&mut *conn)
             .await?;
+            sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
+                .bind(&created_at)
+                .bind(&workspace_id)
+                .bind(&change.entity_id)
+                .execute(&mut *conn)
+                .await?;
         }
         _ => {}
     }
@@ -895,8 +901,8 @@ async fn apply_remote_create_task(conn: &mut SqliteConnection, change: &ChangeWi
     let created_at =
         str_payload(&change.payload, "created_at").unwrap_or_else(|_| change.created_at.clone());
     sqlx::query(
-        "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at, queue_activity_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&workspace_id)
     .bind(&change.entity_id)
@@ -906,6 +912,7 @@ async fn apply_remote_create_task(conn: &mut SqliteConnection, change: &ChangeWi
     .bind(&status)
     .bind(&priority)
     .bind(&created_at)
+    .bind(&change.created_at)
     .bind(&change.created_at)
     .execute(&mut *conn)
     .await?;

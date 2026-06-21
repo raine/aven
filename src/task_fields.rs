@@ -56,6 +56,10 @@ impl TaskField {
         }
     }
 
+    pub(crate) fn updates_queue_activity(self) -> bool {
+        matches!(self, Self::Status | Self::Priority)
+    }
+
     pub(crate) fn current_value(self, task: &Task) -> String {
         match self {
             Self::Title => task.title.clone(),

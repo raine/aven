@@ -64,7 +64,7 @@ SQLite stores synced task data and local UI state. Config stores local routing a
 - Metadata table: `meta` stores `client_id`, `sync_cursor`, `local_seq`, and sync server URL.
 - Local TUI table: `tui_undo_entries` stores inverse operations for TUI mutations.
 
-`Task` and `Project` in `src/types.rs` are the core records. They carry `workspace_id`, and workspace-scoped tables include `workspace_id` in uniqueness and lookup paths. Task state uses string fields for `status` and `priority` plus a `deleted` boolean. Read paths wrap records into list and sidebar DTOs in `src/query.rs`. Task lists batch label and unresolved-conflict enrichment through `src/task_enrichment.rs` so CLI and TUI list refreshes avoid per-task enrichment queries.
+`Task` and `Project` in `src/types.rs` are the core records. They carry `workspace_id`, and workspace-scoped tables include `workspace_id` in uniqueness and lookup paths. Task state uses string fields for `status` and `priority` plus a `deleted` boolean. Tasks keep `updated_at` for any persisted task change and `queue_activity_at` for queue-relevant activity used by the TUI queue idle score. Read paths wrap records into list and sidebar DTOs in `src/query.rs`. Task lists batch label and unresolved-conflict enrichment through `src/task_enrichment.rs` so CLI and TUI list refreshes avoid per-task enrichment queries.
 
 Many invariants are application-enforced rather than database-enforced. Do not write domain tables directly unless the operation intentionally bypasses sync and validation. Prefer `operations.rs`, `mutation.rs`, project helpers, label helpers, and ref helpers.
 
