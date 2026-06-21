@@ -516,7 +516,11 @@ mod tests {
             .unwrap();
     }
 
-    async fn seed_workspace_conflict(conn: &mut SqliteConnection, workspace_id: &str, task_id: &str) {
+    async fn seed_workspace_conflict(
+        conn: &mut SqliteConnection,
+        workspace_id: &str,
+        task_id: &str,
+    ) {
         sqlx::query(
             "INSERT INTO conflicts(workspace_id, task_id, field, base_version, local_value, remote_value,
              local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
@@ -705,9 +709,33 @@ mod tests {
     async fn list_items_include_labels_and_unresolved_conflict_flags() {
         let (_temp, mut conn) = test_conn().await;
         seed_default_project(&mut conn).await;
-        insert_test_task(&mut conn, "0000000000000301", "labeled", "todo", "none", "001").await;
-        insert_test_task(&mut conn, "0000000000000302", "resolved", "todo", "none", "002").await;
-        insert_test_task(&mut conn, "0000000000000303", "plain", "todo", "none", "003").await;
+        insert_test_task(
+            &mut conn,
+            "0000000000000301",
+            "labeled",
+            "todo",
+            "none",
+            "001",
+        )
+        .await;
+        insert_test_task(
+            &mut conn,
+            "0000000000000302",
+            "resolved",
+            "todo",
+            "none",
+            "002",
+        )
+        .await;
+        insert_test_task(
+            &mut conn,
+            "0000000000000303",
+            "plain",
+            "todo",
+            "none",
+            "003",
+        )
+        .await;
 
         insert_test_label(&mut conn, "0000000000000301", "zeta").await;
         insert_test_label(&mut conn, "0000000000000301", "alpha").await;
@@ -737,7 +765,15 @@ mod tests {
         let (_temp, mut conn) = test_conn().await;
         seed_default_project(&mut conn).await;
 
-        insert_test_task(&mut conn, "ABCD000000000001", "visible", "todo", "none", "001").await;
+        insert_test_task(
+            &mut conn,
+            "ABCD000000000001",
+            "visible",
+            "todo",
+            "none",
+            "001",
+        )
+        .await;
         insert_test_task(&mut conn, "ABCD999999999999", "done", "done", "none", "002").await;
 
         let items = list_task_items(
@@ -761,8 +797,24 @@ mod tests {
         let (_temp, mut conn) = test_conn().await;
         seed_default_project(&mut conn).await;
 
-        insert_test_task(&mut conn, "0000000000000401", "clean", "todo", "none", "001").await;
-        insert_test_task(&mut conn, "0000000000000402", "conflicted", "todo", "none", "002").await;
+        insert_test_task(
+            &mut conn,
+            "0000000000000401",
+            "clean",
+            "todo",
+            "none",
+            "001",
+        )
+        .await;
+        insert_test_task(
+            &mut conn,
+            "0000000000000402",
+            "conflicted",
+            "todo",
+            "none",
+            "002",
+        )
+        .await;
         insert_test_conflict(&mut conn, "0000000000000402", false).await;
 
         let items = list_task_items(
@@ -781,7 +833,9 @@ mod tests {
     async fn explicit_workspace_read_apis_scope_results() {
         let (_temp, mut conn) = test_conn().await;
         let alpha_id = crate::workspaces::DEFAULT_WORKSPACE_ID.to_string();
-        let beta = crate::workspaces::create_workspace(&mut conn, "Beta").await.unwrap();
+        let beta = crate::workspaces::create_workspace(&mut conn, "Beta")
+            .await
+            .unwrap();
         seed_workspace_project(&mut conn, &alpha_id, "app", "Alpha", "ALP").await;
         seed_workspace_project(&mut conn, &beta.id, "app", "Beta", "BET").await;
         seed_workspace_label(&mut conn, &alpha_id, "shared").await;
@@ -856,13 +910,17 @@ mod tests {
         assert_eq!(beta_projects[0].key, "app");
         assert_eq!(beta_projects[0].open_count, 0);
 
-        let alpha_counts = sidebar_counts_in_workspace(&mut conn, &alpha_id).await.unwrap();
+        let alpha_counts = sidebar_counts_in_workspace(&mut conn, &alpha_id)
+            .await
+            .unwrap();
         assert_eq!(alpha_counts.all, 1);
         assert_eq!(alpha_counts.todo, 1);
         assert_eq!(alpha_counts.conflicts, 1);
         assert_eq!(alpha_counts.done, 0);
 
-        let beta_counts = sidebar_counts_in_workspace(&mut conn, &beta.id).await.unwrap();
+        let beta_counts = sidebar_counts_in_workspace(&mut conn, &beta.id)
+            .await
+            .unwrap();
         assert_eq!(beta_counts.all, 0);
         assert_eq!(beta_counts.done, 1);
         assert_eq!(beta_counts.conflicts, 0);
@@ -872,7 +930,9 @@ mod tests {
     async fn active_workspace_wrappers_delegate_to_active_workspace() {
         let (_temp, mut conn) = test_conn().await;
         let alpha_id = crate::workspaces::DEFAULT_WORKSPACE_ID.to_string();
-        let beta = crate::workspaces::create_workspace(&mut conn, "Beta").await.unwrap();
+        let beta = crate::workspaces::create_workspace(&mut conn, "Beta")
+            .await
+            .unwrap();
         seed_workspace_project(&mut conn, &alpha_id, "alpha", "Alpha", "ALP").await;
         seed_workspace_project(&mut conn, &beta.id, "beta", "Beta", "BET").await;
         seed_workspace_task(
@@ -916,7 +976,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(listed_titles(&wrapper_tasks), listed_titles(&explicit_tasks));
+        assert_eq!(
+            listed_titles(&wrapper_tasks),
+            listed_titles(&explicit_tasks)
+        );
         assert_eq!(listed_titles(&wrapper_tasks), ["beta task"]);
         assert_eq!(list_project_items(&mut conn).await.unwrap()[0].key, "beta");
         assert_eq!(sidebar_counts(&mut conn).await.unwrap().all, 1);

@@ -15,7 +15,7 @@ use crate::ids::{new_id, now};
 use crate::labels::{normalize_label, resolve_labels_in_workspace};
 use crate::mutation::{apply_field_value_in_workspace, set_task_field};
 use crate::projects::{
-    create_project_in_workspace, resolve_existing_project_in_workspace,
+    create_project_in_workspace, project_has_config_mapping, resolve_existing_project_in_workspace,
     resolve_project_for_add_in_workspace,
 };
 use crate::refs::get_task;
@@ -73,6 +73,11 @@ pub(crate) struct ProjectPathOutcome {
     pub(crate) project: Project,
     pub(crate) path: String,
     pub(crate) config_path: PathBuf,
+}
+
+pub(crate) struct ProjectDeleteOutcome {
+    pub(crate) project: Project,
+    pub(crate) config_mapping: bool,
 }
 
 struct ProjectPathTarget {
@@ -507,6 +512,49 @@ pub(crate) async fn create_project_operation(
         project: outcome.project,
         created: outcome.created,
         change_id: outcome.change_id,
+    })
+}
+
+pub(crate) async fn delete_project_operation(
+    conn: &mut SqliteConnection,
+    project: &str,
+) -> Result<ProjectDeleteOutcome> {
+    let workspace = crate::workspaces::active_workspace();
+    let project = resolve_existing_project_in_workspace(conn, &workspace.id, project).await?;
+    let config_mapping =
+        project_has_config_mapping(&project.workspace_id, &project.key).unwrap_or(false);
+    let mut tx = conn.begin().await?;
+    let task_refs: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM tasks WHERE workspace_id = ? AND project_key = ?")
+            .bind(&project.workspace_id)
+            .bind(&project.key)
+            .fetch_one(&mut *tx)
+            .await?;
+    if task_refs > 0 {
+        bail!(
+            "error project-has-tasks project={} tasks={}",
+            project.key,
+            task_refs
+        );
+    }
+    sqlx::query("DELETE FROM project_paths WHERE workspace_id = ? AND project_key = ?")
+        .bind(&project.workspace_id)
+        .bind(&project.key)
+        .execute(&mut *tx)
+        .await?;
+    let deleted = sqlx::query("DELETE FROM projects WHERE workspace_id = ? AND key = ?")
+        .bind(&project.workspace_id)
+        .bind(&project.key)
+        .execute(&mut *tx)
+        .await?;
+    if deleted.rows_affected() != 1 {
+        bail!("error project-delete-race project={}", project.key);
+    }
+    tx.commit().await?;
+    info!(project_key = %project.key, "project deleted");
+    Ok(ProjectDeleteOutcome {
+        project,
+        config_mapping,
     })
 }
 

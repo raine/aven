@@ -142,12 +142,7 @@ fn invalid_deleted_conflict_resolution_preserves_task_and_change_log() {
     let error = fail(env.aven(
         &a,
         [
-            "conflict",
-            "resolve",
-            &task_ref,
-            "deleted",
-            "--value",
-            "true",
+            "conflict", "resolve", &task_ref, "deleted", "--value", "true",
         ],
     ));
 
@@ -156,7 +151,10 @@ fn invalid_deleted_conflict_resolution_preserves_task_and_change_log() {
         common::scalar_i64(&a, "SELECT count(*) FROM tasks WHERE deleted = 1"),
         0
     );
-    assert_eq!(common::scalar_i64(&a, "SELECT count(*) FROM changes"), changes_before);
+    assert_eq!(
+        common::scalar_i64(&a, "SELECT count(*) FROM changes"),
+        changes_before
+    );
     let conflicts = ok(env.aven(&a, ["conflict", "list"]));
     contains_all(&conflicts, &[&task_ref, "conflict field=deleted"]);
 }

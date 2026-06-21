@@ -92,7 +92,7 @@ Scalar task field mutations flow through `src/mutation.rs` or higher-level opera
 5. Append a `changes` row with the previous field version as `base_version`.
 6. Update `field_versions`.
 
-Task creation writes the task, labels, a `create_task` change, and initial field versions for scalar fields. Delete is a soft-delete by setting `deleted`; restore sets it back.
+Task creation writes the task, labels, a `create_task` change, and initial field versions for scalar fields. Task delete is a soft-delete by setting `deleted`; restore sets it back. TUI project deletion hard-deletes unused projects and leaves config path mappings unchanged.
 
 Important invariants:
 

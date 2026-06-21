@@ -99,7 +99,11 @@ impl ProjectOverrideConfig {
         crate::projects::normalize_key(&self.project)
     }
 
-    pub(crate) fn matches_workspace(&self, workspace_id: Option<&str>, workspace: Option<&str>) -> bool {
+    pub(crate) fn matches_workspace(
+        &self,
+        workspace_id: Option<&str>,
+        workspace: Option<&str>,
+    ) -> bool {
         match self.workspace_id.as_deref() {
             Some(id) => Some(id) == workspace_id,
             None => self

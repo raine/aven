@@ -86,7 +86,14 @@ mod tests {
             .collect();
         assert_eq!(
             fields,
-            ["title", "description", "project", "status", "priority", "deleted"]
+            [
+                "title",
+                "description",
+                "project",
+                "status",
+                "priority",
+                "deleted"
+            ]
         );
     }
 }

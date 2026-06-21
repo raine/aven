@@ -21,6 +21,7 @@ use crate::tui::store::{ConflictTarget, SidebarEntry, SidebarTarget, TuiStore};
 use crate::tui::ui::{self, help_scroll_cap};
 
 const ADD_PROJECT_TITLE: &str = "Add project";
+const DELETE_PROJECT_TITLE: &str = "Delete project";
 const ADD_LABEL_TITLE: &str = "Add label";
 const ADD_TASK_TITLE_TITLE: &str = "Add task";
 const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: title project";
@@ -128,6 +129,7 @@ pub(crate) struct App {
     pending_shortcut: Vec<KeyCode>,
     authoring: Option<AuthoringFlow>,
     conflict_flow: Option<ConflictFlow>,
+    pending_delete_project: Option<String>,
 }
 
 impl App {
@@ -147,6 +149,7 @@ impl App {
             pending_shortcut: Vec::new(),
             authoring: None,
             conflict_flow: None,
+            pending_delete_project: None,
         };
         app.widgets.sidebar.select(app.store.sidebar_selection());
         app.widgets
@@ -434,6 +437,9 @@ impl App {
             OverlaySubmit::Confirm { title } if title == CONFIG_INIT_TITLE => {
                 self.submit_config_init()?;
             }
+            OverlaySubmit::Confirm { title } if title == DELETE_PROJECT_TITLE => {
+                self.submit_delete_project().await?;
+            }
             OverlaySubmit::Text { title, value } if title == CONFLICT_MANUAL_TITLE => {
                 self.submit_manual_conflict_value(value).await?;
             }
@@ -498,6 +504,7 @@ impl App {
             Action::Delete => self.update_deleted(true).await?,
             Action::Restore => self.update_deleted(false).await?,
             Action::BeginStatusPicker => self.begin_status_picker(),
+            Action::BeginDeleteProject => self.begin_delete_project(),
             Action::BeginAddProject => self.begin_add_project(),
             Action::BeginAddLabel => self.begin_add_label(),
             Action::BeginAddTask => self.begin_add_task().await?,
@@ -859,6 +866,7 @@ impl App {
         self.overlay = None;
         self.authoring = None;
         self.conflict_flow = None;
+        self.pending_delete_project = None;
     }
 
     fn accept_command_input(&mut self, input: &str) -> Option<Action> {
@@ -894,6 +902,7 @@ impl App {
         self.pending_shortcut.clear();
         self.authoring = None;
         self.conflict_flow = None;
+        self.pending_delete_project = None;
         let had_overlay = self.overlay.take().is_some();
         if !had_overlay && self.focus == Focus::Sidebar {
             self.focus = Focus::Tasks;
@@ -1063,6 +1072,34 @@ impl App {
             .as_str();
         let items = self.store.status_picker_items(Some(selected));
         self.open_picker_overlay(EDIT_STATUS_TITLE, items, false);
+    }
+
+    fn begin_delete_project(&mut self) {
+        self.pending_shortcut.clear();
+        if self.focus != Focus::Sidebar {
+            self.set_message("select a project in the sidebar to delete it".to_string());
+            return;
+        }
+        let Some(project) = self
+            .widgets
+            .sidebar
+            .selected()
+            .and_then(|index| self.store.sidebar_entries.get(index))
+            .and_then(|entry| entry.target.as_ref())
+            .and_then(|target| match target {
+                SidebarTarget::Project(project) => Some(project.clone()),
+                _ => None,
+            })
+        else {
+            self.set_message("select a project in the sidebar to delete it".to_string());
+            return;
+        };
+
+        self.pending_delete_project = Some(project.clone());
+        self.overlay = Some(OverlayState::Confirm(ConfirmState {
+            title: DELETE_PROJECT_TITLE.to_string(),
+            prompt: format!("Delete project {project}? This only works when no tasks use it."),
+        }));
     }
 
     fn begin_edit_title(&mut self) {
@@ -1564,6 +1601,18 @@ impl App {
     fn submit_config_init(&mut self) -> Result<()> {
         let message = self.store.init_config()?;
         self.set_message(message);
+        Ok(())
+    }
+
+    async fn submit_delete_project(&mut self) -> Result<()> {
+        let Some(project) = self.pending_delete_project.take() else {
+            self.set_message("project delete confirmation is not active".to_string());
+            return Ok(());
+        };
+        match self.store.delete_project(&project).await {
+            Ok(result) => self.apply_mutation_result(result),
+            Err(error) => self.set_message(format!("error: {error:#}")),
+        }
         Ok(())
     }
 
@@ -3242,6 +3291,81 @@ mod tests {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
         assert_eq!(app.message.as_deref(), Some("nothing to undo"));
+    }
+
+    #[tokio::test]
+    async fn delete_project_requires_sidebar_project_selection() {
+        let mut app = test_app().await;
+        app.execute(Action::BeginDeleteProject).await.unwrap();
+
+        assert_eq!(
+            app.message.as_deref(),
+            Some("select a project in the sidebar to delete it")
+        );
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_project_confirmation_removes_sidebar_project() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        app.focus = Focus::Sidebar;
+        let project_index = app
+            .store
+            .sidebar_entries
+            .iter()
+            .position(|entry| {
+                entry.target == Some(SidebarTarget::Project("mobile-app".to_string()))
+            })
+            .unwrap();
+        app.widgets.sidebar.select(Some(project_index));
+
+        app.execute(Action::BeginDeleteProject).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Confirm(ConfirmState { ref title, .. })) if title == DELETE_PROJECT_TITLE
+        ));
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+
+        assert_eq!(app.message.as_deref(), Some("deleted project mobile-app"));
+        assert!(
+            !app.store
+                .projects
+                .iter()
+                .any(|project| project.key == "mobile-app")
+        );
+        assert!(app.pending_delete_project.is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_project_cancel_clears_pending_state() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        app.focus = Focus::Sidebar;
+        let project_index = app
+            .store
+            .sidebar_entries
+            .iter()
+            .position(|entry| {
+                entry.target == Some(SidebarTarget::Project("mobile-app".to_string()))
+            })
+            .unwrap();
+        app.widgets.sidebar.select(Some(project_index));
+
+        app.execute(Action::BeginDeleteProject).await.unwrap();
+        assert_eq!(app.pending_delete_project.as_deref(), Some("mobile-app"));
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(app.pending_delete_project.is_none());
     }
 
     #[tokio::test]

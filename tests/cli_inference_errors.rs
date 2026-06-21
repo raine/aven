@@ -131,7 +131,10 @@ project:
             "project: Manual",
         ],
     );
-    contains_none(&config, &["commented", "# aven-managed project path mapping"]);
+    contains_none(
+        &config,
+        &["commented", "# aven-managed project path mapping"],
+    );
 }
 
 #[test]

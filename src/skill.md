@@ -7,6 +7,7 @@
 - Tasks have statuses: `inbox`, `backlog`, `todo`, `active`, `done`, `canceled`.
 - Priorities are: `none`, `low`, `medium`, `high`, `urgent`.
 - Tasks are soft-deleted with `delete` and can be recovered with `restore`.
+- TUI project deletion hard-deletes unused projects and leaves config path mappings unchanged.
 - Labels and notes are append-style supporting data. Notes are better for durable handoff context than scratch work.
 - Projects normalize to lowercase hyphenated keys and get short display prefixes.
 

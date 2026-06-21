@@ -57,6 +57,7 @@ pub(crate) enum Action {
     Delete,
     Restore,
     BeginStatusPicker,
+    BeginDeleteProject,
     BeginAddTask,
     BeginAddNote,
     BeginAddProject,
@@ -655,6 +656,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::BeginAddLabel,
     ),
+    CommandSpec::implemented(
+        "delete-project",
+        "delete selected sidebar project",
+        "Metadata",
+        &[KeySequence {
+            codes: &[KeyCode::Char('A'), KeyCode::Char('d')],
+            label: "A d",
+        }],
+        Action::BeginDeleteProject,
+    ),
     CommandSpec::planned(
         "add-project-path",
         "add a path to a project",
@@ -1219,6 +1230,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::Delete
             | Action::Restore
             | Action::BeginStatusPicker
+            | Action::BeginDeleteProject
             | Action::BeginAddTask
             | Action::BeginAddNote
             | Action::BeginAddProject
@@ -1578,6 +1590,10 @@ mod tests {
             resolve_shortcut(&[KeyCode::Char('A'), KeyCode::Char('l')]),
             ShortcutLookup::Found(Action::BeginAddLabel)
         ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('A'), KeyCode::Char('d')]),
+            ShortcutLookup::Found(Action::BeginDeleteProject)
+        ));
     }
 
     #[test]
@@ -1632,6 +1648,7 @@ mod tests {
             "order-reverse",
             "conflict-list",
             "add-project",
+            "delete-project",
             "config-show",
             "config-status",
             "config-paths",

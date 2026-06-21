@@ -32,9 +32,10 @@ pub(crate) fn add_project_path(path: &Path, edit: ProjectPathMappingEdit<'_>) ->
         }
     }
     entries.retain(|entry| !entry.paths.is_empty());
-    if let Some(entry) = entries.iter_mut().find(|entry| {
-        entry.workspace_id == edit.workspace_id && entry.project == edit.project
-    }) {
+    if let Some(entry) = entries
+        .iter_mut()
+        .find(|entry| entry.workspace_id == edit.workspace_id && entry.project == edit.project)
+    {
         entry.paths.push(edit.path);
     } else {
         entries.push(ManagedProjectOverride {
@@ -68,7 +69,8 @@ pub(crate) fn remove_project_path(
 
 fn read_config_text(path: &Path) -> Result<String> {
     if path.exists() {
-        return fs::read_to_string(path).with_context(|| format!("could not read {}", path.display()));
+        return fs::read_to_string(path)
+            .with_context(|| format!("could not read {}", path.display()));
     }
     serde_yaml::to_string(&AppConfig::default()).context("could not serialize default config")
 }
@@ -81,7 +83,8 @@ fn write_edited_config(path: &Path, text: String) -> Result<()> {
             .with_context(|| format!("could not create {}", parent.display()))?;
     }
     let tmp_path = path.with_extension("yaml.tmp");
-    fs::write(&tmp_path, text).with_context(|| format!("could not write {}", tmp_path.display()))?;
+    fs::write(&tmp_path, text)
+        .with_context(|| format!("could not write {}", tmp_path.display()))?;
     fs::rename(&tmp_path, path).with_context(|| {
         format!(
             "could not replace {} with {}",
@@ -111,7 +114,8 @@ fn remove_managed_entries(text: &str) -> (String, Vec<ManagedProjectOverride>) {
             let line = &lines[i];
             let trimmed = line.trim_start();
             let indent = indent_len(line);
-            let starts_next_entry = seen_entry && indent == marker_indent && trimmed.starts_with("- ");
+            let starts_next_entry =
+                seen_entry && indent == marker_indent && trimmed.starts_with("- ");
             let starts_sibling = indent < marker_indent && !trimmed.is_empty();
             if starts_sibling || starts_next_entry {
                 break;
@@ -142,7 +146,9 @@ fn append_managed_entries(text: &str, entries: &[ManagedProjectOverride]) -> Res
     let block = render_managed_entries(entries);
     if let Some(project_line) = find_top_level_key(&lines, "project") {
         let project_end = find_section_end(&lines, project_line, 0);
-        if let Some(overrides_line) = find_child_key(&lines, project_line + 1, project_end, 2, "overrides") {
+        if let Some(overrides_line) =
+            find_child_key(&lines, project_line + 1, project_end, 2, "overrides")
+        {
             let overrides_end = find_section_end(&lines, overrides_line, 2);
             insert_lines(&mut lines, overrides_end, block);
         } else {
@@ -186,9 +192,7 @@ fn parse_managed_entry(lines: &[String]) -> Option<ManagedProjectOverride> {
             in_paths = false;
         } else if trimmed == "paths:" {
             in_paths = true;
-        } else if in_paths
-            && let Some(value) = trimmed.strip_prefix("- ")
-        {
+        } else if in_paths && let Some(value) = trimmed.strip_prefix("- ") {
             paths.push(PathBuf::from(parse_scalar(value)));
         }
     }
@@ -205,12 +209,21 @@ fn render_managed_entries(entries: &[ManagedProjectOverride]) -> Vec<String> {
     let mut lines = Vec::new();
     for entry in entries {
         lines.push(format!("    {MANAGED_MARKER}"));
-        lines.push(format!("    - workspace_id: {}", yaml_scalar(&entry.workspace_id)));
-        lines.push(format!("      workspace: {}", yaml_scalar(&entry.workspace)));
+        lines.push(format!(
+            "    - workspace_id: {}",
+            yaml_scalar(&entry.workspace_id)
+        ));
+        lines.push(format!(
+            "      workspace: {}",
+            yaml_scalar(&entry.workspace)
+        ));
         lines.push(format!("      project: {}", yaml_scalar(&entry.project)));
         lines.push("      paths:".to_string());
         for path in &entry.paths {
-            lines.push(format!("        - {}", yaml_scalar(&path.display().to_string())));
+            lines.push(format!(
+                "        - {}",
+                yaml_scalar(&path.display().to_string())
+            ));
         }
     }
     lines
@@ -252,7 +265,8 @@ fn insert_lines(lines: &mut Vec<String>, index: usize, new_lines: Vec<String>) {
 fn find_top_level_key(lines: &[String], key: &str) -> Option<usize> {
     let prefix = format!("{key}:");
     lines.iter().position(|line| {
-        indent_len(line) == 0 && (line.trim() == prefix || line.trim().starts_with(&format!("{prefix} ")))
+        indent_len(line) == 0
+            && (line.trim() == prefix || line.trim().starts_with(&format!("{prefix} ")))
     })
 }
 
@@ -332,7 +346,9 @@ mod tests {
         let (text, mut entries) = remove_managed_entries(text);
         assert!(text.contains("# manual"));
         assert!(text.contains("/tmp/app"));
-        entries[0].paths.retain(|path| path != Path::new("/tmp/app"));
+        entries[0]
+            .paths
+            .retain(|path| path != Path::new("/tmp/app"));
         let text = append_managed_entries(&text, &entries).unwrap();
         assert!(text.contains("# manual"));
         assert!(text.contains("/tmp/app"));

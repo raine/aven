@@ -8,7 +8,7 @@ use crate::labels::list_labels_in_workspace;
 use crate::mutation::{cycle_priority, set_deleted, set_status};
 use crate::operations::{
     TaskDraft, TaskUpdate, add_note as add_note_operation, create_label_operation,
-    create_project_operation, create_task as create_task_operation,
+    create_project_operation, create_task as create_task_operation, delete_project_operation,
     init_config as init_config_operation, resolve_conflict, show_config as show_config_operation,
     show_config_paths as show_config_paths_operation,
     show_config_status as show_config_status_operation, task_conflicts,
@@ -656,6 +656,27 @@ impl TuiStore {
         Ok(format!("created project {}", outcome.project.key))
     }
 
+    pub(crate) async fn delete_project(&mut self, project: &str) -> Result<MutationMessage> {
+        self.activate_workspace();
+        let mut conn = self.pool.acquire().await?;
+        let outcome = delete_project_operation(&mut conn, project).await?;
+        drop(conn);
+
+        if self.active_view == SidebarTarget::Project(outcome.project.key.clone()) {
+            self.active_view = SidebarTarget::All;
+            self.apply_active_view_filters();
+        }
+        if self.filters.project.as_deref() == Some(outcome.project.key.as_str()) {
+            self.filters.project = None;
+        }
+        let selected = self.refresh(None).await?;
+        let mut message = format!("deleted project {}", outcome.project.key);
+        if outcome.config_mapping {
+            message.push_str("; config path mappings were left unchanged");
+        }
+        Ok(MutationMessage { message, selected })
+    }
+
     pub(crate) async fn create_label(&mut self, name: String) -> Result<String> {
         let name = name.trim().to_string();
         self.activate_workspace();
@@ -1101,6 +1122,95 @@ mod tests {
                 .iter()
                 .any(|entry| entry.label.contains("Mobile App"))
         );
+    }
+
+    #[tokio::test]
+    async fn delete_project_removes_unused_project() {
+        let mut store = test_store().await;
+        store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
+        let outcome = store.delete_project("mobile-app").await.unwrap();
+
+        assert_eq!(outcome.message, "deleted project mobile-app");
+        assert!(
+            !store
+                .projects
+                .iter()
+                .any(|project| project.key == "mobile-app")
+        );
+        assert!(!store.sidebar_entries.iter().any(|entry| {
+            entry.target == Some(SidebarTarget::Project("mobile-app".to_string()))
+        }));
+    }
+
+    #[tokio::test]
+    async fn delete_project_blocks_when_tasks_reference_project() {
+        let mut store = test_store().await;
+        store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        store
+            .create_task(
+                TaskDraft {
+                    title: "Keep project".to_string(),
+                    description: String::new(),
+                    project: Some("mobile-app".to_string()),
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = store
+            .tasks
+            .iter()
+            .position(|item| item.task.project_key == "mobile-app")
+            .unwrap();
+        store.update_deleted(Some(selected), true).await.unwrap();
+
+        let error = store.delete_project("mobile-app").await.unwrap_err();
+
+        assert!(error.to_string().contains("project-has-tasks"));
+        assert!(
+            store
+                .projects
+                .iter()
+                .any(|project| project.key == "mobile-app")
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_project_is_workspace_scoped() {
+        let mut store = test_store().await;
+        store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        let mut conn = store.pool.acquire().await.unwrap();
+        let other = crate::workspaces::create_workspace(&mut conn, "Client Work")
+            .await
+            .unwrap();
+        crate::projects::create_project_in_workspace(&mut conn, &other.id, "Mobile App")
+            .await
+            .unwrap();
+        drop(conn);
+
+        store.delete_project("mobile-app").await.unwrap();
+
+        let mut conn = store.pool.acquire().await.unwrap();
+        let other_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM projects WHERE workspace_id = ? AND key = 'mobile-app'",
+        )
+        .bind(&other.id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(other_count, 1);
     }
 
     #[tokio::test]

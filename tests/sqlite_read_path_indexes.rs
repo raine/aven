@@ -42,7 +42,8 @@ const READ_PATH_INDEXES: &[(&str, &str)] = &[
     ),
 ];
 
-const READ_PATH_INDEX_MIGRATION: &str = include_str!("../migrations/20260621000000_read_path_indexes.sql");
+const READ_PATH_INDEX_MIGRATION: &str =
+    include_str!("../migrations/20260621000000_read_path_indexes.sql");
 
 #[test]
 fn fresh_database_creates_read_path_indexes() {
@@ -166,11 +167,17 @@ fn old_schema_database_upgrade_creates_read_path_indexes() {
     });
 
     let shown = ok(env.aven(&db, ["show", "7KQ"]));
-    assert!(shown.contains("old task"), "expected old task after upgrade\n{shown}");
+    assert!(
+        shown.contains("old task"),
+        "expected old task after upgrade\n{shown}"
+    );
 
     let indexes = read_index_names(&db);
     for (index, _) in READ_PATH_INDEXES {
-        assert!(indexes.contains(*index), "missing index {index} after upgrade");
+        assert!(
+            indexes.contains(*index),
+            "missing index {index} after upgrade"
+        );
     }
 }
 
@@ -334,7 +341,10 @@ async fn assert_plan_uses(
     for bind in binds {
         query = query.bind(*bind);
     }
-    let rows = query.fetch_all(&mut *conn).await.expect("explain query plan");
+    let rows = query
+        .fetch_all(&mut *conn)
+        .await
+        .expect("explain query plan");
     let plan = rows
         .iter()
         .map(|row| row.get::<String, _>("detail"))
