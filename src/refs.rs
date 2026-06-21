@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Result, bail};
-use sqlx::{Row, SqliteConnection};
+use sqlx::SqliteConnection;
 
 use crate::render::quote;
 use crate::types::Task;
@@ -38,7 +38,7 @@ async fn get_task_scoped(
     .bind(workspace_id)
     .fetch_one(&mut *conn)
     .await?;
-    task_from_row(row)
+    crate::db::task_from_row(&row)
 }
 
 pub(crate) async fn resolve_task_ref(conn: &mut SqliteConnection, input: &str) -> Result<Task> {
@@ -79,7 +79,7 @@ async fn resolve_task_ref_scoped(
     .await?;
     let matches = rows
         .into_iter()
-        .map(task_from_row)
+        .map(|row| crate::db::task_from_row(&row))
         .collect::<Result<Vec<_>>>()?;
     if matches.is_empty() {
         bail!("error unknown-ref input={}", input);
@@ -107,22 +107,6 @@ async fn resolve_task_ref_scoped(
     }
     println!("hint \"retry with longer ref\"");
     bail!("ambiguous ref");
-}
-
-fn task_from_row(row: sqlx::sqlite::SqliteRow) -> Result<Task> {
-    Ok(Task {
-        id: row.try_get("id")?,
-        workspace_id: row.try_get("workspace_id")?,
-        title: row.try_get("title")?,
-        description: row.try_get("description")?,
-        project_key: row.try_get("project_key")?,
-        project_prefix: row.try_get("project_prefix")?,
-        status: row.try_get("status")?,
-        priority: row.try_get("priority")?,
-        created_at: row.try_get("created_at")?,
-        updated_at: row.try_get("updated_at")?,
-        deleted: row.try_get::<i64, _>("deleted")? != 0,
-    })
 }
 
 fn split_ref(input: &str) -> (Option<String>, String) {
