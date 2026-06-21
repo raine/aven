@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::choices::PRIORITIES;
+
 async fn test_store() -> TuiStore {
     let dir = tempfile::tempdir().unwrap();
     let pool = crate::db::open_db(&dir.path().join("test.db"))

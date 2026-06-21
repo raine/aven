@@ -1,4 +1,9 @@
+mod config;
+mod pickers;
+mod sidebar;
+mod sort;
 mod types;
+mod view;
 
 #[cfg(test)]
 mod tests;
@@ -10,16 +15,12 @@ use sqlx::SqlitePool;
 
 pub(crate) use types::{ConflictTarget, MutationMessage, SidebarEntry, SidebarTarget};
 
-use crate::choices::PRIORITIES;
 use crate::labels::list_labels_in_workspace;
 use crate::mutation::{cycle_priority, set_deleted, set_status};
 use crate::operations::{
     TaskDraft, TaskUpdate, add_note as add_note_operation, create_label_operation,
     create_project_operation, create_task as create_task_operation, delete_project_operation,
-    init_config as init_config_operation, resolve_conflict, show_config as show_config_operation,
-    show_config_paths as show_config_paths_operation,
-    show_config_status as show_config_status_operation, task_conflicts,
-    update_task as update_task_operation,
+    resolve_conflict, task_conflicts, update_task as update_task_operation,
 };
 use crate::projects::inferred_project_key_for_add_in_workspace;
 use crate::query::{
@@ -27,7 +28,6 @@ use crate::query::{
     list_project_items_in_workspace, list_task_items_in_workspace, sidebar_counts_in_workspace,
 };
 use crate::refs::display_ref;
-use crate::tui::overlay::PickerItem;
 use crate::undo::{UndoCommand, UndoPayload, task_field_value, task_snapshot};
 use crate::workspaces::{
     Workspace, active_workspace, find_workspace, list_workspaces, set_active_workspace,
@@ -75,17 +75,6 @@ impl TuiStore {
         selected.and_then(|index| self.tasks.get(index))
     }
 
-    pub(crate) fn sort_label(&self) -> &'static str {
-        match self.sort {
-            TaskSort::Queue => "queue",
-            TaskSort::Created => "created",
-            TaskSort::Updated => "updated",
-            TaskSort::Priority => "priority",
-            TaskSort::Project => "project",
-            TaskSort::Title => "title",
-        }
-    }
-
     fn activate_workspace(&self) {
         set_active_workspace(self.active_workspace.clone());
     }
@@ -108,50 +97,6 @@ impl TuiStore {
         self.rebuild_sidebar();
         self.last_refresh = Instant::now();
         Ok(self.restored_task_selection(selected_id))
-    }
-
-    pub(crate) fn sidebar_selection(&self) -> Option<usize> {
-        self.sidebar_entries
-            .iter()
-            .position(|entry| entry.target.as_ref() == Some(&self.active_view))
-            .or(Some(1))
-    }
-
-    pub(crate) async fn apply_sidebar_selection(&mut self, selected: Option<usize>) -> Result<()> {
-        let Some(target) = selected
-            .and_then(|index| self.sidebar_entries.get(index))
-            .and_then(|entry| entry.target.clone())
-        else {
-            return Ok(());
-        };
-        self.show_view(target).await?;
-        Ok(())
-    }
-
-    pub(crate) async fn show_view(&mut self, target: SidebarTarget) -> Result<Option<usize>> {
-        self.active_view = target;
-        self.apply_active_view_filters();
-        self.refresh(None).await
-    }
-
-    pub(crate) async fn clear_filters(&mut self) -> Result<Option<usize>> {
-        self.active_view = SidebarTarget::All;
-        self.filters = TaskFilters {
-            hide_done: true,
-            ..TaskFilters::default()
-        };
-        self.refresh(None).await
-    }
-
-    async fn apply_attribute_filter(
-        &mut self,
-        setter: impl FnOnce(&mut TaskFilters),
-    ) -> Result<Option<usize>> {
-        self.active_view = SidebarTarget::All;
-        self.filters.include_deleted = false;
-        self.filters.conflicts_only = false;
-        setter(&mut self.filters);
-        self.refresh(None).await
     }
 
     async fn record_undo(&self, summary: &str, payload: UndoPayload) -> Result<()> {
@@ -204,100 +149,6 @@ impl TuiStore {
             }));
         }
         Ok(None)
-    }
-
-    pub(crate) async fn filter_project(&mut self, project: String) -> Result<Option<usize>> {
-        self.apply_attribute_filter(|filters| filters.project = Some(project))
-            .await
-    }
-
-    pub(crate) async fn filter_label(&mut self, label: String) -> Result<Option<usize>> {
-        self.apply_attribute_filter(|filters| filters.label = Some(label))
-            .await
-    }
-
-    pub(crate) async fn filter_status(&mut self, status: String) -> Result<Option<usize>> {
-        self.apply_attribute_filter(|filters| filters.status = Some(status))
-            .await
-    }
-
-    pub(crate) async fn filter_priority(&mut self, priority: String) -> Result<Option<usize>> {
-        self.apply_attribute_filter(|filters| filters.priority = Some(priority))
-            .await
-    }
-
-    pub(crate) async fn toggle_deleted_filter(&mut self) -> Result<Option<usize>> {
-        self.active_view = SidebarTarget::All;
-        self.filters.include_deleted = !self.filters.include_deleted;
-        self.filters.conflicts_only = false;
-        self.refresh(None).await
-    }
-
-    fn apply_active_view_filters(&mut self) {
-        let search = self.filters.search.clone();
-        self.filters = TaskFilters {
-            search,
-            ..TaskFilters::default()
-        };
-        match &self.active_view {
-            SidebarTarget::All => self.filters.hide_done = true,
-            SidebarTarget::Inbox => self.filters.status = Some("inbox".to_string()),
-            SidebarTarget::Active => self.filters.status = Some("active".to_string()),
-            SidebarTarget::Backlog => self.filters.status = Some("backlog".to_string()),
-            SidebarTarget::Todo => self.filters.status = Some("todo".to_string()),
-            SidebarTarget::Done => self.filters.status = Some("done".to_string()),
-            SidebarTarget::Conflicts => self.filters.conflicts_only = true,
-            SidebarTarget::Project(project) => self.filters.project = Some(project.clone()),
-        }
-    }
-
-    pub(crate) fn status_picker_items(&self, selected: Option<&str>) -> Vec<PickerItem> {
-        let selected = selected.unwrap_or_default();
-        crate::choices::STATUSES
-            .iter()
-            .map(|status| PickerItem {
-                label: (*status).to_string(),
-                value: (*status).to_string(),
-                selected: *status == selected,
-            })
-            .collect()
-    }
-
-    pub(crate) async fn accept_search(&mut self, input: &str) -> Result<Option<usize>> {
-        self.filters.search = if input.trim().is_empty() {
-            None
-        } else {
-            Some(input.trim().to_string())
-        };
-        self.refresh(None).await
-    }
-
-    pub(crate) fn sort_direction_label(&self) -> &'static str {
-        match self.sort_direction {
-            SortDirection::Asc => "asc",
-            SortDirection::Desc => "desc",
-        }
-    }
-
-    pub(crate) fn cycle_sort(&mut self) {
-        self.sort = match self.sort {
-            TaskSort::Queue => TaskSort::Created,
-            TaskSort::Created => TaskSort::Updated,
-            TaskSort::Updated => TaskSort::Priority,
-            TaskSort::Priority => TaskSort::Project,
-            TaskSort::Project => TaskSort::Title,
-            TaskSort::Title => TaskSort::Queue,
-        };
-    }
-
-    pub(crate) async fn set_sort(&mut self, sort: TaskSort) -> Result<Option<usize>> {
-        self.sort = sort;
-        self.refresh(None).await
-    }
-
-    pub(crate) async fn reverse_sort(&mut self) -> Result<Option<usize>> {
-        self.sort_direction = self.sort_direction.toggled();
-        self.refresh(None).await
     }
 
     pub(crate) async fn update_status(
@@ -679,78 +530,10 @@ impl TuiStore {
         Ok(format!("created label {}", outcome.name))
     }
 
-    pub(crate) fn label_picker_items(&self) -> Vec<PickerItem> {
-        self.labels
-            .iter()
-            .map(|label| PickerItem {
-                label: label.clone(),
-                value: label.clone(),
-                selected: false,
-            })
-            .collect()
-    }
-
-    pub(crate) fn existing_project_picker_items(&self, selected: &str) -> Vec<PickerItem> {
-        self.projects
-            .iter()
-            .map(|project| project_picker_item(project, selected))
-            .collect()
-    }
-
     pub(crate) async fn inferred_add_project(&self) -> Result<Option<String>> {
         self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
         inferred_project_key_for_add_in_workspace(&mut conn, &self.active_workspace.id).await
-    }
-
-    pub(crate) fn project_picker_items(&self, selected: Option<&str>) -> Vec<PickerItem> {
-        let selected = selected.unwrap_or_default();
-        let inferred_label = self
-            .projects
-            .iter()
-            .find(|project| project.key == selected)
-            .map(|project| format!("Infer project ({})", project.key))
-            .unwrap_or_else(|| "Infer project".to_string());
-        let mut items = vec![PickerItem {
-            label: inferred_label,
-            value: String::new(),
-            selected: selected.is_empty(),
-        }];
-        items.extend(
-            self.projects
-                .iter()
-                .map(|project| project_picker_item(project, selected)),
-        );
-        items
-    }
-
-    pub(crate) fn priority_picker_items(&self, selected: &str) -> Vec<PickerItem> {
-        PRIORITIES
-            .iter()
-            .map(|priority| PickerItem {
-                label: (*priority).to_string(),
-                value: (*priority).to_string(),
-                selected: *priority == selected,
-            })
-            .collect()
-    }
-
-    pub(crate) fn workspace_picker_items(&self) -> Vec<PickerItem> {
-        let selected_key = self
-            .workspaces
-            .iter()
-            .find(|workspace| workspace.key != self.active_workspace.key)
-            .map(|workspace| workspace.key.as_str());
-        self.workspaces
-            .iter()
-            .filter(|workspace| workspace.key == self.active_workspace.key)
-            .chain(
-                self.workspaces
-                    .iter()
-                    .filter(|workspace| workspace.key != self.active_workspace.key),
-            )
-            .map(|workspace| workspace_picker_item(workspace, selected_key))
-            .collect()
     }
 
     pub(crate) async fn switch_workspace(
@@ -935,129 +718,5 @@ impl TuiStore {
             .map(|task| task.has_conflict)
             .collect::<Vec<_>>();
         Self::next_conflict_flag_index(&flags, selected, delta)
-    }
-
-    fn rebuild_sidebar(&mut self) {
-        let mut entries = vec![
-            SidebarEntry {
-                label: "Smart Views".to_string(),
-                count: 0,
-                target: None,
-                section: true,
-            },
-            SidebarEntry {
-                label: "Queue".to_string(),
-                count: self.counts.all,
-                target: Some(SidebarTarget::All),
-                section: false,
-            },
-            SidebarEntry {
-                label: "Inbox".to_string(),
-                count: self.counts.inbox,
-                target: Some(SidebarTarget::Inbox),
-                section: false,
-            },
-            SidebarEntry {
-                label: "Active".to_string(),
-                count: self.counts.active,
-                target: Some(SidebarTarget::Active),
-                section: false,
-            },
-            SidebarEntry {
-                label: "Backlog".to_string(),
-                count: self.counts.backlog,
-                target: Some(SidebarTarget::Backlog),
-                section: false,
-            },
-            SidebarEntry {
-                label: "Todo".to_string(),
-                count: self.counts.todo,
-                target: Some(SidebarTarget::Todo),
-                section: false,
-            },
-            SidebarEntry {
-                label: "Done".to_string(),
-                count: self.counts.done,
-                target: Some(SidebarTarget::Done),
-                section: false,
-            },
-            SidebarEntry {
-                label: "Conflicts".to_string(),
-                count: self.counts.conflicts,
-                target: Some(SidebarTarget::Conflicts),
-                section: false,
-            },
-            SidebarEntry {
-                label: String::new(),
-                count: 0,
-                target: None,
-                section: true,
-            },
-            SidebarEntry {
-                label: "Projects".to_string(),
-                count: 0,
-                target: None,
-                section: true,
-            },
-        ];
-        entries.extend(self.projects.iter().map(|project| SidebarEntry {
-            label: if project.inbox_count > 0 {
-                format!("{} {}*", project.prefix, project.name)
-            } else {
-                format!("{} {}", project.prefix, project.name)
-            },
-            count: project.open_count,
-            target: Some(SidebarTarget::Project(project.key.clone())),
-            section: false,
-        }));
-        self.sidebar_entries = entries;
-    }
-
-    fn restored_task_selection(&self, selected_id: Option<&str>) -> Option<usize> {
-        if self.tasks.is_empty() {
-            return None;
-        }
-        selected_id
-            .and_then(|id| self.tasks.iter().position(|item| item.task.id == id))
-            .or(Some(0))
-    }
-
-    pub(crate) fn config_status_lines(&self) -> Result<Vec<String>> {
-        Ok(show_config_status_operation()?.lines)
-    }
-
-    pub(crate) fn config_info_lines(&self) -> Result<Vec<String>> {
-        let outcome = show_config_operation()?;
-        let mut lines = vec![
-            format!("config path: {}", outcome.path.display()),
-            String::new(),
-        ];
-        lines.extend(outcome.text.lines().map(str::to_string));
-        Ok(lines)
-    }
-
-    pub(crate) fn config_path_lines(&self) -> Result<Vec<String>> {
-        Ok(show_config_paths_operation()?.lines)
-    }
-
-    pub(crate) fn init_config(&self) -> Result<String> {
-        let outcome = init_config_operation()?;
-        Ok(format!("created config {}", outcome.path.display()))
-    }
-}
-
-fn project_picker_item(project: &ProjectListItem, selected: &str) -> PickerItem {
-    PickerItem {
-        label: format!("{} {}", project.prefix, project.name),
-        value: project.key.clone(),
-        selected: project.key == selected,
-    }
-}
-
-fn workspace_picker_item(workspace: &Workspace, selected_key: Option<&str>) -> PickerItem {
-    PickerItem {
-        label: format!("{} ({})", workspace.name, workspace.key),
-        value: workspace.key.clone(),
-        selected: selected_key.is_some_and(|key| workspace.key == key),
     }
 }
