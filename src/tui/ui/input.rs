@@ -5,14 +5,18 @@ use ratatui::text::{Line, Span};
 
 use crate::tui::theme::{BG_ALT, FG};
 
-pub(super) fn input_line(prefix: &'static str, input: &str, cursor: usize) -> Line<'static> {
+pub(in crate::tui::ui) fn input_line(
+    prefix: &'static str,
+    input: &str,
+    cursor: usize,
+) -> Line<'static> {
     if prefix.is_empty() {
         return Line::from(input_cursor_spans(input, cursor, InputWidth::Full));
     }
     prefixed_input_line(Span::raw(prefix), input, cursor)
 }
 
-pub(super) fn prefixed_input_line(
+pub(in crate::tui::ui) fn prefixed_input_line(
     prefix: Span<'static>,
     input: &str,
     cursor: usize,
@@ -22,7 +26,11 @@ pub(super) fn prefixed_input_line(
     Line::from(spans)
 }
 
-pub(super) fn clipped_input_line(input: &str, cursor: usize, width: usize) -> Line<'static> {
+pub(in crate::tui::ui) fn clipped_input_line(
+    input: &str,
+    cursor: usize,
+    width: usize,
+) -> Line<'static> {
     Line::from(input_cursor_spans(
         input,
         cursor,
@@ -31,12 +39,12 @@ pub(super) fn clipped_input_line(input: &str, cursor: usize, width: usize) -> Li
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum InputWidth {
+pub(in crate::tui::ui) enum InputWidth {
     Full,
     Clipped(usize),
 }
 
-pub(super) fn input_cursor_spans(
+pub(in crate::tui::ui) fn input_cursor_spans(
     input: &str,
     cursor: usize,
     width: InputWidth,
@@ -76,7 +84,7 @@ pub(super) fn input_cursor_spans(
     ]
 }
 
-pub(super) fn cursor_cell(content: impl Into<Cow<'static, str>>) -> Span<'static> {
+pub(in crate::tui::ui) fn cursor_cell(content: impl Into<Cow<'static, str>>) -> Span<'static> {
     Span::styled(content, Style::new().fg(BG_ALT).bg(FG))
 }
 
