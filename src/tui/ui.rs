@@ -1308,11 +1308,11 @@ fn add_task_title_metadata(title: &str) -> Option<(&str, &str)> {
 fn add_task_title_input_line(input: &str, cursor: usize, width: usize) -> Line<'static> {
     if input.is_empty() {
         return Line::from(vec![
-            Span::styled("▌", Style::new().fg(FG)),
+            cursor_cell(" "),
             Span::styled("title", Style::new().fg(FG_DIM)),
         ]);
     }
-    Line::from(visible_text_input(input, cursor, width))
+    visible_text_input(input, cursor, width)
 }
 
 fn add_task_hint_line() -> Line<'static> {
@@ -1564,15 +1564,51 @@ fn render_text_panel(frame: &mut Frame, state: &TextPanelView) {
     render_overlay_paragraph(frame, area, &state.title, Text::from(lines), true);
 }
 
-fn visible_text_input(input: &str, cursor: usize, width: usize) -> String {
-    let cursor = cursor.min(input.len());
-    let (before, after) = input.split_at(cursor);
-    let value = format!("{before}▌{after}");
-    let len = value.chars().count();
-    if len <= width {
-        return value;
+fn visible_text_input(input: &str, cursor: usize, width: usize) -> Line<'static> {
+    let cursor = char_boundary_at_or_before(input, cursor);
+    let Some(cursor_char) = input[cursor..].chars().next() else {
+        let before = input
+            .chars()
+            .skip(
+                input
+                    .chars()
+                    .count()
+                    .saturating_sub(width.saturating_sub(1)),
+            )
+            .collect::<String>();
+        return Line::from(vec![Span::raw(before), cursor_cell(" ")]);
+    };
+    let cursor_end = cursor + cursor_char.len_utf8();
+    let before = &input[..cursor];
+    let after = &input[cursor_end..];
+    let value_width = input.chars().count().saturating_add(1).min(width);
+    let before_visible = value_width.saturating_sub(1 + after.chars().count());
+    let before = before
+        .chars()
+        .skip(before.chars().count().saturating_sub(before_visible))
+        .collect::<String>();
+    Line::from(vec![
+        Span::raw(before),
+        cursor_cell(cursor_char.to_string()),
+        Span::raw(
+            after
+                .chars()
+                .take(width.saturating_sub(1))
+                .collect::<String>(),
+        ),
+    ])
+}
+
+fn cursor_cell(content: impl Into<std::borrow::Cow<'static, str>>) -> Span<'static> {
+    Span::styled(content, Style::new().fg(BG_ALT).bg(FG))
+}
+
+fn char_boundary_at_or_before(input: &str, cursor: usize) -> usize {
+    let mut cursor = cursor.min(input.len());
+    while cursor > 0 && !input.is_char_boundary(cursor) {
+        cursor -= 1;
     }
-    value.chars().skip(len.saturating_sub(width)).collect()
+    cursor
 }
 
 fn insert_cursor(input: &str, cursor: usize) -> String {
@@ -2116,9 +2152,36 @@ mod tests {
     #[test]
     fn add_task_empty_title_input_shows_placeholder() {
         let line = add_task_title_input_line("", 0, 20);
-        assert_eq!(line.spans[0].content.as_ref(), "▌");
+        assert_eq!(line.spans[0].content.as_ref(), " ");
+        assert_eq!(line.spans[0].style.fg, Some(BG_ALT));
+        assert_eq!(line.spans[0].style.bg, Some(FG));
         assert_eq!(line.spans[1].content.as_ref(), "title");
         assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
+    }
+
+    #[test]
+    fn add_task_title_input_draws_cursor_as_cell() {
+        let line = add_task_title_input_line("abc", 1, 20);
+        assert_eq!(line.spans[0].content.as_ref(), "a");
+        assert_eq!(line.spans[1].content.as_ref(), "b");
+        assert_eq!(line.spans[1].style.fg, Some(BG_ALT));
+        assert_eq!(line.spans[1].style.bg, Some(FG));
+        assert_eq!(line.spans[2].content.as_ref(), "c");
+    }
+
+    #[test]
+    fn add_task_title_input_draws_end_cursor_as_blank_cell() {
+        let line = add_task_title_input_line("abc", 3, 20);
+        assert_eq!(line.spans[0].content.as_ref(), "abc");
+        assert_eq!(line.spans[1].content.as_ref(), " ");
+        assert_eq!(line.spans[1].style.bg, Some(FG));
+    }
+
+    #[test]
+    fn add_task_title_input_scrolls_to_cursor_cell() {
+        let line = add_task_title_input_line("abcdef", 5, 4);
+        assert_eq!(line.spans[0].content.as_ref(), "cde");
+        assert_eq!(line.spans[1].content.as_ref(), "f");
     }
 
     #[test]
