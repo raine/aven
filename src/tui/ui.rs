@@ -1218,7 +1218,7 @@ fn render_command(frame: &mut Frame, input: &str, cursor: usize) {
     let height = (matches.len().min(8) as u16).saturating_add(3);
     let area = centered(frame.area(), 72, height);
 
-    let mut lines = vec![Line::from(format!(":{}", insert_cursor(input, cursor)))];
+    let mut lines = vec![input_line(":", input, cursor)];
     for command in matches.into_iter().take(8) {
         lines.push(command_line(command));
     }
@@ -1228,13 +1228,7 @@ fn render_command(frame: &mut Frame, input: &str, cursor: usize) {
 
 fn render_search(frame: &mut Frame, input: &str, cursor: usize) {
     let area = centered(frame.area(), 54, 3);
-    render_overlay_paragraph(
-        frame,
-        area,
-        "Search",
-        format!("/{}", insert_cursor(input, cursor)),
-        false,
-    );
+    render_overlay_paragraph(frame, area, "Search", input_line("/", input, cursor), false);
 }
 
 fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
@@ -1288,10 +1282,9 @@ fn render_text_input(frame: &mut Frame, state: &TextInputView) {
     }
 
     let area = centered(frame.area(), 54, 5);
-    let input = insert_cursor(&state.input, state.cursor);
     let text = Text::from(vec![
         Line::from(Span::styled(&state.prompt, Style::new().fg(FG_DIM))),
-        Line::from(input),
+        input_line("", &state.input, state.cursor),
         Line::from(Span::styled(
             "Enter submit  Esc cancel",
             Style::new().fg(FG_MUTED),
@@ -1369,12 +1362,11 @@ fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
         .skip(start)
         .take(visible_rows)
     {
-        let text = if row_index == state.row {
-            insert_cursor(line, state.column)
+        if row_index == state.row {
+            lines.push(input_line("", line, state.column));
         } else {
-            line.clone()
-        };
-        lines.push(Line::from(text));
+            lines.push(Line::from(line.clone()));
+        }
     }
     lines.push(Line::from(Span::styled(
         "Ctrl+S submit  Esc cancel",
@@ -1400,10 +1392,7 @@ fn render_picker(frame: &mut Frame, state: &PickerView) {
         .unwrap_or(0);
     let start = selected_position.saturating_sub(viewport_rows.saturating_sub(1));
     let mut lines = vec![
-        Line::from(format!(
-            "/{}",
-            insert_cursor(&state.filter, state.filter_cursor)
-        )),
+        input_line("/", &state.filter, state.filter_cursor),
         Line::from(""),
     ];
     for index in state.visible_indices.iter().skip(start).take(viewport_rows) {
@@ -1473,10 +1462,11 @@ fn render_project_picker(frame: &mut Frame, state: &PickerView) {
         .unwrap_or(0);
     let start = selected_position.saturating_sub(viewport_rows.saturating_sub(1));
     let mut lines = vec![
-        Line::from(vec![
+        prefixed_input_line(
             Span::styled("/", Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
-            Span::raw(insert_cursor(&state.filter, state.filter_cursor)),
-        ]),
+            &state.filter,
+            state.filter_cursor,
+        ),
         Line::from(vec![
             Span::styled("  PREFIX ", Style::new().fg(FG_DIM).bg(BG_PANEL)),
             Span::styled("PROJECT", Style::new().fg(FG_DIM).bg(BG_PANEL)),
@@ -1564,7 +1554,21 @@ fn render_text_panel(frame: &mut Frame, state: &TextPanelView) {
     render_overlay_paragraph(frame, area, &state.title, Text::from(lines), true);
 }
 
+fn input_line(prefix: &'static str, input: &str, cursor: usize) -> Line<'static> {
+    prefixed_input_line(Span::raw(prefix), input, cursor)
+}
+
+fn prefixed_input_line(prefix: Span<'static>, input: &str, cursor: usize) -> Line<'static> {
+    let mut spans = vec![prefix];
+    spans.extend(input_cursor_spans(input, cursor, None));
+    Line::from(spans)
+}
+
 fn visible_text_input(input: &str, cursor: usize, width: usize) -> Line<'static> {
+    Line::from(input_cursor_spans(input, cursor, Some(width)))
+}
+
+fn input_cursor_spans(input: &str, cursor: usize, width: Option<usize>) -> Vec<Span<'static>> {
     let cursor = char_boundary_at_or_before(input, cursor);
     let Some(cursor_char) = input[cursor..].chars().next() else {
         let before = input
@@ -1573,21 +1577,22 @@ fn visible_text_input(input: &str, cursor: usize, width: usize) -> Line<'static>
                 input
                     .chars()
                     .count()
-                    .saturating_sub(width.saturating_sub(1)),
+                    .saturating_sub(width.unwrap_or(usize::MAX).saturating_sub(1)),
             )
             .collect::<String>();
-        return Line::from(vec![Span::raw(before), cursor_cell(" ")]);
+        return vec![Span::raw(before), cursor_cell(" ")];
     };
     let cursor_end = cursor + cursor_char.len_utf8();
     let before = &input[..cursor];
     let after = &input[cursor_end..];
+    let width = width.unwrap_or(usize::MAX);
     let value_width = input.chars().count().saturating_add(1).min(width);
     let before_visible = value_width.saturating_sub(1 + after.chars().count());
     let before = before
         .chars()
         .skip(before.chars().count().saturating_sub(before_visible))
         .collect::<String>();
-    Line::from(vec![
+    vec![
         Span::raw(before),
         cursor_cell(cursor_char.to_string()),
         Span::raw(
@@ -1596,7 +1601,7 @@ fn visible_text_input(input: &str, cursor: usize, width: usize) -> Line<'static>
                 .take(width.saturating_sub(1))
                 .collect::<String>(),
         ),
-    ])
+    ]
 }
 
 fn cursor_cell(content: impl Into<std::borrow::Cow<'static, str>>) -> Span<'static> {
@@ -1609,12 +1614,6 @@ fn char_boundary_at_or_before(input: &str, cursor: usize) -> usize {
         cursor -= 1;
     }
     cursor
-}
-
-fn insert_cursor(input: &str, cursor: usize) -> String {
-    let cursor = cursor.min(input.len());
-    let (before, after) = input.split_at(cursor);
-    format!("{before}▌{after}")
 }
 
 fn overlay_block(title: &str) -> Block<'_> {
