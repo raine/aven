@@ -1539,7 +1539,7 @@ fn project_picker_hint_line(submit_label: &'static str) -> Line<'static> {
 
 fn render_confirm(frame: &mut Frame, state: &ConfirmView) {
     let width = state.prompt.chars().count().saturating_add(4).max(32) as u16;
-    let area = centered(frame.area(), width, 6);
+    let area = centered(frame.area(), width, 5);
     let text = Text::from(vec![
         Line::from(state.prompt.as_str()),
         Line::from(""),
