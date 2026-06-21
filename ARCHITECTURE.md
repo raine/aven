@@ -167,6 +167,8 @@ The TUI is split into these layers:
 
 - `app.rs`: application state, event loop, focus, selection, action execution, refresh cadence, and the top-level coordination of extracted flows.
 - `app_edit.rs`: task edit overlay orchestration and direct edit mutation coordination for status, title, description, project, priority, labels, delete, restore, and undo.
+- `app_filters.rs`: filter, view, and workspace picker orchestration that applies store filter and view results back to App state.
+- `app_conflicts.rs`: conflict list, detail, variant resolution, and manual merge overlay orchestration while `conflict_flow.rs` owns conflict flow transitions.
 - `authoring.rs`: durable state and submit transitions for task and note authoring flows.
 - `conflict_flow.rs`: conflict resolution flow state, field selection transitions, confirmation submissions, and manual merge submissions.
 - `config_overlay.rs`: config status, config info, config path, and config init overlay construction.

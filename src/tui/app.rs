@@ -16,13 +16,9 @@ use crate::tui::authoring::{
 use crate::tui::config_overlay::{
     config_info_overlay, config_init_overlay, config_paths_overlay, config_status_overlay,
 };
-use crate::tui::conflict_flow::{
-    ConflictFlowState, ConflictResolutionChoice, ConflictSubmit, ConflictTransition,
-    truncate_value_preview,
-};
+use crate::tui::conflict_flow::{ConflictFlowState, ConflictResolutionChoice};
 use crate::tui::event::{
-    Action, CommandLookup, ShortcutLookup, ViewTarget, lookup_command, resolve_shortcut,
-    shortcut_label,
+    Action, CommandLookup, ShortcutLookup, lookup_command, resolve_shortcut, shortcut_label,
 };
 use crate::tui::navigation::{
     detail_action, detail_task_delta, handle_detail_overlay_key, next_index,
@@ -30,26 +26,14 @@ use crate::tui::navigation::{
 };
 use crate::tui::overlay::{
     ConfirmState, LineEdit, MultilineInputState, OverlayOutcome, OverlayRoute, OverlayState,
-    OverlaySubmit, OverlayView, PickerItem, PickerState, TextInputState, TextPanelState,
+    OverlaySubmit, OverlayView, PickerItem, PickerState, TextInputState,
 };
-use crate::tui::store::deleted_picker_items;
-use crate::tui::store::{ConflictTarget, SidebarTarget, TuiStore};
+use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::ui::{self, detail_help_scroll_cap, help_scroll_cap};
 
 const ADD_PROJECT_TITLE: &str = "Add project";
 const DELETE_PROJECT_TITLE: &str = "Delete project";
 const ADD_LABEL_TITLE: &str = "Add label";
-const FILTER_PROJECT_TITLE: &str = "Filter: project";
-const FILTER_LABEL_TITLE: &str = "Filter: label";
-const FILTER_STATUS_TITLE: &str = "Filter: status";
-const FILTER_PRIORITY_TITLE: &str = "Filter: priority";
-const VIEW_PROJECT_TITLE: &str = "Go: project";
-const SWITCH_WORKSPACE_TITLE: &str = "Switch workspace";
-const CONFLICT_FIELD_TITLE: &str = "Conflict: field";
-const CONFLICT_CONFIRM_LOCAL_TITLE: &str = "Resolve conflict: local";
-const CONFLICT_CONFIRM_REMOTE_TITLE: &str = "Resolve conflict: remote";
-const CONFLICT_MANUAL_TITLE: &str = "Resolve conflict: manual";
-const CONFLICT_DETAILS_TITLE: &str = "Conflict details";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TaskRefKind {
@@ -79,7 +63,7 @@ pub(crate) struct App {
     pub(super) pending_shortcut: Vec<KeyCode>,
     detail_context: bool,
     authoring: AuthoringState,
-    conflict_flow: ConflictFlowState,
+    pub(super) conflict_flow: ConflictFlowState,
     pending_delete_project: Option<String>,
 }
 
@@ -1082,7 +1066,11 @@ impl App {
         }));
     }
 
-    fn require_picker_value(&mut self, values: Vec<String>, message: &str) -> Option<String> {
+    pub(super) fn require_picker_value(
+        &mut self,
+        values: Vec<String>,
+        message: &str,
+    ) -> Option<String> {
         match values.first().cloned() {
             Some(value) => Some(value),
             None => {
@@ -1090,19 +1078,6 @@ impl App {
                 None
             }
         }
-    }
-
-    fn filter_value_or_reopen(
-        &mut self,
-        values: Vec<String>,
-        empty_message: &str,
-        reopen: fn(&mut Self),
-    ) -> Option<String> {
-        let Some(value) = self.require_picker_value(values, empty_message) else {
-            reopen(self);
-            return None;
-        };
-        Some(value)
     }
 
     fn begin_delete_project(&mut self) {
@@ -1164,196 +1139,6 @@ impl App {
         }
     }
 
-    fn begin_filter_project(&mut self) {
-        self.pending_shortcut.clear();
-        let selected = self.store.filters.project.as_deref().unwrap_or_default();
-        let items = self.store.existing_project_picker_items(selected);
-        self.open_picker_overlay(
-            OverlayRoute::FilterProject,
-            FILTER_PROJECT_TITLE,
-            items,
-            false,
-        );
-    }
-
-    fn begin_filter_label(&mut self) {
-        self.pending_shortcut.clear();
-        let mut items = self.store.label_picker_items();
-        for item in &mut items {
-            item.selected = Some(&item.value) == self.store.filters.label.as_ref();
-        }
-        self.open_picker_overlay(OverlayRoute::FilterLabel, FILTER_LABEL_TITLE, items, false);
-    }
-
-    fn begin_filter_status(&mut self) {
-        self.pending_shortcut.clear();
-        let items = self
-            .store
-            .status_picker_items(self.store.filters.status.as_deref());
-        self.open_picker_overlay(
-            OverlayRoute::FilterStatus,
-            FILTER_STATUS_TITLE,
-            items,
-            false,
-        );
-    }
-
-    fn begin_filter_priority(&mut self) {
-        self.pending_shortcut.clear();
-        let selected = self.store.filters.priority.as_deref().unwrap_or_default();
-        let items = self.store.priority_picker_items(selected);
-        self.open_picker_overlay(
-            OverlayRoute::FilterPriority,
-            FILTER_PRIORITY_TITLE,
-            items,
-            false,
-        );
-    }
-
-    async fn begin_switch_workspace(&mut self) -> Result<()> {
-        self.pending_shortcut.clear();
-        self.store.refresh(None).await?;
-        let items = self.store.workspace_picker_items();
-        self.open_picker_overlay(
-            OverlayRoute::SwitchWorkspace,
-            SWITCH_WORKSPACE_TITLE,
-            items,
-            false,
-        );
-        Ok(())
-    }
-
-    fn begin_view_project(&mut self) {
-        self.pending_shortcut.clear();
-        let selected = match &self.store.active_view {
-            SidebarTarget::Project(project) => project.as_str(),
-            _ => "",
-        };
-        let items = self.store.existing_project_picker_items(selected);
-        self.open_picker_overlay(OverlayRoute::ViewProject, VIEW_PROJECT_TITLE, items, false);
-    }
-
-    async fn show_view(&mut self, target: ViewTarget) -> Result<()> {
-        let sidebar_target = match target {
-            ViewTarget::All => SidebarTarget::All,
-            ViewTarget::Inbox => SidebarTarget::Inbox,
-            ViewTarget::Active => SidebarTarget::Active,
-            ViewTarget::Backlog => SidebarTarget::Backlog,
-            ViewTarget::Todo => SidebarTarget::Todo,
-            ViewTarget::Done => SidebarTarget::Done,
-            ViewTarget::Conflicts => SidebarTarget::Conflicts,
-            ViewTarget::Project => {
-                self.begin_view_project();
-                return Ok(());
-            }
-        };
-        let selected = self.store.show_view(sidebar_target).await?;
-        self.apply_filter_selection(selected);
-        self.set_message("view updated".to_string());
-        Ok(())
-    }
-
-    fn apply_filter_selection(&mut self, selected: Option<usize>) {
-        self.widgets.table.select(selected);
-        self.widgets.sidebar.select(self.store.sidebar_selection());
-        self.focus = Focus::Tasks;
-        self.overlay = None;
-    }
-
-    async fn clear_filters(&mut self) -> Result<()> {
-        let selected = self.store.clear_filters().await?;
-        self.apply_filter_selection(selected);
-        self.set_message("filters cleared".to_string());
-        Ok(())
-    }
-
-    async fn toggle_deleted_filter(&mut self) -> Result<()> {
-        let selected = self.store.toggle_deleted_filter().await?;
-        self.apply_filter_selection(selected);
-        let message = if self.store.filters.include_deleted {
-            "showing deleted tasks"
-        } else {
-            "hiding deleted tasks"
-        };
-        self.set_message(message.to_string());
-        Ok(())
-    }
-
-    async fn submit_filter_project(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(project) =
-            self.filter_value_or_reopen(values, "no matching project", Self::begin_filter_project)
-        else {
-            return Ok(());
-        };
-        let selected = self.store.filter_project(project).await?;
-        self.apply_filter_selection(selected);
-        self.set_message("project filter applied".to_string());
-        Ok(())
-    }
-
-    async fn submit_filter_label(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(label) =
-            self.filter_value_or_reopen(values, "no matching label", Self::begin_filter_label)
-        else {
-            return Ok(());
-        };
-        let selected = self.store.filter_label(label).await?;
-        self.apply_filter_selection(selected);
-        self.set_message("label filter applied".to_string());
-        Ok(())
-    }
-
-    async fn submit_filter_status(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(status) =
-            self.filter_value_or_reopen(values, "no matching status", Self::begin_filter_status)
-        else {
-            return Ok(());
-        };
-        let selected = self.store.filter_status(status).await?;
-        self.apply_filter_selection(selected);
-        self.set_message("status filter applied".to_string());
-        Ok(())
-    }
-
-    async fn submit_filter_priority(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(priority) = self.filter_value_or_reopen(
-            values,
-            "no matching priority",
-            Self::begin_filter_priority,
-        ) else {
-            return Ok(());
-        };
-        let selected = self.store.filter_priority(priority).await?;
-        self.apply_filter_selection(selected);
-        self.set_message("priority filter applied".to_string());
-        Ok(())
-    }
-
-    async fn submit_view_project(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(project) = self.require_picker_value(values, "no matching project") else {
-            self.begin_view_project();
-            return Ok(());
-        };
-        let selected = self
-            .store
-            .show_view(SidebarTarget::Project(project))
-            .await?;
-        self.apply_filter_selection(selected);
-        self.set_message("project view selected".to_string());
-        Ok(())
-    }
-
-    async fn submit_switch_workspace(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(workspace) = self.require_picker_value(values, "no matching workspace") else {
-            self.begin_switch_workspace().await?;
-            return Ok(());
-        };
-        let (message, selected) = self.store.switch_workspace(workspace).await?;
-        self.apply_filter_selection(selected);
-        self.set_message(message);
-        Ok(())
-    }
-
     pub(super) fn set_message(&mut self, message: String) {
         self.message = Some(message);
         self.message_at = Some(Instant::now());
@@ -1367,81 +1152,6 @@ impl App {
             self.message = None;
             self.message_at = None;
         }
-    }
-
-    async fn open_conflict_list(&mut self) -> Result<()> {
-        let selected = self.store.show_view(SidebarTarget::Conflicts).await?;
-        self.apply_filter_selection(selected);
-        let count = self
-            .store
-            .tasks
-            .iter()
-            .filter(|task| task.has_conflict)
-            .count();
-        let message = if count == 0 {
-            "no unresolved conflicts".to_string()
-        } else {
-            format!("showing {count} conflicted tasks")
-        };
-        self.set_message(message);
-        Ok(())
-    }
-
-    async fn conflict_targets_for_selected(&mut self) -> Result<Option<Vec<ConflictTarget>>> {
-        self.store
-            .conflict_targets(self.widgets.table.selected())
-            .await
-    }
-
-    async fn load_conflict_targets_for_resolution(
-        &mut self,
-    ) -> Result<Option<Vec<ConflictTarget>>> {
-        let Some(targets) = self.conflict_targets_for_selected().await? else {
-            self.set_message("no selected task for conflict resolution".to_string());
-            return Ok(None);
-        };
-        if targets.is_empty() {
-            self.set_message("selected task has no unresolved conflicts".to_string());
-            return Ok(None);
-        }
-        Ok(Some(targets))
-    }
-
-    async fn show_conflict_details(&mut self) -> Result<()> {
-        let Some(targets) = self.conflict_targets_for_selected().await? else {
-            self.set_message("no selected task for conflicts".to_string());
-            return Ok(());
-        };
-        if targets.is_empty() {
-            let display_ref = self
-                .store
-                .selected_task(self.widgets.table.selected())
-                .map(|item| item.display_ref.clone())
-                .unwrap_or_else(|| "task".to_string());
-            self.set_message(format!("{display_ref} has no unresolved conflicts"));
-            return Ok(());
-        }
-        let mut lines = Vec::new();
-        for target in &targets {
-            lines.push(format!("field={}", target.field));
-            lines.push(format!(
-                "local {}: {}",
-                target.variant_a, target.local_value
-            ));
-            lines.push(format!(
-                "remote {}: {}",
-                target.variant_b, target.remote_value
-            ));
-            lines.push(String::new());
-        }
-        if lines.last().is_some_and(String::is_empty) {
-            lines.pop();
-        }
-        self.overlay = Some(OverlayState::TextPanel(TextPanelState::new(
-            CONFLICT_DETAILS_TITLE,
-            lines,
-        )));
-        Ok(())
     }
 
     fn show_config_status(&mut self) -> Result<()> {
@@ -1495,207 +1205,6 @@ impl App {
         match self.store.delete_project(&project).await {
             Ok(result) => self.apply_mutation_result(result),
             Err(error) => self.set_message(format!("error: {error:#}")),
-        }
-        Ok(())
-    }
-
-    fn move_to_conflict(&mut self, delta: isize) {
-        let current = self.widgets.table.selected();
-        let Some(next) = self.store.next_conflict_index(current, delta) else {
-            self.set_message("no conflicts in current list".to_string());
-            return;
-        };
-        if current == Some(next) {
-            self.set_message("selected only conflict".to_string());
-            return;
-        }
-        self.widgets.table.select(Some(next));
-        self.focus = Focus::Tasks;
-        let message = if delta > 0 {
-            "selected next conflict"
-        } else {
-            "selected previous conflict"
-        };
-        self.set_message(message.to_string());
-    }
-
-    fn apply_conflict_transition(&mut self, transition: ConflictTransition) {
-        match transition {
-            ConflictTransition::PickField { targets } => self.open_conflict_field_picker(&targets),
-            ConflictTransition::Confirm { choice, target } => {
-                self.open_conflict_confirm(choice, target)
-            }
-            ConflictTransition::EditManual { target } => self.open_manual_conflict_editor(target),
-            ConflictTransition::Message(message) => self.set_message(message),
-        }
-    }
-
-    async fn begin_conflict_resolution(&mut self, choice: ConflictResolutionChoice) -> Result<()> {
-        let Some(targets) = self.load_conflict_targets_for_resolution().await? else {
-            return Ok(());
-        };
-        let transition = self.conflict_flow.begin_resolution(choice, targets);
-        self.apply_conflict_transition(transition);
-        Ok(())
-    }
-
-    async fn begin_manual_conflict_merge(&mut self) -> Result<()> {
-        let Some(targets) = self.load_conflict_targets_for_resolution().await? else {
-            return Ok(());
-        };
-        let transition = self.conflict_flow.begin_manual(targets);
-        self.apply_conflict_transition(transition);
-        Ok(())
-    }
-
-    fn open_conflict_field_picker(&mut self, targets: &[ConflictTarget]) {
-        let items = targets
-            .iter()
-            .map(|target| PickerItem {
-                label: target.field.clone(),
-                value: target.field.clone(),
-                selected: false,
-            })
-            .collect();
-        self.open_picker_overlay(
-            OverlayRoute::ConflictField,
-            CONFLICT_FIELD_TITLE,
-            items,
-            false,
-        );
-    }
-
-    async fn submit_conflict_field_picker(&mut self, values: Vec<String>) -> Result<()> {
-        let transition = self.conflict_flow.submit_field(values);
-        self.apply_conflict_transition(transition);
-        Ok(())
-    }
-
-    fn open_conflict_confirm(&mut self, choice: ConflictResolutionChoice, target: ConflictTarget) {
-        let value = match choice {
-            ConflictResolutionChoice::Local => target.local_value.as_str(),
-            ConflictResolutionChoice::Remote => target.remote_value.as_str(),
-        };
-        let title = match choice {
-            ConflictResolutionChoice::Local => CONFLICT_CONFIRM_LOCAL_TITLE,
-            ConflictResolutionChoice::Remote => CONFLICT_CONFIRM_REMOTE_TITLE,
-        };
-        self.overlay = Some(OverlayState::Confirm(ConfirmState {
-            route: OverlayRoute::ConflictConfirm,
-            title: title.to_string(),
-            prompt: format!(
-                "Resolve field={} with {}?",
-                target.field,
-                truncate_value_preview(value, 60)
-            ),
-        }));
-    }
-
-    async fn submit_confirmed_conflict_resolution(&mut self) -> Result<()> {
-        match self.conflict_flow.submit_confirmed_variant() {
-            ConflictSubmit::Resolve { target, value } => {
-                match self.store.resolve_conflict_value(target, value).await {
-                    Ok(result) => self.apply_mutation_result(result),
-                    Err(error) => self.set_message(format!("error: {error:#}")),
-                }
-            }
-            ConflictSubmit::Inactive { message } => self.set_message(message.to_string()),
-        }
-        Ok(())
-    }
-
-    fn open_manual_conflict_editor(&mut self, target: ConflictTarget) {
-        match target.field.as_str() {
-            "description" => {
-                self.overlay = Some(OverlayState::MultilineInput(
-                    MultilineInputState::from_value(
-                        OverlayRoute::ConflictManual,
-                        CONFLICT_MANUAL_TITLE,
-                        format!("manual value for field={}:", target.field),
-                        target.local_value.clone(),
-                    ),
-                ));
-            }
-            "title" => {
-                self.overlay = Some(OverlayState::TextInput(TextInputState::new(
-                    OverlayRoute::ConflictManual,
-                    CONFLICT_MANUAL_TITLE,
-                    format!("manual value for field={}:", target.field),
-                    target.local_value.clone(),
-                )));
-            }
-            "status" => {
-                let items = self
-                    .store
-                    .status_picker_items(Some(target.local_value.as_str()));
-                self.open_picker_overlay(
-                    OverlayRoute::ConflictManual,
-                    CONFLICT_MANUAL_TITLE,
-                    items,
-                    false,
-                );
-            }
-            "priority" => {
-                let items = self
-                    .store
-                    .priority_picker_items(target.local_value.as_str());
-                self.open_picker_overlay(
-                    OverlayRoute::ConflictManual,
-                    CONFLICT_MANUAL_TITLE,
-                    items,
-                    false,
-                );
-            }
-            "project" => {
-                let items = self
-                    .store
-                    .existing_project_picker_items(target.local_value.as_str());
-                self.open_picker_overlay(
-                    OverlayRoute::ConflictManual,
-                    CONFLICT_MANUAL_TITLE,
-                    items,
-                    false,
-                );
-            }
-            "deleted" => {
-                let items = deleted_picker_items(&target.local_value);
-                self.open_picker_overlay(
-                    OverlayRoute::ConflictManual,
-                    CONFLICT_MANUAL_TITLE,
-                    items,
-                    false,
-                );
-            }
-            _ => {
-                self.conflict_flow.clear();
-                self.overlay = None;
-                self.set_message(format!(
-                    "manual merge is not supported for field={}",
-                    target.field
-                ));
-            }
-        }
-    }
-
-    async fn submit_manual_conflict_value(&mut self, value: String) -> Result<()> {
-        match self.conflict_flow.submit_manual_value(value) {
-            ConflictSubmit::Resolve { target, value } => {
-                match self
-                    .store
-                    .resolve_conflict_value(target.clone(), value.clone())
-                    .await
-                {
-                    Ok(result) => self.apply_mutation_result(result),
-                    Err(error) => {
-                        self.set_message(format!("error: {error:#}"));
-                        let mut retry_target = target;
-                        retry_target.local_value = value;
-                        let transition = self.conflict_flow.retry_manual_edit(retry_target);
-                        self.apply_conflict_transition(transition);
-                    }
-                }
-            }
-            ConflictSubmit::Inactive { message } => self.set_message(message.to_string()),
         }
         Ok(())
     }

@@ -1,8 +1,10 @@
 use super::*;
+use crate::tui::app_conflicts::CONFLICT_CONFIRM_LOCAL_TITLE;
 use crate::tui::app_edit::{
     EDIT_DESCRIPTION_TITLE, EDIT_LABELS_TITLE, EDIT_PRIORITY_TITLE, EDIT_PROJECT_TITLE,
     EDIT_STATUS_TITLE, EDIT_TITLE_TITLE,
 };
+use crate::tui::app_filters::{FILTER_PROJECT_TITLE, SWITCH_WORKSPACE_TITLE};
 use crate::tui::config_overlay::{
     CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PATHS_TITLE, CONFIG_STATUS_TITLE,
 };
@@ -430,6 +432,47 @@ async fn filter_project_shortcut_opens_project_picker() {
         &app.overlay,
         Some(OverlayState::Picker(PickerState { title, .. })) if title == FILTER_PROJECT_TITLE
     ));
+}
+
+#[tokio::test]
+async fn filter_shortcuts_apply_label_status_priority_and_deleted() {
+    let mut app = test_app().await;
+    app.store.create_label("backend".to_string()).await.unwrap();
+    create_and_select_task(
+        &mut app,
+        TaskDraft {
+            title: "Filtered task".to_string(),
+            description: String::new(),
+            project: None,
+            priority: "urgent".to_string(),
+            labels: vec!["backend".to_string()],
+        },
+    )
+    .await;
+
+    app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+    type_chars(&mut app, "backend").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert_eq!(app.store.filters.label.as_deref(), Some("backend"));
+    assert_eq!(app.message.as_deref(), Some("label filter applied"));
+
+    app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
+    type_chars(&mut app, "inbox").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert_eq!(app.store.filters.status.as_deref(), Some("inbox"));
+
+    app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
+    type_chars(&mut app, "urgent").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert_eq!(app.store.filters.priority.as_deref(), Some("urgent"));
+
+    app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
+    assert!(app.store.filters.include_deleted);
+    assert_eq!(app.message.as_deref(), Some("showing deleted tasks"));
 }
 
 #[tokio::test]
