@@ -74,6 +74,7 @@ enum AuthoringFlow {
     AddNote {
         task_id: String,
         display_ref: String,
+        return_to_detail: bool,
     },
 }
 
@@ -779,9 +780,11 @@ impl App {
             self.set_message("no selected task for note".to_string());
             return;
         };
+        let return_to_detail = matches!(self.overlay, Some(OverlayState::Detail));
         self.authoring = Some(AuthoringFlow::AddNote {
             task_id: item.task.id.clone(),
             display_ref: item.display_ref.clone(),
+            return_to_detail,
         });
         self.overlay = Some(OverlayState::MultilineInput(MultilineInputState::blank(
             ADD_NOTE_TITLE,
@@ -843,33 +846,55 @@ impl App {
 
     async fn submit_add_note(&mut self, body: String) -> Result<()> {
         let trimmed = body.trim();
-        if trimmed.is_empty() {
-            self.authoring = None;
-            self.set_message("note body is required".to_string());
-            return Ok(());
-        }
         let Some(AuthoringFlow::AddNote {
             task_id,
             display_ref,
+            return_to_detail,
         }) = self.authoring.take()
         else {
             self.set_message("no selected task for note".to_string());
             return Ok(());
         };
+        if trimmed.is_empty() {
+            self.restore_detail_overlay(return_to_detail);
+            self.set_message("note body is required".to_string());
+            return Ok(());
+        }
         let note_id = self
             .store
             .add_note_to_task(&task_id, trimmed.to_string())
             .await?;
+        self.refresh().await?;
+        self.restore_detail_overlay(return_to_detail);
         self.set_message(format!("added note {note_id} to {display_ref}"));
         Ok(())
     }
 
     fn cancel_authoring_overlay(&mut self) {
         self.pending_shortcut.clear();
+        let return_to_detail = matches!(
+            self.authoring,
+            Some(AuthoringFlow::AddNote {
+                return_to_detail: true,
+                ..
+            })
+        );
         self.overlay = None;
         self.authoring = None;
         self.conflict_flow = None;
         self.pending_delete_project = None;
+        self.restore_detail_overlay(return_to_detail);
+    }
+
+    fn restore_detail_overlay(&mut self, return_to_detail: bool) {
+        if return_to_detail
+            && self
+                .store
+                .selected_task(self.widgets.table.selected())
+                .is_some()
+        {
+            self.overlay = Some(OverlayState::Detail);
+        }
     }
 
     fn accept_command_input(&mut self, input: &str) -> Option<Action> {
@@ -2589,6 +2614,52 @@ mod tests {
                 .as_deref()
                 .is_some_and(|message| message.starts_with("added note "))
         );
+    }
+
+    #[tokio::test]
+    async fn add_note_from_detail_returns_to_detail() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Note target")).await;
+        app.overlay = Some(OverlayState::Detail);
+
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state)) if state.title == ADD_NOTE_TITLE
+        ));
+
+        type_chars(&mut app, "Important detail").await;
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        assert!(matches!(app.overlay, Some(OverlayState::Detail)));
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].notes.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn cancel_add_note_from_detail_returns_to_detail() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Note target")).await;
+        app.overlay = Some(OverlayState::Detail);
+
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(matches!(app.overlay, Some(OverlayState::Detail)));
+        assert!(app.authoring.is_none());
+    }
+
+    #[tokio::test]
+    async fn add_note_blank_body_from_detail_returns_to_detail() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Note target")).await;
+        app.overlay = Some(OverlayState::Detail);
+
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        assert!(matches!(app.overlay, Some(OverlayState::Detail)));
+        assert_eq!(app.message.as_deref(), Some("note body is required"));
     }
 
     #[tokio::test]

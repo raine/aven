@@ -1095,8 +1095,10 @@ fn render_detail_content(frame: &mut Frame, item: &TaskListItem, area: Rect) {
     let content_height = lines.len().max(1);
     let start = 0;
     frame.render_widget(
-        Paragraph::new(Text::from(lines.into_iter().skip(start).collect::<Vec<_>>()))
-            .style(Style::new().fg(FG).bg(BG)),
+        Paragraph::new(Text::from(
+            lines.into_iter().skip(start).collect::<Vec<_>>(),
+        ))
+        .style(Style::new().fg(FG).bg(BG)),
         area,
     );
     if content_height > visible {
@@ -1137,7 +1139,10 @@ fn detail_content_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>>
     ));
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled("NOTES", Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "NOTES",
+            Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" (", Style::new().fg(FG_DIM)),
         Span::styled("n", keycap_style()),
         Span::styled(" add)", Style::new().fg(FG_DIM)),
@@ -1231,15 +1236,15 @@ fn detail_metadata_lines(item: &TaskListItem) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from(Span::styled(
             " TASK ",
-            Style::new()
-                .fg(BG)
-                .bg(BORDER)
-                .add_modifier(Modifier::BOLD),
+            Style::new().fg(BG).bg(BORDER).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         metadata_label("PROJECT"),
         Line::from(vec![
-            Span::styled("● ", Style::new().fg(theme::project_color(&item.task.project_key))),
+            Span::styled(
+                "● ",
+                Style::new().fg(theme::project_color(&item.task.project_key)),
+            ),
             Span::styled(
                 item.task.project_key.clone(),
                 Style::new().fg(FG).add_modifier(Modifier::BOLD),
@@ -1265,23 +1270,35 @@ fn detail_metadata_lines(item: &TaskListItem) -> Vec<Line<'static>> {
         )),
         Line::from(""),
         metadata_label("CREATED"),
-        Line::from(Span::styled(item.task.created_at.clone(), Style::new().fg(FG_MUTED))),
+        Line::from(Span::styled(
+            item.task.created_at.clone(),
+            Style::new().fg(FG_MUTED),
+        )),
         Line::from(""),
         metadata_label("UPDATED"),
-        Line::from(Span::styled(item.task.updated_at.clone(), Style::new().fg(FG_MUTED))),
+        Line::from(Span::styled(
+            item.task.updated_at.clone(),
+            Style::new().fg(FG_MUTED),
+        )),
     ];
     if item.has_conflict {
         lines.extend([
             Line::from(""),
             metadata_label("CONFLICTS"),
-            Line::from(Span::styled("yes", Style::new().fg(ORANGE).add_modifier(Modifier::BOLD))),
+            Line::from(Span::styled(
+                "yes",
+                Style::new().fg(ORANGE).add_modifier(Modifier::BOLD),
+            )),
         ]);
     }
     if item.task.deleted {
         lines.extend([
             Line::from(""),
             metadata_label("DELETED"),
-            Line::from(Span::styled("yes", Style::new().fg(RED).add_modifier(Modifier::BOLD))),
+            Line::from(Span::styled(
+                "yes",
+                Style::new().fg(RED).add_modifier(Modifier::BOLD),
+            )),
         ]);
     }
     lines
@@ -1593,6 +1610,11 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 }
 
 fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
+    if state.title == "Add note" {
+        render_add_note_input(frame, state);
+        return;
+    }
+
     let visible_rows = 10usize;
     let content_rows = state.lines.len().min(visible_rows).max(1);
     let height = (content_rows as u16).saturating_add(5).min(16);
@@ -1617,6 +1639,53 @@ fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
     }
     lines.push(multiline_hint_line());
     render_overlay_paragraph(frame, area, &state.title, Text::from(lines), true);
+}
+
+fn render_add_note_input(frame: &mut Frame, state: &MultilineInputView) {
+    let visible_rows = 8usize;
+    let content_rows = state.lines.len().min(visible_rows).max(1);
+    let height = (content_rows as u16).saturating_add(3).min(12);
+    let area = centered(frame.area(), 60, height);
+    let start = state.row.saturating_sub(visible_rows.saturating_sub(1));
+    let mut lines = Vec::new();
+    for (row_index, line) in state
+        .lines
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(visible_rows)
+    {
+        lines.push(add_note_input_line(
+            line,
+            if row_index == state.row {
+                Some(state.column)
+            } else {
+                None
+            },
+        ));
+    }
+    lines.push(multiline_hint_line());
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(overlay_block("Add note"))
+            .wrap(Wrap { trim: false })
+            .style(Style::new().fg(FG).bg(BG_ALT)),
+        area,
+    );
+}
+
+fn add_note_input_line(line: &str, cursor: Option<usize>) -> Line<'static> {
+    if line.is_empty() && cursor.is_some() {
+        return Line::from(vec![
+            Span::styled("▌", Style::new().fg(FG)),
+            Span::styled("note body", Style::new().fg(FG_DIM)),
+        ]);
+    }
+    Line::from(match cursor {
+        Some(cursor) => insert_cursor(line, cursor),
+        None => line.to_string(),
+    })
 }
 
 fn multiline_hint_line() -> Line<'static> {
@@ -2561,6 +2630,40 @@ mod tests {
             column: 4,
         }));
         assert!(rendered.contains("Description"));
+        assert!(rendered.contains("Ctrl+S submit"));
+    }
+
+    #[test]
+    fn add_note_empty_input_shows_placeholder() {
+        let line = add_note_input_line("", Some(0));
+        assert_eq!(line.spans[0].content.as_ref(), "▌");
+        assert_eq!(line.spans[1].content.as_ref(), "note body");
+        assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
+    }
+
+    #[test]
+    fn multiline_hint_styles_keys() {
+        let line = multiline_hint_line();
+        let keys = line
+            .spans
+            .iter()
+            .filter(|span| span.style.fg == Some(FG))
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>();
+        assert_eq!(keys, vec!["Ctrl+S", "Esc"]);
+    }
+
+    #[test]
+    fn add_note_overlay_uses_placeholder_and_key_styles() {
+        let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+            title: "Add note".to_string(),
+            prompt: "note body:".to_string(),
+            lines: vec![String::new()],
+            row: 0,
+            column: 0,
+        }));
+        assert!(rendered.contains("Add note"));
+        assert!(rendered.contains("note body"));
         assert!(rendered.contains("Ctrl+S submit"));
     }
 
