@@ -4,7 +4,7 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::db::task_from_row;
 use crate::labels::ensure_label_exists_in_workspace;
-use crate::projects::resolve_existing_project;
+use crate::projects::resolve_existing_project_in_workspace;
 use crate::queue::{QueueMeta, now_seconds, queue_meta, queue_order};
 use crate::refs::display_refs_for_tasks;
 use crate::task_enrichment::load_task_enrichment;
@@ -83,6 +83,17 @@ pub(crate) async fn list_task_items(
     sort: TaskSort,
     direction: SortDirection,
 ) -> Result<Vec<TaskListItem>> {
+    let workspace_id = active_workspace_id();
+    list_task_items_in_workspace(conn, &workspace_id, filters, sort, direction).await
+}
+
+pub(crate) async fn list_task_items_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    filters: TaskFilters,
+    sort: TaskSort,
+    direction: SortDirection,
+) -> Result<Vec<TaskListItem>> {
     if let Some(status) = filters.status.as_deref() {
         validate_choice("status", status, STATUSES)?;
     }
@@ -91,14 +102,17 @@ pub(crate) async fn list_task_items(
         validate_choice("priority", priority, PRIORITIES)?;
     }
 
-    let workspace_id = active_workspace_id();
     let project_key = if let Some(project) = filters.project.as_deref() {
-        Some(resolve_existing_project(conn, project).await?.key)
+        Some(
+            resolve_existing_project_in_workspace(conn, workspace_id, project)
+                .await?
+                .key,
+        )
     } else {
         None
     };
     let label = if let Some(label) = filters.label.as_deref() {
-        Some(ensure_label_exists_in_workspace(conn, &workspace_id, label).await?)
+        Some(ensure_label_exists_in_workspace(conn, workspace_id, label).await?)
     } else {
         None
     };
@@ -112,7 +126,7 @@ pub(crate) async fn list_task_items(
     let mut filters_added = 0;
     push_filter_prefix(&mut query, &mut filters_added);
     query.push("t.workspace_id = ");
-    query.push_bind(workspace_id.clone());
+    query.push_bind(workspace_id.to_string());
     if !filters.include_deleted {
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("t.deleted = 0");
@@ -195,10 +209,18 @@ pub(crate) async fn list_task_items(
     Ok(items)
 }
 
+#[allow(dead_code)]
 pub(crate) async fn list_project_items(
     conn: &mut SqliteConnection,
 ) -> Result<Vec<ProjectListItem>> {
     let workspace_id = active_workspace_id();
+    list_project_items_in_workspace(conn, &workspace_id).await
+}
+
+pub(crate) async fn list_project_items_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+) -> Result<Vec<ProjectListItem>> {
     let rows = sqlx::query(
         "SELECT p.key, p.name, p.prefix,
          COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status NOT IN ('done', 'canceled') THEN 1 ELSE 0 END), 0) AS open_count,
@@ -224,8 +246,16 @@ pub(crate) async fn list_project_items(
         .collect())
 }
 
+#[allow(dead_code)]
 pub(crate) async fn sidebar_counts(conn: &mut SqliteConnection) -> Result<SidebarCounts> {
     let workspace_id = active_workspace_id();
+    sidebar_counts_in_workspace(conn, &workspace_id).await
+}
+
+pub(crate) async fn sidebar_counts_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+) -> Result<SidebarCounts> {
     let row = sqlx::query(
         "SELECT
          COALESCE(SUM(CASE WHEN deleted = 0 AND status NOT IN ('done', 'canceled') THEN 1 ELSE 0 END), 0) AS all_count,
@@ -393,6 +423,110 @@ mod tests {
 
     fn listed_titles(items: &[TaskListItem]) -> Vec<&str> {
         items.iter().map(|item| item.task.title.as_str()).collect()
+    }
+
+    struct ActiveWorkspaceGuard {
+        previous: crate::workspaces::Workspace,
+    }
+
+    impl ActiveWorkspaceGuard {
+        fn set(workspace: crate::workspaces::Workspace) -> Self {
+            let previous = crate::workspaces::active_workspace();
+            crate::workspaces::set_active_workspace(workspace);
+            Self { previous }
+        }
+    }
+
+    impl Drop for ActiveWorkspaceGuard {
+        fn drop(&mut self) {
+            crate::workspaces::set_active_workspace(self.previous.clone());
+        }
+    }
+
+    async fn seed_workspace_project(
+        conn: &mut SqliteConnection,
+        workspace_id: &str,
+        key: &str,
+        name: &str,
+        prefix: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO projects(workspace_id, key, name, prefix, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 't', 't')",
+        )
+        .bind(workspace_id)
+        .bind(key)
+        .bind(name)
+        .bind(prefix)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_workspace_label(conn: &mut SqliteConnection, workspace_id: &str, name: &str) {
+        sqlx::query("INSERT INTO labels(workspace_id, name, created_at) VALUES (?, ?, 't')")
+            .bind(workspace_id)
+            .bind(name)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+    }
+
+    async fn seed_workspace_task(
+        conn: &mut SqliteConnection,
+        workspace_id: &str,
+        id: &str,
+        title: &str,
+        project_key: &str,
+        status: &str,
+        priority: &str,
+        created_at: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at)
+             VALUES (?, ?, ?, '', ?, ?, ?, ?, ?)",
+        )
+        .bind(workspace_id)
+        .bind(id)
+        .bind(title)
+        .bind(project_key)
+        .bind(status)
+        .bind(priority)
+        .bind(created_at)
+        .bind(created_at)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_workspace_task_label(
+        conn: &mut SqliteConnection,
+        workspace_id: &str,
+        task_id: &str,
+        label: &str,
+    ) {
+        sqlx::query("INSERT INTO task_labels(workspace_id, task_id, label) VALUES (?, ?, ?)")
+            .bind(workspace_id)
+            .bind(task_id)
+            .bind(label)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+    }
+
+    async fn seed_workspace_conflict(conn: &mut SqliteConnection, workspace_id: &str, task_id: &str) {
+        sqlx::query(
+            "INSERT INTO conflicts(workspace_id, task_id, field, base_version, local_value, remote_value,
+             local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
+             VALUES (?, ?, 'title', NULL, 'local', 'remote', NULL, ?, 'a', 'b', ?, 0)",
+        )
+        .bind(workspace_id)
+        .bind(task_id)
+        .bind(crate::ids::new_id())
+        .bind(crate::ids::now())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -639,5 +773,150 @@ mod tests {
         .unwrap();
 
         assert_eq!(listed_titles(&items), ["conflicted", "clean"]);
+    }
+
+    #[tokio::test]
+    async fn explicit_workspace_read_apis_scope_results() {
+        let (_temp, mut conn) = test_conn().await;
+        let alpha_id = crate::workspaces::DEFAULT_WORKSPACE_ID.to_string();
+        let beta = crate::workspaces::create_workspace(&mut conn, "Beta").await.unwrap();
+        seed_workspace_project(&mut conn, &alpha_id, "app", "Alpha", "ALP").await;
+        seed_workspace_project(&mut conn, &beta.id, "app", "Beta", "BET").await;
+        seed_workspace_label(&mut conn, &alpha_id, "shared").await;
+        seed_workspace_label(&mut conn, &beta.id, "shared").await;
+        seed_workspace_task(
+            &mut conn,
+            &alpha_id,
+            "ALPHA0000000001",
+            "alpha task",
+            "app",
+            "todo",
+            "high",
+            "001",
+        )
+        .await;
+        seed_workspace_task(
+            &mut conn,
+            &beta.id,
+            "BETA00000000001",
+            "beta task",
+            "app",
+            "done",
+            "low",
+            "002",
+        )
+        .await;
+        seed_workspace_task_label(&mut conn, &alpha_id, "ALPHA0000000001", "shared").await;
+        seed_workspace_task_label(&mut conn, &beta.id, "BETA00000000001", "shared").await;
+        seed_workspace_conflict(&mut conn, &alpha_id, "ALPHA0000000001").await;
+        let _guard = ActiveWorkspaceGuard::set(beta.clone());
+
+        let alpha_tasks = list_task_items_in_workspace(
+            &mut conn,
+            &alpha_id,
+            TaskFilters {
+                project: Some("app".to_string()),
+                label: Some("shared".to_string()),
+                conflicts_only: true,
+                ..TaskFilters::default()
+            },
+            TaskSort::Created,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed_titles(&alpha_tasks), ["alpha task"]);
+        assert_eq!(alpha_tasks[0].labels, vec!["shared".to_string()]);
+        assert!(alpha_tasks[0].has_conflict);
+
+        let beta_tasks = list_task_items_in_workspace(
+            &mut conn,
+            &beta.id,
+            TaskFilters::default(),
+            TaskSort::Created,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed_titles(&beta_tasks), ["beta task"]);
+
+        let alpha_projects = list_project_items_in_workspace(&mut conn, &alpha_id)
+            .await
+            .unwrap();
+        assert_eq!(alpha_projects.len(), 1);
+        assert_eq!(alpha_projects[0].key, "app");
+        assert_eq!(alpha_projects[0].open_count, 1);
+
+        let beta_projects = list_project_items_in_workspace(&mut conn, &beta.id)
+            .await
+            .unwrap();
+        assert_eq!(beta_projects.len(), 1);
+        assert_eq!(beta_projects[0].key, "app");
+        assert_eq!(beta_projects[0].open_count, 0);
+
+        let alpha_counts = sidebar_counts_in_workspace(&mut conn, &alpha_id).await.unwrap();
+        assert_eq!(alpha_counts.all, 1);
+        assert_eq!(alpha_counts.todo, 1);
+        assert_eq!(alpha_counts.conflicts, 1);
+        assert_eq!(alpha_counts.done, 0);
+
+        let beta_counts = sidebar_counts_in_workspace(&mut conn, &beta.id).await.unwrap();
+        assert_eq!(beta_counts.all, 0);
+        assert_eq!(beta_counts.done, 1);
+        assert_eq!(beta_counts.conflicts, 0);
+    }
+
+    #[tokio::test]
+    async fn active_workspace_wrappers_delegate_to_active_workspace() {
+        let (_temp, mut conn) = test_conn().await;
+        let alpha_id = crate::workspaces::DEFAULT_WORKSPACE_ID.to_string();
+        let beta = crate::workspaces::create_workspace(&mut conn, "Beta").await.unwrap();
+        seed_workspace_project(&mut conn, &alpha_id, "alpha", "Alpha", "ALP").await;
+        seed_workspace_project(&mut conn, &beta.id, "beta", "Beta", "BET").await;
+        seed_workspace_task(
+            &mut conn,
+            &alpha_id,
+            "ALPHA0000000001",
+            "alpha task",
+            "alpha",
+            "todo",
+            "none",
+            "001",
+        )
+        .await;
+        seed_workspace_task(
+            &mut conn,
+            &beta.id,
+            "BETA00000000001",
+            "beta task",
+            "beta",
+            "todo",
+            "none",
+            "002",
+        )
+        .await;
+        let _guard = ActiveWorkspaceGuard::set(beta.clone());
+
+        let wrapper_tasks = list_task_items(
+            &mut conn,
+            TaskFilters::default(),
+            TaskSort::Created,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+        let explicit_tasks = list_task_items_in_workspace(
+            &mut conn,
+            &beta.id,
+            TaskFilters::default(),
+            TaskSort::Created,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed_titles(&wrapper_tasks), listed_titles(&explicit_tasks));
+        assert_eq!(listed_titles(&wrapper_tasks), ["beta task"]);
+        assert_eq!(list_project_items(&mut conn).await.unwrap()[0].key, "beta");
+        assert_eq!(sidebar_counts(&mut conn).await.unwrap().all, 1);
     }
 }

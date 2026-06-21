@@ -58,6 +58,7 @@ pub(crate) async fn resolve_project_for_add_in_workspace(
     bail!("error project-required");
 }
 
+#[allow(dead_code)]
 pub(crate) async fn resolve_existing_project(
     conn: &mut SqliteConnection,
     project: &str,
