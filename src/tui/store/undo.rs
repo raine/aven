@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::tui::store::MutationMessage;
-use crate::undo::UndoPayload;
+use crate::undo::{UndoCommand, UndoPayload};
 
 use super::TuiStore;
 
@@ -11,6 +11,23 @@ impl TuiStore {
         let mut conn = self.pool.acquire().await?;
         crate::undo::record_tui_undo(&mut conn, &workspace_id, summary, payload).await?;
         Ok(())
+    }
+
+    pub(super) async fn record_undo_commands(
+        &self,
+        summary: &str,
+        commands: Vec<UndoCommand>,
+    ) -> Result<()> {
+        self.record_undo(summary, UndoPayload { commands }).await
+    }
+
+    pub(super) async fn refresh_task_message(
+        &mut self,
+        task_id: &str,
+        message: impl Into<String>,
+    ) -> Result<MutationMessage> {
+        let selected = self.refresh(Some(task_id)).await?;
+        Ok(MutationMessage::new(message, selected))
     }
 
     pub(crate) async fn undo_last(&mut self) -> Result<Option<MutationMessage>> {
@@ -28,9 +45,9 @@ impl TuiStore {
         }
 
         let selected = self.refresh(outcome.task_id.as_deref()).await?;
-        Ok(Some(MutationMessage {
-            message: format!("undid {}", outcome.summary),
+        Ok(Some(MutationMessage::new(
+            format!("undid {}", outcome.summary),
             selected,
-        }))
+        )))
     }
 }

@@ -365,20 +365,33 @@ async fn update_task_fields_refresh_selected_task() {
         .await
         .unwrap();
     let selected = selected.unwrap();
+    let display_ref = store.tasks[selected].display_ref.clone();
 
-    store
+    let title = store
         .update_title(Some(selected), "New".to_string())
         .await
+        .unwrap()
         .unwrap();
-    store
+    let description = store
         .update_description(Some(selected), "new body".to_string())
         .await
+        .unwrap()
         .unwrap();
-    store
+    let priority = store
         .set_exact_priority(Some(selected), "urgent")
         .await
+        .unwrap()
         .unwrap();
 
+    assert_eq!(title.message, format!("set {display_ref} title"));
+    assert_eq!(
+        description.message,
+        format!("set {display_ref} description")
+    );
+    assert_eq!(
+        priority.message,
+        format!("set {display_ref} priority=urgent")
+    );
     let task = &store.tasks[selected].task;
     assert_eq!(task.title, "New");
     assert_eq!(task.description, "new body");
@@ -491,12 +504,15 @@ async fn update_labels_adds_and_removes_labels() {
         .await
         .unwrap();
     let selected = selected.unwrap();
+    let display_ref = store.tasks[selected].display_ref.clone();
 
-    store
+    let outcome = store
         .update_labels(Some(selected), vec!["docs".to_string()])
         .await
+        .unwrap()
         .unwrap();
 
+    assert_eq!(outcome.message, format!("set {display_ref} labels"));
     assert_eq!(store.tasks[selected].labels, vec!["docs".to_string()]);
 }
 
@@ -580,11 +596,11 @@ async fn resolve_conflict_value_updates_task_and_clears_conflict() {
     drop(conn);
     store.refresh(Some(&task_id)).await.unwrap();
 
-    store
+    let outcome = store
         .resolve_conflict_value(
             ConflictTarget {
                 task_id,
-                display_ref,
+                display_ref: display_ref.clone(),
                 field: "title".to_string(),
                 variant_a: "a".to_string(),
                 local_value: "local title".to_string(),
@@ -596,6 +612,10 @@ async fn resolve_conflict_value_updates_task_and_clears_conflict() {
         .await
         .unwrap();
 
+    assert_eq!(
+        outcome.message,
+        format!("resolved {display_ref} conflict field=title")
+    );
     assert_eq!(store.tasks[selected].task.title, "local title");
     assert!(!store.tasks[selected].has_conflict);
 }
@@ -974,6 +994,7 @@ async fn undo_returns_none_when_empty() {
 async fn undo_title_edit_survives_store_restart() {
     let (_dir, pool, mut store) = test_store_with_pool().await;
     let (task_id, selected) = create_selected_task(&mut store, "Before").await;
+    let display_ref = store.tasks[selected].display_ref.clone();
     store
         .update_title(Some(selected), "After".to_string())
         .await
@@ -982,7 +1003,7 @@ async fn undo_title_edit_survives_store_restart() {
 
     let mut restarted = TuiStore::new(pool).await.unwrap();
     let outcome = restarted.undo_last().await.unwrap().unwrap();
-    assert!(outcome.message.contains("undid"));
+    assert_eq!(outcome.message, format!("undid title {display_ref}"));
     let index = restarted
         .tasks
         .iter()
@@ -1024,7 +1045,16 @@ async fn undo_guard_blocks_stale_task_field() {
 async fn undo_delete_restores_task() {
     let mut store = test_store().await;
     let (task_id, selected) = create_selected_task(&mut store, "Keep").await;
-    store.update_deleted(Some(selected), true).await.unwrap();
+    let display_ref = store.tasks[selected].display_ref.clone();
+    let delete = store
+        .update_deleted(Some(selected), true)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        delete.message,
+        format!("deleted {display_ref} (showing deleted)")
+    );
     store.filters.include_deleted = true;
     store.refresh(Some(&task_id)).await.unwrap();
     let index = store
@@ -1161,7 +1191,13 @@ async fn undo_restore_redeletes_task() {
         .iter()
         .position(|item| item.task.id == task_id)
         .unwrap();
-    store.update_deleted(Some(index), false).await.unwrap();
+    let display_ref = store.tasks[index].display_ref.clone();
+    let restore = store
+        .update_deleted(Some(index), false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(restore.message, format!("restored {display_ref}"));
 
     store.undo_last().await.unwrap();
     store.filters.include_deleted = true;

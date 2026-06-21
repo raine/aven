@@ -4,7 +4,7 @@ use crate::operations::{
     TaskDraft, add_note as add_note_operation, create_task as create_task_operation,
 };
 use crate::refs::display_ref;
-use crate::undo::{UndoCommand, UndoPayload, task_snapshot};
+use crate::undo::{UndoCommand, task_snapshot};
 
 use super::TuiStore;
 
@@ -25,15 +25,13 @@ impl TuiStore {
         let workspace_id = self.active_workspace.id.clone();
         let snapshot = task_snapshot(&mut conn, &workspace_id, &task_id).await?;
         drop(conn);
-        self.record_undo(
+        self.record_undo_commands(
             &format!("task {task_id}"),
-            UndoPayload {
-                commands: vec![UndoCommand::DeleteCreatedTask {
-                    task_id: task_id.clone(),
-                    create_change_id: outcome.create_change_id,
-                    expected: snapshot,
-                }],
-            },
+            vec![UndoCommand::DeleteCreatedTask {
+                task_id: task_id.clone(),
+                create_change_id: outcome.create_change_id,
+                expected: snapshot,
+            }],
         )
         .await?;
 
@@ -64,15 +62,13 @@ impl TuiStore {
         .fetch_one(&mut *conn)
         .await?;
         drop(conn);
-        self.record_undo(
+        self.record_undo_commands(
             &format!("note {}", outcome.note_id),
-            UndoPayload {
-                commands: vec![UndoCommand::DeleteCreatedNote {
-                    task_id: task_id.to_string(),
-                    note_id: outcome.note_id.clone(),
-                    note_add_change_id: note_change_id,
-                }],
-            },
+            vec![UndoCommand::DeleteCreatedNote {
+                task_id: task_id.to_string(),
+                note_id: outcome.note_id.clone(),
+                note_add_change_id: note_change_id,
+            }],
         )
         .await?;
         Ok(outcome.note_id)

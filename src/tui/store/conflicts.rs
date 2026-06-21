@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::operations::{resolve_conflict, task_conflicts};
 use crate::tui::store::{ConflictTarget, MutationMessage};
-use crate::undo::{UndoCommand, UndoPayload, task_field_value};
+use crate::undo::{UndoCommand, task_field_value};
 
 use super::TuiStore;
 
@@ -48,27 +48,25 @@ impl TuiStore {
                 .await?;
         let outcome = resolve_conflict(&mut conn, &target.task_id, &target.field, &value).await?;
         drop(conn);
-        self.record_undo(
+        self.record_undo_commands(
             &format!("conflict {} {}", target.display_ref, target.field),
-            UndoPayload {
-                commands: vec![UndoCommand::RestoreConflictResolution {
-                    task_id: target.task_id.clone(),
-                    field: target.field.clone(),
-                    before,
-                    after: value,
-                    conflict_id,
-                }],
-            },
+            vec![UndoCommand::RestoreConflictResolution {
+                task_id: target.task_id.clone(),
+                field: target.field.clone(),
+                before,
+                after: value,
+                conflict_id,
+            }],
         )
         .await?;
-        let selected = self.refresh(Some(&outcome.task.id)).await?;
-        Ok(MutationMessage {
-            message: format!(
+        self.refresh_task_message(
+            &outcome.task.id,
+            format!(
                 "resolved {} conflict field={}",
                 target.display_ref, outcome.field
             ),
-            selected,
-        })
+        )
+        .await
     }
 
     pub(crate) fn next_conflict_flag_index(

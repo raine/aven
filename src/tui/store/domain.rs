@@ -6,7 +6,7 @@ use crate::operations::{
 };
 use crate::projects::inferred_project_key_for_add_in_workspace;
 use crate::tui::store::{MutationMessage, SidebarTarget};
-use crate::undo::{UndoCommand, UndoPayload};
+use crate::undo::UndoCommand;
 
 use super::TuiStore;
 
@@ -27,11 +27,8 @@ impl TuiStore {
         } else {
             Vec::new()
         };
-        self.record_undo(
-            &format!("project {}", outcome.project.key),
-            UndoPayload { commands },
-        )
-        .await?;
+        self.record_undo_commands(&format!("project {}", outcome.project.key), commands)
+            .await?;
         self.refresh(None).await?;
         Ok(format!("created project {}", outcome.project.key))
     }
@@ -54,7 +51,7 @@ impl TuiStore {
         if outcome.config_mapping {
             message.push_str("; config path mappings were left unchanged");
         }
-        Ok(MutationMessage { message, selected })
+        Ok(MutationMessage::new(message, selected))
     }
 
     pub(crate) async fn create_label(&mut self, name: String) -> Result<String> {
@@ -71,7 +68,7 @@ impl TuiStore {
         } else {
             Vec::new()
         };
-        self.record_undo(&format!("label {}", outcome.name), UndoPayload { commands })
+        self.record_undo_commands(&format!("label {}", outcome.name), commands)
             .await?;
         let mut conn = self.pool.acquire().await?;
         self.labels = list_labels_in_workspace(&mut conn, &self.active_workspace.id, None).await?;

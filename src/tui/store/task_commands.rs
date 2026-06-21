@@ -4,7 +4,7 @@ use crate::mutation::{cycle_priority, set_deleted, set_status};
 use crate::operations::{TaskUpdate, update_task as update_task_operation};
 use crate::query::TaskListItem;
 use crate::tui::store::MutationMessage;
-use crate::undo::{UndoCommand, UndoPayload};
+use crate::undo::UndoCommand;
 
 use super::TuiStore;
 
@@ -23,11 +23,10 @@ impl TuiStore {
             let mut conn = self.pool.acquire().await?;
             update_task_operation(&mut conn, &item.task.id, update).await?;
             drop(conn);
-            let selected = self.refresh(Some(&item.task.id)).await?;
-            return Ok(Some(MutationMessage {
-                message: message(&item),
-                selected,
-            }));
+            return Ok(Some(
+                self.refresh_task_message(&item.task.id, message(&item))
+                    .await?,
+            ));
         }
         Ok(None)
     }
@@ -43,23 +42,23 @@ impl TuiStore {
             let mut conn = self.pool.acquire().await?;
             set_status(&mut conn, &item.task, status).await?;
             drop(conn);
-            self.record_undo(
+            self.record_undo_commands(
                 &format!("status {}", item.display_ref),
-                UndoPayload {
-                    commands: vec![UndoCommand::SetTaskField {
-                        task_id: item.task.id.clone(),
-                        field: "status".to_string(),
-                        before,
-                        after: status.to_string(),
-                    }],
-                },
+                vec![UndoCommand::SetTaskField {
+                    task_id: item.task.id.clone(),
+                    field: "status".to_string(),
+                    before,
+                    after: status.to_string(),
+                }],
             )
             .await?;
-            let selected = self.refresh(Some(&item.task.id)).await?;
-            return Ok(Some(MutationMessage {
-                message: format!("set {} status={status}", item.display_ref),
-                selected,
-            }));
+            return Ok(Some(
+                self.refresh_task_message(
+                    &item.task.id,
+                    format!("set {} status={status}", item.display_ref),
+                )
+                .await?,
+            ));
         }
         Ok(None)
     }
@@ -75,23 +74,23 @@ impl TuiStore {
             let mut conn = self.pool.acquire().await?;
             let task = cycle_priority(&mut conn, &item.task, reverse).await?;
             drop(conn);
-            self.record_undo(
+            self.record_undo_commands(
                 &format!("priority {}", item.display_ref),
-                UndoPayload {
-                    commands: vec![UndoCommand::SetTaskField {
-                        task_id: item.task.id.clone(),
-                        field: "priority".to_string(),
-                        before,
-                        after: task.priority.clone(),
-                    }],
-                },
+                vec![UndoCommand::SetTaskField {
+                    task_id: item.task.id.clone(),
+                    field: "priority".to_string(),
+                    before,
+                    after: task.priority.clone(),
+                }],
             )
             .await?;
-            let selected = self.refresh(Some(&item.task.id)).await?;
-            return Ok(Some(MutationMessage {
-                message: format!("set {} priority={}", item.display_ref, task.priority),
-                selected,
-            }));
+            return Ok(Some(
+                self.refresh_task_message(
+                    &item.task.id,
+                    format!("set {} priority={}", item.display_ref, task.priority),
+                )
+                .await?,
+            ));
         }
         Ok(None)
     }
@@ -116,16 +115,14 @@ impl TuiStore {
             )
             .await?;
         if outcome.is_some() {
-            self.record_undo(
+            self.record_undo_commands(
                 &format!("priority {}", item.display_ref),
-                UndoPayload {
-                    commands: vec![UndoCommand::SetTaskField {
-                        task_id: item.task.id.clone(),
-                        field: "priority".to_string(),
-                        before,
-                        after: priority.to_string(),
-                    }],
-                },
+                vec![UndoCommand::SetTaskField {
+                    task_id: item.task.id.clone(),
+                    field: "priority".to_string(),
+                    before,
+                    after: priority.to_string(),
+                }],
             )
             .await?;
         }
@@ -153,16 +150,14 @@ impl TuiStore {
             )
             .await?;
         if outcome.is_some() {
-            self.record_undo(
+            self.record_undo_commands(
                 &format!("title {}", item.display_ref),
-                UndoPayload {
-                    commands: vec![UndoCommand::SetTaskField {
-                        task_id: item.task.id.clone(),
-                        field: "title".to_string(),
-                        before,
-                        after: title,
-                    }],
-                },
+                vec![UndoCommand::SetTaskField {
+                    task_id: item.task.id.clone(),
+                    field: "title".to_string(),
+                    before,
+                    after: title,
+                }],
             )
             .await?;
         }
@@ -189,16 +184,14 @@ impl TuiStore {
             )
             .await?;
         if outcome.is_some() {
-            self.record_undo(
+            self.record_undo_commands(
                 &format!("description {}", item.display_ref),
-                UndoPayload {
-                    commands: vec![UndoCommand::SetTaskField {
-                        task_id: item.task.id.clone(),
-                        field: "description".to_string(),
-                        before,
-                        after: description,
-                    }],
-                },
+                vec![UndoCommand::SetTaskField {
+                    task_id: item.task.id.clone(),
+                    field: "description".to_string(),
+                    before,
+                    after: description,
+                }],
             )
             .await?;
         }
@@ -226,23 +219,20 @@ impl TuiStore {
         )
         .await?;
         drop(conn);
-        self.record_undo(
+        self.record_undo_commands(
             &format!("project {}", item.display_ref),
-            UndoPayload {
-                commands: vec![UndoCommand::SetTaskField {
-                    task_id: item.task.id.clone(),
-                    field: "project".to_string(),
-                    before,
-                    after: outcome.task.project_key.clone(),
-                }],
-            },
+            vec![UndoCommand::SetTaskField {
+                task_id: item.task.id.clone(),
+                field: "project".to_string(),
+                before,
+                after: outcome.task.project_key.clone(),
+            }],
         )
         .await?;
-        let selected = self.refresh(Some(&item.task.id)).await?;
-        Ok(Some(MutationMessage {
-            message: format!("set {} project", item.display_ref),
-            selected,
-        }))
+        Ok(Some(
+            self.refresh_task_message(&item.task.id, format!("set {} project", item.display_ref))
+                .await?,
+        ))
     }
 
     pub(crate) async fn update_labels(
@@ -276,15 +266,13 @@ impl TuiStore {
             )
             .await?;
         if outcome.is_some() {
-            self.record_undo(
+            self.record_undo_commands(
                 &format!("labels {}", item.display_ref),
-                UndoPayload {
-                    commands: vec![UndoCommand::SetTaskLabels {
-                        task_id: item.task.id.clone(),
-                        before: item.labels.clone(),
-                        after: selected_labels,
-                    }],
-                },
+                vec![UndoCommand::SetTaskLabels {
+                    task_id: item.task.id.clone(),
+                    before: item.labels.clone(),
+                    after: selected_labels,
+                }],
             )
             .await?;
         }
@@ -298,14 +286,14 @@ impl TuiStore {
     ) -> Result<Option<MutationMessage>> {
         if let Some(item) = self.selected_task(index).cloned() {
             if item.task.deleted == deleted {
-                return Ok(Some(MutationMessage {
-                    message: if deleted {
+                return Ok(Some(MutationMessage::new(
+                    if deleted {
                         format!("already deleted {}", item.display_ref)
                     } else {
                         format!("already restored {}", item.display_ref)
                     },
-                    selected: index,
-                }));
+                    index,
+                )));
             }
 
             let before = if item.task.deleted { "1" } else { "0" };
@@ -318,28 +306,28 @@ impl TuiStore {
             } else {
                 format!("restore {}", item.display_ref)
             };
-            self.record_undo(
+            self.record_undo_commands(
                 &summary,
-                UndoPayload {
-                    commands: vec![UndoCommand::SetTaskField {
-                        task_id: item.task.id.clone(),
-                        field: "deleted".to_string(),
-                        before: before.to_string(),
-                        after: if deleted { "1" } else { "0" }.to_string(),
-                    }],
-                },
+                vec![UndoCommand::SetTaskField {
+                    task_id: item.task.id.clone(),
+                    field: "deleted".to_string(),
+                    before: before.to_string(),
+                    after: if deleted { "1" } else { "0" }.to_string(),
+                }],
             )
             .await?;
             self.filters.include_deleted = deleted;
-            let selected = self.refresh(Some(&item.task.id)).await?;
-            return Ok(Some(MutationMessage {
-                message: if deleted {
-                    format!("deleted {} (showing deleted)", item.display_ref)
-                } else {
-                    format!("restored {}", item.display_ref)
-                },
-                selected,
-            }));
+            return Ok(Some(
+                self.refresh_task_message(
+                    &item.task.id,
+                    if deleted {
+                        format!("deleted {} (showing deleted)", item.display_ref)
+                    } else {
+                        format!("restored {}", item.display_ref)
+                    },
+                )
+                .await?,
+            ));
         }
         Ok(None)
     }

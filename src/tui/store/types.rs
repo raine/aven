@@ -4,6 +4,15 @@ pub(crate) struct MutationMessage {
     pub(crate) selected: Option<usize>,
 }
 
+impl MutationMessage {
+    pub(crate) fn new(message: impl Into<String>, selected: Option<usize>) -> Self {
+        Self {
+            message: message.into(),
+            selected,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConflictTarget {
     pub(crate) task_id: String,
