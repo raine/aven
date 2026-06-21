@@ -148,15 +148,16 @@ pub(crate) async fn create_task_in_workspace(
     let id = new_id();
     let ts = now();
     let mut tx = conn.begin().await?;
+    let workspace = crate::workspaces::workspace_for_id(&mut tx, workspace_id).await?;
     let project =
-        resolve_project_for_add_in_workspace(&mut tx, workspace_id, draft.project.as_deref())
+        resolve_project_for_add_in_workspace(&mut tx, &workspace.id, draft.project.as_deref())
             .await?;
-    let labels = resolve_labels_in_workspace(&mut tx, workspace_id, &draft.labels).await?;
+    let labels = resolve_labels_in_workspace(&mut tx, &workspace.id, &draft.labels).await?;
     sqlx::query(
         "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at, queue_activity_at)
          VALUES (?, ?, ?, ?, ?, 'inbox', ?, ?, ?, ?)",
     )
-    .bind(workspace_id)
+    .bind(&workspace.id)
     .bind(&id)
     .bind(&draft.title)
     .bind(&draft.description)
@@ -171,7 +172,7 @@ pub(crate) async fn create_task_in_workspace(
         sqlx::query(
             "INSERT OR IGNORE INTO task_labels(workspace_id, task_id, label) VALUES (?, ?, ?)",
         )
-        .bind(workspace_id)
+        .bind(&workspace.id)
         .bind(&id)
         .bind(label)
         .execute(&mut *tx)
@@ -184,8 +185,8 @@ pub(crate) async fn create_task_in_workspace(
         None,
         "create_task",
         json!({
-            "workspace_id": workspace_id,
-            "workspace_key": crate::workspaces::active_workspace().key,
+            "workspace_id": &workspace.id,
+            "workspace_key": &workspace.key,
             "title": draft.title,
             "description": draft.description,
             "project_key": project.key,
@@ -307,12 +308,13 @@ pub(crate) async fn update_task_labels_in_workspace(
     add_labels: &[String],
     remove_labels: &[String],
 ) -> Result<bool> {
+    let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
     let mut changed = false;
-    for label in resolve_labels_in_workspace(conn, workspace_id, add_labels).await? {
+    for label in resolve_labels_in_workspace(conn, &workspace.id, add_labels).await? {
         sqlx::query(
             "INSERT OR IGNORE INTO task_labels(workspace_id, task_id, label) VALUES (?, ?, ?)",
         )
-        .bind(workspace_id)
+        .bind(&workspace.id)
         .bind(task_id)
         .bind(&label)
         .execute(&mut *conn)
@@ -324,8 +326,8 @@ pub(crate) async fn update_task_labels_in_workspace(
             Some("labels"),
             "label_add",
             json!({
-                "workspace_id": workspace_id,
-                "workspace_key": crate::workspaces::active_workspace().key,
+                "workspace_id": &workspace.id,
+                "workspace_key": &workspace.key,
                 "label": label,
             }),
             None,
@@ -333,9 +335,9 @@ pub(crate) async fn update_task_labels_in_workspace(
         .await?;
         changed = true;
     }
-    for label in resolve_labels_in_workspace(conn, workspace_id, remove_labels).await? {
+    for label in resolve_labels_in_workspace(conn, &workspace.id, remove_labels).await? {
         sqlx::query("DELETE FROM task_labels WHERE workspace_id = ? AND task_id = ? AND label = ?")
-            .bind(workspace_id)
+            .bind(&workspace.id)
             .bind(task_id)
             .bind(&label)
             .execute(&mut *conn)
@@ -347,8 +349,8 @@ pub(crate) async fn update_task_labels_in_workspace(
             Some("labels"),
             "label_remove",
             json!({
-                "workspace_id": workspace_id,
-                "workspace_key": crate::workspaces::active_workspace().key,
+                "workspace_id": &workspace.id,
+                "workspace_key": &workspace.key,
                 "label": label,
             }),
             None,
@@ -447,6 +449,7 @@ pub(crate) async fn create_label_operation_in_workspace(
     workspace_id: &str,
     name: &str,
 ) -> Result<LabelOutcome> {
+    let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
     let name = normalize_label(name);
     if name.is_empty() {
         bail!("error invalid-label");
@@ -454,14 +457,14 @@ pub(crate) async fn create_label_operation_in_workspace(
     let existed = sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM labels WHERE workspace_id = ? AND name = ?",
     )
-    .bind(workspace_id)
+    .bind(&workspace.id)
     .bind(&name)
     .fetch_one(&mut *conn)
     .await?
         > 0;
     let created_at = now();
     sqlx::query("INSERT OR IGNORE INTO labels(workspace_id, name, created_at) VALUES (?, ?, ?)")
-        .bind(workspace_id)
+        .bind(&workspace.id)
         .bind(&name)
         .bind(&created_at)
         .execute(&mut *conn)
@@ -476,8 +479,8 @@ pub(crate) async fn create_label_operation_in_workspace(
                 None,
                 "create_label",
                 json!({
-                    "workspace_id": workspace_id,
-                    "workspace_key": crate::workspaces::active_workspace().key,
+                    "workspace_id": &workspace.id,
+                    "workspace_key": &workspace.key,
                     "name": name,
                     "created_at": created_at,
                 }),

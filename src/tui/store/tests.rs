@@ -872,6 +872,98 @@ async fn pending_undo_count(pool: &sqlx::SqlitePool, workspace_id: &str) -> i64 
     .unwrap()
 }
 
+async fn latest_payload(
+    conn: &mut sqlx::SqliteConnection,
+    entity_type: &str,
+    op_type: &str,
+) -> serde_json::Value {
+    let payload: String = sqlx::query_scalar(
+        "SELECT payload FROM changes
+         WHERE entity_type = ? AND op_type = ?
+         ORDER BY local_seq DESC LIMIT 1",
+    )
+    .bind(entity_type)
+    .bind(op_type)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    serde_json::from_str(&payload).unwrap()
+}
+
+fn assert_workspace_payload(payload: &serde_json::Value, workspace: &crate::workspaces::Workspace) {
+    assert_eq!(
+        payload["workspace_id"].as_str(),
+        Some(workspace.id.as_str())
+    );
+    assert_eq!(
+        payload["workspace_key"].as_str(),
+        Some(workspace.key.as_str())
+    );
+}
+
+#[tokio::test]
+async fn explicit_workspace_payloads_pair_id_and_key_when_active_differs() {
+    let (_dir, pool, _store) = test_store_with_pool().await;
+    let default = crate::workspaces::active_workspace();
+    let mut conn = pool.acquire().await.unwrap();
+    let other = crate::workspaces::create_workspace(&mut conn, "Client Work")
+        .await
+        .unwrap();
+    crate::workspaces::set_active_workspace(default);
+
+    crate::operations::create_label_operation_in_workspace(&mut conn, &other.id, "Needs Review")
+        .await
+        .unwrap();
+    assert_workspace_payload(
+        &latest_payload(&mut conn, "label", "create_label").await,
+        &other,
+    );
+
+    let task = crate::operations::create_task_in_workspace(
+        &mut conn,
+        &other.id,
+        TaskDraft {
+            title: "Scoped task".to_string(),
+            description: String::new(),
+            project: Some("Mobile App".to_string()),
+            priority: "none".to_string(),
+            labels: vec!["Needs Review".to_string()],
+        },
+    )
+    .await
+    .unwrap()
+    .task;
+    assert_workspace_payload(
+        &latest_payload(&mut conn, "project", "create_project").await,
+        &other,
+    );
+    assert_workspace_payload(
+        &latest_payload(&mut conn, "task", "create_task").await,
+        &other,
+    );
+
+    crate::operations::create_label_operation_in_workspace(&mut conn, &other.id, "Docs")
+        .await
+        .unwrap();
+    crate::operations::update_task_labels_in_workspace(
+        &mut conn,
+        &other.id,
+        &task.id,
+        &[String::from("Docs")],
+        &[String::from("Needs Review")],
+    )
+    .await
+    .unwrap();
+    assert_workspace_payload(
+        &latest_payload(&mut conn, "task", "label_add").await,
+        &other,
+    );
+    assert_workspace_payload(
+        &latest_payload(&mut conn, "task", "label_remove").await,
+        &other,
+    );
+}
+
 #[tokio::test]
 async fn undo_returns_none_when_empty() {
     let mut store = test_store().await;

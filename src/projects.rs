@@ -157,24 +157,25 @@ pub(crate) async fn create_project_in_workspace(
     workspace_id: &str,
     name: &str,
 ) -> Result<ProjectCreateOutcome> {
+    let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
     let key = normalize_key(name);
     if key.is_empty() {
         bail!("error invalid-project input={}", quote(name));
     }
-    if let Some(project) = find_project_in_workspace(conn, workspace_id, &key).await? {
+    if let Some(project) = find_project_in_workspace(conn, &workspace.id, &key).await? {
         return Ok(ProjectCreateOutcome {
             project,
             created: false,
             change_id: None,
         });
     }
-    let prefix = unique_project_prefix(conn, workspace_id, &key).await?;
+    let prefix = unique_project_prefix(conn, &workspace.id, &key).await?;
     let ts = now();
     sqlx::query(
         "INSERT INTO projects(workspace_id, key, name, prefix, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?)",
     )
-    .bind(workspace_id)
+    .bind(&workspace.id)
     .bind(&key)
     .bind(name)
     .bind(&prefix)
@@ -189,8 +190,8 @@ pub(crate) async fn create_project_in_workspace(
         None,
         "create_project",
         json!({
-            "workspace_id": workspace_id,
-            "workspace_key": crate::workspaces::active_workspace().key,
+            "workspace_id": &workspace.id,
+            "workspace_key": &workspace.key,
             "key": key,
             "name": name,
             "prefix": prefix,
@@ -201,7 +202,7 @@ pub(crate) async fn create_project_in_workspace(
     .await?;
     Ok(ProjectCreateOutcome {
         project: Project {
-            workspace_id: workspace_id.to_string(),
+            workspace_id: workspace.id,
             key,
             name: name.to_string(),
             prefix,
