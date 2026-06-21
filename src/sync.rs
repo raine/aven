@@ -24,6 +24,7 @@ use crate::mutation::apply_field_value_in_workspace;
 use crate::projects::{find_project_in_workspace, prefix_base};
 use crate::refs::get_task;
 use crate::signals::shutdown_signal;
+use crate::task_fields::TaskField;
 use crate::workspaces::{DEFAULT_WORKSPACE_ID, ensure_default_workspace};
 
 pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 1;
@@ -406,10 +407,10 @@ fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
             optional_string_payload("project_name", &change.payload)?;
             optional_string_payload("project_prefix", &change.payload)?;
             if let Some(status) = optional_string_payload("status", &change.payload)? {
-                validate_protocol_choice("status", &status, STATUSES)?;
+                validate_sync_task_field_value(TaskField::Status, &status)?;
             }
             if let Some(priority) = optional_string_payload("priority", &change.payload)? {
-                validate_protocol_choice("priority", &priority, PRIORITIES)?;
+                validate_sync_task_field_value(TaskField::Priority, &priority)?;
             }
             optional_string_array_payload("labels", &change.payload)?;
             optional_string_payload("created_at", &change.payload)?;
@@ -423,9 +424,10 @@ fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
                 .as_deref()
                 .filter(|field| !field.trim().is_empty())
                 .context("error invalid-sync-change field missing")?;
-            ensure_scalar_field(field)?;
+            let task_field = TaskField::parse(field)
+                .ok_or_else(|| anyhow::anyhow!("error invalid-sync-change field={field}"))?;
             let value = required_string_payload("value", &change.payload)?;
-            validate_field_value(field, &value)?;
+            validate_sync_task_field_value(task_field, &value)?;
         }
         "label_add" | "label_remove" => {
             ensure_entity_type(change, "task")?;
@@ -447,9 +449,16 @@ fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
     Ok(())
 }
 
-fn validate_protocol_choice(name: &str, value: &str, choices: &[&str]) -> Result<()> {
-    validate_choice(name, value, choices)
-        .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))
+fn validate_sync_task_field_value(field: TaskField, value: &str) -> Result<()> {
+    match field {
+        TaskField::Status => validate_choice("status", value, STATUSES)
+            .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}")),
+        TaskField::Priority => validate_choice("priority", value, PRIORITIES)
+            .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}")),
+        TaskField::Deleted if matches!(value, "0" | "1") => Ok(()),
+        TaskField::Deleted => bail!("error invalid-sync-change deleted value={value}"),
+        _ => Ok(()),
+    }
 }
 
 fn ensure_entity_type(change: &ChangeWire, expected: &str) -> Result<()> {
@@ -477,27 +486,6 @@ fn ensure_sync_id(name: &str, value: &str) -> Result<()> {
         Ok(())
     } else {
         bail!("error invalid-sync-change {name} invalid-id");
-    }
-}
-
-fn ensure_scalar_field(field: &str) -> Result<()> {
-    if matches!(
-        field,
-        "title" | "description" | "project" | "status" | "priority" | "deleted"
-    ) {
-        Ok(())
-    } else {
-        bail!("error invalid-sync-change field={field}");
-    }
-}
-
-fn validate_field_value(field: &str, value: &str) -> Result<()> {
-    match field {
-        "status" => validate_protocol_choice("status", value, STATUSES),
-        "priority" => validate_protocol_choice("priority", value, PRIORITIES),
-        "deleted" if matches!(value, "0" | "1") => Ok(()),
-        "deleted" => bail!("error invalid-sync-change deleted value={value}"),
-        _ => Ok(()),
     }
 }
 
@@ -948,15 +936,8 @@ async fn apply_remote_create_task(conn: &mut SqliteConnection, change: &ChangeWi
             .await?;
         }
     }
-    for field in [
-        "title",
-        "description",
-        "project",
-        "status",
-        "priority",
-        "deleted",
-    ] {
-        set_field_version(conn, &change.entity_id, field, &change.change_id).await?;
+    for field in TaskField::VERSIONED {
+        set_field_version(conn, &change.entity_id, field.as_str(), &change.change_id).await?;
     }
     Ok(())
 }
@@ -1079,15 +1060,9 @@ async fn current_field_value(
     field: &str,
 ) -> Result<String> {
     let task = get_task(conn, task_id).await?;
-    match field {
-        "title" => Ok(task.title),
-        "description" => Ok(task.description),
-        "project" => Ok(task.project_key),
-        "status" => Ok(task.status),
-        "priority" => Ok(task.priority),
-        "deleted" => Ok(if task.deleted { "1" } else { "0" }.to_string()),
-        _ => bail!("error unknown-field field={field}"),
-    }
+    let task_field = TaskField::parse(field)
+        .ok_or_else(|| anyhow::anyhow!("error unknown-field field={field}"))?;
+    Ok(task_field.current_value(&task))
 }
 
 fn str_payload(payload: &Value, key: &str) -> Result<String> {

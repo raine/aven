@@ -17,6 +17,7 @@ use crate::projects::{
     resolve_existing_project_in_workspace, resolve_project_for_add_in_workspace,
 };
 use crate::refs::get_task;
+use crate::task_fields::TaskField;
 use crate::types::{Project, Task};
 
 pub(crate) struct TaskDraft {
@@ -188,15 +189,8 @@ pub(crate) async fn create_task_in_workspace(
         None,
     )
     .await?;
-    for field in [
-        "title",
-        "description",
-        "project",
-        "status",
-        "priority",
-        "deleted",
-    ] {
-        set_field_version(&mut tx, &id, field, &change_id).await?;
+    for field in TaskField::VERSIONED {
+        set_field_version(&mut tx, &id, field.as_str(), &change_id).await?;
     }
     tx.commit().await?;
     info!(

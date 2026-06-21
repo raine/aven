@@ -7,6 +7,7 @@ use sqlx::{Connection as _, Row, SqliteConnection};
 use crate::ids::{new_id, now};
 use crate::mutation::set_task_field;
 use crate::operations::update_task_labels_in_workspace;
+use crate::task_fields::TaskField;
 
 static APPLYING_UNDO: AtomicBool = AtomicBool::new(false);
 
@@ -85,70 +86,33 @@ pub(crate) async fn task_field_value(
     task_id: &str,
     field: &str,
 ) -> Result<String> {
-    match field {
-        "title" => {
-            let row = sqlx::query("SELECT title FROM tasks WHERE workspace_id = ? AND id = ?")
-                .bind(workspace_id)
-                .bind(task_id)
-                .fetch_optional(&mut *conn)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
-            Ok(row.get("title"))
-        }
-        "description" => {
-            let row =
-                sqlx::query("SELECT description FROM tasks WHERE workspace_id = ? AND id = ?")
-                    .bind(workspace_id)
-                    .bind(task_id)
-                    .fetch_optional(&mut *conn)
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
-            Ok(row.get("description"))
-        }
-        "status" => {
-            let row = sqlx::query("SELECT status FROM tasks WHERE workspace_id = ? AND id = ?")
-                .bind(workspace_id)
-                .bind(task_id)
-                .fetch_optional(&mut *conn)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
-            Ok(row.get("status"))
-        }
-        "priority" => {
-            let row = sqlx::query("SELECT priority FROM tasks WHERE workspace_id = ? AND id = ?")
-                .bind(workspace_id)
-                .bind(task_id)
-                .fetch_optional(&mut *conn)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
-            Ok(row.get("priority"))
-        }
-        "project" => {
-            let row =
-                sqlx::query("SELECT project_key FROM tasks WHERE workspace_id = ? AND id = ?")
-                    .bind(workspace_id)
-                    .bind(task_id)
-                    .fetch_optional(&mut *conn)
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
-            Ok(row.get("project_key"))
-        }
-        "deleted" => {
-            let deleted: i64 =
-                sqlx::query_scalar("SELECT deleted FROM tasks WHERE workspace_id = ? AND id = ?")
-                    .bind(workspace_id)
-                    .bind(task_id)
-                    .fetch_optional(&mut *conn)
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
-            if deleted != 0 {
-                Ok("1".to_string())
+    let task_field = TaskField::parse(field)
+        .ok_or_else(|| anyhow::anyhow!("error unknown-field field={field}"))?;
+
+    let row = sqlx::query(
+        "SELECT title, description, project_key, status, priority, deleted
+         FROM tasks WHERE workspace_id = ? AND id = ?",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
+
+    Ok(match task_field {
+        TaskField::Title => row.get("title"),
+        TaskField::Description => row.get("description"),
+        TaskField::Project => row.get("project_key"),
+        TaskField::Status => row.get("status"),
+        TaskField::Priority => row.get("priority"),
+        TaskField::Deleted => {
+            if row.get::<i64, _>("deleted") != 0 {
+                "1".to_string()
             } else {
-                Ok("0".to_string())
+                "0".to_string()
             }
         }
-        _ => bail!("error unknown-field field={field}"),
-    }
+    })
 }
 
 pub(crate) async fn task_labels(

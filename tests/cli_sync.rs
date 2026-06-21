@@ -65,6 +65,18 @@ async fn assert_server_log_empty(server: &TestServer) {
     assert_eq!(body["changes"].as_array().expect("changes array").len(), 0);
 }
 
+fn assert_task_field_versions(db: &std::path::Path) {
+    assert_eq!(scalar_i64(db, "SELECT count(*) FROM field_versions"), 6);
+    assert_eq!(
+        scalar_i64(
+            db,
+            "SELECT count(*) FROM field_versions
+             WHERE field IN ('title','description','project','status','priority','deleted')",
+        ),
+        6
+    );
+}
+
 async fn rejected_sync(server: &TestServer, change: Value, expected: &str) {
     let response = post_sync(server, change).await;
     assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
@@ -559,6 +571,16 @@ async fn sync_server_rejects_invalid_status_priority_and_deleted_values() {
     );
     rejected_sync(&server, bad_priority, "invalid-priority").await;
 
+    let bad_create_status = task_change(
+        "create_task",
+        json!({
+            "title": "bad status",
+            "project_key": "app",
+            "status": "blocked",
+        }),
+    );
+    rejected_sync(&server, bad_create_status, "invalid-status").await;
+
     let mut bad_deleted = task_change("set_field", json!({ "value": "true" }));
     bad_deleted
         .as_object_mut()
@@ -630,6 +652,21 @@ fn valid_offline_batch_with_related_operations_still_syncs() {
 
     let full = ok(env.aven(&b, ["show", &task_ref, "--full"]));
     contains_all(&full, &["offline batch", "labels=offline", "batch note"]);
+}
+
+#[test]
+fn task_create_seeds_versioned_field_versions_locally_and_remotely() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("client-a.sqlite");
+    let b = env.db("client-b.sqlite");
+
+    ok(env.aven(&a, ["add", "version seed", "--project", "app"]));
+    assert_task_field_versions(&a);
+
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    assert_task_field_versions(&b);
 }
 
 #[test]

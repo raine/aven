@@ -3,11 +3,12 @@ use serde_json::json;
 use sqlx::SqliteConnection;
 use tracing::{debug, info};
 
-use crate::choices::{PRIORITIES, STATUSES, validate_choice};
+use crate::choices::PRIORITIES;
 use crate::db::{conflict_exists, field_version, insert_change, set_field_version};
 use crate::ids::now;
 use crate::projects::resolve_project_for_add_in_workspace;
 use crate::refs::get_task;
+use crate::task_fields::TaskField;
 use crate::types::Task;
 use crate::workspaces::active_workspace_id;
 
@@ -114,10 +115,14 @@ pub(crate) async fn apply_field_value_in_workspace(
     field: &str,
     value: &str,
 ) -> Result<()> {
+    let task_field = TaskField::parse(field)
+        .ok_or_else(|| anyhow::anyhow!("error unknown-field field={field}"))?;
+    task_field.validate_mutation_value(value)?;
+
     let ts = now();
     let deleted_value = value.parse::<i64>().unwrap_or(0);
-    let rows_affected = match field {
-        "title" => sqlx::query(
+    let rows_affected = match task_field {
+        TaskField::Title => sqlx::query(
             "UPDATE tasks SET title = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
         )
         .bind(value)
@@ -127,7 +132,7 @@ pub(crate) async fn apply_field_value_in_workspace(
         .execute(&mut *conn)
         .await?
         .rows_affected(),
-        "description" => sqlx::query(
+        TaskField::Description => sqlx::query(
             "UPDATE tasks SET description = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
         )
         .bind(value)
@@ -137,7 +142,7 @@ pub(crate) async fn apply_field_value_in_workspace(
         .execute(&mut *conn)
         .await?
         .rows_affected(),
-        "project" => {
+        TaskField::Project => {
             let project =
                 resolve_project_for_add_in_workspace(conn, workspace_id, Some(value)).await?;
             sqlx::query(
@@ -151,33 +156,27 @@ pub(crate) async fn apply_field_value_in_workspace(
             .await?
             .rows_affected()
         }
-        "status" => {
-            validate_choice("status", value, STATUSES)?;
-            sqlx::query(
-                "UPDATE tasks SET status = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
-            )
-            .bind(value)
-            .bind(&ts)
-            .bind(workspace_id)
-            .bind(task_id)
-            .execute(&mut *conn)
-            .await?
-            .rows_affected()
-        }
-        "priority" => {
-            validate_choice("priority", value, PRIORITIES)?;
-            sqlx::query(
-                "UPDATE tasks SET priority = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
-            )
-            .bind(value)
-            .bind(&ts)
-            .bind(workspace_id)
-            .bind(task_id)
-            .execute(&mut *conn)
-            .await?
-            .rows_affected()
-        }
-        "deleted" => sqlx::query(
+        TaskField::Status => sqlx::query(
+            "UPDATE tasks SET status = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
+        )
+        .bind(value)
+        .bind(&ts)
+        .bind(workspace_id)
+        .bind(task_id)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected(),
+        TaskField::Priority => sqlx::query(
+            "UPDATE tasks SET priority = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
+        )
+        .bind(value)
+        .bind(&ts)
+        .bind(workspace_id)
+        .bind(task_id)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected(),
+        TaskField::Deleted => sqlx::query(
             "UPDATE tasks SET deleted = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
         )
         .bind(deleted_value)
@@ -187,7 +186,6 @@ pub(crate) async fn apply_field_value_in_workspace(
         .execute(&mut *conn)
         .await?
         .rows_affected(),
-        _ => bail!("error unknown-field field={field}"),
     };
     ensure!(
         rows_affected == 1,
