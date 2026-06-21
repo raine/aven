@@ -71,6 +71,11 @@ pub(crate) struct ProjectPathOutcome {
     pub(crate) path: String,
 }
 
+struct ProjectPathTarget {
+    project: Project,
+    path: String,
+}
+
 pub(crate) struct ConflictListItem {
     pub(crate) task_id: String,
     pub(crate) title: String,
@@ -519,11 +524,11 @@ fn canonicalize_project_path(path: &Path) -> Result<String> {
     Ok(path.display().to_string())
 }
 
-pub(crate) async fn add_project_path_operation(
+async fn resolve_project_path_target(
     conn: &mut SqliteConnection,
     project: &str,
     path: &Path,
-) -> Result<ProjectPathOutcome> {
+) -> Result<ProjectPathTarget> {
     let project = resolve_existing_project_in_workspace(
         conn,
         crate::workspaces::active_workspace_id().as_str(),
@@ -531,8 +536,26 @@ pub(crate) async fn add_project_path_operation(
     )
     .await?;
     let path = canonicalize_project_path(path)?;
-    add_project_path_mapping(conn, &project.workspace_id, &project.key, Path::new(&path)).await?;
-    Ok(ProjectPathOutcome { project, path })
+    Ok(ProjectPathTarget { project, path })
+}
+
+pub(crate) async fn add_project_path_operation(
+    conn: &mut SqliteConnection,
+    project: &str,
+    path: &Path,
+) -> Result<ProjectPathOutcome> {
+    let target = resolve_project_path_target(conn, project, path).await?;
+    add_project_path_mapping(
+        conn,
+        &target.project.workspace_id,
+        &target.project.key,
+        Path::new(&target.path),
+    )
+    .await?;
+    Ok(ProjectPathOutcome {
+        project: target.project,
+        path: target.path,
+    })
 }
 
 pub(crate) async fn remove_project_path_operation(
@@ -540,22 +563,19 @@ pub(crate) async fn remove_project_path_operation(
     project: &str,
     path: &Path,
 ) -> Result<ProjectPathOutcome> {
-    let project = resolve_existing_project_in_workspace(
-        conn,
-        crate::workspaces::active_workspace_id().as_str(),
-        project,
-    )
-    .await?;
-    let path = canonicalize_project_path(path)?;
+    let target = resolve_project_path_target(conn, project, path).await?;
     sqlx::query(
         "DELETE FROM project_paths WHERE workspace_id = ? AND project_key = ? AND path = ?",
     )
-    .bind(&project.workspace_id)
-    .bind(&project.key)
-    .bind(&path)
+    .bind(&target.project.workspace_id)
+    .bind(&target.project.key)
+    .bind(&target.path)
     .execute(&mut *conn)
     .await?;
-    Ok(ProjectPathOutcome { project, path })
+    Ok(ProjectPathOutcome {
+        project: target.project,
+        path: target.path,
+    })
 }
 
 pub(crate) async fn list_conflicts(
