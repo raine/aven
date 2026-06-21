@@ -127,29 +127,71 @@ impl LineEdit {
     }
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OverlayRoute {
+    MessageOnly,
+    AddTaskTitle,
+    AddTaskTitleProject,
+    AddTaskTitlePriority,
+    AddNote,
+    AddProject,
+    AddLabel,
+    EditStatus,
+    EditTitle,
+    EditDescription,
+    EditProject,
+    EditPriority,
+    EditLabels,
+    FilterProject,
+    FilterLabel,
+    FilterStatus,
+    FilterPriority,
+    ViewProject,
+    DeleteProjectPicker,
+    DeleteProjectConfirm,
+    SwitchWorkspace,
+    ConflictField,
+    ConflictConfirm,
+    ConflictManual,
+    ConfigInit,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TextInputState {
+    pub(crate) route: OverlayRoute,
     pub(crate) title: String,
     pub(crate) prompt: String,
     pub(crate) input: LineEdit,
 }
 
 impl TextInputState {
-    pub(crate) fn new(title: impl Into<String>, prompt: impl Into<String>, input: String) -> Self {
+    pub(crate) fn new(
+        route: OverlayRoute,
+        title: impl Into<String>,
+        prompt: impl Into<String>,
+        input: String,
+    ) -> Self {
         Self {
+            route,
             title: title.into(),
             prompt: prompt.into(),
             input: LineEdit::new(input),
         }
     }
 
-    pub(crate) fn blank(title: impl Into<String>, prompt: impl Into<String>) -> Self {
-        Self::new(title, prompt, String::new())
+    pub(crate) fn blank(
+        route: OverlayRoute,
+        title: impl Into<String>,
+        prompt: impl Into<String>,
+    ) -> Self {
+        Self::new(route, title, prompt, String::new())
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MultilineInputState {
+    pub(crate) route: OverlayRoute,
     pub(crate) title: String,
     pub(crate) prompt: String,
     pub(crate) lines: Vec<String>,
@@ -158,8 +200,13 @@ pub(crate) struct MultilineInputState {
 }
 
 impl MultilineInputState {
-    pub(crate) fn blank(title: impl Into<String>, prompt: impl Into<String>) -> Self {
+    pub(crate) fn blank(
+        route: OverlayRoute,
+        title: impl Into<String>,
+        prompt: impl Into<String>,
+    ) -> Self {
         Self {
+            route,
             title: title.into(),
             prompt: prompt.into(),
             lines: vec![String::new()],
@@ -169,6 +216,7 @@ impl MultilineInputState {
     }
 
     pub(crate) fn from_value(
+        route: OverlayRoute,
         title: impl Into<String>,
         prompt: impl Into<String>,
         value: String,
@@ -180,6 +228,7 @@ impl MultilineInputState {
         let row = lines.len() - 1;
         let column = lines[row].len();
         Self {
+            route,
             title: title.into(),
             prompt: prompt.into(),
             lines,
@@ -191,6 +240,7 @@ impl MultilineInputState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PickerState {
+    pub(crate) route: OverlayRoute,
     pub(crate) title: String,
     pub(crate) filter: LineEdit,
     pub(crate) items: Vec<PickerItem>,
@@ -207,6 +257,7 @@ pub(crate) struct PickerItem {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConfirmState {
+    pub(crate) route: OverlayRoute,
     pub(crate) title: String,
     pub(crate) prompt: String,
 }
@@ -268,10 +319,25 @@ pub(crate) struct ConfirmView {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlaySubmit {
-    Text { title: String, value: String },
-    Multiline { title: String, value: String },
-    Picker { title: String, values: Vec<String> },
-    Confirm { title: String },
+    Text {
+        route: OverlayRoute,
+        title: String,
+        value: String,
+    },
+    Multiline {
+        route: OverlayRoute,
+        title: String,
+        value: String,
+    },
+    Picker {
+        route: OverlayRoute,
+        title: String,
+        values: Vec<String>,
+    },
+    Confirm {
+        route: OverlayRoute,
+        title: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -287,7 +353,7 @@ impl OverlaySubmit {
             Self::Text { title, .. } => format!("submitted {title}"),
             Self::Multiline { title, .. } => format!("submitted {title}"),
             Self::Picker { title, .. } => format!("selected {title}"),
-            Self::Confirm { title } => format!("confirmed {title}"),
+            Self::Confirm { title, .. } => format!("confirmed {title}"),
         }
     }
 }
@@ -392,6 +458,7 @@ pub(crate) fn handle_generic_overlay_key(
         OverlayState::TextInput(mut state) => match key.code {
             KeyCode::Esc => OverlayOutcome::Cancelled,
             KeyCode::Enter => OverlayOutcome::Submitted(OverlaySubmit::Text {
+                route: state.route,
                 title: state.title.clone(),
                 value: state.input.text.clone(),
             }),
@@ -404,6 +471,7 @@ pub(crate) fn handle_generic_overlay_key(
             if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
                 let value = state.lines.join("\n");
                 return OverlayOutcome::Submitted(OverlaySubmit::Multiline {
+                    route: state.route,
                     title: state.title.clone(),
                     value,
                 });
@@ -434,6 +502,7 @@ pub(crate) fn handle_generic_overlay_key(
                         .unwrap_or_default()
                 };
                 OverlayOutcome::Submitted(OverlaySubmit::Picker {
+                    route: state.route,
                     title: state.title.clone(),
                     values,
                 })
@@ -474,6 +543,7 @@ pub(crate) fn handle_generic_overlay_key(
             KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => OverlayOutcome::Cancelled,
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 OverlayOutcome::Submitted(OverlaySubmit::Confirm {
+                    route: state.route,
                     title: state.title.clone(),
                 })
             }
@@ -739,6 +809,7 @@ mod tests {
     #[test]
     fn multiline_input_splits_and_merges_lines() {
         let mut state = MultilineInputState {
+            route: OverlayRoute::MessageOnly,
             title: "Title".to_string(),
             prompt: "Prompt".to_string(),
             lines: vec!["ab".to_string()],
@@ -756,6 +827,7 @@ mod tests {
     #[test]
     fn multiline_ctrl_s_submits() {
         let state = MultilineInputState {
+            route: OverlayRoute::MessageOnly,
             title: "Notes".to_string(),
             prompt: "Body".to_string(),
             lines: vec!["line".to_string()],
@@ -775,6 +847,7 @@ mod tests {
     #[test]
     fn picker_filter_and_selection_normalize() {
         let mut state = PickerState {
+            route: OverlayRoute::MessageOnly,
             title: "Pick".to_string(),
             filter: LineEdit::blank(),
             items: vec![
@@ -801,6 +874,7 @@ mod tests {
     #[test]
     fn picker_filter_ignores_dashes_in_labels() {
         let state = PickerState {
+            route: OverlayRoute::MessageOnly,
             title: "Go: project".to_string(),
             filter: LineEdit::new("gitsur".to_string()),
             items: vec![PickerItem {
@@ -818,6 +892,7 @@ mod tests {
     #[test]
     fn picker_filter_preserves_dash_matching() {
         let state = PickerState {
+            route: OverlayRoute::MessageOnly,
             title: "Pick".to_string(),
             filter: LineEdit::new("git-sur".to_string()),
             items: vec![PickerItem {
@@ -835,6 +910,7 @@ mod tests {
     #[test]
     fn picker_types_j_and_k_into_filter() {
         let state = PickerState {
+            route: OverlayRoute::MessageOnly,
             title: "Pick".to_string(),
             filter: LineEdit::blank(),
             items: vec![PickerItem {
@@ -894,6 +970,7 @@ mod tests {
 
     fn picker_navigation_state() -> PickerState {
         PickerState {
+            route: OverlayRoute::MessageOnly,
             title: "Pick".to_string(),
             filter: LineEdit::blank(),
             items: vec![
@@ -970,8 +1047,14 @@ mod tests {
     #[test]
     fn esc_cancels_all_generic_overlay_variants() {
         let overlays = vec![
-            OverlayState::TextInput(TextInputState::new("Title", "Prompt", "value".to_string())),
+            OverlayState::TextInput(TextInputState::new(
+                OverlayRoute::MessageOnly,
+                "Title",
+                "Prompt",
+                "value".to_string(),
+            )),
             OverlayState::MultilineInput(MultilineInputState {
+                route: OverlayRoute::MessageOnly,
                 title: "Body".to_string(),
                 prompt: "Prompt".to_string(),
                 lines: vec!["value".to_string()],
@@ -979,6 +1062,7 @@ mod tests {
                 column: 5,
             }),
             OverlayState::Picker(PickerState {
+                route: OverlayRoute::MessageOnly,
                 title: "Pick".to_string(),
                 filter: LineEdit::blank(),
                 items: vec![PickerItem {
@@ -990,6 +1074,7 @@ mod tests {
                 multi: false,
             }),
             OverlayState::Confirm(ConfirmState {
+                route: OverlayRoute::MessageOnly,
                 title: "Confirm".to_string(),
                 prompt: "Continue?".to_string(),
             }),
@@ -1021,6 +1106,7 @@ mod tests {
     #[test]
     fn confirm_yes_and_no() {
         let state = ConfirmState {
+            route: OverlayRoute::MessageOnly,
             title: "Delete".to_string(),
             prompt: "Sure?".to_string(),
         };
@@ -1029,11 +1115,77 @@ mod tests {
                 key(KeyCode::Char('y')),
                 OverlayState::Confirm(state.clone())
             ),
-            OverlayOutcome::Submitted(_)
+            OverlayOutcome::Submitted(OverlaySubmit::Confirm {
+                route: OverlayRoute::MessageOnly,
+                title,
+                ..
+            }) if title == "Delete"
         ));
         assert!(matches!(
             handle(key(KeyCode::Char('n')), OverlayState::Confirm(state)),
             OverlayOutcome::Cancelled
+        ));
+    }
+
+    #[test]
+    fn generic_submit_variants_propagate_route() {
+        let text = handle(
+            key(KeyCode::Enter),
+            OverlayState::TextInput(TextInputState::new(
+                OverlayRoute::AddProject,
+                "Add project",
+                "name:",
+                "app".to_string(),
+            )),
+        );
+        assert!(matches!(
+            text,
+            OverlayOutcome::Submitted(OverlaySubmit::Text {
+                route: OverlayRoute::AddProject,
+                ..
+            })
+        ));
+
+        let multiline = handle(
+            ctrl(KeyCode::Char('s')),
+            OverlayState::MultilineInput(MultilineInputState {
+                route: OverlayRoute::AddNote,
+                title: "Add note".to_string(),
+                prompt: "body:".to_string(),
+                lines: vec!["note".to_string()],
+                row: 0,
+                column: 4,
+            }),
+        );
+        assert!(matches!(
+            multiline,
+            OverlayOutcome::Submitted(OverlaySubmit::Multiline {
+                route: OverlayRoute::AddNote,
+                ..
+            })
+        ));
+
+        let picker = handle(
+            key(KeyCode::Enter),
+            OverlayState::Picker(PickerState {
+                route: OverlayRoute::EditStatus,
+                title: "Edit task: status".to_string(),
+                filter: LineEdit::blank(),
+                items: vec![PickerItem {
+                    label: "Todo".to_string(),
+                    value: "todo".to_string(),
+                    selected: false,
+                }],
+                selected: 0,
+                multi: false,
+            }),
+        );
+        assert!(matches!(
+            picker,
+            OverlayOutcome::Submitted(OverlaySubmit::Picker {
+                route: OverlayRoute::EditStatus,
+                ..
+            })
         ));
     }
 }

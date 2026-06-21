@@ -10,8 +10,7 @@ use sqlx::SqlitePool;
 use crate::operations::TaskDraft;
 use crate::query::TaskSort;
 use crate::tui::config_overlay::{
-    CONFIG_INIT_TITLE, config_info_overlay, config_init_overlay, config_paths_overlay,
-    config_status_overlay,
+    config_info_overlay, config_init_overlay, config_paths_overlay, config_status_overlay,
 };
 use crate::tui::event::{
     Action, CommandLookup, ShortcutLookup, ViewTarget, lookup_command, resolve_shortcut,
@@ -22,8 +21,8 @@ use crate::tui::navigation::{
     next_selectable_sidebar,
 };
 use crate::tui::overlay::{
-    ConfirmState, LineEdit, MultilineInputState, OverlayOutcome, OverlayState, OverlaySubmit,
-    OverlayView, PickerItem, PickerState, TextInputState, TextPanelState,
+    ConfirmState, LineEdit, MultilineInputState, OverlayOutcome, OverlayRoute, OverlayState,
+    OverlaySubmit, OverlayView, PickerItem, PickerState, TextInputState, TextPanelState,
 };
 use crate::tui::store::{ConflictTarget, SidebarTarget, TuiStore};
 use crate::tui::ui::{self, detail_help_scroll_cap, help_scroll_cap};
@@ -31,7 +30,6 @@ use crate::tui::ui::{self, detail_help_scroll_cap, help_scroll_cap};
 const ADD_PROJECT_TITLE: &str = "Add project";
 const DELETE_PROJECT_TITLE: &str = "Delete project";
 const ADD_LABEL_TITLE: &str = "Add label";
-const ADD_TASK_TITLE_TITLE: &str = "Add task";
 const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: title project";
 const ADD_TASK_TITLE_PRIORITY_TITLE: &str = "Add task: title priority";
 const ADD_NOTE_TITLE: &str = "Add note";
@@ -365,7 +363,7 @@ impl App {
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && key.code == KeyCode::Char('p')
             && let OverlayState::TextInput(state) = &overlay
-            && add_task_title_overlay(&state.title)
+            && state.route == OverlayRoute::AddTaskTitle
         {
             if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
                 draft.title = state.input.text.clone();
@@ -376,7 +374,7 @@ impl App {
 
         if key.code == KeyCode::Tab
             && let OverlayState::TextInput(state) = &overlay
-            && add_task_title_overlay(&state.title)
+            && state.route == OverlayRoute::AddTaskTitle
         {
             if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
                 draft.title = state.input.text.clone();
@@ -404,7 +402,11 @@ impl App {
 
     async fn handle_overlay_submit(&mut self, submit: OverlaySubmit) -> Result<()> {
         match submit {
-            OverlaySubmit::Text { title, value } if add_task_title_overlay(&title) => {
+            OverlaySubmit::Text {
+                route: OverlayRoute::AddTaskTitle,
+                value,
+                ..
+            } => {
                 let trimmed = value.trim();
                 if trimmed.is_empty() {
                     self.set_message("task title is required".to_string());
@@ -413,13 +415,21 @@ impl App {
                     self.submit_add_task_with_title(trimmed.to_string()).await?;
                 }
             }
-            OverlaySubmit::Picker { title, values } if title == ADD_TASK_TITLE_PROJECT_TITLE => {
+            OverlaySubmit::Picker {
+                route: OverlayRoute::AddTaskTitleProject,
+                values,
+                ..
+            } => {
                 if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
                     draft.project = values.first().filter(|value| !value.is_empty()).cloned();
                     self.begin_add_task_title();
                 }
             }
-            OverlaySubmit::Picker { title, values } if title == ADD_TASK_TITLE_PRIORITY_TITLE => {
+            OverlaySubmit::Picker {
+                route: OverlayRoute::AddTaskTitlePriority,
+                values,
+                ..
+            } => {
                 if let Some(AuthoringFlow::AddTask(draft)) = self.authoring.as_mut() {
                     draft.priority = values
                         .first()
@@ -428,19 +438,35 @@ impl App {
                     self.begin_add_task_title();
                 }
             }
-            OverlaySubmit::Multiline { title, value } if title == ADD_NOTE_TITLE => {
+            OverlaySubmit::Multiline {
+                route: OverlayRoute::AddNote,
+                value,
+                ..
+            } => {
                 self.submit_add_note(value).await?;
             }
-            OverlaySubmit::Text { title, value } if title == ADD_PROJECT_TITLE => {
+            OverlaySubmit::Text {
+                route: OverlayRoute::AddProject,
+                value,
+                ..
+            } => {
                 let message = self.store.create_project(value).await?;
                 self.restore_selection_after_mutation();
                 self.set_message(message);
             }
-            OverlaySubmit::Text { title, value } if title == ADD_LABEL_TITLE => {
+            OverlaySubmit::Text {
+                route: OverlayRoute::AddLabel,
+                value,
+                ..
+            } => {
                 let message = self.store.create_label(value).await?;
                 self.set_message(message);
             }
-            OverlaySubmit::Picker { title, values } if title == EDIT_STATUS_TITLE => {
+            OverlaySubmit::Picker {
+                route: OverlayRoute::EditStatus,
+                values,
+                ..
+            } => {
                 if let Some(status) = values.first() {
                     self.submit_edit_status(status.clone()).await?;
                 } else {
@@ -448,13 +474,25 @@ impl App {
                     self.begin_status_picker();
                 }
             }
-            OverlaySubmit::Text { title, value } if title == EDIT_TITLE_TITLE => {
+            OverlaySubmit::Text {
+                route: OverlayRoute::EditTitle,
+                value,
+                ..
+            } => {
                 self.submit_edit_title(value).await?;
             }
-            OverlaySubmit::Multiline { title, value } if title == EDIT_DESCRIPTION_TITLE => {
+            OverlaySubmit::Multiline {
+                route: OverlayRoute::EditDescription,
+                value,
+                ..
+            } => {
                 self.submit_edit_description(value).await?;
             }
-            OverlaySubmit::Picker { title, values } if title == EDIT_PROJECT_TITLE => {
+            OverlaySubmit::Picker {
+                route: OverlayRoute::EditProject,
+                values,
+                ..
+            } => {
                 if let Some(project) = values.first() {
                     self.submit_edit_project(project.clone()).await?;
                 } else {
@@ -462,7 +500,11 @@ impl App {
                     self.begin_edit_project();
                 }
             }
-            OverlaySubmit::Picker { title, values } if title == EDIT_PRIORITY_TITLE => {
+            OverlaySubmit::Picker {
+                route: OverlayRoute::EditPriority,
+                values,
+                ..
+            } => {
                 if let Some(priority) = values.first() {
                     self.submit_edit_priority(priority.clone()).await?;
                 } else {
@@ -470,52 +512,106 @@ impl App {
                     self.begin_edit_priority();
                 }
             }
-            OverlaySubmit::Picker { title, values } if title == EDIT_LABELS_TITLE => {
+            OverlaySubmit::Picker {
+                route: OverlayRoute::EditLabels,
+                values,
+                ..
+            } => {
                 self.submit_edit_labels(values).await?;
             }
-            OverlaySubmit::Picker { title, values } if title == FILTER_PROJECT_TITLE => {
+            OverlaySubmit::Picker {
+                route: OverlayRoute::FilterProject,
+                values,
+                ..
+            } => {
                 self.submit_filter_project(values).await?;
             }
-            OverlaySubmit::Picker { title, values } if title == FILTER_LABEL_TITLE => {
+            OverlaySubmit::Picker {
+                route: OverlayRoute::FilterLabel,
+                values,
+                ..
+            } => {
                 self.submit_filter_label(values).await?;
             }
-            OverlaySubmit::Picker { title, values } if title == FILTER_STATUS_TITLE => {
+            OverlaySubmit::Picker {
+                route: OverlayRoute::FilterStatus,
+                values,
+                ..
+            } => {
                 self.submit_filter_status(values).await?;
             }
-            OverlaySubmit::Picker { title, values } if title == FILTER_PRIORITY_TITLE => {
+            OverlaySubmit::Picker {
+                route: OverlayRoute::FilterPriority,
+                values,
+                ..
+            } => {
                 self.submit_filter_priority(values).await?;
             }
-            OverlaySubmit::Picker { title, values } if title == VIEW_PROJECT_TITLE => {
+            OverlaySubmit::Picker {
+                route: OverlayRoute::ViewProject,
+                values,
+                ..
+            } => {
                 self.submit_view_project(values).await?;
             }
-            OverlaySubmit::Picker { title, values } if title == DELETE_PROJECT_TITLE => {
+            OverlaySubmit::Picker {
+                route: OverlayRoute::DeleteProjectPicker,
+                values,
+                ..
+            } => {
                 self.submit_delete_project_picker(values);
             }
-            OverlaySubmit::Picker { title, values } if title == SWITCH_WORKSPACE_TITLE => {
+            OverlaySubmit::Picker {
+                route: OverlayRoute::SwitchWorkspace,
+                values,
+                ..
+            } => {
                 self.submit_switch_workspace(values).await?;
             }
-            OverlaySubmit::Picker { title, values } if title == CONFLICT_FIELD_TITLE => {
+            OverlaySubmit::Picker {
+                route: OverlayRoute::ConflictField,
+                values,
+                ..
+            } => {
                 self.submit_conflict_field_picker(values).await?;
             }
-            OverlaySubmit::Confirm { title }
-                if title == CONFLICT_CONFIRM_LOCAL_TITLE
-                    || title == CONFLICT_CONFIRM_REMOTE_TITLE =>
-            {
+            OverlaySubmit::Confirm {
+                route: OverlayRoute::ConflictConfirm,
+                ..
+            } => {
                 self.submit_confirmed_conflict_resolution().await?;
             }
-            OverlaySubmit::Confirm { title } if title == CONFIG_INIT_TITLE => {
+            OverlaySubmit::Confirm {
+                route: OverlayRoute::ConfigInit,
+                ..
+            } => {
                 self.submit_config_init()?;
             }
-            OverlaySubmit::Confirm { title } if title == DELETE_PROJECT_TITLE => {
+            OverlaySubmit::Confirm {
+                route: OverlayRoute::DeleteProjectConfirm,
+                ..
+            } => {
                 self.submit_delete_project().await?;
             }
-            OverlaySubmit::Text { title, value } if title == CONFLICT_MANUAL_TITLE => {
+            OverlaySubmit::Text {
+                route: OverlayRoute::ConflictManual,
+                value,
+                ..
+            } => {
                 self.submit_manual_conflict_value(value).await?;
             }
-            OverlaySubmit::Multiline { title, value } if title == CONFLICT_MANUAL_TITLE => {
+            OverlaySubmit::Multiline {
+                route: OverlayRoute::ConflictManual,
+                value,
+                ..
+            } => {
                 self.submit_manual_conflict_value(value).await?;
             }
-            OverlaySubmit::Picker { title, values } if title == CONFLICT_MANUAL_TITLE => {
+            OverlaySubmit::Picker {
+                route: OverlayRoute::ConflictManual,
+                values,
+                ..
+            } => {
                 if let Some(value) = values.first() {
                     self.submit_manual_conflict_value(value.clone()).await?;
                 } else {
@@ -794,6 +890,7 @@ impl App {
     fn begin_add_project(&mut self) {
         self.pending_shortcut.clear();
         self.overlay = Some(OverlayState::TextInput(TextInputState::blank(
+            OverlayRoute::AddProject,
             ADD_PROJECT_TITLE,
             "project name:",
         )));
@@ -802,6 +899,7 @@ impl App {
     fn begin_add_label(&mut self) {
         self.pending_shortcut.clear();
         self.overlay = Some(OverlayState::TextInput(TextInputState::blank(
+            OverlayRoute::AddLabel,
             ADD_LABEL_TITLE,
             "label name:",
         )));
@@ -844,6 +942,7 @@ impl App {
             _ => return,
         };
         self.overlay = Some(OverlayState::TextInput(TextInputState::new(
+            OverlayRoute::AddTaskTitle,
             format!("Add task  project={project} priority={priority}"),
             "",
             input,
@@ -869,6 +968,7 @@ impl App {
         });
         self.detail_context = return_to_detail;
         self.overlay = Some(OverlayState::MultilineInput(MultilineInputState::blank(
+            OverlayRoute::AddNote,
             ADD_NOTE_TITLE,
             "note body:",
         )));
@@ -880,7 +980,12 @@ impl App {
             _ => return,
         };
         let items = self.store.project_picker_items(selected);
-        self.open_picker_overlay(ADD_TASK_TITLE_PROJECT_TITLE, items, false);
+        self.open_picker_overlay(
+            OverlayRoute::AddTaskTitleProject,
+            ADD_TASK_TITLE_PROJECT_TITLE,
+            items,
+            false,
+        );
     }
 
     fn begin_add_task_title_priority(&mut self) {
@@ -889,7 +994,12 @@ impl App {
             _ => return,
         };
         let items = self.store.priority_picker_items(selected);
-        self.open_picker_overlay(ADD_TASK_TITLE_PRIORITY_TITLE, items, false);
+        self.open_picker_overlay(
+            OverlayRoute::AddTaskTitlePriority,
+            ADD_TASK_TITLE_PRIORITY_TITLE,
+            items,
+            false,
+        );
     }
 
     async fn submit_add_task_with_title(&mut self, title: String) -> Result<()> {
@@ -1116,8 +1226,15 @@ impl App {
         self.set_message(result.message);
     }
 
-    fn open_picker_overlay(&mut self, title: &str, items: Vec<PickerItem>, multi: bool) {
+    fn open_picker_overlay(
+        &mut self,
+        route: OverlayRoute,
+        title: &str,
+        items: Vec<PickerItem>,
+        multi: bool,
+    ) {
         self.overlay = Some(OverlayState::Picker(PickerState {
+            route,
             title: title.to_string(),
             filter: LineEdit::blank(),
             selected: selected_picker_index(&items),
@@ -1189,7 +1306,7 @@ impl App {
             .status
             .as_str();
         let items = self.store.status_picker_items(Some(selected));
-        self.open_picker_overlay(EDIT_STATUS_TITLE, items, false);
+        self.open_picker_overlay(OverlayRoute::EditStatus, EDIT_STATUS_TITLE, items, false);
     }
 
     fn begin_delete_project(&mut self) {
@@ -1202,7 +1319,12 @@ impl App {
         let items = self
             .store
             .existing_project_picker_items(selected.as_deref().unwrap_or_default());
-        self.open_picker_overlay(DELETE_PROJECT_TITLE, items, false);
+        self.open_picker_overlay(
+            OverlayRoute::DeleteProjectPicker,
+            DELETE_PROJECT_TITLE,
+            items,
+            false,
+        );
     }
 
     fn selected_sidebar_project(&self) -> Option<String> {
@@ -1233,6 +1355,7 @@ impl App {
 
     fn open_edit_title_overlay(&mut self, input: String) {
         self.overlay = Some(OverlayState::TextInput(TextInputState::new(
+            OverlayRoute::EditTitle,
             EDIT_TITLE_TITLE,
             "title:",
             input,
@@ -1241,7 +1364,12 @@ impl App {
 
     fn open_edit_description_overlay(&mut self, value: String) {
         self.overlay = Some(OverlayState::MultilineInput(
-            MultilineInputState::from_value(EDIT_DESCRIPTION_TITLE, "description:", value),
+            MultilineInputState::from_value(
+                OverlayRoute::EditDescription,
+                EDIT_DESCRIPTION_TITLE,
+                "description:",
+                value,
+            ),
         ));
     }
 
@@ -1271,7 +1399,7 @@ impl App {
             .project_key
             .as_str();
         let items = self.store.existing_project_picker_items(selected);
-        self.open_picker_overlay(EDIT_PROJECT_TITLE, items, false);
+        self.open_picker_overlay(OverlayRoute::EditProject, EDIT_PROJECT_TITLE, items, false);
     }
 
     fn begin_edit_priority(&mut self) {
@@ -1286,7 +1414,12 @@ impl App {
             .priority
             .as_str();
         let items = self.store.priority_picker_items(priority);
-        self.open_picker_overlay(EDIT_PRIORITY_TITLE, items, false);
+        self.open_picker_overlay(
+            OverlayRoute::EditPriority,
+            EDIT_PRIORITY_TITLE,
+            items,
+            false,
+        );
     }
 
     fn begin_edit_labels(&mut self) {
@@ -1303,7 +1436,7 @@ impl App {
         for picker_item in &mut items {
             picker_item.selected = labels.contains(&picker_item.value);
         }
-        self.open_picker_overlay(EDIT_LABELS_TITLE, items, true);
+        self.open_picker_overlay(OverlayRoute::EditLabels, EDIT_LABELS_TITLE, items, true);
     }
 
     fn copy_selected_ref(&mut self, kind: TaskRefKind) {
@@ -1406,7 +1539,12 @@ impl App {
         self.pending_shortcut.clear();
         let selected = self.store.filters.project.as_deref().unwrap_or_default();
         let items = self.store.existing_project_picker_items(selected);
-        self.open_picker_overlay(FILTER_PROJECT_TITLE, items, false);
+        self.open_picker_overlay(
+            OverlayRoute::FilterProject,
+            FILTER_PROJECT_TITLE,
+            items,
+            false,
+        );
     }
 
     fn begin_filter_label(&mut self) {
@@ -1415,7 +1553,7 @@ impl App {
         for item in &mut items {
             item.selected = Some(&item.value) == self.store.filters.label.as_ref();
         }
-        self.open_picker_overlay(FILTER_LABEL_TITLE, items, false);
+        self.open_picker_overlay(OverlayRoute::FilterLabel, FILTER_LABEL_TITLE, items, false);
     }
 
     fn begin_filter_status(&mut self) {
@@ -1423,21 +1561,36 @@ impl App {
         let items = self
             .store
             .status_picker_items(self.store.filters.status.as_deref());
-        self.open_picker_overlay(FILTER_STATUS_TITLE, items, false);
+        self.open_picker_overlay(
+            OverlayRoute::FilterStatus,
+            FILTER_STATUS_TITLE,
+            items,
+            false,
+        );
     }
 
     fn begin_filter_priority(&mut self) {
         self.pending_shortcut.clear();
         let selected = self.store.filters.priority.as_deref().unwrap_or_default();
         let items = self.store.priority_picker_items(selected);
-        self.open_picker_overlay(FILTER_PRIORITY_TITLE, items, false);
+        self.open_picker_overlay(
+            OverlayRoute::FilterPriority,
+            FILTER_PRIORITY_TITLE,
+            items,
+            false,
+        );
     }
 
     async fn begin_switch_workspace(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
         self.store.refresh(None).await?;
         let items = self.store.workspace_picker_items();
-        self.open_picker_overlay(SWITCH_WORKSPACE_TITLE, items, false);
+        self.open_picker_overlay(
+            OverlayRoute::SwitchWorkspace,
+            SWITCH_WORKSPACE_TITLE,
+            items,
+            false,
+        );
         Ok(())
     }
 
@@ -1448,7 +1601,7 @@ impl App {
             _ => "",
         };
         let items = self.store.existing_project_picker_items(selected);
-        self.open_picker_overlay(VIEW_PROJECT_TITLE, items, false);
+        self.open_picker_overlay(OverlayRoute::ViewProject, VIEW_PROJECT_TITLE, items, false);
     }
 
     async fn show_view(&mut self, target: ViewTarget) -> Result<()> {
@@ -1713,6 +1866,7 @@ impl App {
         };
         self.pending_delete_project = Some(project.clone());
         self.overlay = Some(OverlayState::Confirm(ConfirmState {
+            route: OverlayRoute::DeleteProjectConfirm,
             title: DELETE_PROJECT_TITLE.to_string(),
             prompt: format!("Delete project {project}?"),
         }));
@@ -1783,7 +1937,12 @@ impl App {
                 selected: false,
             })
             .collect();
-        self.open_picker_overlay(CONFLICT_FIELD_TITLE, items, false);
+        self.open_picker_overlay(
+            OverlayRoute::ConflictField,
+            CONFLICT_FIELD_TITLE,
+            items,
+            false,
+        );
     }
 
     async fn submit_conflict_field_picker(&mut self, values: Vec<String>) -> Result<()> {
@@ -1825,6 +1984,7 @@ impl App {
             target: target.clone(),
         });
         self.overlay = Some(OverlayState::Confirm(ConfirmState {
+            route: OverlayRoute::ConflictConfirm,
             title: title.to_string(),
             prompt: format!(
                 "Resolve field={} with {}?",
@@ -1862,6 +2022,7 @@ impl App {
             "description" => {
                 self.overlay = Some(OverlayState::MultilineInput(
                     MultilineInputState::from_value(
+                        OverlayRoute::ConflictManual,
                         CONFLICT_MANUAL_TITLE,
                         format!("manual value for field={}:", target.field),
                         target.local_value.clone(),
@@ -1870,6 +2031,7 @@ impl App {
             }
             "title" => {
                 self.overlay = Some(OverlayState::TextInput(TextInputState::new(
+                    OverlayRoute::ConflictManual,
                     CONFLICT_MANUAL_TITLE,
                     format!("manual value for field={}:", target.field),
                     target.local_value.clone(),
@@ -1879,23 +2041,43 @@ impl App {
                 let items = self
                     .store
                     .status_picker_items(Some(target.local_value.as_str()));
-                self.open_picker_overlay(CONFLICT_MANUAL_TITLE, items, false);
+                self.open_picker_overlay(
+                    OverlayRoute::ConflictManual,
+                    CONFLICT_MANUAL_TITLE,
+                    items,
+                    false,
+                );
             }
             "priority" => {
                 let items = self
                     .store
                     .priority_picker_items(target.local_value.as_str());
-                self.open_picker_overlay(CONFLICT_MANUAL_TITLE, items, false);
+                self.open_picker_overlay(
+                    OverlayRoute::ConflictManual,
+                    CONFLICT_MANUAL_TITLE,
+                    items,
+                    false,
+                );
             }
             "project" => {
                 let items = self
                     .store
                     .existing_project_picker_items(target.local_value.as_str());
-                self.open_picker_overlay(CONFLICT_MANUAL_TITLE, items, false);
+                self.open_picker_overlay(
+                    OverlayRoute::ConflictManual,
+                    CONFLICT_MANUAL_TITLE,
+                    items,
+                    false,
+                );
             }
             "deleted" => {
                 let items = deleted_picker_items(&target.local_value);
-                self.open_picker_overlay(CONFLICT_MANUAL_TITLE, items, false);
+                self.open_picker_overlay(
+                    OverlayRoute::ConflictManual,
+                    CONFLICT_MANUAL_TITLE,
+                    items,
+                    false,
+                );
             }
             _ => {
                 self.conflict_flow = None;
@@ -1929,10 +2111,6 @@ impl App {
         }
         Ok(())
     }
-}
-
-fn add_task_title_overlay(title: &str) -> bool {
-    title == ADD_TASK_TITLE_TITLE || title.starts_with("Add task  project=")
 }
 
 fn selected_picker_index(items: &[PickerItem]) -> usize {
@@ -1984,7 +2162,8 @@ mod tests {
         CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PATHS_TITLE, CONFIG_STATUS_TITLE,
     };
     use crate::tui::overlay::{
-        ConfirmState, MultilineInputState, PickerState, TextInputState, TextPanelState,
+        ConfirmState, MultilineInputState, OverlayRoute, PickerState, TextInputState,
+        TextPanelState,
     };
     use crate::tui::store::SidebarTarget;
 
@@ -2093,7 +2272,7 @@ mod tests {
         assert!(app.pending_shortcut.is_empty());
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::TextInput(state)) if add_task_title_overlay(&state.title)
+            Some(OverlayState::TextInput(state)) if state.route == OverlayRoute::AddTaskTitle
         ));
     }
 
@@ -2500,7 +2679,7 @@ mod tests {
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::TextInput(state))
-                if add_task_title_overlay(&state.title) && state.prompt.is_empty()
+                if state.route == OverlayRoute::AddTaskTitle && state.prompt.is_empty()
         ));
     }
 
@@ -2560,7 +2739,7 @@ mod tests {
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::Picker(state)) if state.title == ADD_TASK_TITLE_PROJECT_TITLE
+            Some(OverlayState::Picker(state)) if state.route == OverlayRoute::AddTaskTitleProject
         ));
         type_chars(&mut app, "mobile").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
@@ -2568,7 +2747,7 @@ mod tests {
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::Picker(state)) if state.title == ADD_TASK_TITLE_PRIORITY_TITLE
+            Some(OverlayState::Picker(state)) if state.route == OverlayRoute::AddTaskTitlePriority
         ));
         type_chars(&mut app, "high").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
@@ -2602,7 +2781,7 @@ mod tests {
         assert_eq!(app.message.as_deref(), Some("task title is required"));
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::TextInput(state)) if add_task_title_overlay(&state.title)
+            Some(OverlayState::TextInput(state)) if state.route == OverlayRoute::AddTaskTitle
         ));
     }
 
@@ -2891,8 +3070,14 @@ mod tests {
             OverlayState::Command {
                 input: LineEdit::new("ref".to_string()),
             },
-            OverlayState::TextInput(TextInputState::new("T", "P", "x".to_string())),
+            OverlayState::TextInput(TextInputState::new(
+                OverlayRoute::MessageOnly,
+                "T",
+                "P",
+                "x".to_string(),
+            )),
             OverlayState::MultilineInput(MultilineInputState {
+                route: OverlayRoute::MessageOnly,
                 title: "M".to_string(),
                 prompt: "P".to_string(),
                 lines: vec!["x".to_string()],
@@ -2900,6 +3085,7 @@ mod tests {
                 column: 1,
             }),
             OverlayState::Picker(PickerState {
+                route: OverlayRoute::MessageOnly,
                 title: "Pick".to_string(),
                 filter: LineEdit::blank(),
                 items: vec![PickerItem {
@@ -2911,6 +3097,7 @@ mod tests {
                 multi: false,
             }),
             OverlayState::Confirm(ConfirmState {
+                route: OverlayRoute::MessageOnly,
                 title: "C".to_string(),
                 prompt: "?".to_string(),
             }),
@@ -3142,6 +3329,7 @@ mod tests {
     async fn generic_text_input_submits_message() {
         let mut app = test_app().await;
         app.overlay = Some(OverlayState::TextInput(TextInputState::new(
+            OverlayRoute::MessageOnly,
             "Title",
             "Enter title",
             "done".to_string(),
@@ -3545,7 +3733,10 @@ mod tests {
 
         assert!(matches!(
             app.overlay,
-            Some(OverlayState::Picker(PickerState { ref title, .. })) if title == DELETE_PROJECT_TITLE
+            Some(OverlayState::Picker(PickerState {
+                route: OverlayRoute::DeleteProjectPicker,
+                ..
+            }))
         ));
         assert!(app.message.is_none());
     }
@@ -3589,7 +3780,10 @@ mod tests {
 
         assert!(matches!(
             app.overlay,
-            Some(OverlayState::Confirm(ConfirmState { ref title, .. })) if title == DELETE_PROJECT_TITLE
+            Some(OverlayState::Confirm(ConfirmState {
+                route: OverlayRoute::DeleteProjectConfirm,
+                ..
+            }))
         ));
         app.handle_overlay_key(key(KeyCode::Char('y')))
             .await
@@ -3632,9 +3826,108 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn add_project_submit_routes_by_route_not_title() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::TextInput(TextInputState::new(
+            OverlayRoute::AddProject,
+            "Renamed copy",
+            "project name:",
+            "Mobile App".to_string(),
+        )));
+
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert_eq!(app.message.as_deref(), Some("created project mobile-app"));
+    }
+
+    #[tokio::test]
+    async fn add_task_project_shortcut_routes_by_route_not_title_prefix() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        let Some(OverlayState::TextInput(state)) = &mut app.overlay else {
+            panic!("expected add task title overlay");
+        };
+        state.title = "Create item".to_string();
+
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state))
+                if state.route == OverlayRoute::AddTaskTitleProject
+        ));
+    }
+
+    #[tokio::test]
+    async fn add_task_priority_shortcut_routes_by_route_not_title_prefix() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        let Some(OverlayState::TextInput(state)) = &mut app.overlay else {
+            panic!("expected add task title overlay");
+        };
+        state.title = "Create item".to_string();
+
+        app.handle_overlay_key(ctrl_p()).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state))
+                if state.route == OverlayRoute::AddTaskTitlePriority
+        ));
+    }
+
+    #[tokio::test]
+    async fn conflict_confirm_without_active_flow_reports_message() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::Confirm(ConfirmState {
+            route: OverlayRoute::ConflictConfirm,
+            title: CONFLICT_CONFIRM_LOCAL_TITLE.to_string(),
+            prompt: "Resolve?".to_string(),
+        }));
+
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            app.message.as_deref(),
+            Some("conflict confirmation is not active")
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_project_picker_and_confirm_use_distinct_routes() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
+        app.execute(Action::BeginDeleteProject).await.unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Picker(PickerState {
+                route: OverlayRoute::DeleteProjectPicker,
+                ref title,
+                ..
+            })) if title == DELETE_PROJECT_TITLE
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Confirm(ConfirmState {
+                route: OverlayRoute::DeleteProjectConfirm,
+                ref title,
+                ..
+            })) if title == DELETE_PROJECT_TITLE
+        ));
+    }
+    #[tokio::test]
     async fn generic_confirm_submits_on_y() {
         let mut app = test_app().await;
         app.overlay = Some(OverlayState::Confirm(ConfirmState {
+            route: OverlayRoute::MessageOnly,
             title: "Delete".to_string(),
             prompt: "Continue?".to_string(),
         }));

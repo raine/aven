@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::tui::overlay::{ConfirmState, OverlayState, TextPanelState};
+use crate::tui::overlay::{ConfirmState, OverlayRoute, OverlayState, TextPanelState};
 use crate::tui::store::TuiStore;
 
 pub(crate) const CONFIG_STATUS_TITLE: &str = "Config status";
@@ -32,6 +32,7 @@ pub(crate) fn config_paths_overlay(store: &TuiStore) -> Result<OverlayState> {
 pub(crate) fn config_init_overlay() -> Result<OverlayState> {
     let path = crate::config::config_file_path()?;
     Ok(OverlayState::Confirm(ConfirmState {
+        route: OverlayRoute::ConfigInit,
         title: CONFIG_INIT_TITLE.to_string(),
         prompt: format!("Create default config at {}?", path.display()),
     }))
