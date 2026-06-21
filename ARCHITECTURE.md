@@ -12,7 +12,7 @@
 | `src/cli.rs` | Clap argument and subcommand definitions. |
 | `src/commands.rs`, `src/commands/doctor.rs` | User-facing CLI command handlers, focused doctor report rendering, and output formatting calls. |
 | `src/skill.md` | Agent-facing CLI primer printed by `aven skill` and embedded in `aven prime`. |
-| `src/operations.rs` | Transactional business operations used by CLI and TUI. |
+| `src/operations/` | Transactional business operations used by CLI and TUI, split by task, project, conflict, and config concerns behind a stable facade. |
 | `src/mutation.rs` | Field-level task mutations, scalar conflict checks, change recording, and field version updates. |
 | `src/task_fields.rs` | Shared metadata for versioned scalar task fields and value validation. |
 | `src/db.rs` | SQLite connection setup, migrations, metadata, sync helpers, and conflict helpers. |
@@ -66,7 +66,7 @@ SQLite stores synced task data and local UI state. Config stores local routing a
 
 `Task` and `Project` in `src/types.rs` are the core records. They carry `workspace_id`, and workspace-scoped tables include `workspace_id` in uniqueness and lookup paths. Task state uses string fields for `status` and `priority` plus a `deleted` boolean. Tasks keep `updated_at` for any persisted task change and `queue_activity_at` for queue-relevant activity used by the TUI queue idle score. Read paths wrap records into list and sidebar DTOs in `src/query.rs`. Task lists batch label and unresolved-conflict enrichment through `src/task_enrichment.rs` so CLI and TUI list refreshes avoid per-task enrichment queries.
 
-Many invariants are application-enforced rather than database-enforced. Do not write domain tables directly unless the operation intentionally bypasses sync and validation. Prefer `operations.rs`, `mutation.rs`, project helpers, label helpers, and ref helpers.
+Many invariants are application-enforced rather than database-enforced. Do not write domain tables directly unless the operation intentionally bypasses sync and validation. Prefer the operations facade or focused operations modules, `mutation.rs`, project helpers, label helpers, and ref helpers.
 
 ## Domain rules
 
@@ -83,7 +83,7 @@ Many invariants are application-enforced rather than database-enforced. Do not w
 
 ## Mutation and invariants
 
-Scalar task field mutations flow through `src/mutation.rs` or higher-level operations in `src/operations.rs`:
+Scalar task field mutations flow through `src/mutation.rs` or higher-level operations in `src/operations/`:
 
 1. Validate versioned scalar fields through `src/task_fields.rs`.
 2. Reject writes to scalar fields with unresolved conflicts.
@@ -218,7 +218,7 @@ Overlay submits route through `OverlayRoute` in `App::handle_overlay_submit`. Ti
 1. Add args and a `Commands` variant in `src/cli.rs`.
 2. Add dispatch in `src/lib.rs`.
 3. Add output and input handling in `src/commands.rs`.
-4. Put transactional business logic in `src/operations.rs`.
+4. Put transactional business logic in `src/operations/`.
 5. Put low-level persistence helpers in `src/db.rs` or focused modules.
 6. For mutating commands, record changes and keep `field_versions` aligned when scalar fields change.
 7. For mutating CLI commands that should trigger prompt sync, update `command_should_wake` in `src/lib.rs`.
@@ -228,7 +228,7 @@ Overlay submits route through `OverlayRoute` in `App::handle_overlay_submit`. Ti
 
 1. Add a migration for the `tasks` column and any indexes.
 2. Update `Task` in `src/types.rs` and task row mapping in `src/refs.rs` or query code.
-3. Update create payloads, update DTOs, and operation logic in `src/operations.rs`.
+3. Update create payloads, update DTOs, and operation logic in `src/operations/`.
 4. Update `apply_field_value` and mutation validation in `src/mutation.rs`.
 5. Seed field versions during task creation if the field needs conflict protection.
 6. Update sync remote apply and conflict resolution behavior in `src/sync.rs`.

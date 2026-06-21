@@ -1,0 +1,28 @@
+mod config;
+mod conflicts;
+mod projects;
+mod tasks;
+
+#[allow(unused_imports)]
+pub(crate) use config::{
+    ConfigInitOutcome, ConfigPathsOutcome, ConfigShowOutcome, ConfigStatusOutcome, init_config,
+    show_config, show_config_paths, show_config_status,
+};
+#[allow(unused_imports)]
+pub(crate) use conflicts::{
+    ConflictDetail, ConflictListItem, ConflictOutcome, conflict_variant_value, list_conflicts,
+    resolve_conflict, task_conflicts,
+};
+#[allow(unused_imports)]
+pub(crate) use projects::{
+    LabelOutcome, ProjectDeleteOutcome, ProjectOutcome, ProjectPathOutcome,
+    add_project_path_operation, create_label_operation, create_label_operation_in_workspace,
+    create_project_operation, delete_project_operation, list_project_paths_operation,
+    remove_project_path_operation,
+};
+#[allow(unused_imports)]
+pub(crate) use tasks::{
+    NoteOutcome, TaskDraft, TaskOutcome, TaskUpdate, TaskUpdateOutcome, add_note, create_task,
+    create_task_in_workspace, set_task_deleted, update_task, update_task_field, update_task_labels,
+    update_task_labels_in_workspace,
+};
