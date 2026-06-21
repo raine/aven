@@ -21,6 +21,7 @@ mod refs;
 mod render;
 mod signals;
 mod sync;
+mod task_enrichment;
 mod task_render;
 mod tui;
 mod types;

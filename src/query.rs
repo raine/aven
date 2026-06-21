@@ -2,12 +2,12 @@ use anyhow::Result;
 use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
-use crate::db::{task_from_row, task_has_conflict};
+use crate::db::task_from_row;
 use crate::labels::ensure_label_exists_in_workspace;
 use crate::projects::resolve_existing_project;
 use crate::queue::{QueueMeta, now_seconds, queue_meta, queue_order};
 use crate::refs::display_refs_for_tasks;
-use crate::task_render::labels_for_task_in_workspace;
+use crate::task_enrichment::load_task_enrichment;
 use crate::types::Task;
 use crate::workspaces::active_workspace_id;
 
@@ -163,6 +163,8 @@ pub(crate) async fn list_task_items(
         .map(|row| task_from_row(&row))
         .collect::<Result<Vec<_>>>()?;
     let display_refs = display_refs_for_tasks(conn, &tasks).await?;
+    let task_ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
+    let mut enrichment = load_task_enrichment(conn, &workspace_id, &task_ids).await?;
     let mut items = Vec::with_capacity(tasks.len());
     let now_seconds = now_seconds();
     for task in tasks {
@@ -170,8 +172,11 @@ pub(crate) async fn list_task_items(
             .get(&task.id)
             .cloned()
             .unwrap_or_else(|| format!("{}-{}", task.project_prefix, task.id));
-        let labels = labels_for_task_in_workspace(conn, &task.workspace_id, &task.id).await?;
-        let has_conflict = task_has_conflict(conn, &task.workspace_id, &task.id).await?;
+        let labels = enrichment
+            .labels_by_task
+            .remove(&task.id)
+            .unwrap_or_default();
+        let has_conflict = enrichment.conflicted_task_ids.contains(&task.id);
         let queue = queue_meta(&task, has_conflict, now_seconds);
         items.push(TaskListItem {
             task,
@@ -349,6 +354,43 @@ mod tests {
         .unwrap();
     }
 
+    async fn insert_test_label(conn: &mut SqliteConnection, task_id: &str, label: &str) {
+        let workspace_id = crate::workspaces::active_workspace_id();
+        sqlx::query(
+            "INSERT OR IGNORE INTO labels(workspace_id, name, created_at) VALUES (?, ?, 't')",
+        )
+        .bind(&workspace_id)
+        .bind(label)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        sqlx::query("INSERT INTO task_labels(workspace_id, task_id, label) VALUES (?, ?, ?)")
+            .bind(&workspace_id)
+            .bind(task_id)
+            .bind(label)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+    }
+
+    async fn insert_test_conflict(conn: &mut SqliteConnection, task_id: &str, resolved: bool) {
+        let resolved = if resolved { 1_i64 } else { 0_i64 };
+        sqlx::query(
+            "INSERT INTO conflicts(workspace_id, task_id, field, base_version, local_value, remote_value,
+             local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
+             VALUES (?, ?, 'title', NULL, 'local', 'remote', NULL, ?, 'a', 'b', ?, ?)",
+        )
+        .bind(crate::workspaces::active_workspace_id())
+        .bind(task_id)
+        .bind(crate::ids::new_id())
+        .bind(crate::ids::now())
+        .bind(resolved)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    }
+
     fn listed_titles(items: &[TaskListItem]) -> Vec<&str> {
         items.iter().map(|item| item.task.title.as_str()).collect()
     }
@@ -521,5 +563,81 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].task.title, "conflicted");
         assert!(items[0].has_conflict);
+    }
+
+    #[tokio::test]
+    async fn list_items_include_labels_and_unresolved_conflict_flags() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+        insert_test_task(&mut conn, "0000000000000301", "labeled", "todo", "none", "001").await;
+        insert_test_task(&mut conn, "0000000000000302", "resolved", "todo", "none", "002").await;
+        insert_test_task(&mut conn, "0000000000000303", "plain", "todo", "none", "003").await;
+
+        insert_test_label(&mut conn, "0000000000000301", "zeta").await;
+        insert_test_label(&mut conn, "0000000000000301", "alpha").await;
+        insert_test_conflict(&mut conn, "0000000000000301", false).await;
+        insert_test_conflict(&mut conn, "0000000000000302", true).await;
+
+        let items = list_task_items(
+            &mut conn,
+            TaskFilters::default(),
+            TaskSort::Created,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            items[0].labels,
+            vec!["alpha".to_string(), "zeta".to_string()]
+        );
+        assert!(items[0].has_conflict);
+        assert!(!items[1].has_conflict);
+        assert!(items[2].labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_items_preserve_display_refs_with_hidden_collisions() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+
+        insert_test_task(&mut conn, "ABCD000000000001", "visible", "todo", "none", "001").await;
+        insert_test_task(&mut conn, "ABCD999999999999", "done", "done", "none", "002").await;
+
+        let items = list_task_items(
+            &mut conn,
+            TaskFilters {
+                hide_done: true,
+                ..TaskFilters::default()
+            },
+            TaskSort::Created,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].display_ref, "APP-ABCD0");
+    }
+
+    #[tokio::test]
+    async fn queue_sort_ranks_conflicted_tasks_ahead_of_clean_peers() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+
+        insert_test_task(&mut conn, "0000000000000401", "clean", "todo", "none", "001").await;
+        insert_test_task(&mut conn, "0000000000000402", "conflicted", "todo", "none", "002").await;
+        insert_test_conflict(&mut conn, "0000000000000402", false).await;
+
+        let items = list_task_items(
+            &mut conn,
+            TaskFilters::default(),
+            TaskSort::Queue,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(listed_titles(&items), ["conflicted", "clean"]);
     }
 }
