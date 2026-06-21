@@ -68,7 +68,7 @@ check-types:
 
 # Run tests
 test:
-    @scripts/quiet-check test env SQLX_OFFLINE=true cargo nextest run --all-targets --locked --no-fail-fast
+    @scripts/quiet-check test env SQLX_OFFLINE=true cargo nextest run --all-targets --locked --no-fail-fast --status-level fail
     @scripts/quiet-check doc-test env SQLX_OFFLINE=true cargo test --doc --locked
 
 # Generate sqlx offline query metadata
