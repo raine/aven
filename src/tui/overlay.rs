@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayState {
     Help { scroll: u16 },
-    Detail,
+    Detail { scroll: u16 },
     DetailHelp { scroll: u16 },
     Search { input: LineEdit },
     Command { input: LineEdit },
@@ -214,7 +214,7 @@ pub(crate) struct ConfirmState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayView {
     Help { scroll: u16 },
-    Detail,
+    Detail { scroll: u16 },
     DetailHelp { scroll: u16 },
     Search { input: String, cursor: usize },
     Command { input: String, cursor: usize },
@@ -308,7 +308,7 @@ impl From<&OverlayState> for OverlayView {
     fn from(state: &OverlayState) -> Self {
         match state {
             OverlayState::Help { scroll } => Self::Help { scroll: *scroll },
-            OverlayState::Detail => Self::Detail,
+            OverlayState::Detail { scroll } => Self::Detail { scroll: *scroll },
             OverlayState::DetailHelp { scroll } => Self::DetailHelp { scroll: *scroll },
             OverlayState::Search { input } => Self::Search {
                 input: input.text.clone(),
@@ -515,9 +515,17 @@ pub(crate) fn handle_generic_overlay_key(
             }
             _ => OverlayOutcome::None(OverlayState::DetailHelp { scroll }),
         },
-        OverlayState::Detail => match key.code {
+        OverlayState::Detail { mut scroll } => match key.code {
             KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
-            _ => OverlayOutcome::None(OverlayState::Detail),
+            KeyCode::Char('j') | KeyCode::Down => {
+                scroll = scroll.saturating_add(1);
+                OverlayOutcome::None(OverlayState::Detail { scroll })
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                scroll = scroll.saturating_sub(1);
+                OverlayOutcome::None(OverlayState::Detail { scroll })
+            }
+            _ => OverlayOutcome::None(OverlayState::Detail { scroll }),
         },
         other => OverlayOutcome::None(other),
     }
@@ -941,6 +949,22 @@ mod tests {
             panic!("expected scrolled text panel");
         };
         assert_eq!(state.scroll, 0);
+    }
+
+    #[test]
+    fn detail_scrolls_with_line_navigation_keys() {
+        let OverlayOutcome::None(OverlayState::Detail { scroll }) =
+            handle(key(KeyCode::Char('j')), OverlayState::Detail { scroll: 0 })
+        else {
+            panic!("expected scrolled detail");
+        };
+        assert_eq!(scroll, 1);
+        let OverlayOutcome::None(OverlayState::Detail { scroll }) =
+            handle(key(KeyCode::Char('k')), OverlayState::Detail { scroll })
+        else {
+            panic!("expected scrolled detail");
+        };
+        assert_eq!(scroll, 0);
     }
 
     #[test]

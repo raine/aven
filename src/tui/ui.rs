@@ -47,12 +47,20 @@ impl ViewState {
     fn footer_mode(&self) -> FooterMode {
         if matches!(
             self.overlay,
-            Some(OverlayView::Detail | OverlayView::DetailHelp { .. })
+            Some(OverlayView::Detail { .. } | OverlayView::DetailHelp { .. })
         ) {
             FooterMode::Detail
         } else {
             FooterMode::List
         }
+    }
+}
+
+fn detail_underlay_scroll(overlay: &Option<OverlayView>) -> u16 {
+    match overlay {
+        Some(OverlayView::Detail { scroll }) => *scroll,
+        Some(OverlayView::DetailHelp { .. }) => 0,
+        _ => 0,
     }
 }
 
@@ -109,7 +117,7 @@ pub(crate) fn render(
         render_toast(frame, message);
     }
     if view.detail_underlay {
-        render_detail_underlay(frame, store, widgets);
+        render_detail_underlay(frame, store, widgets, detail_underlay_scroll(&view.overlay));
     }
     if let Some(overlay) = &view.overlay {
         render_overlay(frame, store, widgets, overlay);
@@ -383,13 +391,13 @@ fn footer_bar(mode: FooterMode) -> Paragraph<'static> {
             ("q", "quit"),
         ],
         FooterMode::Detail => &[
+            ("j/k Pg", "scroll"),
+            ("[/]", "prev/next"),
             ("e", "edit field"),
             ("n", "add note"),
             ("d", "done"),
-            ("s", "status"),
-            ("p", "priority"),
-            ("l", "labels"),
-            ("y/Y", "copy ref/id"),
+            ("s/p/l", "edit"),
+            ("y/Y", "copy"),
             ("?", "help"),
             ("Esc", "back"),
         ],
@@ -1062,7 +1070,7 @@ fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usi
     );
 }
 
-fn render_detail(frame: &mut Frame, item: &TaskListItem) {
+fn render_detail(frame: &mut Frame, item: &TaskListItem, scroll: u16) {
     let area = frame.area();
     let [_, body, _] = Layout::vertical([
         Constraint::Length(2),
@@ -1085,7 +1093,7 @@ fn render_detail(frame: &mut Frame, item: &TaskListItem) {
         horizontal: 2,
         vertical: 1,
     });
-    render_detail_content(frame, item, content_area);
+    render_detail_content(frame, item, content_area, scroll);
     if metadata_area.width > 0 {
         render_detail_metadata(frame, item, metadata_area);
     }
@@ -1098,11 +1106,11 @@ fn keycap_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
-fn render_detail_content(frame: &mut Frame, item: &TaskListItem, area: Rect) {
+fn render_detail_content(frame: &mut Frame, item: &TaskListItem, area: Rect, scroll: u16) {
     let lines = detail_content_lines(item, area.width as usize);
     let visible = area.height as usize;
     let content_height = lines.len().max(1);
-    let start = 0;
+    let start = detail_scroll_start(scroll, content_height, visible);
     frame.render_widget(
         Paragraph::new(Text::from(
             lines.into_iter().skip(start).collect::<Vec<_>>(),
@@ -1119,6 +1127,11 @@ fn render_detail_content(frame: &mut Frame, item: &TaskListItem, area: Rect) {
             &mut ScrollbarState::new(content_height).position(start),
         );
     }
+}
+
+fn detail_scroll_start(scroll: u16, content_height: usize, visible: usize) -> usize {
+    let max_start = content_height.saturating_sub(visible);
+    (scroll as usize).min(max_start)
 }
 
 fn detail_content_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
@@ -1330,8 +1343,18 @@ const DETAIL_HELP_TOPICS: &[HelpTopic] = &[
         section: "General",
     },
     HelpTopic {
-        keys: "j/k",
-        description: "move selection in the task list",
+        keys: "j/k Up/Down",
+        description: "scroll one line",
+        section: "Task detail",
+    },
+    HelpTopic {
+        keys: "Ctrl-d/Ctrl-u PgDn/PgUp",
+        description: "scroll one page",
+        section: "Task detail",
+    },
+    HelpTopic {
+        keys: "[/]",
+        description: "select previous or next task",
         section: "Task detail",
     },
     HelpTopic {
@@ -1619,13 +1642,18 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
         OverlayView::Picker(state) => render_picker(frame, state),
         OverlayView::Confirm(state) => render_confirm(frame, state),
         OverlayView::TextPanel(state) => render_text_panel(frame, state),
-        OverlayView::Detail => {}
+        OverlayView::Detail { .. } => {}
     }
 }
 
-fn render_detail_underlay(frame: &mut Frame, store: &TuiStore, widgets: &mut WidgetState) {
+fn render_detail_underlay(
+    frame: &mut Frame,
+    store: &TuiStore,
+    widgets: &mut WidgetState,
+    scroll: u16,
+) {
     if let Some(task) = store.selected_task(widgets.table.selected()) {
-        render_detail(frame, task);
+        render_detail(frame, task, scroll);
     }
 }
 
@@ -1637,9 +1665,14 @@ fn render_overlay(
 ) {
     if matches!(
         overlay,
-        OverlayView::Detail | OverlayView::DetailHelp { .. }
+        OverlayView::Detail { .. } | OverlayView::DetailHelp { .. }
     ) {
-        render_detail_underlay(frame, store, widgets);
+        let scroll = match overlay {
+            OverlayView::Detail { scroll } => *scroll,
+            OverlayView::DetailHelp { .. } => 0,
+            _ => 0,
+        };
+        render_detail_underlay(frame, store, widgets, scroll);
         if matches!(overlay, OverlayView::DetailHelp { .. }) {
             render_overlay_content(frame, overlay);
         }
@@ -2641,6 +2674,28 @@ mod tests {
         assert!(rendered.contains("CONFLICTS\nyes"));
     }
 
+    #[test]
+    fn detail_scroll_start_is_capped_by_visible_rows() {
+        assert_eq!(detail_scroll_start(0, 20, 5), 0);
+        assert_eq!(detail_scroll_start(8, 20, 5), 8);
+        assert_eq!(detail_scroll_start(30, 20, 5), 15);
+        assert_eq!(detail_scroll_start(4, 3, 5), 0);
+    }
+
+    #[test]
+    fn detail_footer_lists_scroll_and_task_navigation_keys() {
+        let backend = TestBackend::new(100, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| frame.render_widget(footer_bar(FooterMode::Detail), frame.area()))
+            .unwrap();
+        let rendered = buffer_text(terminal.backend());
+
+        assert!(rendered.contains("j/k Pg"));
+        assert!(rendered.contains("[/]"));
+        assert!(rendered.contains("prev/next"));
+    }
+
     fn detail_test_item() -> TaskListItem {
         TaskListItem {
             task: crate::types::Task {
@@ -2733,6 +2788,8 @@ mod tests {
         let rendered = render_overlay_view(OverlayView::DetailHelp { scroll: 0 });
         assert!(rendered.contains("Task detail shortcuts"));
         assert!(rendered.contains("return to the task list"));
+        assert!(rendered.contains("scroll one page"));
+        assert!(rendered.contains("select previous or next task"));
         assert!(rendered.contains("add a note to this task"));
         assert!(!rendered.contains("view updated"));
     }
