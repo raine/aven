@@ -1,22 +1,26 @@
 use std::io::{self, IsTerminal};
 use std::path::Path;
 
-use anyhow::Result;
+use std::collections::HashSet;
+
+use anyhow::{Result, bail};
 use crossterm::style::{Color, Stylize};
 use sqlx::SqliteConnection;
 
 use crate::config::{self, AppConfig};
-use crate::db::get_meta;
+use crate::db::{conflict_exists, get_meta};
 use crate::workspaces::resolve_active_workspace;
 
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::cli::{
-    AddArgs, ConfigCommand, ConfigSubcommand, ConflictCommand, ConflictSubcommand, LabelCommand,
-    LabelSubcommand, ListArgs, NoteArgs, ProjectCommand, ProjectPathSubcommand, ProjectSubcommand,
-    RefArgs, SearchArgs, ShowArgs, UpdateArgs, WorkspaceCommand, WorkspaceSubcommand,
+    AddArgs, BulkUpdateArgs, ConfigCommand, ConfigSubcommand, ConflictCommand, ConflictSubcommand,
+    LabelCommand, LabelSubcommand, ListArgs, NoteArgs, ProjectCommand, ProjectPathSubcommand,
+    ProjectSubcommand, RefArgs, SearchArgs, ShowArgs, UpdateArgs, WorkspaceCommand,
+    WorkspaceSubcommand,
 };
 use crate::input::{read_optional_text, read_required_text};
 use crate::labels::list_labels;
+use crate::labels::resolve_labels_in_workspace;
 use crate::operations::{
     TaskDraft, TaskUpdate, add_note, add_project_path_operation, conflict_variant_value,
     create_label_operation, create_project_operation, create_task, init_config, list_conflicts,
@@ -83,6 +87,273 @@ pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Res
         query::list_task_items(conn, filters, TaskSort::Updated, SortDirection::Desc).await?
     {
         print_task_line_item(&item).await?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn cmd_bulk_update(
+    conn: &mut SqliteConnection,
+    args: BulkUpdateArgs,
+) -> Result<()> {
+    ensure_bulk_update_has_selector(&args)?;
+    ensure_bulk_update_has_mutation(&args)?;
+    validate_bulk_update_args(&args)?;
+
+    let workspace_id = crate::workspaces::active_workspace_id();
+    let add_labels =
+        dedup_labels(resolve_labels_in_workspace(conn, &workspace_id, &args.label).await?);
+    let remove_labels =
+        dedup_labels(resolve_labels_in_workspace(conn, &workspace_id, &args.remove_label).await?);
+    ensure_disjoint_labels(&add_labels, &remove_labels)?;
+    let set_project_key = if let Some(project) = args.set_project.as_deref() {
+        Some(
+            resolve_existing_project_in_workspace(conn, &workspace_id, project)
+                .await?
+                .key,
+        )
+    } else {
+        None
+    };
+
+    let filters = TaskFilters {
+        project: args.project.clone(),
+        status: args.status.clone(),
+        priority: args.priority.clone(),
+        label: args.filter_label.clone(),
+        include_deleted: args.include_deleted,
+        hide_done: false,
+        conflicts_only: false,
+        search: None,
+    };
+    let items =
+        query::list_task_items(conn, filters, TaskSort::Updated, SortDirection::Desc).await?;
+    let matched = items.len();
+    let mut planned = Vec::with_capacity(matched);
+    for item in items {
+        let update = bulk_update_for_item(
+            &item,
+            &args,
+            &add_labels,
+            &remove_labels,
+            set_project_key.as_deref(),
+        );
+        let will_change = bulk_update_has_changes(&update);
+        preflight_bulk_update_item(conn, &workspace_id, &item, &update).await?;
+        planned.push((item, update, will_change));
+    }
+
+    let would_change = planned
+        .iter()
+        .filter(|(_, _, will_change)| *will_change)
+        .count();
+    let mut changed = 0;
+    let mut unchanged = 0;
+    for (item, update, will_change) in planned {
+        if args.dry_run {
+            println!(
+                "would-update {} changed={} status={} priority={} labels={} title={}",
+                item.display_ref,
+                if will_change { "yes" } else { "none" },
+                item.task.status,
+                item.task.priority,
+                item.labels.join(","),
+                quote(&item.task.title)
+            );
+            continue;
+        }
+        if !will_change {
+            unchanged += 1;
+            println!(
+                "bulk-updated {} changed=none status={} priority={} title={}",
+                item.display_ref,
+                item.task.status,
+                item.task.priority,
+                quote(&item.task.title)
+            );
+            continue;
+        }
+        let outcome = update_task(conn, &item.task.id, update).await?;
+        changed += 1;
+        println!(
+            "bulk-updated {} changed=yes status={} priority={} title={}",
+            display_ref(conn, &outcome.task).await?,
+            outcome.task.status,
+            outcome.task.priority,
+            quote(&outcome.task.title)
+        );
+    }
+    if args.dry_run {
+        unchanged = matched - would_change;
+    }
+    println!(
+        "bulk-update-summary matched={matched} changed={changed} would_change={would_change} unchanged={unchanged} dry_run={}",
+        if args.dry_run { "yes" } else { "no" }
+    );
+    Ok(())
+}
+
+fn ensure_bulk_update_has_selector(args: &BulkUpdateArgs) -> Result<()> {
+    if args.project.is_some()
+        || args.status.is_some()
+        || args.priority.is_some()
+        || args.filter_label.is_some()
+        || args.all
+    {
+        return Ok(());
+    }
+    bail!("error bulk-update-requires-selector hint=\"add a filter or --all\"");
+}
+
+fn ensure_bulk_update_has_mutation(args: &BulkUpdateArgs) -> Result<()> {
+    if args.set_status.is_some()
+        || args.set_priority.is_some()
+        || args.set_project.is_some()
+        || !args.label.is_empty()
+        || !args.remove_label.is_empty()
+    {
+        return Ok(());
+    }
+    bail!("error bulk-update-requires-mutation hint=\"add a mutation flag\"");
+}
+
+fn validate_bulk_update_args(args: &BulkUpdateArgs) -> Result<()> {
+    if let Some(status) = args.status.as_deref() {
+        validate_choice("status", status, STATUSES)?;
+    }
+    if let Some(priority) = args.priority.as_deref() {
+        validate_choice("priority", priority, PRIORITIES)?;
+    }
+    if let Some(status) = args.set_status.as_deref() {
+        validate_choice("status", status, STATUSES)?;
+    }
+    if let Some(priority) = args.set_priority.as_deref() {
+        validate_choice("priority", priority, PRIORITIES)?;
+    }
+    Ok(())
+}
+
+fn ensure_disjoint_labels(add_labels: &[String], remove_labels: &[String]) -> Result<()> {
+    let add_labels = add_labels.iter().collect::<HashSet<_>>();
+    for label in remove_labels {
+        if add_labels.contains(label) {
+            bail!("error bulk-update-label-conflict label={label}");
+        }
+    }
+    Ok(())
+}
+
+fn dedup_labels(labels: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    labels
+        .into_iter()
+        .filter(|label| seen.insert(label.clone()))
+        .collect()
+}
+
+fn bulk_update_for_item(
+    item: &query::TaskListItem,
+    args: &BulkUpdateArgs,
+    add_labels: &[String],
+    remove_labels: &[String],
+    set_project_key: Option<&str>,
+) -> TaskUpdate {
+    TaskUpdate {
+        title: None,
+        description: None,
+        project: set_project_key
+            .filter(|project_key| *project_key != item.task.project_key)
+            .map(str::to_string),
+        status: args
+            .set_status
+            .as_deref()
+            .filter(|status| *status != item.task.status)
+            .map(str::to_string),
+        priority: args
+            .set_priority
+            .as_deref()
+            .filter(|priority| *priority != item.task.priority)
+            .map(str::to_string),
+        add_labels: add_labels
+            .iter()
+            .filter(|label| !item.labels.contains(label))
+            .cloned()
+            .collect(),
+        remove_labels: remove_labels
+            .iter()
+            .filter(|label| item.labels.contains(label))
+            .cloned()
+            .collect(),
+    }
+}
+
+fn bulk_update_has_changes(update: &TaskUpdate) -> bool {
+    update.title.is_some()
+        || update.description.is_some()
+        || update.project.is_some()
+        || update.status.is_some()
+        || update.priority.is_some()
+        || !update.add_labels.is_empty()
+        || !update.remove_labels.is_empty()
+}
+
+async fn preflight_bulk_update_item(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    item: &query::TaskListItem,
+    update: &TaskUpdate,
+) -> Result<()> {
+    if update.status.is_some() {
+        ensure_bulk_field_clear(
+            conn,
+            workspace_id,
+            &item.display_ref,
+            &item.task.id,
+            "status",
+        )
+        .await?;
+    }
+    if update.priority.is_some() {
+        ensure_bulk_field_clear(
+            conn,
+            workspace_id,
+            &item.display_ref,
+            &item.task.id,
+            "priority",
+        )
+        .await?;
+    }
+    if update.project.is_some() {
+        ensure_bulk_field_clear(
+            conn,
+            workspace_id,
+            &item.display_ref,
+            &item.task.id,
+            "project",
+        )
+        .await?;
+    }
+    if !update.add_labels.is_empty() || !update.remove_labels.is_empty() {
+        ensure_bulk_field_clear(
+            conn,
+            workspace_id,
+            &item.display_ref,
+            &item.task.id,
+            "labels",
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn ensure_bulk_field_clear(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    display_ref: &str,
+    task_id: &str,
+    field: &str,
+) -> Result<()> {
+    if conflict_exists(conn, workspace_id, task_id, field).await? {
+        bail!("error bulk-update-conflicted-field ref={display_ref} field={field}");
     }
     Ok(())
 }

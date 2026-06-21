@@ -28,6 +28,7 @@ pub(crate) enum Commands {
     Add(AddArgs),
     Show(ShowArgs),
     List(ListArgs),
+    BulkUpdate(BulkUpdateArgs),
     Update(UpdateArgs),
     Note(NoteArgs),
     Projects(SearchArgs),
@@ -83,6 +84,34 @@ pub(crate) struct ListArgs {
     pub(crate) label: Option<String>,
     #[arg(long)]
     pub(crate) all: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct BulkUpdateArgs {
+    #[arg(long)]
+    pub(crate) project: Option<String>,
+    #[arg(long)]
+    pub(crate) status: Option<String>,
+    #[arg(long)]
+    pub(crate) priority: Option<String>,
+    #[arg(long)]
+    pub(crate) filter_label: Option<String>,
+    #[arg(long)]
+    pub(crate) all: bool,
+    #[arg(long)]
+    pub(crate) include_deleted: bool,
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+    #[arg(long)]
+    pub(crate) set_status: Option<String>,
+    #[arg(long)]
+    pub(crate) set_priority: Option<String>,
+    #[arg(long)]
+    pub(crate) set_project: Option<String>,
+    #[arg(long)]
+    pub(crate) label: Vec<String>,
+    #[arg(long)]
+    pub(crate) remove_label: Vec<String>,
 }
 
 #[derive(Args)]

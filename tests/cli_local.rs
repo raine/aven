@@ -219,3 +219,193 @@ fn invalid_filter_values_fail() {
         ],
     );
 }
+
+#[test]
+fn bulk_update_filters_and_removes_label() {
+    let env = TestEnv::new();
+    let db = env.db("bulk-update.sqlite");
+    for label in ["bug", "docs"] {
+        ok(env.aven(&db, ["label", "create", label]));
+    }
+    let bug_one = extract_ref(&ok(env.aven(
+        &db,
+        ["add", "bug one", "--project", "app", "--label", "bug"],
+    )));
+    let bug_two = extract_ref(&ok(env.aven(
+        &db,
+        ["add", "bug two", "--project", "app", "--label", "bug"],
+    )));
+    let docs = extract_ref(&ok(
+        env.aven(&db, ["add", "docs", "--project", "app", "--label", "docs"])
+    ));
+
+    let dry_run = ok(env.aven(
+        &db,
+        [
+            "bulk-update",
+            "--filter-label",
+            "bug",
+            "--remove-label",
+            "bug",
+            "--dry-run",
+        ],
+    ));
+    contains_all(
+        &dry_run,
+        &[
+            "would-update",
+            "changed=yes",
+            "bulk-update-summary matched=2 changed=0 would_change=2 unchanged=0 dry_run=yes",
+        ],
+    );
+    contains_all(&ok(env.aven(&db, ["show", &bug_one])), &["labels=bug"]);
+
+    let updated = ok(env.aven(
+        &db,
+        [
+            "bulk-update",
+            "--filter-label",
+            "bug",
+            "--remove-label",
+            "bug",
+        ],
+    ));
+    contains_all(
+        &updated,
+        &[
+            "bulk-updated",
+            "bulk-update-summary matched=2 changed=2 would_change=2 unchanged=0 dry_run=no",
+        ],
+    );
+    contains_none(&ok(env.aven(&db, ["show", &bug_one])), &["labels=bug"]);
+    contains_none(&ok(env.aven(&db, ["show", &bug_two])), &["labels=bug"]);
+    contains_all(&ok(env.aven(&db, ["show", &docs])), &["labels=docs"]);
+}
+
+#[test]
+fn bulk_update_sets_status_by_project_and_status() {
+    let env = TestEnv::new();
+    let db = env.db("bulk-update-status.sqlite");
+    ok(env.aven(&db, ["project", "create", "app"]));
+    ok(env.aven(&db, ["project", "create", "ops"]));
+    let app_todo = extract_ref(&ok(env.aven(&db, ["add", "app todo", "--project", "app"])));
+    let app_inbox = extract_ref(&ok(env.aven(&db, ["add", "app inbox", "--project", "app"])));
+    let ops_todo = extract_ref(&ok(env.aven(&db, ["add", "ops todo", "--project", "ops"])));
+    ok(env.aven(&db, ["update", &app_todo, "--status", "todo"]));
+    ok(env.aven(&db, ["update", &ops_todo, "--status", "todo"]));
+
+    let updated = ok(env.aven(
+        &db,
+        [
+            "bulk-update",
+            "--project",
+            "app",
+            "--status",
+            "todo",
+            "--set-status",
+            "active",
+        ],
+    ));
+    contains_all(
+        &updated,
+        &["bulk-update-summary matched=1 changed=1 would_change=1 unchanged=0 dry_run=no"],
+    );
+    contains_all(&ok(env.aven(&db, ["show", &app_todo])), &["status=active"]);
+    contains_all(&ok(env.aven(&db, ["show", &app_inbox])), &["status=inbox"]);
+    contains_all(&ok(env.aven(&db, ["show", &ops_todo])), &["status=todo"]);
+}
+
+#[test]
+fn bulk_update_requires_selector_and_mutation() {
+    let env = TestEnv::new();
+    let db = env.db("bulk-update-guards.sqlite");
+    contains_all(
+        &fail(env.aven(&db, ["bulk-update", "--set-status", "done"])),
+        &["error bulk-update-requires-selector"],
+    );
+    contains_all(
+        &fail(env.aven(&db, ["bulk-update", "--all"])),
+        &["error bulk-update-requires-mutation"],
+    );
+}
+
+#[test]
+fn bulk_update_all_excludes_deleted_unless_requested() {
+    let env = TestEnv::new();
+    let db = env.db("bulk-update-deleted.sqlite");
+    let live = extract_ref(&ok(env.aven(&db, ["add", "live", "--project", "app"])));
+    let deleted = extract_ref(&ok(env.aven(&db, ["add", "deleted", "--project", "app"])));
+    ok(env.aven(&db, ["delete", &deleted]));
+
+    let updated = ok(env.aven(&db, ["bulk-update", "--all", "--set-priority", "high"]));
+    contains_all(
+        &updated,
+        &["bulk-update-summary matched=1 changed=1 would_change=1 unchanged=0 dry_run=no"],
+    );
+    contains_all(&ok(env.aven(&db, ["show", &live])), &["priority=high"]);
+    contains_all(&ok(env.aven(&db, ["show", &deleted])), &["priority=none"]);
+
+    let included = ok(env.aven(
+        &db,
+        [
+            "bulk-update",
+            "--all",
+            "--include-deleted",
+            "--set-priority",
+            "urgent",
+        ],
+    ));
+    contains_all(
+        &included,
+        &["bulk-update-summary matched=2 changed=2 would_change=2 unchanged=0 dry_run=no"],
+    );
+    contains_all(&ok(env.aven(&db, ["show", &deleted])), &["priority=urgent"]);
+}
+
+#[test]
+fn bulk_update_rejects_contradictory_label_mutation() {
+    let env = TestEnv::new();
+    let db = env.db("bulk-update-label-conflict.sqlite");
+    ok(env.aven(&db, ["label", "create", "bug"]));
+    ok(env.aven(&db, ["add", "bug", "--project", "app", "--label", "bug"]));
+
+    let error = fail(env.aven(
+        &db,
+        [
+            "bulk-update",
+            "--filter-label",
+            "bug",
+            "--label",
+            "bug",
+            "--remove-label",
+            "bug",
+        ],
+    ));
+    contains_all(&error, &["error bulk-update-label-conflict label=bug"]);
+}
+
+#[test]
+fn bulk_update_ignores_duplicate_label_mutation_args() {
+    let env = TestEnv::new();
+    let db = env.db("bulk-update-duplicate-labels.sqlite");
+    ok(env.aven(&db, ["label", "create", "bug"]));
+    let task_ref = extract_ref(&ok(env.aven(&db, ["add", "task", "--project", "app"])));
+
+    let updated = ok(env.aven(
+        &db,
+        ["bulk-update", "--all", "--label", "bug", "--label", "bug"],
+    ));
+    contains_all(
+        &updated,
+        &["bulk-update-summary matched=1 changed=1 would_change=1 unchanged=0 dry_run=no"],
+    );
+    let noop = ok(env.aven(
+        &db,
+        ["bulk-update", "--all", "--label", "bug", "--label", "bug"],
+    ));
+    contains_all(
+        &noop,
+        &["bulk-update-summary matched=1 changed=0 would_change=0 unchanged=1 dry_run=no"],
+    );
+    contains_all(&ok(env.aven(&db, ["show", &task_ref])), &["labels=bug"]);
+}

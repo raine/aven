@@ -37,8 +37,9 @@ pub use cli::Cli;
 
 use cli::{Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand};
 use commands::{
-    cmd_add, cmd_config, cmd_conflict, cmd_delete_restore, cmd_doctor, cmd_label, cmd_labels,
-    cmd_list, cmd_note, cmd_project, cmd_projects, cmd_show, cmd_skill, cmd_update, cmd_workspace,
+    cmd_add, cmd_bulk_update, cmd_config, cmd_conflict, cmd_delete_restore, cmd_doctor, cmd_label,
+    cmd_labels, cmd_list, cmd_note, cmd_project, cmd_projects, cmd_show, cmd_skill, cmd_update,
+    cmd_workspace,
 };
 use db::open_db;
 use sync::{run_server, sync_client};
@@ -94,6 +95,7 @@ pub async fn run_cli() -> Result<()> {
                 Commands::Add(args) => cmd_add(&mut conn, args).await,
                 Commands::Show(args) => cmd_show(&mut conn, args).await,
                 Commands::List(args) => cmd_list(&mut conn, args).await,
+                Commands::BulkUpdate(args) => cmd_bulk_update(&mut conn, args).await,
                 Commands::Update(args) => cmd_update(&mut conn, args).await,
                 Commands::Note(args) => cmd_note(&mut conn, args).await,
                 Commands::Projects(args) => cmd_projects(&mut conn, args).await,
@@ -144,6 +146,7 @@ fn command_needs_workspace(command: &Commands) -> bool {
         Commands::Add(_)
             | Commands::Show(_)
             | Commands::List(_)
+            | Commands::BulkUpdate(_)
             | Commands::Update(_)
             | Commands::Note(_)
             | Commands::Projects(_)
@@ -158,20 +161,21 @@ fn command_needs_workspace(command: &Commands) -> bool {
 }
 
 fn command_should_wake(command: &Commands) -> bool {
-    matches!(
-        command,
-        Commands::Add(_)
-            | Commands::Update(_)
-            | Commands::Note(_)
-            | Commands::Label(_)
-            | Commands::Project(_)
-            | Commands::Workspace(_)
-            | Commands::Delete(_)
-            | Commands::Restore(_)
-            | Commands::Conflict(ConflictCommand {
-                command: ConflictSubcommand::Resolve { .. }
-            })
-    )
+    matches!(command, Commands::BulkUpdate(args) if !args.dry_run)
+        || matches!(
+            command,
+            Commands::Add(_)
+                | Commands::Update(_)
+                | Commands::Note(_)
+                | Commands::Label(_)
+                | Commands::Project(_)
+                | Commands::Workspace(_)
+                | Commands::Delete(_)
+                | Commands::Restore(_)
+                | Commands::Conflict(ConflictCommand {
+                    command: ConflictSubcommand::Resolve { .. }
+                })
+        )
 }
 
 #[cfg(test)]

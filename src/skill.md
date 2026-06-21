@@ -73,6 +73,10 @@ aven update APP-7KQ9 --status active
 aven update APP-7KQ9 --title "clearer title" --priority medium
 aven update APP-7KQ9 --project app --label docs --remove-label bug
 aven update APP-7KQ9 --description-file description.md
+aven bulk-update --filter-label bug --remove-label bug --dry-run
+aven bulk-update --filter-label bug --remove-label bug
+aven bulk-update --project app --status todo --set-status active --dry-run
+aven bulk-update --project app --status todo --set-status active
 aven note APP-7KQ9 "handoff note"
 printf 'handoff note\n' | aven note APP-7KQ9 --stdin
 aven delete APP-7KQ9
@@ -81,7 +85,7 @@ aven workspace create client-work
 aven workspace rename client-work "Client Work"
 ```
 
-After `aven add`, capture and report the printed ref so future agents can use it. Run `aven --help` or `aven <command> --help` for additional command details.
+After `aven add`, capture and report the printed ref so future agents can use it. For `bulk-update`, `--filter-label` selects tasks and `--label` adds a label. Prefer `--dry-run` before broad bulk mutations, then check the `bulk-update-summary` counts before running the real command. Run `aven --help` or `aven <command> --help` for additional command details.
 
 ## Agent workflow
 
