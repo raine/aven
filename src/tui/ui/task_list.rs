@@ -4,7 +4,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Padding, Paragraph, Wrap};
 
-use super::ViewState;
+use super::task_display::{description_or_placeholder, labels_display};
 use super::truncate::truncate_chars;
 use crate::query::{TaskListItem, TaskSort};
 use crate::queue::{QueueBand, now_seconds, unix_seconds};
@@ -21,7 +21,7 @@ pub(super) fn render_tasks(
     frame: &mut Frame,
     store: &TuiStore,
     widgets: &mut WidgetState,
-    view: &ViewState,
+    focus: Focus,
     area: Rect,
 ) {
     let [table_area, preview_area] = if area.height >= 24 {
@@ -29,7 +29,7 @@ pub(super) fn render_tasks(
     } else {
         [area, Rect::default()]
     };
-    render_task_list(frame, store, widgets.table.selected(), view, table_area);
+    render_task_list(frame, store, widgets.table.selected(), focus, table_area);
     if preview_area.height > 0 {
         render_task_preview(frame, store, widgets.table.selected(), preview_area);
     }
@@ -39,7 +39,7 @@ fn render_task_list(
     frame: &mut Frame,
     store: &TuiStore,
     selected_task: Option<usize>,
-    view: &ViewState,
+    focus: Focus,
     area: Rect,
 ) {
     frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
@@ -106,10 +106,7 @@ fn render_task_list(
             render_task_row(
                 frame,
                 item,
-                row_style(
-                    selected_task == Some(task_index),
-                    view.focus == Focus::Tasks,
-                ),
+                row_style(selected_task == Some(task_index), focus == Focus::Tasks),
                 row_areas[row],
                 columns,
                 now_seconds,
@@ -298,22 +295,6 @@ fn task_heading_line(item: &TaskListItem) -> Line<'_> {
     ])
 }
 
-pub(super) fn labels_display(labels: &[String], separator: &str) -> String {
-    if labels.is_empty() {
-        "none".to_string()
-    } else {
-        labels.join(separator)
-    }
-}
-
-pub(super) fn description_or_placeholder(description: &str) -> String {
-    if description.is_empty() {
-        "(no description)".to_string()
-    } else {
-        description.to_string()
-    }
-}
-
 fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usize>, area: Rect) {
     let Some(item) = store.selected_task(selected) else {
         return;
@@ -397,20 +378,5 @@ mod tests {
         let rendered = project_cell(&item, 10).to_string();
 
         assert_eq!(rendered, "very-lon… ");
-    }
-
-    #[test]
-    fn description_or_placeholder_uses_empty_state_copy() {
-        assert_eq!(description_or_placeholder(""), "(no description)");
-        assert_eq!(description_or_placeholder("Body"), "Body");
-    }
-
-    #[test]
-    fn labels_display_uses_none_for_empty_labels() {
-        assert_eq!(labels_display(&[], ", "), "none");
-        assert_eq!(
-            labels_display(&["bug".to_string(), "mobile".to_string()], ", "),
-            "bug, mobile"
-        );
     }
 }

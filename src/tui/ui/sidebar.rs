@@ -4,7 +4,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem};
 
-use super::ViewState;
 use super::truncate::truncate_chars;
 use crate::tui::app::{Focus, WidgetState};
 use crate::tui::store::{SidebarEntry, SidebarTarget, TuiStore};
@@ -16,7 +15,7 @@ pub(super) fn render_sidebar_overlay(
     frame: &mut Frame,
     store: &TuiStore,
     widgets: &mut WidgetState,
-    view: &ViewState,
+    focus: Focus,
     area: Rect,
 ) {
     let width = area.width.saturating_sub(4).min(34);
@@ -28,14 +27,14 @@ pub(super) fn render_sidebar_overlay(
         height,
     };
     frame.render_widget(Clear, area);
-    render_sidebar(frame, store, widgets, view, area, true);
+    render_sidebar(frame, store, widgets, focus, area, true);
 }
 
 pub(super) fn render_sidebar(
     frame: &mut Frame,
     store: &TuiStore,
     widgets: &mut WidgetState,
-    view: &ViewState,
+    focus: Focus,
     area: Rect,
     overlay: bool,
 ) {
@@ -104,7 +103,7 @@ pub(super) fn render_sidebar(
         filter_item("⚡", "conflicts", conflict_count, PINK, area.width),
     ]);
 
-    let highlight_style = if view.focus == Focus::Sidebar {
+    let highlight_style = if focus == Focus::Sidebar {
         SELECTED
     } else {
         SELECTED_INACTIVE

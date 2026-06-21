@@ -169,7 +169,7 @@ The TUI is split into these layers:
 - `event.rs`: shared command catalog, key sequences, command lookup, shortcut resolution, action lifecycle, and help metadata.
 - `store.rs`: database-backed TUI state and operations. It owns task lists, projects, labels, sidebar counts, filters, sorting, active view, and refresh time.
 - `overlay.rs`: reusable text input, multiline input, picker, confirm, search, command, detail, help, and text panel state machines.
-- `ui.rs`: pure Ratatui rendering for header, sidebar, task list, preview, footer, overlays, command palette, help, and prefix hints. Overlay dialogs share frame, clear, background, and footer hint styling through dialog helpers.
+- `ui.rs`: top-level Ratatui render orchestration for header, footer, overlays, command palette, help, and prefix hints. Region modules live under `ui/` for sidebar, task list, task display helpers, detail rendering, dialogs, and toasts. Overlay dialogs share frame, clear, background, and footer hint styling through dialog helpers.
 - `widgets.rs`: small cell helpers such as priority icons and title conflict markers.
 - `theme.rs`: colors and style helpers.
 
