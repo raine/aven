@@ -595,6 +595,17 @@ impl TuiStore {
         deleted: bool,
     ) -> Result<Option<MutationMessage>> {
         if let Some(item) = self.selected_task(index).cloned() {
+            if item.task.deleted == deleted {
+                return Ok(Some(MutationMessage {
+                    message: if deleted {
+                        format!("already deleted {}", item.display_ref)
+                    } else {
+                        format!("already restored {}", item.display_ref)
+                    },
+                    selected: index,
+                }));
+            }
+
             let before = if item.task.deleted { "1" } else { "0" };
             self.activate_workspace();
             let mut conn = self.pool.acquire().await?;
@@ -1799,6 +1810,18 @@ mod tests {
         (task_id, selected)
     }
 
+    async fn pending_undo_count(pool: &sqlx::SqlitePool) -> i64 {
+        let workspace_id = crate::workspaces::active_workspace_id();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query_scalar(
+            "SELECT count(*) FROM tui_undo_entries WHERE workspace_id = ? AND undone_at IS NULL",
+        )
+        .bind(workspace_id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap()
+    }
+
     #[tokio::test]
     async fn undo_returns_none_when_empty() {
         let mut store = test_store().await;
@@ -1870,6 +1893,30 @@ mod tests {
         assert!(store.tasks[index].task.deleted);
 
         store.undo_last().await.unwrap();
+        store.refresh(Some(&task_id)).await.unwrap();
+        let index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+        assert!(!store.tasks[index].task.deleted);
+    }
+
+    #[tokio::test]
+    async fn repeated_delete_does_not_add_noop_undo_entry() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (task_id, selected) = create_selected_task(&mut store, "Keep once").await;
+        store.update_deleted(Some(selected), true).await.unwrap();
+        let undo_count_after_delete = pending_undo_count(&pool).await;
+        let index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+        store.update_deleted(Some(index), true).await.unwrap();
+
+        assert_eq!(pending_undo_count(&pool).await, undo_count_after_delete);
+        store.undo_last().await.unwrap().unwrap();
         store.refresh(Some(&task_id)).await.unwrap();
         let index = store
             .tasks
