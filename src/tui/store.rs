@@ -1927,6 +1927,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn noop_task_field_updates_do_not_add_undo_entries() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        store.create_project("Side".to_string()).await.unwrap();
+        store.create_label("bug".to_string()).await.unwrap();
+        let (task_id, selected) = create_selected_task(&mut store, "Noop fields").await;
+        store
+            .update_title(Some(selected), "Changed".to_string())
+            .await
+            .unwrap();
+        store
+            .update_description(Some(selected), "details".to_string())
+            .await
+            .unwrap();
+        store
+            .set_exact_priority(Some(selected), "high")
+            .await
+            .unwrap();
+        store.update_project(Some(selected), "side".to_string()).await.unwrap();
+        store
+            .update_labels(Some(selected), vec!["bug".to_string()])
+            .await
+            .unwrap();
+        store.update_status(Some(selected), "todo").await.unwrap();
+        let undo_count_after_changes = pending_undo_count(&pool).await;
+        let index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+
+        store.update_status(Some(index), "todo").await.unwrap();
+        store
+            .set_exact_priority(Some(index), "high")
+            .await
+            .unwrap();
+        store
+            .update_title(Some(index), "Changed".to_string())
+            .await
+            .unwrap();
+        store
+            .update_description(Some(index), "details".to_string())
+            .await
+            .unwrap();
+        store.update_project(Some(index), "side".to_string()).await.unwrap();
+        store
+            .update_labels(Some(index), vec!["bug".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(pending_undo_count(&pool).await, undo_count_after_changes);
+    }
+
+    #[tokio::test]
+    async fn duplicate_project_and_label_do_not_add_undo_entries() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        store.create_project("Side".to_string()).await.unwrap();
+        store.create_label("bug".to_string()).await.unwrap();
+        let undo_count_after_creates = pending_undo_count(&pool).await;
+
+        store.create_project("Side".to_string()).await.unwrap();
+        store.create_label("bug".to_string()).await.unwrap();
+
+        assert_eq!(pending_undo_count(&pool).await, undo_count_after_creates);
+    }
+
+    #[tokio::test]
     async fn undo_restore_redeletes_task() {
         let mut store = test_store().await;
         let (task_id, selected) = create_selected_task(&mut store, "Gone").await;

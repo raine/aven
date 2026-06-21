@@ -182,7 +182,7 @@ pub(crate) async fn record_tui_undo(
     summary: &str,
     payload: UndoPayload,
 ) -> Result<()> {
-    if is_applying_undo() {
+    if is_applying_undo() || !undo_payload_has_effect(&payload) {
         return Ok(());
     }
     let id = new_id();
@@ -208,6 +208,18 @@ pub(crate) async fn record_tui_undo(
     .await?;
     prune_consumed_undo_entries(conn, workspace_id).await?;
     Ok(())
+}
+
+fn undo_payload_has_effect(payload: &UndoPayload) -> bool {
+    payload.commands.iter().any(|command| match command {
+        UndoCommand::SetTaskField { before, after, .. } => before != after,
+        UndoCommand::SetTaskLabels { before, after, .. } => !label_sets_equal(before, after),
+        UndoCommand::DeleteCreatedTask { .. }
+        | UndoCommand::DeleteCreatedNote { .. }
+        | UndoCommand::DeleteCreatedProject { .. }
+        | UndoCommand::DeleteCreatedLabel { .. }
+        | UndoCommand::RestoreConflictResolution { .. } => true,
+    })
 }
 
 async fn prune_consumed_undo_entries(
