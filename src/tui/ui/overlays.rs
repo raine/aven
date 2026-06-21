@@ -34,6 +34,22 @@ pub(super) fn render_text_input(frame: &mut Frame, state: &TextInputView) {
         return;
     }
 
+    if state.prompt.is_empty() {
+        let dialog = Dialog::new(&state.title, 54, 5);
+        let content = dialog.render_block(frame);
+        let input = clipped_input_line(&state.input, state.cursor, content.width as usize);
+        let text = Text::from(vec![
+            input,
+            Line::from(""),
+            dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
+        ]);
+        frame.render_widget(
+            Paragraph::new(text).style(Style::new().fg(FG).bg(BG_ALT)),
+            content,
+        );
+        return;
+    }
+
     let text = Text::from(vec![
         Line::from(Span::styled(&state.prompt, Style::new().fg(FG_DIM))),
         input_line("", &state.input, state.cursor),
@@ -424,6 +440,20 @@ mod tests {
         }));
         assert!(rendered.contains("Edit title"));
         assert!(rendered.contains("New title"));
+        assert!(rendered.contains("Enter submit"));
+    }
+
+    #[test]
+    fn overlay_render_omits_empty_text_input_prompt() {
+        let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
+            title: "Edit title".to_string(),
+            prompt: String::new(),
+            input: "alpha".to_string(),
+            cursor: 5,
+        }));
+        assert!(rendered.contains("Edit title"));
+        assert!(rendered.contains("alpha"));
+        assert!(!rendered.contains("title:"));
         assert!(rendered.contains("Enter submit"));
     }
 

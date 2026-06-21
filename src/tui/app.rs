@@ -40,7 +40,7 @@ const ADD_PROJECT_TITLE: &str = "Add project";
 const DELETE_PROJECT_TITLE: &str = "Delete project";
 const ADD_LABEL_TITLE: &str = "Add label";
 const EDIT_STATUS_TITLE: &str = "Edit task: status";
-const EDIT_TITLE_TITLE: &str = "Edit task: title";
+const EDIT_TITLE_TITLE: &str = "Edit title";
 const EDIT_DESCRIPTION_TITLE: &str = "Edit task: description";
 const EDIT_PROJECT_TITLE: &str = "Edit task: project";
 const EDIT_PRIORITY_TITLE: &str = "Edit task: priority";
@@ -1262,7 +1262,7 @@ impl App {
         self.overlay = Some(OverlayState::TextInput(TextInputState::new(
             OverlayRoute::EditTitle,
             EDIT_TITLE_TITLE,
-            "title:",
+            "",
             input,
         )));
     }
@@ -3279,7 +3279,9 @@ mod tests {
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::TextInput(state))
-                if state.title == EDIT_TITLE_TITLE && state.input.as_str() == "Old title"
+                if state.title == EDIT_TITLE_TITLE
+                    && state.prompt.is_empty()
+                    && state.input.as_str() == "Old title"
         ));
 
         app.handle_overlay_key(key(KeyCode::End)).await.unwrap();

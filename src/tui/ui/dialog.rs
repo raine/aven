@@ -4,6 +4,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 
+use super::truncate::truncate_chars;
 use crate::tui::theme::{ACCENT, BG_ALT, FG, FG_MUTED};
 
 pub(super) struct Dialog<'a> {
@@ -42,7 +43,7 @@ impl<'a> Dialog<'a> {
     pub(super) fn render_block(self, frame: &mut Frame) -> Rect {
         let area = self.area(frame);
         frame.render_widget(Clear, area);
-        let mut block = overlay_block(self.title);
+        let mut block = overlay_block(self.title, area.width);
         if let Some(title) = self.right_title {
             block = block.title_top(title.right_aligned());
         }
@@ -62,9 +63,9 @@ impl<'a> Dialog<'a> {
     }
 }
 
-fn overlay_block(title: &str) -> Block<'_> {
+fn overlay_block(title: &str, width: u16) -> Block<'_> {
     Block::new()
-        .title(title)
+        .title(truncate_chars(title, width.saturating_sub(2) as usize))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(ACCENT))
@@ -108,6 +109,21 @@ mod tests {
     fn dialog_hint_line_styles_keys() {
         let keys = styled_key_contents(dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]));
         assert_eq!(keys, vec!["Enter", "Esc"]);
+    }
+
+    #[test]
+    fn dialog_truncates_title_to_border_width() {
+        let backend = ratatui::backend::TestBackend::new(20, 5);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| Dialog::new("abcdef", 5, 3).render_text(frame, ""))
+            .unwrap();
+        let rendered = (0..terminal.backend().buffer().area.width)
+            .map(|column| terminal.backend().buffer()[(column, 1)].symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("ab…"));
+        assert!(!rendered.contains("abcdef"));
     }
 
     fn styled_key_contents(line: Line<'static>) -> Vec<String> {
