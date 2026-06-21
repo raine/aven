@@ -95,15 +95,11 @@ impl Default for DaemonConfig {
 }
 
 impl ProjectOverrideConfig {
-    fn project_key(&self) -> String {
+    pub(crate) fn project_key(&self) -> String {
         crate::projects::normalize_key(&self.project)
     }
 
-    fn matches_exact_workspace(&self, workspace_id: Option<&str>, workspace: Option<&str>) -> bool {
-        self.workspace_id.as_deref() == workspace_id && self.workspace.as_deref() == workspace
-    }
-
-    fn matches_workspace(&self, workspace_id: Option<&str>, workspace: Option<&str>) -> bool {
+    pub(crate) fn matches_workspace(&self, workspace_id: Option<&str>, workspace: Option<&str>) -> bool {
         match self.workspace_id.as_deref() {
             Some(id) => Some(id) == workspace_id,
             None => self
@@ -139,59 +135,6 @@ impl AppConfig {
             project_override.matches_workspace(workspace_id, workspace)
                 && project_override.project_key() == project_key
         })
-    }
-
-    pub fn add_project_override_path(
-        &mut self,
-        workspace_id: Option<&str>,
-        workspace: Option<&str>,
-        project: &str,
-        path: PathBuf,
-    ) {
-        for project_override in &mut self.project.overrides {
-            if project_override.matches_workspace(workspace_id, workspace) {
-                project_override.paths.retain(|existing| existing != &path);
-            }
-        }
-        self.project
-            .overrides
-            .retain(|project_override| !project_override.paths.is_empty());
-        if let Some(project_override) = self.project.overrides.iter_mut().find(|project_override| {
-            project_override.matches_exact_workspace(workspace_id, workspace)
-                && project_override.project_key() == project
-        }) {
-            project_override.paths.push(path);
-            return;
-        }
-        self.project.overrides.push(ProjectOverrideConfig {
-            workspace_id: workspace_id.map(str::to_string),
-            workspace: workspace.map(str::to_string),
-            project: project.to_string(),
-            paths: vec![path],
-        });
-    }
-
-    pub fn remove_project_override_path(
-        &mut self,
-        workspace_id: Option<&str>,
-        workspace: Option<&str>,
-        project: &str,
-        paths: &[PathBuf],
-    ) -> bool {
-        let mut removed = false;
-        self.project.overrides.retain_mut(|project_override| {
-            if project_override.matches_workspace(workspace_id, workspace)
-                && project_override.project_key() == project
-            {
-                let before = project_override.paths.len();
-                project_override
-                    .paths
-                    .retain(|existing| !paths.iter().any(|path| existing == path));
-                removed |= project_override.paths.len() != before;
-            }
-            !project_override.paths.is_empty()
-        });
-        removed
     }
 
     pub fn sync_interval_seconds(&self) -> u64 {

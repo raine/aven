@@ -5,6 +5,7 @@ mod choices;
 mod cli;
 mod commands;
 mod config;
+mod config_edit;
 mod daemon;
 mod db;
 mod fuzzy;

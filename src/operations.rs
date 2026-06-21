@@ -9,6 +9,7 @@ use tracing::info;
 
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::config;
+use crate::config_edit::{self, ProjectPathMappingEdit};
 use crate::db::{insert_change, set_field_version};
 use crate::ids::{new_id, now};
 use crate::labels::{normalize_label, resolve_labels_in_workspace};
@@ -548,15 +549,16 @@ async fn resolve_project_path_target(
 
 fn save_project_path_mapping(project: &Project, path: PathBuf) -> Result<ProjectPathOutcome> {
     let config_path = config::config_file_path()?;
-    let mut app_config = config::AppConfig::load_from_path(&config_path)?;
     let workspace = crate::workspaces::active_workspace();
-    app_config.add_project_override_path(
-        Some(&workspace.id),
-        Some(&workspace.key),
-        &project.key,
-        path.clone(),
-    );
-    config::write_config(&config_path, &app_config)?;
+    config_edit::add_project_path(
+        &config_path,
+        ProjectPathMappingEdit {
+            workspace_id: &workspace.id,
+            workspace: &workspace.key,
+            project: &project.key,
+            path: path.clone(),
+        },
+    )?;
     Ok(ProjectPathOutcome {
         project: project.clone(),
         path: path.display().to_string(),
@@ -585,15 +587,9 @@ pub(crate) async fn remove_project_path_operation(
     )
     .await?;
     let config_path = config::config_file_path()?;
-    let mut app_config = config::AppConfig::load_from_path(&config_path)?;
     let workspace = crate::workspaces::active_workspace();
     let remove_paths = project_path_remove_candidates(path);
-    app_config.remove_project_override_path(
-        Some(&workspace.id),
-        Some(&workspace.key),
-        &project.key,
-        &remove_paths,
-    );
+    config_edit::remove_project_path(&config_path, &workspace.id, &project.key, &remove_paths)?;
     for path in &remove_paths {
         sqlx::query(
             "DELETE FROM project_paths WHERE workspace_id = ? AND project_key = ? AND path = ?",
@@ -604,7 +600,6 @@ pub(crate) async fn remove_project_path_operation(
         .execute(&mut *conn)
         .await?;
     }
-    config::write_config(&config_path, &app_config)?;
     let path = remove_paths
         .first()
         .unwrap_or(&path.to_path_buf())

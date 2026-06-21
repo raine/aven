@@ -3,7 +3,7 @@ mod common;
 use std::fs;
 use std::process::Command;
 
-use common::{TestEnv, command, contains_all, fail, ok};
+use common::{TestEnv, command, contains_all, contains_none, fail, ok};
 
 #[test]
 fn infers_project_from_path_mapping() {
@@ -30,7 +30,12 @@ fn infers_project_from_path_mapping() {
     let config = fs::read_to_string(env.config_file()).unwrap();
     contains_all(
         &config,
-        &["workspace: default", "project: mapped", mapped.to_str().unwrap()],
+        &[
+            "# aven-managed project path mapping",
+            "workspace: default",
+            "project: mapped",
+            mapped.to_str().unwrap(),
+        ],
     );
 
     let output = ok(aven_config_in(&env, &nested, ["add", "mapped inference"]));
@@ -74,6 +79,59 @@ fn infers_project_from_main_worktree_for_linked_worktree() {
 
     let output = ok(env.aven_in(&db, &linked, ["add", "linked inference"]));
     contains_all(&output, &["project=main-project"]);
+}
+
+#[test]
+fn project_path_commands_preserve_config_comments() {
+    let env = TestEnv::new();
+    let db = env.db("comments.sqlite");
+    let mapped = env.path("commented");
+    fs::create_dir_all(&mapped).unwrap();
+    env.write_config(&format!(
+        r#"# top comment
+local:
+  # db comment
+  db_path: "{}"
+
+project:
+  # project comment
+  overrides:
+    # manual override comment
+    - project: Manual
+      paths: ["{}"]
+"#,
+        db.display(),
+        env.path("manual").display()
+    ));
+
+    ok(env.aven_config(["project", "create", "Commented"]));
+    ok(env.aven_config([
+        "project",
+        "path",
+        "add",
+        "commented",
+        mapped.to_str().unwrap(),
+    ]));
+    ok(env.aven_config([
+        "project",
+        "path",
+        "remove",
+        "commented",
+        mapped.to_str().unwrap(),
+    ]));
+
+    let config = fs::read_to_string(env.config_file()).unwrap();
+    contains_all(
+        &config,
+        &[
+            "# top comment",
+            "# db comment",
+            "# project comment",
+            "# manual override comment",
+            "project: Manual",
+        ],
+    );
+    contains_none(&config, &["commented", "# aven-managed project path mapping"]);
 }
 
 #[test]
@@ -130,6 +188,7 @@ project:
     contains_all(&output, &["project=mapped"]);
     let config = fs::read_to_string(env.config_file()).unwrap();
     contains_all(&config, &["workspace: default", "project: mapped"]);
+    contains_none(&config, &["project: Override"]);
 }
 
 #[test]
