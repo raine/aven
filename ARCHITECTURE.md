@@ -18,7 +18,7 @@
 | `src/db.rs` | SQLite connection setup, migrations, metadata, sync helpers, and conflict helpers. |
 | `src/query.rs` | Read models for task lists, project lists, sidebar counts, filters, sorting, and conflicts. |
 | `src/task_enrichment.rs` | Batched task-list label and unresolved-conflict enrichment. |
-| `src/sync.rs` | HTTP sync client, Axum sync server, wire types, remote change application, and conflict creation. |
+| `src/sync.rs`, `src/sync/` | Sync facade plus focused HTTP client, Axum server, wire DTO, and remote apply modules. |
 | `src/daemon.rs` | Periodic sync loop and local wake listener. |
 | `src/config.rs` | Config file loading, default paths, and environment or CLI override resolution. |
 | `src/workspaces.rs` | Workspace records, active workspace resolution, routing, and management helpers. |
@@ -138,8 +138,9 @@ Manual sync performs this sequence:
 5. Update `sync_cursor`.
 
 The server is an Axum `POST /sync` endpoint using the `SyncRequest`,
-`SyncResponse`, and `ChangeWire` JSON shapes in `src/sync.rs`. Requests and
-responses include `protocol_version`, and both peers require an exact match with
+`SyncResponse`, and `ChangeWire` JSON shapes in `src/sync/wire.rs`, exposed
+through the sync facade where callers need them. Requests and responses include
+`protocol_version`, and both peers require an exact match with
 `SYNC_PROTOCOL_VERSION` before applying changes. It assigns server sequence
 numbers and persists changes.
 
@@ -231,7 +232,7 @@ Overlay submits route through `OverlayRoute` in `App::handle_overlay_submit`. Ti
 3. Update create payloads, update DTOs, and operation logic in `src/operations/`.
 4. Update `apply_field_value` and mutation validation in `src/mutation.rs`.
 5. Seed field versions during task creation if the field needs conflict protection.
-6. Update sync remote apply and conflict resolution behavior in `src/sync.rs`.
+6. Update sync remote apply and conflict resolution behavior in `src/sync/apply.rs`, and update facade exports in `src/sync.rs` if callers need new sync entry points.
 7. Update list filters, sort, or display models in `src/query.rs` if needed.
 8. Update CLI rendering and TUI rendering or overlays.
 9. Add tests for local mutation, sync, conflict behavior, and TUI behavior if exposed there.
