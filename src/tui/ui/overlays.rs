@@ -360,7 +360,7 @@ pub(super) fn render_text_panel(frame: &mut Frame, state: &TextPanelView) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::overlay::OverlayView;
+    use crate::tui::overlay::{OverlayRoute, OverlayView};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -438,6 +438,7 @@ mod tests {
     #[test]
     fn overlay_render_includes_text_input_prompt_and_hints() {
         let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
+            route: OverlayRoute::MessageOnly,
             title: "Edit title".to_string(),
             prompt: "New title".to_string(),
             input: "alpha".to_string(),
@@ -451,6 +452,7 @@ mod tests {
     #[test]
     fn overlay_render_omits_empty_text_input_prompt() {
         let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
+            route: OverlayRoute::MessageOnly,
             title: "Edit title".to_string(),
             prompt: String::new(),
             input: "alpha".to_string(),
@@ -465,6 +467,7 @@ mod tests {
     #[test]
     fn add_task_overlay_renders_metadata_title_and_footer() {
         let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
+            route: OverlayRoute::AddTaskTitle,
             title: "Add task  project=aven priority=high".to_string(),
             prompt: "Title".to_string(),
             input: "ship dialogs".to_string(),

@@ -322,6 +322,7 @@ pub(crate) struct TextPanelView {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TextInputView {
+    pub(crate) route: OverlayRoute,
     pub(crate) title: String,
     pub(crate) prompt: String,
     pub(crate) input: String,
@@ -422,6 +423,7 @@ impl From<&OverlayState> for OverlayView {
                 cursor: input.cursor,
             },
             OverlayState::TextInput(state) => Self::TextInput(TextInputView {
+                route: state.route,
                 title: state.title.clone(),
                 prompt: state.prompt.clone(),
                 input: state.input.text.clone(),

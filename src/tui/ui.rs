@@ -31,7 +31,7 @@ use ratatui::style::Style;
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::tui::app::{Focus, WidgetState};
-use crate::tui::overlay::OverlayView;
+use crate::tui::overlay::{OverlayRoute, OverlayView, TextInputView};
 use crate::tui::store::TuiStore;
 use crate::tui::theme::{BG, FG};
 
@@ -93,8 +93,9 @@ pub(crate) fn render(
     .areas(inner);
 
     render_header(frame, store, header);
+    let inline_title_editor = inline_title_editor(view);
     if body.width < 100 {
-        render_tasks(frame, store, widgets, view.focus, body);
+        render_tasks(frame, store, widgets, view.focus, body, inline_title_editor);
         if view.focus == Focus::Sidebar {
             render_sidebar_overlay(frame, store, widgets, view.focus, body);
         }
@@ -102,7 +103,7 @@ pub(crate) fn render(
         let [sidebar, main] =
             Layout::horizontal([Constraint::Max(26), Constraint::Fill(1)]).areas(body);
         render_sidebar(frame, store, widgets, view.focus, sidebar, false);
-        render_tasks(frame, store, widgets, view.focus, main);
+        render_tasks(frame, store, widgets, view.focus, main, inline_title_editor);
     }
     frame.render_widget(footer_bar(view.footer_mode()), footer);
 
@@ -125,12 +126,25 @@ pub(crate) fn render(
     }
 }
 
+fn inline_title_editor(view: &ViewState) -> Option<&TextInputView> {
+    if view.focus != Focus::Tasks {
+        return None;
+    }
+    match &view.overlay {
+        Some(OverlayView::TextInput(state)) if state.route == OverlayRoute::EditTitle => {
+            Some(state)
+        }
+        _ => None,
+    }
+}
+
 fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
     match overlay {
         OverlayView::Help { scroll } => render_help(frame, *scroll),
         OverlayView::DetailHelp { scroll } => render_detail_help(frame, *scroll),
         OverlayView::Search { input, cursor } => render_search(frame, input, *cursor),
         OverlayView::Command { input, cursor } => render_command(frame, input, *cursor),
+        OverlayView::TextInput(state) if state.route == OverlayRoute::EditTitle => {}
         OverlayView::TextInput(state) => render_text_input(frame, state),
         OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
         OverlayView::Picker(state) => render_picker(frame, state),
