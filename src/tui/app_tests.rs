@@ -913,6 +913,208 @@ async fn detail_shortcuts_do_not_leave_detail_before_opening_overlay() {
 }
 
 #[tokio::test]
+async fn edit_title_from_detail_renders_inline_cursor() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
+    app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+    app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
+        .await
+        .unwrap();
+    app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::TextInput(state)) if state.route == OverlayRoute::EditTitle
+    ));
+    assert!(app.view().detail_underlay);
+
+    let backend = ratatui::backend::TestBackend::new(100, 30);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let view = app.view();
+    terminal
+        .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
+        .unwrap();
+    let rendered = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+
+    assert!(rendered.contains("Detail title target"));
+    assert!(!rendered.contains("Edit title"));
+    assert!(!rendered.contains("Enter submit"));
+}
+
+#[tokio::test]
+async fn cancel_edit_title_from_detail_returns_to_detail() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
+    app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+    app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
+        .await
+        .unwrap();
+    app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
+        .await
+        .unwrap();
+    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Detail { scroll: 0 })
+    ));
+    assert!(app.authoring.is_idle());
+}
+
+#[tokio::test]
+async fn submit_edit_title_from_detail_returns_to_detail() {
+    let mut app = test_app().await;
+    let selected = create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
+    app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+    app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
+        .await
+        .unwrap();
+    app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
+        .await
+        .unwrap();
+    app.handle_overlay_key(key(KeyCode::End)).await.unwrap();
+    type_chars(&mut app, " updated").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Detail { scroll: 0 })
+    ));
+    assert_eq!(
+        app.store.tasks[selected].task.title,
+        "Detail title target updated"
+    );
+}
+
+#[tokio::test]
+async fn detail_edit_chords_open_advertised_editors() {
+    let mut app = test_app().await;
+    app.store
+        .create_project("Mobile App".to_string())
+        .await
+        .unwrap();
+    app.store.create_label("Bug".to_string()).await.unwrap();
+    create_and_select_task(
+        &mut app,
+        TaskDraft {
+            title: "Detail target".to_string(),
+            description: "existing description".to_string(),
+            project: None,
+            priority: "none".to_string(),
+            labels: vec!["bug".to_string()],
+        },
+    )
+    .await;
+
+    for (code, expected_route) in [
+        (KeyCode::Char('t'), OverlayRoute::EditTitle),
+        (KeyCode::Char('d'), OverlayRoute::EditDescription),
+        (KeyCode::Char('p'), OverlayRoute::EditProject),
+        (KeyCode::Char('l'), OverlayRoute::EditLabels),
+        (KeyCode::Char('r'), OverlayRoute::EditPriority),
+    ] {
+        app.overlay = Some(OverlayState::Detail { scroll: 4 });
+        app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(app.pending_shortcut, vec![KeyCode::Char('e')]);
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 4 })
+        ));
+
+        app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        match (&app.overlay, expected_route) {
+            (Some(OverlayState::TextInput(state)), route) => assert_eq!(state.route, route),
+            (Some(OverlayState::MultilineInput(state)), route) => assert_eq!(state.route, route),
+            (Some(OverlayState::Picker(state)), route) => assert_eq!(state.route, route),
+            (overlay, route) => panic!("expected {route:?}, got {overlay:?}"),
+        }
+        assert!(app.pending_shortcut.is_empty());
+        assert!(app.view().detail_underlay);
+    }
+}
+
+#[tokio::test]
+async fn detail_single_key_edit_shortcuts_still_work() {
+    let mut app = test_app().await;
+    app.store.create_label("Bug".to_string()).await.unwrap();
+    create_and_select_task(&mut app, test_task_draft("Detail target")).await;
+    app.overlay = Some(OverlayState::Detail { scroll: 3 });
+
+    app.dispatch_key(key(KeyCode::Char('l')), (80, 24).into())
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Picker(state)) if state.route == OverlayRoute::EditLabels
+    ));
+    assert!(app.pending_shortcut.is_empty());
+    assert!(app.view().detail_underlay);
+}
+
+#[tokio::test]
+async fn invalid_detail_prefix_stays_in_detail() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Detail target")).await;
+    app.overlay = Some(OverlayState::Detail { scroll: 5 });
+
+    app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
+        .await
+        .unwrap();
+    app.dispatch_key(key(KeyCode::Char('z')), (80, 24).into())
+        .await
+        .unwrap();
+
+    assert!(app.pending_shortcut.is_empty());
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Detail { scroll: 5 })
+    ));
+    assert_eq!(toast_message(&app), Some("invalid shortcut: e z"));
+}
+
+#[tokio::test]
+async fn detail_prefix_hints_render_above_detail_overlay() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Detail target")).await;
+    app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+    app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
+        .await
+        .unwrap();
+
+    let backend = ratatui::backend::TestBackend::new(100, 30);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let view = app.view();
+    terminal
+        .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
+        .unwrap();
+    let rendered = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+
+    assert!(rendered.contains("e …"));
+    assert!(rendered.contains(":edit-title"));
+}
+
+#[tokio::test]
 async fn ignored_keys_stay_in_detail() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("Detail target")).await;

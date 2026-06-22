@@ -76,8 +76,13 @@ const DETAIL_HELP_TOPICS: &[HelpTopic] = &[
         section: "Task detail",
     },
     HelpTopic {
-        keys: "e t/d/p/l",
-        description: "edit title, description, project, labels",
+        keys: "e t/d/p/l/r",
+        description: "edit title, description, project, labels, priority",
+        section: "Edit",
+    },
+    HelpTopic {
+        keys: "l",
+        description: "edit labels",
         section: "Edit",
     },
     HelpTopic {
@@ -587,7 +592,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(rendered.contains("e t/d/p/l"));
+        assert!(rendered.contains("e t/d/p/l/r"));
         assert!(rendered.contains("m i/b/t/a"));
         assert!(rendered.contains("m 0/l/m/h/u"));
         assert!(!rendered.contains("m 0/m l/m m/m h/m u"));

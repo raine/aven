@@ -27,7 +27,7 @@ use crate::tui::event::{
     Action, CommandLookup, ShortcutLookup, lookup_command, resolve_shortcut, shortcut_label,
 };
 use crate::tui::navigation::{
-    detail_action, detail_task_delta, handle_detail_overlay_key, next_index,
+    DetailShortcut, detail_shortcut, detail_task_delta, handle_detail_overlay_key, next_index,
     next_selectable_sidebar,
 };
 use crate::tui::overlay::{
@@ -165,7 +165,8 @@ impl App {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.handle(Action::Quit).await
         } else if key.code == KeyCode::Esc && !self.pending_shortcut.is_empty() {
-            self.handle_normal_key(key.code).await
+            self.pending_shortcut.clear();
+            Ok(())
         } else if self.overlay_captures_input() {
             if key.code == KeyCode::Char('?')
                 && matches!(self.overlay, Some(OverlayState::Detail { .. }))
@@ -278,6 +279,10 @@ impl App {
             }
         }
 
+        if self.detail_context && self.overlay.is_none() {
+            self.restore_detail_overlay(true);
+        }
+
         Ok(())
     }
 
@@ -288,12 +293,8 @@ impl App {
         terminal_size: Size,
     ) -> Result<()> {
         if let OverlayState::Detail { scroll } = overlay {
-            if let Some(action) = detail_action(key) {
-                self.detail_context = true;
-                self.execute(action).await?;
-                if self.detail_context && self.overlay.is_none() {
-                    self.restore_detail_overlay_at_scroll(true, scroll);
-                }
+            if let Some(outcome) = self.handle_detail_shortcut(key, scroll).await? {
+                self.overlay = outcome;
                 return Ok(());
             }
 
@@ -371,6 +372,40 @@ impl App {
             OverlayOutcome::Submitted(submit) => self.handle_overlay_submit(submit).await?,
         }
         Ok(())
+    }
+
+    async fn handle_detail_shortcut(
+        &mut self,
+        key: KeyEvent,
+        scroll: u16,
+    ) -> Result<Option<Option<OverlayState>>> {
+        if !key.modifiers.is_empty() {
+            return Ok(None);
+        }
+
+        let mut sequence = self.pending_shortcut.clone();
+        sequence.push(key.code);
+        match detail_shortcut(&sequence) {
+            DetailShortcut::Action(action) => {
+                self.pending_shortcut.clear();
+                self.detail_context = true;
+                self.execute(action).await?;
+                if self.detail_context && self.overlay.is_none() {
+                    self.restore_detail_overlay_at_scroll(true, scroll);
+                }
+                Ok(Some(self.overlay.take()))
+            }
+            DetailShortcut::Prefix => {
+                self.pending_shortcut = sequence;
+                Ok(Some(Some(OverlayState::Detail { scroll })))
+            }
+            DetailShortcut::Missing(label) if !self.pending_shortcut.is_empty() => {
+                self.pending_shortcut.clear();
+                self.set_warning(format!("invalid shortcut: {label}"));
+                Ok(Some(Some(OverlayState::Detail { scroll })))
+            }
+            DetailShortcut::Missing(_) => Ok(None),
+        }
     }
 
     async fn handle_overlay_submit(&mut self, submit: OverlaySubmit) -> Result<()> {
@@ -1007,7 +1042,7 @@ impl App {
 
     fn cancel_authoring_overlay(&mut self) {
         self.pending_shortcut.clear();
-        let return_to_detail = self.authoring.cancel();
+        let return_to_detail = self.authoring.cancel() || self.detail_context;
         self.overlay = None;
         self.conflict_flow.clear();
         self.pending_delete_project = None;

@@ -6,15 +6,22 @@ use ratatui::widgets::{
     Block, Borders, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 
+use super::input::clipped_input_line;
 use super::task_display::{description_or_placeholder, labels_display};
 use crate::query::TaskListItem;
 use crate::tui::app::WidgetState;
 use crate::tui::markdown::render_markdown;
+use crate::tui::overlay::TextInputView;
 use crate::tui::store::TuiStore;
 use crate::tui::theme::{self, ACCENT, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, ORANGE, RED};
 use crate::tui::widgets::{priority_short, status_chip, status_span};
 
-fn render_detail(frame: &mut Frame, item: &TaskListItem, scroll: u16) {
+fn render_detail(
+    frame: &mut Frame,
+    item: &TaskListItem,
+    scroll: u16,
+    inline_title_editor: Option<&TextInputView>,
+) {
     let area = frame.area();
     let [_, body, _] = Layout::vertical([
         Constraint::Length(2),
@@ -34,7 +41,7 @@ fn render_detail(frame: &mut Frame, item: &TaskListItem, scroll: u16) {
         [body, Rect::default()]
     };
     let content_area = content_area.inner(detail_content_margin());
-    render_detail_content(frame, item, content_area, scroll);
+    render_detail_content(frame, item, content_area, scroll, inline_title_editor);
     if metadata_area.width > 0 {
         render_detail_metadata(frame, item, metadata_area);
     }
@@ -65,7 +72,7 @@ pub(crate) fn detail_scroll_cap(
         [body, Rect::default()]
     };
     let content_area = content_area.inner(detail_content_margin());
-    let content_height = detail_content_lines(item, content_area.width as usize)
+    let content_height = detail_content_lines(item, content_area.width as usize, None)
         .len()
         .max(1);
     detail_scroll_max_start(content_height, content_area.height as usize) as u16
@@ -78,8 +85,14 @@ fn detail_content_margin() -> Margin {
     }
 }
 
-fn render_detail_content(frame: &mut Frame, item: &TaskListItem, area: Rect, scroll: u16) {
-    let lines = detail_content_lines(item, area.width as usize);
+fn render_detail_content(
+    frame: &mut Frame,
+    item: &TaskListItem,
+    area: Rect,
+    scroll: u16,
+    inline_title_editor: Option<&TextInputView>,
+) {
+    let lines = detail_content_lines(item, area.width as usize, inline_title_editor);
     let visible = area.height as usize;
     let content_height = lines.len().max(1);
     let start = detail_scroll_start(scroll, content_height, visible);
@@ -120,8 +133,12 @@ fn detail_scroll_max_start(content_height: usize, visible: usize) -> usize {
     content_height.saturating_sub(visible)
 }
 
-fn detail_content_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
-    let mut lines = detail_header_options(item, width);
+fn detail_content_lines(
+    item: &TaskListItem,
+    width: usize,
+    inline_title_editor: Option<&TextInputView>,
+) -> Vec<Line<'static>> {
+    let mut lines = detail_header_options(item, width, inline_title_editor);
     lines.extend(quoted_block_lines(
         &description_or_placeholder(&item.task.description),
         width,
@@ -152,12 +169,13 @@ fn detail_content_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>>
     lines
 }
 
-fn detail_header_options(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
+fn detail_header_options(
+    item: &TaskListItem,
+    width: usize,
+    inline_title_editor: Option<&TextInputView>,
+) -> Vec<Line<'static>> {
     vec![
-        Line::from(vec![Span::styled(
-            item.task.title.clone(),
-            Style::new().fg(FG).add_modifier(Modifier::BOLD),
-        )]),
+        detail_title_line(item, width, inline_title_editor),
         Line::from(Span::styled("─".repeat(width), Style::new().fg(BORDER))),
         Line::from(vec![
             Span::styled(item.display_ref.clone(), Style::new().fg(FG_DIM)),
@@ -171,6 +189,28 @@ fn detail_header_options(item: &TaskListItem, width: usize) -> Vec<Line<'static>
         ]),
         Line::from(""),
     ]
+}
+
+fn detail_title_line(
+    item: &TaskListItem,
+    width: usize,
+    inline_title_editor: Option<&TextInputView>,
+) -> Line<'static> {
+    if let Some(editor) = inline_title_editor {
+        let mut line = clipped_input_line(&editor.input, editor.cursor, width);
+        for span in &mut line.spans {
+            span.style = Style::new()
+                .fg(FG)
+                .add_modifier(Modifier::BOLD)
+                .patch(span.style);
+        }
+        return line;
+    }
+
+    Line::from(vec![Span::styled(
+        item.task.title.clone(),
+        Style::new().fg(FG).add_modifier(Modifier::BOLD),
+    )])
 }
 
 fn quoted_block_lines(body: &str, width: usize, style: Style) -> Vec<Line<'static>> {
@@ -303,9 +343,10 @@ pub(super) fn render_detail_underlay(
     store: &TuiStore,
     widgets: &mut WidgetState,
     scroll: u16,
+    inline_title_editor: Option<&TextInputView>,
 ) {
     if let Some(task) = store.selected_task(widgets.table.selected()) {
-        render_detail(frame, task, scroll);
+        render_detail(frame, task, scroll, inline_title_editor);
     }
 }
 
@@ -316,7 +357,7 @@ mod tests {
     #[test]
     fn detail_content_includes_notes() {
         let item = detail_test_item();
-        let rendered = detail_content_lines(&item, 60)
+        let rendered = detail_content_lines(&item, 60, None)
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -333,7 +374,7 @@ mod tests {
         item.task.description = "## Context\n- **One** item".to_string();
         item.notes[0].body = "Use `aven show` after edits".to_string();
 
-        let rendered = detail_content_lines(&item, 60)
+        let rendered = detail_content_lines(&item, 60, None)
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -348,7 +389,7 @@ mod tests {
     fn detail_description_lines_keep_quote_rail() {
         let mut item = detail_test_item();
         item.task.description = "## Context\nsecond line".to_string();
-        let lines = detail_content_lines(&item, 60);
+        let lines = detail_content_lines(&item, 60, None);
         let description_lines: Vec<_> = lines
             .into_iter()
             .filter(|line| {
@@ -371,7 +412,7 @@ mod tests {
     fn detail_note_lines_keep_card_background() {
         let mut item = detail_test_item();
         item.notes[0].body = "Use `aven` here".to_string();
-        let lines = detail_content_lines(&item, 60);
+        let lines = detail_content_lines(&item, 60, None);
         let note_lines: Vec<_> = lines
             .into_iter()
             .filter(|line| line.to_string().contains("aven"))

@@ -96,6 +96,7 @@ pub(crate) fn render(
 
     render_header(frame, store, header);
     let inline_title_editor = inline_title_editor(view);
+    let inline_detail_title_editor = inline_detail_title_editor(view);
     if body.width < 100 {
         render_tasks(frame, store, widgets, view.focus, body, inline_title_editor);
         if view.focus == Focus::Sidebar {
@@ -109,29 +110,33 @@ pub(crate) fn render(
     }
     frame.render_widget(footer_bar(view.footer_mode(), footer.width), footer);
 
-    if !view.pending_shortcut.is_empty()
-        && !view
-            .overlay
-            .as_ref()
-            .is_some_and(OverlayView::captures_input)
-    {
-        render_prefix_hints(frame, view);
-    }
     if view.detail_underlay {
-        render_detail_underlay(frame, store, widgets, detail_underlay_scroll(&view.overlay));
+        render_detail_underlay(
+            frame,
+            store,
+            widgets,
+            detail_underlay_scroll(&view.overlay),
+            inline_detail_title_editor,
+        );
     }
     if let Some(overlay) = &view.overlay {
-        render_overlay(frame, store, widgets, overlay);
+        render_overlay(
+            frame,
+            store,
+            widgets,
+            overlay,
+            inline_title_editor.is_some() || inline_detail_title_editor.is_some(),
+        );
+    }
+    if !view.pending_shortcut.is_empty() {
+        render_prefix_hints(frame, view);
     }
     if let Some(toast) = &view.message {
         render_toast(frame, toast);
     }
 }
 
-fn inline_title_editor(view: &ViewState) -> Option<&TextInputView> {
-    if view.focus != Focus::Tasks {
-        return None;
-    }
+fn edit_title_view(view: &ViewState) -> Option<&TextInputView> {
     match &view.overlay {
         Some(OverlayView::TextInput(state)) if state.route == OverlayRoute::EditTitle => {
             Some(state)
@@ -140,13 +145,28 @@ fn inline_title_editor(view: &ViewState) -> Option<&TextInputView> {
     }
 }
 
-fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
+fn inline_title_editor(view: &ViewState) -> Option<&TextInputView> {
+    if view.focus != Focus::Tasks || view.detail_underlay {
+        return None;
+    }
+    edit_title_view(view)
+}
+
+fn inline_detail_title_editor(view: &ViewState) -> Option<&TextInputView> {
+    if !view.detail_underlay {
+        return None;
+    }
+    edit_title_view(view)
+}
+
+fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title_editor: bool) {
     match overlay {
         OverlayView::Help { scroll } => render_help(frame, *scroll),
         OverlayView::DetailHelp { scroll } => render_detail_help(frame, *scroll),
         OverlayView::Search { input, cursor } => render_search(frame, input, *cursor),
         OverlayView::Command { input, cursor } => render_command(frame, input, *cursor),
-        OverlayView::TextInput(state) if state.route == OverlayRoute::EditTitle => {}
+        OverlayView::TextInput(state)
+            if state.route == OverlayRoute::EditTitle && inline_title_editor => {}
         OverlayView::TextInput(state) => render_text_input(frame, state),
         OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
         OverlayView::Picker(state) => render_picker(frame, state),
@@ -161,6 +181,7 @@ fn render_overlay(
     store: &TuiStore,
     widgets: &mut WidgetState,
     overlay: &OverlayView,
+    inline_title_editor: bool,
 ) {
     if matches!(
         overlay,
@@ -171,11 +192,11 @@ fn render_overlay(
             OverlayView::DetailHelp { .. } => 0,
             _ => 0,
         };
-        render_detail_underlay(frame, store, widgets, scroll);
+        render_detail_underlay(frame, store, widgets, scroll, None);
         if matches!(overlay, OverlayView::DetailHelp { .. }) {
-            render_overlay_content(frame, overlay);
+            render_overlay_content(frame, overlay, inline_title_editor);
         }
         return;
     }
-    render_overlay_content(frame, overlay);
+    render_overlay_content(frame, overlay, inline_title_editor);
 }

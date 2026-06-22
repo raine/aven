@@ -1,10 +1,145 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::query::TaskListItem;
-use crate::tui::event::Action;
+use crate::tui::event::{Action, CommandSpec, KeySequence, ShortcutLookup, shortcut_label};
 use crate::tui::overlay::{OverlayOutcome, OverlayState};
 use crate::tui::store::SidebarEntry;
 use crate::tui::ui::detail_scroll_cap;
+
+const DETAIL_COMMANDS: &[CommandSpec] = &[
+    CommandSpec::implemented(
+        "detail-edit-title",
+        "edit selected task title",
+        "Edit",
+        &[KeySequence {
+            codes: &[KeyCode::Char('e'), KeyCode::Char('t')],
+            label: "e t",
+        }],
+        Action::BeginEditTitle,
+    ),
+    CommandSpec::implemented(
+        "detail-edit-description",
+        "edit selected task description",
+        "Edit",
+        &[KeySequence {
+            codes: &[KeyCode::Char('e'), KeyCode::Char('d')],
+            label: "e d",
+        }],
+        Action::BeginEditDescription,
+    ),
+    CommandSpec::implemented(
+        "detail-edit-project",
+        "edit selected task project",
+        "Edit",
+        &[KeySequence {
+            codes: &[KeyCode::Char('e'), KeyCode::Char('p')],
+            label: "e p",
+        }],
+        Action::BeginEditProject,
+    ),
+    CommandSpec::implemented(
+        "detail-edit-labels",
+        "edit selected task labels",
+        "Edit",
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('l')],
+                label: "l",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('l')],
+                label: "e l",
+            },
+        ],
+        Action::BeginEditLabels,
+    ),
+    CommandSpec::implemented(
+        "detail-add-note",
+        "add a note to selected task",
+        "Task detail",
+        &[KeySequence {
+            codes: &[KeyCode::Char('n')],
+            label: "n",
+        }],
+        Action::BeginAddNote,
+    ),
+    CommandSpec::implemented(
+        "detail-status-picker",
+        "open status picker",
+        "Status",
+        &[KeySequence {
+            codes: &[KeyCode::Char('s')],
+            label: "s",
+        }],
+        Action::BeginStatusPicker,
+    ),
+    CommandSpec::implemented(
+        "detail-status-done",
+        "set status to done",
+        "Status",
+        &[KeySequence {
+            codes: &[KeyCode::Char('d')],
+            label: "d",
+        }],
+        Action::SetStatus("done"),
+    ),
+    CommandSpec::implemented(
+        "detail-edit-priority",
+        "edit selected task priority",
+        "Priority",
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('p')],
+                label: "p",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('r')],
+                label: "e r",
+            },
+        ],
+        Action::BeginEditPriority,
+    ),
+    CommandSpec::implemented(
+        "detail-delete",
+        "confirm deleting selected task",
+        "Task detail",
+        &[KeySequence {
+            codes: &[KeyCode::Char('D')],
+            label: "D",
+        }],
+        Action::Delete,
+    ),
+    CommandSpec::implemented(
+        "detail-copy-ref",
+        "copy selected task display ref",
+        "Task detail",
+        &[KeySequence {
+            codes: &[KeyCode::Char('y')],
+            label: "y",
+        }],
+        Action::CopyShortRef,
+    ),
+    CommandSpec::implemented(
+        "detail-copy-id",
+        "copy selected task id",
+        "Task detail",
+        &[KeySequence {
+            codes: &[KeyCode::Char('Y')],
+            label: "Y",
+        }],
+        Action::CopyDurableRef,
+    ),
+    CommandSpec::implemented(
+        "detail-undo",
+        "undo last TUI mutation",
+        "General",
+        &[KeySequence {
+            codes: &[KeyCode::Char('u')],
+            label: "u",
+        }],
+        Action::Undo,
+    ),
+];
 
 pub(crate) fn handle_detail_overlay_key(
     key: KeyEvent,
@@ -66,23 +201,19 @@ pub(crate) fn detail_task_delta(key: KeyEvent) -> Option<isize> {
     }
 }
 
-pub(crate) fn detail_action(key: KeyEvent) -> Option<Action> {
-    if !key.modifiers.is_empty() {
-        return None;
-    }
+pub(crate) enum DetailShortcut {
+    Action(Action),
+    Prefix,
+    Missing(String),
+}
 
-    match key.code {
-        KeyCode::Char('e') => Some(Action::BeginEditTitle),
-        KeyCode::Char('n') => Some(Action::BeginAddNote),
-        KeyCode::Char('d') => Some(Action::SetStatus("done")),
-        KeyCode::Char('s') => Some(Action::BeginStatusPicker),
-        KeyCode::Char('p') => Some(Action::BeginEditPriority),
-        KeyCode::Char('l') => Some(Action::BeginEditLabels),
-        KeyCode::Char('D') => Some(Action::Delete),
-        KeyCode::Char('y') => Some(Action::CopyShortRef),
-        KeyCode::Char('Y') => Some(Action::CopyDurableRef),
-        KeyCode::Char('u') => Some(Action::Undo),
-        _ => None,
+pub(crate) fn detail_shortcut(sequence: &[KeyCode]) -> DetailShortcut {
+    match crate::tui::event::resolve_shortcut_in(DETAIL_COMMANDS, sequence) {
+        ShortcutLookup::Found(action) | ShortcutLookup::Ambiguous(action) => {
+            DetailShortcut::Action(action)
+        }
+        ShortcutLookup::Prefix => DetailShortcut::Prefix,
+        ShortcutLookup::Missing => DetailShortcut::Missing(shortcut_label(sequence)),
     }
 }
 

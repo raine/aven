@@ -121,7 +121,7 @@ const PROJECT_PATH_FLOW_REASON: &str = "requires a multi-step project/path picke
 const DUE_SORT_REASON: &str = "tasks do not have due dates";
 
 impl CommandSpec {
-    const fn implemented(
+    pub(crate) const fn implemented(
         name: &'static str,
         description: &'static str,
         section: &'static str,

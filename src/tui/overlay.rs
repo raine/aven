@@ -414,12 +414,6 @@ impl OverlayState {
     }
 }
 
-impl OverlayView {
-    pub(crate) fn captures_input(&self) -> bool {
-        true
-    }
-}
-
 impl From<&OverlayState> for OverlayView {
     fn from(state: &OverlayState) -> Self {
         match state {
