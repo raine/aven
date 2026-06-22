@@ -202,7 +202,14 @@ fn render_task_list(
         row += 1;
     }
 
-    render_task_scrollbar(frame, scroll, view.rows.len(), viewport_rows, area);
+    render_task_scrollbar(
+        frame,
+        scroll,
+        view.rows.len(),
+        viewport_rows,
+        task_list_top_scroll(&view),
+        area,
+    );
 }
 
 fn task_list_scroll(
@@ -216,7 +223,7 @@ fn task_list_scroll(
     }
     let max_scroll = row_count - viewport_rows;
     let scroll = current_scroll.min(max_scroll);
-    if selected_row < scroll {
+    if selected_row <= scroll {
         selected_row
     } else if selected_row >= scroll + viewport_rows {
         selected_row.saturating_sub(viewport_rows.saturating_sub(1))
@@ -230,6 +237,7 @@ fn render_task_scrollbar(
     scroll: usize,
     row_count: usize,
     viewport_rows: usize,
+    top_scroll: usize,
     area: Rect,
 ) {
     if viewport_rows == 0 || row_count <= viewport_rows {
@@ -238,16 +246,35 @@ fn render_task_scrollbar(
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(None)
         .end_symbol(None)
+        .thumb_symbol("┃")
+        .track_symbol(Some("│"))
         .thumb_style(Style::new().fg(ACCENT).bg(BG))
         .track_style(Style::new().fg(BORDER).bg(BG));
     let mut scrollbar_state = ScrollbarState::new(row_count)
-        .position(scrollbar_position(scroll, row_count, viewport_rows))
+        .position(scrollbar_position(
+            scroll,
+            row_count,
+            viewport_rows,
+            top_scroll,
+        ))
         .viewport_content_length(viewport_rows);
     frame.render_stateful_widget(scrollbar, list_scrollbar_area(area), &mut scrollbar_state);
 }
 
-fn scrollbar_position(scroll: usize, row_count: usize, viewport_rows: usize) -> usize {
-    if viewport_rows == 0 || row_count <= viewport_rows {
+fn task_list_top_scroll(view: &TaskListView) -> usize {
+    match view.rows.first() {
+        Some(TaskListRow::Group(_)) => 1,
+        _ => 0,
+    }
+}
+
+fn scrollbar_position(
+    scroll: usize,
+    row_count: usize,
+    viewport_rows: usize,
+    top_scroll: usize,
+) -> usize {
+    if viewport_rows == 0 || row_count <= viewport_rows || scroll <= top_scroll {
         0
     } else {
         scroll.saturating_mul(row_count.saturating_sub(1)) / (row_count - viewport_rows)
@@ -637,6 +664,12 @@ mod tests {
     }
 
     #[test]
+    fn returning_to_first_row_resets_scroll_to_top() {
+        assert_eq!(task_list_scroll(1, 0, 10, 4), 0);
+        assert_eq!(task_list_scroll(6, 6, 10, 4), 6);
+    }
+
+    #[test]
     fn downward_selection_scrolls_after_bottom_edge() {
         assert_eq!(task_list_scroll(0, 0, 10, 4), 0);
         assert_eq!(task_list_scroll(0, 1, 10, 4), 0);
@@ -653,9 +686,14 @@ mod tests {
 
     #[test]
     fn scrollbar_position_maps_max_scroll_to_end() {
-        assert_eq!(scrollbar_position(0, 10, 4), 0);
-        assert_eq!(scrollbar_position(6, 10, 4), 9);
-        assert_eq!(scrollbar_position(0, 3, 4), 0);
+        assert_eq!(scrollbar_position(0, 10, 4, 0), 0);
+        assert_eq!(scrollbar_position(6, 10, 4, 0), 9);
+        assert_eq!(scrollbar_position(0, 3, 4, 0), 0);
+    }
+
+    #[test]
+    fn grouped_queue_top_scroll_keeps_scrollbar_at_top() {
+        assert_eq!(scrollbar_position(1, 10, 4, 1), 0);
     }
 
     #[test]
@@ -672,16 +710,16 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
-                render_task_scrollbar(frame, 6, 10, 4, frame.area());
+                render_task_scrollbar(frame, 6, 10, 4, 0, frame.area());
             })
             .unwrap();
         let buffer = terminal.backend().buffer();
 
-        assert_eq!(buffer[(4, 1)].symbol(), "║");
-        assert_eq!(buffer[(4, 2)].symbol(), "║");
-        assert_eq!(buffer[(4, 3)].symbol(), "║");
-        assert_eq!(buffer[(4, 4)].symbol(), "█");
-        assert_eq!(buffer[(4, 5)].symbol(), "█");
+        assert_eq!(buffer[(4, 1)].symbol(), "│");
+        assert_eq!(buffer[(4, 2)].symbol(), "│");
+        assert_eq!(buffer[(4, 3)].symbol(), "│");
+        assert_eq!(buffer[(4, 4)].symbol(), "┃");
+        assert_eq!(buffer[(4, 5)].symbol(), "┃");
     }
 
     #[test]
