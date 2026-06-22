@@ -100,6 +100,29 @@ pub(crate) async fn inferred_project_key_for_add_in_workspace(
     Ok(git_root_name()?.map(|name| normalize_key(&name)))
 }
 
+pub(crate) async fn inferred_existing_project_key_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+) -> Result<Option<String>> {
+    let config = AppConfig::load()?;
+    let workspace = crate::workspaces::active_workspace();
+    if let Some(project) =
+        matching_project_override(&config, Some(&workspace.id), Some(&workspace.key))?
+        && let Some(project) = find_project_in_workspace(conn, workspace_id, &project).await?
+    {
+        return Ok(Some(project.key));
+    }
+    if let Some(project) = project_from_path_mapping(conn, workspace_id).await? {
+        return Ok(Some(project.key));
+    }
+    let Some(root_name) = git_root_name()? else {
+        return Ok(None);
+    };
+    Ok(find_project_in_workspace(conn, workspace_id, &root_name)
+        .await?
+        .map(|project| project.key))
+}
+
 #[allow(dead_code)]
 pub(crate) async fn find_project(
     conn: &mut SqliteConnection,

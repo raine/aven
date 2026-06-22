@@ -43,6 +43,57 @@ async fn create_project_refreshes_sidebar() {
 }
 
 #[tokio::test]
+async fn initial_project_opens_project_view() {
+    let mut store = test_store().await;
+    store
+        .create_project("Mobile App".to_string())
+        .await
+        .unwrap();
+    store.create_project("Ops".to_string()).await.unwrap();
+    store
+        .create_task(
+            TaskDraft {
+                title: "mobile task".to_string(),
+                description: String::new(),
+                project: Some("mobile-app".to_string()),
+                priority: "none".to_string(),
+                labels: Vec::new(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .create_task(
+            TaskDraft {
+                title: "ops task".to_string(),
+                description: String::new(),
+                project: Some("ops".to_string()),
+                priority: "none".to_string(),
+                labels: Vec::new(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+    let reopened = TuiStore::new_with_initial_project(
+        store.pool.clone(),
+        Some("mobile-app".to_string()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        reopened.active_view,
+        SidebarTarget::Project("mobile-app".to_string())
+    );
+    assert_eq!(reopened.filters.project.as_deref(), Some("mobile-app"));
+    assert_eq!(reopened.tasks.len(), 1);
+    assert_eq!(reopened.tasks[0].task.title, "mobile task");
+}
+
+#[tokio::test]
 async fn delete_project_removes_unused_project() {
     let mut store = test_store().await;
     store

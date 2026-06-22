@@ -18,7 +18,7 @@ mod ui;
 mod widgets;
 
 pub(crate) async fn run(pool: SqlitePool) -> Result<()> {
-    let app = app::App::new(pool).await?;
+    let app = app::App::new_for_inferred_project(pool).await?;
     let mut terminal = ratatui::init();
     let result = app.run(&mut terminal).await;
     ratatui::restore();

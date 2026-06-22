@@ -68,8 +68,18 @@ pub(crate) struct App {
 }
 
 impl App {
+    #[cfg(test)]
     pub(crate) async fn new(pool: SqlitePool) -> Result<Self> {
         let store = TuiStore::new(pool).await?;
+        Self::new_with_store(store)
+    }
+
+    pub(crate) async fn new_for_inferred_project(pool: SqlitePool) -> Result<Self> {
+        let store = TuiStore::new_for_inferred_project(pool).await?;
+        Self::new_with_store(store)
+    }
+
+    fn new_with_store(store: TuiStore) -> Result<Self> {
         let mut app = Self {
             store,
             should_quit: false,

@@ -27,6 +27,7 @@ use crate::query::{
     ProjectListItem, SidebarCounts, SortDirection, TaskFilters, TaskListItem, TaskSort,
     list_project_items_in_workspace, list_task_items_in_workspace, sidebar_counts_in_workspace,
 };
+use crate::projects::inferred_existing_project_key_in_workspace;
 use crate::workspaces::{Workspace, active_workspace, list_workspaces, set_active_workspace};
 
 pub(crate) struct TuiStore {
@@ -46,7 +47,27 @@ pub(crate) struct TuiStore {
 }
 
 impl TuiStore {
+    #[cfg(test)]
     pub(crate) async fn new(pool: SqlitePool) -> Result<Self> {
+        Self::new_with_initial_project(pool, None).await
+    }
+
+    pub(crate) async fn new_for_inferred_project(pool: SqlitePool) -> Result<Self> {
+        let active_workspace = active_workspace();
+        let initial_project = {
+            let mut conn = pool.acquire().await?;
+            inferred_existing_project_key_in_workspace(&mut conn, &active_workspace.id).await?
+        };
+        Self::new_with_initial_project(pool, initial_project).await
+    }
+
+    async fn new_with_initial_project(
+        pool: SqlitePool,
+        initial_project: Option<String>,
+    ) -> Result<Self> {
+        let active_view = initial_project
+            .map(SidebarTarget::Project)
+            .unwrap_or(SidebarTarget::All);
         let mut store = Self {
             pool,
             tasks: Vec::new(),
@@ -56,7 +77,7 @@ impl TuiStore {
             active_workspace: active_workspace(),
             counts: SidebarCounts::default(),
             sidebar_entries: Vec::new(),
-            active_view: SidebarTarget::All,
+            active_view,
             filters: TaskFilters::default(),
             sort: TaskSort::Queue,
             sort_direction: SortDirection::Asc,
