@@ -12,6 +12,7 @@ mod event;
 mod markdown;
 mod navigation;
 mod overlay;
+mod platform;
 mod store;
 mod theme;
 mod toast;
