@@ -2,7 +2,10 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Padding, Paragraph, TableState, Wrap};
+use ratatui::widgets::{
+    Block, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    TableState, Wrap,
+};
 
 use super::input::clipped_input_line;
 use super::task_display::{description_or_placeholder, labels_display};
@@ -198,6 +201,8 @@ fn render_task_list(
         }
         row += 1;
     }
+
+    render_task_scrollbar(frame, scroll, view.rows.len(), viewport_rows, area);
 }
 
 fn task_list_scroll(
@@ -217,6 +222,43 @@ fn task_list_scroll(
         selected_row.saturating_sub(viewport_rows.saturating_sub(1))
     } else {
         scroll
+    }
+}
+
+fn render_task_scrollbar(
+    frame: &mut Frame,
+    scroll: usize,
+    row_count: usize,
+    viewport_rows: usize,
+    area: Rect,
+) {
+    if viewport_rows == 0 || row_count <= viewport_rows {
+        return;
+    }
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .end_symbol(None)
+        .thumb_style(Style::new().fg(ACCENT).bg(BG))
+        .track_style(Style::new().fg(BORDER).bg(BG));
+    let mut scrollbar_state = ScrollbarState::new(row_count)
+        .position(scrollbar_position(scroll, row_count, viewport_rows))
+        .viewport_content_length(viewport_rows);
+    frame.render_stateful_widget(scrollbar, list_scrollbar_area(area), &mut scrollbar_state);
+}
+
+fn scrollbar_position(scroll: usize, row_count: usize, viewport_rows: usize) -> usize {
+    if viewport_rows == 0 || row_count <= viewport_rows {
+        0
+    } else {
+        scroll.saturating_mul(row_count.saturating_sub(1)) / (row_count - viewport_rows)
+    }
+}
+
+fn list_scrollbar_area(area: Rect) -> Rect {
+    Rect {
+        y: area.y.saturating_add(1),
+        height: area.height.saturating_sub(1),
+        ..area
     }
 }
 
@@ -607,6 +649,39 @@ mod tests {
     fn task_list_scroll_clamps_to_valid_rows() {
         assert_eq!(task_list_scroll(6, 2, 3, 4), 0);
         assert_eq!(task_list_scroll(8, 9, 10, 4), 6);
+    }
+
+    #[test]
+    fn scrollbar_position_maps_max_scroll_to_end() {
+        assert_eq!(scrollbar_position(0, 10, 4), 0);
+        assert_eq!(scrollbar_position(6, 10, 4), 9);
+        assert_eq!(scrollbar_position(0, 3, 4), 0);
+    }
+
+    #[test]
+    fn list_scrollbar_area_skips_header_row() {
+        assert_eq!(
+            list_scrollbar_area(Rect::new(2, 3, 10, 6)),
+            Rect::new(2, 4, 10, 5)
+        );
+    }
+
+    #[test]
+    fn task_scrollbar_draws_on_right_side() {
+        let backend = TestBackend::new(5, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render_task_scrollbar(frame, 6, 10, 4, frame.area());
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        assert_eq!(buffer[(4, 1)].symbol(), "║");
+        assert_eq!(buffer[(4, 2)].symbol(), "║");
+        assert_eq!(buffer[(4, 3)].symbol(), "║");
+        assert_eq!(buffer[(4, 4)].symbol(), "█");
+        assert_eq!(buffer[(4, 5)].symbol(), "█");
     }
 
     #[test]
