@@ -49,7 +49,7 @@ const DETAIL_HELP_TOPICS: &[HelpTopic] = &[
         section: "Task detail",
     },
     HelpTopic {
-        keys: "Ctrl-d/Ctrl-u PgDn/PgUp",
+        keys: "C-d C-u",
         description: "scroll one page",
         section: "Task detail",
     },
