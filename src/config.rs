@@ -23,6 +23,8 @@ pub struct AppConfig {
     pub workspace: WorkspaceConfig,
     #[serde(default)]
     pub project: ProjectConfig,
+    #[serde(default)]
+    pub agent: AgentConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -59,6 +61,40 @@ pub struct ProjectOverrideConfig {
     pub project: String,
     #[serde(default)]
     pub paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AgentConfig {
+    #[serde(default)]
+    pub task_intake: TaskIntakeConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskIntakeConfig {
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default = "default_task_intake_args")]
+    pub args: Vec<String>,
+    pub timeout_seconds: Option<u64>,
+}
+
+fn default_task_intake_args() -> Vec<String> {
+    vec![
+        "-p".to_string(),
+        "--no-session-persistence".to_string(),
+        "--bare".to_string(),
+        "{prompt}".to_string(),
+    ]
+}
+
+impl Default for TaskIntakeConfig {
+    fn default() -> Self {
+        Self {
+            command: None,
+            args: default_task_intake_args(),
+            timeout_seconds: Some(45),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

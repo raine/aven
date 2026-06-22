@@ -18,6 +18,7 @@
 | `src/db.rs` | SQLite connection setup, migrations, metadata, sync helpers, and conflict helpers. |
 | `src/query.rs`, `src/query/` | Read-model facade plus focused modules for task lists, project lists, sidebar counts, filters, sorting, and conflicts. |
 | `src/task_enrichment.rs` | Batched task-list label and unresolved-conflict enrichment. |
+| `src/task_intake.rs` | Configured agent CLI intake that turns natural-language text into validated task drafts. |
 | `src/sync.rs`, `src/sync/` | Sync facade plus focused HTTP client, Axum server, wire DTO, and remote apply modules. |
 | `src/daemon.rs` | Periodic sync loop and local wake listener. |
 | `src/config.rs` | Config file loading, default paths, and environment or CLI override resolution. |
@@ -51,9 +52,9 @@
 7. `tui` hands the open pool to `tui::run`; project startup selection comes from the `--project` flag.
 8. Successful mutating CLI commands wake the daemon when sync is enabled and a loopback wake address is configured.
 
-`--db` selects the database path but commands still load config so workspace routes, workspace defaults, project overrides, sync settings, and daemon settings remain available. Active workspace resolution uses `--workspace`, then the longest matching config route, then `workspace.default`, then the built-in default workspace, then the only workspace in the database. Commands fail with `workspace-required` only when the default workspace is unavailable and no active workspace can be inferred. Project inference for task creation uses explicit `--project`, then the longest matching `project.overrides` config path, then deprecated database project path mappings, then the Git root name. The TUI starts in the all-projects queue by default. `aven tui --project` or `aven tui -p` uses the same directory signals to choose an existing project view at startup, without creating a project. `aven tui --project <project>` or `aven tui -p <project>` opens a specific existing project. Linked Git worktrees infer from their main worktree root.
+`--db` selects the database path but commands still load config so workspace routes, workspace defaults, project overrides, sync settings, daemon settings, and task intake settings remain available. Active workspace resolution uses `--workspace`, then the longest matching config route, then `workspace.default`, then the built-in default workspace, then the only workspace in the database. Commands fail with `workspace-required` only when the default workspace is unavailable and no active workspace can be inferred. Project inference for task creation uses explicit `--project`, then the longest matching `project.overrides` config path, then deprecated database project path mappings, then the Git root name. `aven add --natural` sends raw intake text to the configured `agent.task_intake` command and validates the returned JSON before using normal task creation. The TUI starts in the all-projects queue by default. `aven tui --project` or `aven tui -p` uses the same directory signals to choose an existing project view at startup, without creating a project. `aven tui --project <project>` or `aven tui -p <project>` opens a specific existing project. `aven tui --add-task` starts directly in the add task overlay and exits after creating or canceling. Linked Git worktrees infer from their main worktree root.
 
-CLI commands cover task add, show, list, prime, update, note, delete, restore, projects, labels, project paths, workspace management, conflict list or show or resolve, config, doctor, skill, daemon, server, sync, and TUI.
+CLI commands cover task add, natural-language add, show, list, prime, update, note, delete, restore, projects, labels, project paths, workspace management, conflict list or show or resolve, config, doctor, skill, daemon, server, sync, tmux popup helpers, and TUI.
 
 ## Persistence model
 

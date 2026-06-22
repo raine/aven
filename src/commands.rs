@@ -17,8 +17,8 @@ use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::cli::{
     AddArgs, BulkUpdateArgs, ConfigCommand, ConfigSubcommand, ConflictCommand, ConflictSubcommand,
     LabelCommand, LabelSubcommand, ListArgs, NoteArgs, PrimeArgs, ProjectCommand,
-    ProjectPathSubcommand, ProjectSubcommand, RefArgs, SearchArgs, ShowArgs, UpdateArgs,
-    WorkspaceCommand, WorkspaceSubcommand,
+    ProjectPathSubcommand, ProjectSubcommand, RefArgs, SearchArgs, ShowArgs, TmuxAddTaskPopupArgs,
+    UpdateArgs, WorkspaceCommand, WorkspaceSubcommand,
 };
 use crate::input::{read_optional_text, read_required_text};
 use crate::labels::list_labels;
@@ -39,7 +39,11 @@ use crate::render::quote;
 use crate::task_render::{print_task, print_task_line_item};
 use crate::workspaces::{create_workspace, list_workspaces, rename_workspace};
 
-pub(crate) async fn cmd_add(conn: &mut SqliteConnection, args: AddArgs) -> Result<()> {
+pub(crate) async fn cmd_add(
+    conn: &mut SqliteConnection,
+    config: &AppConfig,
+    args: AddArgs,
+) -> Result<()> {
     validate_choice("priority", &args.priority, PRIORITIES)?;
     let description = read_optional_text(
         args.description,
@@ -48,17 +52,27 @@ pub(crate) async fn cmd_add(conn: &mut SqliteConnection, args: AddArgs) -> Resul
         "description",
     )?
     .unwrap_or_default();
-    let outcome = create_task(
-        conn,
+    let draft = if args.natural {
+        if !description.is_empty()
+            || args.project.is_some()
+            || args.priority != "none"
+            || !args.label.is_empty()
+        {
+            bail!(
+                "error natural-add-exclusive hint=\"use plain add flags or --natural, not both\""
+            );
+        }
+        crate::task_intake::parse_task_intake(conn, &config.agent.task_intake, &args.title).await?
+    } else {
         TaskDraft {
             title: args.title,
             description,
             project: args.project,
             priority: args.priority,
             labels: args.label,
-        },
-    )
-    .await?;
+        }
+    };
+    let outcome = create_task(conn, draft).await?;
     let task = outcome.task;
     println!(
         "created {} ref={} project={} status={} priority={} title={}",
@@ -70,6 +84,36 @@ pub(crate) async fn cmd_add(conn: &mut SqliteConnection, args: AddArgs) -> Resul
         quote(&task.title)
     );
     Ok(())
+}
+
+pub(crate) fn cmd_tmux_add_task_popup(args: TmuxAddTaskPopupArgs) -> Result<()> {
+    let mut aven_args = vec![
+        "aven".to_string(),
+        "tui".to_string(),
+        "--add-task".to_string(),
+    ];
+    if let Some(project) = args.project {
+        aven_args.push("--project".to_string());
+        if !project.is_empty() {
+            aven_args.push(project);
+        }
+    }
+    let command = format!(
+        "tmux display-popup -E -d '#{{pane_current_path}}' -w {} -h {} -T 'Aven add task' {}",
+        shell_quote(&args.width),
+        shell_quote(&args.height),
+        shell_quote(&aven_args.join(" ")),
+    );
+    if args.print_binding {
+        println!("bind-key A {command}");
+    } else {
+        println!("{command}");
+    }
+    Ok(())
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 pub(crate) async fn cmd_show(conn: &mut SqliteConnection, args: ShowArgs) -> Result<()> {

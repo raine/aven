@@ -54,6 +54,8 @@ aven project path add app /path/to/repo
 aven add "fix inferred project task"
 aven add "fix conflict display" --project app --priority high --label bug
 aven add "write docs" --project app --description-file notes.md
+aven add "in slack-agent, we need to fix dispatch" --natural
+aven tmux add-task-popup --print-binding
 aven update APP-7KQ9 --status active
 aven update APP-7KQ9 --title "clearer title" --priority medium
 aven update APP-7KQ9 --project app --label docs --remove-label bug
@@ -65,7 +67,7 @@ aven restore APP-7KQ9
 aven workspace create client-work
 ```
 
-After `aven add`, capture and report the printed ref so future agents can use it. For `bulk-update`, `--filter-label` selects tasks and `--label` adds a label. Prefer `--dry-run` before broad bulk mutations. Run `aven --help` or `aven <command> --help` for additional command details.
+After `aven add`, capture and report the printed ref so future agents can use it. `aven add --natural` sends the title argument as raw intake text to `agent.task_intake.command`, which must return JSON for a task draft. The command is configured with argv pieces, not a shell string. Use `{prompt}` in `agent.task_intake.args` for commands such as `claude -p`; otherwise the prompt is written to stdin. Use `aven tmux add-task-popup --print-binding` to print a tmux binding for opening `aven tui --add-task` in a popup. For `bulk-update`, `--filter-label` selects tasks and `--label` adds a label. Prefer `--dry-run` before broad bulk mutations. Run `aven --help` or `aven <command> --help` for additional command details.
 
 ## Agent workflow
 

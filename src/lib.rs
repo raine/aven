@@ -24,6 +24,7 @@ mod signals;
 mod sync;
 mod task_enrichment;
 mod task_fields;
+mod task_intake;
 mod task_render;
 mod tui;
 mod types;
@@ -35,11 +36,11 @@ mod test_support;
 
 pub use cli::Cli;
 
-use cli::{Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand};
+use cli::{Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand, TmuxSubcommand};
 use commands::{
     cmd_add, cmd_bulk_update, cmd_config, cmd_conflict, cmd_delete_restore, cmd_doctor, cmd_label,
     cmd_labels, cmd_list, cmd_note, cmd_prime, cmd_project, cmd_projects, cmd_show, cmd_skill,
-    cmd_update, cmd_workspace,
+    cmd_tmux_add_task_popup, cmd_update, cmd_workspace,
 };
 use db::open_db;
 use sync::{run_server, sync_client};
@@ -71,6 +72,9 @@ pub async fn run_cli() -> Result<()> {
                 }
             }
         }
+        Commands::Tmux(args) => match args.command {
+            TmuxSubcommand::AddTaskPopup(args) => cmd_tmux_add_task_popup(args),
+        },
         command => {
             let db_flag_set = cli.db.is_some();
             let workspace = cli.workspace;
@@ -87,12 +91,15 @@ pub async fn run_cli() -> Result<()> {
             }
             drop(conn);
             if let Commands::Tui(args) = &command {
+                if args.add_task {
+                    return tui::run_add_task(pool, args.project.as_deref()).await;
+                }
                 return tui::run(pool, args.project.as_deref()).await;
             }
             let mut conn = pool.acquire().await?;
             let should_wake = command_should_wake(&command);
             let result = match command {
-                Commands::Add(args) => cmd_add(&mut conn, args).await,
+                Commands::Add(args) => cmd_add(&mut conn, &config, args).await,
                 Commands::Show(args) => cmd_show(&mut conn, args).await,
                 Commands::List(args) => cmd_list(&mut conn, args).await,
                 Commands::BulkUpdate(args) => cmd_bulk_update(&mut conn, args).await,
@@ -122,6 +129,7 @@ pub async fn run_cli() -> Result<()> {
                 Commands::Config(_)
                 | Commands::Daemon(_)
                 | Commands::Server(_)
+                | Commands::Tmux(_)
                 | Commands::Skill => unreachable!(),
             };
             if result.is_ok()

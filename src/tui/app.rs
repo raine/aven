@@ -72,6 +72,8 @@ pub(crate) struct App {
     pub(super) conflict_flow: ConflictFlowState,
     pending_delete_project: Option<String>,
     needs_terminal_clear: bool,
+    add_task_only: bool,
+    add_task_only_message: Option<String>,
 }
 
 impl App {
@@ -108,6 +110,8 @@ impl App {
             conflict_flow: ConflictFlowState::default(),
             pending_delete_project: None,
             needs_terminal_clear: false,
+            add_task_only: false,
+            add_task_only_message: None,
         };
         app.widgets.sidebar.select(app.store.sidebar_selection());
         app.widgets
@@ -121,6 +125,18 @@ impl App {
         let result = self.run_loop(terminal).await;
         execute!(std::io::stdout(), DisableBracketedPaste)?;
         result
+    }
+
+    pub(crate) async fn run_add_task_only(
+        mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> Result<Option<String>> {
+        self.add_task_only = true;
+        self.begin_add_task().await?;
+        execute!(std::io::stdout(), EnableBracketedPaste)?;
+        let result = self.run_loop(terminal).await;
+        execute!(std::io::stdout(), DisableBracketedPaste)?;
+        result.map(|()| self.add_task_only_message)
     }
 
     async fn run_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
@@ -394,6 +410,7 @@ impl App {
             OverlayOutcome::Cancelled if was_add_task_description_editor => {
                 self.begin_add_task_step()
             }
+            OverlayOutcome::Cancelled if self.add_task_only => self.should_quit = true,
             OverlayOutcome::Cancelled => self.cancel_authoring_overlay(),
             OverlayOutcome::Submitted(submit) => self.handle_overlay_submit(submit).await?,
         }
@@ -854,7 +871,11 @@ impl App {
         if selected.is_none() {
             self.restore_selection_after_mutation();
         }
-        self.set_success(message);
+        self.set_success(message.clone());
+        if self.add_task_only {
+            self.add_task_only_message = Some(message);
+            self.should_quit = true;
+        }
         Ok(())
     }
 

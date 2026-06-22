@@ -29,3 +29,14 @@ pub(crate) async fn run(pool: SqlitePool, project: Option<&str>) -> Result<()> {
     ratatui::restore();
     result
 }
+
+pub(crate) async fn run_add_task(pool: SqlitePool, project: Option<&str>) -> Result<()> {
+    let app = app::App::new(pool, project).await?;
+    let mut terminal = ratatui::init();
+    let result = app.run_add_task_only(&mut terminal).await;
+    ratatui::restore();
+    if let Ok(Some(message)) = &result {
+        println!("{message}");
+    }
+    result.map(|_| ())
+}

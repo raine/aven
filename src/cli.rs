@@ -46,6 +46,7 @@ pub(crate) enum Commands {
     Workspace(WorkspaceCommand),
     Skill,
     Doctor,
+    Tmux(TmuxCommand),
     Tui(TuiArgs),
 }
 
@@ -53,6 +54,31 @@ pub(crate) enum Commands {
 pub(crate) struct TuiArgs {
     #[arg(short = 'p', long, num_args = 0..=1, default_missing_value = "")]
     pub(crate) project: Option<String>,
+    #[arg(long)]
+    pub(crate) add_task: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct TmuxCommand {
+    #[command(subcommand)]
+    pub(crate) command: TmuxSubcommand,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum TmuxSubcommand {
+    AddTaskPopup(TmuxAddTaskPopupArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct TmuxAddTaskPopupArgs {
+    #[arg(short = 'p', long, num_args = 0..=1, default_missing_value = "")]
+    pub(crate) project: Option<String>,
+    #[arg(long, default_value = "80%")]
+    pub(crate) width: String,
+    #[arg(long, default_value = "80%")]
+    pub(crate) height: String,
+    #[arg(long)]
+    pub(crate) print_binding: bool,
 }
 
 #[derive(Args)]
@@ -70,6 +96,8 @@ pub(crate) struct AddArgs {
     pub(crate) priority: String,
     #[arg(long)]
     pub(crate) label: Vec<String>,
+    #[arg(long)]
+    pub(crate) natural: bool,
 }
 
 #[derive(Args)]
