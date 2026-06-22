@@ -509,7 +509,7 @@ mod tests {
     fn command_line_marks_planned_actions() {
         let command = COMMANDS
             .iter()
-            .find(|command| command.name == "view-deleted")
+            .find(|command| command.name == "add-project-path")
             .unwrap();
         let rendered = command_line(command).to_string();
         assert!(rendered.contains("planned"));
@@ -517,12 +517,12 @@ mod tests {
 
     #[test]
     fn prefix_hint_lines_mark_planned_actions() {
-        let rendered = prefix_hint_lines(&["g".to_string()])
+        let rendered = prefix_hint_lines(&["A".to_string()])
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(rendered.contains(":view-deleted"));
+        assert!(rendered.contains(":add-project-path"));
         assert!(rendered.contains("planned"));
     }
 

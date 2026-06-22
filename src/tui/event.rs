@@ -116,7 +116,6 @@ pub(crate) struct CommandSpec {
     pub(crate) lifecycle: CommandLifecycle,
 }
 
-const PLANNED_FLOW_REASON: &str = "not yet implemented";
 const PROJECT_PATH_FLOW_REASON: &str = "requires a multi-step project/path picker flow";
 const DUE_SORT_REASON: &str = "tasks do not have due dates";
 
@@ -591,16 +590,6 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             label: "g w",
         }],
         Action::BeginSwitchWorkspace,
-    ),
-    CommandSpec::planned(
-        "view-deleted",
-        "show deleted tasks view",
-        "Views",
-        &[KeySequence {
-            codes: &[KeyCode::Char('g'), KeyCode::Char('x')],
-            label: "g x",
-        }],
-        PLANNED_FLOW_REASON,
     ),
     // Add/Create
     CommandSpec::implemented(

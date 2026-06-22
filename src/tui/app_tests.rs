@@ -1368,23 +1368,6 @@ async fn add_note_blank_body_is_rejected() {
 async fn planned_and_disabled_shortcut_and_command_report_non_executing() {
     let mut app = test_app().await;
 
-    app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
-    assert_eq!(
-        toast_message(&app),
-        Some(":view-deleted is not yet implemented: not yet implemented")
-    );
-    assert!(app.overlay.is_none());
-
-    app.begin_command();
-    type_chars(&mut app, "view-deleted").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    assert_eq!(
-        toast_message(&app),
-        Some(":view-deleted is not yet implemented: not yet implemented")
-    );
-    assert!(app.overlay.is_none());
-
     app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
     assert_eq!(

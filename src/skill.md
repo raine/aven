@@ -31,6 +31,7 @@
 ```sh
 aven list
 aven list --project app
+aven list --project app --all
 aven list --status todo
 aven list --all
 aven show APP-7KQ9 --full
@@ -42,7 +43,7 @@ aven config show
 aven doctor
 ```
 
-Use `prime` to print this primer plus open issues for the inferred current project. Open issues are tasks that are not done, not canceled, and not deleted. Use `show --full` before making decisions that depend on description, labels, notes, deletion state, or conflicts.
+Use `prime` to print this primer plus open issues for the inferred current project. Open issues are tasks that are not done, not canceled, and not deleted. Use `list --all` with any normal list filters to find deleted tasks, for example `aven list --project app --all`. In the TUI, use `f x` to include deleted tasks in the current view. Use `show --full` before making decisions that depend on description, labels, notes, deletion state, or conflicts.
 
 ## Mutating commands
 

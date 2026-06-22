@@ -70,7 +70,6 @@ impl TuiStore {
     }
 
     pub(crate) async fn toggle_deleted_filter(&mut self) -> Result<Option<usize>> {
-        self.active_view = SidebarTarget::All;
         self.filters.include_deleted = !self.filters.include_deleted;
         self.filters.conflicts_only = false;
         self.refresh(None).await

@@ -144,7 +144,45 @@ async fn delete_project_removes_unused_project() {
 }
 
 #[tokio::test]
-async fn delete_project_blocks_when_tasks_reference_project() {
+async fn delete_project_allows_only_deleted_tasks_to_reference_project() {
+    let mut store = test_store().await;
+    store
+        .create_project("Mobile App".to_string())
+        .await
+        .unwrap();
+    store
+        .create_task(
+            TaskDraft {
+                title: "Deleted project task".to_string(),
+                description: String::new(),
+                project: Some("mobile-app".to_string()),
+                priority: "none".to_string(),
+                labels: Vec::new(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let selected = store
+        .tasks
+        .iter()
+        .position(|item| item.task.project_key == "mobile-app")
+        .unwrap();
+    store.update_deleted(Some(selected), true).await.unwrap();
+
+    let outcome = store.delete_project("mobile-app").await.unwrap();
+
+    assert_eq!(outcome.message, "deleted project mobile-app");
+    assert!(
+        !store
+            .projects
+            .iter()
+            .any(|project| project.key == "mobile-app")
+    );
+}
+
+#[tokio::test]
+async fn delete_project_blocks_when_visible_tasks_reference_project() {
     let mut store = test_store().await;
     store
         .create_project("Mobile App".to_string())
@@ -163,12 +201,6 @@ async fn delete_project_blocks_when_tasks_reference_project() {
         )
         .await
         .unwrap();
-    let selected = store
-        .tasks
-        .iter()
-        .position(|item| item.task.project_key == "mobile-app")
-        .unwrap();
-    store.update_deleted(Some(selected), true).await.unwrap();
 
     let error = store.delete_project("mobile-app").await.unwrap_err();
 
@@ -961,6 +993,50 @@ async fn toggle_deleted_filter_switches_include_deleted() {
 
     store.toggle_deleted_filter().await.unwrap();
     assert!(!store.filters.include_deleted);
+}
+
+#[tokio::test]
+async fn toggle_deleted_filter_preserves_project_view() {
+    let mut store = test_store().await;
+    store
+        .create_project("Mobile App".to_string())
+        .await
+        .unwrap();
+    store
+        .create_task(
+            TaskDraft {
+                title: "Deleted project task".to_string(),
+                description: String::new(),
+                project: Some("mobile-app".to_string()),
+                priority: "none".to_string(),
+                labels: Vec::new(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let selected = store
+        .tasks
+        .iter()
+        .position(|item| item.task.project_key == "mobile-app")
+        .unwrap();
+    store.update_deleted(Some(selected), true).await.unwrap();
+    store
+        .show_view(SidebarTarget::Project("mobile-app".to_string()))
+        .await
+        .unwrap();
+    assert!(store.tasks.is_empty());
+
+    store.toggle_deleted_filter().await.unwrap();
+
+    assert_eq!(
+        store.active_view,
+        SidebarTarget::Project("mobile-app".to_string())
+    );
+    assert_eq!(store.filters.project.as_deref(), Some("mobile-app"));
+    assert!(store.filters.include_deleted);
+    assert_eq!(store.tasks.len(), 1);
+    assert!(store.tasks[0].task.deleted);
 }
 
 #[tokio::test]

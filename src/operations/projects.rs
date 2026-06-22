@@ -145,12 +145,13 @@ pub(crate) async fn delete_project_operation(
     let config_mapping =
         project_has_config_mapping(&workspace.id, &workspace.key, &project.key).unwrap_or(false);
     let mut tx = conn.begin().await?;
-    let task_refs: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM tasks WHERE workspace_id = ? AND project_key = ?")
-            .bind(&project.workspace_id)
-            .bind(&project.key)
-            .fetch_one(&mut *tx)
-            .await?;
+    let task_refs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM tasks WHERE workspace_id = ? AND project_key = ? AND deleted = 0",
+    )
+    .bind(&project.workspace_id)
+    .bind(&project.key)
+    .fetch_one(&mut *tx)
+    .await?;
     if task_refs > 0 {
         bail!(
             "error project-has-tasks project={} tasks={}",

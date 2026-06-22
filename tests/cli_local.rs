@@ -201,6 +201,10 @@ fn delete_restore_and_filters_work() {
     let all = ok(env.aven(&db, ["list", "--all"]));
     contains_all(&all, &[&app_bug, "deleted=yes", "app bug"]);
 
+    let all_project = ok(env.aven(&db, ["list", "--project", "app", "--all"]));
+    contains_all(&all_project, &[&app_bug, "deleted=yes", "app bug"]);
+    contains_none(&all_project, &["ops sync"]);
+
     ok(env.aven(&db, ["restore", &app_bug]));
     let restored = ok(env.aven(&db, ["list"]));
     contains_all(&restored, &[&app_bug, "app bug"]);
