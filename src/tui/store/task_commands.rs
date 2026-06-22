@@ -52,13 +52,13 @@ impl TuiStore {
                 }],
             )
             .await?;
-            return Ok(Some(
-                self.refresh_task_message(
-                    &item.task.id,
-                    format!("set {} status={status}", item.display_ref),
-                )
-                .await?,
-            ));
+            let message = format!("set {} status={status}", item.display_ref);
+            let result = if status == "done" {
+                self.refresh_index_message(index, message).await?
+            } else {
+                self.refresh_task_message(&item.task.id, message).await?
+            };
+            return Ok(Some(result));
         }
         Ok(None)
     }

@@ -111,4 +111,15 @@ impl TuiStore {
             .and_then(|id| self.tasks.iter().position(|item| item.task.id == id))
             .or(Some(0))
     }
+
+    pub(super) fn restored_task_selection_at_index(
+        &self,
+        selected: Option<usize>,
+    ) -> Option<usize> {
+        if self.tasks.is_empty() {
+            None
+        } else {
+            selected.map(|index| index.min(self.tasks.len() - 1))
+        }
+    }
 }

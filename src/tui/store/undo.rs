@@ -30,6 +30,16 @@ impl TuiStore {
         Ok(MutationMessage::new(message, selected))
     }
 
+    pub(super) async fn refresh_index_message(
+        &mut self,
+        selected: Option<usize>,
+        message: impl Into<String>,
+    ) -> Result<MutationMessage> {
+        self.refresh(None).await?;
+        let selected = self.restored_task_selection_at_index(selected);
+        Ok(MutationMessage::new(message, selected))
+    }
+
     pub(crate) async fn undo_last(&mut self) -> Result<Option<MutationMessage>> {
         self.activate_workspace();
         let workspace_id = self.active_workspace.id.clone();

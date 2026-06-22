@@ -1735,6 +1735,44 @@ async fn status_picker_alias_updates_selected_task() {
 }
 
 #[tokio::test]
+async fn done_alias_keeps_selected_row_position() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("First")).await;
+    create_and_select_task(&mut app, test_task_draft("Second")).await;
+    create_and_select_task(&mut app, test_task_draft("Third")).await;
+    let selected = 1;
+    let next_title = app.store.tasks[selected + 1].task.title.clone();
+    app.widgets.table.select(Some(selected));
+
+    app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+
+    assert_eq!(app.widgets.table.selected(), Some(selected));
+    let selected = app.widgets.table.selected().unwrap();
+    assert_eq!(app.store.tasks[selected].task.title, next_title);
+    assert_eq!(app.store.tasks[selected].task.status, "inbox");
+}
+
+#[tokio::test]
+async fn done_alias_clamps_selection_when_last_row_is_done() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("First")).await;
+    create_and_select_task(&mut app, test_task_draft("Second")).await;
+    let selected = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.title == "Second")
+        .unwrap();
+    app.widgets.table.select(Some(selected));
+
+    app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+
+    assert_eq!(app.widgets.table.selected(), Some(0));
+    let selected = app.widgets.table.selected().unwrap();
+    assert_eq!(app.store.tasks[selected].task.title, "First");
+}
+
+#[tokio::test]
 async fn done_and_cancel_aliases_update_selected_task() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("Status alias")).await;
