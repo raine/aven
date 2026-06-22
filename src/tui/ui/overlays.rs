@@ -64,11 +64,13 @@ fn add_task_title_metadata(title: &str) -> Option<(&str, &str)> {
     value.split_once(" priority=")
 }
 
+const ADD_TASK_TITLE_PLACEHOLDER: &str = "Enter title here...";
+
 fn add_task_title_input_line(input: &str, cursor: usize, width: usize) -> Line<'static> {
     if input.is_empty() {
         return Line::from(vec![
-            cursor_cell("t"),
-            Span::styled("itle", Style::new().fg(FG_DIM)),
+            cursor_cell(&ADD_TASK_TITLE_PLACEHOLDER[..1]),
+            Span::styled(&ADD_TASK_TITLE_PLACEHOLDER[1..], Style::new().fg(FG_DIM)),
         ]);
     }
     clipped_input_line(input, cursor, width)
@@ -503,11 +505,12 @@ mod tests {
     #[test]
     fn add_task_empty_title_input_shows_placeholder() {
         let line = add_task_title_input_line("", 0, 20);
-        assert_eq!(line.spans[0].content.as_ref(), "t");
+        assert_eq!(line.spans[0].content.as_ref(), "E");
         assert_eq!(line.spans[0].style.fg, Some(BG_ALT));
         assert_eq!(line.spans[0].style.bg, Some(FG));
-        assert_eq!(line.spans[1].content.as_ref(), "itle");
+        assert_eq!(line.spans[1].content.as_ref(), "nter title here...");
         assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
+        assert_eq!(line.to_string(), ADD_TASK_TITLE_PLACEHOLDER);
     }
 
     #[test]
