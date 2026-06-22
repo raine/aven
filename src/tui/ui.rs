@@ -35,13 +35,14 @@ use crate::tui::app::{Focus, WidgetState};
 use crate::tui::overlay::{OverlayRoute, OverlayView, TextInputView};
 use crate::tui::store::TuiStore;
 use crate::tui::theme::{BG, FG};
+use crate::tui::toast::Toast;
 
 #[derive(Clone)]
 pub(crate) struct ViewState {
     pub(crate) focus: Focus,
     pub(crate) overlay: Option<OverlayView>,
     pub(crate) detail_underlay: bool,
-    pub(crate) message: Option<String>,
+    pub(crate) message: Option<Toast>,
     pub(crate) pending_shortcut: Vec<String>,
 }
 
@@ -122,8 +123,8 @@ pub(crate) fn render(
     if let Some(overlay) = &view.overlay {
         render_overlay(frame, store, widgets, overlay);
     }
-    if let Some(message) = &view.message {
-        render_toast(frame, message);
+    if let Some(toast) = &view.message {
+        render_toast(frame, toast);
     }
 }
 

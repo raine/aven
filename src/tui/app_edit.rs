@@ -19,7 +19,7 @@ impl App {
         {
             self.apply_mutation_result(result);
         } else {
-            self.set_message("no selected task to edit".to_string());
+            self.set_info("no selected task to edit");
         }
         Ok(())
     }
@@ -32,7 +32,7 @@ impl App {
         {
             self.apply_mutation_result(result);
         } else {
-            self.set_message("no selected task to edit".to_string());
+            self.set_info("no selected task to edit");
         }
         Ok(())
     }
@@ -45,7 +45,7 @@ impl App {
         {
             self.apply_mutation_result(result);
         } else {
-            self.set_message("no selected task to edit".to_string());
+            self.set_info("no selected task to edit");
         }
         Ok(())
     }
@@ -58,7 +58,7 @@ impl App {
         {
             self.apply_mutation_result(result);
         } else {
-            self.set_message("no selected task to edit".to_string());
+            self.set_info("no selected task to edit");
         }
         Ok(())
     }
@@ -66,7 +66,7 @@ impl App {
     pub(super) async fn undo_last(&mut self) -> Result<()> {
         match self.store.undo_last().await? {
             Some(result) => self.apply_mutation_result(result),
-            None => self.set_message("nothing to undo".to_string()),
+            None => self.set_info("nothing to undo"),
         }
         Ok(())
     }
@@ -77,7 +77,7 @@ impl App {
         if index.is_some_and(|i| self.store.selected_task(Some(i)).is_some()) {
             index
         } else {
-            self.set_message("no selected task to edit".to_string());
+            self.set_info("no selected task to edit");
             None
         }
     }
@@ -91,9 +91,9 @@ impl App {
     {
         match result {
             Ok(Some(result)) => self.apply_mutation_result(result),
-            Ok(None) => self.set_message("no selected task to edit".to_string()),
+            Ok(None) => self.set_info("no selected task to edit"),
             Err(error) => {
-                self.set_message(format!("error: {error:#}"));
+                self.set_error(format!("{error:#}"));
                 on_error(self);
             }
         }
@@ -226,7 +226,7 @@ impl App {
     pub(super) async fn submit_edit_title(&mut self, value: String) -> Result<()> {
         let trimmed = value.trim().to_string();
         if trimmed.is_empty() {
-            self.set_message("task title is required".to_string());
+            self.set_warning("task title is required");
             self.open_edit_title_overlay(value);
             return Ok(());
         }
@@ -236,9 +236,9 @@ impl App {
             .await
         {
             Ok(Some(result)) => self.apply_mutation_result(result),
-            Ok(None) => self.set_message("no selected task to edit".to_string()),
+            Ok(None) => self.set_info("no selected task to edit"),
             Err(error) => {
-                self.set_message(format!("error: {error:#}"));
+                self.set_error(format!("{error:#}"));
                 self.open_edit_title_overlay(value);
             }
         }

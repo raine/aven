@@ -35,6 +35,7 @@ use crate::tui::overlay::{
     OverlaySubmit, OverlayView, PickerItem, PickerMode, PickerState, TextInputState,
 };
 use crate::tui::store::{SidebarTarget, TuiStore};
+use crate::tui::toast::{Toast, ToastSeverity};
 use crate::tui::ui::{self, detail_help_scroll_cap, help_scroll_cap};
 
 const ADD_PROJECT_TITLE: &str = "Add project";
@@ -65,7 +66,7 @@ pub(crate) struct App {
     pub(crate) focus: Focus,
     pub(crate) widgets: WidgetState,
     pub(crate) overlay: Option<OverlayState>,
-    pub(crate) message: Option<String>,
+    pub(crate) message: Option<Toast>,
     pub(crate) message_at: Option<Instant>,
     pub(super) pending_shortcut: Vec<KeyCode>,
     detail_context: bool,
@@ -127,7 +128,7 @@ impl App {
             {
                 let result = self.dispatch_key(key, terminal.size()?).await;
                 if let Err(error) = result {
-                    self.set_message(format!("error: {error:#}"));
+                    self.set_error(format!("{error:#}"));
                 }
                 if self.needs_terminal_clear {
                     self.needs_terminal_clear = false;
@@ -138,7 +139,7 @@ impl App {
             if self.store.last_refresh.elapsed() >= Duration::from_secs(5)
                 && let Err(error) = self.refresh().await
             {
-                self.set_message(format!("refresh failed: {error:#}"));
+                self.set_error(format!("refresh failed: {error:#}"));
             }
 
             self.clear_expired_message();
@@ -228,7 +229,7 @@ impl App {
             ShortcutLookup::Missing => {
                 let label = shortcut_label(&sequence);
                 self.pending_shortcut.clear();
-                self.set_message(format!("invalid shortcut: {label}"));
+                self.set_warning(format!("invalid shortcut: {label}"));
             }
         }
         Ok(())
@@ -380,7 +381,7 @@ impl App {
                 ..
             } => match self.authoring.submit_add_task_title(value) {
                 AddTaskTitleSubmit::ReopenTitle { message } => {
-                    self.set_message(message.to_string());
+                    self.set_warning(message);
                     self.begin_add_task_title();
                 }
                 AddTaskTitleSubmit::Create(draft) => {
@@ -420,7 +421,7 @@ impl App {
             } => {
                 let message = self.store.create_project(value).await?;
                 self.restore_selection_after_mutation();
-                self.set_message(message);
+                self.set_success(message);
             }
             OverlaySubmit::Text {
                 route: OverlayRoute::AddLabel,
@@ -428,7 +429,7 @@ impl App {
                 ..
             } => {
                 let message = self.store.create_label(value).await?;
-                self.set_message(message);
+                self.set_success(message);
             }
             OverlaySubmit::Picker {
                 route: OverlayRoute::EditStatus,
@@ -438,7 +439,7 @@ impl App {
                 if let Some(status) = values.first() {
                     self.submit_edit_status(status.clone()).await?;
                 } else {
-                    self.set_message("no matching status".to_string());
+                    self.set_warning("no matching status");
                     self.begin_status_picker();
                 }
             }
@@ -464,7 +465,7 @@ impl App {
                 if let Some(project) = values.first() {
                     self.submit_edit_project(project.clone()).await?;
                 } else {
-                    self.set_message("no matching project".to_string());
+                    self.set_warning("no matching project");
                     self.begin_edit_project();
                 }
             }
@@ -476,7 +477,7 @@ impl App {
                 if let Some(priority) = values.first() {
                     self.submit_edit_priority(priority.clone()).await?;
                 } else {
-                    self.set_message("no matching priority".to_string());
+                    self.set_warning("no matching priority");
                     self.begin_edit_priority();
                 }
             }
@@ -592,10 +593,10 @@ impl App {
                 if let Some(value) = values.first() {
                     self.submit_manual_conflict_value(value.clone()).await?;
                 } else {
-                    self.set_message("no value selected".to_string());
+                    self.set_warning("no value selected");
                 }
             }
-            other => self.set_message(other.message()),
+            other => self.set_success(other.message()),
         }
         Ok(())
     }
@@ -625,7 +626,7 @@ impl App {
             Action::CycleSort => {
                 self.store.cycle_sort();
                 self.refresh().await?;
-                self.set_message(format!(
+                self.set_info(format!(
                     "order {} {}",
                     self.store.sort_label(),
                     self.store.sort_direction_label()
@@ -678,10 +679,10 @@ impl App {
             Action::BeginConfigInit => self.begin_config_init()?,
             Action::Undo => self.undo_last().await?,
             Action::Planned { name, reason } => {
-                self.set_message(format!(":{name} is not yet implemented: {reason}"));
+                self.set_warning(format!(":{name} is not yet implemented: {reason}"));
             }
             Action::Disabled { name, reason } => {
-                self.set_message(format!(":{name} is disabled: {reason}"));
+                self.set_warning(format!(":{name} is disabled: {reason}"));
             }
             Action::AcceptCommand
             | Action::CancelCommand
@@ -790,7 +791,7 @@ impl App {
         {
             self.move_to_conflict(-1);
         } else {
-            self.set_message("previous item is available in conflict flows".to_string());
+            self.set_info("previous item is available in conflict flows");
         }
     }
 
@@ -800,7 +801,7 @@ impl App {
         {
             self.move_to_conflict(1);
         } else {
-            self.set_message("next item is available in conflict flows".to_string());
+            self.set_info("next item is available in conflict flows");
         }
     }
 
@@ -815,7 +816,7 @@ impl App {
             } else {
                 "selected previous task"
             };
-            self.set_message(message.to_string());
+            self.set_info(message);
         }
     }
 
@@ -921,7 +922,7 @@ impl App {
             .selected_task(self.widgets.table.selected())
             .cloned()
         else {
-            self.set_message("no selected task for note".to_string());
+            self.set_info("no selected task for note");
             return;
         };
         let return_to_detail =
@@ -973,7 +974,7 @@ impl App {
         if selected.is_none() {
             self.restore_selection_after_mutation();
         }
-        self.set_message(message);
+        self.set_success(message);
         Ok(())
     }
 
@@ -988,17 +989,17 @@ impl App {
                 let note_id = self.store.add_note_to_task(&task_id, body).await?;
                 self.refresh().await?;
                 self.restore_detail_overlay(return_to_detail);
-                self.set_message(format!("added note {note_id} to {display_ref}"));
+                self.set_success(format!("added note {note_id} to {display_ref}"));
             }
             AddNoteSubmit::Blank {
                 return_to_detail,
                 message,
             } => {
                 self.restore_detail_overlay(return_to_detail);
-                self.set_message(message.to_string());
+                self.set_warning(message);
             }
             AddNoteSubmit::Inactive { message } => {
-                self.set_message(message.to_string());
+                self.set_info(message);
             }
         }
         Ok(())
@@ -1037,15 +1038,15 @@ impl App {
                 Some(action)
             }
             CommandLookup::Empty => {
-                self.set_message("empty command".to_string());
+                self.set_info("empty command");
                 None
             }
             CommandLookup::Ambiguous => {
-                self.set_message(format!("ambiguous command: {}", input.trim()));
+                self.set_warning(format!("ambiguous command: {}", input.trim()));
                 None
             }
             CommandLookup::Missing => {
-                self.set_message(format!("unknown command: {}", input.trim()));
+                self.set_warning(format!("unknown command: {}", input.trim()));
                 None
             }
         }
@@ -1080,7 +1081,7 @@ impl App {
     async fn set_sort(&mut self, sort: TaskSort) -> Result<()> {
         let selected = self.store.set_sort(sort).await?;
         self.apply_filter_selection(selected);
-        self.set_message(format!(
+        self.set_info(format!(
             "order {} {}",
             self.store.sort_label(),
             self.store.sort_direction_label()
@@ -1091,7 +1092,7 @@ impl App {
     async fn reverse_sort(&mut self) -> Result<()> {
         let selected = self.store.reverse_sort().await?;
         self.apply_filter_selection(selected);
-        self.set_message(format!(
+        self.set_info(format!(
             "order {} {}",
             self.store.sort_label(),
             self.store.sort_direction_label()
@@ -1102,7 +1103,7 @@ impl App {
     pub(super) fn apply_mutation_result(&mut self, result: crate::tui::store::MutationMessage) {
         self.widgets.table.select(result.selected);
         self.widgets.sidebar.select(self.store.sidebar_selection());
-        self.set_message(result.message);
+        self.set_success(result.message);
     }
 
     pub(super) fn open_picker_overlay(
@@ -1131,7 +1132,7 @@ impl App {
         match values.first().cloned() {
             Some(value) => Some(value),
             None => {
-                self.set_message(message.to_string());
+                self.set_warning(message);
                 None
             }
         }
@@ -1140,7 +1141,7 @@ impl App {
     fn begin_delete_task(&mut self) {
         self.pending_shortcut.clear();
         let Some(task) = self.store.selected_task(self.widgets.table.selected()) else {
-            self.set_message("no selected task to edit".to_string());
+            self.set_info("no selected task to edit");
             return;
         };
         self.detail_context =
@@ -1184,7 +1185,7 @@ impl App {
 
     fn copy_selected_ref(&mut self, kind: TaskRefKind) {
         let Some(task) = self.store.selected_task(self.widgets.table.selected()) else {
-            self.set_message("no selected task to copy".to_string());
+            self.set_info("no selected task to copy");
             return;
         };
         let (value, message_ref) = match kind {
@@ -1192,8 +1193,8 @@ impl App {
             TaskRefKind::Durable => (task.task.id.clone(), task.display_ref.clone()),
         };
         match copy_to_clipboard(&value) {
-            Ok(()) => self.set_message(format!("copied {message_ref}")),
-            Err(error) => self.set_message(format!("copy failed: {error}")),
+            Ok(()) => self.set_success(format!("copied {message_ref}")),
+            Err(error) => self.set_error(format!("copy failed: {error}")),
         }
     }
 
@@ -1211,8 +1212,24 @@ impl App {
         }
     }
 
-    pub(super) fn set_message(&mut self, message: String) {
-        self.message = Some(message);
+    pub(super) fn set_info(&mut self, message: impl Into<String>) {
+        self.set_toast(message, ToastSeverity::Info);
+    }
+
+    pub(super) fn set_warning(&mut self, message: impl Into<String>) {
+        self.set_toast(message, ToastSeverity::Warning);
+    }
+
+    pub(super) fn set_error(&mut self, message: impl Into<String>) {
+        self.set_toast(message, ToastSeverity::Error);
+    }
+
+    pub(super) fn set_success(&mut self, message: impl Into<String>) {
+        self.set_toast(message, ToastSeverity::Success);
+    }
+
+    fn set_toast(&mut self, message: impl Into<String>, severity: ToastSeverity) {
+        self.message = Some(Toast::new(message, severity));
         self.message_at = Some(Instant::now());
     }
 
@@ -1252,7 +1269,7 @@ impl App {
 
     fn submit_config_init(&mut self) -> Result<()> {
         let message = self.store.init_config()?;
-        self.set_message(message);
+        self.set_success(message);
         Ok(())
     }
 
@@ -1261,7 +1278,7 @@ impl App {
         match edit_text_externally(state.lines.join("\n"), "description.md") {
             Ok(value) => self.overlay = Some(description_overlay_from_value(value)),
             Err(error) => {
-                self.set_message(format!("editor failed: {error:#}"));
+                self.set_error(format!("editor failed: {error:#}"));
                 self.overlay = Some(OverlayState::MultilineInput(state));
             }
         }
@@ -1282,12 +1299,12 @@ impl App {
 
     async fn submit_delete_project(&mut self) -> Result<()> {
         let Some(project) = self.pending_delete_project.take() else {
-            self.set_message("project delete confirmation is not active".to_string());
+            self.set_warning("project delete confirmation is not active");
             return Ok(());
         };
         match self.store.delete_project(&project).await {
             Ok(result) => self.apply_mutation_result(result),
-            Err(error) => self.set_message(format!("error: {error:#}")),
+            Err(error) => self.set_error(format!("{error:#}")),
         }
         Ok(())
     }

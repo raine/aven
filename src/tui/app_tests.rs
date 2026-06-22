@@ -13,6 +13,15 @@ use crate::tui::overlay::{
     TextPanelState,
 };
 use crate::tui::store::SidebarTarget;
+use crate::tui::toast::ToastSeverity;
+
+fn toast_message(app: &App) -> Option<&str> {
+    app.message.as_ref().map(|toast| toast.message.as_str())
+}
+
+fn toast_severity(app: &App) -> Option<ToastSeverity> {
+    app.message.as_ref().map(|toast| toast.severity)
+}
 
 async fn test_app() -> App {
     let dir = tempfile::tempdir().unwrap();
@@ -189,7 +198,7 @@ async fn command_overlay_executes_unique_lookup_and_keeps_overlay_on_errors() {
         .unwrap();
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
-    assert_eq!(app.message.as_deref(), Some("ambiguous command: s"));
+    assert_eq!(toast_message(&app), Some("ambiguous command: s"));
 
     app.begin_command();
     for ch in "zzzz".chars() {
@@ -199,7 +208,7 @@ async fn command_overlay_executes_unique_lookup_and_keeps_overlay_on_errors() {
     }
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
-    assert_eq!(app.message.as_deref(), Some("unknown command: zzzz"));
+    assert_eq!(toast_message(&app), Some("unknown command: zzzz"));
 }
 
 #[tokio::test]
@@ -400,7 +409,7 @@ async fn invalid_continuation_shows_message() {
     app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('z')).await.unwrap();
     assert!(app.pending_shortcut.is_empty());
-    assert_eq!(app.message.as_deref(), Some("invalid shortcut: m z"));
+    assert_eq!(toast_message(&app), Some("invalid shortcut: m z"));
 }
 
 #[tokio::test]
@@ -417,7 +426,7 @@ async fn order_shortcut_sets_sort() {
     app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
     assert_eq!(app.store.sort, TaskSort::Priority);
-    assert_eq!(app.message.as_deref(), Some("order priority asc"));
+    assert_eq!(toast_message(&app), Some("order priority asc"));
 }
 
 #[tokio::test]
@@ -426,7 +435,7 @@ async fn order_reverse_shortcut_toggles_direction() {
     app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
     assert_eq!(app.store.sort_direction_label(), "desc");
-    assert_eq!(app.message.as_deref(), Some("order queue desc"));
+    assert_eq!(toast_message(&app), Some("order queue desc"));
 }
 
 #[tokio::test]
@@ -435,7 +444,7 @@ async fn due_order_shortcut_reports_unsupported() {
     app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
     assert_eq!(
-        app.message.as_deref(),
+        toast_message(&app),
         Some(":order-due is disabled: tasks do not have due dates")
     );
 }
@@ -481,7 +490,7 @@ async fn filter_shortcuts_apply_label_status_priority_and_deleted() {
     type_chars(&mut app, "backend").await;
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert_eq!(app.store.filters.label.as_deref(), Some("backend"));
-    assert_eq!(app.message.as_deref(), Some("label filter applied"));
+    assert_eq!(toast_message(&app), Some("label filter applied"));
 
     app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
@@ -504,7 +513,7 @@ async fn filter_shortcuts_apply_label_status_priority_and_deleted() {
     app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
     assert!(app.store.filters.include_deleted);
-    assert_eq!(app.message.as_deref(), Some("showing deleted tasks"));
+    assert_eq!(toast_message(&app), Some("showing deleted tasks"));
 }
 
 #[tokio::test]
@@ -548,7 +557,7 @@ async fn switch_workspace_changes_active_workspace() {
         .await
         .unwrap();
     app.apply_filter_selection(selected);
-    app.set_message(message);
+    app.set_success(message);
 
     assert_eq!(app.store.active_workspace.key, "client-work");
     assert_eq!(app.store.active_view, SidebarTarget::All);
@@ -556,8 +565,7 @@ async fn switch_workspace_changes_active_workspace() {
     assert!(app.store.tasks.is_empty());
     assert!(app.overlay.is_none());
     assert!(
-        app.message
-            .as_deref()
+        toast_message(&app)
             .is_some_and(|message| message.contains("switched workspace to client-work"))
     );
 
@@ -575,7 +583,8 @@ async fn clear_filters_shortcut_resets_default_view() {
 
     assert_eq!(app.store.active_view, SidebarTarget::All);
     assert!(app.store.filters.status.is_none());
-    assert_eq!(app.message.as_deref(), Some("filters cleared"));
+    assert_eq!(toast_message(&app), Some("filters cleared"));
+    assert_eq!(toast_severity(&app), Some(ToastSeverity::Success));
 }
 
 #[tokio::test]
@@ -697,7 +706,8 @@ async fn add_task_blank_title_is_rejected() {
     app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    assert_eq!(app.message.as_deref(), Some("task title is required"));
+    assert_eq!(toast_message(&app), Some("task title is required"));
+    assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
     assert!(matches!(
         &app.overlay,
         Some(OverlayState::TextInput(state)) if state.route == OverlayRoute::AddTaskTitle
@@ -712,7 +722,8 @@ async fn add_note_requires_selected_task() {
     app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
 
     assert!(app.overlay.is_none());
-    assert_eq!(app.message.as_deref(), Some("no selected task for note"));
+    assert_eq!(toast_message(&app), Some("no selected task for note"));
+    assert_eq!(toast_severity(&app), Some(ToastSeverity::Info));
 }
 
 #[tokio::test]
@@ -722,7 +733,7 @@ async fn add_note_alias_requires_selected_task() {
     app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
 
     assert!(app.overlay.is_none());
-    assert_eq!(app.message.as_deref(), Some("no selected task for note"));
+    assert_eq!(toast_message(&app), Some("no selected task for note"));
 }
 
 #[tokio::test]
@@ -741,11 +752,7 @@ async fn add_note_flow_creates_note_for_selected_task() {
     app.handle_overlay_key(ctrl_s()).await.unwrap();
 
     assert!(app.overlay.is_none());
-    assert!(
-        app.message
-            .as_deref()
-            .is_some_and(|message| message.starts_with("added note "))
-    );
+    assert!(toast_message(&app).is_some_and(|message| message.starts_with("added note ")));
 }
 
 #[tokio::test]
@@ -849,7 +856,7 @@ async fn detail_next_and_previous_task_stay_in_detail() {
         app.overlay,
         Some(OverlayState::Detail { scroll: 0 })
     ));
-    assert_eq!(app.message.as_deref(), Some("selected next task"));
+    assert_eq!(toast_message(&app), Some("selected next task"));
 
     app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
         .await
@@ -859,7 +866,7 @@ async fn detail_next_and_previous_task_stay_in_detail() {
         app.overlay,
         Some(OverlayState::Detail { scroll: 0 })
     ));
-    assert_eq!(app.message.as_deref(), Some("selected previous task"));
+    assert_eq!(toast_message(&app), Some("selected previous task"));
 }
 
 #[tokio::test]
@@ -927,7 +934,7 @@ async fn detail_toast_renders_above_detail_overlay() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("Toast target")).await;
     app.overlay = Some(OverlayState::Detail { scroll: 0 });
-    app.set_message("set APP-TEST status=done".to_string());
+    app.set_success("set APP-TEST status=done");
     let backend = ratatui::backend::TestBackend::new(100, 30);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     let view = app.view();
@@ -963,7 +970,7 @@ async fn detail_done_shortcut_keeps_detail_and_sets_message() {
         Some(OverlayState::Detail { scroll: 7 })
     ));
     assert_eq!(
-        app.message.as_deref(),
+        toast_message(&app),
         Some(format!("set {display_ref} status=done").as_str())
     );
 }
@@ -987,7 +994,7 @@ async fn detail_undo_shortcut_reverts_last_mutation() {
         Some(OverlayState::Detail { scroll: 5 })
     ));
     assert_eq!(app.store.tasks[selected].task.title, "Before");
-    assert!(app.message.as_ref().unwrap().contains("undid"));
+    assert!(app.message.as_ref().unwrap().message.contains("undid"));
 }
 
 #[tokio::test]
@@ -1023,7 +1030,7 @@ async fn add_note_blank_body_from_detail_returns_to_detail() {
         app.overlay,
         Some(OverlayState::Detail { scroll: 0 })
     ));
-    assert_eq!(app.message.as_deref(), Some("note body is required"));
+    assert_eq!(toast_message(&app), Some("note body is required"));
 }
 
 #[tokio::test]
@@ -1036,7 +1043,7 @@ async fn add_note_blank_body_is_rejected() {
     app.handle_overlay_key(ctrl_s()).await.unwrap();
 
     assert!(app.overlay.is_none());
-    assert_eq!(app.message.as_deref(), Some("note body is required"));
+    assert_eq!(toast_message(&app), Some("note body is required"));
 }
 
 #[tokio::test]
@@ -1046,7 +1053,7 @@ async fn planned_and_disabled_shortcut_and_command_report_non_executing() {
     app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
     assert_eq!(
-        app.message.as_deref(),
+        toast_message(&app),
         Some(":view-deleted is not yet implemented: not yet implemented")
     );
     assert!(app.overlay.is_none());
@@ -1055,7 +1062,7 @@ async fn planned_and_disabled_shortcut_and_command_report_non_executing() {
     type_chars(&mut app, "view-deleted").await;
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert_eq!(
-        app.message.as_deref(),
+        toast_message(&app),
         Some(":view-deleted is not yet implemented: not yet implemented")
     );
     assert!(app.overlay.is_none());
@@ -1063,7 +1070,7 @@ async fn planned_and_disabled_shortcut_and_command_report_non_executing() {
     app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
     assert_eq!(
-        app.message.as_deref(),
+        toast_message(&app),
         Some(":order-due is disabled: tasks do not have due dates")
     );
 
@@ -1071,7 +1078,7 @@ async fn planned_and_disabled_shortcut_and_command_report_non_executing() {
     type_chars(&mut app, "order-due").await;
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert_eq!(
-        app.message.as_deref(),
+        toast_message(&app),
         Some(":order-due is disabled: tasks do not have due dates")
     );
     assert!(app.overlay.is_none());
@@ -1091,7 +1098,7 @@ async fn no_selected_mutating_shortcuts_report_failure() {
         app.message = None;
         app.handle_normal_key(sequence[0]).await.unwrap();
         app.handle_normal_key(sequence[1]).await.unwrap();
-        assert_eq!(app.message.as_deref(), Some("no selected task to edit"));
+        assert_eq!(toast_message(&app), Some("no selected task to edit"));
     }
 }
 
@@ -1147,7 +1154,7 @@ async fn confirm_delete_task_soft_deletes_selected_task() {
     assert!(app.store.tasks[selected].task.deleted);
     assert!(!app.store.filters.include_deleted);
     assert_eq!(
-        app.message.as_deref(),
+        toast_message(&app),
         Some(format!("deleted {display_ref}").as_str())
     );
 }
@@ -1294,7 +1301,7 @@ async fn conflict_list_shortcut_applies_conflicts_view() {
     app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
     assert_eq!(app.store.active_view, SidebarTarget::Conflicts);
     assert!(app.store.filters.conflicts_only);
-    assert_eq!(app.message.as_deref(), Some("no unresolved conflicts"));
+    assert_eq!(toast_message(&app), Some("no unresolved conflicts"));
 }
 
 #[tokio::test]
@@ -1357,7 +1364,7 @@ async fn conflict_next_selects_next_conflicted_task() {
     app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
     assert_eq!(app.widgets.table.selected(), Some(second));
-    assert_eq!(app.message.as_deref(), Some("selected next conflict"));
+    assert_eq!(toast_message(&app), Some("selected next conflict"));
 }
 
 #[tokio::test]
@@ -1380,8 +1387,7 @@ async fn accept_local_conflict_resolves_after_confirmation() {
     assert_eq!(app.store.tasks[selected].task.title, "local title");
     assert!(!app.store.tasks[selected].has_conflict);
     assert!(
-        app.message
-            .as_deref()
+        toast_message(&app)
             .is_some_and(|message| message.contains("resolved") && message.contains("field=title"))
     );
 }
@@ -1438,11 +1444,8 @@ async fn manual_conflict_retry_preserves_submitted_text_after_error() {
 
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-    assert!(
-        app.message
-            .as_deref()
-            .is_some_and(|message| message.contains("conflict-not-found"))
-    );
+    assert!(toast_message(&app).is_some_and(|message| message.contains("conflict-not-found")));
+    assert_eq!(toast_severity(&app), Some(ToastSeverity::Error));
     assert!(matches!(
         &app.overlay,
         Some(OverlayState::TextInput(state))
@@ -1459,7 +1462,7 @@ async fn conflict_resolution_without_selected_task_reports_message() {
     app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
     assert_eq!(
-        app.message.as_deref(),
+        toast_message(&app),
         Some("no selected task for conflict resolution")
     );
 }
@@ -1488,7 +1491,7 @@ async fn generic_text_input_submits_message() {
     )));
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert!(app.overlay.is_none());
-    assert_eq!(app.message.as_deref(), Some("submitted Title"));
+    assert_eq!(toast_message(&app), Some("submitted Title"));
 }
 
 #[tokio::test]
@@ -1509,7 +1512,7 @@ async fn add_project_shortcut_opens_prompt_and_creates_project() {
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
     assert!(app.overlay.is_none());
-    assert_eq!(app.message.as_deref(), Some("created project mobile-app"));
+    assert_eq!(toast_message(&app), Some("created project mobile-app"));
     assert!(
         app.store
             .projects
@@ -1542,7 +1545,7 @@ async fn add_label_shortcut_opens_prompt_and_creates_label() {
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
     assert!(app.overlay.is_none());
-    assert_eq!(app.message.as_deref(), Some("created label needs-review"));
+    assert_eq!(toast_message(&app), Some("created label needs-review"));
     assert!(app.store.labels.iter().any(|label| label == "needs-review"));
     assert!(
         app.store
@@ -1787,7 +1790,7 @@ async fn edit_shortcuts_require_selected_task() {
     app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
 
     assert!(app.overlay.is_none());
-    assert_eq!(app.message.as_deref(), Some("no selected task to edit"));
+    assert_eq!(toast_message(&app), Some("no selected task to edit"));
 }
 
 #[tokio::test]
@@ -1821,11 +1824,7 @@ async fn edit_description_conflict_preserves_overlay() {
     type_chars(&mut app, " updated").await;
     app.handle_overlay_key(ctrl_s()).await.unwrap();
 
-    assert!(
-        app.message
-            .as_deref()
-            .is_some_and(|message| message.contains("conflicted-field"))
-    );
+    assert!(toast_message(&app).is_some_and(|message| message.contains("conflicted-field")));
     assert!(matches!(
         &app.overlay,
         Some(OverlayState::MultilineInput(state))
@@ -1840,7 +1839,7 @@ async fn copy_requires_selected_task() {
 
     app.copy_selected_ref(TaskRefKind::Short);
 
-    assert_eq!(app.message.as_deref(), Some("no selected task to copy"));
+    assert_eq!(toast_message(&app), Some("no selected task to copy"));
 }
 
 #[tokio::test]
@@ -1855,7 +1854,7 @@ async fn undo_shortcut_reverts_last_mutation() {
 
     app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
     assert_eq!(app.store.tasks[selected].task.title, "Before");
-    assert!(app.message.as_ref().unwrap().contains("undid"));
+    assert!(app.message.as_ref().unwrap().message.contains("undid"));
 }
 
 #[tokio::test]
@@ -1882,7 +1881,8 @@ async fn undo_command_reverts_last_mutation() {
 async fn undo_reports_nothing_to_undo() {
     let mut app = test_app().await;
     app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
-    assert_eq!(app.message.as_deref(), Some("nothing to undo"));
+    assert_eq!(toast_message(&app), Some("nothing to undo"));
+    assert_eq!(toast_severity(&app), Some(ToastSeverity::Info));
 }
 
 #[tokio::test]
@@ -1951,7 +1951,7 @@ async fn delete_project_confirmation_removes_selected_project() {
         .await
         .unwrap();
 
-    assert_eq!(app.message.as_deref(), Some("deleted project mobile-app"));
+    assert_eq!(toast_message(&app), Some("deleted project mobile-app"));
     assert!(
         !app.store
             .projects
@@ -1997,7 +1997,7 @@ async fn add_project_submit_routes_by_route_not_title() {
 
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-    assert_eq!(app.message.as_deref(), Some("created project mobile-app"));
+    assert_eq!(toast_message(&app), Some("created project mobile-app"));
 }
 
 #[tokio::test]
@@ -2050,7 +2050,7 @@ async fn conflict_confirm_without_active_flow_reports_message() {
         .unwrap();
 
     assert_eq!(
-        app.message.as_deref(),
+        toast_message(&app),
         Some("conflict confirmation is not active")
     );
 }
@@ -2199,5 +2199,5 @@ async fn generic_confirm_submits_on_y() {
         .await
         .unwrap();
     assert!(app.overlay.is_none());
-    assert_eq!(app.message.as_deref(), Some("confirmed Delete"));
+    assert_eq!(toast_message(&app), Some("confirmed Delete"));
 }

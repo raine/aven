@@ -98,7 +98,7 @@ impl App {
         };
         let selected = self.store.show_view(sidebar_target).await?;
         self.apply_filter_selection(selected);
-        self.set_message("view updated".to_string());
+        self.set_info("view updated");
         Ok(())
     }
 
@@ -112,7 +112,7 @@ impl App {
     pub(super) async fn clear_filters(&mut self) -> Result<()> {
         let selected = self.store.clear_filters().await?;
         self.apply_filter_selection(selected);
-        self.set_message("filters cleared".to_string());
+        self.set_success("filters cleared");
         Ok(())
     }
 
@@ -124,7 +124,7 @@ impl App {
         } else {
             "hiding deleted tasks"
         };
-        self.set_message(message.to_string());
+        self.set_info(message);
         Ok(())
     }
 
@@ -149,7 +149,7 @@ impl App {
         };
         let selected = self.store.filter_project(project).await?;
         self.apply_filter_selection(selected);
-        self.set_message("project filter applied".to_string());
+        self.set_success("project filter applied");
         Ok(())
     }
 
@@ -161,7 +161,7 @@ impl App {
         };
         let selected = self.store.filter_label(label).await?;
         self.apply_filter_selection(selected);
-        self.set_message("label filter applied".to_string());
+        self.set_success("label filter applied");
         Ok(())
     }
 
@@ -173,7 +173,7 @@ impl App {
         };
         let selected = self.store.filter_status(status).await?;
         self.apply_filter_selection(selected);
-        self.set_message("status filter applied".to_string());
+        self.set_success("status filter applied");
         Ok(())
     }
 
@@ -187,7 +187,7 @@ impl App {
         };
         let selected = self.store.filter_priority(priority).await?;
         self.apply_filter_selection(selected);
-        self.set_message("priority filter applied".to_string());
+        self.set_success("priority filter applied");
         Ok(())
     }
 
@@ -201,7 +201,7 @@ impl App {
             .show_view(SidebarTarget::Project(project))
             .await?;
         self.apply_filter_selection(selected);
-        self.set_message("project view selected".to_string());
+        self.set_info("project view selected");
         Ok(())
     }
 
@@ -212,7 +212,7 @@ impl App {
         };
         let (message, selected) = self.store.switch_workspace(workspace).await?;
         self.apply_filter_selection(selected);
-        self.set_message(message);
+        self.set_success(message);
         Ok(())
     }
 }

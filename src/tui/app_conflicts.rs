@@ -32,7 +32,7 @@ impl App {
         } else {
             format!("showing {count} conflicted tasks")
         };
-        self.set_message(message);
+        self.set_info(message);
         Ok(())
     }
 
@@ -46,11 +46,11 @@ impl App {
         &mut self,
     ) -> Result<Option<Vec<ConflictTarget>>> {
         let Some(targets) = self.conflict_targets_for_selected().await? else {
-            self.set_message("no selected task for conflict resolution".to_string());
+            self.set_info("no selected task for conflict resolution");
             return Ok(None);
         };
         if targets.is_empty() {
-            self.set_message("selected task has no unresolved conflicts".to_string());
+            self.set_info("selected task has no unresolved conflicts");
             return Ok(None);
         }
         Ok(Some(targets))
@@ -58,7 +58,7 @@ impl App {
 
     pub(super) async fn show_conflict_details(&mut self) -> Result<()> {
         let Some(targets) = self.conflict_targets_for_selected().await? else {
-            self.set_message("no selected task for conflicts".to_string());
+            self.set_info("no selected task for conflicts");
             return Ok(());
         };
         if targets.is_empty() {
@@ -67,7 +67,7 @@ impl App {
                 .selected_task(self.widgets.table.selected())
                 .map(|item| item.display_ref.clone())
                 .unwrap_or_else(|| "task".to_string());
-            self.set_message(format!("{display_ref} has no unresolved conflicts"));
+            self.set_info(format!("{display_ref} has no unresolved conflicts"));
             return Ok(());
         }
         let mut lines = Vec::new();
@@ -96,11 +96,11 @@ impl App {
     pub(super) fn move_to_conflict(&mut self, delta: isize) {
         let current = self.widgets.table.selected();
         let Some(next) = self.store.next_conflict_index(current, delta) else {
-            self.set_message("no conflicts in current list".to_string());
+            self.set_info("no conflicts in current list");
             return;
         };
         if current == Some(next) {
-            self.set_message("selected only conflict".to_string());
+            self.set_info("selected only conflict");
             return;
         }
         self.widgets.table.select(Some(next));
@@ -110,7 +110,7 @@ impl App {
         } else {
             "selected previous conflict"
         };
-        self.set_message(message.to_string());
+        self.set_info(message);
     }
 
     fn apply_conflict_transition(&mut self, transition: ConflictTransition) {
@@ -120,7 +120,7 @@ impl App {
                 self.open_conflict_confirm(choice, target)
             }
             ConflictTransition::EditManual { target } => self.open_manual_conflict_editor(target),
-            ConflictTransition::Message(message) => self.set_message(message),
+            ConflictTransition::Message(message) => self.set_warning(message),
         }
     }
 
@@ -193,10 +193,10 @@ impl App {
             ConflictSubmit::Resolve { target, value } => {
                 match self.store.resolve_conflict_value(target, value).await {
                     Ok(result) => self.apply_mutation_result(result),
-                    Err(error) => self.set_message(format!("error: {error:#}")),
+                    Err(error) => self.set_error(format!("{error:#}")),
                 }
             }
-            ConflictSubmit::Inactive { message } => self.set_message(message.to_string()),
+            ConflictSubmit::Inactive { message } => self.set_warning(message),
         }
         Ok(())
     }
@@ -266,7 +266,7 @@ impl App {
             _ => {
                 self.conflict_flow.clear();
                 self.overlay = None;
-                self.set_message(format!(
+                self.set_warning(format!(
                     "manual merge is not supported for field={}",
                     target.field
                 ));
@@ -284,7 +284,7 @@ impl App {
                 {
                     Ok(result) => self.apply_mutation_result(result),
                     Err(error) => {
-                        self.set_message(format!("error: {error:#}"));
+                        self.set_error(format!("{error:#}"));
                         let mut retry_target = target;
                         retry_target.local_value = value;
                         let transition = self.conflict_flow.retry_manual_edit(retry_target);
@@ -292,7 +292,7 @@ impl App {
                     }
                 }
             }
-            ConflictSubmit::Inactive { message } => self.set_message(message.to_string()),
+            ConflictSubmit::Inactive { message } => self.set_warning(message),
         }
         Ok(())
     }
