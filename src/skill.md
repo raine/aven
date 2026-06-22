@@ -24,7 +24,7 @@
 - Use `aven doctor` when the active workspace is unclear.
 - Add `--workspace <name-or-key>` when a command must target a specific workspace.
 - Project path routes can select the active workspace from the current directory.
-- `project.overrides` maps paths to project names for inferred `aven add` tasks and the initial `aven tui` project view. Use `aven tui --all` to start in the all-projects queue.
+- `project.overrides` maps paths to project names for inferred `aven add` tasks and `aven tui --project` or `aven tui -p` startup. Plain `aven tui` starts in the all-projects queue.
 
 ## Discovery commands
 

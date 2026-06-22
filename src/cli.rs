@@ -51,8 +51,8 @@ pub(crate) enum Commands {
 
 #[derive(Args)]
 pub(crate) struct TuiArgs {
-    #[arg(long)]
-    pub(crate) all: bool,
+    #[arg(short = 'p', long, num_args = 0..=1, default_missing_value = "")]
+    pub(crate) project: Option<String>,
 }
 
 #[derive(Args)]

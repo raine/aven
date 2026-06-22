@@ -43,6 +43,34 @@ async fn create_project_refreshes_sidebar() {
 }
 
 #[tokio::test]
+async fn default_startup_opens_all_projects() {
+    let mut store = test_store().await;
+    store
+        .create_project("Mobile App".to_string())
+        .await
+        .unwrap();
+    store
+        .create_task(
+            TaskDraft {
+                title: "mobile task".to_string(),
+                description: String::new(),
+                project: Some("mobile-app".to_string()),
+                priority: "none".to_string(),
+                labels: Vec::new(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+    let reopened = TuiStore::new(store.pool.clone()).await.unwrap();
+
+    assert_eq!(reopened.active_view, SidebarTarget::All);
+    assert!(reopened.filters.project.is_none());
+    assert_eq!(reopened.tasks.len(), 1);
+}
+
+#[tokio::test]
 async fn initial_project_opens_project_view() {
     let mut store = test_store().await;
     store
@@ -77,12 +105,10 @@ async fn initial_project_opens_project_view() {
         .await
         .unwrap();
 
-    let reopened = TuiStore::new_with_initial_project(
-        store.pool.clone(),
-        Some("mobile-app".to_string()),
-    )
-    .await
-    .unwrap();
+    let reopened =
+        TuiStore::new_with_initial_project(store.pool.clone(), Some("mobile-app".to_string()))
+            .await
+            .unwrap();
 
     assert_eq!(
         reopened.active_view,

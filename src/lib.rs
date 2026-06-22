@@ -87,7 +87,7 @@ pub async fn run_cli() -> Result<()> {
             }
             drop(conn);
             if let Commands::Tui(args) = &command {
-                return tui::run(pool, args.all).await;
+                return tui::run(pool, args.project.as_deref()).await;
             }
             let mut conn = pool.acquire().await?;
             let should_wake = command_should_wake(&command);

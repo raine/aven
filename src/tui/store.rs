@@ -23,11 +23,13 @@ pub(crate) use pickers::deleted_picker_items;
 pub(crate) use types::{ConflictTarget, MutationMessage, SidebarEntry, SidebarTarget};
 
 use crate::labels::list_labels_in_workspace;
+use crate::projects::{
+    inferred_existing_project_key_in_workspace, resolve_existing_project_in_workspace,
+};
 use crate::query::{
     ProjectListItem, SidebarCounts, SortDirection, TaskFilters, TaskListItem, TaskSort,
     list_project_items_in_workspace, list_task_items_in_workspace, sidebar_counts_in_workspace,
 };
-use crate::projects::inferred_existing_project_key_in_workspace;
 use crate::workspaces::{Workspace, active_workspace, list_workspaces, set_active_workspace};
 
 pub(crate) struct TuiStore {
@@ -58,6 +60,15 @@ impl TuiStore {
             inferred_existing_project_key_in_workspace(&mut conn, &active_workspace.id).await?
         };
         Self::new_with_initial_project(pool, initial_project).await
+    }
+
+    pub(crate) async fn new_for_project(pool: SqlitePool, project: &str) -> Result<Self> {
+        let active_workspace = active_workspace();
+        let project = {
+            let mut conn = pool.acquire().await?;
+            resolve_existing_project_in_workspace(&mut conn, &active_workspace.id, project).await?
+        };
+        Self::new_with_initial_project(pool, Some(project.key)).await
     }
 
     async fn new_with_initial_project(
