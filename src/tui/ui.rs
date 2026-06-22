@@ -106,7 +106,7 @@ pub(crate) fn render(
         render_sidebar(frame, store, widgets, view.focus, sidebar, false);
         render_tasks(frame, store, widgets, view.focus, main, inline_title_editor);
     }
-    frame.render_widget(footer_bar(view.footer_mode()), footer);
+    frame.render_widget(footer_bar(view.footer_mode(), footer.width), footer);
 
     if !view.pending_shortcut.is_empty()
         && !view

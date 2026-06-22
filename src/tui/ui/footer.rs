@@ -10,32 +10,9 @@ pub(super) enum FooterMode {
     Detail,
 }
 
-pub(super) fn footer_bar(mode: FooterMode) -> Paragraph<'static> {
+pub(super) fn footer_bar(mode: FooterMode, width: u16) -> Paragraph<'static> {
     let mut spans = Vec::new();
-    let hints: &[(&str, &str)] = match mode {
-        FooterMode::List => &[
-            ("j/k", "navigate"),
-            ("Enter", "detail"),
-            ("a/s/p/l/n/d/x/y", "task"),
-            ("g/e/m/f/o/c/C", "prefixes"),
-            ("/", "search"),
-            (":", "command"),
-            ("?", "help"),
-            ("q", "quit"),
-        ],
-        FooterMode::Detail => &[
-            ("j/k Pg", "scroll"),
-            ("[/]", "prev/next"),
-            ("e", "edit field"),
-            ("n", "add note"),
-            ("d", "done"),
-            ("s/p/l", "edit"),
-            ("y/Y", "copy"),
-            ("?", "help"),
-            ("Esc", "back"),
-        ],
-    };
-    for (keys, label) in hints {
+    for (keys, label) in footer_hints(mode, width) {
         spans.extend(key(keys));
         spans.push(cmd(label));
     }
@@ -47,6 +24,72 @@ pub(super) fn footer_bar(mode: FooterMode) -> Paragraph<'static> {
                 .border_style(Style::new().fg(BORDER)),
         )
         .style(Style::new().fg(FG).bg(BG))
+}
+
+fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'static str)] {
+    match mode {
+        FooterMode::List if width >= 148 => &[
+            ("j/k", "move"),
+            ("Enter", "detail"),
+            ("a", "add"),
+            ("n", "note"),
+            ("s", "status"),
+            ("p", "priority"),
+            ("d", "done"),
+            ("x", "cancel"),
+            ("g", "views"),
+            ("f", "filter"),
+            ("o", "order"),
+            ("?", "more"),
+            ("q", "quit"),
+        ],
+        FooterMode::List if width >= 96 => &[
+            ("j/k", "move"),
+            ("Enter", "detail"),
+            ("a", "add"),
+            ("s", "status"),
+            ("p", "priority"),
+            ("g/f/o", "menus"),
+            ("?", "more"),
+            ("q", "quit"),
+        ],
+        FooterMode::List => &[
+            ("j/k", "move"),
+            ("Enter", "detail"),
+            ("a", "add"),
+            ("?", "more"),
+            ("q", "quit"),
+        ],
+        FooterMode::Detail if width >= 128 => &[
+            ("j/k Pg", "scroll"),
+            ("[/]", "task"),
+            ("e", "edit"),
+            ("s", "status"),
+            ("p", "priority"),
+            ("l", "labels"),
+            ("n", "note"),
+            ("d", "done"),
+            ("y/Y", "copy"),
+            ("?", "more"),
+            ("Esc", "back"),
+        ],
+        FooterMode::Detail if width >= 72 => &[
+            ("j/k Pg", "scroll"),
+            ("[/]", "task"),
+            ("e", "edit"),
+            ("s/p/l", "edit"),
+            ("n", "note"),
+            ("?", "more"),
+            ("Esc", "back"),
+        ],
+        FooterMode::Detail => &[
+            ("j/k", "scroll"),
+            ("[/]", "task"),
+            ("e", "edit"),
+            ("?", "more"),
+            ("Esc", "back"),
+        ],
+    }
 }
 
 fn key(label: &str) -> Vec<Span<'static>> {
@@ -88,15 +131,48 @@ mod tests {
 
     #[test]
     fn detail_footer_lists_scroll_and_task_navigation_keys() {
-        let backend = TestBackend::new(100, 3);
+        let backend = TestBackend::new(128, 3);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| frame.render_widget(footer_bar(FooterMode::Detail), frame.area()))
+            .draw(|frame| frame.render_widget(footer_bar(FooterMode::Detail, 128), frame.area()))
             .unwrap();
         let rendered = buffer_text(terminal.backend());
 
         assert!(rendered.contains("j/k Pg"));
         assert!(rendered.contains("[/]"));
-        assert!(rendered.contains("prev/next"));
+        assert!(rendered.contains("task"));
+        assert!(rendered.contains("status"));
+        assert!(rendered.contains("priority"));
+        assert!(rendered.contains("more"));
+    }
+
+    #[test]
+    fn list_footer_expands_intent_labels_when_wide() {
+        let hints = footer_hints(FooterMode::List, 148);
+
+        assert!(hints.contains(&("a", "add")));
+        assert!(hints.contains(&("s", "status")));
+        assert!(hints.contains(&("p", "priority")));
+        assert!(hints.contains(&("d", "done")));
+        assert!(hints.contains(&("x", "cancel")));
+        assert!(hints.contains(&("g", "views")));
+        assert!(hints.contains(&("?", "more")));
+        assert!(!hints.iter().any(|(_, label)| *label == "prefixes"));
+    }
+
+    #[test]
+    fn footer_collapses_to_core_hints_when_narrow() {
+        let hints = footer_hints(FooterMode::List, 60);
+
+        assert_eq!(
+            hints,
+            &[
+                ("j/k", "move"),
+                ("Enter", "detail"),
+                ("a", "add"),
+                ("?", "more"),
+                ("q", "quit"),
+            ]
+        );
     }
 }
