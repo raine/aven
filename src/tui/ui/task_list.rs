@@ -34,7 +34,7 @@ impl TaskRenderMode {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TaskGroupRow {
     label: &'static str,
     count: usize,
@@ -44,6 +44,29 @@ struct TaskGroupRow {
 enum TaskListRow {
     Group(TaskGroupRow),
     Task { task_index: usize },
+}
+
+#[derive(Debug)]
+struct TaskListRenderModel {
+    columns: [Constraint; 6],
+    row_areas: Vec<Rect>,
+    rows: Vec<TaskListRenderRow>,
+    scroll: usize,
+    row_count: usize,
+    viewport_rows: usize,
+    top_scroll: usize,
+}
+
+#[derive(Debug)]
+enum TaskListRenderRow {
+    Group(TaskGroupRow),
+    Task(TaskListTaskRow),
+}
+
+#[derive(Debug)]
+struct TaskListTaskRow {
+    style: Style,
+    cells: Vec<Line<'static>>,
 }
 
 struct TaskListView {
@@ -148,21 +171,57 @@ fn render_task_list(
     inline_title_editor: Option<&TextInputView>,
 ) {
     frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
-    if area.height == 0 {
+    let model = build_task_list_render_model(store, table_state, focus, area, inline_title_editor);
+    if model.row_areas.is_empty() {
         return;
     }
 
-    let project_width = project_column_width(store, area.width < 90);
-    let columns = [
-        Constraint::Length(12),
-        Constraint::Fill(1),
-        Constraint::Length(project_width),
-        Constraint::Length(10),
-        Constraint::Length(3),
-        Constraint::Length(5),
-    ];
+    render_task_header(frame, model.row_areas[0], model.columns);
+
+    for (index, row) in model.rows.iter().enumerate() {
+        let Some(row_area) = model.row_areas.get(index + 1).copied() else {
+            break;
+        };
+        match row {
+            TaskListRenderRow::Group(group) => {
+                render_group_row(frame, group.label, group.count, row_area);
+            }
+            TaskListRenderRow::Task(row) => {
+                render_task_row_from_model(frame, row_area, &model.columns, row);
+            }
+        }
+    }
+
+    render_task_scrollbar(
+        frame,
+        model.scroll,
+        model.row_count,
+        model.viewport_rows,
+        model.top_scroll,
+        area,
+    );
+}
+
+fn build_task_list_render_model(
+    store: &TuiStore,
+    table_state: &mut TableState,
+    focus: Focus,
+    area: Rect,
+    inline_title_editor: Option<&TextInputView>,
+) -> TaskListRenderModel {
     let row_areas = Layout::vertical(vec![Constraint::Length(1); area.height as usize]).split(area);
-    render_task_header(frame, row_areas[0], columns);
+    let columns = task_list_columns(store, area.width < 90);
+    if row_areas.is_empty() {
+        return TaskListRenderModel {
+            columns,
+            row_areas: row_areas.to_vec(),
+            rows: Vec::new(),
+            scroll: 0,
+            row_count: 0,
+            viewport_rows: 0,
+            top_scroll: 0,
+        };
+    }
 
     let view = TaskListView::new(store);
     let viewport_rows = row_areas.len().saturating_sub(1);
@@ -178,46 +237,74 @@ fn render_task_list(
     );
     *table_state.offset_mut() = scroll;
 
-    let now_seconds = now_seconds();
-    let mut row = 1usize;
-    for visual_row in scroll..view.rows.len() {
-        if row >= row_areas.len() {
-            break;
-        }
-        match &view.rows[visual_row] {
-            TaskListRow::Group(group) => {
-                render_group_row(frame, group.label, group.count, row_areas[row]);
-            }
+    let now = now_seconds();
+    let column_widths = task_list_column_widths(
+        &columns,
+        row_areas.get(1).map_or(area.width, |area| area.width),
+    );
+    let mut rows = Vec::new();
+    for row in view.rows.iter().skip(scroll).take(viewport_rows) {
+        match row {
+            TaskListRow::Group(group) => rows.push(TaskListRenderRow::Group(*group)),
             TaskListRow::Task { task_index } => {
                 let Some(item) = store.tasks.get(*task_index) else {
+                    rows.push(TaskListRenderRow::Task(TaskListTaskRow {
+                        style: row_style(false, focus == Focus::Tasks),
+                        cells: blank_task_row_cells(),
+                    }));
                     continue;
                 };
                 let selected = selected_task == Some(*task_index);
-                render_task_row(
-                    frame,
-                    item,
-                    row_style(selected, focus == Focus::Tasks),
-                    row_areas[row],
-                    TaskRowContext {
-                        columns,
-                        now_seconds,
-                        render_mode: view.render_mode,
-                        inline_title_editor: inline_title_editor.filter(|_| selected),
-                    },
-                );
+                rows.push(TaskListRenderRow::Task(TaskListTaskRow {
+                    style: row_style(selected, focus == Focus::Tasks),
+                    cells: build_task_row_cells(
+                        item,
+                        now,
+                        view.render_mode,
+                        inline_title_editor.filter(|_| selected),
+                        &column_widths,
+                    ),
+                }));
             }
         }
-        row += 1;
     }
 
-    render_task_scrollbar(
-        frame,
+    TaskListRenderModel {
+        columns,
+        row_areas: row_areas.to_vec(),
+        rows,
         scroll,
-        view.rows.len(),
+        row_count: view.rows.len(),
         viewport_rows,
-        task_list_top_scroll(&view),
-        area,
-    );
+        top_scroll: task_list_top_scroll(&view),
+    }
+}
+
+fn task_list_columns(store: &TuiStore, narrow: bool) -> [Constraint; 6] {
+    let project_width = project_column_width(store, narrow);
+    [
+        Constraint::Length(12),
+        Constraint::Fill(1),
+        Constraint::Length(project_width),
+        Constraint::Length(10),
+        Constraint::Length(3),
+        Constraint::Length(5),
+    ]
+}
+
+fn task_list_column_widths(columns: &[Constraint; 6], width: u16) -> [usize; 6] {
+    if width == 0 {
+        return [0; 6];
+    }
+    let cells = Layout::horizontal(*columns).areas::<6>(Rect::new(0, 0, width, 1));
+    [
+        cells[0].width as usize,
+        cells[1].width as usize,
+        cells[2].width as usize,
+        cells[3].width as usize,
+        cells[4].width as usize,
+        cells[5].width as usize,
+    ]
 }
 
 fn task_list_scroll(
@@ -346,40 +433,53 @@ fn row_style(selected: bool, focused: bool) -> Style {
     }
 }
 
-struct TaskRowContext<'a> {
-    columns: [Constraint; 6],
-    now_seconds: i64,
-    render_mode: TaskRenderMode,
-    inline_title_editor: Option<&'a TextInputView>,
+fn render_task_row_from_model(
+    frame: &mut Frame,
+    area: Rect,
+    columns: &[Constraint; 6],
+    row: &TaskListTaskRow,
+) {
+    render_task_row_cells(frame, area, row.style, columns, &row.cells);
 }
 
-fn render_task_row(
+fn render_task_row_cells(
     frame: &mut Frame,
-    item: &TaskListItem,
-    style: Style,
     area: Rect,
-    context: TaskRowContext<'_>,
+    style: Style,
+    columns: &[Constraint; 6],
+    values: &[Line<'static>],
 ) {
     frame.render_widget(Block::new().style(style), area);
-    let cells = Layout::horizontal(context.columns).areas::<6>(area);
-    let age_seconds = if context.render_mode.uses_queue_age() {
+    let areas = Layout::horizontal(columns).areas::<6>(area);
+    for (area, value) in areas.into_iter().zip(values) {
+        frame.render_widget(Paragraph::new(value.clone()).style(style), area);
+    }
+}
+
+fn build_task_row_cells(
+    item: &TaskListItem,
+    now_seconds: i64,
+    render_mode: TaskRenderMode,
+    inline_title_editor: Option<&TextInputView>,
+    column_widths: &[usize; 6],
+) -> Vec<Line<'static>> {
+    let age_seconds = if render_mode.uses_queue_age() {
         item.queue.idle_seconds()
     } else {
-        task_seconds_since(&item.task.created_at, context.now_seconds)
+        task_seconds_since(&item.task.created_at, now_seconds)
     };
-    let age_style_input = if context.render_mode.uses_queue_age() {
+    let age_style_input = if render_mode.uses_queue_age() {
         &item.task.queue_activity_at
     } else {
         &item.task.created_at
     };
-    let title = context
-        .inline_title_editor
-        .map(|editor| inline_title_edit_cell(editor, cells[1].width as usize))
-        .unwrap_or_else(|| title_cell(item, cells[1].width as usize));
-    let values = [
+    let title = inline_title_editor
+        .map(|editor| inline_title_edit_cell(editor, column_widths[1]))
+        .unwrap_or_else(|| title_cell(item, column_widths[1]));
+    vec![
         task_ref_cell(item),
         title,
-        project_cell(item, cells[2].width as usize),
+        project_cell(item, column_widths[2]),
         status_chip(&item.task.status),
         Line::from(Span::styled(
             priority_icon(&item.task.priority),
@@ -387,12 +487,20 @@ fn render_task_row(
         )),
         Line::from(Span::styled(
             age_seconds.map(compact_age).unwrap_or_default(),
-            age_style(age_style_input, context.now_seconds),
+            age_style(age_style_input, now_seconds),
         )),
-    ];
-    for (area, value) in cells.into_iter().zip(values) {
-        frame.render_widget(Paragraph::new(value).style(style), area);
-    }
+    ]
+}
+
+fn blank_task_row_cells() -> Vec<Line<'static>> {
+    vec![
+        Line::from(""),
+        Line::from(""),
+        Line::from(""),
+        Line::from(""),
+        Line::from(""),
+        Line::from(""),
+    ]
 }
 
 fn inline_title_edit_cell(editor: &TextInputView, max_width: usize) -> Line<'static> {
@@ -563,18 +671,10 @@ mod tests {
         ];
         terminal
             .draw(|frame| {
-                render_task_row(
-                    frame,
-                    item,
-                    row_style(true, true),
-                    frame.area(),
-                    TaskRowContext {
-                        columns,
-                        now_seconds: 0,
-                        render_mode,
-                        inline_title_editor,
-                    },
-                );
+                let column_widths = task_list_column_widths(&columns, frame.area().width);
+                let cells =
+                    build_task_row_cells(item, 0, render_mode, inline_title_editor, &column_widths);
+                render_task_row_cells(frame, frame.area(), row_style(true, true), &columns, &cells);
             })
             .unwrap();
         terminal.backend().buffer().clone()
@@ -860,5 +960,27 @@ mod tests {
         let rendered = inline_title_edit_cell(&editor, 5).to_string();
 
         assert_eq!(rendered, "cdef");
+    }
+
+    #[test]
+    fn task_row_cells_use_inline_title_when_selected() {
+        let item = task_item("original title");
+        let editor = TextInputView {
+            route: OverlayRoute::EditTitle,
+            title: "Edit title".to_string(),
+            prompt: String::new(),
+            input: "edited title".to_string(),
+            cursor: 12,
+        };
+
+        let cells = build_task_row_cells(
+            &item,
+            0,
+            TaskRenderMode::Default,
+            Some(&editor),
+            &[12, 40, 9, 10, 3, 5],
+        );
+
+        assert!(cells[1].to_string().contains("edited title"));
     }
 }

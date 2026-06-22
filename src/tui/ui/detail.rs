@@ -16,24 +16,47 @@ use crate::tui::store::TuiStore;
 use crate::tui::theme::{self, ACCENT, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, ORANGE, RED};
 use crate::tui::widgets::{priority_short, status_chip, status_span};
 
+#[derive(Debug)]
+struct DetailContentLayout {
+    body_area: Rect,
+    content_area: Rect,
+    metadata_area: Rect,
+}
+
+#[derive(Debug)]
+struct DetailContentRenderModel {
+    lines: Vec<Line<'static>>,
+    content_height: usize,
+    scrollbar_position: usize,
+}
+
 fn render_detail(
     frame: &mut Frame,
     item: &TaskListItem,
     scroll: u16,
     inline_title_editor: Option<&TextInputView>,
 ) {
-    let area = frame.area();
+    let layout = detail_content_layout(frame.area());
+    frame.render_widget(Clear, layout.body_area);
+    frame.render_widget(Block::new().style(Style::new().bg(BG)), layout.body_area);
+    if layout.body_area.width == 0 || layout.body_area.height == 0 {
+        return;
+    }
+
+    let model = build_detail_content_model(item, layout.content_area, scroll, inline_title_editor);
+    render_detail_content_from_model(frame, layout.content_area, &model);
+    if layout.metadata_area.width > 0 {
+        render_detail_metadata(frame, item, layout.metadata_area);
+    }
+}
+
+fn detail_content_layout(frame_area: Rect) -> DetailContentLayout {
     let [_, body, _] = Layout::vertical([
         Constraint::Length(2),
         Constraint::Fill(1),
         Constraint::Length(2),
     ])
-    .areas(area);
-    frame.render_widget(Clear, body);
-    frame.render_widget(Block::new().style(Style::new().bg(BG)), body);
-    if body.width == 0 || body.height == 0 {
-        return;
-    }
+    .areas(frame_area);
 
     let [content_area, metadata_area] = if body.width >= 96 {
         Layout::horizontal([Constraint::Fill(1), Constraint::Length(34)]).areas(body)
@@ -41,9 +64,10 @@ fn render_detail(
         [body, Rect::default()]
     };
     let content_area = content_area.inner(detail_content_margin());
-    render_detail_content(frame, item, content_area, scroll, inline_title_editor);
-    if metadata_area.width > 0 {
-        render_detail_metadata(frame, item, metadata_area);
+    DetailContentLayout {
+        body_area: body,
+        content_area,
+        metadata_area,
     }
 }
 
@@ -59,23 +83,9 @@ pub(crate) fn detail_scroll_cap(
     terminal_width: u16,
     terminal_height: u16,
 ) -> u16 {
-    let area = Rect::new(0, 0, terminal_width, terminal_height);
-    let [_, body, _] = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Fill(1),
-        Constraint::Length(2),
-    ])
-    .areas(area);
-    let [content_area, _] = if body.width >= 96 {
-        Layout::horizontal([Constraint::Fill(1), Constraint::Length(34)]).areas(body)
-    } else {
-        [body, Rect::default()]
-    };
-    let content_area = content_area.inner(detail_content_margin());
-    let content_height = detail_content_lines(item, content_area.width as usize, None)
-        .len()
-        .max(1);
-    detail_scroll_max_start(content_height, content_area.height as usize) as u16
+    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    let model = build_detail_content_model(item, layout.content_area, 0, None);
+    detail_scroll_max_start(model.content_height, layout.content_area.height as usize) as u16
 }
 
 fn detail_content_margin() -> Margin {
@@ -85,32 +95,47 @@ fn detail_content_margin() -> Margin {
     }
 }
 
-fn render_detail_content(
-    frame: &mut Frame,
+fn build_detail_content_model(
     item: &TaskListItem,
     area: Rect,
     scroll: u16,
     inline_title_editor: Option<&TextInputView>,
-) {
+) -> DetailContentRenderModel {
     let lines = detail_content_lines(item, area.width as usize, inline_title_editor);
-    let visible = area.height as usize;
     let content_height = lines.len().max(1);
-    let start = detail_scroll_start(scroll, content_height, visible);
+    let visible = area.height as usize;
+    let start = detail_scroll_start(scroll, content_height, visible.max(1));
+    let lines = lines.into_iter().skip(start).collect();
+    let scrollbar_position = if content_height > visible {
+        detail_scrollbar_position(start, content_height, visible.max(1))
+    } else {
+        0
+    };
+    DetailContentRenderModel {
+        lines,
+        content_height,
+        scrollbar_position,
+    }
+}
+
+fn render_detail_content_from_model(
+    frame: &mut Frame,
+    area: Rect,
+    model: &DetailContentRenderModel,
+) {
+    let visible = area.height as usize;
     frame.render_widget(
-        Paragraph::new(Text::from(
-            lines.into_iter().skip(start).collect::<Vec<_>>(),
-        ))
-        .style(Style::new().fg(FG).bg(BG)),
+        Paragraph::new(Text::from(model.lines.clone())).style(Style::new().fg(FG).bg(BG)),
         area,
     );
-    if content_height > visible {
+    if model.content_height > visible {
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .style(Style::new().fg(FG_DIM).bg(BG))
                 .thumb_style(Style::new().fg(FG_MUTED)),
             area,
-            &mut ScrollbarState::new(content_height)
-                .position(detail_scrollbar_position(start, content_height, visible))
+            &mut ScrollbarState::new(model.content_height)
+                .position(model.scrollbar_position)
                 .viewport_content_length(visible),
         );
     }
@@ -468,6 +493,38 @@ mod tests {
         assert_eq!(detail_scrollbar_position(0, 20, 5), 0);
         assert_eq!(detail_scrollbar_position(15, 20, 5), 19);
         assert_eq!(detail_scrollbar_position(0, 3, 5), 0);
+    }
+
+    #[test]
+    fn detail_content_layout_matches_wide_and_narrow_metadata_rules() {
+        let wide = detail_content_layout(Rect::new(0, 0, 120, 30));
+
+        assert_eq!(wide.body_area, Rect::new(0, 2, 120, 26));
+        assert!(wide.metadata_area.width > 0);
+        assert_eq!(wide.content_area.y, 3);
+
+        let narrow = detail_content_layout(Rect::new(0, 0, 80, 30));
+
+        assert_eq!(narrow.metadata_area, Rect::default());
+        assert_eq!(narrow.content_area.x, 2);
+    }
+
+    #[test]
+    fn detail_content_model_prepares_render_lines_and_scrollbar() {
+        let mut item = detail_test_item();
+        item.task.description = (0..20)
+            .map(|index| format!("line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let model = build_detail_content_model(&item, Rect::new(0, 0, 60, 5), 4, None);
+
+        assert_eq!(
+            model.content_height,
+            detail_content_lines(&item, 60, None).len()
+        );
+        assert_eq!(model.lines.len(), model.content_height.saturating_sub(4));
+        assert!(model.scrollbar_position > 0);
     }
 
     fn detail_test_item() -> TaskListItem {
