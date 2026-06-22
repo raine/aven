@@ -2511,43 +2511,29 @@ async fn delete_project_picker_and_confirm_use_distinct_routes() {
 
 #[test]
 fn overlay_submit_routes_are_all_handled() {
-    let routes = [
-        OverlayRoute::MessageOnly,
-        OverlayRoute::AddTaskTitle,
-        OverlayRoute::AddTaskDescription,
-        OverlayRoute::AddTaskTitleProject,
-        OverlayRoute::AddTaskTitlePriority,
-        OverlayRoute::AddNote,
-        OverlayRoute::AddProject,
-        OverlayRoute::AddLabel,
-        OverlayRoute::EditStatus,
-        OverlayRoute::EditTitle,
-        OverlayRoute::EditDescription,
-        OverlayRoute::EditProject,
-        OverlayRoute::EditPriority,
-        OverlayRoute::EditLabels,
-        OverlayRoute::FilterProject,
-        OverlayRoute::FilterLabel,
-        OverlayRoute::FilterStatus,
-        OverlayRoute::FilterPriority,
-        OverlayRoute::ViewProject,
-        OverlayRoute::DeleteProjectPicker,
-        OverlayRoute::DeleteProjectConfirm,
-        OverlayRoute::DeleteTaskConfirm,
-        OverlayRoute::SwitchWorkspace,
-        OverlayRoute::ConflictField,
-        OverlayRoute::ConflictConfirm,
-        OverlayRoute::ConflictManual,
-        OverlayRoute::ConfigInit,
-    ];
-
-    for route in routes {
+    for route in OverlayRoute::ALL {
         for kind in route.submit_kinds() {
             assert!(
-                crate::tui::app_overlay_submit::handles_submit_kind(route, *kind),
+                crate::tui::app_overlay_submit::handles_submit_kind(route, kind),
                 "unhandled {kind:?} route {route:?}"
             );
         }
+    }
+}
+
+#[test]
+fn overlay_routes_have_submit_contracts() {
+    for route in OverlayRoute::ALL {
+        if route == OverlayRoute::MessageOnly {
+            continue;
+        }
+
+        let has_handler = route.text_submit_route().is_some()
+            || route.multiline_submit_route().is_some()
+            || route.picker_submit_route().is_some()
+            || route.confirm_submit_route().is_some();
+
+        assert!(has_handler, "route {route:?} has no submit contract");
     }
 }
 

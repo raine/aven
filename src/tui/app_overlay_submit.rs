@@ -2,118 +2,20 @@ use anyhow::Result;
 
 use crate::tui::app::App;
 use crate::tui::authoring::AddTaskStep;
-use crate::tui::overlay::{OverlayRoute, OverlaySubmit};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TextSubmitRoute {
-    AddTaskTitleToast,
-    AddProject,
-    AddLabel,
-    EditTitle,
-    ConflictManual,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MultilineSubmitRoute {
-    AddTaskDescription,
-    AddTaskNatural,
-    AddNote,
-    EditDescription,
-    ConflictManual,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PickerSubmitRoute {
-    AddTaskTitleProject,
-    AddTaskTitlePriority,
-    EditStatus,
-    EditProject,
-    EditPriority,
-    EditLabels,
-    FilterProject,
-    FilterLabel,
-    FilterStatus,
-    FilterPriority,
-    ViewProject,
-    DeleteProjectPicker,
-    SwitchWorkspace,
-    ConflictField,
-    ConflictManual,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConfirmSubmitRoute {
-    ConflictConfirm,
-    ConfigInit,
-    DeleteProjectConfirm,
-    DeleteTaskConfirm,
-}
-
-fn text_submit_route(route: OverlayRoute) -> Option<TextSubmitRoute> {
-    match route {
-        OverlayRoute::AddTaskTitle => Some(TextSubmitRoute::AddTaskTitleToast),
-        OverlayRoute::AddProject => Some(TextSubmitRoute::AddProject),
-        OverlayRoute::AddLabel => Some(TextSubmitRoute::AddLabel),
-        OverlayRoute::EditTitle => Some(TextSubmitRoute::EditTitle),
-        OverlayRoute::ConflictManual => Some(TextSubmitRoute::ConflictManual),
-        _ => None,
-    }
-}
-
-fn multiline_submit_route(route: OverlayRoute) -> Option<MultilineSubmitRoute> {
-    match route {
-        OverlayRoute::AddTaskDescription => Some(MultilineSubmitRoute::AddTaskDescription),
-        OverlayRoute::AddTaskNatural => Some(MultilineSubmitRoute::AddTaskNatural),
-        OverlayRoute::AddNote => Some(MultilineSubmitRoute::AddNote),
-        OverlayRoute::EditDescription => Some(MultilineSubmitRoute::EditDescription),
-        OverlayRoute::ConflictManual => Some(MultilineSubmitRoute::ConflictManual),
-        _ => None,
-    }
-}
-
-fn picker_submit_route(route: OverlayRoute) -> Option<PickerSubmitRoute> {
-    match route {
-        OverlayRoute::AddTaskTitleProject => Some(PickerSubmitRoute::AddTaskTitleProject),
-        OverlayRoute::AddTaskTitlePriority => Some(PickerSubmitRoute::AddTaskTitlePriority),
-        OverlayRoute::EditStatus => Some(PickerSubmitRoute::EditStatus),
-        OverlayRoute::EditProject => Some(PickerSubmitRoute::EditProject),
-        OverlayRoute::EditPriority => Some(PickerSubmitRoute::EditPriority),
-        OverlayRoute::EditLabels => Some(PickerSubmitRoute::EditLabels),
-        OverlayRoute::FilterProject => Some(PickerSubmitRoute::FilterProject),
-        OverlayRoute::FilterLabel => Some(PickerSubmitRoute::FilterLabel),
-        OverlayRoute::FilterStatus => Some(PickerSubmitRoute::FilterStatus),
-        OverlayRoute::FilterPriority => Some(PickerSubmitRoute::FilterPriority),
-        OverlayRoute::ViewProject => Some(PickerSubmitRoute::ViewProject),
-        OverlayRoute::DeleteProjectPicker => Some(PickerSubmitRoute::DeleteProjectPicker),
-        OverlayRoute::SwitchWorkspace => Some(PickerSubmitRoute::SwitchWorkspace),
-        OverlayRoute::ConflictField => Some(PickerSubmitRoute::ConflictField),
-        OverlayRoute::ConflictManual => Some(PickerSubmitRoute::ConflictManual),
-        _ => None,
-    }
-}
-
-fn confirm_submit_route(route: OverlayRoute) -> Option<ConfirmSubmitRoute> {
-    match route {
-        OverlayRoute::ConflictConfirm => Some(ConfirmSubmitRoute::ConflictConfirm),
-        OverlayRoute::ConfigInit => Some(ConfirmSubmitRoute::ConfigInit),
-        OverlayRoute::DeleteProjectConfirm => Some(ConfirmSubmitRoute::DeleteProjectConfirm),
-        OverlayRoute::DeleteTaskConfirm => Some(ConfirmSubmitRoute::DeleteTaskConfirm),
-        _ => None,
-    }
-}
+#[cfg(test)]
+use crate::tui::overlay::OverlaySubmitKind;
+use crate::tui::overlay::{
+    ConfirmSubmitRoute, MultilineSubmitRoute, OverlayRoute, OverlaySubmit, PickerSubmitRoute,
+    TextSubmitRoute,
+};
 
 #[cfg(test)]
-pub(crate) fn handles_submit_kind(
-    route: OverlayRoute,
-    kind: crate::tui::overlay::OverlaySubmitKind,
-) -> bool {
-    use crate::tui::overlay::OverlaySubmitKind::{Confirm, Multiline, Picker, Text};
-
+pub(crate) fn handles_submit_kind(route: OverlayRoute, kind: OverlaySubmitKind) -> bool {
     match kind {
-        Text => text_submit_route(route).is_some(),
-        Multiline => multiline_submit_route(route).is_some(),
-        Picker => picker_submit_route(route).is_some(),
-        Confirm => confirm_submit_route(route).is_some(),
+        OverlaySubmitKind::Text => route.text_submit_route().is_some(),
+        OverlaySubmitKind::Multiline => route.multiline_submit_route().is_some(),
+        OverlaySubmitKind::Picker => route.picker_submit_route().is_some(),
+        OverlaySubmitKind::Confirm => route.confirm_submit_route().is_some(),
     }
 }
 
@@ -163,7 +65,7 @@ impl App {
         title: String,
         value: String,
     ) -> Result<()> {
-        match text_submit_route(route) {
+        match route.text_submit_route() {
             Some(TextSubmitRoute::AddTaskTitleToast) => self.set_success(
                 OverlaySubmit::Text {
                     route,
@@ -205,7 +107,7 @@ impl App {
         title: String,
         value: String,
     ) -> Result<()> {
-        match multiline_submit_route(route) {
+        match route.multiline_submit_route() {
             Some(MultilineSubmitRoute::AddTaskDescription) => {
                 if self.authoring.capture_add_task_fields(
                     self.authoring
@@ -248,7 +150,7 @@ impl App {
         title: String,
         values: Vec<String>,
     ) -> Result<()> {
-        match picker_submit_route(route) {
+        match route.picker_submit_route() {
             Some(PickerSubmitRoute::AddTaskTitleProject) => {
                 if self.authoring.apply_add_task_project(values) {
                     self.begin_add_task_step();
@@ -327,7 +229,7 @@ impl App {
     }
 
     async fn handle_confirm_submit(&mut self, route: OverlayRoute, title: String) -> Result<()> {
-        match confirm_submit_route(route) {
+        match route.confirm_submit_route() {
             Some(ConfirmSubmitRoute::ConflictConfirm) => {
                 self.submit_confirmed_conflict_resolution().await?;
             }

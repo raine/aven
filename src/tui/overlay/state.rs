@@ -68,6 +68,51 @@ pub(crate) enum OverlayRoute {
     ConfigInit,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TextSubmitRoute {
+    AddTaskTitleToast,
+    AddProject,
+    AddLabel,
+    EditTitle,
+    ConflictManual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MultilineSubmitRoute {
+    AddTaskDescription,
+    AddTaskNatural,
+    AddNote,
+    EditDescription,
+    ConflictManual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PickerSubmitRoute {
+    AddTaskTitleProject,
+    AddTaskTitlePriority,
+    EditStatus,
+    EditProject,
+    EditPriority,
+    EditLabels,
+    FilterProject,
+    FilterLabel,
+    FilterStatus,
+    FilterPriority,
+    ViewProject,
+    DeleteProjectPicker,
+    SwitchWorkspace,
+    ConflictField,
+    ConflictManual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConfirmSubmitRoute {
+    ConflictConfirm,
+    ConfigInit,
+    DeleteProjectConfirm,
+    DeleteTaskConfirm,
+}
+
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OverlaySubmitKind {
@@ -78,34 +123,109 @@ pub(crate) enum OverlaySubmitKind {
 }
 
 #[cfg(test)]
+impl OverlaySubmitKind {
+    pub(crate) const ALL: [Self; 4] = [Self::Text, Self::Multiline, Self::Picker, Self::Confirm];
+}
+
 impl OverlayRoute {
-    pub(crate) fn submit_kinds(self) -> &'static [OverlaySubmitKind] {
-        use OverlaySubmitKind::{Confirm, Multiline, Picker, Text};
+    pub(crate) fn text_submit_route(self) -> Option<TextSubmitRoute> {
         match self {
-            Self::MessageOnly => &[],
-            Self::AddTaskTitle => &[Text],
-            Self::AddTaskDescription | Self::AddTaskNatural => &[Multiline],
-            Self::AddTaskTitleProject | Self::AddTaskTitlePriority => &[Picker],
-            Self::AddNote => &[Multiline],
-            Self::AddProject | Self::AddLabel | Self::EditTitle => &[Text],
-            Self::EditStatus | Self::EditProject | Self::EditPriority | Self::EditLabels => {
-                &[Picker]
-            }
-            Self::EditDescription => &[Multiline],
-            Self::FilterProject
-            | Self::FilterLabel
-            | Self::FilterStatus
-            | Self::FilterPriority
-            | Self::ViewProject
-            | Self::DeleteProjectPicker
-            | Self::SwitchWorkspace
-            | Self::ConflictField => &[Picker],
-            Self::DeleteProjectConfirm
-            | Self::DeleteTaskConfirm
-            | Self::ConflictConfirm
-            | Self::ConfigInit => &[Confirm],
-            Self::ConflictManual => &[Text, Multiline, Picker],
+            Self::AddTaskTitle => Some(TextSubmitRoute::AddTaskTitleToast),
+            Self::AddProject => Some(TextSubmitRoute::AddProject),
+            Self::AddLabel => Some(TextSubmitRoute::AddLabel),
+            Self::EditTitle => Some(TextSubmitRoute::EditTitle),
+            Self::ConflictManual => Some(TextSubmitRoute::ConflictManual),
+            _ => None,
         }
+    }
+
+    pub(crate) fn multiline_submit_route(self) -> Option<MultilineSubmitRoute> {
+        match self {
+            Self::AddTaskDescription => Some(MultilineSubmitRoute::AddTaskDescription),
+            Self::AddTaskNatural => Some(MultilineSubmitRoute::AddTaskNatural),
+            Self::AddNote => Some(MultilineSubmitRoute::AddNote),
+            Self::EditDescription => Some(MultilineSubmitRoute::EditDescription),
+            Self::ConflictManual => Some(MultilineSubmitRoute::ConflictManual),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn picker_submit_route(self) -> Option<PickerSubmitRoute> {
+        match self {
+            Self::AddTaskTitleProject => Some(PickerSubmitRoute::AddTaskTitleProject),
+            Self::AddTaskTitlePriority => Some(PickerSubmitRoute::AddTaskTitlePriority),
+            Self::EditStatus => Some(PickerSubmitRoute::EditStatus),
+            Self::EditProject => Some(PickerSubmitRoute::EditProject),
+            Self::EditPriority => Some(PickerSubmitRoute::EditPriority),
+            Self::EditLabels => Some(PickerSubmitRoute::EditLabels),
+            Self::FilterProject => Some(PickerSubmitRoute::FilterProject),
+            Self::FilterLabel => Some(PickerSubmitRoute::FilterLabel),
+            Self::FilterStatus => Some(PickerSubmitRoute::FilterStatus),
+            Self::FilterPriority => Some(PickerSubmitRoute::FilterPriority),
+            Self::ViewProject => Some(PickerSubmitRoute::ViewProject),
+            Self::DeleteProjectPicker => Some(PickerSubmitRoute::DeleteProjectPicker),
+            Self::SwitchWorkspace => Some(PickerSubmitRoute::SwitchWorkspace),
+            Self::ConflictField => Some(PickerSubmitRoute::ConflictField),
+            Self::ConflictManual => Some(PickerSubmitRoute::ConflictManual),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn confirm_submit_route(self) -> Option<ConfirmSubmitRoute> {
+        match self {
+            Self::ConflictConfirm => Some(ConfirmSubmitRoute::ConflictConfirm),
+            Self::ConfigInit => Some(ConfirmSubmitRoute::ConfigInit),
+            Self::DeleteProjectConfirm => Some(ConfirmSubmitRoute::DeleteProjectConfirm),
+            Self::DeleteTaskConfirm => Some(ConfirmSubmitRoute::DeleteTaskConfirm),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+impl OverlayRoute {
+    pub(crate) const ALL: [Self; 28] = [
+        Self::MessageOnly,
+        Self::AddTaskTitle,
+        Self::AddTaskDescription,
+        Self::AddTaskNatural,
+        Self::AddTaskTitleProject,
+        Self::AddTaskTitlePriority,
+        Self::AddNote,
+        Self::AddProject,
+        Self::AddLabel,
+        Self::EditStatus,
+        Self::EditTitle,
+        Self::EditDescription,
+        Self::EditProject,
+        Self::EditPriority,
+        Self::EditLabels,
+        Self::FilterProject,
+        Self::FilterLabel,
+        Self::FilterStatus,
+        Self::FilterPriority,
+        Self::ViewProject,
+        Self::DeleteProjectPicker,
+        Self::DeleteProjectConfirm,
+        Self::DeleteTaskConfirm,
+        Self::SwitchWorkspace,
+        Self::ConflictField,
+        Self::ConflictConfirm,
+        Self::ConflictManual,
+        Self::ConfigInit,
+    ];
+
+    pub(crate) fn submit_kinds(self) -> Vec<OverlaySubmitKind> {
+        OverlaySubmitKind::ALL
+            .iter()
+            .copied()
+            .filter(|kind| match kind {
+                OverlaySubmitKind::Text => self.text_submit_route().is_some(),
+                OverlaySubmitKind::Multiline => self.multiline_submit_route().is_some(),
+                OverlaySubmitKind::Picker => self.picker_submit_route().is_some(),
+                OverlaySubmitKind::Confirm => self.confirm_submit_route().is_some(),
+            })
+            .collect()
     }
 }
 
