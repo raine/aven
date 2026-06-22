@@ -4,7 +4,10 @@ use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers,
+};
+use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -17,7 +20,7 @@ use crate::operations::TaskDraft;
 use crate::query::TaskSort;
 use crate::tui::authoring::{
     ADD_NOTE_TITLE, ADD_TASK_TITLE_PRIORITY_TITLE, ADD_TASK_TITLE_PROJECT_TITLE, AddNoteSubmit,
-    AddTaskTitleSubmit, AuthoringState,
+    AddTaskStep, AddTaskTitleSubmit, AuthoringState,
 };
 use crate::tui::config_overlay::{
     config_info_overlay, config_init_overlay, config_paths_overlay, config_status_overlay,
@@ -31,8 +34,8 @@ use crate::tui::navigation::{
     next_selectable_sidebar,
 };
 use crate::tui::overlay::{
-    ConfirmState, LineEdit, MultilineInputState, OverlayOutcome, OverlayRoute, OverlayState,
-    OverlaySubmit, OverlayView, PickerItem, PickerMode, PickerState, TextInputState,
+    AddTaskState, ConfirmState, LineEdit, MultilineInputState, OverlayOutcome, OverlayRoute,
+    OverlayState, OverlaySubmit, OverlayView, PickerItem, PickerMode, PickerState, TextInputState,
 };
 use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::toast::{Toast, ToastSeverity};
@@ -119,20 +122,31 @@ impl App {
     }
 
     pub(crate) async fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+        execute!(std::io::stdout(), EnableBracketedPaste)?;
+        let result = self.run_loop(terminal).await;
+        execute!(std::io::stdout(), DisableBracketedPaste)?;
+        result
+    }
+
+    async fn run_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         while !self.should_quit {
             let view = self.view();
             terminal.draw(|frame| ui::render(frame, &self.store, &mut self.widgets, &view))?;
 
-            if event::poll(Duration::from_millis(250))?
-                && let Event::Key(key) = event::read()?
-            {
-                let result = self.dispatch_key(key, terminal.size()?).await;
-                if let Err(error) = result {
-                    self.set_error(format!("{error:#}"));
-                }
-                if self.needs_terminal_clear {
-                    self.needs_terminal_clear = false;
-                    terminal.clear()?;
+            if event::poll(Duration::from_millis(250))? {
+                match event::read()? {
+                    Event::Key(key) => {
+                        let result = self.dispatch_key(key, terminal.size()?).await;
+                        if let Err(error) = result {
+                            self.set_error(format!("{error:#}"));
+                        }
+                        if self.needs_terminal_clear {
+                            self.needs_terminal_clear = false;
+                            terminal.clear()?;
+                        }
+                    }
+                    Event::Paste(text) => self.dispatch_paste(&text),
+                    _ => {}
                 }
             }
 
@@ -159,6 +173,15 @@ impl App {
                 .map(|code| crate::tui::event::key_label(*code))
                 .collect(),
         }
+    }
+
+    fn dispatch_paste(&mut self, text: &str) {
+        let Some(overlay) = self.overlay.take() else {
+            return;
+        };
+        self.overlay = Some(crate::tui::overlay::handle_generic_overlay_paste(
+            text, overlay,
+        ));
     }
 
     async fn dispatch_key(&mut self, key: KeyEvent, terminal_size: Size) -> Result<()> {
@@ -330,31 +353,19 @@ impl App {
             return Ok(());
         }
 
-        if key.modifiers.contains(KeyModifiers::CONTROL)
-            && key.code == KeyCode::Char('p')
-            && let OverlayState::TextInput(state) = &overlay
-            && state.route == OverlayRoute::AddTaskTitle
-        {
-            if self
-                .authoring
-                .capture_add_task_title(state.input.text.clone())
-            {
-                self.begin_add_task_title_priority();
+        if let OverlayState::AddTask(state) = &overlay {
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
+                if self.capture_add_task_state(state) {
+                    self.begin_add_task_title_priority();
+                }
+                return Ok(());
             }
-            return Ok(());
-        }
-
-        if key.code == KeyCode::Tab
-            && let OverlayState::TextInput(state) = &overlay
-            && state.route == OverlayRoute::AddTaskTitle
-        {
-            if self
-                .authoring
-                .capture_add_task_title(state.input.text.clone())
-            {
-                self.begin_add_task_title_project();
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') {
+                if self.capture_add_task_state(state) {
+                    self.begin_add_task_title_project();
+                }
+                return Ok(());
             }
-            return Ok(());
         }
 
         let scroll_cap = match overlay {
@@ -410,27 +421,18 @@ impl App {
 
     async fn handle_overlay_submit(&mut self, submit: OverlaySubmit) -> Result<()> {
         match submit {
-            OverlaySubmit::Text {
-                route: OverlayRoute::AddTaskTitle,
-                value,
-                ..
-            } => match self.authoring.submit_add_task_title(value) {
-                AddTaskTitleSubmit::ReopenTitle { message } => {
-                    self.set_warning(message);
-                    self.begin_add_task_title();
-                }
-                AddTaskTitleSubmit::Create(draft) => {
-                    self.submit_created_task(draft).await?;
-                }
-                AddTaskTitleSubmit::Inactive => {}
-            },
+            OverlaySubmit::AddTask { title, description } => {
+                self.authoring
+                    .capture_add_task_fields(title, description, AddTaskStep::Title);
+                self.submit_add_task_from_authoring().await?;
+            }
             OverlaySubmit::Picker {
                 route: OverlayRoute::AddTaskTitleProject,
                 values,
                 ..
             } => {
                 if self.authoring.apply_add_task_project(values) {
-                    self.begin_add_task_title();
+                    self.begin_add_task_step();
                 }
             }
             OverlaySubmit::Picker {
@@ -439,7 +441,7 @@ impl App {
                 ..
             } => {
                 if self.authoring.apply_add_task_priority(values) {
-                    self.begin_add_task_title();
+                    self.begin_add_task_step();
                 }
             }
             OverlaySubmit::Multiline {
@@ -936,18 +938,51 @@ impl App {
     }
 
     fn begin_add_task_title(&mut self) {
-        let Some(context) = self.authoring.add_task_title_context() else {
+        self.begin_add_task_overlay();
+    }
+
+    fn begin_add_task_overlay(&mut self) {
+        let Some(context) = self.authoring.add_task_context() else {
             return;
         };
-        self.overlay = Some(OverlayState::TextInput(TextInputState::new(
-            OverlayRoute::AddTaskTitle,
-            format!(
-                "Add task  project={} priority={}",
-                context.project, context.priority
+        self.overlay = Some(OverlayState::AddTask(AddTaskState {
+            title: LineEdit::new(context.title),
+            description: MultilineInputState::from_value(
+                OverlayRoute::AddTaskDescription,
+                "Add task: description",
+                "",
+                context.description,
             ),
-            "",
-            context.title,
-        )));
+            focus: context.step,
+            project: context.project,
+            priority: context.priority,
+        }));
+    }
+
+    fn begin_add_task_step(&mut self) {
+        self.begin_add_task_overlay();
+    }
+
+    fn capture_add_task_state(&mut self, state: &AddTaskState) -> bool {
+        self.authoring.capture_add_task_fields(
+            state.title.text.clone(),
+            state.description.lines.join("\n"),
+            state.focus,
+        )
+    }
+
+    async fn submit_add_task_from_authoring(&mut self) -> Result<()> {
+        match self.authoring.submit_add_task() {
+            AddTaskTitleSubmit::ReopenTitle { message } => {
+                self.set_warning(message);
+                self.begin_add_task_title();
+            }
+            AddTaskTitleSubmit::Create(draft) => {
+                self.submit_created_task(draft).await?;
+            }
+            AddTaskTitleSubmit::Inactive => {}
+        }
+        Ok(())
     }
 
     fn begin_add_note(&mut self) {

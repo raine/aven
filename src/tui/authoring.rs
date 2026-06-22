@@ -4,21 +4,31 @@ pub(crate) const ADD_NOTE_TITLE: &str = "Add note";
 pub(crate) const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: title project";
 pub(crate) const ADD_TASK_TITLE_PRIORITY_TITLE: &str = "Add task: title priority";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AddTaskStep {
+    Title,
+    Description,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AddTaskDraftState {
     title: String,
+    description: String,
     project: Option<String>,
     inferred_project: Option<String>,
     priority: String,
+    step: AddTaskStep,
 }
 
 impl Default for AddTaskDraftState {
     fn default() -> Self {
         Self {
             title: String::new(),
+            description: String::new(),
             project: None,
             inferred_project: None,
             priority: "none".to_string(),
+            step: AddTaskStep::Title,
         }
     }
 }
@@ -39,8 +49,10 @@ pub(crate) struct AuthoringState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AddTaskTitleContext {
+pub(crate) struct AddTaskContext {
     pub(crate) title: String,
+    pub(crate) description: String,
+    pub(crate) step: AddTaskStep,
     pub(crate) project: String,
     pub(crate) priority: String,
 }
@@ -93,7 +105,7 @@ impl AuthoringState {
         });
     }
 
-    pub(crate) fn add_task_title_context(&self) -> Option<AddTaskTitleContext> {
+    pub(crate) fn add_task_context(&self) -> Option<AddTaskContext> {
         let AuthoringFlow::AddTask(draft) = self.flow.as_ref()? else {
             return None;
         };
@@ -102,8 +114,10 @@ impl AuthoringState {
             .as_deref()
             .or(draft.inferred_project.as_deref())
             .unwrap_or("no project");
-        Some(AddTaskTitleContext {
+        Some(AddTaskContext {
             title: draft.title.clone(),
+            description: draft.description.clone(),
+            step: draft.step,
             project: project.to_string(),
             priority: draft.priority.clone(),
         })
@@ -123,11 +137,18 @@ impl AuthoringState {
         Some(draft.priority.clone())
     }
 
-    pub(crate) fn capture_add_task_title(&mut self, title: String) -> bool {
+    pub(crate) fn capture_add_task_fields(
+        &mut self,
+        title: String,
+        description: String,
+        step: AddTaskStep,
+    ) -> bool {
         let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
             return false;
         };
         draft.title = title;
+        draft.description = description;
+        draft.step = step;
         true
     }
 
@@ -150,11 +171,11 @@ impl AuthoringState {
         true
     }
 
-    pub(crate) fn submit_add_task_title(&mut self, value: String) -> AddTaskTitleSubmit {
+    pub(crate) fn submit_add_task(&mut self) -> AddTaskTitleSubmit {
         let Some(AuthoringFlow::AddTask(draft)) = self.flow.take() else {
             return AddTaskTitleSubmit::Inactive;
         };
-        let trimmed = value.trim();
+        let trimmed = draft.title.trim();
         if trimmed.is_empty() {
             self.flow = Some(AuthoringFlow::AddTask(draft));
             return AddTaskTitleSubmit::ReopenTitle {
@@ -163,7 +184,7 @@ impl AuthoringState {
         }
         AddTaskTitleSubmit::Create(TaskDraft {
             title: trimmed.to_string(),
-            description: String::new(),
+            description: draft.description.trim().to_string(),
             project: draft.project,
             priority: draft.priority,
             labels: Vec::new(),
@@ -236,9 +257,44 @@ mod tests {
     fn add_task_project_selection_retains_flow() {
         let mut state = AuthoringState::default();
         state.begin_add_task(None, Some("mobile-app".to_string()));
-        assert!(state.capture_add_task_title("Write docs".to_string()));
+        assert!(state.capture_add_task_fields(
+            "Write docs".to_string(),
+            String::new(),
+            AddTaskStep::Title,
+        ));
         assert!(state.apply_add_task_project(vec!["mobile-app".to_string()]));
-        assert!(state.add_task_title_context().is_some());
+        assert!(state.add_task_context().is_some());
+    }
+
+    #[test]
+    fn add_task_description_is_stored_in_created_draft() {
+        let mut state = AuthoringState::default();
+        state.begin_add_task(None, None);
+        assert!(state.capture_add_task_fields(
+            "Write docs".to_string(),
+            "Details\nfor handoff".to_string(),
+            AddTaskStep::Description,
+        ));
+        assert!(matches!(
+            state.submit_add_task(),
+            AddTaskTitleSubmit::Create(draft)
+                if draft.description == "Details\nfor handoff"
+        ));
+    }
+
+    #[test]
+    fn add_task_description_context_marks_active_step() {
+        let mut state = AuthoringState::default();
+        state.begin_add_task(None, None);
+        assert!(state.capture_add_task_fields(
+            "Write docs".to_string(),
+            "Details".to_string(),
+            AddTaskStep::Description,
+        ));
+        let context = state.add_task_context().unwrap();
+        assert_eq!(context.step, AddTaskStep::Description);
+        assert_eq!(context.title, "Write docs");
+        assert_eq!(context.description, "Details");
     }
 
     #[test]
@@ -246,22 +302,26 @@ mod tests {
         let mut state = AuthoringState::default();
         state.begin_add_task(None, None);
         assert!(matches!(
-            state.submit_add_task_title("   ".to_string()),
+            state.submit_add_task(),
             AddTaskTitleSubmit::ReopenTitle {
                 message: "task title is required"
             }
         ));
-        assert!(state.add_task_title_context().is_some());
+        assert!(state.add_task_context().is_some());
     }
 
     #[test]
     fn project_empty_value_keeps_project_none_for_inferred_create() {
         let mut state = AuthoringState::default();
         state.begin_add_task(None, Some("mobile-app".to_string()));
-        assert!(state.capture_add_task_title("Write docs".to_string()));
+        assert!(state.capture_add_task_fields(
+            "Write docs".to_string(),
+            String::new(),
+            AddTaskStep::Title,
+        ));
         assert!(state.apply_add_task_project(vec![String::new()]));
         assert!(matches!(
-            state.submit_add_task_title("Write docs".to_string()),
+            state.submit_add_task(),
             AddTaskTitleSubmit::Create(draft) if draft.project.is_none()
         ));
     }

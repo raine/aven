@@ -9,9 +9,10 @@ use super::input::{
     prefixed_input_line,
 };
 use super::truncate::truncate_chars;
+use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::{
-    ConfirmView, MultilineInputView, PickerItem, PickerMode, PickerView, TextInputView,
-    TextPanelView,
+    AddTaskView, ConfirmView, MultilineInputView, PickerItem, PickerMode, PickerView,
+    TextInputView, TextPanelView,
 };
 use crate::tui::theme::{self, ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, SELECTED};
 use crate::tui::widgets::priority_icon;
@@ -20,14 +21,53 @@ pub(super) fn render_search(frame: &mut Frame, input: &str, cursor: usize) {
     Dialog::new("Search", 54, 3).render_text(frame, input_line("/", input, cursor));
 }
 
+pub(super) fn render_add_task(frame: &mut Frame, state: &AddTaskView) {
+    let dialog = Dialog::new("Add task", 88, 11);
+    let width = dialog.area(frame).width;
+    let dialog = dialog.right_title(add_task_metadata_title(
+        &state.project,
+        &state.priority,
+        width,
+    ));
+    let content = dialog.render_block(frame);
+    let mut lines = vec![
+        add_task_field_label("Title", state.focus == AddTaskStep::Title),
+        add_task_title_input_line(
+            &state.title,
+            if state.focus == AddTaskStep::Title {
+                Some(state.title_cursor)
+            } else {
+                None
+            },
+            content.width as usize,
+        ),
+        Line::from(""),
+        add_task_field_label("Description", state.focus == AddTaskStep::Description),
+    ];
+    lines.extend(add_task_description_lines(state, 3));
+    while lines.len() + 1 < content.height as usize {
+        lines.push(Line::from(""));
+    }
+    lines.push(add_task_hint_line(state.focus));
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG_ALT)),
+        content,
+    );
+}
+
 pub(super) fn render_text_input(frame: &mut Frame, state: &TextInputView) {
     if let Some((project, priority)) = add_task_title_metadata(&state.title) {
-        let dialog = Dialog::new("Add task", 60, 5);
+        let dialog = Dialog::new("Add task", 74, 5);
         let width = dialog.area(frame).width;
         let dialog = dialog.right_title(add_task_metadata_title(project, priority, width));
         let content = dialog.render_block(frame);
-        let input = add_task_title_input_line(&state.input, state.cursor, content.width as usize);
-        let text = Text::from(vec![input, Line::from(""), add_task_hint_line()]);
+        let input =
+            add_task_title_input_line(&state.input, Some(state.cursor), content.width as usize);
+        let text = Text::from(vec![
+            input,
+            Line::from(""),
+            add_task_hint_line(AddTaskStep::Title),
+        ]);
         frame.render_widget(
             Paragraph::new(text).style(Style::new().fg(FG).bg(BG_ALT)),
             content,
@@ -67,23 +107,79 @@ fn add_task_title_metadata(title: &str) -> Option<(&str, &str)> {
 
 const ADD_TASK_TITLE_PLACEHOLDER: &str = "Enter title here...";
 
-fn add_task_title_input_line(input: &str, cursor: usize, width: usize) -> Line<'static> {
+fn add_task_title_input_line(input: &str, cursor: Option<usize>, width: usize) -> Line<'static> {
     if input.is_empty() {
-        return Line::from(vec![
-            cursor_cell(&ADD_TASK_TITLE_PLACEHOLDER[..1]),
-            Span::styled(&ADD_TASK_TITLE_PLACEHOLDER[1..], Style::new().fg(FG_DIM)),
-        ]);
+        if cursor.is_some() {
+            return Line::from(vec![
+                cursor_cell(&ADD_TASK_TITLE_PLACEHOLDER[..1]),
+                Span::styled(&ADD_TASK_TITLE_PLACEHOLDER[1..], Style::new().fg(FG_DIM)),
+            ]);
+        }
+        return Line::from(Span::styled(
+            ADD_TASK_TITLE_PLACEHOLDER,
+            Style::new().fg(FG_DIM),
+        ));
     }
-    clipped_input_line(input, cursor, width)
+    match cursor {
+        Some(cursor) => clipped_input_line(input, cursor, width),
+        None => Line::from(input.to_string()),
+    }
 }
 
-fn add_task_hint_line() -> Line<'static> {
-    dialog_hint_line(&[
-        ("Enter", "create"),
-        ("Tab", "project"),
-        ("Ctrl+P", "priority"),
-        ("Esc", "cancel"),
-    ])
+fn add_task_field_label(label: &'static str, active: bool) -> Line<'static> {
+    let style = if active {
+        Style::new()
+            .fg(Color::Rgb(194, 174, 255))
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(FG_DIM)
+    };
+    Line::from(Span::styled(label, style))
+}
+
+fn add_task_description_lines(state: &AddTaskView, visible_rows: usize) -> Vec<Line<'static>> {
+    let start = state
+        .description_row
+        .saturating_sub(visible_rows.saturating_sub(1));
+    let show_placeholder = state.description.len() == 1 && state.description[0].is_empty();
+    state
+        .description
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(visible_rows)
+        .map(|(row_index, line)| {
+            add_task_description_input_line(
+                line,
+                if state.focus == AddTaskStep::Description && row_index == state.description_row {
+                    Some(state.description_column)
+                } else {
+                    None
+                },
+                show_placeholder && row_index == 0,
+            )
+        })
+        .collect()
+}
+
+fn add_task_hint_line(focus: AddTaskStep) -> Line<'static> {
+    match focus {
+        AddTaskStep::Title => dialog_hint_line(&[
+            ("Enter", "create"),
+            ("Tab", "description"),
+            ("Ctrl+B", "project"),
+            ("Ctrl+P", "priority"),
+            ("Esc", "cancel"),
+        ]),
+        AddTaskStep::Description => dialog_hint_line(&[
+            ("Ctrl+S", "create"),
+            ("Enter", "newline"),
+            ("Tab", "title"),
+            ("Ctrl+B", "project"),
+            ("Ctrl+P", "priority"),
+            ("Esc", "cancel"),
+        ]),
+    }
 }
 
 fn add_task_metadata_title(project: &str, priority: &str, width: u16) -> Line<'static> {
@@ -105,6 +201,10 @@ pub(super) fn render_multiline_input(frame: &mut Frame, state: &MultilineInputVi
     }
     if state.title == "Edit description" {
         render_description_input(frame, state);
+        return;
+    }
+    if state.title == "Add task: description" {
+        render_add_task_description_input(frame, state);
         return;
     }
 
@@ -167,6 +267,36 @@ fn render_description_input(frame: &mut Frame, state: &MultilineInputView) {
     );
 }
 
+fn render_add_task_description_input(frame: &mut Frame, state: &MultilineInputView) {
+    let visible_rows = 8usize;
+    let content_rows = state.lines.len().min(visible_rows).max(1);
+    let height = (content_rows as u16).saturating_add(4).min(13);
+    let start = state.row.saturating_sub(visible_rows.saturating_sub(1));
+    let mut lines = Vec::new();
+    for (row_index, line) in state
+        .lines
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(visible_rows)
+    {
+        lines.push(add_task_description_input_line(
+            line,
+            if row_index == state.row {
+                Some(state.column)
+            } else {
+                None
+            },
+            line.is_empty() && state.lines.len() == 1,
+        ));
+    }
+    lines.push(Line::from(""));
+    lines.push(add_task_description_hint_line());
+    Dialog::new("Add task: description", 70, height)
+        .wrap()
+        .render_text(frame, Text::from(lines));
+}
+
 fn description_editor_width(frame_width: u16) -> u16 {
     let max_width = frame_width.saturating_sub(4).max(1);
     frame_width
@@ -226,6 +356,37 @@ fn description_input_line(line: &str, cursor: usize, show_placeholder: bool) -> 
         ]);
     }
     input_line("", line, cursor)
+}
+
+fn add_task_description_input_line(
+    line: &str,
+    cursor: Option<usize>,
+    show_placeholder: bool,
+) -> Line<'static> {
+    if show_placeholder {
+        let placeholder = "Optional details, links, or handoff context...";
+        if cursor.is_some() {
+            return Line::from(vec![
+                cursor_cell(&placeholder[..1]),
+                Span::styled(&placeholder[1..], Style::new().fg(FG_DIM)),
+            ]);
+        }
+        return Line::from(Span::styled(placeholder, Style::new().fg(FG_DIM)));
+    }
+    match cursor {
+        Some(cursor) => Line::from(input_cursor_spans(line, cursor, InputWidth::Full)),
+        None => Line::from(line.to_string()),
+    }
+}
+
+fn add_task_description_hint_line() -> Line<'static> {
+    dialog_hint_line(&[
+        ("Ctrl+S", "create"),
+        ("Enter", "newline"),
+        ("Ctrl+B", "project"),
+        ("Ctrl+P", "priority"),
+        ("Esc", "cancel"),
+    ])
 }
 
 fn wrapped_ranges(line: &str, width: usize) -> Vec<(usize, usize)> {
@@ -547,6 +708,7 @@ mod tests {
     fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
         match overlay {
             OverlayView::Search { input, cursor } => render_search(frame, input, *cursor),
+            OverlayView::AddTask(state) => render_add_task(frame, state),
             OverlayView::TextInput(state) => render_text_input(frame, state),
             OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
             OverlayView::Picker(state) => render_picker(frame, state),
@@ -636,28 +798,117 @@ mod tests {
     }
 
     #[test]
-    fn add_task_overlay_renders_metadata_title_and_footer() {
-        let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
-            route: OverlayRoute::AddTaskTitle,
-            title: "Add task  project=aven priority=high".to_string(),
-            prompt: "Title".to_string(),
-            input: "ship dialogs".to_string(),
-            cursor: 12,
+    fn add_task_overlay_renders_metadata_fields_and_footer() {
+        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            title: "ship dialogs".to_string(),
+            title_cursor: 12,
+            description: vec![String::new()],
+            description_row: 0,
+            description_column: 0,
+            focus: AddTaskStep::Title,
+            project: "aven".to_string(),
+            priority: "high".to_string(),
         }));
         assert!(rendered.contains("Add task"));
         assert!(rendered.contains("project: aven"));
         assert!(rendered.contains("prio: high"));
+        assert!(rendered.contains("Title"));
+        assert!(rendered.contains("Description"));
         assert!(rendered.contains("ship dialogs"));
+        assert!(rendered.contains("Optional details, links, or handoff context..."));
+        assert!(rendered.contains("Tab description"));
+        assert!(rendered.contains("Ctrl+B project"));
         assert!(rendered.contains("Ctrl+P priority"));
     }
 
     #[test]
+    fn add_task_overlay_pins_footer_to_bottom() {
+        let buffer = overlay_buffer(OverlayView::AddTask(AddTaskView {
+            title: String::new(),
+            title_cursor: 0,
+            description: vec![String::new()],
+            description_row: 0,
+            description_column: 0,
+            focus: AddTaskStep::Description,
+            project: "aven".to_string(),
+            priority: "none".to_string(),
+        }));
+        let hint_row = (0..buffer.area.height)
+            .find(|row| buffer_row(&buffer, *row).contains("Ctrl+S create"))
+            .unwrap();
+        let bottom_border_row = (0..buffer.area.height)
+            .rev()
+            .find(|row| buffer_row(&buffer, *row).contains("╰"))
+            .unwrap();
+        assert_eq!(hint_row + 1, bottom_border_row);
+    }
+
+    #[test]
+    fn add_task_overlay_does_not_truncate_title_hints() {
+        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            title: String::new(),
+            title_cursor: 0,
+            description: vec![String::new()],
+            description_row: 0,
+            description_column: 0,
+            focus: AddTaskStep::Title,
+            project: "aven".to_string(),
+            priority: "none".to_string(),
+        }));
+        assert!(rendered.contains("Esc cancel"));
+    }
+
+    #[test]
+    fn add_task_overlay_does_not_truncate_description_hints() {
+        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            title: String::new(),
+            title_cursor: 0,
+            description: vec![String::new()],
+            description_row: 0,
+            description_column: 0,
+            focus: AddTaskStep::Description,
+            project: "aven".to_string(),
+            priority: "none".to_string(),
+        }));
+        assert!(rendered.contains("Esc cancel"));
+    }
+
+    #[test]
+    fn add_task_overlay_omits_title_placeholder_cursor_when_description_focused() {
+        let buffer = overlay_buffer(OverlayView::AddTask(AddTaskView {
+            title: String::new(),
+            title_cursor: 0,
+            description: vec!["details".to_string()],
+            description_row: 0,
+            description_column: 7,
+            focus: AddTaskStep::Description,
+            project: "aven".to_string(),
+            priority: "none".to_string(),
+        }));
+        let title_row = (0..buffer.area.height)
+            .find(|row| buffer_row(&buffer, *row).contains(ADD_TASK_TITLE_PLACEHOLDER))
+            .unwrap();
+        let cursor_cell = &buffer[(8, title_row)];
+        assert_eq!(cursor_cell.symbol(), "E");
+        assert_eq!(cursor_cell.style().bg, Some(BG_ALT));
+    }
+
+    #[test]
     fn hint_lines_style_keys() {
-        let add_task_keys = styled_key_contents(add_task_hint_line());
-        assert_eq!(add_task_keys, vec!["Enter", "Tab", "Ctrl+P", "Esc"]);
+        let add_task_keys = styled_key_contents(add_task_hint_line(AddTaskStep::Title));
+        assert_eq!(
+            add_task_keys,
+            vec!["Enter", "Tab", "Ctrl+B", "Ctrl+P", "Esc"]
+        );
 
         let multiline_keys = styled_key_contents(multiline_hint_line());
         assert_eq!(multiline_keys, vec!["Ctrl+S", "Esc"]);
+
+        let add_task_description_keys = styled_key_contents(add_task_description_hint_line());
+        assert_eq!(
+            add_task_description_keys,
+            vec!["Ctrl+S", "Enter", "Ctrl+B", "Ctrl+P", "Esc"]
+        );
 
         let confirm_keys = styled_key_contents(confirm_hint_line());
         assert_eq!(confirm_keys, vec!["y", "n", "Esc"]);
@@ -673,7 +924,7 @@ mod tests {
 
     #[test]
     fn add_task_empty_title_input_shows_placeholder() {
-        let line = add_task_title_input_line("", 0, 20);
+        let line = add_task_title_input_line("", Some(0), 20);
         assert_eq!(line.spans[0].content.as_ref(), "E");
         assert_eq!(line.spans[0].style.fg, Some(BG_ALT));
         assert_eq!(line.spans[0].style.bg, Some(FG));
@@ -683,8 +934,17 @@ mod tests {
     }
 
     #[test]
+    fn add_task_empty_title_input_without_focus_omits_cursor() {
+        let line = add_task_title_input_line("", None, 20);
+        assert_eq!(line.to_string(), ADD_TASK_TITLE_PLACEHOLDER);
+        assert_eq!(line.spans.len(), 1);
+        assert_eq!(line.spans[0].style.fg, Some(FG_DIM));
+        assert_eq!(line.spans[0].style.bg, None);
+    }
+
+    #[test]
     fn add_task_title_input_draws_cursor_as_cell() {
-        let line = add_task_title_input_line("abc", 1, 20);
+        let line = add_task_title_input_line("abc", Some(1), 20);
         assert_eq!(line.spans[0].content.as_ref(), "a");
         assert_eq!(line.spans[1].content.as_ref(), "b");
         assert_eq!(line.spans[1].style.fg, Some(BG_ALT));
@@ -694,7 +954,7 @@ mod tests {
 
     #[test]
     fn add_task_title_input_draws_end_cursor_as_blank_cell() {
-        let line = add_task_title_input_line("abc", 3, 20);
+        let line = add_task_title_input_line("abc", Some(3), 20);
         assert_eq!(line.spans[0].content.as_ref(), "abc");
         assert_eq!(line.spans[1].content.as_ref(), " ");
         assert_eq!(line.spans[1].style.bg, Some(FG));
@@ -702,7 +962,7 @@ mod tests {
 
     #[test]
     fn add_task_title_input_scrolls_to_cursor_cell() {
-        let line = add_task_title_input_line("abcdef", 5, 4);
+        let line = add_task_title_input_line("abcdef", Some(5), 4);
         assert_eq!(line.spans[0].content.as_ref(), "cde");
         assert_eq!(line.spans[1].content.as_ref(), "f");
     }
@@ -883,6 +1143,36 @@ mod tests {
         assert_eq!(line.spans[0].style.bg, Some(FG));
         assert_eq!(line.spans[1].content.as_ref(), "ote body");
         assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
+    }
+
+    #[test]
+    fn add_task_description_empty_input_shows_placeholder() {
+        let line = add_task_description_input_line("", Some(0), true);
+        assert_eq!(line.spans[0].content.as_ref(), "O");
+        assert_eq!(line.spans[0].style.fg, Some(BG_ALT));
+        assert_eq!(line.spans[0].style.bg, Some(FG));
+        assert_eq!(
+            line.spans[1].content.as_ref(),
+            "ptional details, links, or handoff context..."
+        );
+        assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
+    }
+
+    #[test]
+    fn add_task_description_empty_unfocused_shows_placeholder() {
+        let line = add_task_description_input_line("", None, true);
+        assert_eq!(
+            line.to_string(),
+            "Optional details, links, or handoff context..."
+        );
+        assert_eq!(line.spans[0].style.fg, Some(FG_DIM));
+    }
+
+    #[test]
+    fn add_task_description_blank_later_line_omits_placeholder() {
+        let line = add_task_description_input_line("", Some(0), false);
+        assert_eq!(line.to_string(), " ");
+        assert!(!line.to_string().contains("Optional details"));
     }
 
     #[test]

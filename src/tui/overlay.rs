@@ -1,5 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::tui::authoring::AddTaskStep;
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayState {
@@ -8,6 +10,7 @@ pub(crate) enum OverlayState {
     DetailHelp { scroll: u16 },
     Search { input: LineEdit },
     Command { input: LineEdit },
+    AddTask(AddTaskState),
     TextInput(TextInputState),
     MultilineInput(MultilineInputState),
     Picker(PickerState),
@@ -50,6 +53,13 @@ impl LineEdit {
 
     pub(crate) fn as_str(&self) -> &str {
         &self.text
+    }
+
+    pub(crate) fn insert_paste(&mut self, text: &str) {
+        let text = normalize_pasted_newlines(text).replace('\n', " ");
+        let cursor = char_boundary_at_or_before(&self.text, self.cursor);
+        self.text.insert_str(cursor, &text);
+        self.cursor = cursor + text.len();
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) {
@@ -132,6 +142,7 @@ impl LineEdit {
 pub(crate) enum OverlayRoute {
     MessageOnly,
     AddTaskTitle,
+    AddTaskDescription,
     AddTaskTitleProject,
     AddTaskTitlePriority,
     AddNote,
@@ -174,6 +185,7 @@ impl OverlayRoute {
         match self {
             Self::MessageOnly => &[],
             Self::AddTaskTitle => &[Text],
+            Self::AddTaskDescription => &[Multiline],
             Self::AddTaskTitleProject | Self::AddTaskTitlePriority => &[Picker],
             Self::AddNote => &[Multiline],
             Self::AddProject | Self::AddLabel | Self::EditTitle => &[Text],
@@ -196,6 +208,15 @@ impl OverlayRoute {
             Self::ConflictManual => &[Text, Multiline, Picker],
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AddTaskState {
+    pub(crate) title: LineEdit,
+    pub(crate) description: MultilineInputState,
+    pub(crate) focus: AddTaskStep,
+    pub(crate) project: String,
+    pub(crate) priority: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -241,6 +262,31 @@ pub(crate) struct MultilineInputState {
 }
 
 impl MultilineInputState {
+    pub(crate) fn insert_paste(&mut self, text: &str) {
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+        let row = self.row.min(self.lines.len() - 1);
+        let column = char_boundary_at_or_before(&self.lines[row], self.column);
+        self.row = row;
+        self.column = column;
+
+        let text = normalize_pasted_newlines(text);
+        let mut pasted_lines = text.split('\n');
+        let first = pasted_lines.next().unwrap_or_default();
+        let rest = self.lines[row].split_off(column);
+        self.lines[row].push_str(first);
+
+        let mut insert_at = row;
+        for line in pasted_lines {
+            insert_at += 1;
+            self.lines.insert(insert_at, line.to_string());
+        }
+        self.lines[insert_at].push_str(&rest);
+        self.row = insert_at;
+        self.column = self.lines[insert_at].len().saturating_sub(rest.len());
+    }
+
     pub(crate) fn blank(
         route: OverlayRoute,
         title: impl Into<String>,
@@ -317,6 +363,7 @@ pub(crate) enum OverlayView {
     DetailHelp { scroll: u16 },
     Search { input: String, cursor: usize },
     Command { input: String, cursor: usize },
+    AddTask(AddTaskView),
     TextInput(TextInputView),
     MultilineInput(MultilineInputView),
     Picker(PickerView),
@@ -329,6 +376,18 @@ pub(crate) struct TextPanelView {
     pub(crate) title: String,
     pub(crate) lines: Vec<String>,
     pub(crate) scroll: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AddTaskView {
+    pub(crate) title: String,
+    pub(crate) title_cursor: usize,
+    pub(crate) description: Vec<String>,
+    pub(crate) description_row: usize,
+    pub(crate) description_column: usize,
+    pub(crate) focus: AddTaskStep,
+    pub(crate) project: String,
+    pub(crate) priority: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -369,6 +428,10 @@ pub(crate) struct ConfirmView {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlaySubmit {
+    AddTask {
+        title: String,
+        description: String,
+    },
     Text {
         route: OverlayRoute,
         title: String,
@@ -400,6 +463,7 @@ pub(crate) enum OverlayOutcome {
 impl OverlaySubmit {
     pub(crate) fn message(&self) -> String {
         match self {
+            Self::AddTask { .. } => "submitted Add task".to_string(),
             Self::Text { title, .. } => format!("submitted {title}"),
             Self::Multiline { title, .. } => format!("submitted {title}"),
             Self::Picker { title, .. } => format!("selected {title}"),
@@ -428,6 +492,16 @@ impl From<&OverlayState> for OverlayView {
                 input: input.text.clone(),
                 cursor: input.cursor,
             },
+            OverlayState::AddTask(state) => Self::AddTask(AddTaskView {
+                title: state.title.text.clone(),
+                title_cursor: state.title.cursor,
+                description: state.description.lines.clone(),
+                description_row: state.description.row,
+                description_column: state.description.column,
+                focus: state.focus,
+                project: state.project.clone(),
+                priority: state.priority.clone(),
+            }),
             OverlayState::TextInput(state) => Self::TextInput(TextInputView {
                 route: state.route,
                 title: state.title.clone(),
@@ -495,12 +569,75 @@ pub(crate) fn normalize_picker_selection(state: &mut PickerState) {
         .unwrap_or(0);
 }
 
+pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) -> OverlayState {
+    match overlay {
+        OverlayState::Search { mut input } => {
+            input.insert_paste(text);
+            OverlayState::Search { input }
+        }
+        OverlayState::Command { mut input } => {
+            input.insert_paste(text);
+            OverlayState::Command { input }
+        }
+        OverlayState::AddTask(mut state) => {
+            match state.focus {
+                AddTaskStep::Title => state.title.insert_paste(text),
+                AddTaskStep::Description => state.description.insert_paste(text),
+            }
+            OverlayState::AddTask(state)
+        }
+        OverlayState::TextInput(mut state) => {
+            state.input.insert_paste(text);
+            OverlayState::TextInput(state)
+        }
+        OverlayState::MultilineInput(mut state) => {
+            state.insert_paste(text);
+            OverlayState::MultilineInput(state)
+        }
+        OverlayState::Picker(mut state) => {
+            state.filter.insert_paste(text);
+            normalize_picker_selection(&mut state);
+            OverlayState::Picker(state)
+        }
+        other => other,
+    }
+}
+
 pub(crate) fn handle_generic_overlay_key(
     key: KeyEvent,
     overlay: OverlayState,
     help_scroll_cap: u16,
 ) -> OverlayOutcome {
     match overlay {
+        OverlayState::AddTask(mut state) => match key.code {
+            KeyCode::Esc => OverlayOutcome::Cancelled,
+            KeyCode::Tab => {
+                state.focus = match state.focus {
+                    AddTaskStep::Title => AddTaskStep::Description,
+                    AddTaskStep::Description => AddTaskStep::Title,
+                };
+                OverlayOutcome::None(OverlayState::AddTask(state))
+            }
+            KeyCode::Enter if state.focus == AddTaskStep::Title => {
+                OverlayOutcome::Submitted(OverlaySubmit::AddTask {
+                    title: state.title.text.clone(),
+                    description: state.description.lines.join("\n"),
+                })
+            }
+            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                OverlayOutcome::Submitted(OverlaySubmit::AddTask {
+                    title: state.title.text.clone(),
+                    description: state.description.lines.join("\n"),
+                })
+            }
+            _ => {
+                match state.focus {
+                    AddTaskStep::Title => state.title.handle_key(key),
+                    AddTaskStep::Description => edit_multiline_input(&mut state.description, key),
+                }
+                OverlayOutcome::None(OverlayState::AddTask(state))
+            }
+        },
         OverlayState::TextInput(mut state) => match key.code {
             KeyCode::Esc => OverlayOutcome::Cancelled,
             KeyCode::Enter => OverlayOutcome::Submitted(OverlaySubmit::Text {
@@ -650,6 +787,10 @@ fn edit_multiline_input(state: &mut MultilineInputState, key: KeyEvent) {
         }
         _ => state.column = column,
     }
+}
+
+fn normalize_pasted_newlines(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 fn char_boundary_at_or_before(input: &str, index: usize) -> usize {
@@ -843,6 +984,20 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::CONTROL)
     }
 
+    fn add_task_state(focus: AddTaskStep) -> AddTaskState {
+        AddTaskState {
+            title: LineEdit::blank(),
+            description: MultilineInputState::blank(
+                OverlayRoute::AddTaskDescription,
+                "Add task: description",
+                "",
+            ),
+            focus,
+            project: "aven".to_string(),
+            priority: "none".to_string(),
+        }
+    }
+
     fn line_edit(input: &str, cursor: usize) -> LineEdit {
         LineEdit {
             text: input.to_string(),
@@ -975,6 +1130,48 @@ mod tests {
         edit_multiline_input(&mut state, key(KeyCode::Left));
         assert_eq!(state.column, 0);
         assert!(state.lines[state.row].is_char_boundary(state.column));
+    }
+
+    #[test]
+    fn multiline_paste_preserves_newlines() {
+        let mut state = MultilineInputState::blank(OverlayRoute::MessageOnly, "Notes", "Body");
+        state.insert_paste("one\ntwo\r\nthree");
+        assert_eq!(
+            state.lines,
+            vec!["one".to_string(), "two".to_string(), "three".to_string()]
+        );
+        assert_eq!(state.row, 2);
+        assert_eq!(state.column, 5);
+    }
+
+    #[test]
+    fn add_task_description_paste_preserves_newlines() {
+        let outcome = handle_generic_overlay_paste(
+            "one\ntwo",
+            OverlayState::AddTask(add_task_state(AddTaskStep::Description)),
+        );
+        let OverlayState::AddTask(state) = outcome else {
+            panic!("expected add task state");
+        };
+        assert_eq!(
+            state.description.lines,
+            vec!["one".to_string(), "two".to_string()]
+        );
+        assert_eq!(state.description.row, 1);
+        assert_eq!(state.description.column, 3);
+    }
+
+    #[test]
+    fn add_task_title_paste_flattens_newlines() {
+        let outcome = handle_generic_overlay_paste(
+            "one\ntwo",
+            OverlayState::AddTask(add_task_state(AddTaskStep::Title)),
+        );
+        let OverlayState::AddTask(state) = outcome else {
+            panic!("expected add task state");
+        };
+        assert_eq!(state.title.text, "one two");
+        assert_eq!(state.title.cursor, 7);
     }
 
     #[test]

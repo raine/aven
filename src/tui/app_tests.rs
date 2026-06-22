@@ -5,6 +5,7 @@ use crate::tui::app_edit::{
     EDIT_STATUS_TITLE, EDIT_TITLE_TITLE,
 };
 use crate::tui::app_filters::{FILTER_PROJECT_TITLE, SWITCH_WORKSPACE_TITLE};
+use crate::tui::authoring::AddTaskStep;
 use crate::tui::config_overlay::{
     CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PATHS_TITLE, CONFIG_STATUS_TITLE,
 };
@@ -83,6 +84,10 @@ fn ctrl_p() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)
 }
 
+fn ctrl_b() -> KeyEvent {
+    KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL)
+}
+
 fn ctrl_d() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)
 }
@@ -128,7 +133,7 @@ async fn add_task_alias_executes_immediately() {
     assert!(app.pending_shortcut.is_empty());
     assert!(matches!(
         &app.overlay,
-        Some(OverlayState::TextInput(state)) if state.route == OverlayRoute::AddTaskTitle
+        Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Title
     ));
 }
 
@@ -606,8 +611,8 @@ async fn add_task_shortcut_opens_title_prompt() {
 
     assert!(matches!(
         &app.overlay,
-        Some(OverlayState::TextInput(state))
-            if state.route == OverlayRoute::AddTaskTitle && state.prompt.is_empty()
+        Some(OverlayState::AddTask(state))
+            if state.focus == AddTaskStep::Title && state.title.as_str().is_empty()
     ));
 }
 
@@ -663,7 +668,7 @@ async fn add_task_flow_configures_project_and_priority_from_title() {
     app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
     type_chars(&mut app, "Write docs").await;
-    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+    app.handle_overlay_key(ctrl_b()).await.unwrap();
 
     assert!(matches!(
         &app.overlay,
@@ -692,6 +697,72 @@ async fn add_task_flow_configures_project_and_priority_from_title() {
 }
 
 #[tokio::test]
+async fn add_task_tab_opens_description_step() {
+    let mut app = test_app().await;
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    type_chars(&mut app, "Write docs").await;
+    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::AddTask(state))
+            if state.focus == AddTaskStep::Description
+                && state.title.as_str() == "Write docs"
+    ));
+}
+
+#[tokio::test]
+async fn add_task_description_flow_creates_task_with_description() {
+    let mut app = test_app().await;
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    type_chars(&mut app, "Write docs").await;
+    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+    type_chars(&mut app, "Include setup details").await;
+    app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+    assert!(app.overlay.is_none());
+    let selected = app.widgets.table.selected().unwrap();
+    let task = &app.store.tasks[selected];
+    assert_eq!(task.task.title, "Write docs");
+    assert_eq!(task.task.description, "Include setup details");
+}
+
+#[tokio::test]
+async fn add_task_project_and_priority_return_to_description_step() {
+    let mut app = test_app().await;
+    app.store
+        .create_project("Mobile App".to_string())
+        .await
+        .unwrap();
+
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    type_chars(&mut app, "Write docs").await;
+    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+    type_chars(&mut app, "Details").await;
+    app.handle_overlay_key(ctrl_b()).await.unwrap();
+    type_chars(&mut app, "mobile").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::AddTask(state))
+            if state.focus == AddTaskStep::Description
+                && state.description.lines == vec!["Details".to_string()]
+    ));
+
+    app.handle_overlay_key(ctrl_p()).await.unwrap();
+    type_chars(&mut app, "high").await;
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+    let selected = app.widgets.table.selected().unwrap();
+    let task = &app.store.tasks[selected];
+    assert_eq!(task.task.project_key, "mobile-app");
+    assert_eq!(task.task.priority, "high");
+    assert_eq!(task.task.description, "Details");
+}
+
+#[tokio::test]
 async fn add_task_flow_cancels_at_title_step() {
     let mut app = test_app().await;
     app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
@@ -710,7 +781,7 @@ async fn add_task_blank_title_is_rejected() {
     assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
     assert!(matches!(
         &app.overlay,
-        Some(OverlayState::TextInput(state)) if state.route == OverlayRoute::AddTaskTitle
+        Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Title
     ));
 }
 
@@ -2262,12 +2333,12 @@ async fn add_project_submit_routes_by_route_not_title() {
 async fn add_task_project_shortcut_routes_by_route_not_title_prefix() {
     let mut app = test_app().await;
     app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    let Some(OverlayState::TextInput(state)) = &mut app.overlay else {
-        panic!("expected add task title overlay");
+    let Some(OverlayState::AddTask(state)) = &mut app.overlay else {
+        panic!("expected add task overlay");
     };
-    state.title = "Create item".to_string();
+    state.project = "Create item".to_string();
 
-    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+    app.handle_overlay_key(ctrl_b()).await.unwrap();
 
     assert!(matches!(
         &app.overlay,
@@ -2280,10 +2351,10 @@ async fn add_task_project_shortcut_routes_by_route_not_title_prefix() {
 async fn add_task_priority_shortcut_routes_by_route_not_title_prefix() {
     let mut app = test_app().await;
     app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    let Some(OverlayState::TextInput(state)) = &mut app.overlay else {
-        panic!("expected add task title overlay");
+    let Some(OverlayState::AddTask(state)) = &mut app.overlay else {
+        panic!("expected add task overlay");
     };
-    state.title = "Create item".to_string();
+    state.project = "Create item".to_string();
 
     app.handle_overlay_key(ctrl_p()).await.unwrap();
 
@@ -2357,7 +2428,8 @@ fn overlay_submit_routes_are_all_handled() {
                     | OverlayRoute::ConflictManual,
                 ..
             } | OverlaySubmit::Multiline {
-                route: OverlayRoute::AddNote
+                route: OverlayRoute::AddTaskDescription
+                    | OverlayRoute::AddNote
                     | OverlayRoute::EditDescription
                     | OverlayRoute::ConflictManual,
                 ..
@@ -2391,6 +2463,7 @@ fn overlay_submit_routes_are_all_handled() {
     let routes = [
         OverlayRoute::MessageOnly,
         OverlayRoute::AddTaskTitle,
+        OverlayRoute::AddTaskDescription,
         OverlayRoute::AddTaskTitleProject,
         OverlayRoute::AddTaskTitlePriority,
         OverlayRoute::AddNote,
