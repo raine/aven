@@ -2443,51 +2443,6 @@ async fn delete_project_picker_and_confirm_use_distinct_routes() {
 
 #[test]
 fn overlay_submit_routes_are_all_handled() {
-    use crate::tui::overlay::OverlaySubmitKind;
-
-    fn handled(submit: OverlaySubmit) -> bool {
-        matches!(
-            submit,
-            OverlaySubmit::Text {
-                route: OverlayRoute::AddTaskTitle
-                    | OverlayRoute::AddProject
-                    | OverlayRoute::AddLabel
-                    | OverlayRoute::EditTitle
-                    | OverlayRoute::ConflictManual,
-                ..
-            } | OverlaySubmit::Multiline {
-                route: OverlayRoute::AddTaskDescription
-                    | OverlayRoute::AddNote
-                    | OverlayRoute::EditDescription
-                    | OverlayRoute::ConflictManual,
-                ..
-            } | OverlaySubmit::Picker {
-                route: OverlayRoute::AddTaskTitleProject
-                    | OverlayRoute::AddTaskTitlePriority
-                    | OverlayRoute::EditStatus
-                    | OverlayRoute::EditProject
-                    | OverlayRoute::EditPriority
-                    | OverlayRoute::EditLabels
-                    | OverlayRoute::FilterProject
-                    | OverlayRoute::FilterLabel
-                    | OverlayRoute::FilterStatus
-                    | OverlayRoute::FilterPriority
-                    | OverlayRoute::ViewProject
-                    | OverlayRoute::DeleteProjectPicker
-                    | OverlayRoute::SwitchWorkspace
-                    | OverlayRoute::ConflictField
-                    | OverlayRoute::ConflictManual,
-                ..
-            } | OverlaySubmit::Confirm {
-                route: OverlayRoute::ConflictConfirm
-                    | OverlayRoute::ConfigInit
-                    | OverlayRoute::DeleteProjectConfirm
-                    | OverlayRoute::DeleteTaskConfirm,
-                ..
-            }
-        )
-    }
-
     let routes = [
         OverlayRoute::MessageOnly,
         OverlayRoute::AddTaskTitle,
@@ -2520,28 +2475,10 @@ fn overlay_submit_routes_are_all_handled() {
 
     for route in routes {
         for kind in route.submit_kinds() {
-            let submit = match kind {
-                OverlaySubmitKind::Text => OverlaySubmit::Text {
-                    route,
-                    title: "Title".to_string(),
-                    value: "value".to_string(),
-                },
-                OverlaySubmitKind::Multiline => OverlaySubmit::Multiline {
-                    route,
-                    title: "Title".to_string(),
-                    value: "value".to_string(),
-                },
-                OverlaySubmitKind::Picker => OverlaySubmit::Picker {
-                    route,
-                    title: "Title".to_string(),
-                    values: vec!["value".to_string()],
-                },
-                OverlaySubmitKind::Confirm => OverlaySubmit::Confirm {
-                    route,
-                    title: "Title".to_string(),
-                },
-            };
-            assert!(handled(submit), "unhandled {kind:?} route {route:?}");
+            assert!(
+                crate::tui::app_overlay_submit::handles_submit_kind(route, *kind),
+                "unhandled {kind:?} route {route:?}"
+            );
         }
     }
 }

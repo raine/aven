@@ -5,6 +5,7 @@ mod app;
 mod app_conflicts;
 mod app_edit;
 mod app_filters;
+mod app_overlay_submit;
 mod authoring;
 mod config_overlay;
 mod conflict_flow;

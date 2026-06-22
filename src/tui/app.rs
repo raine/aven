@@ -29,7 +29,7 @@ use crate::tui::navigation::{
 };
 use crate::tui::overlay::{
     AddTaskState, LineEdit, MultilineInputState, OverlayOutcome, OverlayRoute, OverlayState,
-    OverlaySubmit, OverlayView, PickerItem,
+    OverlayView, PickerItem,
 };
 use crate::tui::platform::{copy_to_clipboard, edit_text_externally, is_editor_prefix_key};
 use crate::tui::store::{SidebarTarget, TuiStore};
@@ -67,8 +67,8 @@ pub(crate) struct App {
     pub(crate) message: Option<Toast>,
     pub(crate) message_at: Option<Instant>,
     pub(super) pending_shortcut: Vec<KeyCode>,
-    detail_context: bool,
-    authoring: AuthoringState,
+    pub(super) detail_context: bool,
+    pub(super) authoring: AuthoringState,
     pub(super) conflict_flow: ConflictFlowState,
     pending_delete_project: Option<String>,
     needs_terminal_clear: bool,
@@ -453,241 +453,6 @@ impl App {
         }
     }
 
-    async fn handle_overlay_submit(&mut self, submit: OverlaySubmit) -> Result<()> {
-        match submit {
-            OverlaySubmit::AddTask { title, description } => {
-                self.authoring
-                    .capture_add_task_fields(title, description, AddTaskStep::Title);
-                self.submit_add_task_from_authoring().await?;
-            }
-            OverlaySubmit::Picker {
-                route: OverlayRoute::AddTaskTitleProject,
-                values,
-                ..
-            } => {
-                if self.authoring.apply_add_task_project(values) {
-                    self.begin_add_task_step();
-                }
-            }
-            OverlaySubmit::Picker {
-                route: OverlayRoute::AddTaskTitlePriority,
-                values,
-                ..
-            } => {
-                if self.authoring.apply_add_task_priority(values) {
-                    self.begin_add_task_step();
-                }
-            }
-            OverlaySubmit::Multiline {
-                route: OverlayRoute::AddTaskDescription,
-                value,
-                ..
-            } => {
-                if self.authoring.capture_add_task_fields(
-                    self.authoring
-                        .add_task_context()
-                        .map(|context| context.title)
-                        .unwrap_or_default(),
-                    value,
-                    AddTaskStep::Description,
-                ) {
-                    self.begin_add_task_step();
-                }
-            }
-            OverlaySubmit::Multiline {
-                route: OverlayRoute::AddNote,
-                value,
-                ..
-            } => {
-                self.submit_add_note(value).await?;
-            }
-            OverlaySubmit::Text {
-                route: OverlayRoute::AddProject,
-                value,
-                ..
-            } => {
-                let message = self.store.create_project(value).await?;
-                self.restore_selection_after_mutation();
-                self.set_success(message);
-            }
-            OverlaySubmit::Text {
-                route: OverlayRoute::AddLabel,
-                value,
-                ..
-            } => {
-                let message = self.store.create_label(value).await?;
-                self.set_success(message);
-            }
-            OverlaySubmit::Picker {
-                route: OverlayRoute::EditStatus,
-                values,
-                ..
-            } => {
-                if let Some(status) = values.first() {
-                    self.submit_edit_status(status.clone()).await?;
-                } else {
-                    self.set_warning("no matching status");
-                    self.begin_status_picker();
-                }
-            }
-            OverlaySubmit::Text {
-                route: OverlayRoute::EditTitle,
-                value,
-                ..
-            } => {
-                self.submit_edit_title(value).await?;
-            }
-            OverlaySubmit::Multiline {
-                route: OverlayRoute::EditDescription,
-                value,
-                ..
-            } => {
-                self.submit_edit_description(value).await?;
-            }
-            OverlaySubmit::Picker {
-                route: OverlayRoute::EditProject,
-                values,
-                ..
-            } => {
-                if let Some(project) = values.first() {
-                    self.submit_edit_project(project.clone()).await?;
-                } else {
-                    self.set_warning("no matching project");
-                    self.begin_edit_project();
-                }
-            }
-            OverlaySubmit::Picker {
-                route: OverlayRoute::EditPriority,
-                values,
-                ..
-            } => {
-                if let Some(priority) = values.first() {
-                    self.submit_edit_priority(priority.clone()).await?;
-                } else {
-                    self.set_warning("no matching priority");
-                    self.begin_edit_priority();
-                }
-            }
-            OverlaySubmit::Picker {
-                route: OverlayRoute::EditLabels,
-                values,
-                ..
-            } => {
-                self.submit_edit_labels(values).await?;
-            }
-            OverlaySubmit::Picker {
-                route: OverlayRoute::FilterProject,
-                values,
-                ..
-            } => {
-                self.submit_filter_project(values).await?;
-            }
-            OverlaySubmit::Picker {
-                route: OverlayRoute::FilterLabel,
-                values,
-                ..
-            } => {
-                self.submit_filter_label(values).await?;
-            }
-            OverlaySubmit::Picker {
-                route: OverlayRoute::FilterStatus,
-                values,
-                ..
-            } => {
-                self.submit_filter_status(values).await?;
-            }
-            OverlaySubmit::Picker {
-                route: OverlayRoute::FilterPriority,
-                values,
-                ..
-            } => {
-                self.submit_filter_priority(values).await?;
-            }
-            OverlaySubmit::Picker {
-                route: OverlayRoute::ViewProject,
-                values,
-                ..
-            } => {
-                self.submit_view_project(values).await?;
-            }
-            OverlaySubmit::Picker {
-                route: OverlayRoute::DeleteProjectPicker,
-                values,
-                ..
-            } => {
-                self.submit_delete_project_picker(values);
-            }
-            OverlaySubmit::Picker {
-                route: OverlayRoute::SwitchWorkspace,
-                values,
-                ..
-            } => {
-                self.submit_switch_workspace(values).await?;
-            }
-            OverlaySubmit::Picker {
-                route: OverlayRoute::ConflictField,
-                values,
-                ..
-            } => {
-                self.submit_conflict_field_picker(values).await?;
-            }
-            OverlaySubmit::Confirm {
-                route: OverlayRoute::ConflictConfirm,
-                ..
-            } => {
-                self.submit_confirmed_conflict_resolution().await?;
-            }
-            OverlaySubmit::Confirm {
-                route: OverlayRoute::ConfigInit,
-                ..
-            } => {
-                self.submit_config_init()?;
-            }
-            OverlaySubmit::Confirm {
-                route: OverlayRoute::DeleteProjectConfirm,
-                ..
-            } => {
-                self.submit_delete_project().await?;
-            }
-            OverlaySubmit::Confirm {
-                route: OverlayRoute::DeleteTaskConfirm,
-                ..
-            } => {
-                let return_to_detail = self.detail_context;
-                self.update_deleted(true).await?;
-                self.detail_context = false;
-                self.restore_detail_overlay(return_to_detail);
-            }
-            OverlaySubmit::Text {
-                route: OverlayRoute::ConflictManual,
-                value,
-                ..
-            } => {
-                self.submit_manual_conflict_value(value).await?;
-            }
-            OverlaySubmit::Multiline {
-                route: OverlayRoute::ConflictManual,
-                value,
-                ..
-            } => {
-                self.submit_manual_conflict_value(value).await?;
-            }
-            OverlaySubmit::Picker {
-                route: OverlayRoute::ConflictManual,
-                values,
-                ..
-            } => {
-                if let Some(value) = values.first() {
-                    self.submit_manual_conflict_value(value.clone()).await?;
-                } else {
-                    self.set_warning("no value selected");
-                }
-            }
-            other => self.set_success(other.message()),
-        }
-        Ok(())
-    }
-
     async fn handle(&mut self, action: Action) -> Result<()> {
         self.execute(action).await
     }
@@ -1009,7 +774,7 @@ impl App {
         }));
     }
 
-    fn begin_add_task_step(&mut self) {
+    pub(super) fn begin_add_task_step(&mut self) {
         self.begin_add_task_overlay();
     }
 
@@ -1042,7 +807,7 @@ impl App {
         )
     }
 
-    async fn submit_add_task_from_authoring(&mut self) -> Result<()> {
+    pub(super) async fn submit_add_task_from_authoring(&mut self) -> Result<()> {
         match self.authoring.submit_add_task() {
             AddTaskTitleSubmit::ReopenTitle { message } => {
                 self.set_warning(message);
@@ -1119,7 +884,7 @@ impl App {
         Ok(())
     }
 
-    async fn submit_add_note(&mut self, body: String) -> Result<()> {
+    pub(super) async fn submit_add_note(&mut self, body: String) -> Result<()> {
         match self.authoring.submit_add_note(body) {
             AddNoteSubmit::Create {
                 task_id,
@@ -1156,7 +921,7 @@ impl App {
         self.restore_detail_overlay(return_to_detail);
     }
 
-    fn restore_detail_overlay(&mut self, return_to_detail: bool) {
+    pub(super) fn restore_detail_overlay(&mut self, return_to_detail: bool) {
         self.restore_detail_overlay_at_scroll(return_to_detail, 0);
     }
 
@@ -1331,7 +1096,7 @@ impl App {
         }
     }
 
-    fn restore_selection_after_mutation(&mut self) {
+    pub(super) fn restore_selection_after_mutation(&mut self) {
         self.widgets.sidebar.select(self.store.sidebar_selection());
         if self.store.tasks.is_empty() {
             self.widgets.table.select(None);
@@ -1400,7 +1165,7 @@ impl App {
         Ok(())
     }
 
-    fn submit_config_init(&mut self) -> Result<()> {
+    pub(super) fn submit_config_init(&mut self) -> Result<()> {
         let message = self.store.init_config()?;
         self.set_success(message);
         Ok(())
@@ -1417,7 +1182,7 @@ impl App {
         }
     }
 
-    fn submit_delete_project_picker(&mut self, values: Vec<String>) {
+    pub(super) fn submit_delete_project_picker(&mut self, values: Vec<String>) {
         let Some(project) = self.require_picker_value(values, "no matching project") else {
             self.begin_delete_project();
             return;
@@ -1430,7 +1195,7 @@ impl App {
         ));
     }
 
-    async fn submit_delete_project(&mut self) -> Result<()> {
+    pub(super) async fn submit_delete_project(&mut self) -> Result<()> {
         let Some(project) = self.pending_delete_project.take() else {
             self.set_warning("project delete confirmation is not active");
             return Ok(());
