@@ -10,18 +10,20 @@ use super::input::input_line;
 use crate::tui::event::{COMMANDS, CommandLifecycle, CommandSpec, key_label, matching_commands};
 use crate::tui::theme::{ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, ORANGE};
 
-const HELP_COLUMNS: &[&[&str]] = &[
-    &["General", "Navigation", "Tasks", "Status", "Priority"],
-    &[
-        "Views",
-        "Add/Create",
-        "Metadata",
-        "Edit",
-        "Filters",
-        "Order",
-        "Conflict",
-        "Config",
-    ],
+const HELP_SECTIONS: &[&str] = &[
+    "General",
+    "Navigation",
+    "Tasks",
+    "Status",
+    "Priority",
+    "Views",
+    "Add/Create",
+    "Metadata",
+    "Edit",
+    "Filters",
+    "Order",
+    "Conflict",
+    "Config",
 ];
 
 const DETAIL_HELP_SECTIONS: &[&str] = &["General", "Task detail", "Edit", "Status", "Priority"];
@@ -122,9 +124,70 @@ pub(super) fn render_help(frame: &mut Frame, scroll: u16) {
         Constraint::Ratio(1, 2),
     ])
     .areas(content);
-    for (column, sections) in [left, right].into_iter().zip(HELP_COLUMNS.iter()) {
+    let columns = help_columns();
+    for (column, sections) in [left, right].into_iter().zip(columns.iter()) {
         render_help_column(frame, column, sections, scroll);
     }
+}
+
+fn help_columns() -> [Vec<&'static str>; 2] {
+    let section_count = HELP_SECTIONS.len();
+    let section_rows = HELP_SECTIONS
+        .iter()
+        .map(|section| help_section_len(section))
+        .collect::<Vec<_>>();
+    let total_section_rows = section_rows.iter().sum::<usize>();
+    let mut best_mask = 1;
+    let mut best_score = (usize::MAX, usize::MAX, usize::MAX);
+
+    for mask in 1usize..(1usize << section_count) - 1 {
+        if mask & 1 == 0 {
+            continue;
+        }
+        let left_count = mask.count_ones() as usize;
+        let right_count = section_count - left_count;
+        let left_rows = section_rows
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| mask & (1usize << index) != 0)
+            .map(|(_, rows)| *rows)
+            .sum::<usize>()
+            + left_count.saturating_sub(1);
+        let right_rows = total_section_rows + section_count - 2 - left_rows;
+        let tail_left = (section_count.saturating_sub(3)..section_count)
+            .filter(|index| mask & (1usize << index) != 0)
+            .count();
+        let tail_right = 3 - tail_left;
+        let score = (
+            left_rows.abs_diff(right_rows),
+            tail_left.abs_diff(tail_right),
+            left_count.abs_diff(right_count),
+        );
+        if score < best_score {
+            best_mask = mask;
+            best_score = score;
+        }
+    }
+
+    let mut left = Vec::new();
+    let mut right = Vec::new();
+    for (index, section) in HELP_SECTIONS.iter().enumerate() {
+        if best_mask & (1usize << index) != 0 {
+            left.push(*section);
+        } else {
+            right.push(*section);
+        }
+    }
+
+    [left, right]
+}
+
+fn help_section_len(section: &str) -> usize {
+    COMMANDS
+        .iter()
+        .filter(|command| command.section == section)
+        .count()
+        + 1
 }
 
 fn render_help_column(frame: &mut Frame, area: Rect, sections: &[&'static str], scroll: u16) {
@@ -200,7 +263,7 @@ fn detail_help_scroll_title(scroll: u16, visible_rows: u16) -> Option<String> {
 }
 
 fn help_scroll_title(scroll: u16, visible_rows: u16) -> Option<String> {
-    let max_rows = HELP_COLUMNS
+    let max_rows = help_columns()
         .iter()
         .map(|sections| help_column_lines(sections).len())
         .max()
@@ -236,7 +299,7 @@ fn help_column_lines(sections: &[&'static str]) -> Vec<Line<'static>> {
 
 pub(crate) fn help_scroll_cap(frame_height: u16) -> u16 {
     let visible_rows = frame_height.saturating_sub(4).min(28).saturating_sub(2) as usize;
-    HELP_COLUMNS
+    help_columns()
         .iter()
         .map(|sections| {
             help_column_lines(sections)
@@ -566,7 +629,7 @@ mod tests {
 
     #[test]
     fn help_columns_cover_every_command_section() {
-        let sections = HELP_COLUMNS
+        let sections = help_columns()
             .iter()
             .flat_map(|column| column.iter().copied())
             .collect::<Vec<_>>();
@@ -578,6 +641,23 @@ mod tests {
                 command.section
             );
         }
+    }
+
+    #[test]
+    fn help_columns_balance_section_rows() {
+        let columns = help_columns();
+        let row_counts = columns
+            .iter()
+            .map(|sections| help_column_lines(sections).len())
+            .collect::<Vec<_>>();
+
+        let tail_right = ["Order", "Conflict", "Config"]
+            .into_iter()
+            .filter(|section| columns[1].contains(section))
+            .count();
+
+        assert!(row_counts[0].abs_diff(row_counts[1]) <= 3);
+        assert!(tail_right < 3);
     }
 
     #[test]
