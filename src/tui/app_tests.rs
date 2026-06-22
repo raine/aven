@@ -112,6 +112,18 @@ async fn type_chars(app: &mut App, input: &str) {
     }
 }
 
+fn assert_pending(app: &App, expected: &[&str]) {
+    let expected = expected
+        .iter()
+        .map(|label| label.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(app.view().pending_shortcut, expected);
+}
+
+fn assert_pending_empty(app: &App) {
+    assert!(app.view().pending_shortcut.is_empty());
+}
+
 #[tokio::test]
 async fn ctrl_c_quits_from_normal_mode() {
     let mut app = test_app().await;
@@ -131,14 +143,14 @@ async fn ctrl_c_quits_while_overlay_captures_input() {
 async fn prefix_key_enters_prefix_mode() {
     let mut app = test_app().await;
     app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
-    assert_eq!(app.pending_shortcut, vec![KeyCode::Char('m')]);
+    assert_pending(&app, &["m"]);
 }
 
 #[tokio::test]
 async fn add_task_alias_executes_immediately() {
     let mut app = test_app().await;
     app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    assert!(app.pending_shortcut.is_empty());
+    assert_pending_empty(&app);
     assert!(matches!(
         &app.overlay,
         Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Title
@@ -151,7 +163,7 @@ async fn prefix_is_inactive_while_overlay_captures_input() {
     app.begin_search();
     app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
 
-    assert!(app.pending_shortcut.is_empty());
+    assert_pending_empty(&app);
     assert!(matches!(
         &app.overlay,
         Some(OverlayState::Search { input }) if input.as_str() == "m"
@@ -162,11 +174,14 @@ async fn prefix_is_inactive_while_overlay_captures_input() {
 async fn esc_cancels_prefix_before_overlay() {
     let mut app = test_app().await;
     app.overlay = Some(OverlayState::Detail { scroll: 0 });
-    app.pending_shortcut.push(KeyCode::Char('m'));
+    app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
+        .await
+        .unwrap();
+    assert_pending(&app, &["e"]);
     app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
         .await
         .unwrap();
-    assert!(app.pending_shortcut.is_empty());
+    assert_pending_empty(&app);
     assert!(matches!(
         app.overlay,
         Some(OverlayState::Detail { scroll: 0 })
@@ -421,7 +436,7 @@ async fn invalid_continuation_shows_message() {
     let mut app = test_app().await;
     app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('z')).await.unwrap();
-    assert!(app.pending_shortcut.is_empty());
+    assert_pending_empty(&app);
     assert_eq!(toast_message(&app), Some("invalid shortcut: m z"));
 }
 
@@ -430,7 +445,7 @@ async fn valid_continuation_executes_and_clears() {
     let mut app = test_app().await;
     app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    assert!(app.pending_shortcut.is_empty());
+    assert_pending_empty(&app);
 }
 
 #[tokio::test]
@@ -751,6 +766,25 @@ async fn add_task_description_ctrl_x_ctrl_e_opens_external_editor_and_returns_to
             if state.focus == AddTaskStep::Description
                 && state.title.as_str() == "Write docs"
                 && state.description.lines == vec!["Details from editor".to_string()]
+    ));
+}
+
+#[tokio::test]
+async fn add_task_description_ctrl_x_non_editor_key_clears_prefix_and_edits_text() {
+    let mut app = test_app().await;
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+    app.handle_overlay_key(ctrl_x()).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Char('z')))
+        .await
+        .unwrap();
+
+    assert_pending_empty(&app);
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::AddTask(state))
+            if state.focus == AddTaskStep::Description
+                && state.description.lines == vec!["z".to_string()]
     ));
 }
 
@@ -1144,7 +1178,7 @@ async fn detail_edit_chords_open_advertised_editors() {
         app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
             .await
             .unwrap();
-        assert_eq!(app.pending_shortcut, vec![KeyCode::Char('e')]);
+        assert_pending(&app, &["e"]);
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Detail { scroll: 4 })
@@ -1157,7 +1191,7 @@ async fn detail_edit_chords_open_advertised_editors() {
             (Some(OverlayState::Picker(state)), route) => assert_eq!(state.route, route),
             (overlay, route) => panic!("expected {route:?}, got {overlay:?}"),
         }
-        assert!(app.pending_shortcut.is_empty());
+        assert_pending_empty(&app);
         assert!(app.view().detail_underlay);
     }
 }
@@ -1177,7 +1211,7 @@ async fn detail_single_key_edit_shortcuts_still_work() {
         &app.overlay,
         Some(OverlayState::Picker(state)) if state.route == OverlayRoute::EditLabels
     ));
-    assert!(app.pending_shortcut.is_empty());
+    assert_pending_empty(&app);
     assert!(app.view().detail_underlay);
 }
 
@@ -1194,7 +1228,7 @@ async fn invalid_detail_prefix_stays_in_detail() {
         .await
         .unwrap();
 
-    assert!(app.pending_shortcut.is_empty());
+    assert_pending_empty(&app);
     assert!(matches!(
         app.overlay,
         Some(OverlayState::Detail { scroll: 5 })
@@ -1555,7 +1589,7 @@ async fn esc_closes_every_overlay_variant() {
         } else {
             assert!(app.overlay.is_none());
         }
-        assert!(app.pending_shortcut.is_empty());
+        assert_pending_empty(&app);
     }
 }
 

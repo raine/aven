@@ -20,18 +20,18 @@ use crate::tui::config_overlay::{
     config_info_overlay, config_init_overlay, config_paths_overlay, config_status_overlay,
 };
 use crate::tui::conflict_flow::{ConflictFlowState, ConflictResolutionChoice};
-use crate::tui::event::{
-    Action, CommandLookup, ShortcutLookup, lookup_command, resolve_shortcut, shortcut_label,
-};
+use crate::tui::event::{Action, CommandLookup, lookup_command};
 use crate::tui::navigation::{
-    DetailShortcut, detail_shortcut, detail_task_delta, handle_detail_overlay_key, next_index,
-    next_selectable_sidebar,
+    detail_task_delta, handle_detail_overlay_key, next_index, next_selectable_sidebar,
 };
 use crate::tui::overlay::{
     AddTaskState, LineEdit, MultilineInputState, OverlayOutcome, OverlayRoute, OverlayState,
     OverlayView, PickerItem,
 };
 use crate::tui::platform::{copy_to_clipboard, edit_text_externally, is_editor_prefix_key};
+use crate::tui::shortcut_buffer::{
+    DetailShortcutResolution, NormalShortcutResolution, ShortcutBuffer,
+};
 use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::toast::{Toast, ToastSeverity};
 use crate::tui::ui::{self, detail_help_scroll_cap, help_scroll_cap};
@@ -66,7 +66,7 @@ pub(crate) struct App {
     pub(crate) overlay: Option<OverlayState>,
     pub(crate) message: Option<Toast>,
     pub(crate) message_at: Option<Instant>,
-    pub(super) pending_shortcut: Vec<KeyCode>,
+    pub(super) pending_shortcut: ShortcutBuffer,
     pub(super) detail_context: bool,
     pub(super) authoring: AuthoringState,
     pub(super) conflict_flow: ConflictFlowState,
@@ -102,7 +102,7 @@ impl App {
             overlay: None,
             message: None,
             message_at: None,
-            pending_shortcut: Vec::new(),
+            pending_shortcut: ShortcutBuffer::default(),
             detail_context: false,
             authoring: AuthoringState::default(),
             conflict_flow: ConflictFlowState::default(),
@@ -162,11 +162,7 @@ impl App {
             overlay: self.overlay.as_ref().map(OverlayView::from),
             detail_underlay: self.detail_underlay(),
             message: self.message.clone(),
-            pending_shortcut: self
-                .pending_shortcut
-                .iter()
-                .map(|code| crate::tui::event::key_label(*code))
-                .collect(),
+            pending_shortcut: self.pending_shortcut.labels(),
         }
     }
 
@@ -182,8 +178,7 @@ impl App {
     async fn dispatch_key(&mut self, key: KeyEvent, terminal_size: Size) -> Result<()> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.handle(Action::Quit).await
-        } else if key.code == KeyCode::Esc && !self.pending_shortcut.is_empty() {
-            self.pending_shortcut.clear();
+        } else if key.code == KeyCode::Esc && self.pending_shortcut.cancel() {
             Ok(())
         } else if self.overlay_captures_input() {
             if key.code == KeyCode::Char('?')
@@ -227,27 +222,18 @@ impl App {
         }
 
         if code == KeyCode::Esc {
-            if !self.pending_shortcut.is_empty() {
-                self.pending_shortcut.clear();
-            } else {
+            if !self.pending_shortcut.cancel() {
                 self.handle(Action::CancelOverlay).await?;
             }
             return Ok(());
         }
 
-        let mut sequence = self.pending_shortcut.clone();
-        sequence.push(code);
-        match resolve_shortcut(&sequence) {
-            ShortcutLookup::Found(action) | ShortcutLookup::Ambiguous(action) => {
-                self.pending_shortcut.clear();
+        match self.pending_shortcut.resolve_normal(code) {
+            NormalShortcutResolution::Action(action) => {
                 self.handle(action).await?;
             }
-            ShortcutLookup::Prefix => {
-                self.pending_shortcut = sequence;
-            }
-            ShortcutLookup::Missing => {
-                let label = shortcut_label(&sequence);
-                self.pending_shortcut.clear();
+            NormalShortcutResolution::Prefix => {}
+            NormalShortcutResolution::Missing(label) => {
                 self.set_warning(format!("invalid shortcut: {label}"));
             }
         }
@@ -339,24 +325,21 @@ impl App {
             return Ok(());
         }
 
-        if self.pending_shortcut == [KeyCode::Char('x')] {
-            self.pending_shortcut.clear();
-            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('e') {
-                match &overlay {
-                    OverlayState::MultilineInput(state)
-                        if state.route == OverlayRoute::EditDescription =>
-                    {
-                        self.open_description_external_editor(state.clone());
-                    }
-                    OverlayState::AddTask(state) if state.focus == AddTaskStep::Description => {
-                        if self.capture_add_task_state(state) {
-                            self.open_add_task_description_editor();
-                        }
-                    }
-                    _ => self.overlay = Some(overlay),
+        if self.pending_shortcut.take_editor_open_request(key) {
+            match &overlay {
+                OverlayState::MultilineInput(state)
+                    if state.route == OverlayRoute::EditDescription =>
+                {
+                    self.open_description_external_editor(state.clone());
                 }
-                return Ok(());
+                OverlayState::AddTask(state) if state.focus == AddTaskStep::Description => {
+                    if self.capture_add_task_state(state) {
+                        self.open_add_task_description_editor();
+                    }
+                }
+                _ => self.overlay = Some(overlay),
             }
+            return Ok(());
         }
 
         if is_editor_prefix_key(key)
@@ -366,7 +349,7 @@ impl App {
                     if state.route == OverlayRoute::EditDescription
             )
         {
-            self.pending_shortcut = vec![KeyCode::Char('x')];
+            self.pending_shortcut.begin_editor_prefix();
             self.overlay = Some(overlay);
             return Ok(());
         }
@@ -374,11 +357,9 @@ impl App {
         if let OverlayState::AddTask(state) = &overlay {
             if is_editor_prefix_key(key) {
                 if state.focus == AddTaskStep::Description {
-                    self.pending_shortcut = vec![KeyCode::Char('x')];
-                    self.overlay = Some(overlay);
-                } else {
-                    self.overlay = Some(overlay);
+                    self.pending_shortcut.begin_editor_prefix();
                 }
+                self.overlay = Some(overlay);
                 return Ok(());
             }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
@@ -428,11 +409,8 @@ impl App {
             return Ok(None);
         }
 
-        let mut sequence = self.pending_shortcut.clone();
-        sequence.push(key.code);
-        match detail_shortcut(&sequence) {
-            DetailShortcut::Action(action) => {
-                self.pending_shortcut.clear();
+        match self.pending_shortcut.resolve_detail(key) {
+            DetailShortcutResolution::Action(action) => {
                 self.detail_context = true;
                 self.execute(action).await?;
                 if self.detail_context && self.overlay.is_none() {
@@ -440,16 +418,12 @@ impl App {
                 }
                 Ok(Some(self.overlay.take()))
             }
-            DetailShortcut::Prefix => {
-                self.pending_shortcut = sequence;
-                Ok(Some(Some(OverlayState::Detail { scroll })))
-            }
-            DetailShortcut::Missing(label) if !self.pending_shortcut.is_empty() => {
-                self.pending_shortcut.clear();
+            DetailShortcutResolution::Prefix => Ok(Some(Some(OverlayState::Detail { scroll }))),
+            DetailShortcutResolution::MissingAfterPrefix(label) => {
                 self.set_warning(format!("invalid shortcut: {label}"));
                 Ok(Some(Some(OverlayState::Detail { scroll })))
             }
-            DetailShortcut::Missing(_) => Ok(None),
+            DetailShortcutResolution::PassThrough => Ok(None),
         }
     }
 
