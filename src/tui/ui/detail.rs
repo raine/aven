@@ -121,25 +121,7 @@ fn detail_scroll_max_start(content_height: usize, visible: usize) -> usize {
 }
 
 fn detail_content_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
-    let mut lines = vec![
-        Line::from(vec![
-            Span::styled(
-                format!("{}  ", item.display_ref),
-                Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
-            ),
-            status_span(&item.task.status),
-            Span::raw("  "),
-            Span::styled(
-                priority_short(&item.task.priority),
-                theme::priority_style(&item.task.priority).add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::from(Span::styled(
-            item.task.title.clone(),
-            Style::new().fg(FG).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-    ];
+    let mut lines = detail_header_options(item, width);
     lines.extend(quoted_block_lines(
         &description_or_placeholder(&item.task.description),
         width,
@@ -168,6 +150,27 @@ fn detail_content_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>>
         }
     }
     lines
+}
+
+fn detail_header_options(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![Span::styled(
+            item.task.title.clone(),
+            Style::new().fg(FG).add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(Span::styled("─".repeat(width), Style::new().fg(BORDER))),
+        Line::from(vec![
+            Span::styled(item.display_ref.clone(), Style::new().fg(FG_DIM)),
+            Span::styled("   ", Style::new().fg(FG_DIM)),
+            status_span(&item.task.status),
+            Span::styled("   ", Style::new().fg(FG_DIM)),
+            Span::styled(
+                priority_short(&item.task.priority),
+                theme::priority_style(&item.task.priority).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+    ]
 }
 
 fn quoted_block_lines(body: &str, width: usize, style: Style) -> Vec<Line<'static>> {
