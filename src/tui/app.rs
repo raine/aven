@@ -349,19 +349,43 @@ impl App {
             return Ok(());
         }
 
-        if key.modifiers.contains(KeyModifiers::CONTROL)
-            && key.code == KeyCode::Char('e')
-            && let OverlayState::MultilineInput(state) = &overlay
-            && state.route == OverlayRoute::EditDescription
+        if self.pending_shortcut == [KeyCode::Char('x')] {
+            self.pending_shortcut.clear();
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('e') {
+                match &overlay {
+                    OverlayState::MultilineInput(state)
+                        if state.route == OverlayRoute::EditDescription =>
+                    {
+                        self.open_description_external_editor(state.clone());
+                    }
+                    OverlayState::AddTask(state) if state.focus == AddTaskStep::Description => {
+                        if self.capture_add_task_state(state) {
+                            self.open_add_task_description_editor();
+                        }
+                    }
+                    _ => self.overlay = Some(overlay),
+                }
+                return Ok(());
+            }
+        }
+
+        if is_editor_prefix_key(key)
+            && matches!(
+                &overlay,
+                OverlayState::MultilineInput(state)
+                    if state.route == OverlayRoute::EditDescription
+            )
         {
-            self.open_description_external_editor(state.clone());
+            self.pending_shortcut = vec![KeyCode::Char('x')];
+            self.overlay = Some(overlay);
             return Ok(());
         }
 
         if let OverlayState::AddTask(state) = &overlay {
-            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('e') {
-                if state.focus == AddTaskStep::Description && self.capture_add_task_state(state) {
-                    self.open_add_task_description_editor();
+            if is_editor_prefix_key(key) {
+                if state.focus == AddTaskStep::Description {
+                    self.pending_shortcut = vec![KeyCode::Char('x')];
+                    self.overlay = Some(overlay);
                 } else {
                     self.overlay = Some(overlay);
                 }
@@ -1435,6 +1459,10 @@ impl App {
         }
         Ok(())
     }
+}
+
+fn is_editor_prefix_key(key: KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('x')
 }
 
 fn selected_picker_index(items: &[PickerItem]) -> usize {

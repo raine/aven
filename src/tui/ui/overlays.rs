@@ -300,7 +300,7 @@ fn add_task_hint_line(focus: AddTaskStep) -> Line<'static> {
         ]),
         AddTaskStep::Description => dialog_hint_line(&[
             ("Ctrl+S", "create"),
-            ("Ctrl+E", "editor"),
+            ("Ctrl+X Ctrl+E", "editor"),
             ("Tab", "title"),
             ("Ctrl+B", "project"),
             ("Ctrl+P", "priority"),
@@ -612,7 +612,7 @@ fn description_hint_line(state: &MultilineInputView) -> Line<'static> {
     );
     let mut line = dialog_hint_line(&[
         ("Ctrl+S", "submit"),
-        ("Ctrl+E", "editor"),
+        ("Ctrl+X Ctrl+E", "editor"),
         ("Esc", "cancel"),
     ]);
     line.spans
@@ -1082,7 +1082,7 @@ mod tests {
             styled_key_contents(add_task_hint_line(AddTaskStep::Description));
         assert_eq!(
             add_task_description_keys,
-            vec!["Ctrl+S", "Ctrl+E", "Tab", "Ctrl+B", "Ctrl+P", "Esc"]
+            vec!["Ctrl+S", "Ctrl+X Ctrl+E", "Tab", "Ctrl+B", "Ctrl+P", "Esc"]
         );
 
         let add_task_description_editor_keys =
@@ -1213,7 +1213,7 @@ mod tests {
         let rendered = render_overlay_view(overlay);
         assert!(rendered.contains("Edit description"));
         assert!(rendered.contains("Ctrl+S submit"));
-        assert!(rendered.contains("Ctrl+E editor"));
+        assert!(rendered.contains("Ctrl+X Ctrl+E editor"));
         assert!(rendered.contains("line 1/1"));
         assert!(!rendered.contains(&"a".repeat(160)));
     }
