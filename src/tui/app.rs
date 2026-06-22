@@ -1,8 +1,13 @@
+use std::fs;
+use std::io;
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use ratatui::DefaultTerminal;
 use ratatui::layout::Size;
 use ratatui::widgets::{ListState, TableState};
@@ -66,6 +71,7 @@ pub(crate) struct App {
     authoring: AuthoringState,
     pub(super) conflict_flow: ConflictFlowState,
     pending_delete_project: Option<String>,
+    needs_terminal_clear: bool,
 }
 
 impl App {
@@ -101,6 +107,7 @@ impl App {
             authoring: AuthoringState::default(),
             conflict_flow: ConflictFlowState::default(),
             pending_delete_project: None,
+            needs_terminal_clear: false,
         };
         app.widgets.sidebar.select(app.store.sidebar_selection());
         app.widgets
@@ -120,6 +127,10 @@ impl App {
                 let result = self.dispatch_key(key, terminal.size()?).await;
                 if let Err(error) = result {
                     self.set_message(format!("error: {error:#}"));
+                }
+                if self.needs_terminal_clear {
+                    self.needs_terminal_clear = false;
+                    terminal.clear()?;
                 }
             }
 
@@ -304,6 +315,15 @@ impl App {
                 OverlayOutcome::Cancelled => self.cancel_authoring_overlay(),
                 OverlayOutcome::Submitted(submit) => self.handle_overlay_submit(submit).await?,
             }
+            return Ok(());
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.code == KeyCode::Char('e')
+            && let OverlayState::MultilineInput(state) = &overlay
+            && state.route == OverlayRoute::EditDescription
+        {
+            self.open_description_external_editor(state.clone());
             return Ok(());
         }
 
@@ -1206,6 +1226,17 @@ impl App {
         Ok(())
     }
 
+    fn open_description_external_editor(&mut self, state: MultilineInputState) {
+        self.needs_terminal_clear = true;
+        match edit_text_externally(state.lines.join("\n"), "description.md") {
+            Ok(value) => self.overlay = Some(description_overlay_from_value(value)),
+            Err(error) => {
+                self.set_message(format!("editor failed: {error:#}"));
+                self.overlay = Some(OverlayState::MultilineInput(state));
+            }
+        }
+    }
+
     fn submit_delete_project_picker(&mut self, values: Vec<String>) {
         let Some(project) = self.require_picker_value(values, "no matching project") else {
             self.begin_delete_project();
@@ -1234,6 +1265,69 @@ impl App {
 
 fn selected_picker_index(items: &[PickerItem]) -> usize {
     items.iter().position(|item| item.selected).unwrap_or(0)
+}
+
+fn description_overlay_from_value(value: String) -> OverlayState {
+    OverlayState::MultilineInput(MultilineInputState::from_value(
+        OverlayRoute::EditDescription,
+        "Edit description",
+        "",
+        value,
+    ))
+}
+
+fn edit_text_externally(value: String, filename: &str) -> Result<String> {
+    let path = temp_editor_path(filename)?;
+    fs::write(&path, value)?;
+    let result =
+        run_external_editor(&path).and_then(|()| fs::read_to_string(&path).map_err(Into::into));
+    let _ = fs::remove_file(&path);
+    if let Some(parent) = path.parent() {
+        let _ = fs::remove_dir(parent);
+    }
+    result
+}
+
+fn temp_editor_path(filename: &str) -> io::Result<std::path::PathBuf> {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let pid = std::process::id();
+    let dir = std::env::temp_dir().join(format!("aven-tui-editor-{pid}-{millis}"));
+    fs::create_dir(&dir)?;
+    Ok(dir.join(filename))
+}
+
+fn run_external_editor(path: &std::path::Path) -> Result<()> {
+    let restore = suspend_terminal()?;
+    let status = external_editor_command(path).status();
+    restore()?;
+    let status = status?;
+    if !status.success() {
+        anyhow::bail!("editor exited with {status}");
+    }
+    Ok(())
+}
+
+fn external_editor_command(path: &std::path::Path) -> Command {
+    let mut command = Command::new("sh");
+    command
+        .arg("-c")
+        .arg("exec ${VISUAL:-${EDITOR:-vi}} \"$1\"")
+        .arg("sh")
+        .arg(path);
+    command
+}
+
+fn suspend_terminal() -> Result<impl FnOnce() -> Result<()>> {
+    disable_raw_mode()?;
+    crossterm::execute!(io::stdout(), LeaveAlternateScreen)?;
+    Ok(|| {
+        crossterm::execute!(io::stdout(), EnterAlternateScreen)?;
+        enable_raw_mode()?;
+        Ok(())
+    })
 }
 
 fn copy_to_clipboard(value: &str) -> Result<()> {

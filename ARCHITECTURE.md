@@ -189,7 +189,17 @@ The TUI is split into these layers:
   - `view.rs`: active view, filters, search, and selection restoration.
   - `workspaces.rs`: TUI workspace switching, active workspace updates, and related filter/view reset.
 - `overlay.rs`: reusable text input, multiline input, picker, confirm, search, command, detail, help, and text panel state machines. Input overlays carry an `OverlayRoute` that identifies the destination flow independently from display titles.
-- `ui.rs`: top-level Ratatui render orchestration for header, footer, overlays, command palette, help, and prefix hints. Region modules live under `ui/` for sidebar, task list, task display helpers, detail rendering, dialogs, and toasts. Overlay dialogs share frame, clear, background, and footer hint styling through dialog helpers. The task list region builds an explicit row model for group headers and task rows so rendering and scrolling use the same table structure.
+- `ui.rs`: top-level Ratatui render orchestration.
+  - Renders header, footer, overlays, command palette, help, and prefix hints.
+  - Region modules under `ui/` handle sidebar, task list, task display helpers,
+    detail rendering, dialogs, and toasts.
+  - Overlay dialogs share frame, clear, background, and footer hint styling
+    through dialog helpers.
+  - The task list region builds an explicit row model for group headers and task
+    rows so rendering and scrolling use the same table structure.
+  - The task description editor uses a terminal-sized multiline overlay with
+    visual wrapping and can hand the current draft to `$VISUAL`, `$EDITOR`, or
+    `vi` through `Ctrl+E`.
 - `widgets.rs`: small cell helpers such as priority icons and title conflict markers.
 - `theme.rs`: colors and style helpers.
 

@@ -102,6 +102,10 @@ pub(super) fn render_multiline_input(frame: &mut Frame, state: &MultilineInputVi
         render_add_note_input(frame, state);
         return;
     }
+    if state.title == "Edit description" {
+        render_description_input(frame, state);
+        return;
+    }
 
     let visible_rows = 10usize;
     let content_rows = state.lines.len().min(visible_rows).max(1);
@@ -133,6 +137,136 @@ pub(super) fn render_multiline_input(frame: &mut Frame, state: &MultilineInputVi
     Dialog::new(&state.title, 60, height)
         .wrap()
         .render_text(frame, Text::from(lines));
+}
+
+fn render_description_input(frame: &mut Frame, state: &MultilineInputView) {
+    let frame_area = frame.area();
+    let max_height = frame_area.height.saturating_mul(4).saturating_div(5);
+    let width = description_editor_width(frame_area.width);
+    let line_width = width.saturating_sub(4).max(1) as usize;
+    let max_editor_rows = max_height.saturating_sub(4).max(1) as usize;
+    let editor_rows = description_visual_row_count(state, line_width).clamp(4, max_editor_rows);
+    let height = editor_rows.saturating_add(4) as u16;
+    let dialog = Dialog::new("Edit description", width, height);
+    let content = dialog.render_block(frame);
+    let editor_rows = content.height.saturating_sub(2).max(1) as usize;
+    let line_width = content.width.max(1) as usize;
+    let (mut lines, cursor_row) = description_editor_lines(state, line_width);
+    let start = cursor_row.saturating_sub(editor_rows.saturating_sub(1));
+    lines = lines.into_iter().skip(start).take(editor_rows).collect();
+    while lines.len() < editor_rows {
+        lines.push(Line::from(""));
+    }
+    lines.push(Line::from(""));
+    lines.push(description_hint_line(state));
+
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG_ALT)),
+        content,
+    );
+}
+
+fn description_editor_width(frame_width: u16) -> u16 {
+    let max_width = frame_width.saturating_sub(4).max(1);
+    frame_width
+        .saturating_mul(4)
+        .saturating_div(5)
+        .max(80)
+        .min(max_width)
+}
+
+fn description_visual_row_count(state: &MultilineInputView, line_width: usize) -> usize {
+    state
+        .lines
+        .iter()
+        .map(|line| wrapped_ranges(line, line_width).len())
+        .sum::<usize>()
+        .max(1)
+}
+
+fn description_editor_lines(
+    state: &MultilineInputView,
+    line_width: usize,
+) -> (Vec<Line<'static>>, usize) {
+    let mut lines = Vec::new();
+    let mut cursor_row = 0;
+    let show_placeholder = state.lines.len() == 1 && state.lines[0].is_empty();
+    for (row_index, line) in state.lines.iter().enumerate() {
+        let ranges = wrapped_ranges(line, line_width);
+        if row_index == state.row {
+            let cursor = char_boundary_at_or_before(line, state.column);
+            let cursor_segment = cursor_segment_index(line, cursor, line_width);
+            cursor_row = lines.len().saturating_add(cursor_segment);
+            for (range_index, (start, end)) in ranges.into_iter().enumerate() {
+                if range_index == cursor_segment {
+                    lines.push(description_input_line(
+                        &line[start..end],
+                        cursor - start,
+                        show_placeholder,
+                    ));
+                } else {
+                    lines.push(Line::from(line[start..end].to_string()));
+                }
+            }
+        } else {
+            for (start, end) in ranges {
+                lines.push(Line::from(line[start..end].to_string()));
+            }
+        }
+    }
+    (lines, cursor_row)
+}
+
+fn description_input_line(line: &str, cursor: usize, show_placeholder: bool) -> Line<'static> {
+    if show_placeholder && line.is_empty() && cursor == 0 {
+        return Line::from(vec![
+            cursor_cell("E"),
+            Span::styled("nter task description here...", Style::new().fg(FG_DIM)),
+        ]);
+    }
+    input_line("", line, cursor)
+}
+
+fn wrapped_ranges(line: &str, width: usize) -> Vec<(usize, usize)> {
+    let width = width.max(1);
+    let mut boundaries = line
+        .char_indices()
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    boundaries.push(line.len());
+    let char_count = boundaries.len().saturating_sub(1);
+    if char_count == 0 {
+        return vec![(0, 0)];
+    }
+    (0..char_count)
+        .step_by(width)
+        .map(|start| {
+            let end = start.saturating_add(width).min(char_count);
+            (boundaries[start], boundaries[end])
+        })
+        .collect()
+}
+
+fn cursor_segment_index(line: &str, cursor: usize, width: usize) -> usize {
+    let width = width.max(1);
+    let cursor_chars = line[..cursor].chars().count();
+    let line_chars = line.chars().count();
+    if line_chars == 0 {
+        return 0;
+    }
+    if cursor_chars == line_chars {
+        line_chars.saturating_sub(1) / width
+    } else {
+        cursor_chars / width
+    }
+}
+
+fn char_boundary_at_or_before(input: &str, index: usize) -> usize {
+    let mut index = index.min(input.len());
+    while !input.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
 }
 
 fn render_add_note_input(frame: &mut Frame, state: &MultilineInputView) {
@@ -179,6 +313,22 @@ fn add_note_input_line(line: &str, cursor: Option<usize>) -> Line<'static> {
 
 fn multiline_hint_line() -> Line<'static> {
     dialog_hint_line(&[("Ctrl+S", "submit"), ("Esc", "cancel")])
+}
+
+fn description_hint_line(state: &MultilineInputView) -> Line<'static> {
+    let position = format!(
+        "  line {}/{}",
+        state.row.saturating_add(1),
+        state.lines.len().max(1)
+    );
+    let mut line = dialog_hint_line(&[
+        ("Ctrl+S", "submit"),
+        ("Ctrl+E", "editor"),
+        ("Esc", "cancel"),
+    ]);
+    line.spans
+        .push(Span::styled(position, Style::new().fg(FG_MUTED)));
+    line
 }
 
 pub(super) fn render_picker(frame: &mut Frame, state: &PickerView) {
@@ -560,6 +710,135 @@ mod tests {
         assert!(rendered.contains("Description"));
         assert!(rendered.contains("Body"));
         assert!(rendered.contains("Ctrl+S submit"));
+    }
+
+    #[test]
+    fn edit_description_empty_input_shows_placeholder() {
+        let line = description_input_line("", 0, true);
+        assert_eq!(line.spans[0].content.as_ref(), "E");
+        assert_eq!(line.spans[0].style.fg, Some(BG_ALT));
+        assert_eq!(line.spans[0].style.bg, Some(FG));
+        assert_eq!(
+            line.spans[1].content.as_ref(),
+            "nter task description here..."
+        );
+        assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
+    }
+
+    #[test]
+    fn edit_description_blank_line_does_not_show_placeholder() {
+        let state = MultilineInputView {
+            title: "Edit description".to_string(),
+            prompt: String::new(),
+            lines: vec!["body".to_string(), String::new()],
+            row: 1,
+            column: 0,
+        };
+        let (lines, _) = description_editor_lines(&state, 80);
+        assert!(!lines[1].to_string().contains("Enter task description here"));
+        assert_eq!(lines[1].spans[1].content.as_ref(), " ");
+        assert_eq!(lines[1].spans[1].style.bg, Some(FG));
+    }
+
+    #[test]
+    fn edit_description_overlay_wraps_long_lines() {
+        let overlay = OverlayView::MultilineInput(MultilineInputView {
+            title: "Edit description".to_string(),
+            prompt: String::new(),
+            lines: vec!["a".repeat(160)],
+            row: 0,
+            column: 150,
+        });
+        let rendered = render_overlay_view(overlay);
+        assert!(rendered.contains("Edit description"));
+        assert!(rendered.contains("Ctrl+S submit"));
+        assert!(rendered.contains("Ctrl+E editor"));
+        assert!(rendered.contains("line 1/1"));
+        assert!(!rendered.contains(&"a".repeat(160)));
+    }
+
+    #[test]
+    fn edit_description_overlay_sizes_height_to_wrapped_content() {
+        let short = description_overlay_metrics(100, vec!["body".to_string()], 0, 4);
+        let long = description_overlay_metrics(
+            100,
+            (0..16).map(|index| format!("line {index}")).collect(),
+            15,
+            7,
+        );
+        let wrapped = description_overlay_metrics(100, vec!["a".repeat(400)], 0, 390);
+        assert!(short.rows < long.rows, "expected content-sized height");
+        assert!(short.rows < wrapped.rows, "expected wrapped line height");
+        assert!(
+            short.rows >= 4,
+            "expected useful minimum height, got {}",
+            short.rows
+        );
+        assert!(
+            long.rows <= 24,
+            "expected terminal-relative cap, got {}",
+            long.rows
+        );
+    }
+
+    #[test]
+    fn edit_description_overlay_width_tracks_terminal_size() {
+        let normal = description_overlay_metrics(100, vec!["body".to_string()], 0, 4);
+        let wide = description_overlay_metrics(160, vec!["body".to_string()], 0, 4);
+        assert!(wide.columns > normal.columns);
+    }
+
+    #[test]
+    fn edit_description_cursor_row_tracks_wrapped_segment() {
+        let state = MultilineInputView {
+            title: "Edit description".to_string(),
+            prompt: String::new(),
+            lines: vec!["abcdefghij".to_string()],
+            row: 0,
+            column: 8,
+        };
+        let (lines, cursor_row) = description_editor_lines(&state, 4);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(cursor_row, 2);
+    }
+
+    struct DescriptionOverlayMetrics {
+        rows: usize,
+        columns: usize,
+    }
+
+    fn description_overlay_metrics(
+        terminal_width: u16,
+        lines: Vec<String>,
+        row: usize,
+        column: usize,
+    ) -> DescriptionOverlayMetrics {
+        let backend = TestBackend::new(terminal_width, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render_multiline_input(
+                    frame,
+                    &MultilineInputView {
+                        title: "Edit description".to_string(),
+                        prompt: String::new(),
+                        lines,
+                        row,
+                        column,
+                    },
+                )
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let rows = (0..buffer.area.height)
+            .filter(|row| buffer_row(buffer, *row).contains("│"))
+            .count();
+        let top_row = (0..buffer.area.height)
+            .map(|row| buffer_row(buffer, row))
+            .find(|row| row.contains('╭'))
+            .unwrap();
+        let columns = top_row.chars().filter(|ch| *ch == '─').count();
+        DescriptionOverlayMetrics { rows, columns }
     }
 
     #[test]

@@ -687,7 +687,11 @@ fn edit_multiline_input(state: &mut MultilineInputState, key: KeyEvent) {
             let next = next_char_boundary(&state.lines[row], column);
             state.lines[row].drain(column..next);
         }
-        KeyCode::Char(ch) => {
+        KeyCode::Delete if row + 1 < state.lines.len() => {
+            let line = state.lines.remove(row + 1);
+            state.lines[row].push_str(&line);
+        }
+        KeyCode::Char(ch) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
             state.lines[row].insert(column, ch);
             state.column = column + ch.len_utf8();
         }
@@ -861,6 +865,57 @@ mod tests {
         state.column = 0;
         edit_multiline_input(&mut state, key(KeyCode::Backspace));
         assert_eq!(state.lines, vec!["ab".to_string()]);
+    }
+
+    #[test]
+    fn multiline_delete_at_line_end_merges_next_line() {
+        let mut state = MultilineInputState {
+            route: OverlayRoute::MessageOnly,
+            title: "Title".to_string(),
+            prompt: "Prompt".to_string(),
+            lines: vec!["one".to_string(), "two".to_string()],
+            row: 0,
+            column: 3,
+        };
+        edit_multiline_input(&mut state, key(KeyCode::Delete));
+        assert_eq!(state.lines, vec!["onetwo".to_string()]);
+        assert_eq!(state.row, 0);
+        assert_eq!(state.column, 3);
+    }
+
+    #[test]
+    fn multiline_ignores_control_chars_that_are_not_editing_keys() {
+        let mut state = MultilineInputState {
+            route: OverlayRoute::MessageOnly,
+            title: "Title".to_string(),
+            prompt: "Prompt".to_string(),
+            lines: vec!["ab".to_string()],
+            row: 0,
+            column: 1,
+        };
+        edit_multiline_input(&mut state, ctrl(KeyCode::Char('x')));
+        assert_eq!(state.lines, vec!["ab".to_string()]);
+        assert_eq!(state.column, 1);
+    }
+
+    #[test]
+    fn multiline_long_line_navigation_keeps_byte_cursor_valid() {
+        let mut state = MultilineInputState {
+            route: OverlayRoute::MessageOnly,
+            title: "Title".to_string(),
+            prompt: "Prompt".to_string(),
+            lines: vec!["a".repeat(140), "é".to_string()],
+            row: 0,
+            column: 139,
+        };
+        edit_multiline_input(&mut state, key(KeyCode::Right));
+        assert_eq!(state.column, 140);
+        edit_multiline_input(&mut state, key(KeyCode::Down));
+        assert_eq!(state.row, 1);
+        assert_eq!(state.column, "é".len());
+        edit_multiline_input(&mut state, key(KeyCode::Left));
+        assert_eq!(state.column, 0);
+        assert!(state.lines[state.row].is_char_boundary(state.column));
     }
 
     #[test]
