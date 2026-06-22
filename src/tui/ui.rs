@@ -116,14 +116,14 @@ pub(crate) fn render(
     {
         render_prefix_hints(frame, view);
     }
-    if let Some(message) = &view.message {
-        render_toast(frame, message);
-    }
     if view.detail_underlay {
         render_detail_underlay(frame, store, widgets, detail_underlay_scroll(&view.overlay));
     }
     if let Some(overlay) = &view.overlay {
         render_overlay(frame, store, widgets, overlay);
+    }
+    if let Some(message) = &view.message {
+        render_toast(frame, message);
     }
 }
 

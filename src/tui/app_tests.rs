@@ -899,6 +899,74 @@ async fn ignored_keys_stay_in_detail() {
 }
 
 #[tokio::test]
+async fn detail_toast_renders_above_detail_overlay() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Toast target")).await;
+    app.overlay = Some(OverlayState::Detail { scroll: 0 });
+    app.set_message("set APP-TEST status=done".to_string());
+    let backend = ratatui::backend::TestBackend::new(100, 30);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let view = app.view();
+
+    terminal
+        .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
+        .unwrap();
+    let rendered = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+
+    assert!(rendered.contains("set APP-TEST status=done"));
+}
+
+#[tokio::test]
+async fn detail_done_shortcut_keeps_detail_and_sets_message() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Next target")).await;
+    let selected = create_and_select_task(&mut app, test_task_draft("Done target")).await;
+    let display_ref = app.store.tasks[selected].display_ref.clone();
+    app.overlay = Some(OverlayState::Detail { scroll: 7 });
+
+    app.dispatch_key(key(KeyCode::Char('d')), (80, 24).into())
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Detail { scroll: 7 })
+    ));
+    assert_eq!(
+        app.message.as_deref(),
+        Some(format!("set {display_ref} status=done").as_str())
+    );
+}
+
+#[tokio::test]
+async fn detail_undo_shortcut_reverts_last_mutation() {
+    let mut app = test_app().await;
+    let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
+    app.store
+        .update_title(Some(selected), "After".to_string())
+        .await
+        .unwrap();
+    app.overlay = Some(OverlayState::Detail { scroll: 5 });
+
+    app.dispatch_key(key(KeyCode::Char('u')), (80, 24).into())
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Detail { scroll: 5 })
+    ));
+    assert_eq!(app.store.tasks[selected].task.title, "Before");
+    assert!(app.message.as_ref().unwrap().contains("undid"));
+}
+
+#[tokio::test]
 async fn cancel_add_note_from_detail_returns_to_detail() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("Note target")).await;

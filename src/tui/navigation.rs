@@ -80,6 +80,7 @@ pub(crate) fn detail_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('l') => Some(Action::BeginEditLabels),
         KeyCode::Char('y') => Some(Action::CopyShortRef),
         KeyCode::Char('Y') => Some(Action::CopyDurableRef),
+        KeyCode::Char('u') => Some(Action::Undo),
         _ => None,
     }
 }

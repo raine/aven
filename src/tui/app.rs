@@ -290,7 +290,7 @@ impl App {
                 self.detail_context = true;
                 self.execute(action).await?;
                 if self.detail_context && self.overlay.is_none() {
-                    self.restore_detail_overlay(true);
+                    self.restore_detail_overlay_at_scroll(true, scroll);
                 }
                 return Ok(());
             }
@@ -1005,6 +1005,10 @@ impl App {
     }
 
     fn restore_detail_overlay(&mut self, return_to_detail: bool) {
+        self.restore_detail_overlay_at_scroll(return_to_detail, 0);
+    }
+
+    fn restore_detail_overlay_at_scroll(&mut self, return_to_detail: bool, scroll: u16) {
         if return_to_detail
             && self
                 .store
@@ -1012,7 +1016,7 @@ impl App {
                 .is_some()
         {
             self.detail_context = false;
-            self.overlay = Some(OverlayState::Detail { scroll: 0 });
+            self.overlay = Some(OverlayState::Detail { scroll });
         }
     }
 
