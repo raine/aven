@@ -39,6 +39,7 @@ use crate::tui::ui::{self, detail_help_scroll_cap, help_scroll_cap};
 
 const ADD_PROJECT_TITLE: &str = "Add project";
 const DELETE_PROJECT_TITLE: &str = "Delete project";
+const DELETE_TASK_TITLE: &str = "Delete task";
 const ADD_LABEL_TITLE: &str = "Add label";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -560,6 +561,15 @@ impl App {
             } => {
                 self.submit_delete_project().await?;
             }
+            OverlaySubmit::Confirm {
+                route: OverlayRoute::DeleteTaskConfirm,
+                ..
+            } => {
+                let return_to_detail = self.detail_context;
+                self.update_deleted(true).await?;
+                self.detail_context = false;
+                self.restore_detail_overlay(return_to_detail);
+            }
             OverlaySubmit::Text {
                 route: OverlayRoute::ConflictManual,
                 value,
@@ -633,7 +643,7 @@ impl App {
             Action::BeginEditProject => self.begin_edit_project(),
             Action::BeginEditPriority => self.begin_edit_priority(),
             Action::BeginEditLabels => self.begin_edit_labels(),
-            Action::Delete => self.update_deleted(true).await?,
+            Action::Delete => self.begin_delete_task(),
             Action::Restore => self.update_deleted(false).await?,
             Action::BeginStatusPicker => self.begin_status_picker(),
             Action::BeginDeleteProject => self.begin_delete_project(),
@@ -1125,6 +1135,21 @@ impl App {
                 None
             }
         }
+    }
+
+    fn begin_delete_task(&mut self) {
+        self.pending_shortcut.clear();
+        let Some(task) = self.store.selected_task(self.widgets.table.selected()) else {
+            self.set_message("no selected task to edit".to_string());
+            return;
+        };
+        self.detail_context =
+            self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. }));
+        self.overlay = Some(OverlayState::Confirm(ConfirmState {
+            route: OverlayRoute::DeleteTaskConfirm,
+            title: DELETE_TASK_TITLE.to_string(),
+            prompt: format!("Delete {} {}?", task.display_ref, task.task.title),
+        }));
     }
 
     fn begin_delete_project(&mut self) {

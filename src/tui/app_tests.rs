@@ -1096,6 +1096,92 @@ async fn no_selected_mutating_shortcuts_report_failure() {
 }
 
 #[tokio::test]
+async fn delete_task_opens_confirmation_with_task_context() {
+    let mut app = test_app().await;
+    let selected = create_and_select_task(&mut app, test_task_draft("Delete target")).await;
+    let display_ref = app.store.tasks[selected].display_ref.clone();
+
+    app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
+
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Confirm(ConfirmState {
+            route: OverlayRoute::DeleteTaskConfirm,
+            ref title,
+            ref prompt,
+        })) if title == DELETE_TASK_TITLE
+            && prompt.contains(&display_ref)
+            && prompt.contains("Delete target")
+    ));
+    assert!(!app.store.tasks[selected].task.deleted);
+}
+
+#[tokio::test]
+async fn cancel_delete_task_leaves_task_unchanged() {
+    let mut app = test_app().await;
+    let selected = create_and_select_task(&mut app, test_task_draft("Keep target")).await;
+
+    app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+    assert!(app.overlay.is_none());
+    assert!(!app.store.tasks[selected].task.deleted);
+    assert!(app.message.is_none());
+}
+
+#[tokio::test]
+async fn confirm_delete_task_soft_deletes_selected_task() {
+    let mut app = test_app().await;
+    let selected = create_and_select_task(&mut app, test_task_draft("Delete target")).await;
+    let display_ref = app.store.tasks[selected].display_ref.clone();
+
+    app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Char('y')))
+        .await
+        .unwrap();
+
+    let selected = app.widgets.table.selected().unwrap();
+    assert!(app.store.tasks[selected].task.deleted);
+    assert!(app.store.filters.include_deleted);
+    assert_eq!(
+        app.message.as_deref(),
+        Some(format!("deleted {display_ref} (showing deleted)").as_str())
+    );
+}
+
+#[tokio::test]
+async fn delete_task_from_detail_returns_to_detail() {
+    let mut app = test_app().await;
+    let selected = create_and_select_task(&mut app, test_task_draft("Detail delete target")).await;
+    app.overlay = Some(OverlayState::Detail { scroll: 7 });
+
+    app.dispatch_key(key(KeyCode::Char('D')), (80, 24).into())
+        .await
+        .unwrap();
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Confirm(ConfirmState {
+            route: OverlayRoute::DeleteTaskConfirm,
+            ..
+        }))
+    ));
+    assert!(app.view().detail_underlay);
+
+    app.handle_overlay_key(key(KeyCode::Char('y')))
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Detail { scroll: 0 })
+    ));
+    assert!(app.store.tasks[selected].task.deleted);
+}
+
+#[tokio::test]
 async fn esc_closes_every_overlay_variant() {
     let overlays = vec![
         OverlayState::Help { scroll: 0 },
@@ -2037,7 +2123,8 @@ fn overlay_submit_routes_are_all_handled() {
             } | OverlaySubmit::Confirm {
                 route: OverlayRoute::ConflictConfirm
                     | OverlayRoute::ConfigInit
-                    | OverlayRoute::DeleteProjectConfirm,
+                    | OverlayRoute::DeleteProjectConfirm
+                    | OverlayRoute::DeleteTaskConfirm,
                 ..
             }
         )
@@ -2064,6 +2151,7 @@ fn overlay_submit_routes_are_all_handled() {
         OverlayRoute::ViewProject,
         OverlayRoute::DeleteProjectPicker,
         OverlayRoute::DeleteProjectConfirm,
+        OverlayRoute::DeleteTaskConfirm,
         OverlayRoute::SwitchWorkspace,
         OverlayRoute::ConflictField,
         OverlayRoute::ConflictConfirm,

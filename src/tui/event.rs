@@ -394,7 +394,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     ),
     CommandSpec::implemented(
         "delete",
-        "delete selected task",
+        "confirm deleting selected task",
         "Tasks",
         &[KeySequence {
             codes: &[KeyCode::Char('m'), KeyCode::Char('D')],

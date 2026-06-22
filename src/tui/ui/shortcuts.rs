@@ -69,6 +69,11 @@ const DETAIL_HELP_TOPICS: &[HelpTopic] = &[
         section: "Task detail",
     },
     HelpTopic {
+        keys: "D",
+        description: "confirm deleting this task",
+        section: "Task detail",
+    },
+    HelpTopic {
         keys: "e t/d/p/l",
         description: "edit title, description, project, labels",
         section: "Edit",

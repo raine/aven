@@ -150,6 +150,7 @@ pub(crate) enum OverlayRoute {
     ViewProject,
     DeleteProjectPicker,
     DeleteProjectConfirm,
+    DeleteTaskConfirm,
     SwitchWorkspace,
     ConflictField,
     ConflictConfirm,
@@ -188,7 +189,10 @@ impl OverlayRoute {
             | Self::DeleteProjectPicker
             | Self::SwitchWorkspace
             | Self::ConflictField => &[Picker],
-            Self::DeleteProjectConfirm | Self::ConflictConfirm | Self::ConfigInit => &[Confirm],
+            Self::DeleteProjectConfirm
+            | Self::DeleteTaskConfirm
+            | Self::ConflictConfirm
+            | Self::ConfigInit => &[Confirm],
             Self::ConflictManual => &[Text, Multiline, Picker],
         }
     }

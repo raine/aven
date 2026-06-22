@@ -78,6 +78,7 @@ pub(crate) fn detail_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('s') => Some(Action::BeginStatusPicker),
         KeyCode::Char('p') => Some(Action::BeginEditPriority),
         KeyCode::Char('l') => Some(Action::BeginEditLabels),
+        KeyCode::Char('D') => Some(Action::Delete),
         KeyCode::Char('y') => Some(Action::CopyShortRef),
         KeyCode::Char('Y') => Some(Action::CopyDurableRef),
         KeyCode::Char('u') => Some(Action::Undo),
