@@ -483,13 +483,24 @@ fn project_picker_hint_line(mode: PickerMode, submit_label: &'static str) -> Lin
 }
 
 pub(super) fn render_confirm(frame: &mut Frame, state: &ConfirmView) {
-    let width = state.prompt.chars().count().saturating_add(4).max(32) as u16;
+    let width = confirm_width(frame.area().width, &state.prompt);
+    let prompt_rows = wrapped_ranges(&state.prompt, width.saturating_sub(4) as usize).len();
+    let height = prompt_rows.saturating_add(4) as u16;
     let text = Text::from(vec![
         Line::from(state.prompt.as_str()),
         Line::from(""),
         confirm_hint_line(),
     ]);
-    Dialog::new(&state.title, width, 5).render_text(frame, text);
+    Dialog::new(&state.title, width, height)
+        .wrap()
+        .render_text(frame, text);
+}
+
+fn confirm_width(frame_width: u16, prompt: &str) -> u16 {
+    let prompt_width = prompt.chars().count().saturating_add(4) as u16;
+    prompt_width
+        .clamp(32, 80)
+        .min(frame_width.saturating_sub(4).max(32))
 }
 
 fn confirm_hint_line() -> Line<'static> {
@@ -1068,5 +1079,28 @@ mod tests {
         assert!(rendered.contains("Delete"));
         assert!(rendered.contains("Delete task?"));
         assert!(rendered.contains("y yes"));
+    }
+
+    #[test]
+    fn confirm_overlay_wraps_long_prompt() {
+        let prompt =
+            "Delete WI-2ZB3 Option to track treadmill sessions as HealthKit workouts ".repeat(2);
+        let overlay = OverlayView::Confirm(ConfirmView {
+            title: "Delete task".to_string(),
+            prompt: prompt.clone(),
+        });
+        let buffer = overlay_buffer(overlay);
+
+        for row in 0..buffer.area.height {
+            assert!(!buffer_row(&buffer, row).contains(&prompt));
+        }
+        assert!(buffer_text_from_rows(&buffer).contains("y yes"));
+    }
+
+    fn buffer_text_from_rows(buffer: &ratatui::buffer::Buffer) -> String {
+        (0..buffer.area.height)
+            .map(|row| buffer_row(buffer, row))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
