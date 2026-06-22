@@ -8,16 +8,99 @@ use super::input::clipped_input_line;
 use super::task_display::{description_or_placeholder, labels_display};
 use super::truncate::truncate_chars;
 use crate::query::{TaskListItem, TaskSort};
-use crate::queue::{QueueBand, now_seconds, unix_seconds};
+use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::app::{Focus, WidgetState};
 use crate::tui::overlay::TextInputView;
-use crate::tui::store::{SidebarTarget, TuiStore};
+use crate::tui::store::TuiStore;
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, SELECTED, SELECTED_INACTIVE,
 };
 use crate::tui::widgets::{
     age_style, priority_icon, priority_short, status_chip, status_span, title_cell,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskRenderMode {
+    Default,
+    Queue,
+}
+
+impl TaskRenderMode {
+    fn uses_queue_age(self) -> bool {
+        matches!(self, Self::Queue)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct TaskGroupRow {
+    label: &'static str,
+    count: usize,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum TaskListRow {
+    Group(TaskGroupRow),
+    Task { task_index: usize },
+}
+
+struct TaskListView {
+    rows: Vec<TaskListRow>,
+    render_mode: TaskRenderMode,
+}
+
+impl TaskListView {
+    fn new(store: &TuiStore) -> Self {
+        Self::from_tasks(store.sort, &store.tasks)
+    }
+
+    fn from_tasks(sort: TaskSort, tasks: &[TaskListItem]) -> Self {
+        let render_mode = if sort == TaskSort::Queue {
+            TaskRenderMode::Queue
+        } else {
+            TaskRenderMode::Default
+        };
+        let rows = match render_mode {
+            TaskRenderMode::Queue => queue_rows(tasks),
+            TaskRenderMode::Default => task_rows(tasks),
+        };
+        Self { rows, render_mode }
+    }
+
+    fn visual_row(&self, selected_task: usize) -> usize {
+        self.rows
+            .iter()
+            .position(|row| {
+                matches!(row, TaskListRow::Task { task_index } if *task_index == selected_task)
+            })
+            .unwrap_or(0)
+    }
+}
+
+fn task_rows(tasks: &[TaskListItem]) -> Vec<TaskListRow> {
+    tasks
+        .iter()
+        .enumerate()
+        .map(|(task_index, _)| TaskListRow::Task { task_index })
+        .collect()
+}
+
+fn queue_rows(tasks: &[TaskListItem]) -> Vec<TaskListRow> {
+    let mut rows = Vec::new();
+    let mut index = 0;
+    while index < tasks.len() {
+        let band = tasks[index].queue.band;
+        let start = index;
+        while index < tasks.len() && tasks[index].queue.band == band {
+            index += 1;
+        }
+        rows.push(TaskListRow::Group(TaskGroupRow {
+            label: band.label(),
+            count: index - start,
+        }));
+        rows.extend((start..index).map(|task_index| TaskListRow::Task { task_index }));
+    }
+    rows
+}
 
 pub(super) fn render_tasks(
     frame: &mut Frame,
@@ -70,69 +153,43 @@ fn render_task_list(
     let row_areas = Layout::vertical(vec![Constraint::Length(1); area.height as usize]).split(area);
     render_task_header(frame, row_areas[0], columns);
 
+    let view = TaskListView::new(store);
     let viewport_rows = row_areas.len().saturating_sub(1);
     let selected_row = selected_task
-        .map(|selected| task_visual_row(store, selected))
+        .map(|selected| view.visual_row(selected))
         .unwrap_or(0);
     let scroll = selected_row.saturating_sub(viewport_rows.saturating_sub(1));
 
     let now_seconds = now_seconds();
-    let use_queue_groups = store.active_view == SidebarTarget::All && store.sort == TaskSort::Queue;
     let mut row = 1usize;
-    let mut visual_row = 0usize;
-    let mut last_status: Option<&str> = None;
-    let mut last_queue_band: Option<QueueBand> = None;
-    for (task_index, item) in store.tasks.iter().enumerate() {
-        let is_new_queue_group = use_queue_groups && last_queue_band != Some(item.queue.band);
-        let is_new_status_group =
-            !use_queue_groups && last_status != Some(item.task.status.as_str());
-        if is_new_queue_group || is_new_status_group {
-            last_status = Some(&item.task.status);
-            last_queue_band = Some(item.queue.band);
-            if visual_row >= scroll && row < row_areas.len() {
-                let count = if use_queue_groups {
-                    store
-                        .tasks
-                        .iter()
-                        .filter(|task| task.queue.band == item.queue.band)
-                        .count()
-                } else {
-                    store
-                        .tasks
-                        .iter()
-                        .filter(|task| task.task.status == item.task.status)
-                        .count()
-                };
-                let label = if use_queue_groups {
-                    item.queue.band.label()
-                } else {
-                    &item.task.status
-                };
-                render_group_row(frame, label, count, row_areas[row]);
-                row += 1;
-            }
-            visual_row += 1;
-        }
-        if visual_row >= scroll && row < row_areas.len() {
-            let selected = selected_task == Some(task_index);
-            render_task_row(
-                frame,
-                item,
-                row_style(selected, focus == Focus::Tasks),
-                row_areas[row],
-                TaskRowContext {
-                    columns,
-                    now_seconds,
-                    use_queue_groups,
-                    inline_title_editor: inline_title_editor.filter(|_| selected),
-                },
-            );
-            row += 1;
-        }
-        visual_row += 1;
+    for visual_row in scroll..view.rows.len() {
         if row >= row_areas.len() {
             break;
         }
+        match &view.rows[visual_row] {
+            TaskListRow::Group(group) => {
+                render_group_row(frame, group.label, group.count, row_areas[row]);
+            }
+            TaskListRow::Task { task_index } => {
+                let Some(item) = store.tasks.get(*task_index) else {
+                    continue;
+                };
+                let selected = selected_task == Some(*task_index);
+                render_task_row(
+                    frame,
+                    item,
+                    row_style(selected, focus == Focus::Tasks),
+                    row_areas[row],
+                    TaskRowContext {
+                        columns,
+                        now_seconds,
+                        render_mode: view.render_mode,
+                        inline_title_editor: inline_title_editor.filter(|_| selected),
+                    },
+                );
+            }
+        }
+        row += 1;
     }
 }
 
@@ -148,28 +205,6 @@ fn project_column_width(store: &TuiStore, narrow: bool) -> u16 {
         .min(max_width)
 }
 
-fn task_visual_row(store: &TuiStore, selected_task: usize) -> usize {
-    let mut row = 0;
-    let use_queue_groups = store.active_view == SidebarTarget::All && store.sort == TaskSort::Queue;
-    let mut last_status: Option<&str> = None;
-    let mut last_queue_band: Option<QueueBand> = None;
-    for (task_index, item) in store.tasks.iter().enumerate() {
-        let is_new_queue_group = use_queue_groups && last_queue_band != Some(item.queue.band);
-        let is_new_status_group =
-            !use_queue_groups && last_status != Some(item.task.status.as_str());
-        if is_new_queue_group || is_new_status_group {
-            last_status = Some(&item.task.status);
-            last_queue_band = Some(item.queue.band);
-            row += 1;
-        }
-        if task_index == selected_task {
-            return row;
-        }
-        row += 1;
-    }
-    0
-}
-
 fn render_task_header(frame: &mut Frame, area: Rect, columns: [Constraint; 6]) {
     let cells = Layout::horizontal(columns).areas::<6>(area);
     let style = Style::new().fg(BG).bg(BORDER).add_modifier(Modifier::BOLD);
@@ -182,12 +217,12 @@ fn render_task_header(frame: &mut Frame, area: Rect, columns: [Constraint; 6]) {
     }
 }
 
-fn render_group_row(frame: &mut Frame, status: &str, count: usize, area: Rect) {
+fn render_group_row(frame: &mut Frame, label: &str, count: usize, area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(" ▸ ", Style::new().fg(ACCENT).bg(BG_ALT)),
             Span::styled(
-                format!("{} ({count})", status.to_uppercase()),
+                format!("{} ({count})", label.to_uppercase()),
                 Style::new()
                     .fg(ACCENT)
                     .bg(BG_ALT)
@@ -210,7 +245,7 @@ fn row_style(selected: bool, focused: bool) -> Style {
 struct TaskRowContext<'a> {
     columns: [Constraint; 6],
     now_seconds: i64,
-    use_queue_groups: bool,
+    render_mode: TaskRenderMode,
     inline_title_editor: Option<&'a TextInputView>,
 }
 
@@ -223,12 +258,12 @@ fn render_task_row(
 ) {
     frame.render_widget(Block::new().style(style), area);
     let cells = Layout::horizontal(context.columns).areas::<6>(area);
-    let age_seconds = if context.use_queue_groups {
+    let age_seconds = if context.render_mode.uses_queue_age() {
         item.queue.idle_seconds()
     } else {
         task_seconds_since(&item.task.created_at, context.now_seconds)
     };
-    let age_style_input = if context.use_queue_groups {
+    let age_style_input = if context.render_mode.uses_queue_age() {
         &item.task.queue_activity_at
     } else {
         &item.task.created_at
@@ -371,6 +406,7 @@ fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::queue::QueueBand;
     use crate::tui::overlay::OverlayRoute;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -403,6 +439,14 @@ mod tests {
         item: &TaskListItem,
         inline_title_editor: Option<&TextInputView>,
     ) -> ratatui::buffer::Buffer {
+        render_task_row_buffer_with_mode(item, TaskRenderMode::Default, inline_title_editor)
+    }
+
+    fn render_task_row_buffer_with_mode(
+        item: &TaskListItem,
+        render_mode: TaskRenderMode,
+        inline_title_editor: Option<&TextInputView>,
+    ) -> ratatui::buffer::Buffer {
         let backend = TestBackend::new(80, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         let columns = [
@@ -423,7 +467,7 @@ mod tests {
                     TaskRowContext {
                         columns,
                         now_seconds: 0,
-                        use_queue_groups: false,
+                        render_mode,
                         inline_title_editor,
                     },
                 );
@@ -434,6 +478,106 @@ mod tests {
 
     fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
         buffer.content.iter().map(|cell| cell.symbol()).collect()
+    }
+
+    fn task_item_with(title: &str, status: &str, band: QueueBand) -> TaskListItem {
+        let mut item = task_item(title);
+        item.task.title = title.to_string();
+        item.task.status = status.to_string();
+        item.queue.band = band;
+        item
+    }
+
+    #[test]
+    fn project_filtered_queue_view_groups_by_queue_band() {
+        let tasks = vec![
+            task_item_with("todo high", "todo", QueueBand::Focus),
+            task_item_with("inbox", "inbox", QueueBand::Triage),
+            task_item_with("todo medium", "todo", QueueBand::Triage),
+            task_item_with("backlog", "backlog", QueueBand::Later),
+        ];
+
+        let view = TaskListView::from_tasks(TaskSort::Queue, &tasks);
+
+        assert_eq!(view.render_mode, TaskRenderMode::Queue);
+        assert_eq!(
+            view.rows,
+            vec![
+                TaskListRow::Group(TaskGroupRow {
+                    label: "focus",
+                    count: 1,
+                }),
+                TaskListRow::Task { task_index: 0 },
+                TaskListRow::Group(TaskGroupRow {
+                    label: "triage",
+                    count: 2,
+                }),
+                TaskListRow::Task { task_index: 1 },
+                TaskListRow::Task { task_index: 2 },
+                TaskListRow::Group(TaskGroupRow {
+                    label: "later",
+                    count: 1,
+                }),
+                TaskListRow::Task { task_index: 3 },
+            ]
+        );
+    }
+
+    #[test]
+    fn non_queue_sort_does_not_emit_duplicate_status_groups() {
+        let tasks = vec![
+            task_item_with("todo 1", "todo", QueueBand::Focus),
+            task_item_with("inbox", "inbox", QueueBand::Triage),
+            task_item_with("todo 2", "todo", QueueBand::Later),
+        ];
+
+        let view = TaskListView::from_tasks(TaskSort::Priority, &tasks);
+
+        assert_eq!(view.render_mode, TaskRenderMode::Default);
+        assert_eq!(
+            view.rows,
+            vec![
+                TaskListRow::Task { task_index: 0 },
+                TaskListRow::Task { task_index: 1 },
+                TaskListRow::Task { task_index: 2 },
+            ]
+        );
+    }
+
+    #[test]
+    fn visual_row_uses_planned_rows() {
+        let tasks = vec![
+            task_item_with("todo high", "todo", QueueBand::Focus),
+            task_item_with("inbox", "inbox", QueueBand::Triage),
+            task_item_with("todo medium", "todo", QueueBand::Triage),
+        ];
+        let view = TaskListView::from_tasks(TaskSort::Queue, &tasks);
+
+        assert_eq!(view.visual_row(0), 1);
+        assert_eq!(view.visual_row(1), 3);
+        assert_eq!(view.visual_row(2), 4);
+    }
+
+    #[test]
+    fn queue_render_mode_displays_queue_idle_age() {
+        let mut item = task_item("queued");
+        item.task.created_at = "2026-06-20T00:00:00Z".to_string();
+        item.task.queue_activity_at = "1970-01-01T00:00:00Z".to_string();
+        item.queue.idle_days = Some(9);
+
+        let buffer = render_task_row_buffer_with_mode(&item, TaskRenderMode::Queue, None);
+        let rendered = buffer_text(&buffer);
+
+        assert!(rendered.contains("9d"));
+        assert!(!rendered.contains("0h"));
+    }
+
+    #[test]
+    fn empty_task_view_has_no_rows() {
+        let view = TaskListView::from_tasks(TaskSort::Queue, &[]);
+
+        assert!(view.rows.is_empty());
+        assert_eq!(view.visual_row(0), 0);
     }
 
     #[test]
