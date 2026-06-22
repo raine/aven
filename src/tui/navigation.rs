@@ -22,7 +22,7 @@ pub(crate) fn handle_detail_overlay_key(
         .unwrap_or(0);
     scroll = scroll.min(scroll_cap);
     match key.code {
-        KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
+        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => OverlayOutcome::Cancelled,
         KeyCode::Char('j') | KeyCode::Down => {
             scroll = scroll.saturating_add(1).min(scroll_cap);
             OverlayOutcome::None(OverlayState::Detail { scroll })
