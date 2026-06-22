@@ -744,18 +744,40 @@ fn edit_multiline_input(state: &mut MultilineInputState, key: KeyEvent) {
             state.row = row - 1;
             state.column = char_boundary_at_or_before(&state.lines[state.row], state.column);
         }
+        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) && row > 0 => {
+            state.row = row - 1;
+            state.column = char_boundary_at_or_before(&state.lines[state.row], state.column);
+        }
         KeyCode::Down if row + 1 < state.lines.len() => {
+            state.row = row + 1;
+            state.column = char_boundary_at_or_before(&state.lines[state.row], state.column);
+        }
+        KeyCode::Char('n')
+            if key.modifiers.contains(KeyModifiers::CONTROL) && row + 1 < state.lines.len() =>
+        {
             state.row = row + 1;
             state.column = char_boundary_at_or_before(&state.lines[state.row], state.column);
         }
         KeyCode::Left if column > 0 => {
             state.column = previous_char_boundary(&state.lines[row], column);
         }
+        KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) && column > 0 => {
+            state.column = previous_char_boundary(&state.lines[row], column);
+        }
         KeyCode::Right if column < state.lines[row].len() => {
             state.column = next_char_boundary(&state.lines[row], column);
         }
+        KeyCode::Char('f')
+            if key.modifiers.contains(KeyModifiers::CONTROL) && column < state.lines[row].len() =>
+        {
+            state.column = next_char_boundary(&state.lines[row], column);
+        }
         KeyCode::Home => state.column = 0,
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => state.column = 0,
         KeyCode::End => state.column = state.lines[row].len(),
+        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.column = state.lines[row].len()
+        }
         KeyCode::Enter => {
             let rest = state.lines[row].split_off(column);
             state.lines.insert(row + 1, rest);
@@ -767,13 +789,49 @@ fn edit_multiline_input(state: &mut MultilineInputState, key: KeyEvent) {
             state.lines[row].drain(previous..column);
             state.column = previous;
         }
+        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) && column > 0 => {
+            let previous = previous_char_boundary(&state.lines[row], column);
+            state.lines[row].drain(previous..column);
+            state.column = previous;
+        }
         KeyCode::Backspace if row > 0 => {
             let line = state.lines.remove(row);
             state.row = row - 1;
             state.column = state.lines[state.row].len();
             state.lines[state.row].push_str(&line);
         }
+        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.lines[row].truncate(column);
+        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.lines[row].drain(..column);
+            state.column = 0;
+        }
+        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let previous = previous_word_start(&state.lines[row], column);
+            state.lines[row].drain(previous..column);
+            if previous > 0 && next_char_is_whitespace(&state.lines[row], previous) {
+                let before = previous_char_boundary(&state.lines[row], previous);
+                if state.lines[row][before..previous]
+                    .chars()
+                    .all(char::is_whitespace)
+                {
+                    state.lines[row].drain(before..previous);
+                    state.column = before;
+                } else {
+                    state.column = previous;
+                }
+            } else {
+                state.column = previous;
+            }
+        }
         KeyCode::Delete if column < state.lines[row].len() => {
+            let next = next_char_boundary(&state.lines[row], column);
+            state.lines[row].drain(column..next);
+        }
+        KeyCode::Char('d')
+            if key.modifiers.contains(KeyModifiers::CONTROL) && column < state.lines[row].len() =>
+        {
             let next = next_char_boundary(&state.lines[row], column);
             state.lines[row].drain(column..next);
         }
@@ -1079,6 +1137,53 @@ mod tests {
         state.column = 0;
         edit_multiline_input(&mut state, key(KeyCode::Backspace));
         assert_eq!(state.lines, vec!["ab".to_string()]);
+    }
+
+    #[test]
+    fn multiline_input_supports_emacs_navigation() {
+        let mut state = MultilineInputState {
+            route: OverlayRoute::MessageOnly,
+            title: "Title".to_string(),
+            prompt: "Prompt".to_string(),
+            lines: vec!["abc".to_string(), "déf".to_string()],
+            row: 0,
+            column: 1,
+        };
+        edit_multiline_input(&mut state, ctrl(KeyCode::Char('e')));
+        assert_eq!(state.column, 3);
+        edit_multiline_input(&mut state, ctrl(KeyCode::Char('b')));
+        assert_eq!(state.column, 2);
+        edit_multiline_input(&mut state, ctrl(KeyCode::Char('f')));
+        assert_eq!(state.column, 3);
+        edit_multiline_input(&mut state, ctrl(KeyCode::Char('n')));
+        assert_eq!(state.row, 1);
+        assert_eq!(state.column, 3);
+        edit_multiline_input(&mut state, ctrl(KeyCode::Char('a')));
+        assert_eq!(state.column, 0);
+        edit_multiline_input(&mut state, ctrl(KeyCode::Char('p')));
+        assert_eq!(state.row, 0);
+        assert_eq!(state.column, 0);
+    }
+
+    #[test]
+    fn multiline_input_supports_emacs_deletion() {
+        let mut state = MultilineInputState {
+            route: OverlayRoute::MessageOnly,
+            title: "Title".to_string(),
+            prompt: "Prompt".to_string(),
+            lines: vec!["one two three".to_string()],
+            row: 0,
+            column: 7,
+        };
+        edit_multiline_input(&mut state, ctrl(KeyCode::Char('w')));
+        assert_eq!(state.lines, vec!["one three".to_string()]);
+        assert_eq!(state.column, 3);
+        edit_multiline_input(&mut state, ctrl(KeyCode::Char('k')));
+        assert_eq!(state.lines, vec!["one".to_string()]);
+        assert_eq!(state.column, 3);
+        edit_multiline_input(&mut state, ctrl(KeyCode::Char('u')));
+        assert_eq!(state.lines, vec![String::new()]);
+        assert_eq!(state.column, 0);
     }
 
     #[test]
