@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Padding, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Padding, Paragraph, TableState, Wrap};
 
 use super::input::clipped_input_line;
 use super::task_display::{description_or_placeholder, labels_display};
@@ -118,7 +118,7 @@ pub(super) fn render_tasks(
     render_task_list(
         frame,
         store,
-        widgets.table.selected(),
+        &mut widgets.table,
         focus,
         table_area,
         inline_title_editor,
@@ -131,7 +131,7 @@ pub(super) fn render_tasks(
 fn render_task_list(
     frame: &mut Frame,
     store: &TuiStore,
-    selected_task: Option<usize>,
+    table_state: &mut TableState,
     focus: Focus,
     area: Rect,
     inline_title_editor: Option<&TextInputView>,
@@ -155,10 +155,17 @@ fn render_task_list(
 
     let view = TaskListView::new(store);
     let viewport_rows = row_areas.len().saturating_sub(1);
+    let selected_task = table_state.selected();
     let selected_row = selected_task
         .map(|selected| view.visual_row(selected))
         .unwrap_or(0);
-    let scroll = selected_row.saturating_sub(viewport_rows.saturating_sub(1));
+    let scroll = task_list_scroll(
+        table_state.offset(),
+        selected_row,
+        view.rows.len(),
+        viewport_rows,
+    );
+    *table_state.offset_mut() = scroll;
 
     let now_seconds = now_seconds();
     let mut row = 1usize;
@@ -190,6 +197,26 @@ fn render_task_list(
             }
         }
         row += 1;
+    }
+}
+
+fn task_list_scroll(
+    current_scroll: usize,
+    selected_row: usize,
+    row_count: usize,
+    viewport_rows: usize,
+) -> usize {
+    if viewport_rows == 0 || row_count <= viewport_rows {
+        return 0;
+    }
+    let max_scroll = row_count - viewport_rows;
+    let scroll = current_scroll.min(max_scroll);
+    if selected_row < scroll {
+        selected_row
+    } else if selected_row >= scroll + viewport_rows {
+        selected_row.saturating_sub(viewport_rows.saturating_sub(1))
+    } else {
+        scroll
     }
 }
 
@@ -556,6 +583,30 @@ mod tests {
         assert_eq!(view.visual_row(0), 1);
         assert_eq!(view.visual_row(1), 3);
         assert_eq!(view.visual_row(2), 4);
+    }
+
+    #[test]
+    fn upward_selection_from_bottom_keeps_scroll_at_bottom_until_top_edge() {
+        assert_eq!(task_list_scroll(6, 9, 10, 4), 6);
+        assert_eq!(task_list_scroll(6, 8, 10, 4), 6);
+        assert_eq!(task_list_scroll(6, 7, 10, 4), 6);
+        assert_eq!(task_list_scroll(6, 6, 10, 4), 6);
+        assert_eq!(task_list_scroll(6, 5, 10, 4), 5);
+    }
+
+    #[test]
+    fn downward_selection_scrolls_after_bottom_edge() {
+        assert_eq!(task_list_scroll(0, 0, 10, 4), 0);
+        assert_eq!(task_list_scroll(0, 1, 10, 4), 0);
+        assert_eq!(task_list_scroll(0, 2, 10, 4), 0);
+        assert_eq!(task_list_scroll(0, 3, 10, 4), 0);
+        assert_eq!(task_list_scroll(0, 4, 10, 4), 1);
+    }
+
+    #[test]
+    fn task_list_scroll_clamps_to_valid_rows() {
+        assert_eq!(task_list_scroll(6, 2, 3, 4), 0);
+        assert_eq!(task_list_scroll(8, 9, 10, 4), 6);
     }
 
     #[test]
