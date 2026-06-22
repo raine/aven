@@ -1596,13 +1596,14 @@ async fn workspace_picker_selects_first_inactive_workspace() {
     store.refresh(None).await.unwrap();
 
     let items = store.workspace_picker_items();
+    assert_eq!(items[0].label, "default");
     assert_eq!(items[0].value, "default");
     assert!(!items[0].selected);
     assert!(
         items
             .iter()
             .find(|item| item.value == "client-work")
-            .is_some_and(|item| item.selected)
+            .is_some_and(|item| item.label == "Client Work (client-work)" && item.selected)
     );
 
     reset_default_workspace(&pool).await;

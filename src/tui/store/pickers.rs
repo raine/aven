@@ -111,8 +111,13 @@ pub(crate) fn deleted_picker_items(selected: &str) -> Vec<PickerItem> {
 }
 
 fn workspace_picker_item(workspace: &Workspace, selected_key: Option<&str>) -> PickerItem {
+    let label = if workspace.name == workspace.key {
+        workspace.name.clone()
+    } else {
+        format!("{} ({})", workspace.name, workspace.key)
+    };
     PickerItem {
-        label: format!("{} ({})", workspace.name, workspace.key),
+        label,
         value: workspace.key.clone(),
         selected: selected_key.is_some_and(|key| workspace.key == key),
     }
