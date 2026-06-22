@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+use crate::config::TaskIntakeConfig;
 use crate::operations::{
     TaskDraft, add_note as add_note_operation, create_task as create_task_operation,
 };
@@ -9,6 +10,16 @@ use crate::undo::{UndoCommand, task_snapshot};
 use super::TuiStore;
 
 impl TuiStore {
+    pub(crate) async fn parse_task_intake(
+        &mut self,
+        config: &TaskIntakeConfig,
+        input: &str,
+    ) -> Result<TaskDraft> {
+        self.activate_workspace();
+        let mut conn = self.pool.acquire().await?;
+        crate::task_intake::parse_task_intake(&mut conn, config, input).await
+    }
+
     pub(crate) async fn create_task(
         &mut self,
         draft: TaskDraft,

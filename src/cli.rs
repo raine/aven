@@ -56,6 +56,8 @@ pub(crate) struct TuiArgs {
     pub(crate) project: Option<String>,
     #[arg(long)]
     pub(crate) add_task: bool,
+    #[arg(long)]
+    pub(crate) natural: bool,
 }
 
 #[derive(Args)]
@@ -79,6 +81,8 @@ pub(crate) struct TmuxAddTaskPopupArgs {
     pub(crate) height: String,
     #[arg(long)]
     pub(crate) print_binding: bool,
+    #[arg(long)]
+    pub(crate) natural: bool,
 }
 
 #[derive(Args)]

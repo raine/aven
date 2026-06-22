@@ -41,6 +41,7 @@ pub(crate) enum OverlayRoute {
     MessageOnly,
     AddTaskTitle,
     AddTaskDescription,
+    AddTaskNatural,
     AddTaskTitleProject,
     AddTaskTitlePriority,
     AddNote,
@@ -83,7 +84,7 @@ impl OverlayRoute {
         match self {
             Self::MessageOnly => &[],
             Self::AddTaskTitle => &[Text],
-            Self::AddTaskDescription => &[Multiline],
+            Self::AddTaskDescription | Self::AddTaskNatural => &[Multiline],
             Self::AddTaskTitleProject | Self::AddTaskTitlePriority => &[Picker],
             Self::AddNote => &[Multiline],
             Self::AddProject | Self::AddLabel | Self::EditTitle => &[Text],

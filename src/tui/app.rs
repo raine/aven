@@ -10,6 +10,7 @@ use ratatui::layout::Size;
 use ratatui::widgets::{ListState, TableState};
 use sqlx::SqlitePool;
 
+use crate::config::AppConfig;
 use crate::operations::TaskDraft;
 use crate::query::TaskSort;
 use crate::tui::authoring::{
@@ -40,6 +41,7 @@ const ADD_PROJECT_TITLE: &str = "Add project";
 const DELETE_PROJECT_TITLE: &str = "Delete project";
 const DELETE_TASK_TITLE: &str = "Delete task";
 const ADD_LABEL_TITLE: &str = "Add label";
+const ADD_TASK_NATURAL_TITLE: &str = "Add task: natural language";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TaskRefKind {
@@ -74,6 +76,7 @@ pub(crate) struct App {
     needs_terminal_clear: bool,
     add_task_only: bool,
     add_task_only_message: Option<String>,
+    add_task_config: AppConfig,
 }
 
 impl App {
@@ -112,12 +115,17 @@ impl App {
             needs_terminal_clear: false,
             add_task_only: false,
             add_task_only_message: None,
+            add_task_config: AppConfig::default(),
         };
         app.widgets.sidebar.select(app.store.sidebar_selection());
         app.widgets
             .table
             .select(Some(0).filter(|_| !app.store.tasks.is_empty()));
         Ok(app)
+    }
+
+    pub(crate) fn set_config(&mut self, config: AppConfig) {
+        self.add_task_config = config;
     }
 
     pub(crate) async fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
@@ -130,9 +138,15 @@ impl App {
     pub(crate) async fn run_add_task_only(
         mut self,
         terminal: &mut DefaultTerminal,
+        natural: bool,
+        config: AppConfig,
     ) -> Result<Option<String>> {
         self.add_task_only = true;
+        self.add_task_config = config;
         self.begin_add_task().await?;
+        if natural {
+            self.begin_add_task_natural();
+        }
         execute!(std::io::stdout(), EnableBracketedPaste)?;
         let result = self.run_loop(terminal).await;
         execute!(std::io::stdout(), DisableBracketedPaste)?;
@@ -387,6 +401,12 @@ impl App {
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
                 if self.capture_add_task_state(state) {
                     self.begin_add_task_title_priority();
+                }
+                return Ok(());
+            }
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('n') {
+                if self.capture_add_task_state(state) {
+                    self.begin_add_task_natural();
                 }
                 return Ok(());
             }
@@ -861,6 +881,45 @@ impl App {
             items,
             false,
         );
+    }
+
+    fn begin_add_task_natural(&mut self) {
+        self.begin_add_task_natural_with_value(String::new());
+    }
+
+    fn begin_add_task_natural_with_value(&mut self, value: String) {
+        self.overlay = Some(OverlayState::multiline_input(
+            OverlayRoute::AddTaskNatural,
+            ADD_TASK_NATURAL_TITLE,
+            "",
+            value,
+        ));
+    }
+
+    pub(super) async fn submit_add_task_natural(&mut self, value: String) -> Result<()> {
+        let raw = value.trim();
+        if raw.is_empty() {
+            self.set_warning("task description is required");
+            self.begin_add_task_natural_with_value(value);
+            return Ok(());
+        }
+        match self
+            .store
+            .parse_task_intake(&self.add_task_config.agent.task_intake, raw)
+            .await
+        {
+            Ok(draft) => {
+                if self.authoring.apply_add_task_draft(draft) {
+                    self.set_success("parsed task draft, review and save");
+                    self.begin_add_task_step();
+                }
+            }
+            Err(error) => {
+                self.set_error(format!("task intake failed: {error:#}"));
+                self.begin_add_task_natural_with_value(value);
+            }
+        }
+        Ok(())
     }
 
     async fn submit_created_task(&mut self, draft: TaskDraft) -> Result<()> {

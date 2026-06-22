@@ -16,6 +16,7 @@ enum TextSubmitRoute {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MultilineSubmitRoute {
     AddTaskDescription,
+    AddTaskNatural,
     AddNote,
     EditDescription,
     ConflictManual,
@@ -62,6 +63,7 @@ fn text_submit_route(route: OverlayRoute) -> Option<TextSubmitRoute> {
 fn multiline_submit_route(route: OverlayRoute) -> Option<MultilineSubmitRoute> {
     match route {
         OverlayRoute::AddTaskDescription => Some(MultilineSubmitRoute::AddTaskDescription),
+        OverlayRoute::AddTaskNatural => Some(MultilineSubmitRoute::AddTaskNatural),
         OverlayRoute::AddNote => Some(MultilineSubmitRoute::AddNote),
         OverlayRoute::EditDescription => Some(MultilineSubmitRoute::EditDescription),
         OverlayRoute::ConflictManual => Some(MultilineSubmitRoute::ConflictManual),
@@ -215,6 +217,9 @@ impl App {
                 ) {
                     self.begin_add_task_step();
                 }
+            }
+            Some(MultilineSubmitRoute::AddTaskNatural) => {
+                self.submit_add_task_natural(value).await?;
             }
             Some(MultilineSubmitRoute::AddNote) => {
                 self.submit_add_note(value).await?;

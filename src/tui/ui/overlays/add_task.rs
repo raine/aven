@@ -209,6 +209,7 @@ pub(in crate::tui::ui) fn add_task_hint_line(focus: AddTaskStep) -> Line<'static
             ("Tab", "description"),
             ("Ctrl+P", "project"),
             ("Ctrl+R", "priority"),
+            ("Ctrl+N", "natural"),
             ("Esc", "cancel"),
         ]),
         AddTaskStep::Description => dialog_hint_line(&[

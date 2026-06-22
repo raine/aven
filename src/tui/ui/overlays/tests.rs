@@ -259,7 +259,7 @@ fn hint_lines_style_keys() {
     let add_task_keys = styled_key_contents(add_task_hint_line(AddTaskStep::Title));
     assert_eq!(
         add_task_keys,
-        vec!["Enter", "Tab", "Ctrl+P", "Ctrl+R", "Esc"]
+        vec!["Enter", "Tab", "Ctrl+P", "Ctrl+R", "Ctrl+N", "Esc"]
     );
 
     let multiline_keys = styled_key_contents(multiline_hint_line());
@@ -277,6 +277,9 @@ fn hint_lines_style_keys() {
         add_task_description_editor_keys,
         vec!["Ctrl+S", "Enter", "Ctrl+P", "Ctrl+R", "Esc"]
     );
+
+    let add_task_natural_keys = styled_key_contents(add_task_natural_hint_line());
+    assert_eq!(add_task_natural_keys, vec!["Ctrl+S", "Enter", "Esc"]);
 
     let confirm_keys = styled_key_contents(confirm_hint_line());
     assert_eq!(confirm_keys, vec!["y", "n", "Esc"]);
@@ -547,6 +550,40 @@ fn add_task_description_blank_later_line_omits_placeholder() {
     let line = add_task_description_input_line("", Some(0), false);
     assert_eq!(line.to_string(), " ");
     assert!(!line.to_string().contains("Optional details"));
+}
+
+#[test]
+fn add_task_natural_overlay_uses_route_and_add_task_free_text_style() {
+    let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+        route: OverlayRoute::AddTaskNatural,
+        title: "Anything".to_string(),
+        prompt: "wrong prompt".to_string(),
+        lines: vec![String::new()],
+        row: 0,
+        column: 0,
+    }));
+    assert!(rendered.contains("Anything"));
+    assert!(rendered.contains("Describe the task in natural language..."));
+    assert!(rendered.contains("Ctrl+S parse"));
+    assert!(rendered.contains("Enter newline"));
+    assert!(!rendered.contains("wrong prompt"));
+}
+
+#[test]
+fn generic_multiline_does_not_use_natural_style_by_title() {
+    let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+        route: OverlayRoute::MessageOnly,
+        title: "Add task: natural language".to_string(),
+        prompt: "body:".to_string(),
+        lines: vec![String::new()],
+        row: 0,
+        column: 0,
+    }));
+    assert!(rendered.contains("Add task: natural language"));
+    assert!(rendered.contains("body:"));
+    assert!(rendered.contains("Ctrl+S submit"));
+    assert!(!rendered.contains("Ctrl+S parse"));
+    assert!(!rendered.contains("Describe the task in natural language..."));
 }
 
 #[test]

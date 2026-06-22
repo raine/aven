@@ -24,6 +24,10 @@ pub(in crate::tui::ui) fn render_multiline_input(frame: &mut Frame, state: &Mult
             render_add_task_description_input(frame, state);
             return;
         }
+        crate::tui::overlay::OverlayRoute::AddTaskNatural => {
+            render_add_task_natural_input(frame, state);
+            return;
+        }
         _ => {}
     }
 
@@ -87,6 +91,29 @@ fn render_description_input(frame: &mut Frame, state: &MultilineInputView) {
 }
 
 fn render_add_task_description_input(frame: &mut Frame, state: &MultilineInputView) {
+    render_add_task_free_text_input(
+        frame,
+        state,
+        "Optional details, links, or handoff context...",
+        add_task_description_hint_line(),
+    );
+}
+
+fn render_add_task_natural_input(frame: &mut Frame, state: &MultilineInputView) {
+    render_add_task_free_text_input(
+        frame,
+        state,
+        "Describe the task in natural language...",
+        add_task_natural_hint_line(),
+    );
+}
+
+fn render_add_task_free_text_input(
+    frame: &mut Frame,
+    state: &MultilineInputView,
+    placeholder: &'static str,
+    hint_line: Line<'static>,
+) {
     let visible_rows = 8usize;
     let content_rows = state.lines.len().min(visible_rows).max(1);
     let height = (content_rows as u16).saturating_add(4).min(13);
@@ -99,7 +126,7 @@ fn render_add_task_description_input(frame: &mut Frame, state: &MultilineInputVi
         .skip(start)
         .take(visible_rows)
     {
-        lines.push(add_task_description_input_line(
+        lines.push(add_task_free_text_input_line(
             line,
             if row_index == state.row {
                 Some(state.column)
@@ -107,10 +134,11 @@ fn render_add_task_description_input(frame: &mut Frame, state: &MultilineInputVi
                 None
             },
             line.is_empty() && state.lines.len() == 1,
+            placeholder,
         ));
     }
     lines.push(Line::from(""));
-    lines.push(add_task_description_hint_line());
+    lines.push(hint_line);
     Dialog::new(&state.title, 70, height)
         .wrap()
         .render_text(frame, Text::from(lines));
@@ -189,8 +217,21 @@ pub(in crate::tui::ui) fn add_task_description_input_line(
     cursor: Option<usize>,
     show_placeholder: bool,
 ) -> Line<'static> {
+    add_task_free_text_input_line(
+        line,
+        cursor,
+        show_placeholder,
+        "Optional details, links, or handoff context...",
+    )
+}
+
+fn add_task_free_text_input_line(
+    line: &str,
+    cursor: Option<usize>,
+    show_placeholder: bool,
+    placeholder: &'static str,
+) -> Line<'static> {
     if show_placeholder {
-        let placeholder = "Optional details, links, or handoff context...";
         if cursor.is_some() {
             return Line::from(vec![
                 super::super::input::cursor_cell(&placeholder[..1]),
@@ -211,6 +252,14 @@ pub(in crate::tui::ui) fn add_task_description_hint_line() -> Line<'static> {
         ("Enter", "newline"),
         ("Ctrl+P", "project"),
         ("Ctrl+R", "priority"),
+        ("Esc", "cancel"),
+    ])
+}
+
+pub(in crate::tui::ui) fn add_task_natural_hint_line() -> Line<'static> {
+    dialog_hint_line(&[
+        ("Ctrl+S", "parse"),
+        ("Enter", "newline"),
         ("Esc", "cancel"),
     ])
 }

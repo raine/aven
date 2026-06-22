@@ -27,7 +27,8 @@ pub(super) use confirm::confirm_hint_line;
 #[cfg(test)]
 pub(super) use multiline::{
     add_note_input_line, add_task_description_hint_line, add_task_description_input_line,
-    description_editor_lines, description_input_line, multiline_hint_line,
+    add_task_natural_hint_line, description_editor_lines, description_input_line,
+    multiline_hint_line,
 };
 
 #[cfg(test)]

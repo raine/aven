@@ -92,6 +92,9 @@ pub(crate) fn cmd_tmux_add_task_popup(args: TmuxAddTaskPopupArgs) -> Result<()> 
         "tui".to_string(),
         "--add-task".to_string(),
     ];
+    if args.natural {
+        aven_args.push("--natural".to_string());
+    }
     if let Some(project) = args.project {
         aven_args.push("--project".to_string());
         if !project.is_empty() {

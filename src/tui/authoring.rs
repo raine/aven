@@ -171,6 +171,18 @@ impl AuthoringState {
         true
     }
 
+    pub(crate) fn apply_add_task_draft(&mut self, task: TaskDraft) -> bool {
+        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
+            return false;
+        };
+        draft.title = task.title;
+        draft.description = task.description;
+        draft.project = task.project;
+        draft.priority = task.priority;
+        draft.step = AddTaskStep::Title;
+        true
+    }
+
     pub(crate) fn submit_add_task(&mut self) -> AddTaskTitleSubmit {
         let Some(AuthoringFlow::AddTask(draft)) = self.flow.take() else {
             return AddTaskTitleSubmit::Inactive;
