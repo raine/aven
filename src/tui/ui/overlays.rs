@@ -651,14 +651,18 @@ pub(super) fn render_picker(frame: &mut Frame, state: &PickerView) {
         } else {
             ""
         };
-        if state.title == "Edit task: priority" {
+        if priority_picker_submit_label(&state.title).is_some() {
             lines.push(priority_picker_line(item, *index == state.selected));
         } else {
             lines.push(Line::from(format!("{marker}{}{check}", item.label)));
         }
     }
     lines.push(Line::from(""));
-    lines.push(picker_hint_line(state.mode, state.multi, "submit"));
+    lines.push(picker_hint_line(
+        state.mode,
+        state.multi,
+        priority_picker_submit_label(&state.title).unwrap_or("submit"),
+    ));
     Dialog::new(&state.title, 60, height.saturating_add(1)).render_text(frame, Text::from(lines));
 }
 
@@ -735,8 +739,15 @@ fn project_picker_submit_label(title: &str) -> Option<&'static str> {
     match title {
         "Go: project" => Some("open"),
         "Edit project" => Some("submit"),
-        "Add task: title project" => Some("submit"),
+        "Add task: project" => Some("submit"),
         "Delete project" => Some("delete"),
+        _ => None,
+    }
+}
+
+fn priority_picker_submit_label(title: &str) -> Option<&'static str> {
+    match title {
+        "Edit task: priority" | "Add task: priority" => Some("submit"),
         _ => None,
     }
 }
@@ -1443,24 +1454,26 @@ mod tests {
 
     #[test]
     fn priority_picker_shows_priority_icons() {
-        let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-            title: "Edit task: priority".to_string(),
-            filter: String::new(),
-            filter_cursor: 0,
-            items: vec![PickerItem {
-                label: "urgent".to_string(),
-                value: "urgent".to_string(),
-                selected: false,
-            }],
-            selected: 0,
-            multi: false,
-            mode: PickerMode::Navigate,
-            visible_indices: vec![0],
-        }));
-        assert!(rendered.contains(priority_icon("urgent")));
-        assert!(rendered.contains("urgent"));
-        assert!(rendered.contains("Enter"));
-        assert!(rendered.contains("submit"));
+        for title in ["Edit task: priority", "Add task: priority"] {
+            let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+                title: title.to_string(),
+                filter: String::new(),
+                filter_cursor: 0,
+                items: vec![PickerItem {
+                    label: "urgent".to_string(),
+                    value: "urgent".to_string(),
+                    selected: false,
+                }],
+                selected: 0,
+                multi: false,
+                mode: PickerMode::Navigate,
+                visible_indices: vec![0],
+            }));
+            assert!(rendered.contains(priority_icon("urgent")));
+            assert!(rendered.contains("urgent"));
+            assert!(rendered.contains("Enter"));
+            assert!(rendered.contains("submit"));
+        }
     }
 
     #[test]
@@ -1511,25 +1524,28 @@ mod tests {
 
     #[test]
     fn edit_project_uses_structured_project_picker() {
-        let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-            title: "Edit project".to_string(),
-            filter: "claude".to_string(),
-            filter_cursor: 6,
-            items: vec![PickerItem {
-                label: "CC claude-code".to_string(),
-                value: "claude-code".to_string(),
-                selected: false,
-            }],
-            selected: 0,
-            multi: false,
-            mode: PickerMode::Navigate,
-            visible_indices: vec![0],
-        }));
-        assert!(rendered.contains("PREFIX"));
-        assert!(rendered.contains("PROJECT"));
-        assert!(rendered.contains("CC"));
-        assert!(rendered.contains("claude-code"));
-        assert!(rendered.contains("Enter submit"));
+        for title in ["Edit project", "Add task: project"] {
+            let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+                title: title.to_string(),
+                filter: "claude".to_string(),
+                filter_cursor: 6,
+                items: vec![PickerItem {
+                    label: "CC claude-code".to_string(),
+                    value: "claude-code".to_string(),
+                    selected: false,
+                }],
+                selected: 0,
+                multi: false,
+                mode: PickerMode::Navigate,
+                visible_indices: vec![0],
+            }));
+            assert!(rendered.contains("PREFIX"));
+            assert!(rendered.contains("PROJECT"));
+            assert!(rendered.contains("CC"));
+            assert!(rendered.contains("claude-code"));
+            assert!(rendered.contains("Enter submit"));
+            assert!(rendered.contains(title));
+        }
     }
 
     #[test]

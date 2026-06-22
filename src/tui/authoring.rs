@@ -1,8 +1,8 @@
 use crate::operations::TaskDraft;
 
 pub(crate) const ADD_NOTE_TITLE: &str = "Add note";
-pub(crate) const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: title project";
-pub(crate) const ADD_TASK_TITLE_PRIORITY_TITLE: &str = "Add task: title priority";
+pub(crate) const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: project";
+pub(crate) const ADD_TASK_TITLE_PRIORITY_TITLE: &str = "Add task: priority";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AddTaskStep {
