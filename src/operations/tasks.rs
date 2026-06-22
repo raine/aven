@@ -74,8 +74,8 @@ pub(crate) async fn create_task_in_workspace(
             .await?;
     let labels = resolve_labels_in_workspace(&mut tx, &workspace.id, &draft.labels).await?;
     sqlx::query(
-        "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'inbox', ?, ?, ?)",
+        "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at, queue_activity_at)
+         VALUES (?, ?, ?, ?, ?, 'inbox', ?, ?, ?, ?)",
     )
     .bind(&workspace.id)
     .bind(&id)
@@ -83,6 +83,7 @@ pub(crate) async fn create_task_in_workspace(
     .bind(&draft.description)
     .bind(&project.key)
     .bind(&draft.priority)
+    .bind(&ts)
     .bind(&ts)
     .bind(&ts)
     .execute(&mut *tx)
@@ -337,6 +338,12 @@ pub(crate) async fn add_note(
     .bind(&change_id)
     .execute(&mut *tx)
     .await?;
+    sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
+        .bind(&ts)
+        .bind(&workspace.id)
+        .bind(task_id)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     info!(task_id = %task_id, note_id = %note_id, "note added");
     Ok(NoteOutcome {
