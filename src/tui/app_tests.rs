@@ -92,8 +92,8 @@ fn ctrl_p() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)
 }
 
-fn ctrl_b() -> KeyEvent {
-    KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL)
+fn ctrl_r() -> KeyEvent {
+    KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)
 }
 
 fn ctrl_d() -> KeyEvent {
@@ -676,7 +676,7 @@ async fn add_task_flow_configures_project_and_priority_from_title() {
     app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
     type_chars(&mut app, "Write docs").await;
-    app.handle_overlay_key(ctrl_b()).await.unwrap();
+    app.handle_overlay_key(ctrl_p()).await.unwrap();
 
     assert!(matches!(
         &app.overlay,
@@ -684,7 +684,7 @@ async fn add_task_flow_configures_project_and_priority_from_title() {
     ));
     type_chars(&mut app, "mobile").await;
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    app.handle_overlay_key(ctrl_p()).await.unwrap();
+    app.handle_overlay_key(ctrl_r()).await.unwrap();
 
     assert!(matches!(
         &app.overlay,
@@ -784,7 +784,7 @@ async fn add_task_project_and_priority_return_to_description_step() {
     type_chars(&mut app, "Write docs").await;
     app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
     type_chars(&mut app, "Details").await;
-    app.handle_overlay_key(ctrl_b()).await.unwrap();
+    app.handle_overlay_key(ctrl_p()).await.unwrap();
     type_chars(&mut app, "mobile").await;
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
@@ -795,7 +795,7 @@ async fn add_task_project_and_priority_return_to_description_step() {
                 && state.description.lines == vec!["Details".to_string()]
     ));
 
-    app.handle_overlay_key(ctrl_p()).await.unwrap();
+    app.handle_overlay_key(ctrl_r()).await.unwrap();
     type_chars(&mut app, "high").await;
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     app.handle_overlay_key(ctrl_s()).await.unwrap();
@@ -2383,7 +2383,7 @@ async fn add_task_project_shortcut_routes_by_route_not_title_prefix() {
     };
     state.project = "Create item".to_string();
 
-    app.handle_overlay_key(ctrl_b()).await.unwrap();
+    app.handle_overlay_key(ctrl_p()).await.unwrap();
 
     assert!(matches!(
         &app.overlay,
@@ -2401,7 +2401,7 @@ async fn add_task_priority_shortcut_routes_by_route_not_title_prefix() {
     };
     state.project = "Create item".to_string();
 
-    app.handle_overlay_key(ctrl_p()).await.unwrap();
+    app.handle_overlay_key(ctrl_r()).await.unwrap();
 
     assert!(matches!(
         &app.overlay,

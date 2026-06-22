@@ -808,22 +808,7 @@ fn edit_multiline_input(state: &mut MultilineInputState, key: KeyEvent) {
             state.column = 0;
         }
         KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let previous = previous_word_start(&state.lines[row], column);
-            state.lines[row].drain(previous..column);
-            if previous > 0 && next_char_is_whitespace(&state.lines[row], previous) {
-                let before = previous_char_boundary(&state.lines[row], previous);
-                if state.lines[row][before..previous]
-                    .chars()
-                    .all(char::is_whitespace)
-                {
-                    state.lines[row].drain(before..previous);
-                    state.column = before;
-                } else {
-                    state.column = previous;
-                }
-            } else {
-                state.column = previous;
-            }
+            kill_multiline_word_before_cursor(state);
         }
         KeyCode::Delete if column < state.lines[row].len() => {
             let next = next_char_boundary(&state.lines[row], column);
@@ -844,6 +829,38 @@ fn edit_multiline_input(state: &mut MultilineInputState, key: KeyEvent) {
             state.column = column + ch.len_utf8();
         }
         _ => state.column = column,
+    }
+}
+
+fn kill_multiline_word_before_cursor(state: &mut MultilineInputState) {
+    while state.row > 0 && state.column == 0 {
+        let line = state.lines.remove(state.row);
+        state.row -= 1;
+        state.column = state.lines[state.row].len();
+        state.lines[state.row].push_str(&line);
+    }
+
+    if state.lines.is_empty() || state.column == 0 {
+        return;
+    }
+
+    let row = state.row.min(state.lines.len() - 1);
+    let column = char_boundary_at_or_before(&state.lines[row], state.column);
+    let previous = previous_word_start(&state.lines[row], column);
+    state.lines[row].drain(previous..column);
+    if previous > 0 && next_char_is_whitespace(&state.lines[row], previous) {
+        let before = previous_char_boundary(&state.lines[row], previous);
+        if state.lines[row][before..previous]
+            .chars()
+            .all(char::is_whitespace)
+        {
+            state.lines[row].drain(before..previous);
+            state.column = before;
+        } else {
+            state.column = previous;
+        }
+    } else {
+        state.column = previous;
     }
 }
 
@@ -1183,6 +1200,22 @@ mod tests {
         assert_eq!(state.column, 3);
         edit_multiline_input(&mut state, ctrl(KeyCode::Char('u')));
         assert_eq!(state.lines, vec![String::new()]);
+        assert_eq!(state.column, 0);
+    }
+
+    #[test]
+    fn multiline_ctrl_w_merges_previous_line_at_line_start() {
+        let mut state = MultilineInputState {
+            route: OverlayRoute::MessageOnly,
+            title: "Title".to_string(),
+            prompt: "Prompt".to_string(),
+            lines: vec!["one ".to_string(), "two three".to_string()],
+            row: 1,
+            column: 0,
+        };
+        edit_multiline_input(&mut state, ctrl(KeyCode::Char('w')));
+        assert_eq!(state.lines, vec!["two three".to_string()]);
+        assert_eq!(state.row, 0);
         assert_eq!(state.column, 0);
     }
 

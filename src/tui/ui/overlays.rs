@@ -294,16 +294,16 @@ fn add_task_hint_line(focus: AddTaskStep) -> Line<'static> {
         AddTaskStep::Title => dialog_hint_line(&[
             ("Enter", "create"),
             ("Tab", "description"),
-            ("Ctrl+B", "project"),
-            ("Ctrl+P", "priority"),
+            ("Ctrl+P", "project"),
+            ("Ctrl+R", "priority"),
             ("Esc", "cancel"),
         ]),
         AddTaskStep::Description => dialog_hint_line(&[
             ("Ctrl+S", "create"),
             ("Ctrl+X Ctrl+E", "editor"),
             ("Tab", "title"),
-            ("Ctrl+B", "project"),
-            ("Ctrl+P", "priority"),
+            ("Ctrl+P", "project"),
+            ("Ctrl+R", "priority"),
             ("Esc", "cancel"),
         ]),
     }
@@ -510,8 +510,8 @@ fn add_task_description_hint_line() -> Line<'static> {
     dialog_hint_line(&[
         ("Ctrl+S", "create"),
         ("Enter", "newline"),
-        ("Ctrl+B", "project"),
-        ("Ctrl+P", "priority"),
+        ("Ctrl+P", "project"),
+        ("Ctrl+R", "priority"),
         ("Esc", "cancel"),
     ])
 }
@@ -735,6 +735,7 @@ fn project_picker_submit_label(title: &str) -> Option<&'static str> {
     match title {
         "Go: project" => Some("open"),
         "Edit project" => Some("submit"),
+        "Add task: title project" => Some("submit"),
         "Delete project" => Some("delete"),
         _ => None,
     }
@@ -944,8 +945,8 @@ mod tests {
         assert!(rendered.contains("ship dialogs"));
         assert!(rendered.contains("Optional details, links, or handoff context..."));
         assert!(rendered.contains("Tab description"));
-        assert!(rendered.contains("Ctrl+B project"));
-        assert!(rendered.contains("Ctrl+P priority"));
+        assert!(rendered.contains("Ctrl+P project"));
+        assert!(rendered.contains("Ctrl+R priority"));
     }
 
     #[test]
@@ -1072,7 +1073,7 @@ mod tests {
         let add_task_keys = styled_key_contents(add_task_hint_line(AddTaskStep::Title));
         assert_eq!(
             add_task_keys,
-            vec!["Enter", "Tab", "Ctrl+B", "Ctrl+P", "Esc"]
+            vec!["Enter", "Tab", "Ctrl+P", "Ctrl+R", "Esc"]
         );
 
         let multiline_keys = styled_key_contents(multiline_hint_line());
@@ -1082,14 +1083,14 @@ mod tests {
             styled_key_contents(add_task_hint_line(AddTaskStep::Description));
         assert_eq!(
             add_task_description_keys,
-            vec!["Ctrl+S", "Ctrl+X Ctrl+E", "Tab", "Ctrl+B", "Ctrl+P", "Esc"]
+            vec!["Ctrl+S", "Ctrl+X Ctrl+E", "Tab", "Ctrl+P", "Ctrl+R", "Esc"]
         );
 
         let add_task_description_editor_keys =
             styled_key_contents(add_task_description_hint_line());
         assert_eq!(
             add_task_description_editor_keys,
-            vec!["Ctrl+S", "Enter", "Ctrl+B", "Ctrl+P", "Esc"]
+            vec!["Ctrl+S", "Enter", "Ctrl+P", "Ctrl+R", "Esc"]
         );
 
         let confirm_keys = styled_key_contents(confirm_hint_line());

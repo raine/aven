@@ -393,13 +393,13 @@ impl App {
             }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
                 if self.capture_add_task_state(state) {
-                    self.begin_add_task_title_priority();
+                    self.begin_add_task_title_project();
                 }
                 return Ok(());
             }
-            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') {
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
                 if self.capture_add_task_state(state) {
-                    self.begin_add_task_title_project();
+                    self.begin_add_task_title_priority();
                 }
                 return Ok(());
             }
