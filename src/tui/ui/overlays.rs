@@ -2,6 +2,7 @@ use ratatui::Frame;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
+use unicode_width::UnicodeWidthChar;
 
 use super::dialog::{Dialog, dialog_hint_line};
 use super::input::{
@@ -22,7 +23,14 @@ pub(super) fn render_search(frame: &mut Frame, input: &str, cursor: usize) {
 }
 
 pub(super) fn render_add_task(frame: &mut Frame, state: &AddTaskView) {
-    let dialog = Dialog::new("Add task", 88, 11);
+    let expanded =
+        add_task_description_has_content(state) || state.focus == AddTaskStep::Description;
+    let height = if expanded {
+        frame.area().height.saturating_sub(4).clamp(11, 18)
+    } else {
+        11
+    };
+    let dialog = Dialog::new("Add task", 100, height);
     let width = dialog.area(frame).width;
     let dialog = dialog.right_title(add_task_metadata_title(
         &state.project,
@@ -30,6 +38,7 @@ pub(super) fn render_add_task(frame: &mut Frame, state: &AddTaskView) {
         width,
     ));
     let content = dialog.render_block(frame);
+    let description_rows = (content.height as usize).saturating_sub(5).max(1);
     let mut lines = vec![
         add_task_field_label("Title", state.focus == AddTaskStep::Title),
         add_task_title_input_line(
@@ -44,7 +53,11 @@ pub(super) fn render_add_task(frame: &mut Frame, state: &AddTaskView) {
         Line::from(""),
         add_task_field_label("Description", state.focus == AddTaskStep::Description),
     ];
-    lines.extend(add_task_description_lines(state, 3));
+    lines.extend(add_task_description_lines(
+        state,
+        description_rows,
+        content.width as usize,
+    ));
     while lines.len() + 1 < content.height as usize {
         lines.push(Line::from(""));
     }
@@ -137,29 +150,143 @@ fn add_task_field_label(label: &'static str, active: bool) -> Line<'static> {
     Line::from(Span::styled(label, style))
 }
 
-fn add_task_description_lines(state: &AddTaskView, visible_rows: usize) -> Vec<Line<'static>> {
-    let start = state
-        .description_row
-        .saturating_sub(visible_rows.saturating_sub(1));
+fn add_task_description_has_content(state: &AddTaskView) -> bool {
+    state.description.iter().any(|line| !line.is_empty())
+}
+
+fn add_task_description_lines(
+    state: &AddTaskView,
+    visible_rows: usize,
+    width: usize,
+) -> Vec<Line<'static>> {
     let show_placeholder = state.description.len() == 1 && state.description[0].is_empty();
-    state
-        .description
-        .iter()
+    let mut visual_rows = Vec::new();
+    for (row_index, line) in state.description.iter().enumerate() {
+        visual_rows.extend(add_task_description_visual_lines(
+            line,
+            if state.focus == AddTaskStep::Description && row_index == state.description_row {
+                Some(state.description_column)
+            } else {
+                None
+            },
+            show_placeholder && row_index == 0,
+            width,
+        ));
+    }
+    let cursor_visual_row = if state.focus == AddTaskStep::Description {
+        visual_rows
+            .iter()
+            .position(|row| row.has_cursor)
+            .unwrap_or_else(|| visual_rows.len().saturating_sub(1))
+    } else {
+        0
+    };
+    let start = add_task_description_viewport_start(
+        cursor_visual_row,
+        visible_rows,
+        visual_rows.len(),
+        state.focus == AddTaskStep::Description,
+    );
+    let end = start.saturating_add(visible_rows).min(visual_rows.len());
+    let hidden_above = start > 0;
+    let hidden_below = end < visual_rows.len();
+    visual_rows
+        .into_iter()
         .enumerate()
         .skip(start)
         .take(visible_rows)
-        .map(|(row_index, line)| {
-            add_task_description_input_line(
-                line,
-                if state.focus == AddTaskStep::Description && row_index == state.description_row {
-                    Some(state.description_column)
-                } else {
-                    None
-                },
-                show_placeholder && row_index == 0,
-            )
+        .map(|(index, row)| {
+            let marker = match (
+                index == start && hidden_above,
+                index + 1 == end && hidden_below,
+            ) {
+                (true, true) => "↕ ",
+                (true, false) => "↑ ",
+                (false, true) => "↓ ",
+                (false, false) => "  ",
+            };
+            add_task_description_viewport_line(marker, row.line)
         })
         .collect()
+}
+
+fn add_task_description_viewport_start(
+    cursor_row: usize,
+    visible_rows: usize,
+    row_count: usize,
+    focused: bool,
+) -> usize {
+    if row_count <= visible_rows {
+        return 0;
+    }
+    if !focused {
+        return 0;
+    }
+    cursor_row
+        .saturating_sub(visible_rows / 2)
+        .min(row_count.saturating_sub(visible_rows))
+}
+
+fn add_task_description_viewport_line(marker: &'static str, line: Line<'static>) -> Line<'static> {
+    let mut spans = Vec::with_capacity(line.spans.len() + 1);
+    spans.push(Span::styled(marker, Style::new().fg(FG_DIM)));
+    spans.extend(line.spans);
+    Line::from(spans)
+}
+
+struct AddTaskDescriptionVisualLine {
+    line: Line<'static>,
+    has_cursor: bool,
+}
+
+fn add_task_description_visual_lines(
+    line: &str,
+    cursor: Option<usize>,
+    show_placeholder: bool,
+    width: usize,
+) -> Vec<AddTaskDescriptionVisualLine> {
+    if show_placeholder {
+        return vec![AddTaskDescriptionVisualLine {
+            line: add_task_description_input_line(line, cursor, true),
+            has_cursor: cursor.is_some(),
+        }];
+    }
+    let width = width.saturating_sub(2).max(1);
+    let chunks = wrap_line_segments(line, width);
+    chunks
+        .into_iter()
+        .map(|(start, end)| {
+            let cursor = cursor.filter(|cursor| *cursor >= start && *cursor <= end);
+            AddTaskDescriptionVisualLine {
+                line: add_task_description_input_line(
+                    &line[start..end],
+                    cursor.map(|cursor| cursor - start),
+                    false,
+                ),
+                has_cursor: cursor.is_some(),
+            }
+        })
+        .collect()
+}
+
+fn wrap_line_segments(line: &str, width: usize) -> Vec<(usize, usize)> {
+    if line.is_empty() {
+        return vec![(0, 0)];
+    }
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let mut count = 0;
+    for (index, ch) in line.char_indices() {
+        let char_width = ch.width().unwrap_or(0).max(1);
+        if count > 0 && count + char_width > width {
+            segments.push((start, index));
+            start = index;
+            count = 0;
+        }
+        count += char_width;
+    }
+    segments.push((start, line.len()));
+    segments
 }
 
 fn add_task_hint_line(focus: AddTaskStep) -> Line<'static> {
@@ -173,7 +300,7 @@ fn add_task_hint_line(focus: AddTaskStep) -> Line<'static> {
         ]),
         AddTaskStep::Description => dialog_hint_line(&[
             ("Ctrl+S", "create"),
-            ("Enter", "newline"),
+            ("Ctrl+E", "editor"),
             ("Tab", "title"),
             ("Ctrl+B", "project"),
             ("Ctrl+P", "priority"),
@@ -888,9 +1015,56 @@ mod tests {
         let title_row = (0..buffer.area.height)
             .find(|row| buffer_row(&buffer, *row).contains(ADD_TASK_TITLE_PLACEHOLDER))
             .unwrap();
-        let cursor_cell = &buffer[(8, title_row)];
-        assert_eq!(cursor_cell.symbol(), "E");
-        assert_eq!(cursor_cell.style().bg, Some(BG_ALT));
+        let row = buffer_row(&buffer, title_row);
+        assert!(row.contains(ADD_TASK_TITLE_PLACEHOLDER));
+        for column in 0..buffer.area.width {
+            assert_ne!(buffer[(column, title_row)].style().bg, Some(FG));
+        }
+    }
+
+    #[test]
+    fn add_task_description_wraps_and_marks_hidden_rows() {
+        let lines = add_task_description_lines(
+            &AddTaskView {
+                title: String::new(),
+                title_cursor: 0,
+                description: vec!["abcdefghijklmnopqrstuvwxyz".to_string()],
+                description_row: 0,
+                description_column: 25,
+                focus: AddTaskStep::Description,
+                project: "aven".to_string(),
+                priority: "none".to_string(),
+            },
+            2,
+            12,
+        );
+
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].to_string().starts_with("↑ "));
+        assert!(lines[0].to_string().contains("klmnopqrst"));
+        assert!(lines[1].to_string().contains("uvwxyz"));
+        assert!(!lines[0].to_string().contains("abcdefghij"));
+    }
+
+    #[test]
+    fn add_task_description_unfocused_preview_starts_at_top() {
+        let lines = add_task_description_lines(
+            &AddTaskView {
+                title: String::new(),
+                title_cursor: 0,
+                description: vec!["abcdefghijklmnopqrstuvwxyz".to_string()],
+                description_row: 0,
+                description_column: 25,
+                focus: AddTaskStep::Title,
+                project: "aven".to_string(),
+                priority: "none".to_string(),
+            },
+            2,
+            12,
+        );
+
+        assert!(lines[0].to_string().contains("abcdefghij"));
+        assert!(lines[1].to_string().starts_with("↓ "));
     }
 
     #[test]
@@ -904,9 +1078,17 @@ mod tests {
         let multiline_keys = styled_key_contents(multiline_hint_line());
         assert_eq!(multiline_keys, vec!["Ctrl+S", "Esc"]);
 
-        let add_task_description_keys = styled_key_contents(add_task_description_hint_line());
+        let add_task_description_keys =
+            styled_key_contents(add_task_hint_line(AddTaskStep::Description));
         assert_eq!(
             add_task_description_keys,
+            vec!["Ctrl+S", "Ctrl+E", "Tab", "Ctrl+B", "Ctrl+P", "Esc"]
+        );
+
+        let add_task_description_editor_keys =
+            styled_key_contents(add_task_description_hint_line());
+        assert_eq!(
+            add_task_description_editor_keys,
             vec!["Ctrl+S", "Enter", "Ctrl+B", "Ctrl+P", "Esc"]
         );
 

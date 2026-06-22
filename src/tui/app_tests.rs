@@ -76,6 +76,10 @@ fn ctrl_s() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)
 }
 
+fn ctrl_e() -> KeyEvent {
+    KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL)
+}
+
 fn ctrl_c() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
 }
@@ -725,6 +729,24 @@ async fn add_task_description_flow_creates_task_with_description() {
     let task = &app.store.tasks[selected];
     assert_eq!(task.task.title, "Write docs");
     assert_eq!(task.task.description, "Include setup details");
+}
+
+#[tokio::test]
+async fn add_task_description_ctrl_e_opens_external_editor_and_returns_to_composer() {
+    let mut app = test_app().await;
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    type_chars(&mut app, "Write docs").await;
+    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+    type_chars(&mut app, "Details").await;
+    app.handle_overlay_key(ctrl_e()).await.unwrap();
+
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::AddTask(state))
+            if state.focus == AddTaskStep::Description
+                && state.title.as_str() == "Write docs"
+                && state.description.lines == vec!["Details from editor".to_string()]
+    ));
 }
 
 #[tokio::test]

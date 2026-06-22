@@ -1,13 +1,18 @@
+#[cfg(not(test))]
 use std::fs;
+#[cfg(not(test))]
 use std::io;
 use std::process::Command;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
+#[cfg(not(test))]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers,
 };
 use crossterm::execute;
+#[cfg(not(test))]
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -354,6 +359,14 @@ impl App {
         }
 
         if let OverlayState::AddTask(state) = &overlay {
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('e') {
+                if state.focus == AddTaskStep::Description && self.capture_add_task_state(state) {
+                    self.open_add_task_description_editor();
+                } else {
+                    self.overlay = Some(overlay);
+                }
+                return Ok(());
+            }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
                 if self.capture_add_task_state(state) {
                     self.begin_add_task_title_priority();
@@ -373,11 +386,18 @@ impl App {
             _ => help_scroll_cap(terminal_size.height),
         };
         let was_detail_help = matches!(overlay, OverlayState::DetailHelp { .. });
+        let was_add_task_description_editor = matches!(
+            &overlay,
+            OverlayState::MultilineInput(state) if state.route == OverlayRoute::AddTaskDescription
+        );
         let outcome = crate::tui::overlay::handle_generic_overlay_key(key, overlay, scroll_cap);
         match outcome {
             OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
             OverlayOutcome::Cancelled if was_detail_help => {
                 self.overlay = Some(OverlayState::Detail { scroll: 0 })
+            }
+            OverlayOutcome::Cancelled if was_add_task_description_editor => {
+                self.begin_add_task_step()
             }
             OverlayOutcome::Cancelled => self.cancel_authoring_overlay(),
             OverlayOutcome::Submitted(submit) => self.handle_overlay_submit(submit).await?,
@@ -441,6 +461,22 @@ impl App {
                 ..
             } => {
                 if self.authoring.apply_add_task_priority(values) {
+                    self.begin_add_task_step();
+                }
+            }
+            OverlaySubmit::Multiline {
+                route: OverlayRoute::AddTaskDescription,
+                value,
+                ..
+            } => {
+                if self.authoring.capture_add_task_fields(
+                    self.authoring
+                        .add_task_context()
+                        .map(|context| context.title)
+                        .unwrap_or_default(),
+                    value,
+                    AddTaskStep::Description,
+                ) {
                     self.begin_add_task_step();
                 }
             }
@@ -963,6 +999,27 @@ impl App {
         self.begin_add_task_overlay();
     }
 
+    fn open_add_task_description_editor(&mut self) {
+        let Some(context) = self.authoring.add_task_context() else {
+            return;
+        };
+        self.needs_terminal_clear = true;
+        match edit_text_externally(context.description.clone(), "description.md") {
+            Ok(value) => {
+                self.authoring.capture_add_task_fields(
+                    context.title,
+                    value,
+                    AddTaskStep::Description,
+                );
+                self.begin_add_task_step();
+            }
+            Err(error) => {
+                self.set_error(format!("editor failed: {error:#}"));
+                self.begin_add_task_step();
+            }
+        }
+    }
+
     fn capture_add_task_state(&mut self, state: &AddTaskState) -> bool {
         self.authoring.capture_add_task_fields(
             state.title.text.clone(),
@@ -1393,6 +1450,7 @@ fn description_overlay_from_value(value: String) -> OverlayState {
     ))
 }
 
+#[cfg(not(test))]
 fn edit_text_externally(value: String, filename: &str) -> Result<String> {
     let path = temp_editor_path(filename)?;
     fs::write(&path, value)?;
@@ -1405,6 +1463,12 @@ fn edit_text_externally(value: String, filename: &str) -> Result<String> {
     result
 }
 
+#[cfg(test)]
+fn edit_text_externally(value: String, _filename: &str) -> Result<String> {
+    Ok(format!("{value} from editor"))
+}
+
+#[cfg(not(test))]
 fn temp_editor_path(filename: &str) -> io::Result<std::path::PathBuf> {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1416,6 +1480,7 @@ fn temp_editor_path(filename: &str) -> io::Result<std::path::PathBuf> {
     Ok(dir.join(filename))
 }
 
+#[cfg(not(test))]
 fn run_external_editor(path: &std::path::Path) -> Result<()> {
     let restore = suspend_terminal()?;
     let status = external_editor_command(path).status();
@@ -1427,6 +1492,7 @@ fn run_external_editor(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(test))]
 fn external_editor_command(path: &std::path::Path) -> Command {
     let mut command = Command::new("sh");
     command
@@ -1437,6 +1503,7 @@ fn external_editor_command(path: &std::path::Path) -> Command {
     command
 }
 
+#[cfg(not(test))]
 fn suspend_terminal() -> Result<impl FnOnce() -> Result<()>> {
     disable_raw_mode()?;
     crossterm::execute!(io::stdout(), LeaveAlternateScreen)?;
