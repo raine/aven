@@ -23,6 +23,7 @@ use self::sidebar::{render_sidebar, render_sidebar_overlay};
 use self::task_list::render_tasks;
 use self::toast::render_toast;
 
+pub(crate) use self::detail::detail_scroll_cap;
 pub(crate) use self::shortcuts::{detail_help_scroll_cap, help_scroll_cap};
 
 use ratatui::Frame;

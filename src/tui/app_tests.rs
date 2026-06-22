@@ -92,7 +92,7 @@ async fn type_chars(app: &mut App, input: &str) {
 #[tokio::test]
 async fn ctrl_c_quits_from_normal_mode() {
     let mut app = test_app().await;
-    app.dispatch_key(ctrl_c(), 24).await.unwrap();
+    app.dispatch_key(ctrl_c(), (80, 24).into()).await.unwrap();
     assert!(app.should_quit);
 }
 
@@ -100,7 +100,7 @@ async fn ctrl_c_quits_from_normal_mode() {
 async fn ctrl_c_quits_while_overlay_captures_input() {
     let mut app = test_app().await;
     app.begin_search();
-    app.dispatch_key(ctrl_c(), 24).await.unwrap();
+    app.dispatch_key(ctrl_c(), (80, 24).into()).await.unwrap();
     assert!(app.should_quit);
 }
 
@@ -140,14 +140,18 @@ async fn esc_cancels_prefix_before_overlay() {
     let mut app = test_app().await;
     app.overlay = Some(OverlayState::Detail { scroll: 0 });
     app.pending_shortcut.push(KeyCode::Char('m'));
-    app.dispatch_key(key(KeyCode::Esc), 24).await.unwrap();
+    app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+        .await
+        .unwrap();
     assert!(app.pending_shortcut.is_empty());
     assert!(matches!(
         app.overlay,
         Some(OverlayState::Detail { scroll: 0 })
     ));
 
-    app.dispatch_key(key(KeyCode::Esc), 24).await.unwrap();
+    app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+        .await
+        .unwrap();
     assert!(app.overlay.is_none());
 }
 
@@ -212,7 +216,9 @@ async fn help_key_opens_detail_help_from_detail_overlay() {
     create_and_select_task(&mut app, test_task_draft("Detail help target")).await;
     app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
-    app.dispatch_key(key(KeyCode::Char('?')), 24).await.unwrap();
+    app.dispatch_key(key(KeyCode::Char('?')), (80, 24).into())
+        .await
+        .unwrap();
 
     assert!(matches!(app.overlay, Some(OverlayState::DetailHelp { .. })));
     assert_eq!(app.focus, Focus::Tasks);
@@ -237,7 +243,9 @@ async fn second_help_key_returns_from_detail_help_to_detail_overlay() {
     let mut app = test_app().await;
     app.overlay = Some(OverlayState::DetailHelp { scroll: 0 });
 
-    app.dispatch_key(key(KeyCode::Char('?')), 24).await.unwrap();
+    app.dispatch_key(key(KeyCode::Char('?')), (80, 24).into())
+        .await
+        .unwrap();
 
     assert!(matches!(
         app.overlay,
@@ -719,34 +727,70 @@ async fn add_note_flow_creates_note_for_selected_task() {
 #[tokio::test]
 async fn detail_scroll_keys_update_detail_offset() {
     let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Scroll target")).await;
+    let mut draft = test_task_draft("Scroll target");
+    draft.description = (0..100)
+        .map(|index| format!("line {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    create_and_select_task(&mut app, draft).await;
     app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
-    app.dispatch_key(ctrl_d(), 24).await.unwrap();
+    app.dispatch_key(ctrl_d(), (80, 24).into()).await.unwrap();
     assert!(matches!(
         app.overlay,
         Some(OverlayState::Detail { scroll: 18 })
     ));
 
-    app.dispatch_key(key(KeyCode::PageDown), 24).await.unwrap();
+    app.dispatch_key(key(KeyCode::PageDown), (80, 24).into())
+        .await
+        .unwrap();
     assert!(matches!(
         app.overlay,
         Some(OverlayState::Detail { scroll: 36 })
     ));
 
-    app.dispatch_key(ctrl_u(), 24).await.unwrap();
+    app.dispatch_key(ctrl_u(), (80, 24).into()).await.unwrap();
     assert!(matches!(
         app.overlay,
         Some(OverlayState::Detail { scroll: 18 })
     ));
 
-    app.dispatch_key(key(KeyCode::Char('k')), 24).await.unwrap();
+    app.dispatch_key(key(KeyCode::Char('k')), (80, 24).into())
+        .await
+        .unwrap();
     assert!(matches!(
         app.overlay,
         Some(OverlayState::Detail { scroll: 17 })
     ));
 
-    app.dispatch_key(key(KeyCode::PageUp), 24).await.unwrap();
+    app.dispatch_key(key(KeyCode::PageUp), (80, 24).into())
+        .await
+        .unwrap();
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Detail { scroll: 0 })
+    ));
+}
+
+#[tokio::test]
+async fn detail_scroll_resists_down_input_at_bottom() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Short detail")).await;
+    app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+    for _ in 0..10 {
+        app.dispatch_key(key(KeyCode::Char('j')), (80, 24).into())
+            .await
+            .unwrap();
+    }
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Detail { scroll: 0 })
+    ));
+
+    app.dispatch_key(key(KeyCode::Char('k')), (80, 24).into())
+        .await
+        .unwrap();
     assert!(matches!(
         app.overlay,
         Some(OverlayState::Detail { scroll: 0 })
@@ -773,7 +817,9 @@ async fn detail_next_and_previous_task_stay_in_detail() {
     app.widgets.table.select(Some(first));
     app.overlay = Some(OverlayState::Detail { scroll: 7 });
 
-    app.dispatch_key(key(KeyCode::Char(']')), 24).await.unwrap();
+    app.dispatch_key(key(KeyCode::Char(']')), (80, 24).into())
+        .await
+        .unwrap();
     assert_eq!(app.widgets.table.selected(), Some(second));
     assert!(matches!(
         app.overlay,
@@ -781,7 +827,9 @@ async fn detail_next_and_previous_task_stay_in_detail() {
     ));
     assert_eq!(app.message.as_deref(), Some("selected next task"));
 
-    app.dispatch_key(key(KeyCode::Char('[')), 24).await.unwrap();
+    app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
+        .await
+        .unwrap();
     assert_eq!(app.widgets.table.selected(), Some(first));
     assert!(matches!(
         app.overlay,
@@ -796,7 +844,9 @@ async fn add_note_from_detail_returns_to_detail() {
     create_and_select_task(&mut app, test_task_draft("Note target")).await;
     app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
-    app.dispatch_key(key(KeyCode::Char('n')), 24).await.unwrap();
+    app.dispatch_key(key(KeyCode::Char('n')), (80, 24).into())
+        .await
+        .unwrap();
     assert!(matches!(
         &app.overlay,
         Some(OverlayState::MultilineInput(state)) if state.title == ADD_NOTE_TITLE
@@ -820,7 +870,9 @@ async fn detail_shortcuts_do_not_leave_detail_before_opening_overlay() {
     create_and_select_task(&mut app, test_task_draft("Detail target")).await;
     app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
-    app.dispatch_key(key(KeyCode::Char('p')), 24).await.unwrap();
+    app.dispatch_key(key(KeyCode::Char('p')), (80, 24).into())
+        .await
+        .unwrap();
 
     assert!(matches!(
         &app.overlay,
@@ -835,7 +887,9 @@ async fn ignored_keys_stay_in_detail() {
     create_and_select_task(&mut app, test_task_draft("Detail target")).await;
     app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
-    app.dispatch_key(key(KeyCode::Char('a')), 24).await.unwrap();
+    app.dispatch_key(key(KeyCode::Char('a')), (80, 24).into())
+        .await
+        .unwrap();
 
     assert!(matches!(
         app.overlay,
@@ -850,7 +904,9 @@ async fn cancel_add_note_from_detail_returns_to_detail() {
     create_and_select_task(&mut app, test_task_draft("Note target")).await;
     app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
-    app.dispatch_key(key(KeyCode::Char('n')), 24).await.unwrap();
+    app.dispatch_key(key(KeyCode::Char('n')), (80, 24).into())
+        .await
+        .unwrap();
     app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
 
     assert!(matches!(
@@ -866,7 +922,9 @@ async fn add_note_blank_body_from_detail_returns_to_detail() {
     create_and_select_task(&mut app, test_task_draft("Note target")).await;
     app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
-    app.dispatch_key(key(KeyCode::Char('n')), 24).await.unwrap();
+    app.dispatch_key(key(KeyCode::Char('n')), (80, 24).into())
+        .await
+        .unwrap();
     app.handle_overlay_key(ctrl_s()).await.unwrap();
 
     assert!(matches!(
@@ -999,7 +1057,9 @@ async fn esc_closes_every_overlay_variant() {
         let detail_help = matches!(overlay, OverlayState::DetailHelp { .. });
         let mut app = test_app().await;
         app.overlay = Some(overlay);
-        app.dispatch_key(key(KeyCode::Esc), 24).await.unwrap();
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
         if detail_help {
             assert!(matches!(
                 app.overlay,

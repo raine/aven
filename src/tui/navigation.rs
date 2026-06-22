@@ -1,22 +1,30 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::query::TaskListItem;
 use crate::tui::event::Action;
 use crate::tui::overlay::{OverlayOutcome, OverlayState};
 use crate::tui::store::SidebarEntry;
+use crate::tui::ui::detail_scroll_cap;
 
 pub(crate) fn handle_detail_overlay_key(
     key: KeyEvent,
     overlay: OverlayState,
+    terminal_width: u16,
     terminal_height: u16,
+    task: Option<&TaskListItem>,
 ) -> OverlayOutcome {
     let OverlayState::Detail { mut scroll } = overlay else {
         return OverlayOutcome::None(overlay);
     };
     let page = detail_page_scroll_rows(terminal_height);
+    let scroll_cap = task
+        .map(|task| detail_scroll_cap(task, terminal_width, terminal_height))
+        .unwrap_or(0);
+    scroll = scroll.min(scroll_cap);
     match key.code {
         KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
         KeyCode::Char('j') | KeyCode::Down => {
-            scroll = scroll.saturating_add(1);
+            scroll = scroll.saturating_add(1).min(scroll_cap);
             OverlayOutcome::None(OverlayState::Detail { scroll })
         }
         KeyCode::Char('k') | KeyCode::Up => {
@@ -24,7 +32,7 @@ pub(crate) fn handle_detail_overlay_key(
             OverlayOutcome::None(OverlayState::Detail { scroll })
         }
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            scroll = scroll.saturating_add(page);
+            scroll = scroll.saturating_add(page).min(scroll_cap);
             OverlayOutcome::None(OverlayState::Detail { scroll })
         }
         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -32,7 +40,7 @@ pub(crate) fn handle_detail_overlay_key(
             OverlayOutcome::None(OverlayState::Detail { scroll })
         }
         KeyCode::PageDown => {
-            scroll = scroll.saturating_add(page);
+            scroll = scroll.saturating_add(page).min(scroll_cap);
             OverlayOutcome::None(OverlayState::Detail { scroll })
         }
         KeyCode::PageUp => {
@@ -180,5 +188,35 @@ mod tests {
     #[test]
     fn wraps_up_from_first_task_to_last_task() {
         assert_eq!(next_index(Some(0), 3, -1, true), Some(2));
+    }
+
+    #[test]
+    fn detail_down_scroll_stops_at_cap() {
+        let OverlayOutcome::None(OverlayState::Detail { scroll }) = handle_detail_overlay_key(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            OverlayState::Detail { scroll: 4 },
+            80,
+            24,
+            None,
+        ) else {
+            panic!("expected detail overlay");
+        };
+
+        assert_eq!(scroll, 0);
+    }
+
+    #[test]
+    fn detail_up_scroll_moves_after_resisted_down_scroll() {
+        let OverlayOutcome::None(OverlayState::Detail { scroll }) = handle_detail_overlay_key(
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
+            OverlayState::Detail { scroll: 4 },
+            80,
+            24,
+            None,
+        ) else {
+            panic!("expected detail overlay");
+        };
+
+        assert_eq!(scroll, 0);
     }
 }

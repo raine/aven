@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
@@ -33,10 +33,7 @@ fn render_detail(frame: &mut Frame, item: &TaskListItem, scroll: u16) {
     } else {
         [body, Rect::default()]
     };
-    let content_area = content_area.inner(ratatui::layout::Margin {
-        horizontal: 2,
-        vertical: 1,
-    });
+    let content_area = content_area.inner(detail_content_margin());
     render_detail_content(frame, item, content_area, scroll);
     if metadata_area.width > 0 {
         render_detail_metadata(frame, item, metadata_area);
@@ -48,6 +45,37 @@ fn keycap_style() -> Style {
         .fg(FG)
         .bg(BG_PANEL)
         .add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn detail_scroll_cap(
+    item: &TaskListItem,
+    terminal_width: u16,
+    terminal_height: u16,
+) -> u16 {
+    let area = Rect::new(0, 0, terminal_width, terminal_height);
+    let [_, body, _] = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Fill(1),
+        Constraint::Length(2),
+    ])
+    .areas(area);
+    let [content_area, _] = if body.width >= 96 {
+        Layout::horizontal([Constraint::Fill(1), Constraint::Length(34)]).areas(body)
+    } else {
+        [body, Rect::default()]
+    };
+    let content_area = content_area.inner(detail_content_margin());
+    let content_height = detail_content_lines(item, content_area.width as usize)
+        .len()
+        .max(1);
+    detail_scroll_max_start(content_height, content_area.height as usize) as u16
+}
+
+fn detail_content_margin() -> Margin {
+    Margin {
+        horizontal: 2,
+        vertical: 1,
+    }
 }
 
 fn render_detail_content(frame: &mut Frame, item: &TaskListItem, area: Rect, scroll: u16) {
@@ -68,14 +96,28 @@ fn render_detail_content(frame: &mut Frame, item: &TaskListItem, area: Rect, scr
                 .style(Style::new().fg(FG_DIM).bg(BG))
                 .thumb_style(Style::new().fg(FG_MUTED)),
             area,
-            &mut ScrollbarState::new(content_height).position(start),
+            &mut ScrollbarState::new(content_height)
+                .position(detail_scrollbar_position(start, content_height, visible))
+                .viewport_content_length(visible),
         );
     }
 }
 
 fn detail_scroll_start(scroll: u16, content_height: usize, visible: usize) -> usize {
-    let max_start = content_height.saturating_sub(visible);
+    let max_start = detail_scroll_max_start(content_height, visible);
     (scroll as usize).min(max_start)
+}
+
+fn detail_scrollbar_position(start: usize, content_height: usize, visible: usize) -> usize {
+    let max_start = detail_scroll_max_start(content_height, visible);
+    start
+        .saturating_mul(content_height.saturating_sub(1))
+        .checked_div(max_start)
+        .unwrap_or(0)
+}
+
+fn detail_scroll_max_start(content_height: usize, visible: usize) -> usize {
+    content_height.saturating_sub(visible)
 }
 
 fn detail_content_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
@@ -375,6 +417,13 @@ mod tests {
         assert_eq!(detail_scroll_start(8, 20, 5), 8);
         assert_eq!(detail_scroll_start(30, 20, 5), 15);
         assert_eq!(detail_scroll_start(4, 3, 5), 0);
+    }
+
+    #[test]
+    fn detail_scrollbar_position_reaches_end_at_last_visible_row() {
+        assert_eq!(detail_scrollbar_position(0, 20, 5), 0);
+        assert_eq!(detail_scrollbar_position(15, 20, 5), 19);
+        assert_eq!(detail_scrollbar_position(0, 3, 5), 0);
     }
 
     fn detail_test_item() -> TaskListItem {

@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::DefaultTerminal;
+use ratatui::layout::Size;
 use ratatui::widgets::{ListState, TableState};
 use sqlx::SqlitePool;
 
@@ -116,7 +117,7 @@ impl App {
             if event::poll(Duration::from_millis(250))?
                 && let Event::Key(key) = event::read()?
             {
-                let result = self.dispatch_key(key, terminal.size()?.height).await;
+                let result = self.dispatch_key(key, terminal.size()?).await;
                 if let Err(error) = result {
                     self.set_message(format!("error: {error:#}"));
                 }
@@ -147,7 +148,7 @@ impl App {
         }
     }
 
-    async fn dispatch_key(&mut self, key: KeyEvent, terminal_height: u16) -> Result<()> {
+    async fn dispatch_key(&mut self, key: KeyEvent, terminal_size: Size) -> Result<()> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.handle(Action::Quit).await
         } else if key.code == KeyCode::Esc && !self.pending_shortcut.is_empty() {
@@ -156,14 +157,13 @@ impl App {
             if key.code == KeyCode::Char('?')
                 && matches!(self.overlay, Some(OverlayState::Detail { .. }))
             {
-                self.toggle_help_at_height(terminal_height);
+                self.toggle_help_at_height(terminal_size.height);
                 Ok(())
             } else {
-                self.handle_overlay_key_at_height(key, terminal_height)
-                    .await
+                self.handle_overlay_key_at_size(key, terminal_size).await
             }
         } else if key.code == KeyCode::Char('?') {
-            self.toggle_help_at_height(terminal_height);
+            self.toggle_help_at_height(terminal_size.height);
             Ok(())
         } else {
             self.handle_normal_key(key.code).await
@@ -223,13 +223,14 @@ impl App {
     }
 
     pub(crate) async fn handle_overlay_key(&mut self, key: KeyEvent) -> Result<()> {
-        self.handle_overlay_key_at_height(key, 24).await
+        self.handle_overlay_key_at_size(key, Size::new(80, 24))
+            .await
     }
 
-    async fn handle_overlay_key_at_height(
+    async fn handle_overlay_key_at_size(
         &mut self,
         key: KeyEvent,
-        terminal_height: u16,
+        terminal_size: Size,
     ) -> Result<()> {
         let Some(overlay) = self.overlay.take() else {
             return Ok(());
@@ -259,7 +260,7 @@ impl App {
                 }
             },
             overlay => {
-                self.handle_generic_overlay_key(key, overlay, terminal_height)
+                self.handle_generic_overlay_key(key, overlay, terminal_size)
                     .await?
             }
         }
@@ -271,7 +272,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         overlay: OverlayState,
-        terminal_height: u16,
+        terminal_size: Size,
     ) -> Result<()> {
         if let OverlayState::Detail { scroll } = overlay {
             if let Some(action) = detail_action(key) {
@@ -290,7 +291,14 @@ impl App {
             }
 
             let overlay = OverlayState::Detail { scroll };
-            let outcome = handle_detail_overlay_key(key, overlay, terminal_height);
+            let task = self.store.selected_task(self.widgets.table.selected());
+            let outcome = handle_detail_overlay_key(
+                key,
+                overlay,
+                terminal_size.width,
+                terminal_size.height,
+                task,
+            );
             match outcome {
                 OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
                 OverlayOutcome::Cancelled => self.cancel_authoring_overlay(),
@@ -327,8 +335,8 @@ impl App {
         }
 
         let scroll_cap = match overlay {
-            OverlayState::DetailHelp { .. } => detail_help_scroll_cap(terminal_height),
-            _ => help_scroll_cap(terminal_height),
+            OverlayState::DetailHelp { .. } => detail_help_scroll_cap(terminal_size.height),
+            _ => help_scroll_cap(terminal_size.height),
         };
         let was_detail_help = matches!(overlay, OverlayState::DetailHelp { .. });
         let outcome = crate::tui::overlay::handle_generic_overlay_key(key, overlay, scroll_cap);
