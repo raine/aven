@@ -4,10 +4,7 @@ use crate::tui::app::{App, Focus};
 use crate::tui::conflict_flow::{
     ConflictResolutionChoice, ConflictSubmit, ConflictTransition, truncate_value_preview,
 };
-use crate::tui::overlay::{
-    ConfirmState, MultilineInputState, OverlayRoute, OverlayState, PickerItem, TextInputState,
-    TextPanelState,
-};
+use crate::tui::overlay::{OverlayRoute, OverlayState, PickerItem, TextPanelState};
 use crate::tui::store::deleted_picker_items;
 use crate::tui::store::{ConflictTarget, SidebarTarget};
 
@@ -177,15 +174,15 @@ impl App {
             ConflictResolutionChoice::Local => CONFLICT_CONFIRM_LOCAL_TITLE,
             ConflictResolutionChoice::Remote => CONFLICT_CONFIRM_REMOTE_TITLE,
         };
-        self.overlay = Some(OverlayState::Confirm(ConfirmState {
-            route: OverlayRoute::ConflictConfirm,
-            title: title.to_string(),
-            prompt: format!(
+        self.overlay = Some(OverlayState::confirm(
+            OverlayRoute::ConflictConfirm,
+            title,
+            format!(
                 "Resolve field={} with {}?",
                 target.field,
                 truncate_value_preview(value, 60)
             ),
-        }));
+        ));
     }
 
     pub(super) async fn submit_confirmed_conflict_resolution(&mut self) -> Result<()> {
@@ -204,22 +201,20 @@ impl App {
     fn open_manual_conflict_editor(&mut self, target: ConflictTarget) {
         match target.field.as_str() {
             "description" => {
-                self.overlay = Some(OverlayState::MultilineInput(
-                    MultilineInputState::from_value(
-                        OverlayRoute::ConflictManual,
-                        CONFLICT_MANUAL_TITLE,
-                        format!("manual value for field={}:", target.field),
-                        target.local_value.clone(),
-                    ),
-                ));
-            }
-            "title" => {
-                self.overlay = Some(OverlayState::TextInput(TextInputState::new(
+                self.overlay = Some(OverlayState::multiline_input(
                     OverlayRoute::ConflictManual,
                     CONFLICT_MANUAL_TITLE,
                     format!("manual value for field={}:", target.field),
                     target.local_value.clone(),
-                )));
+                ));
+            }
+            "title" => {
+                self.overlay = Some(OverlayState::text_input(
+                    OverlayRoute::ConflictManual,
+                    CONFLICT_MANUAL_TITLE,
+                    format!("manual value for field={}:", target.field),
+                    target.local_value.clone(),
+                ));
             }
             "status" => {
                 let items = self

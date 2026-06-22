@@ -28,8 +28,8 @@ use crate::tui::navigation::{
     next_selectable_sidebar,
 };
 use crate::tui::overlay::{
-    AddTaskState, ConfirmState, LineEdit, MultilineInputState, OverlayOutcome, OverlayRoute,
-    OverlayState, OverlaySubmit, OverlayView, PickerItem, PickerMode, PickerState, TextInputState,
+    AddTaskState, LineEdit, MultilineInputState, OverlayOutcome, OverlayRoute, OverlayState,
+    OverlaySubmit, OverlayView, PickerItem,
 };
 use crate::tui::platform::{copy_to_clipboard, edit_text_externally, is_editor_prefix_key};
 use crate::tui::store::{SidebarTarget, TuiStore};
@@ -954,20 +954,20 @@ impl App {
 
     fn begin_add_project(&mut self) {
         self.pending_shortcut.clear();
-        self.overlay = Some(OverlayState::TextInput(TextInputState::blank(
+        self.overlay = Some(OverlayState::blank_text_input(
             OverlayRoute::AddProject,
             ADD_PROJECT_TITLE,
             "project name:",
-        )));
+        ));
     }
 
     fn begin_add_label(&mut self) {
         self.pending_shortcut.clear();
-        self.overlay = Some(OverlayState::TextInput(TextInputState::blank(
+        self.overlay = Some(OverlayState::blank_text_input(
             OverlayRoute::AddLabel,
             ADD_LABEL_TITLE,
             "label name:",
-        )));
+        ));
     }
 
     async fn begin_add_task(&mut self) -> Result<()> {
@@ -1074,11 +1074,11 @@ impl App {
             return_to_detail,
         );
         self.detail_context = return_to_detail;
-        self.overlay = Some(OverlayState::MultilineInput(MultilineInputState::blank(
+        self.overlay = Some(OverlayState::blank_multiline_input(
             OverlayRoute::AddNote,
             ADD_NOTE_TITLE,
             "note body:",
-        )));
+        ));
     }
 
     fn begin_add_task_title_project(&mut self) {
@@ -1254,15 +1254,7 @@ impl App {
         items: Vec<PickerItem>,
         multi: bool,
     ) {
-        self.overlay = Some(OverlayState::Picker(PickerState {
-            route,
-            title: title.to_string(),
-            filter: LineEdit::blank(),
-            selected: selected_picker_index(&items),
-            items,
-            multi,
-            mode: PickerMode::Navigate,
-        }));
+        self.overlay = Some(OverlayState::picker(route, title, items, multi));
     }
 
     pub(super) fn require_picker_value(
@@ -1287,11 +1279,11 @@ impl App {
         };
         self.detail_context =
             self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. }));
-        self.overlay = Some(OverlayState::Confirm(ConfirmState {
-            route: OverlayRoute::DeleteTaskConfirm,
-            title: DELETE_TASK_TITLE.to_string(),
-            prompt: format!("Delete {} {}?", task.display_ref, task.task.title),
-        }));
+        self.overlay = Some(OverlayState::confirm(
+            OverlayRoute::DeleteTaskConfirm,
+            DELETE_TASK_TITLE,
+            format!("Delete {} {}?", task.display_ref, task.task.title),
+        ));
     }
 
     fn begin_delete_project(&mut self) {
@@ -1431,11 +1423,11 @@ impl App {
             return;
         };
         self.pending_delete_project = Some(project.clone());
-        self.overlay = Some(OverlayState::Confirm(ConfirmState {
-            route: OverlayRoute::DeleteProjectConfirm,
-            title: DELETE_PROJECT_TITLE.to_string(),
-            prompt: format!("Delete project {project}?"),
-        }));
+        self.overlay = Some(OverlayState::confirm(
+            OverlayRoute::DeleteProjectConfirm,
+            DELETE_PROJECT_TITLE,
+            format!("Delete project {project}?"),
+        ));
     }
 
     async fn submit_delete_project(&mut self) -> Result<()> {
@@ -1451,17 +1443,8 @@ impl App {
     }
 }
 
-fn selected_picker_index(items: &[PickerItem]) -> usize {
-    items.iter().position(|item| item.selected).unwrap_or(0)
-}
-
 fn description_overlay_from_value(value: String) -> OverlayState {
-    OverlayState::MultilineInput(MultilineInputState::from_value(
-        OverlayRoute::EditDescription,
-        "Edit description",
-        "",
-        value,
-    ))
+    OverlayState::multiline_input(OverlayRoute::EditDescription, "Edit description", "", value)
 }
 
 #[cfg(test)]

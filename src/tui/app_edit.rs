@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::tui::app::App;
-use crate::tui::overlay::{MultilineInputState, OverlayRoute, OverlayState, TextInputState};
+use crate::tui::overlay::{OverlayRoute, OverlayState};
 
 pub(crate) const EDIT_STATUS_TITLE: &str = "Edit task: status";
 pub(crate) const EDIT_TITLE_TITLE: &str = "Edit title";
@@ -129,22 +129,20 @@ impl App {
     }
 
     fn open_edit_title_overlay(&mut self, input: String) {
-        self.overlay = Some(OverlayState::TextInput(TextInputState::new(
+        self.overlay = Some(OverlayState::text_input(
             OverlayRoute::EditTitle,
             EDIT_TITLE_TITLE,
             "",
             input,
-        )));
+        ));
     }
 
     fn open_edit_description_overlay(&mut self, value: String) {
-        self.overlay = Some(OverlayState::MultilineInput(
-            MultilineInputState::from_value(
-                OverlayRoute::EditDescription,
-                EDIT_DESCRIPTION_TITLE,
-                "",
-                value,
-            ),
+        self.overlay = Some(OverlayState::multiline_input(
+            OverlayRoute::EditDescription,
+            EDIT_DESCRIPTION_TITLE,
+            "",
+            value,
         ));
     }
 

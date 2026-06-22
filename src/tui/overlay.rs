@@ -329,6 +329,44 @@ impl MultilineInputState {
     }
 }
 
+impl PickerState {
+    pub(crate) fn new(
+        route: OverlayRoute,
+        title: impl Into<String>,
+        items: Vec<PickerItem>,
+        multi: bool,
+    ) -> Self {
+        let selected = Self::selected_index(&items);
+        Self {
+            route,
+            title: title.into(),
+            filter: LineEdit::blank(),
+            items,
+            selected,
+            multi,
+            mode: PickerMode::Navigate,
+        }
+    }
+
+    fn selected_index(items: &[PickerItem]) -> usize {
+        items.iter().position(|item| item.selected).unwrap_or(0)
+    }
+}
+
+impl ConfirmState {
+    pub(crate) fn new(
+        route: OverlayRoute,
+        title: impl Into<String>,
+        prompt: impl Into<String>,
+    ) -> Self {
+        Self {
+            route,
+            title: title.into(),
+            prompt: prompt.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PickerMode {
     Navigate,
@@ -479,6 +517,57 @@ impl OverlaySubmit {
 }
 
 impl OverlayState {
+    pub(crate) fn text_input(
+        route: OverlayRoute,
+        title: impl Into<String>,
+        prompt: impl Into<String>,
+        input: String,
+    ) -> Self {
+        Self::TextInput(TextInputState::new(route, title, prompt, input))
+    }
+
+    pub(crate) fn blank_text_input(
+        route: OverlayRoute,
+        title: impl Into<String>,
+        prompt: impl Into<String>,
+    ) -> Self {
+        Self::TextInput(TextInputState::blank(route, title, prompt))
+    }
+
+    pub(crate) fn multiline_input(
+        route: OverlayRoute,
+        title: impl Into<String>,
+        prompt: impl Into<String>,
+        value: String,
+    ) -> Self {
+        Self::MultilineInput(MultilineInputState::from_value(route, title, prompt, value))
+    }
+
+    pub(crate) fn blank_multiline_input(
+        route: OverlayRoute,
+        title: impl Into<String>,
+        prompt: impl Into<String>,
+    ) -> Self {
+        Self::MultilineInput(MultilineInputState::blank(route, title, prompt))
+    }
+
+    pub(crate) fn picker(
+        route: OverlayRoute,
+        title: impl Into<String>,
+        items: Vec<PickerItem>,
+        multi: bool,
+    ) -> Self {
+        Self::Picker(PickerState::new(route, title, items, multi))
+    }
+
+    pub(crate) fn confirm(
+        route: OverlayRoute,
+        title: impl Into<String>,
+        prompt: impl Into<String>,
+    ) -> Self {
+        Self::Confirm(ConfirmState::new(route, title, prompt))
+    }
+
     pub(crate) fn captures_input(&self) -> bool {
         true
     }
@@ -1659,6 +1748,91 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn picker_builder_uses_first_selected_item() {
+        let state = PickerState::new(
+            OverlayRoute::EditLabels,
+            "Labels",
+            vec![
+                PickerItem {
+                    label: "One".to_string(),
+                    value: "one".to_string(),
+                    selected: false,
+                },
+                PickerItem {
+                    label: "Two".to_string(),
+                    value: "two".to_string(),
+                    selected: true,
+                },
+            ],
+            true,
+        );
+
+        assert_eq!(state.selected, 1);
+        assert_eq!(state.filter, LineEdit::blank());
+        assert_eq!(state.mode, PickerMode::Navigate);
+        assert!(state.multi);
+    }
+
+    #[test]
+    fn picker_builder_defaults_to_first_item() {
+        let state = PickerState::new(
+            OverlayRoute::EditProject,
+            "Project",
+            vec![PickerItem {
+                label: "One".to_string(),
+                value: "one".to_string(),
+                selected: false,
+            }],
+            false,
+        );
+
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.filter, LineEdit::blank());
+        assert_eq!(state.mode, PickerMode::Navigate);
+        assert!(!state.multi);
+    }
+
+    #[test]
+    fn overlay_builders_preserve_text_multiline_and_confirm_metadata() {
+        let OverlayState::TextInput(text) = OverlayState::text_input(
+            OverlayRoute::EditTitle,
+            "Edit title",
+            "title:",
+            "old".to_string(),
+        ) else {
+            panic!("expected text input");
+        };
+        assert_eq!(text.route, OverlayRoute::EditTitle);
+        assert_eq!(text.title, "Edit title");
+        assert_eq!(text.prompt, "title:");
+        assert_eq!(text.input.as_str(), "old");
+
+        let OverlayState::MultilineInput(multiline) = OverlayState::multiline_input(
+            OverlayRoute::EditDescription,
+            "Edit description",
+            "body:",
+            "a\nb".to_string(),
+        ) else {
+            panic!("expected multiline input");
+        };
+        assert_eq!(multiline.route, OverlayRoute::EditDescription);
+        assert_eq!(multiline.title, "Edit description");
+        assert_eq!(multiline.prompt, "body:");
+        assert_eq!(multiline.lines, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(multiline.row, 1);
+        assert_eq!(multiline.column, 1);
+
+        let OverlayState::Confirm(confirm) =
+            OverlayState::confirm(OverlayRoute::DeleteTaskConfirm, "Delete", "Sure?")
+        else {
+            panic!("expected confirm");
+        };
+        assert_eq!(confirm.route, OverlayRoute::DeleteTaskConfirm);
+        assert_eq!(confirm.title, "Delete");
+        assert_eq!(confirm.prompt, "Sure?");
     }
 
     #[test]
