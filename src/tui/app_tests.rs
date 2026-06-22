@@ -1896,6 +1896,24 @@ async fn undo_shortcut_reverts_last_mutation() {
 }
 
 #[tokio::test]
+async fn undo_shortcut_keeps_selected_row_position() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("First")).await;
+    create_and_select_task(&mut app, test_task_draft("Second")).await;
+    create_and_select_task(&mut app, test_task_draft("Third")).await;
+    let selected = 1;
+    app.widgets.table.select(Some(selected));
+
+    app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+    assert_eq!(app.widgets.table.selected(), Some(selected));
+
+    app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
+
+    assert_eq!(app.widgets.table.selected(), Some(selected));
+    assert_eq!(app.store.tasks[selected].task.status, "inbox");
+}
+
+#[tokio::test]
 async fn undo_command_reverts_last_mutation() {
     let mut app = test_app().await;
     let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;

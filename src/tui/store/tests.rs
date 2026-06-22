@@ -1064,7 +1064,7 @@ async fn explicit_workspace_payloads_pair_id_and_key_when_active_differs() {
 #[tokio::test]
 async fn undo_returns_none_when_empty() {
     let mut store = test_store().await;
-    assert!(store.undo_last().await.unwrap().is_none());
+    assert!(store.undo_last(None).await.unwrap().is_none());
 }
 
 #[tokio::test]
@@ -1079,7 +1079,7 @@ async fn undo_title_edit_survives_store_restart() {
     assert_eq!(store.tasks[selected].task.title, "After");
 
     let mut restarted = TuiStore::new(pool).await.unwrap();
-    let outcome = restarted.undo_last().await.unwrap().unwrap();
+    let outcome = restarted.undo_last(None).await.unwrap().unwrap();
     assert_eq!(outcome.message, format!("undid title {display_ref}"));
     let index = restarted
         .tasks
@@ -1107,7 +1107,7 @@ async fn undo_guard_blocks_stale_task_field() {
         .unwrap();
     drop(conn);
 
-    let error = store.undo_last().await.unwrap_err();
+    let error = store.undo_last(None).await.unwrap_err();
     assert!(error.to_string().contains("undo-state-changed"));
     store.refresh(Some(&task_id)).await.unwrap();
     let index = store
@@ -1141,7 +1141,7 @@ async fn undo_delete_restores_task() {
         .unwrap();
     assert!(store.tasks[index].task.deleted);
 
-    store.undo_last().await.unwrap();
+    store.undo_last(None).await.unwrap();
     store.refresh(Some(&task_id)).await.unwrap();
     let index = store
         .tasks
@@ -1169,7 +1169,7 @@ async fn repeated_delete_does_not_add_noop_undo_entry() {
         pending_undo_count(&pool, &workspace_id).await,
         undo_count_after_delete
     );
-    store.undo_last().await.unwrap().unwrap();
+    store.undo_last(None).await.unwrap().unwrap();
     store.refresh(Some(&task_id)).await.unwrap();
     let index = store
         .tasks
@@ -1276,7 +1276,7 @@ async fn undo_restore_redeletes_task() {
         .unwrap();
     assert_eq!(restore.message, format!("restored {display_ref}"));
 
-    store.undo_last().await.unwrap();
+    store.undo_last(None).await.unwrap();
     store.filters.include_deleted = true;
     store.refresh(Some(&task_id)).await.unwrap();
     let index = store
@@ -1291,7 +1291,7 @@ async fn undo_restore_redeletes_task() {
 async fn undo_create_task_removes_local_unsynced_task() {
     let (_dir, pool, mut store) = test_store_with_pool().await;
     let (task_id, _) = create_selected_task(&mut store, "Temporary").await;
-    store.undo_last().await.unwrap();
+    store.undo_last(None).await.unwrap();
 
     let mut conn = pool.acquire().await.unwrap();
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks WHERE id = ?")
@@ -1323,7 +1323,7 @@ async fn undo_labels_uses_set_comparison() {
         .unwrap();
     assert_eq!(store.tasks[index].labels, vec!["docs".to_string()]);
 
-    store.undo_last().await.unwrap();
+    store.undo_last(None).await.unwrap();
     store.refresh(Some(&task_id)).await.unwrap();
     let index = store
         .tasks
@@ -1341,7 +1341,7 @@ async fn undo_note_create_deletes_only_unsynced_note() {
         .add_note_to_task(&task_id, "hello".to_string())
         .await
         .unwrap();
-    store.undo_last().await.unwrap();
+    store.undo_last(None).await.unwrap();
 
     let mut conn = pool.acquire().await.unwrap();
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM notes WHERE id = ?")
@@ -1382,7 +1382,7 @@ async fn undo_project_create_fails_when_referenced_or_synced() {
     .unwrap();
     drop(conn);
 
-    let error = store.undo_last().await.unwrap_err();
+    let error = store.undo_last(None).await.unwrap_err();
     assert!(error.to_string().contains("undo-state-changed"));
     store.refresh(None).await.unwrap();
     assert!(store.projects.iter().any(|project| project.key == "side"));
@@ -1402,7 +1402,7 @@ async fn undo_label_create_fails_when_referenced_or_synced() {
         .unwrap();
     drop(conn);
 
-    let error = store.undo_last().await.unwrap_err();
+    let error = store.undo_last(None).await.unwrap_err();
     assert!(error.to_string().contains("undo-state-changed"));
     let mut conn = pool.acquire().await.unwrap();
     store.labels = list_labels_in_workspace(&mut conn, &store.active_workspace.id, None)
@@ -1450,7 +1450,7 @@ async fn undo_conflict_resolution_restores_unresolved_conflict() {
     assert_eq!(store.tasks[selected].task.title, "local title");
     assert!(!store.tasks[selected].has_conflict);
 
-    store.undo_last().await.unwrap();
+    store.undo_last(None).await.unwrap();
     store.refresh(Some(&task_id)).await.unwrap();
     assert_eq!(store.tasks[selected].task.title, "Before");
     assert!(store.tasks[selected].has_conflict);
@@ -1473,7 +1473,7 @@ async fn undo_is_workspace_scoped() {
     crate::workspaces::set_active_workspace(other);
 
     let mut other_store = TuiStore::new(pool.clone()).await.unwrap();
-    assert!(other_store.undo_last().await.unwrap().is_none());
+    assert!(other_store.undo_last(None).await.unwrap().is_none());
 
     crate::workspaces::set_active_workspace(crate::workspaces::Workspace {
         id: crate::workspaces::DEFAULT_WORKSPACE_ID.to_string(),
@@ -1481,7 +1481,7 @@ async fn undo_is_workspace_scoped() {
         name: "default".to_string(),
     });
     let mut default_store = TuiStore::new(pool).await.unwrap();
-    default_store.undo_last().await.unwrap().unwrap();
+    default_store.undo_last(None).await.unwrap().unwrap();
     default_store.refresh(Some(&task_id)).await.unwrap();
     let index = default_store
         .tasks
@@ -1499,9 +1499,9 @@ async fn undo_consumes_entry_once() {
         .update_title(Some(selected), "Changed".to_string())
         .await
         .unwrap();
-    store.undo_last().await.unwrap().unwrap();
-    store.undo_last().await.unwrap().unwrap();
-    assert!(store.undo_last().await.unwrap().is_none());
+    store.undo_last(None).await.unwrap().unwrap();
+    store.undo_last(None).await.unwrap().unwrap();
+    assert!(store.undo_last(None).await.unwrap().is_none());
 }
 
 #[tokio::test]
@@ -1517,7 +1517,7 @@ async fn undo_skips_noop_status_before_previous_mutation() {
         undo_count_after_change
     );
 
-    store.undo_last().await.unwrap().unwrap();
+    store.undo_last(None).await.unwrap().unwrap();
     store.refresh(Some(&task_id)).await.unwrap();
     let index = store
         .tasks

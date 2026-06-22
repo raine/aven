@@ -64,7 +64,7 @@ impl App {
     }
 
     pub(super) async fn undo_last(&mut self) -> Result<()> {
-        match self.store.undo_last().await? {
+        match self.store.undo_last(self.widgets.table.selected()).await? {
             Some(result) => self.apply_mutation_result(result),
             None => self.set_info("nothing to undo"),
         }

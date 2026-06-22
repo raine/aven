@@ -40,7 +40,10 @@ impl TuiStore {
         Ok(MutationMessage::new(message, selected))
     }
 
-    pub(crate) async fn undo_last(&mut self) -> Result<Option<MutationMessage>> {
+    pub(crate) async fn undo_last(
+        &mut self,
+        selected: Option<usize>,
+    ) -> Result<Option<MutationMessage>> {
         self.activate_workspace();
         let workspace_id = self.active_workspace.id.clone();
         let mut conn = self.pool.acquire().await?;
@@ -54,7 +57,12 @@ impl TuiStore {
             self.filters.include_deleted = include_deleted;
         }
 
-        let selected = self.refresh(outcome.task_id.as_deref()).await?;
+        let selected = if selected.is_some() {
+            self.refresh(None).await?;
+            self.restored_task_selection_at_index(selected)
+        } else {
+            self.refresh(outcome.task_id.as_deref()).await?
+        };
         Ok(Some(MutationMessage::new(
             format!("undid {}", outcome.summary),
             selected,
