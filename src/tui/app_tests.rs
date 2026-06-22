@@ -9,7 +9,8 @@ use crate::tui::config_overlay::{
     CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PATHS_TITLE, CONFIG_STATUS_TITLE,
 };
 use crate::tui::overlay::{
-    ConfirmState, MultilineInputState, OverlayRoute, PickerState, TextInputState, TextPanelState,
+    ConfirmState, MultilineInputState, OverlayRoute, PickerMode, PickerState, TextInputState,
+    TextPanelState,
 };
 use crate::tui::store::SidebarTarget;
 
@@ -474,6 +475,9 @@ async fn filter_shortcuts_apply_label_status_priority_and_deleted() {
 
     app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Char('/')))
+        .await
+        .unwrap();
     type_chars(&mut app, "backend").await;
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert_eq!(app.store.filters.label.as_deref(), Some("backend"));
@@ -481,12 +485,18 @@ async fn filter_shortcuts_apply_label_status_priority_and_deleted() {
 
     app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Char('/')))
+        .await
+        .unwrap();
     type_chars(&mut app, "inbox").await;
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert_eq!(app.store.filters.status.as_deref(), Some("inbox"));
 
     app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Char('/')))
+        .await
+        .unwrap();
     type_chars(&mut app, "urgent").await;
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert_eq!(app.store.filters.priority.as_deref(), Some("urgent"));
@@ -1122,6 +1132,7 @@ async fn esc_closes_every_overlay_variant() {
             }],
             selected: 0,
             multi: false,
+            mode: PickerMode::Navigate,
         }),
         OverlayState::Confirm(ConfirmState {
             route: OverlayRoute::MessageOnly,
@@ -1556,6 +1567,9 @@ async fn edit_priority_picker_prefills_current_priority() {
                 && state.items.iter().any(|item| item.value == "high" && item.selected)
     ));
 
+    app.handle_overlay_key(key(KeyCode::Char('/')))
+        .await
+        .unwrap();
     type_chars(&mut app, "urgent").await;
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     let selected = app.widgets.table.selected().unwrap();
@@ -1585,6 +1599,9 @@ async fn edit_labels_picker_prefills_current_labels_and_removes_unselected() {
                 && state.items.iter().any(|item| item.value == "bug" && item.selected)
     ));
 
+    app.handle_overlay_key(key(KeyCode::Char('/')))
+        .await
+        .unwrap();
     type_chars(&mut app, "bug").await;
     app.handle_overlay_key(key(KeyCode::Char(' ')))
         .await
@@ -1618,6 +1635,9 @@ async fn status_picker_alias_updates_selected_task() {
         &app.overlay,
         Some(OverlayState::Picker(state)) if state.title == EDIT_STATUS_TITLE
     ));
+    app.handle_overlay_key(key(KeyCode::Char('/')))
+        .await
+        .unwrap();
     type_chars(&mut app, "todo").await;
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 

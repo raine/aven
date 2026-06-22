@@ -275,6 +275,12 @@ impl MultilineInputState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PickerMode {
+    Navigate,
+    Filter,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PickerState {
     pub(crate) route: OverlayRoute,
@@ -283,6 +289,7 @@ pub(crate) struct PickerState {
     pub(crate) items: Vec<PickerItem>,
     pub(crate) selected: usize,
     pub(crate) multi: bool,
+    pub(crate) mode: PickerMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -346,6 +353,7 @@ pub(crate) struct PickerView {
     pub(crate) items: Vec<PickerItem>,
     pub(crate) selected: usize,
     pub(crate) multi: bool,
+    pub(crate) mode: PickerMode,
     pub(crate) visible_indices: Vec<usize>,
 }
 
@@ -443,6 +451,7 @@ impl From<&OverlayState> for OverlayView {
                 items: state.items.clone(),
                 selected: state.selected,
                 multi: state.multi,
+                mode: state.mode,
                 visible_indices: visible_picker_indices(state),
             }),
             OverlayState::Confirm(state) => Self::Confirm(ConfirmView {
@@ -523,61 +532,7 @@ pub(crate) fn handle_generic_overlay_key(
                 }
             }
         }
-        OverlayState::Picker(mut state) => match key.code {
-            KeyCode::Esc => OverlayOutcome::Cancelled,
-            KeyCode::Enter => {
-                let values = if state.multi {
-                    state
-                        .items
-                        .iter()
-                        .filter(|item| item.selected)
-                        .map(|item| item.value.clone())
-                        .collect()
-                } else {
-                    visible_picker_indices(&state)
-                        .iter()
-                        .find(|index| **index == state.selected)
-                        .map(|index| vec![state.items[*index].value.clone()])
-                        .unwrap_or_default()
-                };
-                OverlayOutcome::Submitted(OverlaySubmit::Picker {
-                    route: state.route,
-                    title: state.title.clone(),
-                    values,
-                })
-            }
-            KeyCode::Down => {
-                move_picker_selection(&mut state, 1);
-                OverlayOutcome::None(OverlayState::Picker(state))
-            }
-            KeyCode::Char('n') if key.modifiers == KeyModifiers::CONTROL => {
-                move_picker_selection(&mut state, 1);
-                OverlayOutcome::None(OverlayState::Picker(state))
-            }
-            KeyCode::Up => {
-                move_picker_selection(&mut state, -1);
-                OverlayOutcome::None(OverlayState::Picker(state))
-            }
-            KeyCode::Char('p') if key.modifiers == KeyModifiers::CONTROL => {
-                move_picker_selection(&mut state, -1);
-                OverlayOutcome::None(OverlayState::Picker(state))
-            }
-            KeyCode::Char(' ') if state.multi => {
-                if let Some(index) = visible_picker_indices(&state)
-                    .iter()
-                    .find(|item| **item == state.selected)
-                    .copied()
-                {
-                    state.items[index].selected = !state.items[index].selected;
-                }
-                OverlayOutcome::None(OverlayState::Picker(state))
-            }
-            _ => {
-                state.filter.handle_key(key);
-                normalize_picker_selection(&mut state);
-                OverlayOutcome::None(OverlayState::Picker(state))
-            }
-        },
+        OverlayState::Picker(state) => handle_picker_key(state, key),
         OverlayState::Confirm(state) => match key.code {
             KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => OverlayOutcome::Cancelled,
             KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -749,6 +704,112 @@ fn next_char_is_whitespace(input: &str, index: usize) -> bool {
         .chars()
         .next()
         .is_some_and(char::is_whitespace)
+}
+
+fn handle_picker_key(state: PickerState, key: KeyEvent) -> OverlayOutcome {
+    match state.mode {
+        PickerMode::Navigate => handle_picker_navigation_key(state, key),
+        PickerMode::Filter => handle_picker_filter_key(state, key),
+    }
+}
+
+fn handle_picker_navigation_key(mut state: PickerState, key: KeyEvent) -> OverlayOutcome {
+    match key.code {
+        KeyCode::Esc => OverlayOutcome::Cancelled,
+        KeyCode::Enter => picker_submit_outcome(state),
+        KeyCode::Char('/') | KeyCode::Char('i') => {
+            state.mode = PickerMode::Filter;
+            OverlayOutcome::None(OverlayState::Picker(state))
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            move_picker_selection(&mut state, 1);
+            OverlayOutcome::None(OverlayState::Picker(state))
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            move_picker_selection(&mut state, -1);
+            OverlayOutcome::None(OverlayState::Picker(state))
+        }
+        KeyCode::Char('n') if key.modifiers == KeyModifiers::CONTROL => {
+            move_picker_selection(&mut state, 1);
+            OverlayOutcome::None(OverlayState::Picker(state))
+        }
+        KeyCode::Char('p') if key.modifiers == KeyModifiers::CONTROL => {
+            move_picker_selection(&mut state, -1);
+            OverlayOutcome::None(OverlayState::Picker(state))
+        }
+        KeyCode::Char(' ') if state.multi => {
+            toggle_picker_item(&mut state);
+            OverlayOutcome::None(OverlayState::Picker(state))
+        }
+        _ => OverlayOutcome::None(OverlayState::Picker(state)),
+    }
+}
+
+fn handle_picker_filter_key(mut state: PickerState, key: KeyEvent) -> OverlayOutcome {
+    match key.code {
+        KeyCode::Esc => {
+            state.mode = PickerMode::Navigate;
+            OverlayOutcome::None(OverlayState::Picker(state))
+        }
+        KeyCode::Enter => picker_submit_outcome(state),
+        KeyCode::Down => {
+            move_picker_selection(&mut state, 1);
+            OverlayOutcome::None(OverlayState::Picker(state))
+        }
+        KeyCode::Char('n') if key.modifiers == KeyModifiers::CONTROL => {
+            move_picker_selection(&mut state, 1);
+            OverlayOutcome::None(OverlayState::Picker(state))
+        }
+        KeyCode::Up => {
+            move_picker_selection(&mut state, -1);
+            OverlayOutcome::None(OverlayState::Picker(state))
+        }
+        KeyCode::Char('p') if key.modifiers == KeyModifiers::CONTROL => {
+            move_picker_selection(&mut state, -1);
+            OverlayOutcome::None(OverlayState::Picker(state))
+        }
+        KeyCode::Char(' ') if state.multi => {
+            toggle_picker_item(&mut state);
+            OverlayOutcome::None(OverlayState::Picker(state))
+        }
+        _ => {
+            state.filter.handle_key(key);
+            normalize_picker_selection(&mut state);
+            OverlayOutcome::None(OverlayState::Picker(state))
+        }
+    }
+}
+
+fn picker_submit_outcome(state: PickerState) -> OverlayOutcome {
+    let values = if state.multi {
+        state
+            .items
+            .iter()
+            .filter(|item| item.selected)
+            .map(|item| item.value.clone())
+            .collect()
+    } else {
+        visible_picker_indices(&state)
+            .iter()
+            .find(|index| **index == state.selected)
+            .map(|index| vec![state.items[*index].value.clone()])
+            .unwrap_or_default()
+    };
+    OverlayOutcome::Submitted(OverlaySubmit::Picker {
+        route: state.route,
+        title: state.title,
+        values,
+    })
+}
+
+fn toggle_picker_item(state: &mut PickerState) {
+    if let Some(index) = visible_picker_indices(state)
+        .iter()
+        .find(|item| **item == state.selected)
+        .copied()
+    {
+        state.items[index].selected = !state.items[index].selected;
+    }
 }
 
 fn move_picker_selection(state: &mut PickerState, delta: isize) {
@@ -958,6 +1019,7 @@ mod tests {
             ],
             selected: 1,
             multi: false,
+            mode: PickerMode::Navigate,
         };
         state.filter = LineEdit::new("alp".to_string());
         normalize_picker_selection(&mut state);
@@ -978,6 +1040,7 @@ mod tests {
             }],
             selected: 0,
             multi: false,
+            mode: PickerMode::Navigate,
         };
 
         assert_eq!(visible_picker_indices(&state), vec![0]);
@@ -996,25 +1059,35 @@ mod tests {
             }],
             selected: 0,
             multi: false,
+            mode: PickerMode::Navigate,
         };
 
         assert_eq!(visible_picker_indices(&state), vec![0]);
     }
 
     #[test]
-    fn picker_types_j_and_k_into_filter() {
-        let state = PickerState {
-            route: OverlayRoute::MessageOnly,
-            title: "Pick".to_string(),
-            filter: LineEdit::blank(),
-            items: vec![PickerItem {
-                label: "jklabs".to_string(),
-                value: "jklabs".to_string(),
-                selected: false,
-            }],
-            selected: 0,
-            multi: false,
+    fn picker_moves_with_j_and_k_in_navigation_mode() {
+        let state = picker_navigation_state();
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle(key(KeyCode::Char('j')), OverlayState::Picker(state))
+        else {
+            panic!("expected picker state");
         };
+        assert_eq!(state.selected, 1);
+        assert_eq!(state.filter.as_str(), "");
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle(key(KeyCode::Char('k')), OverlayState::Picker(state))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.filter.as_str(), "");
+    }
+
+    #[test]
+    fn picker_types_j_and_k_in_filter_mode() {
+        let mut state = picker_navigation_state();
+        state.mode = PickerMode::Filter;
         let OverlayOutcome::None(OverlayState::Picker(state)) =
             handle(key(KeyCode::Char('j')), OverlayState::Picker(state))
         else {
@@ -1026,6 +1099,23 @@ mod tests {
             panic!("expected picker state");
         };
         assert_eq!(state.filter.as_str(), "jk");
+    }
+
+    #[test]
+    fn picker_slash_enters_filter_mode_and_esc_returns_to_navigation() {
+        let state = picker_navigation_state();
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle(key(KeyCode::Char('/')), OverlayState::Picker(state))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.mode, PickerMode::Filter);
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle(key(KeyCode::Esc), OverlayState::Picker(state))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.mode, PickerMode::Navigate);
     }
 
     #[test]
@@ -1081,6 +1171,7 @@ mod tests {
             ],
             selected: 0,
             multi: false,
+            mode: PickerMode::Navigate,
         }
     }
 
@@ -1166,6 +1257,7 @@ mod tests {
                 }],
                 selected: 0,
                 multi: false,
+                mode: PickerMode::Navigate,
             }),
             OverlayState::Confirm(ConfirmState {
                 route: OverlayRoute::MessageOnly,
@@ -1272,6 +1364,7 @@ mod tests {
                 }],
                 selected: 0,
                 multi: false,
+                mode: PickerMode::Navigate,
             }),
         );
         assert!(matches!(

@@ -32,7 +32,7 @@ use crate::tui::navigation::{
 };
 use crate::tui::overlay::{
     ConfirmState, LineEdit, MultilineInputState, OverlayOutcome, OverlayRoute, OverlayState,
-    OverlaySubmit, OverlayView, PickerItem, PickerState, TextInputState,
+    OverlaySubmit, OverlayView, PickerItem, PickerMode, PickerState, TextInputState,
 };
 use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::ui::{self, detail_help_scroll_cap, help_scroll_cap};
@@ -1109,6 +1109,7 @@ impl App {
             selected: selected_picker_index(&items),
             items,
             multi,
+            mode: PickerMode::Navigate,
         }));
     }
 

@@ -10,7 +10,8 @@ use super::input::{
 };
 use super::truncate::truncate_chars;
 use crate::tui::overlay::{
-    ConfirmView, MultilineInputView, PickerItem, PickerView, TextInputView, TextPanelView,
+    ConfirmView, MultilineInputView, PickerItem, PickerMode, PickerView, TextInputView,
+    TextPanelView,
 };
 use crate::tui::theme::{self, ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, SELECTED};
 use crate::tui::widgets::priority_icon;
@@ -369,7 +370,7 @@ pub(super) fn render_picker(frame: &mut Frame, state: &PickerView) {
         }
     }
     lines.push(Line::from(""));
-    lines.push(picker_hint_line(state.multi, "submit"));
+    lines.push(picker_hint_line(state.mode, state.multi, "submit"));
     Dialog::new(&state.title, 60, height.saturating_add(1)).render_text(frame, Text::from(lines));
 }
 
@@ -385,12 +386,19 @@ fn priority_picker_line(item: &PickerItem, selected: bool) -> Line<'static> {
     ])
 }
 
-fn picker_hint_line(multi: bool, submit_label: &str) -> Line<'static> {
-    let mut items = vec![("Up/Down", "move"), ("Ctrl+N/P", "move")];
+fn picker_hint_line(mode: PickerMode, multi: bool, submit_label: &str) -> Line<'static> {
+    let mut items = match mode {
+        PickerMode::Navigate => vec![("j/k", "move"), ("/", "filter")],
+        PickerMode::Filter => vec![("type", "filter"), ("Up/Down", "move")],
+    };
     if multi {
         items.push(("Space", "toggle"));
     }
-    items.extend([("Enter", submit_label), ("Esc", "cancel")]);
+    let esc_label = match mode {
+        PickerMode::Navigate => "cancel",
+        PickerMode::Filter => "normal",
+    };
+    items.extend([("Enter", submit_label), ("Esc", esc_label)]);
     dialog_hint_line(&items)
 }
 
@@ -431,7 +439,7 @@ fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'
         lines.push(Line::from(""));
     }
     lines.push(Line::from(""));
-    lines.push(project_picker_hint_line(submit_label));
+    lines.push(project_picker_hint_line(state.mode, submit_label));
     Dialog::new(&state.title, 70, height).render_text(frame, Text::from(lines));
 }
 
@@ -470,8 +478,8 @@ fn project_picker_line(item: &PickerItem, selected: bool) -> Line<'static> {
     ])
 }
 
-fn project_picker_hint_line(submit_label: &'static str) -> Line<'static> {
-    picker_hint_line(false, submit_label)
+fn project_picker_hint_line(mode: PickerMode, submit_label: &'static str) -> Line<'static> {
+    picker_hint_line(mode, false, submit_label)
 }
 
 pub(super) fn render_confirm(frame: &mut Frame, state: &ConfirmView) {
@@ -918,13 +926,35 @@ mod tests {
             }],
             selected: 0,
             multi: true,
+            mode: PickerMode::Navigate,
             visible_indices: vec![0],
         }));
         assert!(rendered.contains("Project"));
         assert!(rendered.contains("/app"));
-        assert!(rendered.contains("Ctrl+N/P"));
+        assert!(rendered.contains("j/k"));
+        assert!(rendered.contains("/ filter"));
         assert!(rendered.contains("Space"));
         assert!(rendered.contains("toggle"));
+    }
+
+    #[test]
+    fn picker_filter_mode_hints_show_text_entry() {
+        let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+            title: "Project".to_string(),
+            filter: "app".to_string(),
+            filter_cursor: 3,
+            items: vec![PickerItem {
+                label: "APP app".to_string(),
+                value: "app".to_string(),
+                selected: false,
+            }],
+            selected: 0,
+            multi: false,
+            mode: PickerMode::Filter,
+            visible_indices: vec![0],
+        }));
+        assert!(rendered.contains("type filter"));
+        assert!(rendered.contains("Esc normal"));
     }
 
     #[test]
@@ -940,6 +970,7 @@ mod tests {
             }],
             selected: 0,
             multi: false,
+            mode: PickerMode::Navigate,
             visible_indices: vec![0],
         }));
         assert!(rendered.contains(priority_icon("urgent")));
@@ -964,6 +995,7 @@ mod tests {
             items,
             selected: 10,
             multi: false,
+            mode: PickerMode::Navigate,
             visible_indices: (0..12).collect(),
         }));
         assert!(rendered.contains("▸ Item 10"));
@@ -983,6 +1015,7 @@ mod tests {
             }],
             selected: 0,
             multi: false,
+            mode: PickerMode::Navigate,
             visible_indices: vec![0],
         }));
         assert!(rendered.contains("PREFIX"));
@@ -1005,6 +1038,7 @@ mod tests {
             }],
             selected: 0,
             multi: false,
+            mode: PickerMode::Navigate,
             visible_indices: vec![0],
         }));
         assert!(rendered.contains("PREFIX"));
