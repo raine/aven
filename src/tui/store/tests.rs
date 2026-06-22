@@ -1128,10 +1128,10 @@ async fn undo_delete_restores_task() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(
-        delete.message,
-        format!("deleted {display_ref} (showing deleted)")
-    );
+    assert_eq!(delete.message, format!("deleted {display_ref}"));
+    assert!(!store.filters.include_deleted);
+    store.refresh(Some(&task_id)).await.unwrap();
+    assert!(store.tasks.iter().all(|item| item.task.id != task_id));
     store.filters.include_deleted = true;
     store.refresh(Some(&task_id)).await.unwrap();
     let index = store

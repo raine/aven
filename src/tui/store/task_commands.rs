@@ -316,17 +316,20 @@ impl TuiStore {
                 }],
             )
             .await?;
-            self.filters.include_deleted = deleted;
+            if deleted {
+                if let Some(index) = index
+                    && let Some(current) = self.tasks.get_mut(index)
+                {
+                    current.task.deleted = true;
+                }
+                return Ok(Some(MutationMessage::new(
+                    format!("deleted {}", item.display_ref),
+                    index,
+                )));
+            }
             return Ok(Some(
-                self.refresh_task_message(
-                    &item.task.id,
-                    if deleted {
-                        format!("deleted {} (showing deleted)", item.display_ref)
-                    } else {
-                        format!("restored {}", item.display_ref)
-                    },
-                )
-                .await?,
+                self.refresh_task_message(&item.task.id, format!("restored {}", item.display_ref))
+                    .await?,
             ));
         }
         Ok(None)

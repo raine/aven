@@ -1145,10 +1145,10 @@ async fn confirm_delete_task_soft_deletes_selected_task() {
 
     let selected = app.widgets.table.selected().unwrap();
     assert!(app.store.tasks[selected].task.deleted);
-    assert!(app.store.filters.include_deleted);
+    assert!(!app.store.filters.include_deleted);
     assert_eq!(
         app.message.as_deref(),
-        Some(format!("deleted {display_ref} (showing deleted)").as_str())
+        Some(format!("deleted {display_ref}").as_str())
     );
 }
 
