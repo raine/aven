@@ -14,6 +14,7 @@ mod navigation;
 mod overlay;
 mod platform;
 mod store;
+mod text;
 mod theme;
 mod toast;
 mod ui;

@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
+use crate::tui::text::char_boundary_at_or_before;
 use crate::tui::theme::{BG_ALT, FG};
 
 pub(in crate::tui::ui) fn input_line(
@@ -86,14 +87,6 @@ pub(in crate::tui::ui) fn input_cursor_spans(
 
 pub(in crate::tui::ui) fn cursor_cell(content: impl Into<Cow<'static, str>>) -> Span<'static> {
     Span::styled(content, Style::new().fg(BG_ALT).bg(FG))
-}
-
-fn char_boundary_at_or_before(input: &str, cursor: usize) -> usize {
-    let mut cursor = cursor.min(input.len());
-    while cursor > 0 && !input.is_char_boundary(cursor) {
-        cursor -= 1;
-    }
-    cursor
 }
 
 #[cfg(test)]

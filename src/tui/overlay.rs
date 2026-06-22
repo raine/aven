@@ -1,6 +1,10 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::tui::authoring::AddTaskStep;
+use crate::tui::text::{
+    char_boundary_at_or_before, next_char_boundary, next_char_is_whitespace,
+    normalize_pasted_newlines, previous_char_boundary, previous_word_start,
+};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -862,62 +866,6 @@ fn kill_multiline_word_before_cursor(state: &mut MultilineInputState) {
     } else {
         state.column = previous;
     }
-}
-
-fn normalize_pasted_newlines(text: &str) -> String {
-    text.replace("\r\n", "\n").replace('\r', "\n")
-}
-
-fn char_boundary_at_or_before(input: &str, index: usize) -> usize {
-    let mut index = index.min(input.len());
-    while !input.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
-}
-
-fn previous_char_boundary(input: &str, index: usize) -> usize {
-    let mut index = char_boundary_at_or_before(input, index).saturating_sub(1);
-    while !input.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
-}
-
-fn next_char_boundary(input: &str, index: usize) -> usize {
-    let mut index = char_boundary_at_or_before(input, index)
-        .saturating_add(1)
-        .min(input.len());
-    while !input.is_char_boundary(index) {
-        index += 1;
-    }
-    index
-}
-
-fn previous_word_start(input: &str, index: usize) -> usize {
-    let mut index = char_boundary_at_or_before(input, index);
-    while index > 0 {
-        let previous = previous_char_boundary(input, index);
-        if !input[previous..index].chars().all(char::is_whitespace) {
-            break;
-        }
-        index = previous;
-    }
-    while index > 0 {
-        let previous = previous_char_boundary(input, index);
-        if input[previous..index].chars().all(char::is_whitespace) {
-            break;
-        }
-        index = previous;
-    }
-    index
-}
-
-fn next_char_is_whitespace(input: &str, index: usize) -> bool {
-    input[index..]
-        .chars()
-        .next()
-        .is_some_and(char::is_whitespace)
 }
 
 fn handle_picker_key(state: PickerState, key: KeyEvent) -> OverlayOutcome {

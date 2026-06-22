@@ -2,7 +2,6 @@ use ratatui::Frame;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
-use unicode_width::UnicodeWidthChar;
 
 use super::dialog::{Dialog, dialog_hint_line};
 use super::input::{
@@ -14,6 +13,9 @@ use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::{
     AddTaskView, ConfirmView, MultilineInputView, PickerItem, PickerMode, PickerView,
     TextInputView, TextPanelView,
+};
+use crate::tui::text::{
+    cell_width_ranges, char_boundary_at_or_before, char_count_ranges, char_count_segment_index,
 };
 use crate::tui::theme::{self, ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, SELECTED};
 use crate::tui::widgets::priority_icon;
@@ -252,7 +254,7 @@ fn add_task_description_visual_lines(
         }];
     }
     let width = width.saturating_sub(2).max(1);
-    let chunks = wrap_line_segments(line, width);
+    let chunks = cell_width_ranges(line, width);
     chunks
         .into_iter()
         .map(|(start, end)| {
@@ -267,26 +269,6 @@ fn add_task_description_visual_lines(
             }
         })
         .collect()
-}
-
-fn wrap_line_segments(line: &str, width: usize) -> Vec<(usize, usize)> {
-    if line.is_empty() {
-        return vec![(0, 0)];
-    }
-    let mut segments = Vec::new();
-    let mut start = 0;
-    let mut count = 0;
-    for (index, ch) in line.char_indices() {
-        let char_width = ch.width().unwrap_or(0).max(1);
-        if count > 0 && count + char_width > width {
-            segments.push((start, index));
-            start = index;
-            count = 0;
-        }
-        count += char_width;
-    }
-    segments.push((start, line.len()));
-    segments
 }
 
 fn add_task_hint_line(focus: AddTaskStep) -> Line<'static> {
@@ -437,7 +419,7 @@ fn description_visual_row_count(state: &MultilineInputView, line_width: usize) -
     state
         .lines
         .iter()
-        .map(|line| wrapped_ranges(line, line_width).len())
+        .map(|line| char_count_ranges(line, line_width).len())
         .sum::<usize>()
         .max(1)
 }
@@ -450,10 +432,10 @@ fn description_editor_lines(
     let mut cursor_row = 0;
     let show_placeholder = state.lines.len() == 1 && state.lines[0].is_empty();
     for (row_index, line) in state.lines.iter().enumerate() {
-        let ranges = wrapped_ranges(line, line_width);
+        let ranges = char_count_ranges(line, line_width);
         if row_index == state.row {
             let cursor = char_boundary_at_or_before(line, state.column);
-            let cursor_segment = cursor_segment_index(line, cursor, line_width);
+            let cursor_segment = char_count_segment_index(line, cursor, line_width);
             cursor_row = lines.len().saturating_add(cursor_segment);
             for (range_index, (start, end)) in ranges.into_iter().enumerate() {
                 if range_index == cursor_segment {
@@ -514,48 +496,6 @@ fn add_task_description_hint_line() -> Line<'static> {
         ("Ctrl+R", "priority"),
         ("Esc", "cancel"),
     ])
-}
-
-fn wrapped_ranges(line: &str, width: usize) -> Vec<(usize, usize)> {
-    let width = width.max(1);
-    let mut boundaries = line
-        .char_indices()
-        .map(|(index, _)| index)
-        .collect::<Vec<_>>();
-    boundaries.push(line.len());
-    let char_count = boundaries.len().saturating_sub(1);
-    if char_count == 0 {
-        return vec![(0, 0)];
-    }
-    (0..char_count)
-        .step_by(width)
-        .map(|start| {
-            let end = start.saturating_add(width).min(char_count);
-            (boundaries[start], boundaries[end])
-        })
-        .collect()
-}
-
-fn cursor_segment_index(line: &str, cursor: usize, width: usize) -> usize {
-    let width = width.max(1);
-    let cursor_chars = line[..cursor].chars().count();
-    let line_chars = line.chars().count();
-    if line_chars == 0 {
-        return 0;
-    }
-    if cursor_chars == line_chars {
-        line_chars.saturating_sub(1) / width
-    } else {
-        cursor_chars / width
-    }
-}
-
-fn char_boundary_at_or_before(input: &str, index: usize) -> usize {
-    let mut index = index.min(input.len());
-    while !input.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
 }
 
 fn render_add_note_input(frame: &mut Frame, state: &MultilineInputView) {
@@ -784,7 +724,7 @@ fn project_picker_hint_line(mode: PickerMode, submit_label: &'static str) -> Lin
 
 pub(super) fn render_confirm(frame: &mut Frame, state: &ConfirmView) {
     let width = confirm_width(frame.area().width, &state.prompt);
-    let prompt_rows = wrapped_ranges(&state.prompt, width.saturating_sub(4) as usize).len();
+    let prompt_rows = char_count_ranges(&state.prompt, width.saturating_sub(4) as usize).len();
     let height = prompt_rows.saturating_add(4) as u16;
     let text = Text::from(vec![
         Line::from(state.prompt.as_str()),
