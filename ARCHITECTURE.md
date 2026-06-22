@@ -167,7 +167,7 @@ If a remote scalar change base version does not match the current field version,
 
 The TUI is split into these layers:
 
-- `app.rs`: application state, event loop, focus, selection, action execution, refresh cadence, and the top-level coordination of extracted flows.
+- `app.rs`: `App` state, widget state, focus, selection, toasts, terminal lifecycle, input dispatch, action execution, refresh cadence, and the top-level coordination of extracted flows.
 - `app_edit.rs`: task edit overlay orchestration and direct edit mutation coordination for status, title, description, project, priority, labels, delete, restore, and undo.
 - `app_filters.rs`: filter, view, and workspace picker orchestration that applies store filter and view results back to App state.
 - `app_conflicts.rs`: conflict list, detail, variant resolution, and manual merge overlay orchestration while `conflict_flow.rs` owns conflict flow transitions.
@@ -176,7 +176,7 @@ The TUI is split into these layers:
 - `config_overlay.rs`: config status, config info, config path, and config init overlay construction.
 - `navigation.rs`: detail overlay commands, detail task navigation, and sidebar navigation helpers.
 - `shortcut_buffer.rs`: multi-key shortcut prefix state, normal and detail shortcut resolution, editor prefix tracking, and pending shortcut labels.
-- `event.rs` and `event/`: command and shortcut facade plus focused modules for actions, command catalog data, lookup helpers, and command domains used by help rendering.
+- `event.rs` and `event/`: facade exports plus action and view-target types, command specs, command contexts, lifecycle and domain metadata, shortcut lookup, and command lookup used by help rendering.
 - `store.rs` and `store/`: database-backed TUI state and operations. `store.rs` is the facade that owns task lists, projects, labels, workspaces, active workspace, sidebar counts, filters, sorting, active view, refresh time, construction, workspace activation, and refresh. Focused store submodules hold concern logic:
   - `config.rs`: config status, config display, config path display, and config initialization.
   - `conflicts.rs`: conflict target lookup, conflict resolution, and conflict navigation.
@@ -192,12 +192,15 @@ The TUI is split into these layers:
   - `workspaces.rs`: TUI workspace switching, active workspace updates, and related filter/view reset.
 - `overlay.rs` and `overlay/`: reusable text input, multiline input, picker, confirm, search, command, detail, help, and text panel state machines. `overlay.rs` is the facade; focused modules hold state definitions, text input logic, multiline logic, picker behavior, state-to-view projection, and generic handlers. Input overlays carry an `OverlayRoute` that identifies the destination flow independently from display titles.
 - `app_overlay_submit.rs`: overlay submit routing grouped by submitted payload kind and `OverlayRoute`, keeping titles as display text only.
+- `markdown.rs`: terminal markdown shaping helpers for help, detail, and text-panel rendering.
 - `platform.rs`: clipboard, external editor, terminal suspend and restore, temp editor paths, and editor prefix helper functions.
 - `text.rs`: shared UTF-8 boundary, word movement, newline normalization, and wrapping helpers for TUI input and rendering.
+- `toast.rs`: toast message types, severity, and expiry bookkeeping shared by the app and renderer.
 - `ui.rs`: top-level Ratatui render orchestration.
   - Renders header, footer, overlays, command palette, help, and prefix hints.
   - Region modules under `ui/` handle sidebar, task list, task display helpers,
-    detail rendering, dialogs, and toasts.
+    detail rendering, dialogs, headers, footers, shortcut hints, input helpers,
+    truncation, and toasts.
   - Overlay renderers live under `ui/overlays/` by overlay kind with a facade at
     `ui/overlays.rs`.
   - Overlay dialogs share frame, clear, background, and footer hint styling

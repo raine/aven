@@ -129,1504 +129,6 @@ fn assert_pending_empty(app: &App) {
     assert!(app.view().pending_shortcut.is_empty());
 }
 
-#[tokio::test]
-async fn ctrl_c_quits_from_normal_mode() {
-    let mut app = test_app().await;
-    app.dispatch_key(ctrl_c(), (80, 24).into()).await.unwrap();
-    assert!(app.should_quit);
-}
-
-#[tokio::test]
-async fn ctrl_c_quits_while_overlay_captures_input() {
-    let mut app = test_app().await;
-    app.begin_search();
-    app.dispatch_key(ctrl_c(), (80, 24).into()).await.unwrap();
-    assert!(app.should_quit);
-}
-
-#[tokio::test]
-async fn prefix_key_enters_prefix_mode() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
-    assert_pending(&app, &["m"]);
-}
-
-#[tokio::test]
-async fn add_task_alias_executes_immediately() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    assert_pending_empty(&app);
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Title
-    ));
-}
-
-#[tokio::test]
-async fn dispatch_key_routes_normal_action_through_action_executor() {
-    let mut app = test_app().await;
-    app.focus = Focus::Tasks;
-
-    app.dispatch_key(key(KeyCode::Char('h')), (80, 24).into())
-        .await
-        .unwrap();
-
-    assert_eq!(app.focus, Focus::Sidebar);
-    assert_pending_empty(&app);
-}
-
-#[tokio::test]
-async fn prefix_is_inactive_while_overlay_captures_input() {
-    let mut app = test_app().await;
-    app.begin_search();
-    app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
-
-    assert_pending_empty(&app);
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Search { input }) if input.as_str() == "m"
-    ));
-}
-
-#[tokio::test]
-async fn esc_cancels_prefix_before_overlay() {
-    let mut app = test_app().await;
-    app.overlay = Some(OverlayState::Detail { scroll: 0 });
-    app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
-        .await
-        .unwrap();
-    assert_pending(&app, &["e"]);
-    app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
-        .await
-        .unwrap();
-    assert_pending_empty(&app);
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 0 })
-    ));
-
-    app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
-        .await
-        .unwrap();
-    assert!(app.overlay.is_none());
-}
-
-#[tokio::test]
-async fn q_closes_detail_overlay() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Detail target")).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 0 });
-
-    app.dispatch_key(key(KeyCode::Char('q')), (80, 24).into())
-        .await
-        .unwrap();
-
-    assert!(app.overlay.is_none());
-    assert!(!app.should_quit);
-}
-
-#[tokio::test]
-async fn command_overlay_executes_unique_lookup_and_keeps_overlay_on_errors() {
-    let mut app = test_app().await;
-
-    app.begin_command();
-    for ch in "ref".chars() {
-        app.handle_overlay_key(key(KeyCode::Char(ch)))
-            .await
-            .unwrap();
-    }
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    assert!(app.overlay.is_none());
-
-    app.begin_command();
-    app.handle_overlay_key(key(KeyCode::Char('s')))
-        .await
-        .unwrap();
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
-    assert_eq!(toast_message(&app), Some("ambiguous command: s"));
-
-    app.begin_command();
-    for ch in "zzzz".chars() {
-        app.handle_overlay_key(key(KeyCode::Char(ch)))
-            .await
-            .unwrap();
-    }
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
-    assert_eq!(toast_message(&app), Some("unknown command: zzzz"));
-}
-
-#[tokio::test]
-async fn dispatch_paste_updates_capturing_overlay_and_ignores_normal_mode() {
-    let mut app = test_app().await;
-
-    app.dispatch_paste("ignored");
-    assert!(app.overlay.is_none());
-
-    app.begin_search();
-    app.dispatch_paste("needle");
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Search { input }) if input.as_str() == "needle"
-    ));
-}
-
-#[tokio::test]
-async fn search_replaces_existing_overlay() {
-    let mut app = test_app().await;
-    app.overlay = Some(OverlayState::Help { scroll: 0 });
-    app.begin_search();
-    assert!(matches!(app.overlay, Some(OverlayState::Search { .. })));
-}
-
-#[tokio::test]
-async fn toggle_help_closes_active_help_overlay() {
-    let mut app = test_app().await;
-    app.overlay = Some(OverlayState::Help { scroll: 0 });
-    app.toggle_help_at_height(24);
-    assert!(app.overlay.is_none());
-}
-
-#[tokio::test]
-async fn help_key_opens_help_overlay() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('?')).await.unwrap();
-    assert!(matches!(app.overlay, Some(OverlayState::Help { .. })));
-}
-
-#[tokio::test]
-async fn help_key_opens_detail_help_from_detail_overlay() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Detail help target")).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 0 });
-
-    app.dispatch_key(key(KeyCode::Char('?')), (80, 24).into())
-        .await
-        .unwrap();
-
-    assert!(matches!(app.overlay, Some(OverlayState::DetailHelp { .. })));
-    assert_eq!(app.focus, Focus::Tasks);
-    assert!(app.widgets.table.selected().is_some());
-}
-
-#[tokio::test]
-async fn closing_detail_help_returns_to_detail_overlay() {
-    let mut app = test_app().await;
-    app.overlay = Some(OverlayState::DetailHelp { scroll: 0 });
-
-    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 0 })
-    ));
-}
-
-#[tokio::test]
-async fn second_help_key_returns_from_detail_help_to_detail_overlay() {
-    let mut app = test_app().await;
-    app.overlay = Some(OverlayState::DetailHelp { scroll: 0 });
-
-    app.dispatch_key(key(KeyCode::Char('?')), (80, 24).into())
-        .await
-        .unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 0 })
-    ));
-}
-
-#[tokio::test]
-async fn h_and_l_move_between_sidebar_and_tasks() {
-    let mut app = test_app().await;
-    app.focus = Focus::Tasks;
-    app.handle_normal_key(KeyCode::Char('h')).await.unwrap();
-    assert_eq!(app.focus, Focus::Sidebar);
-
-    app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
-    assert_eq!(app.focus, Focus::Tasks);
-}
-
-#[tokio::test]
-async fn config_info_opens_text_panel() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
-
-    let Some(OverlayState::TextPanel(panel)) = app.overlay else {
-        panic!("expected text panel");
-    };
-    assert_eq!(panel.title, CONFIG_INFO_TITLE);
-    assert!(panel.lines.iter().any(|line| line.contains("config path:")));
-}
-
-#[tokio::test]
-async fn config_status_opens_text_panel() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
-
-    let Some(OverlayState::TextPanel(panel)) = app.overlay else {
-        panic!("expected text panel");
-    };
-    assert_eq!(panel.title, CONFIG_STATUS_TITLE);
-    assert!(
-        panel
-            .lines
-            .iter()
-            .any(|line| line.contains("sync enabled:"))
-    );
-    assert!(
-        panel
-            .lines
-            .iter()
-            .any(|line| line.contains("daemon state: not checked from TUI"))
-    );
-}
-
-#[tokio::test]
-async fn config_paths_opens_text_panel() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
-
-    let Some(OverlayState::TextPanel(panel)) = app.overlay else {
-        panic!("expected text panel");
-    };
-    assert_eq!(panel.title, CONFIG_PATHS_TITLE);
-    assert!(
-        panel
-            .lines
-            .iter()
-            .any(|line| line.contains("effective database:"))
-    );
-}
-
-#[tokio::test]
-async fn config_init_requires_confirmation() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('i')).await.unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Confirm(ConfirmState { ref title, .. })) if title == CONFIG_INIT_TITLE
-    ));
-}
-
-#[tokio::test]
-async fn config_init_cancel_does_not_set_success_message() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('i')).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Char('n')))
-        .await
-        .unwrap();
-    assert!(app.overlay.is_none());
-    assert!(app.message.is_none());
-}
-
-#[tokio::test]
-async fn command_panel_runs_config_show() {
-    let mut app = test_app().await;
-    app.begin_command();
-    type_chars(&mut app, "config-show").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::TextPanel(TextPanelState { ref title, .. })) if title == CONFIG_INFO_TITLE
-    ));
-}
-
-#[tokio::test]
-async fn command_panel_runs_workspace_switch() {
-    let (_dir, pool, mut app) = test_app_with_pool().await;
-    let mut conn = pool.acquire().await.unwrap();
-    crate::workspaces::create_workspace(&mut conn, "Client Work")
-        .await
-        .unwrap();
-    drop(conn);
-
-    app.begin_command();
-    type_chars(&mut app, "workspace-switch").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Picker(PickerState { title, items, .. }))
-            if title == SWITCH_WORKSPACE_TITLE
-                && items.iter().any(|item| item.value == "client-work")
-    ));
-
-    reset_default_workspace(&pool).await;
-}
-
-#[tokio::test]
-async fn invalid_continuation_shows_message() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('z')).await.unwrap();
-    assert_pending_empty(&app);
-    assert_eq!(toast_message(&app), Some("invalid shortcut: m z"));
-}
-
-#[tokio::test]
-async fn valid_continuation_executes_and_clears() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    assert_pending_empty(&app);
-}
-
-#[tokio::test]
-async fn order_shortcut_sets_sort() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
-    assert_eq!(app.store.sort, TaskSort::Priority);
-    assert_eq!(toast_message(&app), Some("order priority asc"));
-}
-
-#[tokio::test]
-async fn order_reverse_shortcut_toggles_direction() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
-    assert_eq!(app.store.sort_direction_label(), "desc");
-    assert_eq!(toast_message(&app), Some("order queue desc"));
-}
-
-#[tokio::test]
-async fn due_order_shortcut_reports_unsupported() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
-    assert_eq!(
-        toast_message(&app),
-        Some(":order-due is disabled: tasks do not have due dates")
-    );
-}
-
-#[tokio::test]
-async fn filter_project_shortcut_opens_project_picker() {
-    let mut app = test_app().await;
-    app.store
-        .create_project("Mobile App".to_string())
-        .await
-        .unwrap();
-
-    app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Picker(PickerState { title, .. })) if title == FILTER_PROJECT_TITLE
-    ));
-}
-
-#[tokio::test]
-async fn filter_shortcuts_apply_label_status_priority_and_deleted() {
-    let mut app = test_app().await;
-    app.store.create_label("backend".to_string()).await.unwrap();
-    create_and_select_task(
-        &mut app,
-        TaskDraft {
-            title: "Filtered task".to_string(),
-            description: String::new(),
-            project: None,
-            priority: "urgent".to_string(),
-            labels: vec!["backend".to_string()],
-        },
-    )
-    .await;
-
-    app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Char('/')))
-        .await
-        .unwrap();
-    type_chars(&mut app, "backend").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    assert_eq!(app.store.filters.label.as_deref(), Some("backend"));
-    assert_eq!(toast_message(&app), Some("label filter applied"));
-
-    app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Char('/')))
-        .await
-        .unwrap();
-    type_chars(&mut app, "inbox").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    assert_eq!(app.store.filters.status.as_deref(), Some("inbox"));
-
-    app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Char('/')))
-        .await
-        .unwrap();
-    type_chars(&mut app, "urgent").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    assert_eq!(app.store.filters.priority.as_deref(), Some("urgent"));
-
-    app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
-    assert!(app.store.filters.include_deleted);
-    assert_eq!(toast_message(&app), Some("showing deleted tasks"));
-}
-
-#[tokio::test]
-async fn switch_workspace_shortcut_opens_picker() {
-    let (_dir, pool, mut app) = test_app_with_pool().await;
-    let mut conn = pool.acquire().await.unwrap();
-    crate::workspaces::create_workspace(&mut conn, "Client Work")
-        .await
-        .unwrap();
-    drop(conn);
-
-    app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('w')).await.unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Picker(PickerState { title, .. })) if title == SWITCH_WORKSPACE_TITLE
-    ));
-
-    reset_default_workspace(&pool).await;
-}
-
-#[tokio::test]
-async fn switch_workspace_changes_active_workspace() {
-    let (_dir, pool, mut app) = test_app_with_pool().await;
-    create_and_select_task(&mut app, test_task_draft("Default only")).await;
-
-    let mut conn = pool.acquire().await.unwrap();
-    crate::workspaces::create_workspace(&mut conn, "Client Work")
-        .await
-        .unwrap();
-    drop(conn);
-    app.refresh().await.unwrap();
-
-    app.store.filters.status = Some("todo".to_string());
-    app.store.active_view = SidebarTarget::Todo;
-
-    let (message, selected) = app
-        .store
-        .switch_workspace("client-work".to_string())
-        .await
-        .unwrap();
-    app.apply_filter_selection(selected);
-    app.set_success(message);
-
-    assert_eq!(app.store.active_workspace.key, "client-work");
-    assert_eq!(app.store.active_view, SidebarTarget::All);
-    assert!(app.store.filters.status.is_none());
-    assert!(app.store.tasks.is_empty());
-    assert!(app.overlay.is_none());
-    assert!(
-        toast_message(&app)
-            .is_some_and(|message| message.contains("switched workspace to client-work"))
-    );
-
-    reset_default_workspace(&pool).await;
-}
-
-#[tokio::test]
-async fn clear_filters_shortcut_resets_default_view() {
-    let mut app = test_app().await;
-    app.store.filters.status = Some("todo".to_string());
-    app.store.active_view = SidebarTarget::Todo;
-
-    app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
-
-    assert_eq!(app.store.active_view, SidebarTarget::All);
-    assert!(app.store.filters.status.is_none());
-    assert_eq!(toast_message(&app), Some("filters cleared"));
-    assert_eq!(toast_severity(&app), Some(ToastSeverity::Success));
-}
-
-#[tokio::test]
-async fn go_conflicts_shortcut_sets_conflicts_view() {
-    let mut app = test_app().await;
-
-    app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
-
-    assert_eq!(app.store.active_view, SidebarTarget::Conflicts);
-    assert!(app.store.filters.conflicts_only);
-}
-
-#[tokio::test]
-async fn add_task_shortcut_opens_title_prompt() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::AddTask(state))
-            if state.focus == AddTaskStep::Title && state.title.as_str().is_empty()
-    ));
-}
-
-#[tokio::test]
-async fn add_task_alias_creates_task_after_title() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    type_chars(&mut app, "Write docs").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-
-    assert!(app.overlay.is_none());
-    let selected = app.widgets.table.selected().unwrap();
-    let task = &app.store.tasks[selected];
-    assert_eq!(task.task.title, "Write docs");
-    assert_eq!(task.task.priority, "none");
-    assert_eq!(task.task.description, "");
-    assert!(task.labels.is_empty());
-}
-
-#[tokio::test]
-async fn add_task_uses_active_project_view() {
-    let mut app = test_app().await;
-    app.store
-        .create_project("Mobile App".to_string())
-        .await
-        .unwrap();
-    let selected = app
-        .store
-        .show_view(SidebarTarget::Project("mobile-app".to_string()))
-        .await
-        .unwrap();
-    app.apply_filter_selection(selected);
-
-    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    type_chars(&mut app, "Write docs").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-
-    let selected = app.widgets.table.selected().unwrap();
-    let task = &app.store.tasks[selected];
-    assert_eq!(task.task.title, "Write docs");
-    assert_eq!(task.task.project_key, "mobile-app");
-    assert_eq!(app.store.filters.project.as_deref(), Some("mobile-app"));
-}
-
-#[tokio::test]
-async fn add_task_flow_configures_project_and_priority_from_title() {
-    let mut app = test_app().await;
-    app.store
-        .create_project("Mobile App".to_string())
-        .await
-        .unwrap();
-
-    app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
-    type_chars(&mut app, "Write docs").await;
-    app.handle_overlay_key(ctrl_p()).await.unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Picker(state)) if state.route == OverlayRoute::AddTaskTitleProject
-    ));
-    type_chars(&mut app, "mobile").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    app.handle_overlay_key(ctrl_r()).await.unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Picker(state)) if state.route == OverlayRoute::AddTaskTitlePriority
-    ));
-    type_chars(&mut app, "high").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-
-    assert!(app.overlay.is_none());
-    let selected = app.widgets.table.selected().unwrap();
-    let task = &app.store.tasks[selected];
-    assert_eq!(task.task.title, "Write docs");
-    assert_eq!(task.task.project_key, "mobile-app");
-    assert_eq!(task.task.priority, "high");
-    assert_eq!(task.task.description, "");
-    assert!(task.labels.is_empty());
-}
-
-#[tokio::test]
-async fn add_task_tab_opens_description_step() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    type_chars(&mut app, "Write docs").await;
-    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::AddTask(state))
-            if state.focus == AddTaskStep::Description
-                && state.title.as_str() == "Write docs"
-    ));
-}
-
-#[tokio::test]
-async fn add_task_description_flow_creates_task_with_description() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    type_chars(&mut app, "Write docs").await;
-    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
-    type_chars(&mut app, "Include setup details").await;
-    app.handle_overlay_key(ctrl_s()).await.unwrap();
-
-    assert!(app.overlay.is_none());
-    let selected = app.widgets.table.selected().unwrap();
-    let task = &app.store.tasks[selected];
-    assert_eq!(task.task.title, "Write docs");
-    assert_eq!(task.task.description, "Include setup details");
-}
-
-#[tokio::test]
-async fn add_task_description_ctrl_x_ctrl_e_opens_external_editor_and_returns_to_composer() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    type_chars(&mut app, "Write docs").await;
-    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
-    type_chars(&mut app, "Details").await;
-    app.handle_overlay_key(ctrl_x()).await.unwrap();
-    app.handle_overlay_key(ctrl_e()).await.unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::AddTask(state))
-            if state.focus == AddTaskStep::Description
-                && state.title.as_str() == "Write docs"
-                && state.description.lines == vec!["Details from editor".to_string()]
-    ));
-}
-
-#[tokio::test]
-async fn add_task_description_ctrl_x_non_editor_key_clears_prefix_and_edits_text() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
-    app.handle_overlay_key(ctrl_x()).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Char('z')))
-        .await
-        .unwrap();
-
-    assert_pending_empty(&app);
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::AddTask(state))
-            if state.focus == AddTaskStep::Description
-                && state.description.lines == vec!["z".to_string()]
-    ));
-}
-
-#[tokio::test]
-async fn add_task_description_ctrl_e_moves_to_line_end() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    type_chars(&mut app, "Write docs").await;
-    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
-    type_chars(&mut app, "Details").await;
-    app.handle_overlay_key(ctrl_e()).await.unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::AddTask(state))
-            if state.focus == AddTaskStep::Description
-                && state.description.column == "Details".len()
-                && state.description.lines == vec!["Details".to_string()]
-    ));
-}
-
-#[tokio::test]
-async fn add_task_project_and_priority_return_to_description_step() {
-    let mut app = test_app().await;
-    app.store
-        .create_project("Mobile App".to_string())
-        .await
-        .unwrap();
-
-    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    type_chars(&mut app, "Write docs").await;
-    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
-    type_chars(&mut app, "Details").await;
-    app.handle_overlay_key(ctrl_p()).await.unwrap();
-    type_chars(&mut app, "mobile").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::AddTask(state))
-            if state.focus == AddTaskStep::Description
-                && state.description.lines == vec!["Details".to_string()]
-    ));
-
-    app.handle_overlay_key(ctrl_r()).await.unwrap();
-    type_chars(&mut app, "high").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    app.handle_overlay_key(ctrl_s()).await.unwrap();
-
-    let selected = app.widgets.table.selected().unwrap();
-    let task = &app.store.tasks[selected];
-    assert_eq!(task.task.project_key, "mobile-app");
-    assert_eq!(task.task.priority, "high");
-    assert_eq!(task.task.description, "Details");
-}
-
-#[tokio::test]
-async fn add_task_flow_cancels_at_title_step() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
-    assert!(app.overlay.is_none());
-}
-
-#[tokio::test]
-async fn add_task_blank_title_is_rejected() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    assert_eq!(toast_message(&app), Some("task title is required"));
-    assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Title
-    ));
-}
-
-#[tokio::test]
-async fn add_note_requires_selected_task() {
-    let mut app = test_app().await;
-    app.widgets.table.select(None);
-    app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
-
-    assert!(app.overlay.is_none());
-    assert_eq!(toast_message(&app), Some("no selected task for note"));
-    assert_eq!(toast_severity(&app), Some(ToastSeverity::Info));
-}
-
-#[tokio::test]
-async fn add_note_alias_requires_selected_task() {
-    let mut app = test_app().await;
-    app.widgets.table.select(None);
-    app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
-
-    assert!(app.overlay.is_none());
-    assert_eq!(toast_message(&app), Some("no selected task for note"));
-}
-
-#[tokio::test]
-async fn add_note_flow_creates_note_for_selected_task() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Note target")).await;
-
-    app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::MultilineInput(state)) if state.title == ADD_NOTE_TITLE
-    ));
-
-    type_chars(&mut app, "Important detail").await;
-    app.handle_overlay_key(ctrl_s()).await.unwrap();
-
-    assert!(app.overlay.is_none());
-    assert!(toast_message(&app).is_some_and(|message| message.starts_with("added note ")));
-}
-
-#[tokio::test]
-async fn detail_scroll_keys_update_detail_offset() {
-    let mut app = test_app().await;
-    let mut draft = test_task_draft("Scroll target");
-    draft.description = (0..100)
-        .map(|index| format!("line {index}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    create_and_select_task(&mut app, draft).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 0 });
-
-    app.dispatch_key(ctrl_d(), (80, 24).into()).await.unwrap();
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 18 })
-    ));
-
-    app.dispatch_key(key(KeyCode::PageDown), (80, 24).into())
-        .await
-        .unwrap();
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 36 })
-    ));
-
-    app.dispatch_key(ctrl_u(), (80, 24).into()).await.unwrap();
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 18 })
-    ));
-
-    app.dispatch_key(key(KeyCode::Char('k')), (80, 24).into())
-        .await
-        .unwrap();
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 17 })
-    ));
-
-    app.dispatch_key(key(KeyCode::PageUp), (80, 24).into())
-        .await
-        .unwrap();
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 0 })
-    ));
-}
-
-#[tokio::test]
-async fn detail_scroll_resists_down_input_at_bottom() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Short detail")).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 0 });
-
-    for _ in 0..10 {
-        app.dispatch_key(key(KeyCode::Char('j')), (80, 24).into())
-            .await
-            .unwrap();
-    }
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 0 })
-    ));
-
-    app.dispatch_key(key(KeyCode::Char('k')), (80, 24).into())
-        .await
-        .unwrap();
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 0 })
-    ));
-}
-
-#[tokio::test]
-async fn detail_next_and_previous_task_stay_in_detail() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("First")).await;
-    create_and_select_task(&mut app, test_task_draft("Second")).await;
-    let first = app
-        .store
-        .tasks
-        .iter()
-        .position(|item| item.task.title == "First")
-        .unwrap();
-    let second = app
-        .store
-        .tasks
-        .iter()
-        .position(|item| item.task.title == "Second")
-        .unwrap();
-    app.widgets.table.select(Some(first));
-    app.overlay = Some(OverlayState::Detail { scroll: 7 });
-
-    app.dispatch_key(key(KeyCode::Char(']')), (80, 24).into())
-        .await
-        .unwrap();
-    assert_eq!(app.widgets.table.selected(), Some(second));
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 0 })
-    ));
-    assert_eq!(toast_message(&app), Some("selected next task"));
-
-    app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
-        .await
-        .unwrap();
-    assert_eq!(app.widgets.table.selected(), Some(first));
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 0 })
-    ));
-    assert_eq!(toast_message(&app), Some("selected previous task"));
-}
-
-#[tokio::test]
-async fn add_note_from_detail_returns_to_detail() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Note target")).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 0 });
-
-    app.dispatch_key(key(KeyCode::Char('n')), (80, 24).into())
-        .await
-        .unwrap();
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::MultilineInput(state)) if state.title == ADD_NOTE_TITLE
-    ));
-    assert!(app.view().detail_underlay);
-
-    type_chars(&mut app, "Important detail").await;
-    app.handle_overlay_key(ctrl_s()).await.unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 0 })
-    ));
-    let selected = app.widgets.table.selected().unwrap();
-    assert_eq!(app.store.tasks[selected].notes.len(), 1);
-}
-
-#[tokio::test]
-async fn detail_shortcuts_do_not_leave_detail_before_opening_overlay() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Detail target")).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 0 });
-
-    app.dispatch_key(key(KeyCode::Char('p')), (80, 24).into())
-        .await
-        .unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Picker(PickerState { title, .. })) if title == EDIT_PRIORITY_TITLE
-    ));
-    assert!(app.view().detail_underlay);
-}
-
-#[tokio::test]
-async fn edit_title_from_detail_renders_inline_cursor() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 0 });
-
-    app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
-        .await
-        .unwrap();
-    app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
-        .await
-        .unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::TextInput(state)) if state.route == OverlayRoute::EditTitle
-    ));
-    assert!(app.view().detail_underlay);
-
-    let backend = ratatui::backend::TestBackend::new(100, 30);
-    let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    let view = app.view();
-    terminal
-        .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
-        .unwrap();
-    let rendered = terminal
-        .backend()
-        .buffer()
-        .content
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect::<String>();
-
-    assert!(rendered.contains("Detail title target"));
-    assert!(!rendered.contains("Edit title"));
-    assert!(!rendered.contains("Enter submit"));
-}
-
-#[tokio::test]
-async fn cancel_edit_title_from_detail_returns_to_detail() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 0 });
-
-    app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
-        .await
-        .unwrap();
-    app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
-        .await
-        .unwrap();
-    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 0 })
-    ));
-    assert!(app.authoring.is_idle());
-}
-
-#[tokio::test]
-async fn submit_edit_title_from_detail_returns_to_detail() {
-    let mut app = test_app().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 0 });
-
-    app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
-        .await
-        .unwrap();
-    app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
-        .await
-        .unwrap();
-    app.handle_overlay_key(key(KeyCode::End)).await.unwrap();
-    type_chars(&mut app, " updated").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 0 })
-    ));
-    assert_eq!(
-        app.store.tasks[selected].task.title,
-        "Detail title target updated"
-    );
-}
-
-#[tokio::test]
-async fn detail_edit_chords_open_advertised_editors() {
-    let mut app = test_app().await;
-    app.store
-        .create_project("Mobile App".to_string())
-        .await
-        .unwrap();
-    app.store.create_label("Bug".to_string()).await.unwrap();
-    create_and_select_task(
-        &mut app,
-        TaskDraft {
-            title: "Detail target".to_string(),
-            description: "existing description".to_string(),
-            project: None,
-            priority: "none".to_string(),
-            labels: vec!["bug".to_string()],
-        },
-    )
-    .await;
-
-    for (code, expected_route) in [
-        (KeyCode::Char('t'), OverlayRoute::EditTitle),
-        (KeyCode::Char('d'), OverlayRoute::EditDescription),
-        (KeyCode::Char('p'), OverlayRoute::EditProject),
-        (KeyCode::Char('l'), OverlayRoute::EditLabels),
-        (KeyCode::Char('r'), OverlayRoute::EditPriority),
-    ] {
-        app.overlay = Some(OverlayState::Detail { scroll: 4 });
-        app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
-            .await
-            .unwrap();
-        assert_pending(&app, &["e"]);
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Detail { scroll: 4 })
-        ));
-
-        app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
-        match (&app.overlay, expected_route) {
-            (Some(OverlayState::TextInput(state)), route) => assert_eq!(state.route, route),
-            (Some(OverlayState::MultilineInput(state)), route) => assert_eq!(state.route, route),
-            (Some(OverlayState::Picker(state)), route) => assert_eq!(state.route, route),
-            (overlay, route) => panic!("expected {route:?}, got {overlay:?}"),
-        }
-        assert_pending_empty(&app);
-        assert!(app.view().detail_underlay);
-    }
-}
-
-#[tokio::test]
-async fn detail_single_key_edit_shortcuts_still_work() {
-    let mut app = test_app().await;
-    app.store.create_label("Bug".to_string()).await.unwrap();
-    create_and_select_task(&mut app, test_task_draft("Detail target")).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 3 });
-
-    app.dispatch_key(key(KeyCode::Char('l')), (80, 24).into())
-        .await
-        .unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Picker(state)) if state.route == OverlayRoute::EditLabels
-    ));
-    assert_pending_empty(&app);
-    assert!(app.view().detail_underlay);
-}
-
-#[tokio::test]
-async fn invalid_detail_prefix_stays_in_detail() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Detail target")).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 5 });
-
-    app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
-        .await
-        .unwrap();
-    app.dispatch_key(key(KeyCode::Char('z')), (80, 24).into())
-        .await
-        .unwrap();
-
-    assert_pending_empty(&app);
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 5 })
-    ));
-    assert_eq!(toast_message(&app), Some("invalid shortcut: e z"));
-}
-
-#[tokio::test]
-async fn detail_prefix_hints_render_above_detail_overlay() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Detail target")).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 0 });
-
-    app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
-        .await
-        .unwrap();
-
-    let backend = ratatui::backend::TestBackend::new(100, 30);
-    let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    let view = app.view();
-    terminal
-        .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
-        .unwrap();
-    let rendered = terminal
-        .backend()
-        .buffer()
-        .content
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect::<String>();
-
-    assert!(rendered.contains("e …"));
-    assert!(rendered.contains(":detail-edit-title"));
-}
-
-#[tokio::test]
-async fn ignored_keys_stay_in_detail() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Detail target")).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 0 });
-
-    app.dispatch_key(key(KeyCode::Char('a')), (80, 24).into())
-        .await
-        .unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 0 })
-    ));
-    assert!(app.authoring.is_idle());
-}
-
-#[tokio::test]
-async fn detail_toast_renders_above_detail_overlay() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Toast target")).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 0 });
-    app.set_success("set APP-TEST status=done");
-    let backend = ratatui::backend::TestBackend::new(100, 30);
-    let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    let view = app.view();
-
-    terminal
-        .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
-        .unwrap();
-    let rendered = terminal
-        .backend()
-        .buffer()
-        .content
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect::<String>();
-
-    assert!(rendered.contains("set APP-TEST status=done"));
-}
-
-#[tokio::test]
-async fn detail_done_shortcut_keeps_detail_and_sets_message() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Next target")).await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Done target")).await;
-    let display_ref = app.store.tasks[selected].display_ref.clone();
-    app.overlay = Some(OverlayState::Detail { scroll: 7 });
-
-    app.dispatch_key(key(KeyCode::Char('d')), (80, 24).into())
-        .await
-        .unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 7 })
-    ));
-    assert_eq!(
-        toast_message(&app),
-        Some(format!("set {display_ref} status=done").as_str())
-    );
-}
-
-#[tokio::test]
-async fn detail_undo_shortcut_reverts_last_mutation() {
-    let mut app = test_app().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
-    app.store
-        .update_title(Some(selected), "After".to_string())
-        .await
-        .unwrap();
-    app.overlay = Some(OverlayState::Detail { scroll: 5 });
-
-    app.dispatch_key(key(KeyCode::Char('u')), (80, 24).into())
-        .await
-        .unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 5 })
-    ));
-    assert_eq!(app.store.tasks[selected].task.title, "Before");
-    assert!(app.message.as_ref().unwrap().message.contains("undid"));
-}
-
-#[tokio::test]
-async fn cancel_add_note_from_detail_returns_to_detail() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Note target")).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 0 });
-
-    app.dispatch_key(key(KeyCode::Char('n')), (80, 24).into())
-        .await
-        .unwrap();
-    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 0 })
-    ));
-    assert!(app.authoring.is_idle());
-}
-
-#[tokio::test]
-async fn add_note_blank_body_from_detail_returns_to_detail() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Note target")).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 0 });
-
-    app.dispatch_key(key(KeyCode::Char('n')), (80, 24).into())
-        .await
-        .unwrap();
-    app.handle_overlay_key(ctrl_s()).await.unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 0 })
-    ));
-    assert_eq!(toast_message(&app), Some("note body is required"));
-}
-
-#[tokio::test]
-async fn add_note_blank_body_is_rejected() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Note target")).await;
-
-    app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
-    app.handle_overlay_key(ctrl_s()).await.unwrap();
-
-    assert!(app.overlay.is_none());
-    assert_eq!(toast_message(&app), Some("note body is required"));
-}
-
-#[tokio::test]
-async fn planned_and_disabled_shortcut_and_command_report_non_executing() {
-    let mut app = test_app().await;
-
-    app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
-    assert_eq!(
-        toast_message(&app),
-        Some(":order-due is disabled: tasks do not have due dates")
-    );
-
-    app.begin_command();
-    type_chars(&mut app, "order-due").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    assert_eq!(
-        toast_message(&app),
-        Some(":order-due is disabled: tasks do not have due dates")
-    );
-    assert!(app.overlay.is_none());
-}
-
-#[tokio::test]
-async fn no_selected_mutating_shortcuts_report_failure() {
-    let mut app = test_app().await;
-    app.widgets.table.select(None);
-
-    for sequence in [
-        [KeyCode::Char('m'), KeyCode::Char('i')],
-        [KeyCode::Char('m'), KeyCode::Char('h')],
-        [KeyCode::Char('m'), KeyCode::Char('D')],
-        [KeyCode::Char('m'), KeyCode::Char('r')],
-    ] {
-        app.message = None;
-        app.handle_normal_key(sequence[0]).await.unwrap();
-        app.handle_normal_key(sequence[1]).await.unwrap();
-        assert_eq!(toast_message(&app), Some("no selected task to edit"));
-    }
-}
-
-#[tokio::test]
-async fn delete_task_opens_confirmation_with_task_context() {
-    let mut app = test_app().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Delete target")).await;
-    let display_ref = app.store.tasks[selected].display_ref.clone();
-
-    app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Confirm(ConfirmState {
-            route: OverlayRoute::DeleteTaskConfirm,
-            ref title,
-            ref prompt,
-        })) if title == DELETE_TASK_TITLE
-            && prompt.contains(&display_ref)
-            && prompt.contains("Delete target")
-    ));
-    assert!(!app.store.tasks[selected].task.deleted);
-}
-
-#[tokio::test]
-async fn cancel_delete_task_leaves_task_unchanged() {
-    let mut app = test_app().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Keep target")).await;
-
-    app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
-
-    assert!(app.overlay.is_none());
-    assert!(!app.store.tasks[selected].task.deleted);
-    assert!(app.message.is_none());
-}
-
-#[tokio::test]
-async fn confirm_delete_task_soft_deletes_selected_task() {
-    let mut app = test_app().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Delete target")).await;
-    let display_ref = app.store.tasks[selected].display_ref.clone();
-
-    app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Char('y')))
-        .await
-        .unwrap();
-
-    let selected = app.widgets.table.selected().unwrap();
-    assert!(app.store.tasks[selected].task.deleted);
-    assert!(!app.store.filters.include_deleted);
-    assert_eq!(
-        toast_message(&app),
-        Some(format!("deleted {display_ref}").as_str())
-    );
-}
-
-#[tokio::test]
-async fn delete_task_from_detail_returns_to_detail() {
-    let mut app = test_app().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Detail delete target")).await;
-    app.overlay = Some(OverlayState::Detail { scroll: 7 });
-
-    app.dispatch_key(key(KeyCode::Char('D')), (80, 24).into())
-        .await
-        .unwrap();
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Confirm(ConfirmState {
-            route: OverlayRoute::DeleteTaskConfirm,
-            ..
-        }))
-    ));
-    assert!(app.view().detail_underlay);
-
-    app.handle_overlay_key(key(KeyCode::Char('y')))
-        .await
-        .unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Detail { scroll: 0 })
-    ));
-    assert!(app.store.tasks[selected].task.deleted);
-}
-
-#[tokio::test]
-async fn esc_closes_every_overlay_variant() {
-    let overlays = vec![
-        OverlayState::Help { scroll: 0 },
-        OverlayState::Detail { scroll: 0 },
-        OverlayState::DetailHelp { scroll: 0 },
-        OverlayState::Search {
-            input: LineEdit::new("q".to_string()),
-        },
-        OverlayState::Command {
-            input: LineEdit::new("ref".to_string()),
-        },
-        OverlayState::TextInput(TextInputState::new(
-            OverlayRoute::MessageOnly,
-            "T",
-            "P",
-            "x".to_string(),
-        )),
-        OverlayState::MultilineInput(MultilineInputState {
-            route: OverlayRoute::MessageOnly,
-            title: "M".to_string(),
-            prompt: "P".to_string(),
-            lines: vec!["x".to_string()],
-            row: 0,
-            column: 1,
-        }),
-        OverlayState::Picker(PickerState {
-            route: OverlayRoute::MessageOnly,
-            title: "Pick".to_string(),
-            filter: LineEdit::blank(),
-            items: vec![PickerItem {
-                label: "One".to_string(),
-                value: "one".to_string(),
-                selected: false,
-            }],
-            selected: 0,
-            multi: false,
-            mode: PickerMode::Navigate,
-        }),
-        OverlayState::Confirm(ConfirmState {
-            route: OverlayRoute::MessageOnly,
-            title: "C".to_string(),
-            prompt: "?".to_string(),
-        }),
-        OverlayState::TextPanel(TextPanelState {
-            title: "Panel".to_string(),
-            lines: vec!["line".to_string()],
-            scroll: 0,
-        }),
-    ];
-
-    for overlay in overlays {
-        let detail_help = matches!(overlay, OverlayState::DetailHelp { .. });
-        let mut app = test_app().await;
-        app.overlay = Some(overlay);
-        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
-            .await
-            .unwrap();
-        if detail_help {
-            assert!(matches!(
-                app.overlay,
-                Some(OverlayState::Detail { scroll: 0 })
-            ));
-        } else {
-            assert!(app.overlay.is_none());
-        }
-        assert_pending_empty(&app);
-    }
-}
-
 async fn insert_title_conflict(
     pool: &SqlitePool,
     app: &mut App,
@@ -1663,891 +165,2391 @@ async fn insert_title_conflict_for_task_id(
     app.refresh().await.unwrap();
 }
 
-#[tokio::test]
-async fn conflict_list_shortcut_applies_conflicts_view() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
-    assert_eq!(app.store.active_view, SidebarTarget::Conflicts);
-    assert!(app.store.filters.conflicts_only);
-    assert_eq!(toast_message(&app), Some("no unresolved conflicts"));
+mod keyboard_dispatch {
+    use super::*;
+
+    #[tokio::test]
+    async fn ctrl_c_quits_from_normal_mode() {
+        let mut app = test_app().await;
+        app.dispatch_key(ctrl_c(), (80, 24).into()).await.unwrap();
+        assert!(app.should_quit);
+    }
+
+    #[tokio::test]
+    async fn ctrl_c_quits_while_overlay_captures_input() {
+        let mut app = test_app().await;
+        app.begin_search();
+        app.dispatch_key(ctrl_c(), (80, 24).into()).await.unwrap();
+        assert!(app.should_quit);
+    }
+
+    #[tokio::test]
+    async fn prefix_key_enters_prefix_mode() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        assert_pending(&app, &["m"]);
+    }
+
+    #[tokio::test]
+    async fn add_task_alias_executes_immediately() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        assert_pending_empty(&app);
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Title
+        ));
+    }
+
+    #[tokio::test]
+    async fn prefix_is_inactive_while_overlay_captures_input() {
+        let mut app = test_app().await;
+        app.begin_search();
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+
+        assert_pending_empty(&app);
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Search { input }) if input.as_str() == "m"
+        ));
+    }
+
+    #[tokio::test]
+    async fn esc_cancels_prefix_before_overlay() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
+            .await
+            .unwrap();
+        assert_pending(&app, &["e"]);
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+        assert_pending_empty(&app);
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn invalid_continuation_shows_message() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('z')).await.unwrap();
+        assert_pending_empty(&app);
+        assert_eq!(toast_message(&app), Some("invalid shortcut: m z"));
+    }
+
+    #[tokio::test]
+    async fn valid_continuation_executes_and_clears() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        assert_pending_empty(&app);
+    }
+
+    #[tokio::test]
+    async fn order_shortcut_sets_sort() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
+        assert_eq!(app.store.sort, TaskSort::Priority);
+        assert_eq!(toast_message(&app), Some("order priority asc"));
+    }
+
+    #[tokio::test]
+    async fn order_reverse_shortcut_toggles_direction() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
+        assert_eq!(app.store.sort_direction_label(), "desc");
+        assert_eq!(toast_message(&app), Some("order queue desc"));
+    }
+
+    #[tokio::test]
+    async fn due_order_shortcut_reports_unsupported() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+        assert_eq!(
+            toast_message(&app),
+            Some(":order-due is disabled: tasks do not have due dates")
+        );
+    }
+
+    #[tokio::test]
+    async fn h_and_l_move_between_sidebar_and_tasks() {
+        let mut app = test_app().await;
+        app.focus = Focus::Tasks;
+        app.handle_normal_key(KeyCode::Char('h')).await.unwrap();
+        assert_eq!(app.focus, Focus::Sidebar);
+
+        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+        assert_eq!(app.focus, Focus::Tasks);
+    }
+
+    #[tokio::test]
+    async fn planned_and_disabled_shortcut_and_command_report_non_executing() {
+        let mut app = test_app().await;
+
+        app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+        assert_eq!(
+            toast_message(&app),
+            Some(":order-due is disabled: tasks do not have due dates")
+        );
+
+        app.begin_command();
+        type_chars(&mut app, "order-due").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(
+            toast_message(&app),
+            Some(":order-due is disabled: tasks do not have due dates")
+        );
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn esc_closes_every_overlay_variant() {
+        let overlays = vec![
+            OverlayState::Help { scroll: 0 },
+            OverlayState::Detail { scroll: 0 },
+            OverlayState::DetailHelp { scroll: 0 },
+            OverlayState::Search {
+                input: LineEdit::new("q".to_string()),
+            },
+            OverlayState::Command {
+                input: LineEdit::new("ref".to_string()),
+            },
+            OverlayState::TextInput(TextInputState::new(
+                OverlayRoute::MessageOnly,
+                "T",
+                "P",
+                "x".to_string(),
+            )),
+            OverlayState::MultilineInput(MultilineInputState {
+                route: OverlayRoute::MessageOnly,
+                title: "M".to_string(),
+                prompt: "P".to_string(),
+                lines: vec!["x".to_string()],
+                row: 0,
+                column: 1,
+            }),
+            OverlayState::Picker(PickerState {
+                route: OverlayRoute::MessageOnly,
+                title: "Pick".to_string(),
+                filter: LineEdit::blank(),
+                items: vec![PickerItem {
+                    label: "One".to_string(),
+                    value: "one".to_string(),
+                    selected: false,
+                }],
+                selected: 0,
+                multi: false,
+                mode: PickerMode::Navigate,
+            }),
+            OverlayState::Confirm(ConfirmState {
+                route: OverlayRoute::MessageOnly,
+                title: "C".to_string(),
+                prompt: "?".to_string(),
+            }),
+            OverlayState::TextPanel(TextPanelState {
+                title: "Panel".to_string(),
+                lines: vec!["line".to_string()],
+                scroll: 0,
+            }),
+        ];
+
+        for overlay in overlays {
+            let detail_help = matches!(overlay, OverlayState::DetailHelp { .. });
+            let mut app = test_app().await;
+            app.overlay = Some(overlay);
+            app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+                .await
+                .unwrap();
+            if detail_help {
+                assert!(matches!(
+                    app.overlay,
+                    Some(OverlayState::Detail { scroll: 0 })
+                ));
+            } else {
+                assert!(app.overlay.is_none());
+            }
+            assert_pending_empty(&app);
+        }
+    }
 }
 
-#[tokio::test]
-async fn conflict_show_opens_text_panel_and_esc_closes() {
-    let (_dir, pool, mut app) = test_app_with_pool().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Conflict show")).await;
-    insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+mod command_and_config_overlays {
+    use super::*;
 
-    app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::TextPanel(state))
-            if state.lines.iter().any(|line| line.contains("field=title"))
-    ));
+    #[tokio::test]
+    async fn command_overlay_executes_unique_lookup_and_keeps_overlay_on_errors() {
+        let mut app = test_app().await;
 
-    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
-    assert!(app.overlay.is_none());
+        app.begin_command();
+        for ch in "ref".chars() {
+            app.handle_overlay_key(key(KeyCode::Char(ch)))
+                .await
+                .unwrap();
+        }
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(app.overlay.is_none());
+
+        app.begin_command();
+        app.handle_overlay_key(key(KeyCode::Char('s')))
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
+        assert_eq!(toast_message(&app), Some("ambiguous command: s"));
+
+        app.begin_command();
+        for ch in "zzzz".chars() {
+            app.handle_overlay_key(key(KeyCode::Char(ch)))
+                .await
+                .unwrap();
+        }
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
+        assert_eq!(toast_message(&app), Some("unknown command: zzzz"));
+    }
+
+    #[tokio::test]
+    async fn search_replaces_existing_overlay() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::Help { scroll: 0 });
+        app.begin_search();
+        assert!(matches!(app.overlay, Some(OverlayState::Search { .. })));
+    }
+
+    #[tokio::test]
+    async fn toggle_help_closes_active_help_overlay() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::Help { scroll: 0 });
+        app.toggle_help_at_height(24);
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn help_key_opens_help_overlay() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('?')).await.unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::Help { .. })));
+    }
+
+    #[tokio::test]
+    async fn config_info_opens_text_panel() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+
+        let Some(OverlayState::TextPanel(panel)) = app.overlay else {
+            panic!("expected text panel");
+        };
+        assert_eq!(panel.title, CONFIG_INFO_TITLE);
+        assert!(panel.lines.iter().any(|line| line.contains("config path:")));
+    }
+
+    #[tokio::test]
+    async fn config_status_opens_text_panel() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
+
+        let Some(OverlayState::TextPanel(panel)) = app.overlay else {
+            panic!("expected text panel");
+        };
+        assert_eq!(panel.title, CONFIG_STATUS_TITLE);
+        assert!(
+            panel
+                .lines
+                .iter()
+                .any(|line| line.contains("sync enabled:"))
+        );
+        assert!(
+            panel
+                .lines
+                .iter()
+                .any(|line| line.contains("daemon state: not checked from TUI"))
+        );
+    }
+
+    #[tokio::test]
+    async fn config_paths_opens_text_panel() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+
+        let Some(OverlayState::TextPanel(panel)) = app.overlay else {
+            panic!("expected text panel");
+        };
+        assert_eq!(panel.title, CONFIG_PATHS_TITLE);
+        assert!(
+            panel
+                .lines
+                .iter()
+                .any(|line| line.contains("effective database:"))
+        );
+    }
+
+    #[tokio::test]
+    async fn config_init_requires_confirmation() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('i')).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Confirm(ConfirmState { ref title, .. })) if title == CONFIG_INIT_TITLE
+        ));
+    }
+
+    #[tokio::test]
+    async fn config_init_cancel_does_not_set_success_message() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('i')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Char('n')))
+            .await
+            .unwrap();
+        assert!(app.overlay.is_none());
+        assert!(app.message.is_none());
+    }
+
+    #[tokio::test]
+    async fn command_panel_runs_config_show() {
+        let mut app = test_app().await;
+        app.begin_command();
+        type_chars(&mut app, "config-show").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::TextPanel(TextPanelState { ref title, .. })) if title == CONFIG_INFO_TITLE
+        ));
+    }
+
+    #[tokio::test]
+    async fn command_panel_runs_workspace_switch() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        crate::workspaces::create_workspace(&mut conn, "Client Work")
+            .await
+            .unwrap();
+        drop(conn);
+
+        app.begin_command();
+        type_chars(&mut app, "workspace-switch").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(PickerState { title, items, .. }))
+                if title == SWITCH_WORKSPACE_TITLE
+                    && items.iter().any(|item| item.value == "client-work")
+        ));
+
+        reset_default_workspace(&pool).await;
+    }
 }
 
-#[tokio::test]
-async fn conflict_next_selects_next_conflicted_task() {
-    let (_dir, pool, mut app) = test_app_with_pool().await;
-    create_and_select_task(&mut app, test_task_draft("First")).await;
-    create_and_select_task(&mut app, test_task_draft("Second")).await;
-    let first_id = app
-        .store
-        .tasks
-        .iter()
-        .find(|item| item.task.title == "First")
-        .unwrap()
-        .task
-        .id
-        .clone();
-    let second_id = app
-        .store
-        .tasks
-        .iter()
-        .find(|item| item.task.title == "Second")
-        .unwrap()
-        .task
-        .id
-        .clone();
-    insert_title_conflict_for_task_id(&pool, &mut app, &first_id, "local one", "remote one").await;
-    insert_title_conflict_for_task_id(&pool, &mut app, &second_id, "local two", "remote two").await;
-    let first = app
-        .store
-        .tasks
-        .iter()
-        .position(|item| item.task.id == first_id)
-        .unwrap();
-    let second = app
-        .store
-        .tasks
-        .iter()
-        .position(|item| item.task.id == second_id)
-        .unwrap();
-    app.widgets.table.select(Some(first));
+mod filters_and_workspaces {
+    use super::*;
 
-    app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
-    assert_eq!(app.widgets.table.selected(), Some(second));
-    assert_eq!(toast_message(&app), Some("selected next conflict"));
+    #[tokio::test]
+    async fn filter_project_shortcut_opens_project_picker() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
+        app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(PickerState { title, .. })) if title == FILTER_PROJECT_TITLE
+        ));
+    }
+
+    #[tokio::test]
+    async fn filter_shortcuts_apply_label_status_priority_and_deleted() {
+        let mut app = test_app().await;
+        app.store.create_label("backend".to_string()).await.unwrap();
+        create_and_select_task(
+            &mut app,
+            TaskDraft {
+                title: "Filtered task".to_string(),
+                description: String::new(),
+                project: None,
+                priority: "urgent".to_string(),
+                labels: vec!["backend".to_string()],
+            },
+        )
+        .await;
+
+        app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Char('/')))
+            .await
+            .unwrap();
+        type_chars(&mut app, "backend").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(app.store.filters.label.as_deref(), Some("backend"));
+        assert_eq!(toast_message(&app), Some("label filter applied"));
+
+        app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Char('/')))
+            .await
+            .unwrap();
+        type_chars(&mut app, "inbox").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(app.store.filters.status.as_deref(), Some("inbox"));
+
+        app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Char('/')))
+            .await
+            .unwrap();
+        type_chars(&mut app, "urgent").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(app.store.filters.priority.as_deref(), Some("urgent"));
+
+        app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
+        assert!(app.store.filters.include_deleted);
+        assert_eq!(toast_message(&app), Some("showing deleted tasks"));
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_shortcut_opens_picker() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        crate::workspaces::create_workspace(&mut conn, "Client Work")
+            .await
+            .unwrap();
+        drop(conn);
+
+        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('w')).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(PickerState { title, .. })) if title == SWITCH_WORKSPACE_TITLE
+        ));
+
+        reset_default_workspace(&pool).await;
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_changes_active_workspace() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        create_and_select_task(&mut app, test_task_draft("Default only")).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        crate::workspaces::create_workspace(&mut conn, "Client Work")
+            .await
+            .unwrap();
+        drop(conn);
+        app.refresh().await.unwrap();
+
+        app.store.filters.status = Some("todo".to_string());
+        app.store.active_view = SidebarTarget::Todo;
+
+        let (message, selected) = app
+            .store
+            .switch_workspace("client-work".to_string())
+            .await
+            .unwrap();
+        app.apply_filter_selection(selected);
+        app.set_success(message);
+
+        assert_eq!(app.store.active_workspace.key, "client-work");
+        assert_eq!(app.store.active_view, SidebarTarget::All);
+        assert!(app.store.filters.status.is_none());
+        assert!(app.store.tasks.is_empty());
+        assert!(app.overlay.is_none());
+        assert!(
+            toast_message(&app)
+                .is_some_and(|message| message.contains("switched workspace to client-work"))
+        );
+
+        reset_default_workspace(&pool).await;
+    }
+
+    #[tokio::test]
+    async fn clear_filters_shortcut_resets_default_view() {
+        let mut app = test_app().await;
+        app.store.filters.status = Some("todo".to_string());
+        app.store.active_view = SidebarTarget::Todo;
+
+        app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+
+        assert_eq!(app.store.active_view, SidebarTarget::All);
+        assert!(app.store.filters.status.is_none());
+        assert_eq!(toast_message(&app), Some("filters cleared"));
+        assert_eq!(toast_severity(&app), Some(ToastSeverity::Success));
+    }
+
+    #[tokio::test]
+    async fn go_conflicts_shortcut_sets_conflicts_view() {
+        let mut app = test_app().await;
+
+        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+
+        assert_eq!(app.store.active_view, SidebarTarget::Conflicts);
+        assert!(app.store.filters.conflicts_only);
+    }
 }
 
-#[tokio::test]
-async fn accept_local_conflict_resolves_after_confirmation() {
-    let (_dir, pool, mut app) = test_app_with_pool().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
-    insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+mod authoring {
+    use super::*;
 
-    app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Confirm(state)) if state.title == CONFLICT_CONFIRM_LOCAL_TITLE
-    ));
+    #[tokio::test]
+    async fn add_task_shortcut_opens_title_prompt() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
 
-    app.handle_overlay_key(key(KeyCode::Char('y')))
-        .await
-        .unwrap();
-    assert!(app.overlay.is_none());
-    assert_eq!(app.store.tasks[selected].task.title, "local title");
-    assert!(!app.store.tasks[selected].has_conflict);
-    assert!(
-        toast_message(&app)
-            .is_some_and(|message| message.contains("resolved") && message.contains("field=title"))
-    );
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.focus == AddTaskStep::Title && state.title.as_str().is_empty()
+        ));
+    }
+
+    #[tokio::test]
+    async fn add_task_alias_creates_task_after_title() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        let selected = app.widgets.table.selected().unwrap();
+        let task = &app.store.tasks[selected];
+        assert_eq!(task.task.title, "Write docs");
+        assert_eq!(task.task.priority, "none");
+        assert_eq!(task.task.description, "");
+        assert!(task.labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_task_uses_active_project_view() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        let selected = app
+            .store
+            .show_view(SidebarTarget::Project("mobile-app".to_string()))
+            .await
+            .unwrap();
+        app.apply_filter_selection(selected);
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        let task = &app.store.tasks[selected];
+        assert_eq!(task.task.title, "Write docs");
+        assert_eq!(task.task.project_key, "mobile-app");
+        assert_eq!(app.store.filters.project.as_deref(), Some("mobile-app"));
+    }
+
+    #[tokio::test]
+    async fn add_task_flow_configures_project_and_priority_from_title() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(ctrl_p()).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state)) if state.route == OverlayRoute::AddTaskTitleProject
+        ));
+        type_chars(&mut app, "mobile").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        app.handle_overlay_key(ctrl_r()).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state)) if state.route == OverlayRoute::AddTaskTitlePriority
+        ));
+        type_chars(&mut app, "high").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        let selected = app.widgets.table.selected().unwrap();
+        let task = &app.store.tasks[selected];
+        assert_eq!(task.task.title, "Write docs");
+        assert_eq!(task.task.project_key, "mobile-app");
+        assert_eq!(task.task.priority, "high");
+        assert_eq!(task.task.description, "");
+        assert!(task.labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_task_tab_opens_description_step() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.focus == AddTaskStep::Description
+                    && state.title.as_str() == "Write docs"
+        ));
+    }
+
+    #[tokio::test]
+    async fn add_task_description_flow_creates_task_with_description() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        type_chars(&mut app, "Include setup details").await;
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        let selected = app.widgets.table.selected().unwrap();
+        let task = &app.store.tasks[selected];
+        assert_eq!(task.task.title, "Write docs");
+        assert_eq!(task.task.description, "Include setup details");
+    }
+
+    #[tokio::test]
+    async fn add_task_description_ctrl_x_ctrl_e_opens_external_editor_and_returns_to_composer() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        type_chars(&mut app, "Details").await;
+        app.handle_overlay_key(ctrl_x()).await.unwrap();
+        app.handle_overlay_key(ctrl_e()).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.focus == AddTaskStep::Description
+                    && state.title.as_str() == "Write docs"
+                    && state.description.lines == vec!["Details from editor".to_string()]
+        ));
+    }
+
+    #[tokio::test]
+    async fn add_task_description_ctrl_x_non_editor_key_clears_prefix_and_edits_text() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        app.handle_overlay_key(ctrl_x()).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Char('z')))
+            .await
+            .unwrap();
+
+        assert_pending_empty(&app);
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.focus == AddTaskStep::Description
+                    && state.description.lines == vec!["z".to_string()]
+        ));
+    }
+
+    #[tokio::test]
+    async fn add_task_description_ctrl_e_moves_to_line_end() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        type_chars(&mut app, "Details").await;
+        app.handle_overlay_key(ctrl_e()).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.focus == AddTaskStep::Description
+                    && state.description.column == "Details".len()
+                    && state.description.lines == vec!["Details".to_string()]
+        ));
+    }
+
+    #[tokio::test]
+    async fn add_task_project_and_priority_return_to_description_step() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        type_chars(&mut app, "Details").await;
+        app.handle_overlay_key(ctrl_p()).await.unwrap();
+        type_chars(&mut app, "mobile").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.focus == AddTaskStep::Description
+                    && state.description.lines == vec!["Details".to_string()]
+        ));
+
+        app.handle_overlay_key(ctrl_r()).await.unwrap();
+        type_chars(&mut app, "high").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        let task = &app.store.tasks[selected];
+        assert_eq!(task.task.project_key, "mobile-app");
+        assert_eq!(task.task.priority, "high");
+        assert_eq!(task.task.description, "Details");
+    }
+
+    #[tokio::test]
+    async fn add_task_flow_cancels_at_title_step() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn add_task_blank_title_is_rejected() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(toast_message(&app), Some("task title is required"));
+        assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Title
+        ));
+    }
+
+    #[tokio::test]
+    async fn add_note_requires_selected_task() {
+        let mut app = test_app().await;
+        app.widgets.table.select(None);
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(toast_message(&app), Some("no selected task for note"));
+        assert_eq!(toast_severity(&app), Some(ToastSeverity::Info));
+    }
+
+    #[tokio::test]
+    async fn add_note_alias_requires_selected_task() {
+        let mut app = test_app().await;
+        app.widgets.table.select(None);
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(toast_message(&app), Some("no selected task for note"));
+    }
+
+    #[tokio::test]
+    async fn add_note_flow_creates_note_for_selected_task() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Note target")).await;
+
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state)) if state.title == ADD_NOTE_TITLE
+        ));
+
+        type_chars(&mut app, "Important detail").await;
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(toast_message(&app).is_some_and(|message| message.starts_with("added note ")));
+    }
 }
 
-#[tokio::test]
-async fn accept_remote_conflict_resolves_after_confirmation() {
-    let (_dir, pool, mut app) = test_app_with_pool().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
-    insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+mod detail_mode {
+    use super::*;
 
-    app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Char('y')))
-        .await
-        .unwrap();
+    #[tokio::test]
+    async fn q_closes_detail_overlay() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
-    assert_eq!(app.store.tasks[selected].task.title, "remote title");
-    assert!(!app.store.tasks[selected].has_conflict);
+        app.dispatch_key(key(KeyCode::Char('q')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(!app.should_quit);
+    }
+
+    #[tokio::test]
+    async fn help_key_opens_detail_help_from_detail_overlay() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail help target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Char('?')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(app.overlay, Some(OverlayState::DetailHelp { .. })));
+        assert_eq!(app.focus, Focus::Tasks);
+        assert!(app.widgets.table.selected().is_some());
+    }
+
+    #[tokio::test]
+    async fn closing_detail_help_returns_to_detail_overlay() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::DetailHelp { scroll: 0 });
+
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn second_help_key_returns_from_detail_help_to_detail_overlay() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::DetailHelp { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Char('?')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn detail_scroll_keys_update_detail_offset() {
+        let mut app = test_app().await;
+        let mut draft = test_task_draft("Scroll target");
+        draft.description = (0..100)
+            .map(|index| format!("line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        create_and_select_task(&mut app, draft).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(ctrl_d(), (80, 24).into()).await.unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 18 })
+        ));
+
+        app.dispatch_key(key(KeyCode::PageDown), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 36 })
+        ));
+
+        app.dispatch_key(ctrl_u(), (80, 24).into()).await.unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 18 })
+        ));
+
+        app.dispatch_key(key(KeyCode::Char('k')), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 17 })
+        ));
+
+        app.dispatch_key(key(KeyCode::PageUp), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn detail_scroll_resists_down_input_at_bottom() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Short detail")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        for _ in 0..10 {
+            app.dispatch_key(key(KeyCode::Char('j')), (80, 24).into())
+                .await
+                .unwrap();
+        }
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+
+        app.dispatch_key(key(KeyCode::Char('k')), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn detail_next_and_previous_task_stay_in_detail() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("First")).await;
+        create_and_select_task(&mut app, test_task_draft("Second")).await;
+        let first = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.title == "First")
+            .unwrap();
+        let second = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.title == "Second")
+            .unwrap();
+        app.widgets.table.select(Some(first));
+        app.overlay = Some(OverlayState::Detail { scroll: 7 });
+
+        app.dispatch_key(key(KeyCode::Char(']')), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(app.widgets.table.selected(), Some(second));
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert_eq!(toast_message(&app), Some("selected next task"));
+
+        app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(app.widgets.table.selected(), Some(first));
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert_eq!(toast_message(&app), Some("selected previous task"));
+    }
+
+    #[tokio::test]
+    async fn add_note_from_detail_returns_to_detail() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Note target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Char('n')), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state)) if state.title == ADD_NOTE_TITLE
+        ));
+        assert!(app.view().detail_underlay);
+
+        type_chars(&mut app, "Important detail").await;
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].notes.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn detail_shortcuts_do_not_leave_detail_before_opening_overlay() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Char('p')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(PickerState { title, .. })) if title == EDIT_PRIORITY_TITLE
+        ));
+        assert!(app.view().detail_underlay);
+    }
+
+    #[tokio::test]
+    async fn edit_title_from_detail_renders_inline_cursor() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state)) if state.route == OverlayRoute::EditTitle
+        ));
+        assert!(app.view().detail_underlay);
+
+        let backend = ratatui::backend::TestBackend::new(100, 30);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let view = app.view();
+        terminal
+            .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("Detail title target"));
+        assert!(!rendered.contains("Edit title"));
+        assert!(!rendered.contains("Enter submit"));
+    }
+
+    #[tokio::test]
+    async fn cancel_edit_title_from_detail_returns_to_detail() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert!(app.authoring.is_idle());
+    }
+
+    #[tokio::test]
+    async fn submit_edit_title_from_detail_returns_to_detail() {
+        let mut app = test_app().await;
+        let selected =
+            create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::End)).await.unwrap();
+        type_chars(&mut app, " updated").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert_eq!(
+            app.store.tasks[selected].task.title,
+            "Detail title target updated"
+        );
+    }
+
+    #[tokio::test]
+    async fn detail_edit_chords_open_advertised_editors() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        app.store.create_label("Bug".to_string()).await.unwrap();
+        create_and_select_task(
+            &mut app,
+            TaskDraft {
+                title: "Detail target".to_string(),
+                description: "existing description".to_string(),
+                project: None,
+                priority: "none".to_string(),
+                labels: vec!["bug".to_string()],
+            },
+        )
+        .await;
+
+        for (code, expected_route) in [
+            (KeyCode::Char('t'), OverlayRoute::EditTitle),
+            (KeyCode::Char('d'), OverlayRoute::EditDescription),
+            (KeyCode::Char('p'), OverlayRoute::EditProject),
+            (KeyCode::Char('l'), OverlayRoute::EditLabels),
+            (KeyCode::Char('r'), OverlayRoute::EditPriority),
+        ] {
+            app.overlay = Some(OverlayState::Detail { scroll: 4 });
+            app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
+                .await
+                .unwrap();
+            assert_pending(&app, &["e"]);
+            assert!(matches!(
+                app.overlay,
+                Some(OverlayState::Detail { scroll: 4 })
+            ));
+
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+            match (&app.overlay, expected_route) {
+                (Some(OverlayState::TextInput(state)), route) => assert_eq!(state.route, route),
+                (Some(OverlayState::MultilineInput(state)), route) => {
+                    assert_eq!(state.route, route)
+                }
+                (Some(OverlayState::Picker(state)), route) => assert_eq!(state.route, route),
+                (overlay, route) => panic!("expected {route:?}, got {overlay:?}"),
+            }
+            assert_pending_empty(&app);
+            assert!(app.view().detail_underlay);
+        }
+    }
+
+    #[tokio::test]
+    async fn detail_single_key_edit_shortcuts_still_work() {
+        let mut app = test_app().await;
+        app.store.create_label("Bug".to_string()).await.unwrap();
+        create_and_select_task(&mut app, test_task_draft("Detail target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+
+        app.dispatch_key(key(KeyCode::Char('l')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state)) if state.route == OverlayRoute::EditLabels
+        ));
+        assert_pending_empty(&app);
+        assert!(app.view().detail_underlay);
+    }
+
+    #[tokio::test]
+    async fn invalid_detail_prefix_stays_in_detail() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 5 });
+
+        app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('z')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_pending_empty(&app);
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 5 })
+        ));
+        assert_eq!(toast_message(&app), Some("invalid shortcut: e z"));
+    }
+
+    #[tokio::test]
+    async fn detail_prefix_hints_render_above_detail_overlay() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
+            .await
+            .unwrap();
+
+        let backend = ratatui::backend::TestBackend::new(100, 30);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let view = app.view();
+        terminal
+            .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("e …"));
+        assert!(rendered.contains(":detail-edit-title"));
+    }
+
+    #[tokio::test]
+    async fn ignored_keys_stay_in_detail() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Char('a')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert!(app.authoring.is_idle());
+    }
+
+    #[tokio::test]
+    async fn detail_toast_renders_above_detail_overlay() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Toast target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.set_success("set APP-TEST status=done");
+        let backend = ratatui::backend::TestBackend::new(100, 30);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let view = app.view();
+
+        terminal
+            .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("set APP-TEST status=done"));
+    }
+
+    #[tokio::test]
+    async fn detail_done_shortcut_keeps_detail_and_sets_message() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Next target")).await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Done target")).await;
+        let display_ref = app.store.tasks[selected].display_ref.clone();
+        app.overlay = Some(OverlayState::Detail { scroll: 7 });
+
+        app.dispatch_key(key(KeyCode::Char('d')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 7 })
+        ));
+        assert_eq!(
+            toast_message(&app),
+            Some(format!("set {display_ref} status=done").as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn detail_undo_shortcut_reverts_last_mutation() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
+        app.store
+            .update_title(Some(selected), "After".to_string())
+            .await
+            .unwrap();
+        app.overlay = Some(OverlayState::Detail { scroll: 5 });
+
+        app.dispatch_key(key(KeyCode::Char('u')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 5 })
+        ));
+        assert_eq!(app.store.tasks[selected].task.title, "Before");
+        assert!(app.message.as_ref().unwrap().message.contains("undid"));
+    }
+
+    #[tokio::test]
+    async fn cancel_add_note_from_detail_returns_to_detail() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Note target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Char('n')), (80, 24).into())
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert!(app.authoring.is_idle());
+    }
+
+    #[tokio::test]
+    async fn add_note_blank_body_from_detail_returns_to_detail() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Note target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Char('n')), (80, 24).into())
+            .await
+            .unwrap();
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert_eq!(toast_message(&app), Some("note body is required"));
+    }
 }
 
-#[tokio::test]
-async fn manual_conflict_merge_resolves_with_submitted_value() {
-    let (_dir, pool, mut app) = test_app_with_pool().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
-    insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+mod task_editing {
+    use super::*;
 
-    app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
-    type_chars(&mut app, " merged").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    #[tokio::test]
+    async fn add_note_blank_body_is_rejected() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Note target")).await;
 
-    assert_eq!(app.store.tasks[selected].task.title, "local title merged");
-    assert!(!app.store.tasks[selected].has_conflict);
-}
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
 
-#[tokio::test]
-async fn manual_conflict_retry_preserves_submitted_text_after_error() {
-    let (_dir, pool, mut app) = test_app_with_pool().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
-    let task_id = app.store.tasks[selected].task.id.clone();
-    insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+        assert!(app.overlay.is_none());
+        assert_eq!(toast_message(&app), Some("note body is required"));
+    }
 
-    app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
-    type_chars(&mut app, " merged").await;
+    #[tokio::test]
+    async fn no_selected_mutating_shortcuts_report_failure() {
+        let mut app = test_app().await;
+        app.widgets.table.select(None);
 
-    let mut conn = pool.acquire().await.unwrap();
-    sqlx::query("DELETE FROM conflicts WHERE task_id = ? AND field = 'title'")
+        for sequence in [
+            [KeyCode::Char('m'), KeyCode::Char('i')],
+            [KeyCode::Char('m'), KeyCode::Char('h')],
+            [KeyCode::Char('m'), KeyCode::Char('D')],
+            [KeyCode::Char('m'), KeyCode::Char('r')],
+        ] {
+            app.message = None;
+            app.handle_normal_key(sequence[0]).await.unwrap();
+            app.handle_normal_key(sequence[1]).await.unwrap();
+            assert_eq!(toast_message(&app), Some("no selected task to edit"));
+        }
+    }
+
+    #[tokio::test]
+    async fn add_project_shortcut_opens_prompt_and_creates_project() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state)) if state.prompt == "project name:"
+        ));
+
+        for ch in "Mobile App".chars() {
+            app.handle_overlay_key(key(KeyCode::Char(ch)))
+                .await
+                .unwrap();
+        }
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(toast_message(&app), Some("created project mobile-app"));
+        assert!(
+            app.store
+                .projects
+                .iter()
+                .any(|project| project.key == "mobile-app")
+        );
+        assert!(
+            app.store
+                .sidebar_entries
+                .iter()
+                .any(|entry| entry.label.contains("Mobile App"))
+        );
+    }
+
+    #[tokio::test]
+    async fn add_label_shortcut_opens_prompt_and_creates_label() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state)) if state.prompt == "label name:"
+        ));
+
+        for ch in "Needs Review".chars() {
+            app.handle_overlay_key(key(KeyCode::Char(ch)))
+                .await
+                .unwrap();
+        }
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(toast_message(&app), Some("created label needs-review"));
+        assert!(app.store.labels.iter().any(|label| label == "needs-review"));
+        assert!(
+            app.store
+                .label_picker_items()
+                .iter()
+                .any(|item| item.value == "needs-review")
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_title_shortcut_prefills_and_updates_title() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Old title")).await;
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state))
+                if state.title == EDIT_TITLE_TITLE
+                    && state.prompt.is_empty()
+                    && state.input.as_str() == "Old title"
+        ));
+
+        app.handle_overlay_key(key(KeyCode::End)).await.unwrap();
+        type_chars(&mut app, " updated").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.title, "Old title updated");
+    }
+
+    #[tokio::test]
+    async fn edit_description_prefills_and_ctrl_s_updates() {
+        let mut app = test_app().await;
+        create_and_select_task(
+            &mut app,
+            TaskDraft {
+                description: "first\nsecond".to_string(),
+                ..test_task_draft("Description target")
+            },
+        )
+        .await;
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state))
+                if state.title == EDIT_DESCRIPTION_TITLE
+                    && state.prompt.is_empty()
+                    && state.lines == vec!["first".to_string(), "second".to_string()]
+        ));
+
+        app.handle_overlay_key(key(KeyCode::End)).await.unwrap();
+        type_chars(&mut app, " updated").await;
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(
+            app.store.tasks[selected].task.description,
+            "first\nsecond updated"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_project_picker_uses_existing_projects_only() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        create_and_select_task(&mut app, test_task_draft("Project target")).await;
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state))
+                if state.title == EDIT_PROJECT_TITLE
+                    && !state.items.iter().any(|item| item.label == "Infer project")
+        ));
+
+        type_chars(&mut app, "mobile").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.project_key, "mobile-app");
+    }
+
+    #[tokio::test]
+    async fn edit_priority_picker_prefills_current_priority() {
+        let mut app = test_app().await;
+        create_and_select_task(
+            &mut app,
+            TaskDraft {
+                priority: "high".to_string(),
+                ..test_task_draft("Priority target")
+            },
+        )
+        .await;
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state))
+                if state.title == EDIT_PRIORITY_TITLE
+                    && state.items.iter().any(|item| item.value == "high" && item.selected)
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Char('/')))
+            .await
+            .unwrap();
+        type_chars(&mut app, "urgent").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.priority, "urgent");
+    }
+
+    #[tokio::test]
+    async fn edit_labels_picker_prefills_current_labels_and_removes_unselected() {
+        let mut app = test_app().await;
+        app.store.create_label("Bug".to_string()).await.unwrap();
+        app.store.create_label("Docs".to_string()).await.unwrap();
+        create_and_select_task(
+            &mut app,
+            TaskDraft {
+                labels: vec!["bug".to_string()],
+                ..test_task_draft("Label target")
+            },
+        )
+        .await;
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state))
+                if state.title == EDIT_LABELS_TITLE
+                    && state.items.iter().any(|item| item.value == "bug" && item.selected)
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Char('/')))
+            .await
+            .unwrap();
+        type_chars(&mut app, "bug").await;
+        app.handle_overlay_key(key(KeyCode::Char(' ')))
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Backspace))
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Backspace))
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Backspace))
+            .await
+            .unwrap();
+        type_chars(&mut app, "docs").await;
+        app.handle_overlay_key(key(KeyCode::Char(' ')))
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].labels, vec!["docs".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn status_picker_alias_updates_selected_task() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Status alias")).await;
+
+        app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state)) if state.title == EDIT_STATUS_TITLE
+        ));
+        app.handle_overlay_key(key(KeyCode::Char('/')))
+            .await
+            .unwrap();
+        type_chars(&mut app, "todo").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.status, "todo");
+    }
+
+    #[tokio::test]
+    async fn done_alias_keeps_selected_row_position() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("First")).await;
+        create_and_select_task(&mut app, test_task_draft("Second")).await;
+        create_and_select_task(&mut app, test_task_draft("Third")).await;
+        let selected = 1;
+        let next_title = app.store.tasks[selected + 1].task.title.clone();
+        app.widgets.table.select(Some(selected));
+
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+
+        assert_eq!(app.widgets.table.selected(), Some(selected));
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.title, next_title);
+        assert_eq!(app.store.tasks[selected].task.status, "inbox");
+    }
+
+    #[tokio::test]
+    async fn done_alias_clamps_selection_when_last_row_is_done() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("First")).await;
+        create_and_select_task(&mut app, test_task_draft("Second")).await;
+        let selected = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.title == "Second")
+            .unwrap();
+        app.widgets.table.select(Some(selected));
+
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+
+        assert_eq!(app.widgets.table.selected(), Some(0));
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.title, "First");
+    }
+
+    #[tokio::test]
+    async fn done_and_cancel_aliases_update_selected_task() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Status alias")).await;
+
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+        let selected = app.store.show_view(SidebarTarget::Done).await.unwrap();
+        app.widgets.table.select(selected);
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.status, "done");
+
+        app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
+        let selected = app
+            .store
+            .filter_status("canceled".to_string())
+            .await
+            .unwrap();
+        app.widgets.table.select(selected);
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.status, "canceled");
+    }
+
+    #[tokio::test]
+    async fn exact_priority_shortcut_updates_selected_task() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Priority shortcut")).await;
+
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.priority, "urgent");
+    }
+
+    #[tokio::test]
+    async fn priority_alias_opens_picker() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Priority alias")).await;
+
+        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state)) if state.title == EDIT_PRIORITY_TITLE
+        ));
+    }
+
+    #[tokio::test]
+    async fn edit_shortcuts_require_selected_task() {
+        let mut app = test_app().await;
+        app.widgets.table.select(None);
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(toast_message(&app), Some("no selected task to edit"));
+    }
+
+    #[tokio::test]
+    async fn edit_description_conflict_preserves_overlay() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                description: "old".to_string(),
+                ..test_task_draft("Conflict target")
+            },
+        )
+        .await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
+             local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
+             VALUES (?, 'description', NULL, 'local', 'remote', NULL, ?, 'a', 'b', ?, 0)",
+        )
         .bind(&task_id)
+        .bind(crate::ids::new_id())
+        .bind(crate::ids::now())
         .execute(&mut *conn)
         .await
         .unwrap();
-    drop(conn);
+        drop(conn);
 
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+        type_chars(&mut app, " updated").await;
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
 
-    assert!(toast_message(&app).is_some_and(|message| message.contains("conflict-not-found")));
-    assert_eq!(toast_severity(&app), Some(ToastSeverity::Error));
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::TextInput(state))
-            if state.route == OverlayRoute::ConflictManual
-                && state.input.as_str() == "local title merged"
-    ));
-}
+        assert!(toast_message(&app).is_some_and(|message| message.contains("conflicted-field")));
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state))
+                if state.lines.join("\n") == "old updated"
+        ));
+    }
 
-#[tokio::test]
-async fn conflict_resolution_without_selected_task_reports_message() {
-    let mut app = test_app().await;
-    app.widgets.table.select(None);
+    #[tokio::test]
+    async fn copy_requires_selected_task() {
+        let mut app = test_app().await;
+        app.widgets.table.select(None);
 
-    app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    assert_eq!(
-        toast_message(&app),
-        Some("no selected task for conflict resolution")
-    );
-}
+        app.copy_selected_ref(TaskRefKind::Short);
 
-#[tokio::test]
-async fn cancel_clears_conflict_flow() {
-    let (_dir, pool, mut app) = test_app_with_pool().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Conflict")).await;
-    insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+        assert_eq!(toast_message(&app), Some("no selected task to copy"));
+    }
 
-    app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    assert!(app.conflict_flow.is_active());
-    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
-    assert!(app.conflict_flow.is_idle());
-}
-
-#[tokio::test]
-async fn generic_text_input_submits_message() {
-    let mut app = test_app().await;
-    app.overlay = Some(OverlayState::TextInput(TextInputState::new(
-        OverlayRoute::MessageOnly,
-        "Title",
-        "Enter title",
-        "done".to_string(),
-    )));
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    assert!(app.overlay.is_none());
-    assert_eq!(toast_message(&app), Some("submitted Title"));
-}
-
-#[tokio::test]
-async fn add_project_shortcut_opens_prompt_and_creates_project() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::TextInput(state)) if state.prompt == "project name:"
-    ));
-
-    for ch in "Mobile App".chars() {
-        app.handle_overlay_key(key(KeyCode::Char(ch)))
+    #[tokio::test]
+    async fn undo_shortcut_reverts_last_mutation() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
+        app.store
+            .update_title(Some(selected), "After".to_string())
             .await
             .unwrap();
-    }
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(app.store.tasks[selected].task.title, "After");
 
-    assert!(app.overlay.is_none());
-    assert_eq!(toast_message(&app), Some("created project mobile-app"));
-    assert!(
+        app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
+        assert_eq!(app.store.tasks[selected].task.title, "Before");
+        assert!(app.message.as_ref().unwrap().message.contains("undid"));
+    }
+
+    #[tokio::test]
+    async fn undo_shortcut_keeps_selected_row_position() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("First")).await;
+        create_and_select_task(&mut app, test_task_draft("Second")).await;
+        create_and_select_task(&mut app, test_task_draft("Third")).await;
+        let selected = 1;
+        app.widgets.table.select(Some(selected));
+
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+        assert_eq!(app.widgets.table.selected(), Some(selected));
+
+        app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
+
+        assert_eq!(app.widgets.table.selected(), Some(selected));
+        assert_eq!(app.store.tasks[selected].task.status, "inbox");
+    }
+
+    #[tokio::test]
+    async fn undo_command_reverts_last_mutation() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
         app.store
-            .projects
-            .iter()
-            .any(|project| project.key == "mobile-app")
-    );
-    assert!(
+            .update_title(Some(selected), "After".to_string())
+            .await
+            .unwrap();
+
+        app.begin_command();
+        for ch in "undo".chars() {
+            app.handle_overlay_key(key(KeyCode::Char(ch)))
+                .await
+                .unwrap();
+        }
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert_eq!(app.store.tasks[selected].task.title, "Before");
+    }
+
+    #[tokio::test]
+    async fn undo_reports_nothing_to_undo() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
+        assert_eq!(toast_message(&app), Some("nothing to undo"));
+        assert_eq!(toast_severity(&app), Some(ToastSeverity::Info));
+    }
+}
+
+mod delete_and_restore {
+    use super::*;
+
+    #[tokio::test]
+    async fn delete_task_opens_confirmation_with_task_context() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Delete target")).await;
+        let display_ref = app.store.tasks[selected].display_ref.clone();
+
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Confirm(ConfirmState {
+                route: OverlayRoute::DeleteTaskConfirm,
+                ref title,
+                ref prompt,
+            })) if title == DELETE_TASK_TITLE
+                && prompt.contains(&display_ref)
+                && prompt.contains("Delete target")
+        ));
+        assert!(!app.store.tasks[selected].task.deleted);
+    }
+
+    #[tokio::test]
+    async fn cancel_delete_task_leaves_task_unchanged() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Keep target")).await;
+
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(!app.store.tasks[selected].task.deleted);
+        assert!(app.message.is_none());
+    }
+
+    #[tokio::test]
+    async fn confirm_delete_task_soft_deletes_selected_task() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Delete target")).await;
+        let display_ref = app.store.tasks[selected].display_ref.clone();
+
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert!(app.store.tasks[selected].task.deleted);
+        assert!(!app.store.filters.include_deleted);
+        assert_eq!(
+            toast_message(&app),
+            Some(format!("deleted {display_ref}").as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_task_from_detail_returns_to_detail() {
+        let mut app = test_app().await;
+        let selected =
+            create_and_select_task(&mut app, test_task_draft("Detail delete target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 7 });
+
+        app.dispatch_key(key(KeyCode::Char('D')), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Confirm(ConfirmState {
+                route: OverlayRoute::DeleteTaskConfirm,
+                ..
+            }))
+        ));
+        assert!(app.view().detail_underlay);
+
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert!(app.store.tasks[selected].task.deleted);
+    }
+
+    #[tokio::test]
+    async fn delete_project_opens_project_picker_from_task_focus() {
+        let mut app = test_app().await;
         app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
+        app.execute(Action::BeginDeleteProject).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Picker(PickerState {
+                route: OverlayRoute::DeleteProjectPicker,
+                ..
+            }))
+        ));
+        assert!(app.message.is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_project_picker_preselects_sidebar_project() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        app.focus = Focus::Sidebar;
+        let project_index = app
+            .store
             .sidebar_entries
             .iter()
-            .any(|entry| entry.label.contains("Mobile App"))
-    );
-}
-
-#[tokio::test]
-async fn add_label_shortcut_opens_prompt_and_creates_label() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::TextInput(state)) if state.prompt == "label name:"
-    ));
-
-    for ch in "Needs Review".chars() {
-        app.handle_overlay_key(key(KeyCode::Char(ch)))
-            .await
+            .position(|entry| {
+                entry.target == Some(SidebarTarget::Project("mobile-app".to_string()))
+            })
             .unwrap();
-    }
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        app.widgets.sidebar.select(Some(project_index));
 
-    assert!(app.overlay.is_none());
-    assert_eq!(toast_message(&app), Some("created label needs-review"));
-    assert!(app.store.labels.iter().any(|label| label == "needs-review"));
-    assert!(
+        app.execute(Action::BeginDeleteProject).await.unwrap();
+
+        let Some(OverlayState::Picker(state)) = &app.overlay else {
+            panic!("expected project picker");
+        };
+        assert_eq!(state.items[state.selected].value, "mobile-app");
+    }
+
+    #[tokio::test]
+    async fn delete_project_confirmation_removes_selected_project() {
+        let mut app = test_app().await;
         app.store
-            .label_picker_items()
-            .iter()
-            .any(|item| item.value == "needs-review")
-    );
-}
-
-#[tokio::test]
-async fn edit_title_shortcut_prefills_and_updates_title() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Old title")).await;
-
-    app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::TextInput(state))
-            if state.title == EDIT_TITLE_TITLE
-                && state.prompt.is_empty()
-                && state.input.as_str() == "Old title"
-    ));
-
-    app.handle_overlay_key(key(KeyCode::End)).await.unwrap();
-    type_chars(&mut app, " updated").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-
-    let selected = app.widgets.table.selected().unwrap();
-    assert_eq!(app.store.tasks[selected].task.title, "Old title updated");
-}
-
-#[tokio::test]
-async fn edit_description_prefills_and_ctrl_s_updates() {
-    let mut app = test_app().await;
-    create_and_select_task(
-        &mut app,
-        TaskDraft {
-            description: "first\nsecond".to_string(),
-            ..test_task_draft("Description target")
-        },
-    )
-    .await;
-
-    app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::MultilineInput(state))
-            if state.title == EDIT_DESCRIPTION_TITLE
-                && state.prompt.is_empty()
-                && state.lines == vec!["first".to_string(), "second".to_string()]
-    ));
-
-    app.handle_overlay_key(key(KeyCode::End)).await.unwrap();
-    type_chars(&mut app, " updated").await;
-    app.handle_overlay_key(ctrl_s()).await.unwrap();
-
-    let selected = app.widgets.table.selected().unwrap();
-    assert_eq!(
-        app.store.tasks[selected].task.description,
-        "first\nsecond updated"
-    );
-}
-
-#[tokio::test]
-async fn edit_project_picker_uses_existing_projects_only() {
-    let mut app = test_app().await;
-    app.store
-        .create_project("Mobile App".to_string())
-        .await
-        .unwrap();
-    create_and_select_task(&mut app, test_task_draft("Project target")).await;
-
-    app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Picker(state))
-            if state.title == EDIT_PROJECT_TITLE
-                && !state.items.iter().any(|item| item.label == "Infer project")
-    ));
-
-    type_chars(&mut app, "mobile").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    let selected = app.widgets.table.selected().unwrap();
-    assert_eq!(app.store.tasks[selected].task.project_key, "mobile-app");
-}
-
-#[tokio::test]
-async fn edit_priority_picker_prefills_current_priority() {
-    let mut app = test_app().await;
-    create_and_select_task(
-        &mut app,
-        TaskDraft {
-            priority: "high".to_string(),
-            ..test_task_draft("Priority target")
-        },
-    )
-    .await;
-
-    app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Picker(state))
-            if state.title == EDIT_PRIORITY_TITLE
-                && state.items.iter().any(|item| item.value == "high" && item.selected)
-    ));
-
-    app.handle_overlay_key(key(KeyCode::Char('/')))
-        .await
-        .unwrap();
-    type_chars(&mut app, "urgent").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    let selected = app.widgets.table.selected().unwrap();
-    assert_eq!(app.store.tasks[selected].task.priority, "urgent");
-}
-
-#[tokio::test]
-async fn edit_labels_picker_prefills_current_labels_and_removes_unselected() {
-    let mut app = test_app().await;
-    app.store.create_label("Bug".to_string()).await.unwrap();
-    app.store.create_label("Docs".to_string()).await.unwrap();
-    create_and_select_task(
-        &mut app,
-        TaskDraft {
-            labels: vec!["bug".to_string()],
-            ..test_task_draft("Label target")
-        },
-    )
-    .await;
-
-    app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Picker(state))
-            if state.title == EDIT_LABELS_TITLE
-                && state.items.iter().any(|item| item.value == "bug" && item.selected)
-    ));
-
-    app.handle_overlay_key(key(KeyCode::Char('/')))
-        .await
-        .unwrap();
-    type_chars(&mut app, "bug").await;
-    app.handle_overlay_key(key(KeyCode::Char(' ')))
-        .await
-        .unwrap();
-    app.handle_overlay_key(key(KeyCode::Backspace))
-        .await
-        .unwrap();
-    app.handle_overlay_key(key(KeyCode::Backspace))
-        .await
-        .unwrap();
-    app.handle_overlay_key(key(KeyCode::Backspace))
-        .await
-        .unwrap();
-    type_chars(&mut app, "docs").await;
-    app.handle_overlay_key(key(KeyCode::Char(' ')))
-        .await
-        .unwrap();
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-
-    let selected = app.widgets.table.selected().unwrap();
-    assert_eq!(app.store.tasks[selected].labels, vec!["docs".to_string()]);
-}
-
-#[tokio::test]
-async fn status_picker_alias_updates_selected_task() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Status alias")).await;
-
-    app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Picker(state)) if state.title == EDIT_STATUS_TITLE
-    ));
-    app.handle_overlay_key(key(KeyCode::Char('/')))
-        .await
-        .unwrap();
-    type_chars(&mut app, "todo").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-
-    let selected = app.widgets.table.selected().unwrap();
-    assert_eq!(app.store.tasks[selected].task.status, "todo");
-}
-
-#[tokio::test]
-async fn done_alias_keeps_selected_row_position() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("First")).await;
-    create_and_select_task(&mut app, test_task_draft("Second")).await;
-    create_and_select_task(&mut app, test_task_draft("Third")).await;
-    let selected = 1;
-    let next_title = app.store.tasks[selected + 1].task.title.clone();
-    app.widgets.table.select(Some(selected));
-
-    app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
-
-    assert_eq!(app.widgets.table.selected(), Some(selected));
-    let selected = app.widgets.table.selected().unwrap();
-    assert_eq!(app.store.tasks[selected].task.title, next_title);
-    assert_eq!(app.store.tasks[selected].task.status, "inbox");
-}
-
-#[tokio::test]
-async fn done_alias_clamps_selection_when_last_row_is_done() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("First")).await;
-    create_and_select_task(&mut app, test_task_draft("Second")).await;
-    let selected = app
-        .store
-        .tasks
-        .iter()
-        .position(|item| item.task.title == "Second")
-        .unwrap();
-    app.widgets.table.select(Some(selected));
-
-    app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
-
-    assert_eq!(app.widgets.table.selected(), Some(0));
-    let selected = app.widgets.table.selected().unwrap();
-    assert_eq!(app.store.tasks[selected].task.title, "First");
-}
-
-#[tokio::test]
-async fn done_and_cancel_aliases_update_selected_task() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Status alias")).await;
-
-    app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
-    let selected = app.store.show_view(SidebarTarget::Done).await.unwrap();
-    app.widgets.table.select(selected);
-    let selected = app.widgets.table.selected().unwrap();
-    assert_eq!(app.store.tasks[selected].task.status, "done");
-
-    app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
-    let selected = app
-        .store
-        .filter_status("canceled".to_string())
-        .await
-        .unwrap();
-    app.widgets.table.select(selected);
-    let selected = app.widgets.table.selected().unwrap();
-    assert_eq!(app.store.tasks[selected].task.status, "canceled");
-}
-
-#[tokio::test]
-async fn exact_priority_shortcut_updates_selected_task() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Priority shortcut")).await;
-
-    app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
-
-    let selected = app.widgets.table.selected().unwrap();
-    assert_eq!(app.store.tasks[selected].task.priority, "urgent");
-}
-
-#[tokio::test]
-async fn priority_alias_opens_picker() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Priority alias")).await;
-
-    app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Picker(state)) if state.title == EDIT_PRIORITY_TITLE
-    ));
-}
-
-#[tokio::test]
-async fn edit_shortcuts_require_selected_task() {
-    let mut app = test_app().await;
-    app.widgets.table.select(None);
-
-    app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
-
-    assert!(app.overlay.is_none());
-    assert_eq!(toast_message(&app), Some("no selected task to edit"));
-}
-
-#[tokio::test]
-async fn edit_description_conflict_preserves_overlay() {
-    let (_dir, pool, mut app) = test_app_with_pool().await;
-    let selected = create_and_select_task(
-        &mut app,
-        TaskDraft {
-            description: "old".to_string(),
-            ..test_task_draft("Conflict target")
-        },
-    )
-    .await;
-    let task_id = app.store.tasks[selected].task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    sqlx::query(
-        "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
-         local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
-         VALUES (?, 'description', NULL, 'local', 'remote', NULL, ?, 'a', 'b', ?, 0)",
-    )
-    .bind(&task_id)
-    .bind(crate::ids::new_id())
-    .bind(crate::ids::now())
-    .execute(&mut *conn)
-    .await
-    .unwrap();
-    drop(conn);
-
-    app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
-    type_chars(&mut app, " updated").await;
-    app.handle_overlay_key(ctrl_s()).await.unwrap();
-
-    assert!(toast_message(&app).is_some_and(|message| message.contains("conflicted-field")));
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::MultilineInput(state))
-            if state.lines.join("\n") == "old updated"
-    ));
-}
-
-#[tokio::test]
-async fn copy_requires_selected_task() {
-    let mut app = test_app().await;
-    app.widgets.table.select(None);
-
-    app.copy_selected_ref(TaskRefKind::Short);
-
-    assert_eq!(toast_message(&app), Some("no selected task to copy"));
-}
-
-#[tokio::test]
-async fn undo_shortcut_reverts_last_mutation() {
-    let mut app = test_app().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
-    app.store
-        .update_title(Some(selected), "After".to_string())
-        .await
-        .unwrap();
-    assert_eq!(app.store.tasks[selected].task.title, "After");
-
-    app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
-    assert_eq!(app.store.tasks[selected].task.title, "Before");
-    assert!(app.message.as_ref().unwrap().message.contains("undid"));
-}
-
-#[tokio::test]
-async fn undo_shortcut_keeps_selected_row_position() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("First")).await;
-    create_and_select_task(&mut app, test_task_draft("Second")).await;
-    create_and_select_task(&mut app, test_task_draft("Third")).await;
-    let selected = 1;
-    app.widgets.table.select(Some(selected));
-
-    app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
-    assert_eq!(app.widgets.table.selected(), Some(selected));
-
-    app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
-
-    assert_eq!(app.widgets.table.selected(), Some(selected));
-    assert_eq!(app.store.tasks[selected].task.status, "inbox");
-}
-
-#[tokio::test]
-async fn undo_command_reverts_last_mutation() {
-    let mut app = test_app().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
-    app.store
-        .update_title(Some(selected), "After".to_string())
-        .await
-        .unwrap();
-
-    app.begin_command();
-    for ch in "undo".chars() {
-        app.handle_overlay_key(key(KeyCode::Char(ch)))
+            .create_project("Mobile App".to_string())
             .await
             .unwrap();
+
+        app.execute(Action::BeginDeleteProject).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Confirm(ConfirmState {
+                route: OverlayRoute::DeleteProjectConfirm,
+                ..
+            }))
+        ));
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+
+        assert_eq!(toast_message(&app), Some("deleted project mobile-app"));
+        assert!(
+            !app.store
+                .projects
+                .iter()
+                .any(|project| project.key == "mobile-app")
+        );
+        assert!(app.pending_delete_project.is_none());
     }
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-    assert_eq!(app.store.tasks[selected].task.title, "Before");
-}
-
-#[tokio::test]
-async fn undo_reports_nothing_to_undo() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
-    assert_eq!(toast_message(&app), Some("nothing to undo"));
-    assert_eq!(toast_severity(&app), Some(ToastSeverity::Info));
-}
-
-#[tokio::test]
-async fn delete_project_opens_project_picker_from_task_focus() {
-    let mut app = test_app().await;
-    app.store
-        .create_project("Mobile App".to_string())
-        .await
-        .unwrap();
-
-    app.execute(Action::BeginDeleteProject).await.unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Picker(PickerState {
-            route: OverlayRoute::DeleteProjectPicker,
-            ..
-        }))
-    ));
-    assert!(app.message.is_none());
-}
-
-#[tokio::test]
-async fn delete_project_picker_preselects_sidebar_project() {
-    let mut app = test_app().await;
-    app.store
-        .create_project("Mobile App".to_string())
-        .await
-        .unwrap();
-    app.focus = Focus::Sidebar;
-    let project_index = app
-        .store
-        .sidebar_entries
-        .iter()
-        .position(|entry| entry.target == Some(SidebarTarget::Project("mobile-app".to_string())))
-        .unwrap();
-    app.widgets.sidebar.select(Some(project_index));
-
-    app.execute(Action::BeginDeleteProject).await.unwrap();
-
-    let Some(OverlayState::Picker(state)) = &app.overlay else {
-        panic!("expected project picker");
-    };
-    assert_eq!(state.items[state.selected].value, "mobile-app");
-}
-
-#[tokio::test]
-async fn delete_project_confirmation_removes_selected_project() {
-    let mut app = test_app().await;
-    app.store
-        .create_project("Mobile App".to_string())
-        .await
-        .unwrap();
-
-    app.execute(Action::BeginDeleteProject).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Confirm(ConfirmState {
-            route: OverlayRoute::DeleteProjectConfirm,
-            ..
-        }))
-    ));
-    app.handle_overlay_key(key(KeyCode::Char('y')))
-        .await
-        .unwrap();
-
-    assert_eq!(toast_message(&app), Some("deleted project mobile-app"));
-    assert!(
-        !app.store
-            .projects
+    #[tokio::test]
+    async fn delete_project_cancel_clears_pending_state() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        app.focus = Focus::Sidebar;
+        let project_index = app
+            .store
+            .sidebar_entries
             .iter()
-            .any(|project| project.key == "mobile-app")
-    );
-    assert!(app.pending_delete_project.is_none());
-}
+            .position(|entry| {
+                entry.target == Some(SidebarTarget::Project("mobile-app".to_string()))
+            })
+            .unwrap();
+        app.widgets.sidebar.select(Some(project_index));
 
-#[tokio::test]
-async fn delete_project_cancel_clears_pending_state() {
-    let mut app = test_app().await;
-    app.store
-        .create_project("Mobile App".to_string())
-        .await
-        .unwrap();
-    app.focus = Focus::Sidebar;
-    let project_index = app
-        .store
-        .sidebar_entries
-        .iter()
-        .position(|entry| entry.target == Some(SidebarTarget::Project("mobile-app".to_string())))
-        .unwrap();
-    app.widgets.sidebar.select(Some(project_index));
+        app.execute(Action::BeginDeleteProject).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(app.pending_delete_project.as_deref(), Some("mobile-app"));
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
 
-    app.execute(Action::BeginDeleteProject).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    assert_eq!(app.pending_delete_project.as_deref(), Some("mobile-app"));
-    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
-
-    assert!(app.pending_delete_project.is_none());
-}
-
-#[tokio::test]
-async fn add_project_submit_routes_by_route_not_title() {
-    let mut app = test_app().await;
-    app.overlay = Some(OverlayState::TextInput(TextInputState::new(
-        OverlayRoute::AddProject,
-        "Renamed copy",
-        "project name:",
-        "Mobile App".to_string(),
-    )));
-
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-
-    assert_eq!(toast_message(&app), Some("created project mobile-app"));
-}
-
-#[tokio::test]
-async fn add_task_project_shortcut_routes_by_route_not_title_prefix() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    let Some(OverlayState::AddTask(state)) = &mut app.overlay else {
-        panic!("expected add task overlay");
-    };
-    state.project = "Create item".to_string();
-
-    app.handle_overlay_key(ctrl_p()).await.unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Picker(state))
-            if state.route == OverlayRoute::AddTaskTitleProject
-    ));
-}
-
-#[tokio::test]
-async fn add_task_priority_shortcut_routes_by_route_not_title_prefix() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-    let Some(OverlayState::AddTask(state)) = &mut app.overlay else {
-        panic!("expected add task overlay");
-    };
-    state.project = "Create item".to_string();
-
-    app.handle_overlay_key(ctrl_r()).await.unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Picker(state))
-            if state.route == OverlayRoute::AddTaskTitlePriority
-    ));
-}
-
-#[tokio::test]
-async fn conflict_confirm_without_active_flow_reports_message() {
-    let mut app = test_app().await;
-    app.overlay = Some(OverlayState::Confirm(ConfirmState {
-        route: OverlayRoute::ConflictConfirm,
-        title: CONFLICT_CONFIRM_LOCAL_TITLE.to_string(),
-        prompt: "Resolve?".to_string(),
-    }));
-
-    app.handle_overlay_key(key(KeyCode::Char('y')))
-        .await
-        .unwrap();
-
-    assert_eq!(
-        toast_message(&app),
-        Some("conflict confirmation is not active")
-    );
-}
-
-#[tokio::test]
-async fn delete_project_picker_and_confirm_use_distinct_routes() {
-    let mut app = test_app().await;
-    app.store
-        .create_project("Mobile App".to_string())
-        .await
-        .unwrap();
-
-    app.execute(Action::BeginDeleteProject).await.unwrap();
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Picker(PickerState {
-            route: OverlayRoute::DeleteProjectPicker,
-            ref title,
-            ..
-        })) if title == DELETE_PROJECT_TITLE
-    ));
-
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Confirm(ConfirmState {
-            route: OverlayRoute::DeleteProjectConfirm,
-            ref title,
-            ..
-        })) if title == DELETE_PROJECT_TITLE
-    ));
-}
-
-#[test]
-fn overlay_submit_routes_are_all_handled() {
-    for route in OverlayRoute::ALL {
-        for kind in route.submit_kinds() {
-            assert!(
-                crate::tui::app_overlay_submit::handles_submit_kind(route, kind),
-                "unhandled {kind:?} route {route:?}"
-            );
-        }
+        assert!(app.pending_delete_project.is_none());
     }
 }
 
-#[test]
-fn overlay_routes_have_submit_contracts() {
-    for route in OverlayRoute::ALL {
-        if route == OverlayRoute::MessageOnly {
-            continue;
-        }
+mod conflicts {
+    use super::*;
 
-        let has_handler = route.text_submit_route().is_some()
-            || route.multiline_submit_route().is_some()
-            || route.picker_submit_route().is_some()
-            || route.confirm_submit_route().is_some();
+    #[tokio::test]
+    async fn conflict_list_shortcut_applies_conflicts_view() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+        assert_eq!(app.store.active_view, SidebarTarget::Conflicts);
+        assert!(app.store.filters.conflicts_only);
+        assert_eq!(toast_message(&app), Some("no unresolved conflicts"));
+    }
 
-        assert!(has_handler, "route {route:?} has no submit contract");
+    #[tokio::test]
+    async fn conflict_show_opens_text_panel_and_esc_closes() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Conflict show")).await;
+        insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextPanel(state))
+                if state.lines.iter().any(|line| line.contains("field=title"))
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn conflict_next_selects_next_conflicted_task() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        create_and_select_task(&mut app, test_task_draft("First")).await;
+        create_and_select_task(&mut app, test_task_draft("Second")).await;
+        let first_id = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.title == "First")
+            .unwrap()
+            .task
+            .id
+            .clone();
+        let second_id = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.title == "Second")
+            .unwrap()
+            .task
+            .id
+            .clone();
+        insert_title_conflict_for_task_id(&pool, &mut app, &first_id, "local one", "remote one")
+            .await;
+        insert_title_conflict_for_task_id(&pool, &mut app, &second_id, "local two", "remote two")
+            .await;
+        let first = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == first_id)
+            .unwrap();
+        let second = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == second_id)
+            .unwrap();
+        app.widgets.table.select(Some(first));
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        assert_eq!(app.widgets.table.selected(), Some(second));
+        assert_eq!(toast_message(&app), Some("selected next conflict"));
+    }
+
+    #[tokio::test]
+    async fn accept_local_conflict_resolves_after_confirmation() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
+        insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Confirm(state)) if state.title == CONFLICT_CONFIRM_LOCAL_TITLE
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+        assert!(app.overlay.is_none());
+        assert_eq!(app.store.tasks[selected].task.title, "local title");
+        assert!(!app.store.tasks[selected].has_conflict);
+        assert!(
+            toast_message(&app).is_some_and(
+                |message| message.contains("resolved") && message.contains("field=title")
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn accept_remote_conflict_resolves_after_confirmation() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
+        insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+
+        assert_eq!(app.store.tasks[selected].task.title, "remote title");
+        assert!(!app.store.tasks[selected].has_conflict);
+    }
+
+    #[tokio::test]
+    async fn manual_conflict_merge_resolves_with_submitted_value() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
+        insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        type_chars(&mut app, " merged").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert_eq!(app.store.tasks[selected].task.title, "local title merged");
+        assert!(!app.store.tasks[selected].has_conflict);
+    }
+
+    #[tokio::test]
+    async fn manual_conflict_retry_preserves_submitted_text_after_error() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        type_chars(&mut app, " merged").await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("DELETE FROM conflicts WHERE task_id = ? AND field = 'title'")
+            .bind(&task_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(toast_message(&app).is_some_and(|message| message.contains("conflict-not-found")));
+        assert_eq!(toast_severity(&app), Some(ToastSeverity::Error));
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state))
+                if state.route == OverlayRoute::ConflictManual
+                    && state.input.as_str() == "local title merged"
+        ));
+    }
+
+    #[tokio::test]
+    async fn conflict_resolution_without_selected_task_reports_message() {
+        let mut app = test_app().await;
+        app.widgets.table.select(None);
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        assert_eq!(
+            toast_message(&app),
+            Some("no selected task for conflict resolution")
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_clears_conflict_flow() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Conflict")).await;
+        insert_title_conflict(&pool, &mut app, selected, "local title", "remote title").await;
+
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        assert!(app.conflict_flow.is_active());
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        assert!(app.conflict_flow.is_idle());
     }
 }
 
-#[tokio::test]
-async fn generic_confirm_submits_on_y() {
-    let mut app = test_app().await;
-    app.overlay = Some(OverlayState::Confirm(ConfirmState {
-        route: OverlayRoute::MessageOnly,
-        title: "Delete".to_string(),
-        prompt: "Continue?".to_string(),
-    }));
-    app.handle_overlay_key(key(KeyCode::Char('y')))
-        .await
-        .unwrap();
-    assert!(app.overlay.is_none());
-    assert_eq!(toast_message(&app), Some("confirmed Delete"));
+mod overlay_submit_routes {
+    use super::*;
+
+    #[tokio::test]
+    async fn generic_text_input_submits_message() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::TextInput(TextInputState::new(
+            OverlayRoute::MessageOnly,
+            "Title",
+            "Enter title",
+            "done".to_string(),
+        )));
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(app.overlay.is_none());
+        assert_eq!(toast_message(&app), Some("submitted Title"));
+    }
+
+    #[tokio::test]
+    async fn add_project_submit_routes_by_route_not_title() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::TextInput(TextInputState::new(
+            OverlayRoute::AddProject,
+            "Renamed copy",
+            "project name:",
+            "Mobile App".to_string(),
+        )));
+
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert_eq!(toast_message(&app), Some("created project mobile-app"));
+    }
+
+    #[tokio::test]
+    async fn add_task_project_shortcut_routes_by_route_not_title_prefix() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        let Some(OverlayState::AddTask(state)) = &mut app.overlay else {
+            panic!("expected add task overlay");
+        };
+        state.project = "Create item".to_string();
+
+        app.handle_overlay_key(ctrl_p()).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state))
+                if state.route == OverlayRoute::AddTaskTitleProject
+        ));
+    }
+
+    #[tokio::test]
+    async fn add_task_priority_shortcut_routes_by_route_not_title_prefix() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        let Some(OverlayState::AddTask(state)) = &mut app.overlay else {
+            panic!("expected add task overlay");
+        };
+        state.project = "Create item".to_string();
+
+        app.handle_overlay_key(ctrl_r()).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state))
+                if state.route == OverlayRoute::AddTaskTitlePriority
+        ));
+    }
+
+    #[tokio::test]
+    async fn conflict_confirm_without_active_flow_reports_message() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::Confirm(ConfirmState {
+            route: OverlayRoute::ConflictConfirm,
+            title: CONFLICT_CONFIRM_LOCAL_TITLE.to_string(),
+            prompt: "Resolve?".to_string(),
+        }));
+
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            toast_message(&app),
+            Some("conflict confirmation is not active")
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_project_picker_and_confirm_use_distinct_routes() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
+        app.execute(Action::BeginDeleteProject).await.unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Picker(PickerState {
+                route: OverlayRoute::DeleteProjectPicker,
+                ref title,
+                ..
+            })) if title == DELETE_PROJECT_TITLE
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Confirm(ConfirmState {
+                route: OverlayRoute::DeleteProjectConfirm,
+                ref title,
+                ..
+            })) if title == DELETE_PROJECT_TITLE
+        ));
+    }
+
+    #[test]
+    fn overlay_submit_routes_are_all_handled() {
+        for route in OverlayRoute::ALL {
+            for kind in route.submit_kinds() {
+                assert!(
+                    crate::tui::app_overlay_submit::handles_submit_kind(route, kind),
+                    "unhandled {kind:?} route {route:?}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn generic_confirm_submits_on_y() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::Confirm(ConfirmState {
+            route: OverlayRoute::MessageOnly,
+            title: "Delete".to_string(),
+            prompt: "Continue?".to_string(),
+        }));
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+        assert!(app.overlay.is_none());
+        assert_eq!(toast_message(&app), Some("confirmed Delete"));
+    }
 }
