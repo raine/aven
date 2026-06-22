@@ -174,7 +174,8 @@ The TUI is split into these layers:
 - `conflict_flow.rs`: conflict resolution flow state, field selection transitions, confirmation submissions, and manual merge submissions.
 - `config_overlay.rs`: config status, config info, config path, and config init overlay construction.
 - `navigation.rs`: detail overlay commands, detail task navigation, and sidebar navigation helpers.
-- `event.rs`: shared command catalog, key sequences, command lookup, shortcut resolution, action lifecycle, and help metadata.
+- `shortcut_buffer.rs`: multi-key shortcut prefix state, normal and detail shortcut resolution, editor prefix tracking, and pending shortcut labels.
+- `event.rs` and `event/`: command and shortcut facade plus focused modules for actions, command catalog data, lookup helpers, and command domains used by help rendering.
 - `store.rs` and `store/`: database-backed TUI state and operations. `store.rs` is the facade that owns task lists, projects, labels, workspaces, active workspace, sidebar counts, filters, sorting, active view, refresh time, construction, workspace activation, and refresh. Focused store submodules hold concern logic:
   - `config.rs`: config status, config display, config path display, and config initialization.
   - `conflicts.rs`: conflict target lookup, conflict resolution, and conflict navigation.
@@ -188,11 +189,16 @@ The TUI is split into these layers:
   - `undo.rs`: persistent TUI undo recording and application.
   - `view.rs`: active view, filters, search, and selection restoration.
   - `workspaces.rs`: TUI workspace switching, active workspace updates, and related filter/view reset.
-- `overlay.rs`: reusable text input, multiline input, picker, confirm, search, command, detail, help, and text panel state machines. Input overlays carry an `OverlayRoute` that identifies the destination flow independently from display titles.
+- `overlay.rs` and `overlay/`: reusable text input, multiline input, picker, confirm, search, command, detail, help, and text panel state machines. `overlay.rs` is the facade; focused modules hold state definitions, text input logic, multiline logic, picker behavior, state-to-view projection, and generic handlers. Input overlays carry an `OverlayRoute` that identifies the destination flow independently from display titles.
+- `app_overlay_submit.rs`: overlay submit routing grouped by submitted payload kind and `OverlayRoute`, keeping titles as display text only.
+- `platform.rs`: clipboard, external editor, terminal suspend and restore, temp editor paths, and editor prefix helper functions.
+- `text.rs`: shared UTF-8 boundary, word movement, newline normalization, and wrapping helpers for TUI input and rendering.
 - `ui.rs`: top-level Ratatui render orchestration.
   - Renders header, footer, overlays, command palette, help, and prefix hints.
   - Region modules under `ui/` handle sidebar, task list, task display helpers,
     detail rendering, dialogs, and toasts.
+  - Overlay renderers live under `ui/overlays/` by overlay kind with a facade at
+    `ui/overlays.rs`.
   - Overlay dialogs share frame, clear, background, and footer hint styling
     through dialog helpers.
   - The task list region builds an explicit row model for group headers and task
@@ -203,7 +209,7 @@ The TUI is split into these layers:
 - `widgets.rs`: small cell helpers such as priority icons and title conflict markers.
 - `theme.rs`: colors and style helpers.
 
-The app loop draws the current view, polls keyboard input every 250 ms, dispatches keys, refreshes store data every 5 seconds, and clears expired messages. Normal keys resolve through the command catalog. Capturing overlays handle their own input before normal shortcuts. Multi-key prefixes are stored in `pending_shortcut` and rendered as hints, while alerts render as floating bottom-right toasts. Single-key shortcuts execute immediately, so compatibility chords that would conflict with bare actions use shifted prefixes such as `A t`, `A n`, `A p`, and `A l`. Help remains catalog-driven and `?` is the help shortcut, which leaves `h` and `l` available for left and right navigation.
+The app loop draws the current view, polls keyboard input every 250 ms, dispatches keys, refreshes store data every 5 seconds, and clears expired messages. Normal keys resolve through the command catalog. Capturing overlays handle their own input before normal shortcuts. Multi-key prefixes are stored in `ShortcutBuffer` and rendered as hints, while alerts render as floating bottom-right toasts. Single-key shortcuts execute immediately, so compatibility chords that would conflict with bare actions use shifted prefixes such as `A t`, `A n`, `A p`, and `A l`. Help remains catalog-driven and `?` is the help shortcut, which leaves `h` and `l` available for left and right navigation.
 
 The TUI store calls the same operations and mutation helpers as the CLI for mutations, so TUI edits preserve change log, field version, conflict, and validation behavior. TUI refresh reads pass the store workspace explicitly instead of depending on global active workspace state. TUI query and sort state is separate from CLI list defaults.
 
