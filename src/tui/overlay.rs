@@ -405,6 +405,7 @@ pub(crate) struct TextInputView {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MultilineInputView {
+    pub(crate) route: OverlayRoute,
     pub(crate) title: String,
     pub(crate) prompt: String,
     pub(crate) lines: Vec<String>,
@@ -414,6 +415,7 @@ pub(crate) struct MultilineInputView {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PickerView {
+    pub(crate) route: OverlayRoute,
     pub(crate) title: String,
     pub(crate) filter: String,
     pub(crate) filter_cursor: usize,
@@ -514,6 +516,7 @@ impl From<&OverlayState> for OverlayView {
                 cursor: state.input.cursor,
             }),
             OverlayState::MultilineInput(state) => Self::MultilineInput(MultilineInputView {
+                route: state.route,
                 title: state.title.clone(),
                 prompt: state.prompt.clone(),
                 lines: state.lines.clone(),
@@ -521,6 +524,7 @@ impl From<&OverlayState> for OverlayView {
                 column: state.column,
             }),
             OverlayState::Picker(state) => Self::Picker(PickerView {
+                route: state.route,
                 title: state.title.clone(),
                 filter: state.filter.text.clone(),
                 filter_cursor: state.filter.cursor,
@@ -1652,6 +1656,41 @@ mod tests {
             picker,
             OverlayOutcome::Submitted(OverlaySubmit::Picker {
                 route: OverlayRoute::EditStatus,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn overlay_view_projection_carries_routes() {
+        let multiline = OverlayView::from(&OverlayState::MultilineInput(
+            MultilineInputState::blank(OverlayRoute::AddNote, "Changed note title", "note body:"),
+        ));
+        assert!(matches!(
+            multiline,
+            OverlayView::MultilineInput(MultilineInputView {
+                route: OverlayRoute::AddNote,
+                ..
+            })
+        ));
+
+        let picker = OverlayView::from(&OverlayState::Picker(PickerState {
+            route: OverlayRoute::DeleteProjectPicker,
+            title: "Changed delete title".to_string(),
+            filter: LineEdit::blank(),
+            items: vec![PickerItem {
+                label: "AVN aven".to_string(),
+                value: "aven".to_string(),
+                selected: false,
+            }],
+            selected: 0,
+            multi: false,
+            mode: PickerMode::Navigate,
+        }));
+        assert!(matches!(
+            picker,
+            OverlayView::Picker(PickerView {
+                route: OverlayRoute::DeleteProjectPicker,
                 ..
             })
         ));

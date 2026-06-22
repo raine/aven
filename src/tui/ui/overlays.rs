@@ -11,7 +11,7 @@ use super::input::{
 use super::truncate::truncate_chars;
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::{
-    AddTaskView, ConfirmView, MultilineInputView, PickerItem, PickerMode, PickerView,
+    AddTaskView, ConfirmView, MultilineInputView, OverlayRoute, PickerItem, PickerMode, PickerView,
     TextInputView, TextPanelView,
 };
 use crate::tui::text::{
@@ -304,17 +304,20 @@ fn add_task_metadata_title(project: &str, priority: &str, width: u16) -> Line<'s
 }
 
 pub(super) fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
-    if state.title == "Add note" {
-        render_add_note_input(frame, state);
-        return;
-    }
-    if state.title == "Edit description" {
-        render_description_input(frame, state);
-        return;
-    }
-    if state.title == "Add task: description" {
-        render_add_task_description_input(frame, state);
-        return;
+    match state.route {
+        OverlayRoute::AddNote => {
+            render_add_note_input(frame, state);
+            return;
+        }
+        OverlayRoute::EditDescription => {
+            render_description_input(frame, state);
+            return;
+        }
+        OverlayRoute::AddTaskDescription => {
+            render_add_task_description_input(frame, state);
+            return;
+        }
+        _ => {}
     }
 
     let visible_rows = 10usize;
@@ -357,7 +360,7 @@ fn render_description_input(frame: &mut Frame, state: &MultilineInputView) {
     let max_editor_rows = max_height.saturating_sub(4).max(1) as usize;
     let editor_rows = description_visual_row_count(state, line_width).clamp(4, max_editor_rows);
     let height = editor_rows.saturating_add(4) as u16;
-    let dialog = Dialog::new("Edit description", width, height);
+    let dialog = Dialog::new(&state.title, width, height);
     let content = dialog.render_block(frame);
     let editor_rows = content.height.saturating_sub(2).max(1) as usize;
     let line_width = content.width.max(1) as usize;
@@ -401,7 +404,7 @@ fn render_add_task_description_input(frame: &mut Frame, state: &MultilineInputVi
     }
     lines.push(Line::from(""));
     lines.push(add_task_description_hint_line());
-    Dialog::new("Add task: description", 70, height)
+    Dialog::new(&state.title, 70, height)
         .wrap()
         .render_text(frame, Text::from(lines));
 }
@@ -522,7 +525,7 @@ fn render_add_note_input(frame: &mut Frame, state: &MultilineInputView) {
     }
     lines.push(Line::from(""));
     lines.push(multiline_hint_line());
-    Dialog::new("Add note", 60, height)
+    Dialog::new(&state.title, 60, height)
         .wrap()
         .render_text(frame, Text::from(lines));
 }
@@ -561,7 +564,7 @@ fn description_hint_line(state: &MultilineInputView) -> Line<'static> {
 }
 
 pub(super) fn render_picker(frame: &mut Frame, state: &PickerView) {
-    if let Some(submit_label) = project_picker_submit_label(&state.title) {
+    if let Some(submit_label) = project_picker_submit_label(state.route) {
         render_project_picker(frame, state, submit_label);
         return;
     }
@@ -591,7 +594,7 @@ pub(super) fn render_picker(frame: &mut Frame, state: &PickerView) {
         } else {
             ""
         };
-        if priority_picker_submit_label(&state.title).is_some() {
+        if priority_picker_submit_label(state.route).is_some() {
             lines.push(priority_picker_line(item, *index == state.selected));
         } else {
             lines.push(Line::from(format!("{marker}{}{check}", item.label)));
@@ -601,7 +604,7 @@ pub(super) fn render_picker(frame: &mut Frame, state: &PickerView) {
     lines.push(picker_hint_line(
         state.mode,
         state.multi,
-        priority_picker_submit_label(&state.title).unwrap_or("submit"),
+        priority_picker_submit_label(state.route).unwrap_or("submit"),
     ));
     Dialog::new(&state.title, 60, height.saturating_add(1)).render_text(frame, Text::from(lines));
 }
@@ -675,19 +678,18 @@ fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'
     Dialog::new(&state.title, 70, height).render_text(frame, Text::from(lines));
 }
 
-fn project_picker_submit_label(title: &str) -> Option<&'static str> {
-    match title {
-        "Go: project" => Some("open"),
-        "Edit project" => Some("submit"),
-        "Add task: project" => Some("submit"),
-        "Delete project" => Some("delete"),
+fn project_picker_submit_label(route: OverlayRoute) -> Option<&'static str> {
+    match route {
+        OverlayRoute::ViewProject => Some("open"),
+        OverlayRoute::EditProject | OverlayRoute::AddTaskTitleProject => Some("submit"),
+        OverlayRoute::DeleteProjectPicker => Some("delete"),
         _ => None,
     }
 }
 
-fn priority_picker_submit_label(title: &str) -> Option<&'static str> {
-    match title {
-        "Edit task: priority" | "Add task: priority" => Some("submit"),
+fn priority_picker_submit_label(route: OverlayRoute) -> Option<&'static str> {
+    match route {
+        OverlayRoute::EditPriority | OverlayRoute::AddTaskTitlePriority => Some("submit"),
         _ => None,
     }
 }
@@ -1114,6 +1116,7 @@ mod tests {
     #[test]
     fn overlay_render_includes_multiline_ctrl_s_hint() {
         let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+            route: OverlayRoute::MessageOnly,
             title: "Description".to_string(),
             prompt: "Body".to_string(),
             lines: vec!["line one".to_string()],
@@ -1141,6 +1144,7 @@ mod tests {
     #[test]
     fn edit_description_blank_line_does_not_show_placeholder() {
         let state = MultilineInputView {
+            route: OverlayRoute::EditDescription,
             title: "Edit description".to_string(),
             prompt: String::new(),
             lines: vec!["body".to_string(), String::new()],
@@ -1156,6 +1160,7 @@ mod tests {
     #[test]
     fn edit_description_overlay_wraps_long_lines() {
         let overlay = OverlayView::MultilineInput(MultilineInputView {
+            route: OverlayRoute::EditDescription,
             title: "Edit description".to_string(),
             prompt: String::new(),
             lines: vec!["a".repeat(160)],
@@ -1204,6 +1209,7 @@ mod tests {
     #[test]
     fn edit_description_cursor_row_tracks_wrapped_segment() {
         let state = MultilineInputView {
+            route: OverlayRoute::EditDescription,
             title: "Edit description".to_string(),
             prompt: String::new(),
             lines: vec!["abcdefghij".to_string()],
@@ -1233,6 +1239,7 @@ mod tests {
                 render_multiline_input(
                     frame,
                     &MultilineInputView {
+                        route: OverlayRoute::EditDescription,
                         title: "Edit description".to_string(),
                         prompt: String::new(),
                         lines,
@@ -1257,6 +1264,7 @@ mod tests {
     #[test]
     fn overlay_render_omits_empty_multiline_prompt() {
         let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+            route: OverlayRoute::EditDescription,
             title: "Edit description".to_string(),
             prompt: String::new(),
             lines: vec!["line one".to_string()],
@@ -1324,6 +1332,7 @@ mod tests {
     #[test]
     fn add_note_overlay_uses_placeholder_key_styles_and_spacing() {
         let overlay = OverlayView::MultilineInput(MultilineInputView {
+            route: OverlayRoute::AddNote,
             title: "Add note".to_string(),
             prompt: "note body:".to_string(),
             lines: vec![String::new()],
@@ -1351,6 +1360,7 @@ mod tests {
     #[test]
     fn overlay_render_includes_picker_filter_and_hints() {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+            route: OverlayRoute::MessageOnly,
             title: "Project".to_string(),
             filter: "app".to_string(),
             filter_cursor: 3,
@@ -1375,6 +1385,7 @@ mod tests {
     #[test]
     fn picker_filter_mode_hints_show_text_entry() {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+            route: OverlayRoute::MessageOnly,
             title: "Project".to_string(),
             filter: "app".to_string(),
             filter_cursor: 3,
@@ -1394,8 +1405,12 @@ mod tests {
 
     #[test]
     fn priority_picker_shows_priority_icons() {
-        for title in ["Edit task: priority", "Add task: priority"] {
+        for (route, title) in [
+            (OverlayRoute::EditPriority, "Edit task: priority"),
+            (OverlayRoute::AddTaskTitlePriority, "Add task: priority"),
+        ] {
             let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+                route,
                 title: title.to_string(),
                 filter: String::new(),
                 filter_cursor: 0,
@@ -1426,6 +1441,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+            route: OverlayRoute::MessageOnly,
             title: "Project".to_string(),
             filter: String::new(),
             filter_cursor: 0,
@@ -1442,6 +1458,7 @@ mod tests {
     #[test]
     fn project_picker_uses_structured_columns() {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+            route: OverlayRoute::ViewProject,
             title: "Go: project".to_string(),
             filter: "claude".to_string(),
             filter_cursor: 6,
@@ -1464,8 +1481,12 @@ mod tests {
 
     #[test]
     fn edit_project_uses_structured_project_picker() {
-        for title in ["Edit project", "Add task: project"] {
+        for (route, title) in [
+            (OverlayRoute::EditProject, "Edit project"),
+            (OverlayRoute::AddTaskTitleProject, "Add task: project"),
+        ] {
             let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+                route,
                 title: title.to_string(),
                 filter: "claude".to_string(),
                 filter_cursor: 6,
@@ -1486,6 +1507,141 @@ mod tests {
             assert!(rendered.contains("Enter submit"));
             assert!(rendered.contains(title));
         }
+    }
+
+    #[test]
+    fn add_note_route_uses_specialized_renderer_with_changed_title() {
+        let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+            route: OverlayRoute::AddNote,
+            title: "Changed note title".to_string(),
+            prompt: "note body:".to_string(),
+            lines: vec![String::new()],
+            row: 0,
+            column: 0,
+        }));
+        assert!(rendered.contains("Changed note title"));
+        assert!(rendered.contains("note body"));
+        assert!(rendered.contains("Ctrl+S submit"));
+        assert!(rendered.contains("ote body"));
+    }
+
+    #[test]
+    fn edit_description_route_uses_specialized_renderer_with_changed_title() {
+        let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+            route: OverlayRoute::EditDescription,
+            title: "Changed description title".to_string(),
+            prompt: String::new(),
+            lines: vec!["a".repeat(160)],
+            row: 0,
+            column: 150,
+        }));
+        assert!(rendered.contains("Changed description title"));
+        assert!(rendered.contains("Ctrl+X Ctrl+E editor"));
+        assert!(rendered.contains("line 1/1"));
+    }
+
+    #[test]
+    fn add_task_description_route_uses_specialized_renderer_with_changed_title() {
+        let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+            route: OverlayRoute::AddTaskDescription,
+            title: "Changed add task description".to_string(),
+            prompt: String::new(),
+            lines: vec![String::new()],
+            row: 0,
+            column: 0,
+        }));
+        assert!(rendered.contains("Changed add task description"));
+        assert!(rendered.contains("Optional details, links, or handoff context..."));
+        assert!(rendered.contains("Enter newline"));
+    }
+
+    #[test]
+    fn project_picker_routes_control_submit_hints_with_changed_titles() {
+        for (route, title, hint) in [
+            (
+                OverlayRoute::ViewProject,
+                "Changed view title",
+                "Enter open",
+            ),
+            (
+                OverlayRoute::EditProject,
+                "Changed edit title",
+                "Enter submit",
+            ),
+            (
+                OverlayRoute::AddTaskTitleProject,
+                "Changed add-task project title",
+                "Enter submit",
+            ),
+            (
+                OverlayRoute::DeleteProjectPicker,
+                "Changed delete title",
+                "Enter delete",
+            ),
+        ] {
+            let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+                route,
+                title: title.to_string(),
+                filter: String::new(),
+                filter_cursor: 0,
+                items: vec![PickerItem {
+                    label: "AVN aven".to_string(),
+                    value: "aven".to_string(),
+                    selected: false,
+                }],
+                selected: 0,
+                multi: false,
+                mode: PickerMode::Navigate,
+                visible_indices: vec![0],
+            }));
+            assert!(rendered.contains(title), "{route:?}");
+            assert!(rendered.contains("PREFIX"), "{route:?}");
+            assert!(rendered.contains(hint), "{route:?}");
+        }
+    }
+
+    #[test]
+    fn priority_picker_route_controls_icon_rendering_with_changed_title() {
+        let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+            route: OverlayRoute::EditPriority,
+            title: "Changed priority title".to_string(),
+            filter: String::new(),
+            filter_cursor: 0,
+            items: vec![PickerItem {
+                label: "urgent".to_string(),
+                value: "urgent".to_string(),
+                selected: false,
+            }],
+            selected: 0,
+            multi: false,
+            mode: PickerMode::Navigate,
+            visible_indices: vec![0],
+        }));
+        assert!(rendered.contains("Changed priority title"));
+        assert!(rendered.contains(priority_icon("urgent")));
+    }
+
+    #[test]
+    fn add_task_priority_route_uses_priority_renderer() {
+        let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+            route: OverlayRoute::AddTaskTitlePriority,
+            title: "Changed add task priority".to_string(),
+            filter: String::new(),
+            filter_cursor: 0,
+            items: vec![PickerItem {
+                label: "urgent".to_string(),
+                value: "urgent".to_string(),
+                selected: false,
+            }],
+            selected: 0,
+            multi: false,
+            mode: PickerMode::Navigate,
+            visible_indices: vec![0],
+        }));
+        assert!(rendered.contains("Changed add task priority"));
+        assert!(rendered.contains(priority_icon("urgent")));
+        assert!(rendered.contains("urgent"));
+        assert!(rendered.contains("Enter submit"));
     }
 
     #[test]
