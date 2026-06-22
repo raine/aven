@@ -1,4 +1,6 @@
 use super::*;
+use crate::operations::TaskDraft;
+use crate::query::TaskSort;
 use crate::tui::app_conflicts::CONFLICT_CONFIRM_LOCAL_TITLE;
 use crate::tui::app_edit::{
     EDIT_DESCRIPTION_TITLE, EDIT_LABELS_TITLE, EDIT_PRIORITY_TITLE, EDIT_PROJECT_TITLE,
@@ -9,12 +11,15 @@ use crate::tui::authoring::AddTaskStep;
 use crate::tui::config_overlay::{
     CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PATHS_TITLE, CONFIG_STATUS_TITLE,
 };
+use crate::tui::event::Action;
 use crate::tui::overlay::{
-    ConfirmState, MultilineInputState, OverlayRoute, PickerMode, PickerState, TextInputState,
-    TextPanelState,
+    ConfirmState, LineEdit, MultilineInputState, OverlayRoute, OverlayState, PickerItem,
+    PickerMode, PickerState, TextInputState, TextPanelState,
 };
 use crate::tui::store::SidebarTarget;
 use crate::tui::toast::ToastSeverity;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use sqlx::SqlitePool;
 
 fn toast_message(app: &App) -> Option<&str> {
     app.message.as_ref().map(|toast| toast.message.as_str())
@@ -158,6 +163,19 @@ async fn add_task_alias_executes_immediately() {
 }
 
 #[tokio::test]
+async fn dispatch_key_routes_normal_action_through_action_executor() {
+    let mut app = test_app().await;
+    app.focus = Focus::Tasks;
+
+    app.dispatch_key(key(KeyCode::Char('h')), (80, 24).into())
+        .await
+        .unwrap();
+
+    assert_eq!(app.focus, Focus::Sidebar);
+    assert_pending_empty(&app);
+}
+
+#[tokio::test]
 async fn prefix_is_inactive_while_overlay_captures_input() {
     let mut app = test_app().await;
     app.begin_search();
@@ -237,6 +255,22 @@ async fn command_overlay_executes_unique_lookup_and_keeps_overlay_on_errors() {
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
     assert_eq!(toast_message(&app), Some("unknown command: zzzz"));
+}
+
+#[tokio::test]
+async fn dispatch_paste_updates_capturing_overlay_and_ignores_normal_mode() {
+    let mut app = test_app().await;
+
+    app.dispatch_paste("ignored");
+    assert!(app.overlay.is_none());
+
+    app.begin_search();
+    app.dispatch_paste("needle");
+
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Search { input }) if input.as_str() == "needle"
+    ));
 }
 
 #[tokio::test]

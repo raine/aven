@@ -3,8 +3,10 @@ use sqlx::SqlitePool;
 
 mod app;
 mod app_conflicts;
+mod app_dispatch;
 mod app_edit;
 mod app_filters;
+mod app_lifecycle;
 mod app_overlay_submit;
 mod authoring;
 mod config_overlay;

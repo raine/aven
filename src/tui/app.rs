@@ -1,12 +1,6 @@
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::Result;
-use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers,
-};
-use crossterm::execute;
-use ratatui::DefaultTerminal;
-use ratatui::layout::Size;
 use ratatui::widgets::{ListState, TableState};
 use sqlx::SqlitePool;
 
@@ -20,22 +14,15 @@ use crate::tui::authoring::{
 use crate::tui::config_overlay::{
     config_info_overlay, config_init_overlay, config_paths_overlay, config_status_overlay,
 };
-use crate::tui::conflict_flow::{ConflictFlowState, ConflictResolutionChoice};
-use crate::tui::event::{Action, CommandLookup, lookup_command};
-use crate::tui::navigation::{
-    detail_task_delta, handle_detail_overlay_key, next_index, next_selectable_sidebar,
-};
+use crate::tui::conflict_flow::ConflictFlowState;
+use crate::tui::navigation::{next_index, next_selectable_sidebar};
 use crate::tui::overlay::{
-    AddTaskState, LineEdit, MultilineInputState, OverlayOutcome, OverlayRoute, OverlayState,
-    OverlayView, PickerItem,
+    AddTaskState, LineEdit, MultilineInputState, OverlayRoute, OverlayState, PickerItem,
 };
-use crate::tui::platform::{copy_to_clipboard, edit_text_externally, is_editor_prefix_key};
-use crate::tui::shortcut_buffer::{
-    DetailShortcutResolution, NormalShortcutResolution, ShortcutBuffer,
-};
+use crate::tui::platform::{copy_to_clipboard, edit_text_externally};
+use crate::tui::shortcut_buffer::ShortcutBuffer;
 use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::toast::{Toast, ToastSeverity};
-use crate::tui::ui::{self, detail_help_scroll_cap, help_scroll_cap};
 
 const ADD_PROJECT_TITLE: &str = "Add project";
 const DELETE_PROJECT_TITLE: &str = "Delete project";
@@ -44,7 +31,7 @@ const ADD_LABEL_TITLE: &str = "Add label";
 const ADD_TASK_NATURAL_TITLE: &str = "Add task: natural language";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TaskRefKind {
+pub(super) enum TaskRefKind {
     Short,
     Durable,
 }
@@ -73,10 +60,10 @@ pub(crate) struct App {
     pub(super) authoring: AuthoringState,
     pub(super) conflict_flow: ConflictFlowState,
     pending_delete_project: Option<String>,
-    needs_terminal_clear: bool,
-    add_task_only: bool,
-    add_task_only_message: Option<String>,
-    add_task_config: AppConfig,
+    pub(super) needs_terminal_clear: bool,
+    pub(super) add_task_only: bool,
+    pub(super) add_task_only_message: Option<String>,
+    pub(super) add_task_config: AppConfig,
 }
 
 impl App {
@@ -128,451 +115,7 @@ impl App {
         self.add_task_config = config;
     }
 
-    pub(crate) async fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        execute!(std::io::stdout(), EnableBracketedPaste)?;
-        let result = self.run_loop(terminal).await;
-        execute!(std::io::stdout(), DisableBracketedPaste)?;
-        result
-    }
-
-    pub(crate) async fn run_add_task_only(
-        mut self,
-        terminal: &mut DefaultTerminal,
-        natural: bool,
-        config: AppConfig,
-    ) -> Result<Option<String>> {
-        self.add_task_only = true;
-        self.add_task_config = config;
-        self.begin_add_task().await?;
-        if natural {
-            self.begin_add_task_natural();
-        }
-        execute!(std::io::stdout(), EnableBracketedPaste)?;
-        let result = self.run_loop(terminal).await;
-        execute!(std::io::stdout(), DisableBracketedPaste)?;
-        result.map(|()| self.add_task_only_message)
-    }
-
-    async fn run_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        while !self.should_quit {
-            let view = self.view();
-            terminal.draw(|frame| ui::render(frame, &self.store, &mut self.widgets, &view))?;
-
-            if event::poll(Duration::from_millis(250))? {
-                match event::read()? {
-                    Event::Key(key) => {
-                        let result = self.dispatch_key(key, terminal.size()?).await;
-                        if let Err(error) = result {
-                            self.set_error(format!("{error:#}"));
-                        }
-                        if self.needs_terminal_clear {
-                            self.needs_terminal_clear = false;
-                            terminal.clear()?;
-                        }
-                    }
-                    Event::Paste(text) => self.dispatch_paste(&text),
-                    _ => {}
-                }
-            }
-
-            if self.store.last_refresh.elapsed() >= Duration::from_secs(5)
-                && let Err(error) = self.refresh().await
-            {
-                self.set_error(format!("refresh failed: {error:#}"));
-            }
-
-            self.clear_expired_message();
-        }
-        Ok(())
-    }
-
-    pub(crate) fn view(&self) -> ui::ViewState {
-        ui::ViewState {
-            focus: self.focus,
-            overlay: self.overlay.as_ref().map(OverlayView::from),
-            detail_underlay: self.detail_underlay(),
-            message: self.message.clone(),
-            pending_shortcut: self.pending_shortcut.labels(),
-        }
-    }
-
-    fn dispatch_paste(&mut self, text: &str) {
-        let Some(overlay) = self.overlay.take() else {
-            return;
-        };
-        self.overlay = Some(crate::tui::overlay::handle_generic_overlay_paste(
-            text, overlay,
-        ));
-    }
-
-    async fn dispatch_key(&mut self, key: KeyEvent, terminal_size: Size) -> Result<()> {
-        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            self.handle(Action::Quit).await
-        } else if key.code == KeyCode::Esc && self.pending_shortcut.cancel() {
-            Ok(())
-        } else if self.overlay_captures_input() {
-            if key.code == KeyCode::Char('?')
-                && matches!(self.overlay, Some(OverlayState::Detail { .. }))
-            {
-                self.toggle_help_at_height(terminal_size.height);
-                Ok(())
-            } else {
-                self.handle_overlay_key_at_size(key, terminal_size).await
-            }
-        } else if key.code == KeyCode::Char('?') {
-            self.toggle_help_at_height(terminal_size.height);
-            Ok(())
-        } else {
-            self.handle_normal_key(key.code).await
-        }
-    }
-
-    fn overlay_captures_input(&self) -> bool {
-        self.overlay
-            .as_ref()
-            .is_some_and(OverlayState::captures_input)
-    }
-
-    fn detail_underlay(&self) -> bool {
-        self.detail_context
-            || matches!(
-                self.overlay,
-                Some(OverlayState::Detail { .. } | OverlayState::DetailHelp { .. })
-            )
-            || self.authoring.detail_underlay()
-    }
-
-    async fn handle_normal_key(&mut self, code: KeyCode) -> Result<()> {
-        if self.overlay_captures_input()
-            && (code != KeyCode::Esc || self.pending_shortcut.is_empty())
-        {
-            return self
-                .handle_overlay_key(KeyEvent::new(code, KeyModifiers::NONE))
-                .await;
-        }
-
-        if code == KeyCode::Esc {
-            if !self.pending_shortcut.cancel() {
-                self.handle(Action::CancelOverlay).await?;
-            }
-            return Ok(());
-        }
-
-        match self.pending_shortcut.resolve_normal(code) {
-            NormalShortcutResolution::Action(action) => {
-                self.handle(action).await?;
-            }
-            NormalShortcutResolution::Prefix => {}
-            NormalShortcutResolution::Missing(label) => {
-                self.set_warning(format!("invalid shortcut: {label}"));
-            }
-        }
-        Ok(())
-    }
-
-    pub(crate) async fn handle_overlay_key(&mut self, key: KeyEvent) -> Result<()> {
-        self.handle_overlay_key_at_size(key, Size::new(80, 24))
-            .await
-    }
-
-    async fn handle_overlay_key_at_size(
-        &mut self,
-        key: KeyEvent,
-        terminal_size: Size,
-    ) -> Result<()> {
-        let Some(overlay) = self.overlay.take() else {
-            return Ok(());
-        };
-
-        match overlay {
-            OverlayState::Search { mut input } => match key.code {
-                KeyCode::Esc => {}
-                KeyCode::Enter => self.accept_search_input(input.text).await?,
-                _ => {
-                    input.handle_key(key);
-                    self.overlay = Some(OverlayState::Search { input });
-                }
-            },
-            OverlayState::Command { mut input } => match key.code {
-                KeyCode::Esc => {}
-                KeyCode::Enter => {
-                    if let Some(action) = self.accept_command_input(input.as_str()) {
-                        self.execute(action).await?;
-                    } else {
-                        self.overlay = Some(OverlayState::Command { input });
-                    }
-                }
-                _ => {
-                    input.handle_key(key);
-                    self.overlay = Some(OverlayState::Command { input });
-                }
-            },
-            overlay => {
-                self.handle_generic_overlay_key(key, overlay, terminal_size)
-                    .await?
-            }
-        }
-
-        if self.detail_context && self.overlay.is_none() {
-            self.restore_detail_overlay(true);
-        }
-
-        Ok(())
-    }
-
-    async fn handle_generic_overlay_key(
-        &mut self,
-        key: KeyEvent,
-        overlay: OverlayState,
-        terminal_size: Size,
-    ) -> Result<()> {
-        if let OverlayState::Detail { scroll } = overlay {
-            if let Some(outcome) = self.handle_detail_shortcut(key, scroll).await? {
-                self.overlay = outcome;
-                return Ok(());
-            }
-
-            if let Some(delta) = detail_task_delta(key) {
-                self.select_detail_task(delta);
-                self.overlay = Some(OverlayState::Detail { scroll: 0 });
-                return Ok(());
-            }
-
-            let overlay = OverlayState::Detail { scroll };
-            let task = self.store.selected_task(self.widgets.table.selected());
-            let outcome = handle_detail_overlay_key(
-                key,
-                overlay,
-                terminal_size.width,
-                terminal_size.height,
-                task,
-            );
-            match outcome {
-                OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
-                OverlayOutcome::Cancelled => self.cancel_authoring_overlay(),
-                OverlayOutcome::Submitted(submit) => self.handle_overlay_submit(submit).await?,
-            }
-            return Ok(());
-        }
-
-        if self.pending_shortcut.take_editor_open_request(key) {
-            match &overlay {
-                OverlayState::MultilineInput(state)
-                    if state.route == OverlayRoute::EditDescription =>
-                {
-                    self.open_description_external_editor(state.clone());
-                }
-                OverlayState::AddTask(state) if state.focus == AddTaskStep::Description => {
-                    if self.capture_add_task_state(state) {
-                        self.open_add_task_description_editor();
-                    }
-                }
-                _ => self.overlay = Some(overlay),
-            }
-            return Ok(());
-        }
-
-        if is_editor_prefix_key(key)
-            && matches!(
-                &overlay,
-                OverlayState::MultilineInput(state)
-                    if state.route == OverlayRoute::EditDescription
-            )
-        {
-            self.pending_shortcut.begin_editor_prefix();
-            self.overlay = Some(overlay);
-            return Ok(());
-        }
-
-        if let OverlayState::AddTask(state) = &overlay {
-            if is_editor_prefix_key(key) {
-                if state.focus == AddTaskStep::Description {
-                    self.pending_shortcut.begin_editor_prefix();
-                }
-                self.overlay = Some(overlay);
-                return Ok(());
-            }
-            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
-                if self.capture_add_task_state(state) {
-                    self.begin_add_task_title_project();
-                }
-                return Ok(());
-            }
-            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
-                if self.capture_add_task_state(state) {
-                    self.begin_add_task_title_priority();
-                }
-                return Ok(());
-            }
-            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('n') {
-                if self.capture_add_task_state(state) {
-                    self.begin_add_task_natural();
-                }
-                return Ok(());
-            }
-        }
-
-        let scroll_cap = match overlay {
-            OverlayState::DetailHelp { .. } => detail_help_scroll_cap(terminal_size.height),
-            _ => help_scroll_cap(terminal_size.height),
-        };
-        let was_detail_help = matches!(overlay, OverlayState::DetailHelp { .. });
-        let was_add_task_description_editor = matches!(
-            &overlay,
-            OverlayState::MultilineInput(state) if state.route == OverlayRoute::AddTaskDescription
-        );
-        let outcome = crate::tui::overlay::handle_generic_overlay_key(key, overlay, scroll_cap);
-        match outcome {
-            OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
-            OverlayOutcome::Cancelled if was_detail_help => {
-                self.overlay = Some(OverlayState::Detail { scroll: 0 })
-            }
-            OverlayOutcome::Cancelled if was_add_task_description_editor => {
-                self.begin_add_task_step()
-            }
-            OverlayOutcome::Cancelled if self.add_task_only => self.should_quit = true,
-            OverlayOutcome::Cancelled => self.cancel_authoring_overlay(),
-            OverlayOutcome::Submitted(submit) => self.handle_overlay_submit(submit).await?,
-        }
-        Ok(())
-    }
-
-    async fn handle_detail_shortcut(
-        &mut self,
-        key: KeyEvent,
-        scroll: u16,
-    ) -> Result<Option<Option<OverlayState>>> {
-        if !key.modifiers.is_empty() {
-            return Ok(None);
-        }
-
-        match self.pending_shortcut.resolve_detail(key) {
-            DetailShortcutResolution::Action(action) => {
-                self.detail_context = true;
-                self.execute(action).await?;
-                if self.detail_context && self.overlay.is_none() {
-                    self.restore_detail_overlay_at_scroll(true, scroll);
-                }
-                Ok(Some(self.overlay.take()))
-            }
-            DetailShortcutResolution::Prefix => Ok(Some(Some(OverlayState::Detail { scroll }))),
-            DetailShortcutResolution::MissingAfterPrefix(label) => {
-                self.set_warning(format!("invalid shortcut: {label}"));
-                Ok(Some(Some(OverlayState::Detail { scroll })))
-            }
-            DetailShortcutResolution::PassThrough => Ok(None),
-        }
-    }
-
-    async fn handle(&mut self, action: Action) -> Result<()> {
-        self.execute(action).await
-    }
-
-    async fn execute(&mut self, action: Action) -> Result<()> {
-        match action {
-            Action::Quit => self.should_quit = true,
-            Action::CancelOverlay => self.cancel_overlay(),
-            Action::MoveDown => self.move_selection(1).await?,
-            Action::MoveUp => self.move_selection(-1).await?,
-            Action::MoveLeft => self.move_left(),
-            Action::MoveRight => self.move_right(),
-            Action::PreviousItem => self.previous_item(),
-            Action::NextItem => self.next_item(),
-            Action::First => self.select_edge(false).await?,
-            Action::Last => self.select_edge(true).await?,
-            Action::ToggleFocus => self.toggle_focus(),
-            Action::ToggleDetail => self.activate_or_toggle_detail().await?,
-            Action::ToggleHelp => self.toggle_help_at_height(24),
-            Action::BeginSearch => self.begin_search(),
-            Action::BeginCommand => self.begin_command(),
-            Action::Refresh => self.refresh().await?,
-            Action::CycleSort => {
-                self.store.cycle_sort();
-                self.refresh().await?;
-                self.set_info(format!(
-                    "order {} {}",
-                    self.store.sort_label(),
-                    self.store.sort_direction_label()
-                ));
-            }
-            Action::SetSort(sort) => self.set_sort(sort).await?,
-            Action::ReverseSort => self.reverse_sort().await?,
-            Action::SetStatus(status) => self.update_status(status).await?,
-            Action::SetPriority(priority) => self.set_exact_priority(priority).await?,
-            Action::CyclePriority(reverse) => self.update_priority(reverse).await?,
-            Action::CopyShortRef => self.copy_selected_ref(TaskRefKind::Short),
-            Action::CopyDurableRef => self.copy_selected_ref(TaskRefKind::Durable),
-            Action::BeginEditTitle => self.begin_edit_title(),
-            Action::BeginEditDescription => self.begin_edit_description(),
-            Action::BeginEditProject => self.begin_edit_project(),
-            Action::BeginEditPriority => self.begin_edit_priority(),
-            Action::BeginEditLabels => self.begin_edit_labels(),
-            Action::Delete => self.begin_delete_task(),
-            Action::Restore => self.update_deleted(false).await?,
-            Action::BeginStatusPicker => self.begin_status_picker(),
-            Action::BeginDeleteProject => self.begin_delete_project(),
-            Action::BeginAddProject => self.begin_add_project(),
-            Action::BeginAddLabel => self.begin_add_label(),
-            Action::BeginAddTask => self.begin_add_task().await?,
-            Action::BeginAddNote => self.begin_add_note(),
-            Action::BeginFilterProject => self.begin_filter_project(),
-            Action::BeginFilterLabel => self.begin_filter_label(),
-            Action::BeginFilterStatus => self.begin_filter_status(),
-            Action::BeginFilterPriority => self.begin_filter_priority(),
-            Action::BeginSwitchWorkspace => self.begin_switch_workspace().await?,
-            Action::ClearFilters => self.clear_filters().await?,
-            Action::ToggleDeletedFilter => self.toggle_deleted_filter().await?,
-            Action::ShowView(target) => self.show_view(target).await?,
-            Action::BeginConflictList => self.open_conflict_list().await?,
-            Action::ShowConflictDetails => self.show_conflict_details().await?,
-            Action::NextConflict => self.move_to_conflict(1),
-            Action::PreviousConflict => self.move_to_conflict(-1),
-            Action::AcceptConflictLocal => {
-                self.begin_conflict_resolution(ConflictResolutionChoice::Local)
-                    .await?
-            }
-            Action::AcceptConflictRemote => {
-                self.begin_conflict_resolution(ConflictResolutionChoice::Remote)
-                    .await?
-            }
-            Action::BeginManualConflictMerge => self.begin_manual_conflict_merge().await?,
-            Action::ShowConfigStatus => self.show_config_status()?,
-            Action::ShowConfigInfo => self.show_config_info()?,
-            Action::ShowConfigPaths => self.show_config_paths()?,
-            Action::BeginConfigInit => self.begin_config_init()?,
-            Action::Undo => self.undo_last().await?,
-            Action::Planned { name, reason } => {
-                self.set_warning(format!(":{name} is not yet implemented: {reason}"));
-            }
-            Action::Disabled { name, reason } => {
-                self.set_warning(format!(":{name} is disabled: {reason}"));
-            }
-            Action::AcceptCommand
-            | Action::CancelCommand
-            | Action::BackspaceCommand
-            | Action::CommandChar(_)
-            | Action::AcceptSearch
-            | Action::CancelSearch
-            | Action::BackspaceSearch
-            | Action::SearchChar(_)
-            | Action::None => {}
-        }
-        Ok(())
-    }
-
-    async fn refresh(&mut self) -> Result<()> {
-        let selected_id = self
-            .store
-            .selected_task(self.widgets.table.selected())
-            .map(|item| item.task.id.clone());
-        self.widgets
-            .table
-            .select(self.store.refresh(selected_id.as_deref()).await?);
-        self.widgets.sidebar.select(self.store.sidebar_selection());
-        Ok(())
-    }
-
-    async fn move_selection(&mut self, delta: isize) -> Result<()> {
+    pub(super) async fn move_selection(&mut self, delta: isize) -> Result<()> {
         match self.focus {
             Focus::Tasks => {
                 let next = next_index(
@@ -596,7 +139,7 @@ impl App {
         Ok(())
     }
 
-    async fn select_edge(&mut self, last: bool) -> Result<()> {
+    pub(super) async fn select_edge(&mut self, last: bool) -> Result<()> {
         match self.focus {
             Focus::Tasks => {
                 if self.store.tasks.is_empty() {
@@ -627,7 +170,7 @@ impl App {
         Ok(())
     }
 
-    fn toggle_focus(&mut self) {
+    pub(super) fn toggle_focus(&mut self) {
         self.focus = match self.focus {
             Focus::Sidebar => {
                 self.widgets.sidebar.select(self.store.sidebar_selection());
@@ -637,18 +180,18 @@ impl App {
         };
     }
 
-    fn move_left(&mut self) {
+    pub(super) fn move_left(&mut self) {
         self.focus = Focus::Sidebar;
         self.widgets.sidebar.select(self.store.sidebar_selection());
         self.overlay = None;
     }
 
-    fn move_right(&mut self) {
+    pub(super) fn move_right(&mut self) {
         self.focus = Focus::Tasks;
         self.overlay = None;
     }
 
-    fn previous_item(&mut self) {
+    pub(super) fn previous_item(&mut self) {
         if matches!(self.store.active_view, SidebarTarget::Conflicts)
             || self.store.filters.conflicts_only
         {
@@ -658,7 +201,7 @@ impl App {
         }
     }
 
-    fn next_item(&mut self) {
+    pub(super) fn next_item(&mut self) {
         if matches!(self.store.active_view, SidebarTarget::Conflicts)
             || self.store.filters.conflicts_only
         {
@@ -668,7 +211,7 @@ impl App {
         }
     }
 
-    fn select_detail_task(&mut self, delta: isize) {
+    pub(super) fn select_detail_task(&mut self, delta: isize) {
         let current = self.widgets.table.selected();
         let next = next_index(current, self.store.tasks.len(), delta, true);
         self.widgets.table.select(next);
@@ -683,7 +226,7 @@ impl App {
         }
     }
 
-    async fn activate_or_toggle_detail(&mut self) -> Result<()> {
+    pub(super) async fn activate_or_toggle_detail(&mut self) -> Result<()> {
         if self.focus == Focus::Sidebar {
             self.apply_sidebar_selection().await?;
         } else if matches!(self.overlay, Some(OverlayState::Detail { .. })) {
@@ -694,7 +237,7 @@ impl App {
         Ok(())
     }
 
-    async fn apply_sidebar_selection(&mut self) -> Result<()> {
+    pub(super) async fn apply_sidebar_selection(&mut self) -> Result<()> {
         self.store
             .apply_sidebar_selection(self.widgets.sidebar.selected())
             .await?;
@@ -714,7 +257,7 @@ impl App {
         });
     }
 
-    async fn accept_search_input(&mut self, input: String) -> Result<()> {
+    pub(super) async fn accept_search_input(&mut self, input: String) -> Result<()> {
         self.widgets
             .table
             .select(self.store.accept_search(&input).await?);
@@ -728,7 +271,7 @@ impl App {
         });
     }
 
-    fn begin_add_project(&mut self) {
+    pub(super) fn begin_add_project(&mut self) {
         self.pending_shortcut.clear();
         self.overlay = Some(OverlayState::blank_text_input(
             OverlayRoute::AddProject,
@@ -737,7 +280,7 @@ impl App {
         ));
     }
 
-    fn begin_add_label(&mut self) {
+    pub(super) fn begin_add_label(&mut self) {
         self.pending_shortcut.clear();
         self.overlay = Some(OverlayState::blank_text_input(
             OverlayRoute::AddLabel,
@@ -746,7 +289,7 @@ impl App {
         ));
     }
 
-    async fn begin_add_task(&mut self) -> Result<()> {
+    pub(super) async fn begin_add_task(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
         let active_project = match &self.store.active_view {
             SidebarTarget::Project(project) => Some(project.clone()),
@@ -763,7 +306,7 @@ impl App {
         Ok(())
     }
 
-    fn begin_add_task_title(&mut self) {
+    pub(super) fn begin_add_task_title(&mut self) {
         self.begin_add_task_overlay();
     }
 
@@ -789,7 +332,7 @@ impl App {
         self.begin_add_task_overlay();
     }
 
-    fn open_add_task_description_editor(&mut self) {
+    pub(super) fn open_add_task_description_editor(&mut self) {
         let Some(context) = self.authoring.add_task_context() else {
             return;
         };
@@ -810,7 +353,7 @@ impl App {
         }
     }
 
-    fn capture_add_task_state(&mut self, state: &AddTaskState) -> bool {
+    pub(super) fn capture_add_task_state(&mut self, state: &AddTaskState) -> bool {
         self.authoring.capture_add_task_fields(
             state.title.text.clone(),
             state.description.lines.join("\n"),
@@ -832,7 +375,7 @@ impl App {
         Ok(())
     }
 
-    fn begin_add_note(&mut self) {
+    pub(super) fn begin_add_note(&mut self) {
         self.pending_shortcut.clear();
         let Some(item) = self
             .store
@@ -857,7 +400,7 @@ impl App {
         ));
     }
 
-    fn begin_add_task_title_project(&mut self) {
+    pub(super) fn begin_add_task_title_project(&mut self) {
         let Some(selected) = self.authoring.selected_add_task_project() else {
             return;
         };
@@ -870,7 +413,7 @@ impl App {
         );
     }
 
-    fn begin_add_task_title_priority(&mut self) {
+    pub(super) fn begin_add_task_title_priority(&mut self) {
         let Some(selected) = self.authoring.selected_add_task_priority() else {
             return;
         };
@@ -883,7 +426,7 @@ impl App {
         );
     }
 
-    fn begin_add_task_natural(&mut self) {
+    pub(super) fn begin_add_task_natural(&mut self) {
         self.begin_add_task_natural_with_value(String::new());
     }
 
@@ -965,7 +508,7 @@ impl App {
         Ok(())
     }
 
-    fn cancel_authoring_overlay(&mut self) {
+    pub(super) fn cancel_authoring_overlay(&mut self) {
         self.pending_shortcut.clear();
         let return_to_detail = self.authoring.cancel() || self.detail_context;
         self.overlay = None;
@@ -979,7 +522,7 @@ impl App {
         self.restore_detail_overlay_at_scroll(return_to_detail, 0);
     }
 
-    fn restore_detail_overlay_at_scroll(&mut self, return_to_detail: bool, scroll: u16) {
+    pub(super) fn restore_detail_overlay_at_scroll(&mut self, return_to_detail: bool, scroll: u16) {
         if return_to_detail
             && self
                 .store
@@ -991,41 +534,7 @@ impl App {
         }
     }
 
-    fn accept_command_input(&mut self, input: &str) -> Option<Action> {
-        match lookup_command(input) {
-            CommandLookup::Found(action) => {
-                self.pending_shortcut.clear();
-                Some(action)
-            }
-            CommandLookup::Empty => {
-                self.set_info("empty command");
-                None
-            }
-            CommandLookup::Ambiguous => {
-                self.set_warning(format!("ambiguous command: {}", input.trim()));
-                None
-            }
-            CommandLookup::Missing => {
-                self.set_warning(format!("unknown command: {}", input.trim()));
-                None
-            }
-        }
-    }
-
-    fn toggle_help_at_height(&mut self, _terminal_height: u16) {
-        match self.overlay {
-            Some(OverlayState::Help { .. }) => self.overlay = None,
-            Some(OverlayState::DetailHelp { .. }) => {
-                self.overlay = Some(OverlayState::Detail { scroll: 0 })
-            }
-            Some(OverlayState::Detail { .. }) => {
-                self.overlay = Some(OverlayState::DetailHelp { scroll: 0 })
-            }
-            _ => self.overlay = Some(OverlayState::Help { scroll: 0 }),
-        }
-    }
-
-    fn cancel_overlay(&mut self) {
+    pub(super) fn cancel_overlay(&mut self) {
         self.pending_shortcut.clear();
         self.authoring.clear();
         self.conflict_flow.clear();
@@ -1038,7 +547,7 @@ impl App {
         }
     }
 
-    async fn set_sort(&mut self, sort: TaskSort) -> Result<()> {
+    pub(super) async fn set_sort(&mut self, sort: TaskSort) -> Result<()> {
         let selected = self.store.set_sort(sort).await?;
         self.apply_filter_selection(selected);
         self.set_info(format!(
@@ -1049,7 +558,7 @@ impl App {
         Ok(())
     }
 
-    async fn reverse_sort(&mut self) -> Result<()> {
+    pub(super) async fn reverse_sort(&mut self) -> Result<()> {
         let selected = self.store.reverse_sort().await?;
         self.apply_filter_selection(selected);
         self.set_info(format!(
@@ -1090,7 +599,7 @@ impl App {
         }
     }
 
-    fn begin_delete_task(&mut self) {
+    pub(super) fn begin_delete_task(&mut self) {
         self.pending_shortcut.clear();
         let Some(task) = self.store.selected_task(self.widgets.table.selected()) else {
             self.set_info("no selected task to edit");
@@ -1105,7 +614,7 @@ impl App {
         ));
     }
 
-    fn begin_delete_project(&mut self) {
+    pub(super) fn begin_delete_project(&mut self) {
         self.pending_shortcut.clear();
         let selected = if self.focus == Focus::Sidebar {
             self.selected_sidebar_project()
@@ -1135,7 +644,7 @@ impl App {
             })
     }
 
-    fn copy_selected_ref(&mut self, kind: TaskRefKind) {
+    pub(super) fn copy_selected_ref(&mut self, kind: TaskRefKind) {
         let Some(task) = self.store.selected_task(self.widgets.table.selected()) else {
             self.set_info("no selected task to copy");
             return;
@@ -1185,35 +694,25 @@ impl App {
         self.message_at = Some(Instant::now());
     }
 
-    fn clear_expired_message(&mut self) {
-        if self
-            .message_at
-            .is_some_and(|time| time.elapsed() >= Duration::from_secs(4))
-        {
-            self.message = None;
-            self.message_at = None;
-        }
-    }
-
-    fn show_config_status(&mut self) -> Result<()> {
+    pub(super) fn show_config_status(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
         self.overlay = Some(config_status_overlay(&self.store)?);
         Ok(())
     }
 
-    fn show_config_info(&mut self) -> Result<()> {
+    pub(super) fn show_config_info(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
         self.overlay = Some(config_info_overlay(&self.store)?);
         Ok(())
     }
 
-    fn show_config_paths(&mut self) -> Result<()> {
+    pub(super) fn show_config_paths(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
         self.overlay = Some(config_paths_overlay(&self.store)?);
         Ok(())
     }
 
-    fn begin_config_init(&mut self) -> Result<()> {
+    pub(super) fn begin_config_init(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
         self.overlay = Some(config_init_overlay()?);
         Ok(())
@@ -1225,7 +724,7 @@ impl App {
         Ok(())
     }
 
-    fn open_description_external_editor(&mut self, state: MultilineInputState) {
+    pub(super) fn open_description_external_editor(&mut self, state: MultilineInputState) {
         self.needs_terminal_clear = true;
         match edit_text_externally(state.lines.join("\n"), "description.md") {
             Ok(value) => self.overlay = Some(description_overlay_from_value(value)),

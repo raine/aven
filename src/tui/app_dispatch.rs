@@ -1,0 +1,404 @@
+use anyhow::Result;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::layout::Size;
+
+use crate::tui::app::{App, TaskRefKind};
+use crate::tui::authoring::AddTaskStep;
+use crate::tui::conflict_flow::ConflictResolutionChoice;
+use crate::tui::event::{Action, CommandLookup, lookup_command};
+use crate::tui::navigation::{detail_task_delta, handle_detail_overlay_key};
+use crate::tui::overlay::{OverlayOutcome, OverlayRoute, OverlayState};
+use crate::tui::platform::is_editor_prefix_key;
+use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
+use crate::tui::ui::{detail_help_scroll_cap, help_scroll_cap};
+
+impl App {
+    pub(super) fn dispatch_paste(&mut self, text: &str) {
+        let Some(overlay) = self.overlay.take() else {
+            return;
+        };
+        self.overlay = Some(crate::tui::overlay::handle_generic_overlay_paste(
+            text, overlay,
+        ));
+    }
+
+    pub(crate) async fn dispatch_key(&mut self, key: KeyEvent, terminal_size: Size) -> Result<()> {
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.handle(Action::Quit).await
+        } else if key.code == KeyCode::Esc && self.pending_shortcut.cancel() {
+            Ok(())
+        } else if self.overlay_captures_input() {
+            if key.code == KeyCode::Char('?')
+                && matches!(self.overlay, Some(OverlayState::Detail { .. }))
+            {
+                self.toggle_help_at_height(terminal_size.height);
+                Ok(())
+            } else {
+                self.handle_overlay_key_at_size(key, terminal_size).await
+            }
+        } else if key.code == KeyCode::Char('?') {
+            self.toggle_help_at_height(terminal_size.height);
+            Ok(())
+        } else {
+            self.handle_normal_key(key.code).await
+        }
+    }
+
+    fn overlay_captures_input(&self) -> bool {
+        self.overlay
+            .as_ref()
+            .is_some_and(OverlayState::captures_input)
+    }
+
+    pub(crate) async fn handle_normal_key(&mut self, code: KeyCode) -> Result<()> {
+        if self.overlay_captures_input()
+            && (code != KeyCode::Esc || self.pending_shortcut.is_empty())
+        {
+            return self
+                .handle_overlay_key(KeyEvent::new(code, KeyModifiers::NONE))
+                .await;
+        }
+
+        if code == KeyCode::Esc {
+            if !self.pending_shortcut.cancel() {
+                self.handle(Action::CancelOverlay).await?;
+            }
+            return Ok(());
+        }
+
+        match self.pending_shortcut.resolve_normal(code) {
+            NormalShortcutResolution::Action(action) => {
+                self.handle(action).await?;
+            }
+            NormalShortcutResolution::Prefix => {}
+            NormalShortcutResolution::Missing(label) => {
+                self.set_warning(format!("invalid shortcut: {label}"));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn handle_overlay_key(&mut self, key: KeyEvent) -> Result<()> {
+        self.handle_overlay_key_at_size(key, Size::new(80, 24))
+            .await
+    }
+
+    async fn handle_overlay_key_at_size(
+        &mut self,
+        key: KeyEvent,
+        terminal_size: Size,
+    ) -> Result<()> {
+        let Some(overlay) = self.overlay.take() else {
+            return Ok(());
+        };
+
+        match overlay {
+            OverlayState::Search { mut input } => match key.code {
+                KeyCode::Esc => {}
+                KeyCode::Enter => self.accept_search_input(input.text).await?,
+                _ => {
+                    input.handle_key(key);
+                    self.overlay = Some(OverlayState::Search { input });
+                }
+            },
+            OverlayState::Command { mut input } => match key.code {
+                KeyCode::Esc => {}
+                KeyCode::Enter => {
+                    if let Some(action) = self.accept_command_input(input.as_str()) {
+                        self.execute(action).await?;
+                    } else {
+                        self.overlay = Some(OverlayState::Command { input });
+                    }
+                }
+                _ => {
+                    input.handle_key(key);
+                    self.overlay = Some(OverlayState::Command { input });
+                }
+            },
+            overlay => {
+                self.handle_generic_overlay_key(key, overlay, terminal_size)
+                    .await?
+            }
+        }
+
+        if self.detail_context && self.overlay.is_none() {
+            self.restore_detail_overlay(true);
+        }
+
+        Ok(())
+    }
+
+    async fn handle_generic_overlay_key(
+        &mut self,
+        key: KeyEvent,
+        overlay: OverlayState,
+        terminal_size: Size,
+    ) -> Result<()> {
+        if let OverlayState::Detail { scroll } = overlay {
+            if let Some(outcome) = self.handle_detail_shortcut(key, scroll).await? {
+                self.overlay = outcome;
+                return Ok(());
+            }
+
+            if let Some(delta) = detail_task_delta(key) {
+                self.select_detail_task(delta);
+                self.overlay = Some(OverlayState::Detail { scroll: 0 });
+                return Ok(());
+            }
+
+            let overlay = OverlayState::Detail { scroll };
+            let task = self.store.selected_task(self.widgets.table.selected());
+            let outcome = handle_detail_overlay_key(
+                key,
+                overlay,
+                terminal_size.width,
+                terminal_size.height,
+                task,
+            );
+            match outcome {
+                OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
+                OverlayOutcome::Cancelled => self.cancel_authoring_overlay(),
+                OverlayOutcome::Submitted(submit) => self.handle_overlay_submit(submit).await?,
+            }
+            return Ok(());
+        }
+
+        if self.pending_shortcut.take_editor_open_request(key) {
+            match &overlay {
+                OverlayState::MultilineInput(state)
+                    if state.route == OverlayRoute::EditDescription =>
+                {
+                    self.open_description_external_editor(state.clone());
+                }
+                OverlayState::AddTask(state) if state.focus == AddTaskStep::Description => {
+                    if self.capture_add_task_state(state) {
+                        self.open_add_task_description_editor();
+                    }
+                }
+                _ => self.overlay = Some(overlay),
+            }
+            return Ok(());
+        }
+
+        if is_editor_prefix_key(key)
+            && matches!(
+                &overlay,
+                OverlayState::MultilineInput(state)
+                    if state.route == OverlayRoute::EditDescription
+            )
+        {
+            self.pending_shortcut.begin_editor_prefix();
+            self.overlay = Some(overlay);
+            return Ok(());
+        }
+
+        if let OverlayState::AddTask(state) = &overlay {
+            if is_editor_prefix_key(key) {
+                if state.focus == AddTaskStep::Description {
+                    self.pending_shortcut.begin_editor_prefix();
+                }
+                self.overlay = Some(overlay);
+                return Ok(());
+            }
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
+                if self.capture_add_task_state(state) {
+                    self.begin_add_task_title_project();
+                }
+                return Ok(());
+            }
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
+                if self.capture_add_task_state(state) {
+                    self.begin_add_task_title_priority();
+                }
+                return Ok(());
+            }
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('n') {
+                if self.capture_add_task_state(state) {
+                    self.begin_add_task_natural();
+                }
+                return Ok(());
+            }
+        }
+
+        let scroll_cap = match overlay {
+            OverlayState::DetailHelp { .. } => detail_help_scroll_cap(terminal_size.height),
+            _ => help_scroll_cap(terminal_size.height),
+        };
+        let was_detail_help = matches!(overlay, OverlayState::DetailHelp { .. });
+        let was_add_task_description_editor = matches!(
+            &overlay,
+            OverlayState::MultilineInput(state) if state.route == OverlayRoute::AddTaskDescription
+        );
+        let outcome = crate::tui::overlay::handle_generic_overlay_key(key, overlay, scroll_cap);
+        match outcome {
+            OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
+            OverlayOutcome::Cancelled if was_detail_help => {
+                self.overlay = Some(OverlayState::Detail { scroll: 0 })
+            }
+            OverlayOutcome::Cancelled if was_add_task_description_editor => {
+                self.begin_add_task_step()
+            }
+            OverlayOutcome::Cancelled if self.add_task_only => self.should_quit = true,
+            OverlayOutcome::Cancelled => self.cancel_authoring_overlay(),
+            OverlayOutcome::Submitted(submit) => self.handle_overlay_submit(submit).await?,
+        }
+        Ok(())
+    }
+
+    async fn handle_detail_shortcut(
+        &mut self,
+        key: KeyEvent,
+        scroll: u16,
+    ) -> Result<Option<Option<OverlayState>>> {
+        if !key.modifiers.is_empty() {
+            return Ok(None);
+        }
+
+        match self.pending_shortcut.resolve_detail(key) {
+            DetailShortcutResolution::Action(action) => {
+                self.detail_context = true;
+                self.execute(action).await?;
+                if self.detail_context && self.overlay.is_none() {
+                    self.restore_detail_overlay_at_scroll(true, scroll);
+                }
+                Ok(Some(self.overlay.take()))
+            }
+            DetailShortcutResolution::Prefix => Ok(Some(Some(OverlayState::Detail { scroll }))),
+            DetailShortcutResolution::MissingAfterPrefix(label) => {
+                self.set_warning(format!("invalid shortcut: {label}"));
+                Ok(Some(Some(OverlayState::Detail { scroll })))
+            }
+            DetailShortcutResolution::PassThrough => Ok(None),
+        }
+    }
+
+    async fn handle(&mut self, action: Action) -> Result<()> {
+        self.execute(action).await
+    }
+
+    pub(super) async fn execute(&mut self, action: Action) -> Result<()> {
+        match action {
+            Action::Quit => self.should_quit = true,
+            Action::CancelOverlay => self.cancel_overlay(),
+            Action::MoveDown => self.move_selection(1).await?,
+            Action::MoveUp => self.move_selection(-1).await?,
+            Action::MoveLeft => self.move_left(),
+            Action::MoveRight => self.move_right(),
+            Action::PreviousItem => self.previous_item(),
+            Action::NextItem => self.next_item(),
+            Action::First => self.select_edge(false).await?,
+            Action::Last => self.select_edge(true).await?,
+            Action::ToggleFocus => self.toggle_focus(),
+            Action::ToggleDetail => self.activate_or_toggle_detail().await?,
+            Action::ToggleHelp => self.toggle_help_at_height(24),
+            Action::BeginSearch => self.begin_search(),
+            Action::BeginCommand => self.begin_command(),
+            Action::Refresh => self.refresh().await?,
+            Action::CycleSort => {
+                self.store.cycle_sort();
+                self.refresh().await?;
+                self.set_info(format!(
+                    "order {} {}",
+                    self.store.sort_label(),
+                    self.store.sort_direction_label()
+                ));
+            }
+            Action::SetSort(sort) => self.set_sort(sort).await?,
+            Action::ReverseSort => self.reverse_sort().await?,
+            Action::SetStatus(status) => self.update_status(status).await?,
+            Action::SetPriority(priority) => self.set_exact_priority(priority).await?,
+            Action::CyclePriority(reverse) => self.update_priority(reverse).await?,
+            Action::CopyShortRef => self.copy_selected_ref(TaskRefKind::Short),
+            Action::CopyDurableRef => self.copy_selected_ref(TaskRefKind::Durable),
+            Action::BeginEditTitle => self.begin_edit_title(),
+            Action::BeginEditDescription => self.begin_edit_description(),
+            Action::BeginEditProject => self.begin_edit_project(),
+            Action::BeginEditPriority => self.begin_edit_priority(),
+            Action::BeginEditLabels => self.begin_edit_labels(),
+            Action::Delete => self.begin_delete_task(),
+            Action::Restore => self.update_deleted(false).await?,
+            Action::BeginStatusPicker => self.begin_status_picker(),
+            Action::BeginDeleteProject => self.begin_delete_project(),
+            Action::BeginAddProject => self.begin_add_project(),
+            Action::BeginAddLabel => self.begin_add_label(),
+            Action::BeginAddTask => self.begin_add_task().await?,
+            Action::BeginAddNote => self.begin_add_note(),
+            Action::BeginFilterProject => self.begin_filter_project(),
+            Action::BeginFilterLabel => self.begin_filter_label(),
+            Action::BeginFilterStatus => self.begin_filter_status(),
+            Action::BeginFilterPriority => self.begin_filter_priority(),
+            Action::BeginSwitchWorkspace => self.begin_switch_workspace().await?,
+            Action::ClearFilters => self.clear_filters().await?,
+            Action::ToggleDeletedFilter => self.toggle_deleted_filter().await?,
+            Action::ShowView(target) => self.show_view(target).await?,
+            Action::BeginConflictList => self.open_conflict_list().await?,
+            Action::ShowConflictDetails => self.show_conflict_details().await?,
+            Action::NextConflict => self.move_to_conflict(1),
+            Action::PreviousConflict => self.move_to_conflict(-1),
+            Action::AcceptConflictLocal => {
+                self.begin_conflict_resolution(ConflictResolutionChoice::Local)
+                    .await?
+            }
+            Action::AcceptConflictRemote => {
+                self.begin_conflict_resolution(ConflictResolutionChoice::Remote)
+                    .await?
+            }
+            Action::BeginManualConflictMerge => self.begin_manual_conflict_merge().await?,
+            Action::ShowConfigStatus => self.show_config_status()?,
+            Action::ShowConfigInfo => self.show_config_info()?,
+            Action::ShowConfigPaths => self.show_config_paths()?,
+            Action::BeginConfigInit => self.begin_config_init()?,
+            Action::Undo => self.undo_last().await?,
+            Action::Planned { name, reason } => {
+                self.set_warning(format!(":{name} is not yet implemented: {reason}"));
+            }
+            Action::Disabled { name, reason } => {
+                self.set_warning(format!(":{name} is disabled: {reason}"));
+            }
+            Action::AcceptCommand
+            | Action::CancelCommand
+            | Action::BackspaceCommand
+            | Action::CommandChar(_)
+            | Action::AcceptSearch
+            | Action::CancelSearch
+            | Action::BackspaceSearch
+            | Action::SearchChar(_)
+            | Action::None => {}
+        }
+        Ok(())
+    }
+
+    fn accept_command_input(&mut self, input: &str) -> Option<Action> {
+        match lookup_command(input) {
+            CommandLookup::Found(action) => {
+                self.pending_shortcut.clear();
+                Some(action)
+            }
+            CommandLookup::Empty => {
+                self.set_info("empty command");
+                None
+            }
+            CommandLookup::Ambiguous => {
+                self.set_warning(format!("ambiguous command: {}", input.trim()));
+                None
+            }
+            CommandLookup::Missing => {
+                self.set_warning(format!("unknown command: {}", input.trim()));
+                None
+            }
+        }
+    }
+
+    pub(super) fn toggle_help_at_height(&mut self, _terminal_height: u16) {
+        match self.overlay {
+            Some(OverlayState::Help { .. }) => self.overlay = None,
+            Some(OverlayState::DetailHelp { .. }) => {
+                self.overlay = Some(OverlayState::Detail { scroll: 0 })
+            }
+            Some(OverlayState::Detail { .. }) => {
+                self.overlay = Some(OverlayState::DetailHelp { scroll: 0 })
+            }
+            _ => self.overlay = Some(OverlayState::Help { scroll: 0 }),
+        }
+    }
+}
