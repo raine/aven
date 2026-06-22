@@ -5,13 +5,16 @@ mod lookup;
 pub(crate) use self::action::{Action, ViewTarget};
 #[allow(unused_imports)]
 pub(crate) use self::catalog::{
-    COMMAND_DOMAINS, COMMANDS, CommandDomain, CommandLifecycle, CommandSpec, KeySequence,
+    COMMAND_DOMAINS, COMMANDS, CommandContext, CommandDomain, CommandLifecycle, CommandSpec,
+    DETAIL_COMMANDS, KeySequence,
 };
 #[cfg(test)]
 pub(crate) use self::catalog::{DUE_SORT_REASON, PROJECT_PATH_FLOW_REASON};
+#[allow(unused_imports)]
 pub(crate) use self::lookup::{
-    CommandLookup, ShortcutLookup, key_label, lookup_command, matching_commands, resolve_shortcut,
-    resolve_shortcut_in, shortcut_label,
+    CommandLookup, ShortcutLookup, key_label, lookup_command, matching_commands,
+    prefix_hint_commands, resolve_shortcut, resolve_shortcut_for, resolve_shortcut_in,
+    shortcut_label,
 };
 
 #[cfg(test)]
@@ -382,21 +385,53 @@ mod tests {
     }
 
     #[test]
-    fn catalog_rejects_duplicate_exact_shortcuts() {
-        let mut seen: Vec<(&[KeyCode], &str, &str)> = Vec::new();
-        for command in COMMANDS {
-            for key in command.keys {
-                if let Some((_, other_command, other_label)) =
-                    seen.iter().find(|(codes, _, _)| *codes == key.codes)
-                {
-                    panic!(
-                        "duplicate shortcut {} for :{} conflicts with {} for :{}",
-                        key.label, command.name, other_label, other_command
-                    );
+    fn implemented_detail_actions_are_handled() {
+        for command in CommandContext::Detail.commands() {
+            assert!(
+                implemented_action_is_handled(command.action),
+                "implemented detail command :{} is not handled",
+                command.name
+            );
+        }
+    }
+
+    #[test]
+    fn command_contexts_reject_duplicate_exact_shortcuts() {
+        for context in [CommandContext::Normal, CommandContext::Detail] {
+            let mut seen: Vec<(&[KeyCode], &str, &str)> = Vec::new();
+            for command in context.commands() {
+                for key in command.keys {
+                    if let Some((_, other_command, other_label)) =
+                        seen.iter().find(|(codes, _, _)| *codes == key.codes)
+                    {
+                        panic!(
+                            "duplicate shortcut {} for :{} conflicts with {} for :{}",
+                            key.label, command.name, other_label, other_command
+                        );
+                    }
+                    seen.push((key.codes, command.name, key.label));
                 }
-                seen.push((key.codes, command.name, key.label));
             }
         }
+    }
+
+    #[test]
+    fn detail_context_resolves_detail_shortcuts() {
+        assert_eq!(
+            resolve_shortcut_for(CommandContext::Detail, &[KeyCode::Char('e')]),
+            ShortcutLookup::Prefix
+        );
+        assert_eq!(
+            resolve_shortcut_for(
+                CommandContext::Detail,
+                &[KeyCode::Char('e'), KeyCode::Char('t')]
+            ),
+            ShortcutLookup::Found(Action::BeginEditTitle)
+        );
+        assert_eq!(
+            resolve_shortcut_for(CommandContext::Detail, &[KeyCode::Char('l')]),
+            ShortcutLookup::Found(Action::BeginEditLabels)
+        );
     }
 
     #[test]

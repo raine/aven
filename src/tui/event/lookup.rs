@@ -1,6 +1,6 @@
 use crossterm::event::KeyCode;
 
-use super::{Action, COMMANDS, CommandSpec};
+use super::{Action, COMMANDS, CommandContext, CommandSpec, KeySequence};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandLookup {
@@ -45,7 +45,11 @@ pub(crate) fn shortcut_label(codes: &[KeyCode]) -> String {
 }
 
 pub(crate) fn resolve_shortcut(input: &[KeyCode]) -> ShortcutLookup {
-    resolve_shortcut_in(COMMANDS, input)
+    resolve_shortcut_for(CommandContext::Normal, input)
+}
+
+pub(crate) fn resolve_shortcut_for(context: CommandContext, input: &[KeyCode]) -> ShortcutLookup {
+    resolve_shortcut_in(context.commands(), input)
 }
 
 pub(crate) fn resolve_shortcut_in(commands: &[CommandSpec], input: &[KeyCode]) -> ShortcutLookup {
@@ -83,6 +87,37 @@ pub(crate) fn matching_commands(input: &str) -> Vec<&'static CommandSpec> {
     COMMANDS
         .iter()
         .filter(|command| command.name == input || command.name.starts_with(input))
+        .collect()
+}
+
+pub(crate) fn prefix_hint_commands(
+    context: CommandContext,
+    pending: &[String],
+) -> Vec<(&'static CommandSpec, &'static KeySequence, String)> {
+    context
+        .commands()
+        .iter()
+        .flat_map(|command| {
+            command.keys.iter().filter_map(move |key| {
+                if key.codes.len() <= pending.len() {
+                    return None;
+                }
+                let labels = key
+                    .codes
+                    .iter()
+                    .map(|code| key_label(*code))
+                    .collect::<Vec<_>>();
+                if labels.len() <= pending.len()
+                    || !labels
+                        .iter()
+                        .zip(pending.iter())
+                        .all(|(actual, expected)| actual == expected)
+                {
+                    return None;
+                }
+                Some((command, key, labels[pending.len()].clone()))
+            })
+        })
         .collect()
 }
 

@@ -1295,7 +1295,7 @@ async fn detail_prefix_hints_render_above_detail_overlay() {
         .collect::<String>();
 
     assert!(rendered.contains("e …"));
-    assert!(rendered.contains(":edit-title"));
+    assert!(rendered.contains(":detail-edit-title"));
 }
 
 #[tokio::test]

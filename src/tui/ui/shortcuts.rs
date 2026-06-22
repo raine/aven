@@ -7,26 +7,10 @@ use ratatui::widgets::Paragraph;
 use super::ViewState;
 use super::dialog::Dialog;
 use super::input::input_line;
-use crate::tui::event::{COMMANDS, CommandLifecycle, CommandSpec, key_label, matching_commands};
+use crate::tui::event::{
+    CommandContext, CommandLifecycle, CommandSpec, matching_commands, prefix_hint_commands,
+};
 use crate::tui::theme::{ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, ORANGE};
-
-const HELP_SECTIONS: &[&str] = &[
-    "General",
-    "Navigation",
-    "Tasks",
-    "Status",
-    "Priority",
-    "Views",
-    "Add/Create",
-    "Metadata",
-    "Edit",
-    "Filters",
-    "Order",
-    "Conflict",
-    "Config",
-];
-
-const DETAIL_HELP_SECTIONS: &[&str] = &["General", "Task detail", "Edit", "Status", "Priority"];
 
 struct HelpTopic {
     keys: &'static str,
@@ -36,7 +20,7 @@ struct HelpTopic {
 
 const DETAIL_HELP_TOPICS: &[HelpTopic] = &[
     HelpTopic {
-        keys: "Esc/Enter",
+        keys: "Esc/Enter/q",
         description: "return to the task list",
         section: "General",
     },
@@ -46,69 +30,19 @@ const DETAIL_HELP_TOPICS: &[HelpTopic] = &[
         section: "General",
     },
     HelpTopic {
-        keys: "j/k Up/Down",
-        description: "scroll one line",
+        keys: "C-d C-u",
+        description: "scroll one page",
         section: "Task detail",
     },
     HelpTopic {
-        keys: "C-d C-u",
-        description: "scroll one page",
+        keys: "j/k Up/Down",
+        description: "scroll one line",
         section: "Task detail",
     },
     HelpTopic {
         keys: "[/]",
         description: "select previous or next task",
         section: "Task detail",
-    },
-    HelpTopic {
-        keys: "n",
-        description: "add a note to this task",
-        section: "Task detail",
-    },
-    HelpTopic {
-        keys: "y/Y",
-        description: "copy display ref or task id",
-        section: "Task detail",
-    },
-    HelpTopic {
-        keys: "D",
-        description: "confirm deleting this task",
-        section: "Task detail",
-    },
-    HelpTopic {
-        keys: "e t/d/p/l/r",
-        description: "edit title, description, project, labels, priority",
-        section: "Edit",
-    },
-    HelpTopic {
-        keys: "l",
-        description: "edit labels",
-        section: "Edit",
-    },
-    HelpTopic {
-        keys: "s",
-        description: "open status picker",
-        section: "Status",
-    },
-    HelpTopic {
-        keys: "d/x",
-        description: "set status to done or canceled",
-        section: "Status",
-    },
-    HelpTopic {
-        keys: "m i/b/t/a",
-        description: "set inbox, backlog, todo, active",
-        section: "Status",
-    },
-    HelpTopic {
-        keys: "p",
-        description: "open priority picker",
-        section: "Priority",
-    },
-    HelpTopic {
-        keys: "m 0/l/m/h/u",
-        description: "set none, low, medium, high, urgent",
-        section: "Priority",
     },
 ];
 
@@ -136,8 +70,9 @@ pub(super) fn render_help(frame: &mut Frame, scroll: u16) {
 }
 
 fn help_columns() -> [Vec<&'static str>; 2] {
-    let section_count = HELP_SECTIONS.len();
-    let section_rows = HELP_SECTIONS
+    let section_count = CommandContext::Normal.sections().len();
+    let section_rows = CommandContext::Normal
+        .sections()
         .iter()
         .map(|section| help_section_len(section))
         .collect::<Vec<_>>();
@@ -176,7 +111,7 @@ fn help_columns() -> [Vec<&'static str>; 2] {
 
     let mut left = Vec::new();
     let mut right = Vec::new();
-    for (index, section) in HELP_SECTIONS.iter().enumerate() {
+    for (index, section) in CommandContext::Normal.sections().iter().enumerate() {
         if best_mask & (1usize << index) != 0 {
             left.push(*section);
         } else {
@@ -188,7 +123,8 @@ fn help_columns() -> [Vec<&'static str>; 2] {
 }
 
 fn help_section_len(section: &str) -> usize {
-    COMMANDS
+    CommandContext::Normal
+        .commands()
         .iter()
         .filter(|command| command.section == section)
         .count()
@@ -229,12 +165,17 @@ pub(super) fn render_detail_help(frame: &mut Frame, scroll: u16) {
 
 fn detail_help_lines() -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    for section in DETAIL_HELP_SECTIONS {
-        let mut section_lines = DETAIL_HELP_TOPICS
+    for section in CommandContext::Detail.sections() {
+        let fixed = DETAIL_HELP_TOPICS
             .iter()
             .filter(|topic| topic.section == *section)
-            .peekable();
-        if section_lines.peek().is_none() {
+            .collect::<Vec<_>>();
+        let commands = CommandContext::Detail
+            .commands()
+            .iter()
+            .filter(|command| command.section == *section)
+            .collect::<Vec<_>>();
+        if fixed.is_empty() && commands.is_empty() {
             continue;
         }
         if !lines.is_empty() {
@@ -244,7 +185,8 @@ fn detail_help_lines() -> Vec<Line<'static>> {
             *section,
             Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
         )));
-        lines.extend(section_lines.map(detail_help_line));
+        lines.extend(fixed.into_iter().map(detail_help_line));
+        lines.extend(commands.into_iter().map(help_command_line));
     }
     lines
 }
@@ -292,7 +234,8 @@ fn help_column_lines(sections: &[&'static str]) -> Vec<Line<'static>> {
             *section,
             Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
         )));
-        for command in COMMANDS
+        for command in CommandContext::Normal
+            .commands()
             .iter()
             .filter(|command| command.section == *section)
         {
@@ -398,38 +341,28 @@ pub(super) fn render_command(frame: &mut Frame, input: &str, cursor: usize) {
     Dialog::new("Command", 72, height).render_text(frame, Text::from(lines));
 }
 
-fn prefix_hint_lines(pending: &[String]) -> Vec<Line<'static>> {
-    COMMANDS
-        .iter()
-        .flat_map(|command| {
-            command.keys.iter().filter_map(move |key| {
-                if key.codes.len() <= pending.len() {
-                    return None;
-                }
-                let labels: Vec<String> = key.codes.iter().map(|code| key_label(*code)).collect();
-                if labels.len() <= pending.len()
-                    || !labels
-                        .iter()
-                        .zip(pending.iter())
-                        .all(|(actual, expected)| actual == expected)
-                {
-                    return None;
-                }
-                let next_key = labels[pending.len()].clone();
-                Some(command_hint_line(
-                    Span::styled(
-                        format!(" {:<6} ", next_key),
-                        Style::new().fg(FG_MUTED).bg(BG_PANEL),
-                    ),
-                    command,
-                ))
-            })
+fn prefix_hint_lines(context: CommandContext, pending: &[String]) -> Vec<Line<'static>> {
+    prefix_hint_commands(context, pending)
+        .into_iter()
+        .map(|(command, _, next_key)| {
+            command_hint_line(
+                Span::styled(
+                    format!(" {:<6} ", next_key),
+                    Style::new().fg(FG_MUTED).bg(BG_PANEL),
+                ),
+                command,
+            )
         })
         .collect()
 }
 
 pub(super) fn render_prefix_hints(frame: &mut Frame, view: &ViewState) {
-    let lines = prefix_hint_lines(&view.pending_shortcut);
+    let context = if view.detail_underlay {
+        CommandContext::Detail
+    } else {
+        CommandContext::Normal
+    };
+    let lines = prefix_hint_lines(context, &view.pending_shortcut);
     if lines.is_empty() {
         return;
     }
@@ -444,7 +377,7 @@ pub(super) fn render_prefix_hints(frame: &mut Frame, view: &ViewState) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::event::{COMMANDS, CommandLifecycle, key_label};
+    use crate::tui::event::{COMMANDS, CommandContext, CommandLifecycle, key_label};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -484,7 +417,7 @@ mod tests {
 
     #[test]
     fn prefix_hint_lines_use_shared_catalog() {
-        let lines = prefix_hint_lines(&["m".to_string()]);
+        let lines = prefix_hint_lines(CommandContext::Normal, &["m".to_string()]);
         let rendered = lines
             .iter()
             .map(|line| line.to_string())
@@ -492,6 +425,18 @@ mod tests {
             .join("\n");
         assert!(rendered.contains(":status-active"));
         assert!(rendered.contains(" a "));
+    }
+
+    #[test]
+    fn detail_prefix_hint_lines_use_detail_catalog() {
+        let lines = prefix_hint_lines(CommandContext::Detail, &["e".to_string()]);
+        let rendered = lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains(":detail-edit-title"));
+        assert!(rendered.contains(" t "));
     }
 
     #[test]
@@ -517,7 +462,7 @@ mod tests {
 
     #[test]
     fn prefix_hint_lines_mark_planned_actions() {
-        let rendered = prefix_hint_lines(&["A".to_string()])
+        let rendered = prefix_hint_lines(CommandContext::Normal, &["A".to_string()])
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -528,7 +473,7 @@ mod tests {
 
     #[test]
     fn prefix_hint_lines_show_config_shortcuts_without_planned_badge() {
-        let rendered = prefix_hint_lines(&["C".to_string()])
+        let rendered = prefix_hint_lines(CommandContext::Normal, &["C".to_string()])
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -551,7 +496,7 @@ mod tests {
 
     #[test]
     fn prefix_hint_lines_mark_disabled_actions() {
-        let rendered = prefix_hint_lines(&["o".to_string()])
+        let rendered = prefix_hint_lines(CommandContext::Normal, &["o".to_string()])
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -580,22 +525,36 @@ mod tests {
         assert!(rendered.contains("return to the task list"));
         assert!(rendered.contains("scroll one page"));
         assert!(rendered.contains("select previous or next task"));
-        assert!(rendered.contains("add a note to this task"));
+        assert!(rendered.contains("add a note to selected task"));
         assert!(!rendered.contains("view updated"));
     }
 
     #[test]
-    fn detail_help_compacts_repeated_prefixes() {
+    fn detail_help_includes_fixed_overlay_rows_and_catalog_commands() {
         let rendered = detail_help_lines()
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(rendered.contains("e t/d/p/l/r"));
-        assert!(rendered.contains("m i/b/t/a"));
-        assert!(rendered.contains("m 0/l/m/h/u"));
-        assert!(!rendered.contains("m 0/m l/m m/m h/m u"));
+        assert!(rendered.contains("return to the task list"));
+        assert!(rendered.contains("scroll one page"));
+        assert!(rendered.contains("select previous or next task"));
+
+        for command in CommandContext::Detail.commands() {
+            let keys = command
+                .keys
+                .iter()
+                .map(|key| key.label)
+                .collect::<Vec<_>>()
+                .join("/");
+            assert!(
+                rendered.contains(command.description),
+                ":{} missing",
+                command.name
+            );
+            assert!(rendered.contains(&keys), ":{} keys missing", command.name);
+        }
     }
 
     #[test]
@@ -665,11 +624,10 @@ mod tests {
         assert!(tail_right < 3);
     }
 
-    #[test]
-    fn prefix_hint_lines_include_every_catalog_continuation() {
+    fn assert_prefix_hints_cover_context(context: CommandContext) {
         let mut prefixes: Vec<Vec<String>> = Vec::new();
 
-        for command in COMMANDS {
+        for command in context.commands() {
             for key in command.keys {
                 for len in 1..key.codes.len() {
                     let prefix = key.codes[..len]
@@ -684,13 +642,13 @@ mod tests {
         }
 
         for prefix in prefixes {
-            let rendered = prefix_hint_lines(&prefix)
+            let rendered = prefix_hint_lines(context, &prefix)
                 .iter()
                 .map(|line| line.to_string())
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            for command in COMMANDS {
+            for command in context.commands() {
                 for key in command.keys {
                     let labels = key
                         .codes
@@ -714,5 +672,11 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn prefix_hint_lines_include_every_catalog_continuation() {
+        assert_prefix_hints_cover_context(CommandContext::Normal);
+        assert_prefix_hints_cover_context(CommandContext::Detail);
     }
 }

@@ -83,6 +83,47 @@ impl CommandSpec {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandContext {
+    Normal,
+    Detail,
+}
+
+impl CommandContext {
+    pub(crate) const fn commands(self) -> &'static [CommandSpec] {
+        match self {
+            Self::Normal => COMMANDS,
+            Self::Detail => DETAIL_COMMANDS,
+        }
+    }
+
+    pub(crate) const fn sections(self) -> &'static [&'static str] {
+        match self {
+            Self::Normal => NORMAL_HELP_SECTIONS,
+            Self::Detail => DETAIL_HELP_SECTIONS,
+        }
+    }
+}
+
+pub(crate) const NORMAL_HELP_SECTIONS: &[&str] = &[
+    "General",
+    "Navigation",
+    "Tasks",
+    "Status",
+    "Priority",
+    "Views",
+    "Add/Create",
+    "Metadata",
+    "Edit",
+    "Filters",
+    "Order",
+    "Conflict",
+    "Config",
+];
+
+pub(crate) const DETAIL_HELP_SECTIONS: &[&str] =
+    &["General", "Task detail", "Edit", "Status", "Priority"];
+
 pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "quit",
@@ -959,6 +1000,141 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             label: "C i",
         }],
         Action::BeginConfigInit,
+    ),
+];
+
+pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
+    CommandSpec::implemented(
+        "detail-edit-title",
+        "edit selected task title",
+        "Edit",
+        &[KeySequence {
+            codes: &[KeyCode::Char('e'), KeyCode::Char('t')],
+            label: "e t",
+        }],
+        Action::BeginEditTitle,
+    ),
+    CommandSpec::implemented(
+        "detail-edit-description",
+        "edit selected task description",
+        "Edit",
+        &[KeySequence {
+            codes: &[KeyCode::Char('e'), KeyCode::Char('d')],
+            label: "e d",
+        }],
+        Action::BeginEditDescription,
+    ),
+    CommandSpec::implemented(
+        "detail-edit-project",
+        "edit selected task project",
+        "Edit",
+        &[KeySequence {
+            codes: &[KeyCode::Char('e'), KeyCode::Char('p')],
+            label: "e p",
+        }],
+        Action::BeginEditProject,
+    ),
+    CommandSpec::implemented(
+        "detail-edit-labels",
+        "edit selected task labels",
+        "Edit",
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('l')],
+                label: "l",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('l')],
+                label: "e l",
+            },
+        ],
+        Action::BeginEditLabels,
+    ),
+    CommandSpec::implemented(
+        "detail-add-note",
+        "add a note to selected task",
+        "Task detail",
+        &[KeySequence {
+            codes: &[KeyCode::Char('n')],
+            label: "n",
+        }],
+        Action::BeginAddNote,
+    ),
+    CommandSpec::implemented(
+        "detail-status-picker",
+        "open status picker",
+        "Status",
+        &[KeySequence {
+            codes: &[KeyCode::Char('s')],
+            label: "s",
+        }],
+        Action::BeginStatusPicker,
+    ),
+    CommandSpec::implemented(
+        "detail-status-done",
+        "set status to done",
+        "Status",
+        &[KeySequence {
+            codes: &[KeyCode::Char('d')],
+            label: "d",
+        }],
+        Action::SetStatus("done"),
+    ),
+    CommandSpec::implemented(
+        "detail-edit-priority",
+        "edit selected task priority",
+        "Priority",
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('p')],
+                label: "p",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('r')],
+                label: "e r",
+            },
+        ],
+        Action::BeginEditPriority,
+    ),
+    CommandSpec::implemented(
+        "detail-delete",
+        "confirm deleting selected task",
+        "Task detail",
+        &[KeySequence {
+            codes: &[KeyCode::Char('D')],
+            label: "D",
+        }],
+        Action::Delete,
+    ),
+    CommandSpec::implemented(
+        "detail-copy-ref",
+        "copy selected task display ref",
+        "Task detail",
+        &[KeySequence {
+            codes: &[KeyCode::Char('y')],
+            label: "y",
+        }],
+        Action::CopyShortRef,
+    ),
+    CommandSpec::implemented(
+        "detail-copy-id",
+        "copy selected task id",
+        "Task detail",
+        &[KeySequence {
+            codes: &[KeyCode::Char('Y')],
+            label: "Y",
+        }],
+        Action::CopyDurableRef,
+    ),
+    CommandSpec::implemented(
+        "detail-undo",
+        "undo last TUI mutation",
+        "General",
+        &[KeySequence {
+            codes: &[KeyCode::Char('u')],
+            label: "u",
+        }],
+        Action::Undo,
     ),
 ];
 
