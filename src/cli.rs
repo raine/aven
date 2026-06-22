@@ -46,7 +46,13 @@ pub(crate) enum Commands {
     Workspace(WorkspaceCommand),
     Skill,
     Doctor,
-    Tui,
+    Tui(TuiArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct TuiArgs {
+    #[arg(long)]
+    pub(crate) all: bool,
 }
 
 #[derive(Args)]

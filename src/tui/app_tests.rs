@@ -19,7 +19,7 @@ async fn test_app() -> App {
         .await
         .unwrap();
     reset_default_workspace(&pool).await;
-    App::new(pool).await.unwrap()
+    App::new_for_tests(pool).await.unwrap()
 }
 
 fn test_task_draft(title: &str) -> TaskDraft {
@@ -45,7 +45,7 @@ async fn test_app_with_pool() -> (tempfile::TempDir, SqlitePool, App) {
         .await
         .unwrap();
     reset_default_workspace(&pool).await;
-    let app = App::new(pool.clone()).await.unwrap();
+    let app = App::new_for_tests(pool.clone()).await.unwrap();
     (dir, pool, app)
 }
 

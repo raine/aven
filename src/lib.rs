@@ -50,7 +50,7 @@ pub async fn run_cli() -> Result<()> {
     let log_mode = match &cli.command {
         Commands::Server(_) => logging::LogMode::Server,
         Commands::Daemon(_) => logging::LogMode::Daemon,
-        Commands::Tui => logging::LogMode::Tui,
+        Commands::Tui(_) => logging::LogMode::Tui,
         _ => logging::LogMode::Cli,
     };
     logging::init(log_mode)?;
@@ -86,8 +86,8 @@ pub async fn run_cli() -> Result<()> {
                 set_active_workspace(workspace);
             }
             drop(conn);
-            if matches!(command, Commands::Tui) {
-                return tui::run(pool).await;
+            if let Commands::Tui(args) = &command {
+                return tui::run(pool, args.all).await;
             }
             let mut conn = pool.acquire().await?;
             let should_wake = command_should_wake(&command);
@@ -118,7 +118,7 @@ pub async fn run_cli() -> Result<()> {
                     )
                     .await
                 }
-                Commands::Tui => unreachable!(),
+                Commands::Tui(_) => unreachable!(),
                 Commands::Config(_)
                 | Commands::Daemon(_)
                 | Commands::Server(_)
@@ -158,7 +158,7 @@ fn command_needs_workspace(command: &Commands) -> bool {
             | Commands::Delete(_)
             | Commands::Restore(_)
             | Commands::Conflict(_)
-            | Commands::Tui
+            | Commands::Tui(_)
     )
 }
 

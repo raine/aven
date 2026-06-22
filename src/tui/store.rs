@@ -47,7 +47,6 @@ pub(crate) struct TuiStore {
 }
 
 impl TuiStore {
-    #[cfg(test)]
     pub(crate) async fn new(pool: SqlitePool) -> Result<Self> {
         Self::new_with_initial_project(pool, None).await
     }
