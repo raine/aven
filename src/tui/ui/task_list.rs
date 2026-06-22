@@ -91,18 +91,26 @@ fn queue_rows(tasks: &[TaskListItem]) -> Vec<TaskListRow> {
     let mut rows = Vec::new();
     let mut index = 0;
     while index < tasks.len() {
-        let band = tasks[index].queue.band;
+        let label = queue_group_label(&tasks[index]);
         let start = index;
-        while index < tasks.len() && tasks[index].queue.band == band {
+        while index < tasks.len() && queue_group_label(&tasks[index]) == label {
             index += 1;
         }
         rows.push(TaskListRow::Group(TaskGroupRow {
-            label: band.label(),
+            label,
             count: index - start,
         }));
         rows.extend((start..index).map(|task_index| TaskListRow::Task { task_index }));
     }
     rows
+}
+
+fn queue_group_label(item: &TaskListItem) -> &'static str {
+    match item.task.status.as_str() {
+        "done" => "done",
+        "canceled" => "canceled",
+        _ => item.queue.band.label(),
+    }
 }
 
 pub(super) fn render_tasks(
@@ -615,6 +623,38 @@ mod tests {
                     count: 1,
                 }),
                 TaskListRow::Task { task_index: 3 },
+            ]
+        );
+    }
+
+    #[test]
+    fn queue_view_groups_terminal_statuses_by_status() {
+        let tasks = vec![
+            task_item_with("backlog", "backlog", QueueBand::Later),
+            task_item_with("finished", "done", QueueBand::Later),
+            task_item_with("canceled", "canceled", QueueBand::Later),
+        ];
+
+        let view = TaskListView::from_tasks(TaskSort::Queue, &tasks);
+
+        assert_eq!(
+            view.rows,
+            vec![
+                TaskListRow::Group(TaskGroupRow {
+                    label: "later",
+                    count: 1,
+                }),
+                TaskListRow::Task { task_index: 0 },
+                TaskListRow::Group(TaskGroupRow {
+                    label: "done",
+                    count: 1,
+                }),
+                TaskListRow::Task { task_index: 1 },
+                TaskListRow::Group(TaskGroupRow {
+                    label: "canceled",
+                    count: 1,
+                }),
+                TaskListRow::Task { task_index: 2 },
             ]
         );
     }

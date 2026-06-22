@@ -852,6 +852,52 @@ async fn queue_view_hides_done_tasks() {
 }
 
 #[tokio::test]
+async fn project_view_hides_done_and_canceled_tasks() {
+    let mut store = test_store().await;
+    store
+        .create_project("Mobile App".to_string())
+        .await
+        .unwrap();
+    for (title, status) in [
+        ("Open task", "todo"),
+        ("Finished", "done"),
+        ("Canceled", "canceled"),
+    ] {
+        let (_, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: title.to_string(),
+                    description: String::new(),
+                    project: Some("mobile-app".to_string()),
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+        store.update_status(Some(selected), status).await.unwrap();
+    }
+
+    store
+        .show_view(SidebarTarget::Project("mobile-app".to_string()))
+        .await
+        .unwrap();
+
+    assert_eq!(store.filters.project.as_deref(), Some("mobile-app"));
+    assert!(store.filters.hide_done);
+    assert_eq!(
+        store
+            .tasks
+            .iter()
+            .map(|item| item.task.title.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Open task"]
+    );
+}
+
+#[tokio::test]
 async fn done_view_shows_done_tasks() {
     let mut store = test_store().await;
     let (_, selected) = store

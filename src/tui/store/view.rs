@@ -90,7 +90,10 @@ impl TuiStore {
             SidebarTarget::Todo => self.filters.status = Some("todo".to_string()),
             SidebarTarget::Done => self.filters.status = Some("done".to_string()),
             SidebarTarget::Conflicts => self.filters.conflicts_only = true,
-            SidebarTarget::Project(project) => self.filters.project = Some(project.clone()),
+            SidebarTarget::Project(project) => {
+                self.filters.project = Some(project.clone());
+                self.filters.hide_done = true;
+            }
         }
     }
 
