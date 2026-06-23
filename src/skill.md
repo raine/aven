@@ -35,7 +35,6 @@ aven list --status todo
 aven list --all
 aven show APP-7KQ9 --full
 aven add "fix conflict display" --project app --priority high --label bug
-aven add --natural "fix conflict display and assign it to app"
 aven update APP-7KQ9 --status active
 aven update APP-7KQ9 --title "clearer title" --priority medium
 aven note APP-7KQ9 "durable handoff context"
@@ -47,8 +46,6 @@ aven restore APP-7KQ9
   deletion state, or conflicts.
 - After `aven add`, capture and report the printed ref so future agents can use
   it.
-- Use `aven add --natural` for raw intake text that should be turned into a task
-  automatically.
 - Use `list --all` with normal filters to find deleted tasks.
 - Use `bulk-update --dry-run` before broad mutations.
 
