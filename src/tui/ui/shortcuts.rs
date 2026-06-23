@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 use super::ViewState;
 use super::dialog::Dialog;
@@ -64,9 +64,15 @@ pub(super) fn render_help(frame: &mut Frame, scroll: u16) {
     ])
     .areas(content);
     let columns = help_columns();
+    let content_height = columns
+        .iter()
+        .map(|sections| help_column_lines(sections).len())
+        .max()
+        .unwrap_or(0);
     for (column, sections) in [left, right].into_iter().zip(columns.iter()) {
         render_help_column(frame, column, sections, scroll);
     }
+    render_help_scrollbar(frame, content, content_height, scroll);
 }
 
 fn help_columns() -> [Vec<&'static str>; 2] {
@@ -133,15 +139,57 @@ fn help_section_len(section: &str) -> usize {
 
 fn render_help_column(frame: &mut Frame, area: Rect, sections: &[&'static str], scroll: u16) {
     let lines = help_column_lines(sections);
+    let start = help_scroll_start(scroll, lines.len(), area.height as usize);
     let visible = lines
         .into_iter()
-        .skip(scroll as usize)
+        .skip(start)
         .take(area.height as usize)
         .collect::<Vec<_>>();
     frame.render_widget(
         Paragraph::new(Text::from(visible)).style(Style::new().fg(FG).bg(BG_ALT)),
         area,
     );
+}
+
+fn render_scrollable_help_lines(
+    frame: &mut Frame,
+    area: Rect,
+    lines: Vec<Line<'static>>,
+    scroll: u16,
+) {
+    let content_height = lines.len();
+    let visible_rows = area.height as usize;
+    let start = help_scroll_start(scroll, content_height, visible_rows);
+    let visible = lines
+        .into_iter()
+        .skip(start)
+        .take(visible_rows)
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(Text::from(visible)).style(Style::new().fg(FG).bg(BG_ALT)),
+        area,
+    );
+    render_help_scrollbar(frame, area, content_height, scroll);
+}
+
+fn render_help_scrollbar(frame: &mut Frame, area: Rect, content_height: usize, scroll: u16) {
+    let visible_rows = area.height as usize;
+    if content_height > visible_rows {
+        let start = help_scroll_start(scroll, content_height, visible_rows);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .style(Style::new().fg(FG_DIM).bg(BG_ALT))
+                .thumb_style(Style::new().fg(FG_MUTED)),
+            area,
+            &mut ScrollbarState::new(content_height)
+                .position(help_scrollbar_position(
+                    start,
+                    content_height,
+                    visible_rows.max(1),
+                ))
+                .viewport_content_length(visible_rows),
+        );
+    }
 }
 
 pub(super) fn render_detail_help(frame: &mut Frame, scroll: u16) {
@@ -151,16 +199,7 @@ pub(super) fn render_detail_help(frame: &mut Frame, scroll: u16) {
         dialog = dialog.right_title(Line::from(Span::styled(title, Style::new().fg(FG_MUTED))));
     }
     let content = dialog.render_block(frame);
-    let lines = detail_help_lines();
-    let visible = lines
-        .into_iter()
-        .skip(scroll as usize)
-        .take(content.height as usize)
-        .collect::<Vec<_>>();
-    frame.render_widget(
-        Paragraph::new(Text::from(visible)).style(Style::new().fg(FG).bg(BG_ALT)),
-        content,
-    );
+    render_scrollable_help_lines(frame, content, detail_help_lines(), scroll);
 }
 
 fn detail_help_lines() -> Vec<Line<'static>> {
@@ -261,6 +300,19 @@ pub(crate) fn help_scroll_cap(frame_height: u16) -> u16 {
 pub(crate) fn detail_help_scroll_cap(frame_height: u16) -> u16 {
     let visible_rows = frame_height.min(18).saturating_sub(2) as usize;
     detail_help_lines().len().saturating_sub(visible_rows) as u16
+}
+
+fn help_scroll_start(scroll: u16, content_height: usize, visible: usize) -> usize {
+    let max_start = content_height.saturating_sub(visible);
+    (scroll as usize).min(max_start)
+}
+
+fn help_scrollbar_position(start: usize, content_height: usize, visible: usize) -> usize {
+    let max_start = content_height.saturating_sub(visible);
+    start
+        .saturating_mul(content_height.saturating_sub(1))
+        .checked_div(max_start)
+        .unwrap_or(0)
 }
 
 fn command_name_style(command: &CommandSpec) -> Style {
@@ -437,6 +489,17 @@ mod tests {
         buffer_text(terminal.backend())
     }
 
+    fn buffer_text_from_rows(buffer: &ratatui::buffer::Buffer) -> String {
+        (0..buffer.area.height)
+            .map(|row| buffer_row(buffer, row))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn count_marker(rendered: &str, marker: &str) -> usize {
+        rendered.matches(marker).count()
+    }
+
     #[test]
     fn prefix_hint_lines_use_shared_catalog() {
         let lines = prefix_hint_lines(CommandContext::Normal, &["m".to_string()]);
@@ -598,6 +661,60 @@ mod tests {
     #[test]
     fn detail_help_scroll_cap_uses_detail_rows() {
         assert!(detail_help_scroll_cap(10) > 0);
+    }
+
+    #[test]
+    fn help_scrollbar_position_reaches_end_at_last_visible_row() {
+        assert_eq!(help_scrollbar_position(0, 20, 5), 0);
+        assert_eq!(help_scrollbar_position(15, 20, 5), 19);
+        assert_eq!(help_scrollbar_position(0, 3, 5), 0);
+    }
+
+    #[test]
+    fn help_scroll_start_stops_at_last_available_row() {
+        assert_eq!(help_scroll_start(50, 20, 5), 15);
+        assert_eq!(help_scroll_start(50, 3, 5), 0);
+    }
+
+    #[test]
+    fn help_overlays_draw_scrollbars_when_content_overflows() {
+        let help = buffer_text_from_rows(&render_help_buffer(0));
+        let detail = buffer_text_from_rows(&render_detail_help_buffer(0));
+
+        for (rendered, title) in [(help, "Shortcuts"), (detail, "Task detail shortcuts")] {
+            assert!(rendered.contains("▲"), "{title} missing scrollbar begin");
+            assert!(rendered.contains("▼"), "{title} missing scrollbar end");
+        }
+    }
+
+    #[test]
+    fn global_help_overlay_draws_one_scrollbar() {
+        let rendered = buffer_text_from_rows(&render_help_buffer(0));
+
+        assert_eq!(count_marker(&rendered, "▲"), 1);
+        assert_eq!(count_marker(&rendered, "▼"), 1);
+    }
+
+    #[test]
+    fn help_overlay_scrollbar_moves_with_scroll_offset() {
+        let top = render_help_buffer(0);
+        let scrolled = render_help_buffer(1);
+
+        assert_ne!(
+            buffer_text_from_rows(&top),
+            buffer_text_from_rows(&scrolled)
+        );
+    }
+
+    #[test]
+    fn detail_help_overlay_scrollbar_moves_with_scroll_offset() {
+        let top = render_detail_help_buffer(0);
+        let scrolled = render_detail_help_buffer(1);
+
+        assert_ne!(
+            buffer_text_from_rows(&top),
+            buffer_text_from_rows(&scrolled)
+        );
     }
 
     #[test]
