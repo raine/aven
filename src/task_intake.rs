@@ -125,18 +125,13 @@ fn task_intake_prompt(
     context: &TaskIntakeContext,
     input: &str,
 ) -> String {
-    let system_prompt = config
+    let template = config
         .system_prompt
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or(default_task_intake_system_prompt());
-    format!(
-        "{}\n\n{}\n\nRaw intake text:\n{}\n",
-        system_prompt,
-        task_intake_context_prompt(context),
-        input
-    )
+    expand_task_intake_prompt(template, context, input)
 }
 
 fn default_task_intake_system_prompt() -> &'static str {
@@ -147,17 +142,37 @@ Rules:\n\
 - The title is required and should be concise.\n\
 - Use project only when the text clearly names one of the available projects.\n\
 - Use only existing labels.\n\
-- Put durable context in description when helpful."
+- Put durable context in description when helpful.\n\n\
+Use only these priorities: {priorities}.\n\n\
+Inferred project: {inferred_project}\n\n\
+Available projects:\n{projects}\n\n\
+Available labels:\n{labels}\n\n\
+Raw intake text:\n{input}\n"
 }
 
-fn task_intake_context_prompt(context: &TaskIntakeContext) -> String {
-    let projects = context
+fn expand_task_intake_prompt(template: &str, context: &TaskIntakeContext, input: &str) -> String {
+    template
+        .replace("{priorities}", &PRIORITIES.join(", "))
+        .replace(
+            "{inferred_project}",
+            context.inferred_project.as_deref().unwrap_or("none"),
+        )
+        .replace("{projects}", &task_intake_projects_prompt(context))
+        .replace("{labels}", &task_intake_labels_prompt(context))
+        .replace("{input}", input)
+}
+
+fn task_intake_projects_prompt(context: &TaskIntakeContext) -> String {
+    context
         .projects
         .iter()
         .map(|project| format!("- {} ({})", project.key, project.name))
         .collect::<Vec<_>>()
-        .join("\n");
-    let labels = if context.labels.is_empty() {
+        .join("\n")
+}
+
+fn task_intake_labels_prompt(context: &TaskIntakeContext) -> String {
+    if context.labels.is_empty() {
         "(none)".to_string()
     } else {
         context
@@ -166,17 +181,7 @@ fn task_intake_context_prompt(context: &TaskIntakeContext) -> String {
             .map(|label| format!("- {label}"))
             .collect::<Vec<_>>()
             .join("\n")
-    };
-    format!(
-        "Use only these priorities: {}.\n\n\
-Inferred project: {}\n\n\
-Available projects:\n{}\n\n\
-Available labels:\n{}",
-        PRIORITIES.join(", "),
-        context.inferred_project.as_deref().unwrap_or("none"),
-        projects,
-        labels
-    )
+    }
 }
 
 async fn parsed_output_to_draft(
@@ -242,6 +247,56 @@ fn extract_json(output: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_context() -> TaskIntakeContext {
+        TaskIntakeContext {
+            workspace_id: "workspace-1".to_string(),
+            inferred_project: Some("app".to_string()),
+            projects: vec![ProjectListItem {
+                key: "app".to_string(),
+                name: "App".to_string(),
+                prefix: "APP".to_string(),
+                open_count: 0,
+                inbox_count: 0,
+            }],
+            labels: vec!["bug".to_string()],
+        }
+    }
+
+    #[test]
+    fn expands_custom_task_intake_prompt_placeholders() {
+        let prompt = expand_task_intake_prompt(
+            "priorities={priorities}\nproject={inferred_project}\nprojects:\n{projects}\nlabels:\n{labels}\ninput={input}",
+            &test_context(),
+            "fix dispatch",
+        );
+
+        assert_eq!(
+            prompt,
+            "priorities=none, low, medium, high, urgent\nproject=app\nprojects:\n- app (App)\nlabels:\n- bug\ninput=fix dispatch"
+        );
+    }
+
+    #[test]
+    fn omitted_task_intake_placeholders_omit_context() {
+        let prompt =
+            expand_task_intake_prompt("Only parse: {input}", &test_context(), "fix dispatch");
+
+        assert_eq!(prompt, "Only parse: fix dispatch");
+    }
+
+    #[test]
+    fn default_task_intake_prompt_matches_existing_context_shape() {
+        let config = TaskIntakeConfig::default();
+        let prompt = task_intake_prompt(&config, &test_context(), "fix dispatch");
+
+        assert!(prompt.contains("You turn raw task intake text into one Aven task payload."));
+        assert!(prompt.contains("Use only these priorities: none, low, medium, high, urgent."));
+        assert!(prompt.contains("Inferred project: app"));
+        assert!(prompt.contains("Available projects:\n- app (App)"));
+        assert!(prompt.contains("Available labels:\n- bug"));
+        assert!(prompt.contains("Raw intake text:\nfix dispatch"));
+    }
 
     #[test]
     fn extracts_fenced_json() {
