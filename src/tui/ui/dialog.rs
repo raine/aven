@@ -43,10 +43,8 @@ impl<'a> Dialog<'a> {
     pub(super) fn render_block(self, frame: &mut Frame) -> Rect {
         let area = self.area(frame);
         frame.render_widget(Clear, area);
-        let mut block = overlay_block(self.title, area.width);
-        if let Some(title) = self.right_title {
-            block = block.title_top(title.right_aligned());
-        }
+        let block = overlay_block(self.title, area.width)
+            .title_top(right_edge_title(self.right_title).right_aligned());
         let inner = block.inner(area);
         frame.render_widget(block, area);
         inner
@@ -65,12 +63,26 @@ impl<'a> Dialog<'a> {
 
 fn overlay_block(title: &str, width: u16) -> Block<'_> {
     Block::new()
-        .title(truncate_chars(title, width.saturating_sub(2) as usize))
+        .title(edge_title(title, width))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(ACCENT))
         .padding(Padding::horizontal(1))
         .style(Style::new().bg(BG_ALT))
+}
+
+fn edge_title(title: &str, width: u16) -> Line<'_> {
+    let title = truncate_chars(title, width.saturating_sub(3) as usize);
+    Line::from(vec![
+        Span::styled("─", Style::new().fg(ACCENT)),
+        Span::raw(title),
+    ])
+}
+
+fn right_edge_title(title: Option<Line<'_>>) -> Line<'_> {
+    let mut title = title.unwrap_or_default();
+    title.spans.push(Span::styled("─", Style::new().fg(ACCENT)));
+    title
 }
 
 pub(super) fn dialog_hint_line(items: &[(&str, &str)]) -> Line<'static> {
@@ -122,7 +134,7 @@ mod tests {
             .map(|column| terminal.backend().buffer()[(column, 1)].symbol())
             .collect::<String>();
 
-        assert!(rendered.contains("ab…"));
+        assert!(rendered.contains("─a"));
         assert!(!rendered.contains("abcdef"));
     }
 

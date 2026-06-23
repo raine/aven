@@ -397,6 +397,19 @@ mod tests {
         buffer_text(terminal.backend())
     }
 
+    fn buffer_row(buffer: &ratatui::buffer::Buffer, row: u16) -> String {
+        (0..buffer.area.width)
+            .map(|column| buffer[(column, row)].symbol())
+            .collect()
+    }
+
+    fn render_help_buffer(scroll: u16) -> ratatui::buffer::Buffer {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render_help(frame, scroll)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
     fn render_detail_help_overlay(scroll: u16) -> String {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -516,6 +529,18 @@ mod tests {
     fn overlay_render_includes_help_title() {
         let rendered = render_help_overlay(0);
         assert!(rendered.contains("Shortcuts"));
+    }
+
+    #[test]
+    fn help_overlay_renders_title_edge_lines() {
+        let buffer = render_help_buffer(0);
+        let title_row = (0..buffer.area.height)
+            .map(|row| buffer_row(&buffer, row))
+            .find(|row| row.contains("Shortcuts"))
+            .unwrap();
+
+        assert!(title_row.contains("╭─Shortcuts"), "{title_row}");
+        assert!(title_row.contains("─╮"), "{title_row}");
     }
 
     #[test]
