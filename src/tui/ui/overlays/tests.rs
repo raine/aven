@@ -177,8 +177,8 @@ mod add_task_overlay {
         assert!(rendered.contains("ship dialogs"));
         assert!(rendered.contains("Optional details, links, or handoff context..."));
         assert!(rendered.contains("Tab description"));
-        assert!(rendered.contains("Ctrl+P project"));
-        assert!(rendered.contains("Ctrl+R priority"));
+        assert!(rendered.contains("^P project"));
+        assert!(rendered.contains("^R priority"));
     }
 
     #[test]
@@ -197,7 +197,7 @@ mod add_task_overlay {
             priority_prefix_active: false,
         }));
         let hint_row = (0..buffer.area.height)
-            .find(|row| buffer_row(&buffer, *row).contains("Ctrl+S create"))
+            .find(|row| buffer_row(&buffer, *row).contains("^S create"))
             .unwrap();
         let bottom_border_row = (0..buffer.area.height)
             .rev()
@@ -261,7 +261,7 @@ mod add_task_overlay {
         assert!(rendered.contains("a active"));
         assert!(rendered.contains("Esc cancel"));
         assert!(!rendered.contains("Enter create"));
-        assert!(!rendered.contains("Ctrl+P project"));
+        assert!(!rendered.contains("^P project"));
     }
 
     #[test]
@@ -283,7 +283,7 @@ mod add_task_overlay {
         assert!(rendered.contains("h high"));
         assert!(rendered.contains("Esc cancel"));
         assert!(!rendered.contains("Enter create"));
-        assert!(!rendered.contains("Ctrl+P project"));
+        assert!(!rendered.contains("^P project"));
     }
 
     #[test]
@@ -366,10 +366,7 @@ mod add_task_overlay {
     fn hint_lines_style_keys() {
         let add_task_keys =
             styled_key_contents(add_task_hint_line(AddTaskStep::Title, false, false));
-        assert_eq!(
-            add_task_keys,
-            vec!["Enter", "Tab", "Ctrl+T", "Ctrl+P", "Ctrl+R", "Esc"]
-        );
+        assert_eq!(add_task_keys, vec!["Enter", "Tab", "^T", "^P", "^R", "Esc"]);
 
         let multiline_keys = styled_key_contents(multiline_hint_line());
         assert_eq!(multiline_keys, vec!["Ctrl+S", "Esc"]);
@@ -378,18 +375,18 @@ mod add_task_overlay {
             styled_key_contents(add_task_hint_line(AddTaskStep::Description, false, false));
         assert_eq!(
             add_task_description_keys,
-            vec!["Ctrl+S", "Ctrl+T", "Tab", "Ctrl+P", "Ctrl+R", "Esc"]
+            vec!["^S", "^T", "Tab", "^P", "^R", "Esc"]
         );
 
         let add_task_description_editor_keys =
             styled_key_contents(add_task_description_hint_line());
         assert_eq!(
             add_task_description_editor_keys,
-            vec!["Ctrl+S", "Enter", "Ctrl+P", "Ctrl+R", "Esc"]
+            vec!["^S", "Enter", "^P", "^R", "Esc"]
         );
 
         let add_task_natural_keys = styled_key_contents(add_task_natural_hint_line());
-        assert_eq!(add_task_natural_keys, vec!["Ctrl+S", "Enter", "Esc"]);
+        assert_eq!(add_task_natural_keys, vec!["^S", "Enter", "Esc"]);
 
         let status_keys = styled_key_contents(add_task_status_hint_line());
         assert_eq!(status_keys, vec!["i", "b", "t", "a", "d", "x", "Esc"]);
@@ -455,7 +452,7 @@ mod add_task_overlay {
         assert!(rendered.contains("prio: none"));
         assert!(rendered.contains(" · "));
         assert!(!rendered.contains("Tab"));
-        assert!(!rendered.contains("Ctrl+P"));
+        assert!(!rendered.contains("^P"));
         let project = line
             .spans
             .iter()
@@ -656,7 +653,7 @@ mod multiline_overlays {
         }));
         assert!(rendered.contains("Anything"));
         assert!(rendered.contains("Describe the task in natural language..."));
-        assert!(rendered.contains("Ctrl+S parse"));
+        assert!(rendered.contains("^S parse"));
         assert!(rendered.contains("Enter newline"));
         assert!(!rendered.contains("wrong prompt"));
     }
@@ -674,7 +671,7 @@ mod multiline_overlays {
         assert!(rendered.contains("Add task: natural language"));
         assert!(rendered.contains("body:"));
         assert!(rendered.contains("Ctrl+S submit"));
-        assert!(!rendered.contains("Ctrl+S parse"));
+        assert!(!rendered.contains("^S parse"));
         assert!(!rendered.contains("Describe the task in natural language..."));
     }
 

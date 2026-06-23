@@ -248,16 +248,16 @@ pub(in crate::tui::ui) fn add_task_free_text_input_line(
 
 pub(in crate::tui::ui) fn add_task_description_hint_line() -> Line<'static> {
     dialog_hint_line(&[
-        ("Ctrl+S", "create"),
+        ("^S", "create"),
         ("Enter", "newline"),
-        ("Ctrl+P", "project"),
-        ("Ctrl+R", "priority"),
+        ("^P", "project"),
+        ("^R", "priority"),
         ("Esc", "cancel"),
     ])
 }
 
 pub(in crate::tui::ui) fn add_task_natural_hint_line() -> Line<'static> {
-    dialog_hint_line(&[("Ctrl+S", "parse"), ("Enter", "newline"), ("Esc", "cancel")])
+    dialog_hint_line(&[("^S", "parse"), ("Enter", "newline"), ("Esc", "cancel")])
 }
 
 pub(in crate::tui::ui) fn render_add_note_input(frame: &mut Frame, state: &MultilineInputView) {

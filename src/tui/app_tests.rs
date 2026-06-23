@@ -982,7 +982,7 @@ mod authoring {
 
         assert!(rendered.contains("Add task: natural language"));
         assert!(rendered.contains("Describe the task in natural language"));
-        assert!(rendered.contains("Ctrl+S parse"));
+        assert!(rendered.contains("^S parse"));
         assert!(!rendered.contains("terminal too small for aven tui"));
     }
 
