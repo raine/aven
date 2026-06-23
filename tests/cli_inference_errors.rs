@@ -387,6 +387,36 @@ fn reports_near_project_matches() {
 }
 
 #[test]
+fn creates_projects_that_only_share_a_short_suffix() {
+    let env = TestEnv::new();
+    let db = env.db("project-suffix.sqlite");
+    ok(env.aven(&db, ["workspace", "create", "client"]));
+    ok(env.aven(
+        &db,
+        [
+            "--workspace",
+            "client",
+            "project",
+            "create",
+            "core-service-worker",
+        ],
+    ));
+
+    let output = ok(env.aven(
+        &db,
+        [
+            "--workspace",
+            "client",
+            "add",
+            "regional billing worker task",
+            "--project",
+            "regional-billing-service-worker",
+        ],
+    ));
+    contains_all(&output, &["project=regional-billing-service-worker"]);
+}
+
+#[test]
 fn reports_unknown_label_choices() {
     let env = TestEnv::new();
     let db = env.db("near-label.sqlite");
