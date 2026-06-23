@@ -1,73 +1,56 @@
 # Architecture
 
-`aven` is a local-first task manager implemented as a single Rust crate and binary. It provides a CLI, TUI, SQLite persistence, an HTTP sync server, and a local daemon wake path. This document is a roadmap for coding agents. For operator-facing usage rules, also read `docs/agent-usage.txt`.
+`aven` is a local-first task manager implemented as one Rust crate and binary. It provides a CLI, Ratatui TUI, SQLite persistence, HTTP sync server, and local daemon wake path. This file is a sitemap for coding agents. For operator-facing command usage, also read `docs/agent-usage.txt` and `src/skill.md`.
 
-## Crate layout
+## System map
 
-| Path | Responsibility |
-| --- | --- |
-| `src/main.rs` | Tokio entrypoint that calls `aven::run_cli()`. |
-| `src/lib.rs` | Module wiring, command dispatch, database opening, TUI launch, daemon wake after successful CLI mutations. |
-| `src/logging.rs` | Tracing subscriber initialization from `AVEN_LOG` and `AVEN_LOG_FILE`. |
-| `src/cli.rs` | Clap argument and subcommand definitions. |
-| `src/commands.rs`, `src/commands/doctor.rs` | User-facing CLI command handlers, focused doctor report rendering, and output formatting calls. |
-| `src/skill.md` | Agent-facing CLI primer printed by `aven skill` and embedded in `aven prime`. |
-| `src/operations/` | Transactional business operations used by CLI and TUI, split by task, project, conflict, and config concerns behind a stable facade. |
-| `src/mutation.rs` | Field-level task mutations, scalar conflict checks, change recording, and field version updates. |
-| `src/task_fields.rs` | Shared metadata for versioned scalar task fields and value validation. |
-| `src/db.rs` | SQLite connection setup, migrations, metadata, sync helpers, and conflict helpers. |
-| `src/query.rs`, `src/query/` | Read-model facade plus focused modules for task lists, project lists, sidebar counts, filters, sorting, and conflicts. |
-| `src/task_enrichment.rs` | Batched task-list label and unresolved-conflict enrichment. |
-| `src/task_intake.rs` | Configured agent CLI intake that turns natural-language text into validated task drafts. |
-| `src/sync.rs`, `src/sync/` | Sync facade plus focused HTTP client, Axum server, wire DTO, and remote apply modules. |
-| `src/daemon.rs` | Periodic sync loop and local wake listener. |
-| `src/config.rs` | Config file loading, default paths, and environment or CLI override resolution. |
-| `src/workspaces.rs` | Workspace records, active workspace resolution, routing, and management helpers. |
-| `src/choices.rs` | Canonical task statuses, priorities, and choice validation. |
-| `src/ids.rs` | UTC timestamp helper and 80-bit Crockford Base32 ID generation. |
-| `src/input.rs` | Inline, file, or stdin text input handling for descriptions and notes. |
-| `src/projects.rs` | Project key normalization, prefix generation, lookup, creation, path inference, and config path mappings. |
-| `src/labels.rs` | Label normalization, lookup, creation, and near-match validation. |
-| `src/refs.rs` | Task ref parsing, ref resolution, and display ref generation. |
-| `src/render.rs`, `src/task_render.rs` | Generic text helpers and task-specific CLI rendering. |
-| `src/signals.rs` | Shutdown signal helper for long-running processes. |
-| `src/tui/` | Ratatui application, input handling, store, rendering, overlays, theme, and widgets. |
-| `src/undo.rs` | Persistent TUI undo journal, guarded inverse payloads, and apply helpers. |
-| `migrations/` | SQLite schema migrations named as `YYYYMMDDHHMMSS_lower_snake.sql`. |
-| `tests/` | Integration-heavy CLI, sync, daemon, conflict, schema, and TUI smoke coverage. |
-| `skills/` | Agent-facing operational primers for repository-specific workflows. |
+| Layer | Owns | Start here | Rules |
+| --- | --- | --- | --- |
+| CLI entry and dispatch | argument parsing, command routing, config load, database open, daemon wake | `src/main.rs`, `src/lib.rs`, `src/cli.rs`, `src/commands.rs` | Command handlers format input and output. Business writes belong in operations or mutation helpers. |
+| Write model | transactional task, project, label, conflict, config, and workspace changes | `src/operations/`, `src/mutation.rs`, `src/task_fields.rs` | Synced scalar task writes must update tasks, `changes`, and `field_versions` together. |
+| Read model | task lists, project lists, sidebar counts, filters, sorting, refs, and enrichment | `src/query.rs`, `src/query/`, `src/task_enrichment.rs`, `src/refs.rs`, `src/queue.rs` | Batch task-list enrichment. Avoid per-row queries on list paths. |
+| Persistence | SQLite setup, migrations, sync metadata, conflict helpers, SQLx metadata | `src/db.rs`, `migrations/`, `.sqlx/` | Create migrations with `just migration-new <lower_snake_name>`. Refresh SQLx metadata after query or schema changes. |
+| Config and routing | config files, path mappings, workspace resolution, project inference | `src/config.rs`, `src/config_edit.rs`, `src/workspaces.rs`, `src/projects.rs` | Workspace-scoped commands must resolve an active workspace before domain lookup. |
+| Sync and daemon | HTTP sync client/server, wire DTOs, remote apply, wake loop | `src/sync.rs`, `src/sync/`, `src/daemon.rs` | Wire shapes, protocol version, server validation, and remote apply semantics must evolve together. |
+| TUI app | event loop, actions, overlays, store, rendering, undo, platform helpers | `src/tui/` | Store modules own DB access. UI modules render view models. Overlay routes drive behavior, not titles. |
+| Shared domain helpers | IDs, choices, labels, input loading, text rendering, logging, fuzzy matching | `src/ids.rs`, `src/choices.rs`, `src/labels.rs`, `src/input.rs`, `src/render.rs`, `src/task_render.rs`, `src/logging.rs`, `src/fuzzy.rs`, `src/types.rs` | Reuse canonical helpers instead of duplicating validation, display, or parsing rules. |
+| Tests and tooling | CLI integration tests, TUI/store tests, SQL index checks, just tasks | `tests/`, `src/tui/*tests.rs`, `justfile` | Add focused tests near the subsystem and rely on commit hooks for the full gate. |
 
-## Command flow
+## Runtime flows
 
-1. `main` starts the Tokio runtime and calls `run_cli`.
-2. Clap parses `Cli` and `Commands` in `src/cli.rs`.
-3. Tracing initializes after CLI parsing and writes to `AVEN_LOG_FILE` when set, otherwise `$XDG_STATE_HOME/aven/aven.log` or `~/.local/state/aven/aven.log`. `AVEN_LOG` controls the filter and defaults to `aven=info`. Log fields use IDs, counts, operation names, and safe paths, and must not include auth tokens, raw sync payloads, task descriptions, note bodies, user-authored labels or project names, or secret config values.
-4. `src/lib.rs` handles special commands first:
-   - `server` starts the Axum sync server.
-   - `config` runs without opening the task database.
-   - `daemon run` resolves config and starts the daemon.
-   - `skill` prints the embedded agent-facing CLI primer.
-5. Other commands resolve configuration, open SQLite, and dispatch to handlers.
-6. Workspace-scoped commands resolve an active workspace before dispatch.
-7. `tui` hands the open pool to `tui::run`; project startup selection comes from the `--project` flag.
-8. Successful mutating CLI commands wake the daemon when sync is enabled and a loopback wake address is configured.
+### CLI command flow
 
-Command behavior is organized around a few shared paths: task mutations use the operations facade, workspace selection is resolved before workspace-scoped commands run, project selection flows through project helpers, and TUI entrypoints reuse the TUI app and authoring state.
+1. `src/main.rs` starts Tokio and calls `aven::run_cli()`.
+2. `src/cli.rs` parses `Cli` and `Commands`.
+3. `src/lib.rs` initializes logging, handles commands that do not need the task database, resolves config and database path, opens SQLite, resolves workspace scope when needed, then dispatches to `src/commands.rs`.
+4. Mutating commands call operations or mutation helpers and wake the daemon when sync is enabled.
 
-CLI commands cover task add, show, list, prime, update, note, delete, restore, projects, labels, project paths, workspace management, conflict list or show or resolve, config, doctor, skill, daemon, server, sync, tmux helpers, and TUI.
+### TUI flow
 
-## Persistence model
+1. `src/tui/mod.rs` initializes Ratatui and constructs `App`.
+2. Input resolves through the command catalog in `src/tui/event/` unless a capturing overlay handles it first.
+3. `App` methods coordinate flow state, then call `TuiStore` facade methods in `src/tui/store.rs`.
+4. Store modules call the same operations, mutation, and query helpers as the CLI.
+5. `src/tui/ui.rs` and `src/tui/ui/` render state. Rendering code should not touch the database.
 
-SQLite stores synced task data and local UI state. Config stores local routing and service settings. `open_db` enables WAL, foreign keys, a single connection, and automatic migrations. The initial migration defines materialized domain tables plus sync bookkeeping:
+### Sync flow
 
-- Domain tables: `workspaces`, `tasks`, `projects`, `labels`, `task_labels`, `notes`.
-- Sync tables: `changes`, `field_versions`, `conflicts`.
-- Metadata table: `meta` stores `client_id`, `sync_cursor`, `local_seq`, and sync server URL.
-- Local TUI table: `tui_undo_entries` stores inverse operations for TUI mutations.
+1. Local mutations append operation-log rows in `changes`.
+2. Unsynced rows have `server_seq IS NULL`.
+3. The client posts pending changes and a cursor to `/sync`.
+4. The server validates operation names, entity types, protocol version, and payload shapes before assigning server sequence numbers.
+5. Remote apply updates local tables transactionally, records conflicts for scalar field version mismatches, then advances `sync_cursor`.
 
-`Task` and `Project` in `src/types.rs` are the core records. They carry `workspace_id`, and workspace-scoped tables include `workspace_id` in uniqueness and lookup paths. Task state uses string fields for `status` and `priority` plus a `deleted` boolean. Tasks keep `updated_at` for any persisted task change and `queue_activity_at` for queue-relevant activity used by the TUI queue idle score. Read paths wrap records into list and sidebar DTOs in `src/query.rs` and `src/query/`. Task lists batch label and unresolved-conflict enrichment through `src/task_enrichment.rs` so CLI and TUI list refreshes avoid per-task enrichment queries.
+## Data ownership
 
-Many invariants are application-enforced rather than database-enforced. Do not write domain tables directly unless the operation intentionally bypasses sync and validation. Prefer the operations facade or focused operations modules, `mutation.rs`, project helpers, label helpers, and ref helpers.
+SQLite stores synced task data and local UI state. Config files store local routing and service settings.
+
+- Synced domain tables: `workspaces`, `tasks`, `projects`, `labels`, `task_labels`, `notes`.
+- Sync bookkeeping: `changes`, `field_versions`, `conflicts`, `meta`.
+- Local-only config: database path, sync settings, project path mappings, directory overrides.
+- Local-only TUI state: view, filter, selection, overlay, sort state, and `tui_undo_entries`.
+
+`Task` and `Project` in `src/types.rs` are core records. Workspace-scoped tables include `workspace_id` in uniqueness and lookup paths. Many invariants are application-enforced rather than database-enforced, so do not write domain tables directly unless a change is intentionally bypassing sync and validation.
 
 ## Domain rules
 
@@ -82,206 +65,72 @@ Many invariants are application-enforced rather than database-enforced. Do not w
 - Typed task ref suffixes must be at least 3 characters. Display refs use at least 4 suffix characters and lengthen to disambiguate current tasks.
 - `O` normalizes to `0`, and `I` or `L` normalize to `1` when resolving refs.
 
-## Mutation and invariants
+## Architectural guardrails
 
-Scalar task field mutations flow through `src/mutation.rs` or higher-level operations in `src/operations/`:
+- Use `src/operations/` or `src/mutation.rs` for writes that affect synced domain data.
+- Use `src/query.rs`, `src/query/`, and enrichment helpers for read models.
+- Keep scalar task fields aligned across validation, task rows, `changes`, `field_versions`, sync apply, and conflict resolution.
+- Keep workspace scope explicit on queries and mutations that operate on user data.
+- Keep CLI output formatting in command or render modules, not in persistence helpers.
+- Keep TUI database access in `src/tui/store/`; keep `src/tui/ui/` rendering-only.
+- TUI overlays carry `OverlayRoute` so behavior survives title text changes.
+- Overlay dialogs should use shared helpers in `src/tui/ui/dialog.rs` for title edges, frame clearing, background, border, and footer hint styling.
+- Record a TUI undo entry for completed TUI mutations unless the action is undo itself.
+- Do not log auth tokens, raw sync payloads, task descriptions, note bodies, user-authored labels or project names, or secret config values.
 
-1. Validate versioned scalar fields through `src/task_fields.rs`.
-2. Reject writes to scalar fields with unresolved conflicts.
-3. Read the current field version.
-4. Apply the field update to `tasks`.
-5. Append a `changes` row with the previous field version as `base_version`.
-6. Update `field_versions`.
+## Change routing
 
-Task creation writes the task, labels, a `create_task` change, and initial field versions for scalar fields. Task delete is a soft-delete by setting `deleted`; restore sets it back. TUI project deletion hard-deletes unused projects and leaves config path mappings unchanged.
+| Change | Start here | Also check | Tests |
+| --- | --- | --- | --- |
+| Add or change a CLI command | `src/cli.rs`, `src/lib.rs`, `src/commands.rs` | `src/operations/` for writes, `src/input.rs` for text input, `src/task_render.rs` for task output | focused `tests/cli_*.rs` |
+| Add a task scalar field | migration, `src/types.rs`, `src/task_fields.rs`, `src/mutation.rs` | `src/operations/tasks.rs`, `src/sync/apply.rs`, `src/sync/wire.rs`, `src/query/`, CLI and TUI renderers | sync, conflict, CLI, and TUI tests |
+| Change task list, filters, sorting, or refs | `src/query/`, `src/query.rs`, `src/refs.rs`, `src/queue.rs` | CLI list rendering, `src/tui/store/view.rs`, indexes | `tests/tui_query.rs`, `tests/sqlite_read_path_indexes.rs`, focused CLI tests |
+| Add or change a TUI action | `src/tui/event/catalog.rs`, `src/tui/app_dispatch.rs`, `src/tui/app.rs` | flow helpers, overlays, store module, undo | `src/tui/app_tests.rs`, `src/tui/store/tests.rs`, overlay tests |
+| Add or change TUI overlay rendering | `src/tui/overlay.rs`, `src/tui/overlay/`, `src/tui/ui/overlays.rs`, `src/tui/ui/overlays/` | `OverlayRoute`, shared dialog helpers, input helpers, theme | overlay rendering tests in `src/tui/ui/overlays/tests.rs` |
+| Change sync protocol or conflict handling | `src/sync/wire.rs`, `src/sync/apply.rs`, `src/sync/server.rs`, `src/sync/client.rs` | `src/mutation.rs`, `src/task_fields.rs`, migrations if persisted | `tests/cli_sync*.rs`, `tests/cli_conflicts.rs` |
+| Change config, workspace, or project path routing | `src/config.rs`, `src/config_edit.rs`, `src/workspaces.rs`, `src/projects.rs` | doctor, project commands, TUI workspace and project pickers | `tests/cli_config_daemon.rs`, `tests/cli_workspaces.rs`, `tests/cli_doctor.rs` |
+| Change natural-language task intake or agent primer | `src/task_intake.rs`, `src/skill.md` | config schema, `aven prime`, add-task flows | `tests/cli_task_intake.rs`, focused add-task tests |
+| Change logging | `src/logging.rs` and call sites | safe field policy in guardrails | `tests/cli_logging.rs` |
 
-Important invariants:
-
-- Workspace keys are unique across the database.
-- Projects have unique keys and prefixes within a workspace.
-- `tasks.project_key` should point at a valid project in the same workspace.
-- Task refs must reject ambiguous suffixes within the active workspace.
-- Sync server URL is pinned per database.
-- Local changes have `changes.server_seq IS NULL` until accepted by a server.
-- `sync_cursor` advances only after remote changes are applied.
-
-## Sync semantics
-
-The external integration boundary is HTTP sync plus local UDP wake signaling. No GitHub, Taskwarrior, or generic import/export integration exists in this codebase.
-
-Synced operation-log entities:
-
-- Workspaces: `create_workspace` and workspace scalar field changes.
-- Projects: `create_project`.
-- Labels: `create_label`.
-- Tasks: `create_task`, scalar `set_field`, and `resolve_field`.
-- Task labels: `label_add` and `label_remove`, merged without field-version conflicts.
-- Notes: `note_add`, append-only.
-
-Workspace-scoped sync payloads include `workspace_id` and `workspace_key`. The remote apply path accepts older default-workspace payloads for compatibility and applies scoped records into their owning workspace.
-
-Local-only data:
-
-- Config files and environment overrides.
-- Project path mappings and directory overrides in config.
-- Deprecated project path rows in `project_paths`.
-- TUI view, filter, selection, overlay, and sort state.
-- TUI undo entries in `tui_undo_entries`.
-
-Conflict-protected scalar task fields are `title`, `description`, `project`, `status`, `priority`, and `deleted`. Labels and notes sync through operation records but do not use scalar field conflict protection.
-
-Manual sync performs this sequence:
-
-1. Resolve the server URL from CLI, environment, or config.
-2. Load unsynced local changes where `server_seq IS NULL`.
-3. POST `/sync` with `protocol_version`, `client_id`, `after`, and pending changes.
-4. Apply returned remote changes transactionally.
-5. Update `sync_cursor`.
-
-The server is an Axum `POST /sync` endpoint using the `SyncRequest`,
-`SyncResponse`, and `ChangeWire` JSON shapes in `src/sync/wire.rs`, exposed
-through the sync facade where callers need them. Requests and responses include
-`protocol_version`, and both peers require an exact match with
-`SYNC_PROTOCOL_VERSION` before applying changes. It assigns server sequence
-numbers and persists changes.
-
-Startup classifies the bind address as loopback, private, or public and prints
-`scope=<scope>` on the listening line. Loopback binds can run without a token
-for local testing. Private binds require a configured `sync.auth_token`. Public
-binds require `--unsafe-public-bind`, a configured token, and print a warning
-that TLS or a reverse proxy is needed. When a token is configured, clients send
-`Authorization: Bearer <token>` and the server rejects unauthorized `/sync`
-requests before applying changes.
-
-The server validates incoming operation names, entity types, payload shapes,
-fixed-choice values, sync ID formats, and server-owned fields before appending
-changes to its log. It does not require referenced entities to exist on the
-server because offline batches can contain related operations that arrive
-together. Daemon wake addresses must be loopback.
-
-If a remote scalar change base version does not match the current field version, sync records a `conflicts` row instead of overwriting. If an unresolved conflict already exists for that task field, another remote change for the field is also rejected into conflict handling.
-
-## TUI architecture
-
-`src/tui/mod.rs` constructs `App`, initializes Ratatui, runs the app loop, and restores the terminal on exit.
-
-The TUI is split into these layers:
-
-- `app.rs`: `App` state, widget state, focus, selection, toasts, terminal lifecycle, input dispatch, action execution, refresh cadence, and the top-level coordination of extracted flows.
-- `app_edit.rs`: task edit overlay orchestration and direct edit mutation coordination for status, title, description, project, priority, labels, delete, restore, and undo.
-- `app_filters.rs`: filter, view, and workspace picker orchestration that applies store filter and view results back to App state.
-- `app_conflicts.rs`: conflict list, detail, variant resolution, and manual merge overlay orchestration while `conflict_flow.rs` owns conflict flow transitions.
-- `authoring.rs`: durable state and submit transitions for task and note authoring flows.
-- `conflict_flow.rs`: conflict resolution flow state, field selection transitions, confirmation submissions, and manual merge submissions.
-- `config_overlay.rs`: config status, config info, config path, and config init overlay construction.
-- `navigation.rs`: detail overlay commands, detail task navigation, and sidebar navigation helpers.
-- `shortcut_buffer.rs`: multi-key shortcut prefix state, normal and detail shortcut resolution, editor prefix tracking, and pending shortcut labels.
-- `event.rs` and `event/`: facade exports plus action and view-target types, command specs, command contexts, lifecycle and domain metadata, shortcut lookup, and command lookup used by help rendering.
-- `store.rs` and `store/`: database-backed TUI state and operations. `store.rs` is the facade that owns task lists, projects, labels, workspaces, active workspace, sidebar counts, filters, sorting, active view, refresh time, construction, workspace activation, and refresh. Focused store submodules hold concern logic:
-  - `config.rs`: config status, config display, config path display, and config initialization.
-  - `conflicts.rs`: conflict target lookup, conflict resolution, and conflict navigation.
-  - `domain.rs`: project and label mutations plus inferred project lookup.
-  - `pickers.rs`: overlay picker item construction.
-  - `sidebar.rs`: sidebar section and project entry construction.
-  - `sort.rs`: sort labels and sort state changes.
-  - `task_commands.rs`: selected task field, label, delete, and restore mutations.
-  - `task_creation.rs`: task and note creation flows.
-  - `types.rs`: store DTOs shared with the app and UI layers.
-  - `undo.rs`: persistent TUI undo recording and application.
-  - `view.rs`: active view, filters, search, and selection restoration.
-  - `workspaces.rs`: TUI workspace switching, active workspace updates, and related filter/view reset.
-- `overlay.rs` and `overlay/`: reusable text input, multiline input, picker, confirm, search, command, detail, help, and text panel state machines. `overlay.rs` is the facade; focused modules hold state definitions, text input logic, multiline logic, picker behavior, state-to-view projection, and generic handlers. Input overlays carry an `OverlayRoute` that identifies the destination flow independently from display titles.
-- `app_overlay_submit.rs`: overlay submit routing grouped by submitted payload kind and `OverlayRoute`, keeping titles as display text only.
-- `markdown.rs`: terminal markdown shaping helpers for help, detail, and text-panel rendering.
-- `platform.rs`: clipboard, external editor, terminal suspend and restore, temp editor paths, and editor prefix helper functions.
-- `text.rs`: shared UTF-8 boundary, word movement, newline normalization, and wrapping helpers for TUI input and rendering.
-- `toast.rs`: toast message types, severity, and expiry bookkeeping shared by the app and renderer.
-- `ui.rs`: top-level Ratatui render orchestration.
-  - Renders header, footer, overlays, command palette, help, and prefix hints.
-  - Region modules under `ui/` handle sidebar, task list, task display helpers,
-    detail rendering, dialogs, headers, footers, shortcut hints, input helpers,
-    truncation, and toasts.
-  - Overlay renderers live under `ui/overlays/` by overlay kind with a facade at
-    `ui/overlays.rs`.
-  - Overlay dialogs should use the shared dialog helpers in
-    `src/tui/ui/dialog.rs` for title edges, frame, clear, background, and
-    footer hint styling instead of assembling bespoke Ratatui blocks.
-  - The task list region builds an explicit row model for group headers and task
-    rows so rendering and scrolling use the same table structure.
-  - The task description editor uses a terminal-sized multiline overlay with
-    visual wrapping and can hand the current draft to `$VISUAL`, `$EDITOR`, or
-    `vi` through `Ctrl+E`.
-- `widgets.rs`: small cell helpers such as priority icons and title conflict markers.
-- `theme.rs`: colors and style helpers.
-
-The app loop draws the current view, polls keyboard input every 250 ms, dispatches keys, refreshes store data every 5 seconds, and clears expired messages. Normal keys resolve through the command catalog. Capturing overlays handle their own input before normal shortcuts. Multi-key prefixes are stored in `ShortcutBuffer` and rendered as hints, while alerts render as floating bottom-right toasts. Single-key shortcuts execute immediately, so compatibility chords that would conflict with bare actions use shifted prefixes such as `A t`, `A n`, `A p`, and `A l`. Help remains catalog-driven and `?` is the help shortcut, which leaves `h` and `l` available for left and right navigation.
-
-The TUI store calls the same operations and mutation helpers as the CLI for mutations, so TUI edits preserve change log, field version, conflict, and validation behavior. TUI refresh reads pass the store workspace explicitly instead of depending on global active workspace state. TUI query and sort state is separate from CLI list defaults.
-
-TUI undo records one inverse operation per completed TUI mutation in `tui_undo_entries`. Entries are workspace-scoped, persist across TUI restarts, and apply through the same mutation helpers so undo effects follow normal sync semantics. Scalar field and label undos guard against stale state before applying. `:undo` and `u` dispatch to the same undo action.
-
-To add a TUI action:
-
-1. Add an `Action` variant in `src/tui/event.rs`.
-2. Register it in the `COMMANDS` catalog with key sequences, section, lifecycle, and description.
-3. Handle the action in `App::execute` in `src/tui/app.rs`.
-4. Add or reuse overlay state if the action needs user input, and assign the correct `OverlayRoute`.
-5. Add flow-state helpers in `authoring.rs`, `conflict_flow.rs`, `config_overlay.rs`, or another focused module when a flow spans multiple submits.
-6. Add `TuiStore` facade methods and place database reads or mutations in the focused store submodule.
-7. Record a TUI undo entry for mutating store methods unless the action is undo itself.
-8. Add tests for shortcut resolution, action dispatch, overlay route propagation, and store behavior.
-
-Overlay submits route through `OverlayRoute` in `App::handle_overlay_submit`. Titles are display text only, so tests should keep passing if an overlay title changes without changing its route.
-
-## Feature checklists
+## Common feature checklists
 
 ### Add a CLI command
 
 1. Add args and a `Commands` variant in `src/cli.rs`.
-2. Add dispatch in `src/lib.rs`.
-3. Add output and input handling in `src/commands.rs`.
+2. Add dispatch, workspace needs, and daemon wake behavior in `src/lib.rs`.
+3. Add command handling and output formatting in `src/commands.rs` or a focused command module.
 4. Put transactional business logic in `src/operations/`.
-5. Put low-level persistence helpers in `src/db.rs` or focused modules.
-6. For mutating commands, record changes and keep `field_versions` aligned when scalar fields change.
-7. For mutating CLI commands that should trigger prompt sync, update `command_should_wake` in `src/lib.rs`.
-8. Add integration tests in `tests/`.
+5. Add integration tests in `tests/`.
 
 ### Add a task scalar field
 
-1. Add a migration for the `tasks` column and any indexes.
-2. Update `Task` in `src/types.rs` and task row mapping in `src/refs.rs` or query code.
-3. Update create payloads, update DTOs, and operation logic in `src/operations/`.
-4. Update `apply_field_value` and mutation validation in `src/mutation.rs`.
-5. Seed field versions during task creation if the field needs conflict protection.
-6. Update sync remote apply and conflict resolution behavior in `src/sync/apply.rs`, and update facade exports in `src/sync.rs` if callers need new sync entry points.
-7. Update list filters, sort, or display models in `src/query.rs` if needed.
-8. Update CLI rendering and TUI rendering or overlays.
-9. Add tests for local mutation, sync, conflict behavior, and TUI behavior if exposed there.
-10. Create migrations with `just migration-new <lower_snake_name>` so timestamps stay after the latest migration.
-11. Run `just sqlx-prepare` after changing migrations or `sqlx::query!` shapes.
+1. Create a migration with `just migration-new <lower_snake_name>`.
+2. Update `Task` in `src/types.rs` and row mapping in refs or query code.
+3. Update create payloads, update DTOs, operations, and mutation validation.
+4. Seed field versions during task creation if the field needs conflict protection.
+5. Update sync wire/apply behavior and conflict resolution.
+6. Update CLI rendering, TUI rendering, filters, or sorting if exposed there.
+7. Run `just sqlx-prepare` after query or migration changes.
 
-### Add text input to a command
+### Add a TUI action
 
-Use `src/input.rs` so inline, file, and stdin sources remain mutually exclusive and error messages stay consistent.
+1. Add an `Action` variant and register it in the command catalog under `src/tui/event/`.
+2. Route action execution through `App` dispatch helpers.
+3. Add or reuse overlay state and set the correct `OverlayRoute` for submitted input.
+4. Add flow helpers when the action spans multiple submits.
+5. Add `TuiStore` facade methods and focused store logic.
+6. Record undo for mutating actions.
+7. Add tests for shortcut resolution, action dispatch, overlay route propagation, and store behavior.
 
-## Testing and development
+## Development and validation
 
-The repository uses `just` as the main development entrypoint:
+Use `just` as the main development entrypoint:
 
-- `just pre-commit`: read-only validation gate for formatting, static analysis, migration order, clippy, and tests.
 - `just check`: local read-only validation gate, equivalent to `just pre-commit`.
-- `just migration-order`: validate migration filenames and branch-relative migration order.
-- `just migration-new <lower_snake_name>`: create the next SQLx migration filename safely.
-- `just pre-merge`: deferred validation gate for build output and SQLx metadata when SQLx inputs differ from the merge target.
-- `just check-full`: local read-only gate plus deferred merge checks.
-- `just clippy-fix`: explicit opt-in command for machine-applicable clippy fixes.
 - `just test`: Rust test suite through `cargo nextest`, plus Rust doctests.
+- `just migration-new <lower_snake_name>`: create the next SQLx migration filename safely.
 - `just sqlx-prepare`: regenerate SQLx offline query metadata after migrations or query shape changes.
 - `just sqlx-check`: verify SQLx offline query metadata.
 - `just run -- ...`: run the application.
 
-The pre-commit hook runs `git-format-staged`, hides unstaged changes while validation runs, and suggests `just clippy-fix` if clippy reports fixable lints. Workmux runs `just pre-merge` before merging. Local project instructions say cargo format and tests run automatically on commit.
-
-Tests live mostly in `tests/` and use `tests/common/mod.rs` for temp directories, config files, databases, spawned daemons or servers, and stdout or stderr assertions. There is no dedicated fixtures directory; tests usually create data programmatically or through temp files.
-
-The project uses `sqlx::query!` compile-time checked queries with `.sqlx/` metadata. Never commit schema or query macro changes without regenerating and checking SQLx metadata.
+The pre-commit hook runs formatting, static analysis, migration order checks, clippy, tests, and doctests. Local project instructions say cargo format and broad tests run automatically on commit, so run focused commands while developing and let the hook run the full gate when committing.
