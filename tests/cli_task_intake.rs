@@ -69,7 +69,7 @@ fn tmux_add_task_popup_prints_binding() {
         &[
             "bind-key A tmux display-popup -E",
             "-d '#{pane_current_path}'",
-            "'aven tui --add-task --project app'",
+            "'aven tui --add-task-only --project app'",
         ],
     );
 }

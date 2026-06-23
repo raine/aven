@@ -27,10 +27,15 @@ mod widgets;
 pub(crate) async fn run(
     pool: SqlitePool,
     project: Option<&str>,
+    add_task: bool,
+    natural: bool,
     config: crate::config::AppConfig,
 ) -> Result<()> {
     let mut app = app::App::new(pool, project).await?;
     app.set_config(config);
+    if add_task {
+        app.open_add_task_on_start(natural).await?;
+    }
     let mut terminal = ratatui::init();
     let result = app.run(&mut terminal).await;
     ratatui::restore();

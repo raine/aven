@@ -29,6 +29,7 @@ pub(crate) use self::shortcuts::{detail_help_scroll_cap, help_scroll_cap};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout};
 use ratatui::style::Style;
+use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::tui::app::{Focus, WidgetState};
@@ -37,6 +38,12 @@ use crate::tui::store::TuiStore;
 use crate::tui::theme::{BG, FG};
 use crate::tui::toast::Toast;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ViewSurface {
+    Main,
+    AddTask,
+}
+
 #[derive(Clone)]
 pub(crate) struct ViewState {
     pub(crate) focus: Focus,
@@ -44,6 +51,7 @@ pub(crate) struct ViewState {
     pub(crate) detail_underlay: bool,
     pub(crate) message: Option<Toast>,
     pub(crate) pending_shortcut: Vec<String>,
+    pub(crate) surface: ViewSurface,
 }
 
 impl ViewState {
@@ -74,6 +82,11 @@ pub(crate) fn render(
     view: &ViewState,
 ) {
     frame.render_widget(Block::new().style(Style::new().bg(BG)), frame.area());
+
+    if view.surface == ViewSurface::AddTask {
+        render_add_task_surface(frame, view);
+        return;
+    }
 
     if frame.area().width < 70 || frame.area().height < 18 {
         frame.render_widget(
@@ -134,6 +147,92 @@ pub(crate) fn render(
     if let Some(toast) = &view.message {
         render_toast(frame, toast);
     }
+}
+
+fn render_add_task_surface(frame: &mut Frame, view: &ViewState) {
+    if frame.area().width < 30 || frame.area().height < 8 {
+        frame.render_widget(
+            Paragraph::new("terminal too small for add task")
+                .alignment(Alignment::Center)
+                .style(Style::new().fg(FG).bg(BG)),
+            frame.area(),
+        );
+        return;
+    }
+
+    if let Some(overlay) = &view.overlay {
+        render_add_task_surface_overlay(frame, overlay);
+    }
+    if !view.pending_shortcut.is_empty() {
+        render_prefix_hints(frame, view);
+    }
+    if let Some(toast) = &view.message {
+        render_toast(frame, toast);
+    }
+}
+
+fn render_add_task_surface_overlay(frame: &mut Frame, overlay: &OverlayView) {
+    match overlay {
+        OverlayView::AddTask(state) => self::overlays::render_add_task_full_frame(frame, state),
+        OverlayView::MultilineInput(state)
+            if matches!(
+                state.route,
+                OverlayRoute::AddTaskDescription | OverlayRoute::AddTaskNatural
+            ) =>
+        {
+            render_add_task_multiline_full_frame(frame, state)
+        }
+        _ => render_overlay_content(frame, overlay, false),
+    }
+}
+
+fn render_add_task_multiline_full_frame(
+    frame: &mut Frame,
+    state: &crate::tui::overlay::MultilineInputView,
+) {
+    use crate::tui::overlay::OverlayRoute::{AddTaskDescription, AddTaskNatural};
+
+    let placeholder = match state.route {
+        AddTaskDescription => "Optional details, links, or handoff context...",
+        AddTaskNatural => "Describe the task in natural language...",
+        _ => return,
+    };
+    let hint_line = match state.route {
+        AddTaskDescription => self::overlays::add_task_description_hint_line(),
+        AddTaskNatural => self::overlays::add_task_natural_hint_line(),
+        _ => return,
+    };
+    let content = dialog::Dialog::new(&state.title, frame.area().width, frame.area().height)
+        .render_block_at(frame, frame.area());
+    let visible_rows = content.height.saturating_sub(2).max(1) as usize;
+    let start = self::overlays::tail_viewport_start(state.row, visible_rows);
+    let mut lines = Vec::new();
+    for (row_index, line) in state
+        .lines
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(visible_rows)
+    {
+        lines.push(self::overlays::add_task_free_text_input_line(
+            line,
+            if row_index == state.row {
+                Some(state.column)
+            } else {
+                None
+            },
+            line.is_empty() && state.lines.len() == 1,
+            placeholder,
+        ));
+    }
+    while lines.len() + 1 < content.height as usize {
+        lines.push(Line::from(""));
+    }
+    lines.push(hint_line);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),
+        content,
+    );
 }
 
 fn edit_title_view(view: &ViewState) -> Option<&TextInputView> {

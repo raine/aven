@@ -37,6 +37,12 @@ pub(super) enum TaskRefKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NaturalRetry {
+    AddTask,
+    Dialog,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Focus {
     Sidebar,
     Tasks,
@@ -439,11 +445,25 @@ impl App {
         ));
     }
 
+    pub(super) async fn submit_add_task_title_natural(&mut self, value: String) -> Result<()> {
+        self.submit_add_task_natural_with_retry(value, NaturalRetry::AddTask)
+            .await
+    }
+
     pub(super) async fn submit_add_task_natural(&mut self, value: String) -> Result<()> {
+        self.submit_add_task_natural_with_retry(value, NaturalRetry::Dialog)
+            .await
+    }
+
+    async fn submit_add_task_natural_with_retry(
+        &mut self,
+        value: String,
+        retry: NaturalRetry,
+    ) -> Result<()> {
         let raw = value.trim();
         if raw.is_empty() {
             self.set_warning("task description is required");
-            self.begin_add_task_natural_with_value(value);
+            self.retry_add_task_natural(value, retry);
             return Ok(());
         }
         match self
@@ -459,10 +479,17 @@ impl App {
             }
             Err(error) => {
                 self.set_error(format!("task intake failed: {error:#}"));
-                self.begin_add_task_natural_with_value(value);
+                self.retry_add_task_natural(value, retry);
             }
         }
         Ok(())
+    }
+
+    fn retry_add_task_natural(&mut self, value: String, retry: NaturalRetry) {
+        match retry {
+            NaturalRetry::AddTask => self.begin_add_task_step(),
+            NaturalRetry::Dialog => self.begin_add_task_natural_with_value(value),
+        }
     }
 
     async fn submit_created_task(&mut self, draft: TaskDraft) -> Result<()> {

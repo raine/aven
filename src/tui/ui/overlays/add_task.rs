@@ -1,4 +1,5 @@
 use ratatui::Frame;
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
@@ -23,12 +24,29 @@ pub(in crate::tui::ui) fn render_add_task(frame: &mut Frame, state: &AddTaskView
     };
     let dialog = Dialog::new("Add task", 100, height);
     let width = dialog.area(frame).width;
-    let dialog = dialog.right_title(add_task_metadata_title(
-        &state.project,
-        &state.priority,
-        width,
-    ));
-    let content = dialog.render_block(frame);
+    let content = dialog
+        .right_title(add_task_metadata_title(
+            &state.project,
+            &state.priority,
+            width,
+        ))
+        .render_block(frame);
+    render_add_task_body(frame, state, content);
+}
+
+pub(in crate::tui::ui) fn render_add_task_full_frame(frame: &mut Frame, state: &AddTaskView) {
+    let area = frame.area();
+    let content = Dialog::new("Add task", area.width, area.height)
+        .right_title(add_task_metadata_title(
+            &state.project,
+            &state.priority,
+            area.width,
+        ))
+        .render_block_at(frame, area);
+    render_add_task_body(frame, state, content);
+}
+
+fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
     let description_rows = (content.height as usize).saturating_sub(5).max(1);
     let mut lines = vec![
         add_task_field_label("Title", state.focus == AddTaskStep::Title),
@@ -209,7 +227,7 @@ pub(in crate::tui::ui) fn add_task_hint_line(focus: AddTaskStep) -> Line<'static
             ("Tab", "description"),
             ("Ctrl+P", "project"),
             ("Ctrl+R", "priority"),
-            ("Ctrl+N", "natural"),
+            ("Ctrl+N", "LLM"),
             ("Esc", "cancel"),
         ]),
         AddTaskStep::Description => dialog_hint_line(&[

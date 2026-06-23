@@ -213,8 +213,9 @@ impl App {
                 return Ok(());
             }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('n') {
+                let input = state.title.text.clone();
                 if self.capture_add_task_state(state) {
-                    self.begin_add_task_natural();
+                    self.submit_add_task_title_natural(input).await?;
                 }
                 return Ok(());
             }

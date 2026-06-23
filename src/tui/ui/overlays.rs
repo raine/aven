@@ -7,11 +7,15 @@ mod shared;
 mod text_input;
 mod text_panel;
 
-pub(super) use add_task::render_add_task;
+pub(super) use add_task::{render_add_task, render_add_task_full_frame};
 pub(super) use confirm::render_confirm;
-pub(super) use multiline::render_multiline_input;
+pub(super) use multiline::{
+    add_task_description_hint_line, add_task_free_text_input_line, add_task_natural_hint_line,
+    render_multiline_input,
+};
 pub(super) use picker::render_picker;
 pub(super) use search::render_search;
+pub(super) use shared::tail_viewport_start;
 pub(super) use text_input::render_text_input;
 pub(super) use text_panel::render_text_panel;
 
@@ -26,9 +30,8 @@ pub(super) use confirm::confirm_hint_line;
 
 #[cfg(test)]
 pub(super) use multiline::{
-    add_note_input_line, add_task_description_hint_line, add_task_description_input_line,
-    add_task_natural_hint_line, description_editor_lines, description_input_line,
-    multiline_hint_line,
+    add_note_input_line, add_task_description_input_line, description_editor_lines,
+    description_input_line, multiline_hint_line,
 };
 
 #[cfg(test)]

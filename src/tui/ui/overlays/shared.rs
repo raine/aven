@@ -27,6 +27,6 @@ pub(super) fn selected_viewport_start(
         .saturating_sub(viewport_rows.saturating_sub(1))
 }
 
-pub(super) fn tail_viewport_start(cursor_row: usize, visible_rows: usize) -> usize {
+pub(in crate::tui::ui) fn tail_viewport_start(cursor_row: usize, visible_rows: usize) -> usize {
     cursor_row.saturating_sub(visible_rows.saturating_sub(1))
 }

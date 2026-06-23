@@ -225,7 +225,7 @@ pub(in crate::tui::ui) fn add_task_description_input_line(
     )
 }
 
-fn add_task_free_text_input_line(
+pub(in crate::tui::ui) fn add_task_free_text_input_line(
     line: &str,
     cursor: Option<usize>,
     show_placeholder: bool,

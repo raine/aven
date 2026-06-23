@@ -1,5 +1,6 @@
 use super::*;
 use crate::operations::TaskDraft;
+use crate::tui::ui::ViewSurface;
 use crate::query::TaskSort;
 use crate::tui::app_conflicts::CONFLICT_CONFIRM_LOCAL_TITLE;
 use crate::tui::app_edit::{
@@ -99,6 +100,10 @@ fn ctrl_p() -> KeyEvent {
 
 fn ctrl_r() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)
+}
+
+fn ctrl_n() -> KeyEvent {
+    KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL)
 }
 
 fn ctrl_d() -> KeyEvent {
@@ -746,6 +751,82 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn add_task_start_view_keeps_main_surface() {
+        let mut app = test_app().await;
+        app.open_add_task_on_start(false).await.unwrap();
+
+        let view = app.view();
+
+        assert_eq!(view.surface, ViewSurface::Main);
+        assert!(matches!(app.overlay, Some(OverlayState::AddTask(_))));
+    }
+
+    #[tokio::test]
+    async fn add_task_only_view_uses_popup_surface() {
+        let mut app = test_app().await;
+        app.add_task_only = true;
+        app.begin_add_task().await.unwrap();
+
+        let view = app.view();
+
+        assert_eq!(view.surface, ViewSurface::AddTask);
+    }
+
+    #[tokio::test]
+    async fn add_task_only_render_skips_normal_tui() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Existing queue task")).await;
+        app.add_task_only = true;
+        app.begin_add_task().await.unwrap();
+
+        let backend = ratatui::backend::TestBackend::new(50, 12);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let view = app.view();
+        terminal
+            .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("Add task"));
+        assert!(rendered.contains("Enter title here"));
+        assert!(!rendered.contains("terminal too small for aven tui"));
+        assert!(!rendered.contains("Existing queue task"));
+    }
+
+    #[tokio::test]
+    async fn add_task_only_natural_render_uses_popup_surface() {
+        let mut app = test_app().await;
+        app.add_task_only = true;
+        app.begin_add_task().await.unwrap();
+        app.begin_add_task_natural();
+
+        let backend = ratatui::backend::TestBackend::new(50, 12);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let view = app.view();
+        terminal
+            .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("Add task: natural language"));
+        assert!(rendered.contains("Describe the task in natural language"));
+        assert!(rendered.contains("Ctrl+S parse"));
+        assert!(!rendered.contains("terminal too small for aven tui"));
+    }
+
+    #[tokio::test]
     async fn add_task_uses_active_project_view() {
         let mut app = test_app().await;
         app.store
@@ -930,6 +1011,81 @@ mod authoring {
         assert_eq!(task.task.priority, "high");
         assert_eq!(task.task.description, "Details");
     }
+
+    #[tokio::test]
+    async fn add_task_ctrl_n_parses_title_without_opening_natural_dialog() {
+        let mut app = test_app().await;
+        configure_task_intake(
+            &mut app,
+            "parse-title.sh",
+            r#"{"title":"fix parsed dispatch","description":"from parsed title","project":null,"priority":"medium","labels":[]}"#,
+        );
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "in slack-agent fix dispatch").await;
+        app.handle_overlay_key(ctrl_n()).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.title.as_str() == "fix parsed dispatch"
+                    && state.description.lines == vec!["from parsed title".to_string()]
+                    && state.priority == "medium"
+        ));
+        assert_eq!(toast_message(&app), Some("parsed task draft, review and save"));
+    }
+
+    #[tokio::test]
+    async fn add_task_ctrl_n_error_keeps_add_task_dialog() {
+        let mut app = test_app().await;
+        configure_task_intake_failure(&mut app, "parse-title-fail.sh");
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "raw natural title").await;
+        app.handle_overlay_key(ctrl_n()).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.title.as_str() == "raw natural title"
+        ));
+        assert!(toast_message(&app).is_some_and(|message| message.contains("task intake failed")));
+    }
+
+    fn configure_task_intake(app: &mut App, script_name: &str, output: &str) {
+        let dir = tempfile::tempdir().unwrap().keep();
+        let command = dir.join(script_name);
+        std::fs::write(
+            &command,
+            format!("#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{}'\n", output),
+        )
+        .unwrap();
+        set_executable(&command);
+        app.add_task_config.agent.task_intake.command = Some(command.display().to_string());
+        app.add_task_config.agent.task_intake.args = Vec::new();
+        app.add_task_config.agent.task_intake.timeout_seconds = Some(5);
+    }
+
+    fn configure_task_intake_failure(app: &mut App, script_name: &str) {
+        let dir = tempfile::tempdir().unwrap().keep();
+        let command = dir.join(script_name);
+        std::fs::write(&command, "#!/bin/sh\ncat >/dev/null\nexit 1\n").unwrap();
+        set_executable(&command);
+        app.add_task_config.agent.task_intake.command = Some(command.display().to_string());
+        app.add_task_config.agent.task_intake.args = Vec::new();
+        app.add_task_config.agent.task_intake.timeout_seconds = Some(5);
+    }
+
+    #[cfg(unix)]
+    fn set_executable(path: &std::path::Path) {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[cfg(not(unix))]
+    fn set_executable(_path: &std::path::Path) {}
 
     #[tokio::test]
     async fn add_task_flow_cancels_at_title_step() {

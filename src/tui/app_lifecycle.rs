@@ -8,7 +8,7 @@ use ratatui::DefaultTerminal;
 use crate::config::AppConfig;
 use crate::tui::app::App;
 use crate::tui::overlay::{OverlayState, OverlayView};
-use crate::tui::ui::{self, ViewState};
+use crate::tui::ui::{self, ViewState, ViewSurface};
 
 impl App {
     pub(crate) async fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
@@ -26,14 +26,19 @@ impl App {
     ) -> Result<Option<String>> {
         self.add_task_only = true;
         self.add_task_config = config;
-        self.begin_add_task().await?;
-        if natural {
-            self.begin_add_task_natural();
-        }
+        self.open_add_task_on_start(natural).await?;
         execute!(std::io::stdout(), EnableBracketedPaste)?;
         let result = self.run_loop(terminal).await;
         execute!(std::io::stdout(), DisableBracketedPaste)?;
         result.map(|()| self.add_task_only_message)
+    }
+
+    pub(crate) async fn open_add_task_on_start(&mut self, natural: bool) -> Result<()> {
+        self.begin_add_task().await?;
+        if natural {
+            self.begin_add_task_natural();
+        }
+        Ok(())
     }
 
     async fn run_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
@@ -76,6 +81,11 @@ impl App {
             detail_underlay: self.detail_underlay(),
             message: self.message.clone(),
             pending_shortcut: self.pending_shortcut.labels(),
+            surface: if self.add_task_only {
+                ViewSurface::AddTask
+            } else {
+                ViewSurface::Main
+            },
         }
     }
 

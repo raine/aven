@@ -57,6 +57,8 @@ pub(crate) struct TuiArgs {
     #[arg(long)]
     pub(crate) add_task: bool,
     #[arg(long)]
+    pub(crate) add_task_only: bool,
+    #[arg(long)]
     pub(crate) natural: bool,
 }
 

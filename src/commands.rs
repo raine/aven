@@ -90,7 +90,7 @@ pub(crate) fn cmd_tmux_add_task_popup(args: TmuxAddTaskPopupArgs) -> Result<()> 
     let mut aven_args = vec![
         "aven".to_string(),
         "tui".to_string(),
-        "--add-task".to_string(),
+        "--add-task-only".to_string(),
     ];
     if args.natural {
         aven_args.push("--natural".to_string());
