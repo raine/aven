@@ -1,4 +1,5 @@
 use anyhow::Result;
+use tokio::task::JoinHandle;
 
 use crate::config::TaskIntakeConfig;
 use crate::operations::{
@@ -10,14 +11,19 @@ use crate::undo::{UndoCommand, task_snapshot};
 use super::TuiStore;
 
 impl TuiStore {
-    pub(crate) async fn parse_task_intake(
-        &mut self,
-        config: &TaskIntakeConfig,
-        input: &str,
-    ) -> Result<TaskDraft> {
+    pub(crate) fn spawn_task_intake(
+        &self,
+        config: TaskIntakeConfig,
+        input: String,
+    ) -> JoinHandle<Result<TaskDraft>> {
         self.activate_workspace();
-        let mut conn = self.pool.acquire().await?;
-        crate::task_intake::parse_task_intake(&mut conn, config, input).await
+        let pool = self.pool.clone();
+        let workspace = self.active_workspace.clone();
+        tokio::spawn(async move {
+            crate::workspaces::set_active_workspace(workspace);
+            let mut conn = pool.acquire().await?;
+            crate::task_intake::parse_task_intake(&mut conn, &config, &input).await
+        })
     }
 
     pub(crate) async fn create_task(

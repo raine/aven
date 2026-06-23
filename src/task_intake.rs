@@ -60,7 +60,7 @@ pub(crate) async fn parse_task_intake(
 ) -> Result<TaskDraft> {
     let context = TaskIntakeContext::load(conn).await?;
     let output = run_task_intake_command(config, &context, input).await?;
-    parsed_output_to_draft(conn, &context, input, &output).await
+    parsed_output_to_draft(conn, &context, &output).await
 }
 
 async fn run_task_intake_command(
@@ -75,7 +75,7 @@ async fn run_task_intake_command(
         .context(
             "error task-intake-command-required hint=\"configure agent.task_intake.command\"",
         )?;
-    let prompt = task_intake_prompt(context, input);
+    let prompt = task_intake_prompt(config, context, input);
     let prompt_arg = config.args.iter().any(|arg| arg.contains("{prompt}"));
     let args = config
         .args
@@ -120,7 +120,37 @@ async fn run_task_intake_command(
     String::from_utf8(output.stdout).context("task intake output was not utf-8")
 }
 
-fn task_intake_prompt(context: &TaskIntakeContext, input: &str) -> String {
+fn task_intake_prompt(
+    config: &TaskIntakeConfig,
+    context: &TaskIntakeContext,
+    input: &str,
+) -> String {
+    let system_prompt = config
+        .system_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(default_task_intake_system_prompt());
+    format!(
+        "{}\n\n{}\n\nRaw intake text:\n{}\n",
+        system_prompt,
+        task_intake_context_prompt(context),
+        input
+    )
+}
+
+fn default_task_intake_system_prompt() -> &'static str {
+    "You turn raw task intake text into one Aven task payload.\n\n\
+Return only JSON with this shape:\n\
+{\"title\":\"short imperative task title\",\"description\":\"optional durable context\",\"project\":\"optional project key or name\",\"priority\":\"none|low|medium|high|urgent\",\"labels\":[\"existing-label\"]}\n\n\
+Rules:\n\
+- The title is required and should be concise.\n\
+- Use project only when the text clearly names one of the available projects.\n\
+- Use only existing labels.\n\
+- Put durable context in description when helpful."
+}
+
+fn task_intake_context_prompt(context: &TaskIntakeContext) -> String {
     let projects = context
         .projects
         .iter()
@@ -138,31 +168,20 @@ fn task_intake_prompt(context: &TaskIntakeContext, input: &str) -> String {
             .join("\n")
     };
     format!(
-        "You turn raw task intake text into one Aven task payload.\n\n\
-Return only JSON with this shape:\n\
-{{\"title\":\"short imperative task title\",\"description\":\"optional durable context\",\"project\":\"optional project key or name\",\"priority\":\"none|low|medium|high|urgent\",\"labels\":[\"existing-label\"]}}\n\n\
-Rules:\n\
-- The title is required and should be concise.\n\
-- Use only these priorities: {}.\n\
-- Use project only when the text clearly names one of the available projects.\n\
-- Use only existing labels.\n\
-- Put the original request and useful context in description when helpful.\n\n\
+        "Use only these priorities: {}.\n\n\
 Inferred project: {}\n\n\
 Available projects:\n{}\n\n\
-Available labels:\n{}\n\n\
-Raw intake text:\n{}\n",
+Available labels:\n{}",
         PRIORITIES.join(", "),
         context.inferred_project.as_deref().unwrap_or("none"),
         projects,
-        labels,
-        input
+        labels
     )
 }
 
 async fn parsed_output_to_draft(
     conn: &mut SqliteConnection,
     context: &TaskIntakeContext,
-    raw_input: &str,
     output: &str,
 ) -> Result<TaskDraft> {
     let json = extract_json(output).context("error task-intake-json-missing")?;
@@ -190,11 +209,7 @@ async fn parsed_output_to_draft(
     };
     let labels =
         resolve_labels_in_workspace(conn, context.workspace_id.as_str(), &parsed.labels).await?;
-    let description = if parsed.description.trim().is_empty() {
-        raw_input.trim().to_string()
-    } else {
-        parsed.description.trim().to_string()
-    };
+    let description = parsed.description.trim().to_string();
     Ok(TaskDraft {
         title: title.to_string(),
         description,

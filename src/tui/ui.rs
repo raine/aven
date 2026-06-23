@@ -32,7 +32,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, Paragraph};
 
-use crate::tui::app::{Focus, WidgetState};
+use crate::tui::app::{Focus, LoadingState, WidgetState};
 use crate::tui::overlay::{OverlayRoute, OverlayView, TextInputView};
 use crate::tui::store::TuiStore;
 use crate::tui::theme::{BG, FG};
@@ -52,6 +52,7 @@ pub(crate) struct ViewState {
     pub(crate) message: Option<Toast>,
     pub(crate) pending_shortcut: Vec<String>,
     pub(crate) surface: ViewSurface,
+    pub(crate) loading: Option<LoadingState>,
 }
 
 impl ViewState {
@@ -147,6 +148,9 @@ pub(crate) fn render(
     if let Some(toast) = &view.message {
         render_toast(frame, toast);
     }
+    if let Some(loading) = &view.loading {
+        render_loading(frame, loading);
+    }
 }
 
 fn render_add_task_surface(frame: &mut Frame, view: &ViewState) {
@@ -169,6 +173,21 @@ fn render_add_task_surface(frame: &mut Frame, view: &ViewState) {
     if let Some(toast) = &view.message {
         render_toast(frame, toast);
     }
+    if let Some(loading) = &view.loading {
+        render_loading(frame, loading);
+    }
+}
+
+fn render_loading(frame: &mut Frame, loading: &LoadingState) {
+    let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let frame_symbol = frames[loading.frame() % frames.len()];
+    render_toast(
+        frame,
+        &Toast::new(
+            format!("{frame_symbol} {}", loading.message),
+            crate::tui::toast::ToastSeverity::Info,
+        ),
+    );
 }
 
 fn render_add_task_surface_overlay(frame: &mut Frame, overlay: &OverlayView) {

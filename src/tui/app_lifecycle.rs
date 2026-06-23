@@ -43,10 +43,11 @@ impl App {
 
     async fn run_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         while !self.should_quit {
+            self.poll_pending_task_intake().await?;
             let view = self.view();
             terminal.draw(|frame| ui::render(frame, &self.store, &mut self.widgets, &view))?;
 
-            if event::poll(Duration::from_millis(250))? {
+            if event::poll(Duration::from_millis(120))? {
                 match event::read()? {
                     Event::Key(key) => {
                         let result = self.dispatch_key(key, terminal.size()?).await;
@@ -81,6 +82,7 @@ impl App {
             detail_underlay: self.detail_underlay(),
             message: self.message.clone(),
             pending_shortcut: self.pending_shortcut.labels(),
+            loading: self.loading.clone(),
             surface: if self.add_task_only {
                 ViewSurface::AddTask
             } else {

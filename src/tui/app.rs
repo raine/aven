@@ -1,5 +1,7 @@
 use std::time::Instant;
 
+use tokio::task::JoinHandle;
+
 use anyhow::Result;
 use ratatui::widgets::{ListState, TableState};
 use sqlx::SqlitePool;
@@ -48,6 +50,32 @@ pub(crate) enum Focus {
     Tasks,
 }
 
+pub(super) struct PendingTaskIntake {
+    handle: JoinHandle<Result<TaskDraft>>,
+    retry: NaturalRetry,
+    value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LoadingState {
+    pub(crate) message: String,
+    pub(crate) started_at: Instant,
+}
+
+impl LoadingState {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            started_at: Instant::now(),
+        }
+    }
+
+    pub(crate) fn frame(&self) -> usize {
+        let elapsed = self.started_at.elapsed().as_millis() as usize;
+        elapsed / 120
+    }
+}
+
 pub(crate) struct WidgetState {
     pub(crate) sidebar: ListState,
     pub(crate) table: TableState,
@@ -70,6 +98,8 @@ pub(crate) struct App {
     pub(super) add_task_only: bool,
     pub(super) add_task_only_message: Option<String>,
     pub(super) add_task_config: AppConfig,
+    pub(super) loading: Option<LoadingState>,
+    pub(super) pending_task_intake: Option<PendingTaskIntake>,
 }
 
 impl App {
@@ -109,6 +139,8 @@ impl App {
             add_task_only: false,
             add_task_only_message: None,
             add_task_config: AppConfig::default(),
+            loading: None,
+            pending_task_intake: None,
         };
         app.widgets.sidebar.select(app.store.sidebar_selection());
         app.widgets
@@ -466,11 +498,28 @@ impl App {
             self.retry_add_task_natural(value, retry);
             return Ok(());
         }
-        match self
-            .store
-            .parse_task_intake(&self.add_task_config.agent.task_intake, raw)
-            .await
-        {
+        let handle = self.store.spawn_task_intake(
+            self.add_task_config.agent.task_intake.clone(),
+            raw.to_string(),
+        );
+        self.loading = Some(LoadingState::new("parsing task with LLM"));
+        self.pending_task_intake = Some(PendingTaskIntake {
+            handle,
+            retry,
+            value,
+        });
+        Ok(())
+    }
+
+    pub(super) async fn poll_pending_task_intake(&mut self) -> Result<()> {
+        let Some(pending) = self
+            .pending_task_intake
+            .take_if(|pending| pending.handle.is_finished())
+        else {
+            return Ok(());
+        };
+        self.loading = None;
+        match pending.handle.await? {
             Ok(draft) => {
                 if self.authoring.apply_add_task_draft(draft) {
                     self.set_success("parsed task draft, review and save");
@@ -479,7 +528,7 @@ impl App {
             }
             Err(error) => {
                 self.set_error(format!("task intake failed: {error:#}"));
-                self.retry_add_task_natural(value, retry);
+                self.retry_add_task_natural(pending.value, pending.retry);
             }
         }
         Ok(())

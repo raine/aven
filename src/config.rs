@@ -76,6 +76,8 @@ pub struct TaskIntakeConfig {
     #[serde(default = "default_task_intake_args")]
     pub args: Vec<String>,
     pub timeout_seconds: Option<u64>,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
 }
 
 fn default_task_intake_args() -> Vec<String> {
@@ -93,6 +95,7 @@ impl Default for TaskIntakeConfig {
             command: None,
             args: default_task_intake_args(),
             timeout_seconds: Some(45),
+            system_prompt: None,
         }
     }
 }

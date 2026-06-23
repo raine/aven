@@ -9,9 +9,13 @@ fn natural_add_uses_configured_task_intake_command() {
     let env = TestEnv::new();
     let db = env.db("natural.sqlite");
     let command = env.path("task-intake.sh");
+    let prompt = env.path("prompt.txt");
     fs::write(
         &command,
-        "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"title\":\"fix slack dispatch\",\"description\":\"details from model\",\"project\":\"app\",\"priority\":\"high\",\"labels\":[]}'\n",
+        format!(
+            "#!/bin/sh\ncat >'{}'\nprintf '%s\\n' '{{\"title\":\"fix slack dispatch\",\"description\":\"details from model\",\"project\":\"app\",\"priority\":\"high\",\"labels\":[]}}'\n",
+            prompt.display()
+        ),
     )
     .unwrap();
     set_executable(&command);
@@ -25,6 +29,7 @@ agent:
     command: "{}"
     args: []
     timeout_seconds: 5
+    system_prompt: "custom task shaping"
 "#,
         db.display(),
         command.display()
@@ -46,6 +51,15 @@ agent:
             "priority=high",
             "description<<EOF",
             "details from model",
+        ],
+    );
+    let prompt = fs::read_to_string(prompt).unwrap();
+    contains_all(
+        &prompt,
+        &[
+            "custom task shaping",
+            "Available projects:",
+            "Raw intake text:",
         ],
     );
 }

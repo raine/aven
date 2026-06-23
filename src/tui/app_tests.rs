@@ -1026,12 +1026,25 @@ mod authoring {
         app.handle_overlay_key(ctrl_n()).await.unwrap();
 
         assert!(matches!(
+            app.loading.as_ref(),
+            Some(loading) if loading.message == "parsing task with LLM"
+        ));
+        for _ in 0..100 {
+            app.poll_pending_task_intake().await.unwrap();
+            if app.pending_task_intake.is_none() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        assert!(matches!(
             &app.overlay,
             Some(OverlayState::AddTask(state))
                 if state.title.as_str() == "fix parsed dispatch"
                     && state.description.lines == vec!["from parsed title".to_string()]
                     && state.priority == "medium"
         ));
+        assert!(app.loading.is_none());
         assert_eq!(
             toast_message(&app),
             Some("parsed task draft, review and save")
@@ -1046,6 +1059,13 @@ mod authoring {
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "raw natural title").await;
         app.handle_overlay_key(ctrl_n()).await.unwrap();
+        for _ in 0..100 {
+            app.poll_pending_task_intake().await.unwrap();
+            if app.pending_task_intake.is_none() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
 
         assert!(matches!(
             &app.overlay,
