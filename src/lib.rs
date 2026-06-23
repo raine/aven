@@ -36,11 +36,14 @@ mod test_support;
 
 pub use cli::Cli;
 
-use cli::{Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand, TmuxSubcommand};
+use cli::{
+    Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand, InternalSubcommand,
+    TmuxSubcommand,
+};
 use commands::{
-    cmd_add, cmd_bulk_update, cmd_config, cmd_conflict, cmd_delete_restore, cmd_doctor, cmd_label,
-    cmd_labels, cmd_list, cmd_note, cmd_prime, cmd_project, cmd_projects, cmd_show, cmd_skill,
-    cmd_tmux_add_task_popup, cmd_update, cmd_workspace,
+    cmd_add, cmd_bulk_update, cmd_config, cmd_conflict, cmd_delete_restore, cmd_doctor,
+    cmd_internal_natural_add, cmd_label, cmd_labels, cmd_list, cmd_note, cmd_prime, cmd_project,
+    cmd_projects, cmd_show, cmd_skill, cmd_tmux_add_task_popup, cmd_update, cmd_workspace,
 };
 use db::open_db;
 use sync::{run_server, sync_client};
@@ -63,6 +66,17 @@ pub async fn run_cli() -> Result<()> {
         }
         Commands::Skill => cmd_skill().await,
         Commands::Config(args) => cmd_config(args).await,
+        Commands::Internal(args) => {
+            let config = config::AppConfig::load()?;
+            let db_path = config::resolve_db_path(cli.db, &config)?;
+            let pool = open_db(&db_path).await?;
+            let mut conn = pool.acquire().await?;
+            match args.command {
+                InternalSubcommand::NaturalAdd(args) => {
+                    cmd_internal_natural_add(&mut conn, &config, args).await
+                }
+            }
+        }
         Commands::Daemon(args) => {
             let config = config::AppConfig::load()?;
             let db_path = config::resolve_db_path(cli.db, &config)?;
@@ -92,8 +106,14 @@ pub async fn run_cli() -> Result<()> {
             drop(conn);
             if let Commands::Tui(args) = &command {
                 if args.add_task_only {
-                    return tui::run_add_task(pool, args.project.as_deref(), args.natural, config)
-                        .await;
+                    return tui::run_add_task(
+                        pool,
+                        args.project.as_deref(),
+                        args.natural,
+                        db_path,
+                        config,
+                    )
+                    .await;
                 }
                 return tui::run(
                     pool,
@@ -137,6 +157,7 @@ pub async fn run_cli() -> Result<()> {
                 Commands::Config(_)
                 | Commands::Daemon(_)
                 | Commands::Server(_)
+                | Commands::Internal(_)
                 | Commands::Tmux(_)
                 | Commands::Skill => unreachable!(),
             };

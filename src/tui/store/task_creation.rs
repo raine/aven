@@ -15,6 +15,7 @@ impl TuiStore {
         &self,
         config: TaskIntakeConfig,
         input: String,
+        project: Option<String>,
     ) -> JoinHandle<Result<TaskDraft>> {
         self.activate_workspace();
         let pool = self.pool.clone();
@@ -22,7 +23,13 @@ impl TuiStore {
         tokio::spawn(async move {
             crate::workspaces::set_active_workspace(workspace);
             let mut conn = pool.acquire().await?;
-            crate::task_intake::parse_task_intake(&mut conn, &config, &input).await
+            crate::task_intake::parse_task_intake_with_project(
+                &mut conn,
+                &config,
+                &input,
+                project.as_deref(),
+            )
+            .await
         })
     }
 

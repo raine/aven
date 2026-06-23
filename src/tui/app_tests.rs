@@ -1107,7 +1107,7 @@ mod authoring {
     }
 
     #[tokio::test]
-    async fn add_task_ctrl_n_parses_title_without_opening_natural_dialog() {
+    async fn add_task_ctrl_n_creates_task_in_background_in_full_tui() {
         let mut app = test_app().await;
         configure_task_intake(
             &mut app,
@@ -1121,8 +1121,10 @@ mod authoring {
 
         assert!(matches!(
             app.loading.as_ref(),
-            Some(loading) if loading.message == "parsing task with LLM"
+            Some(loading) if loading.message == "adding task with LLM"
         ));
+        assert!(app.overlay.is_none());
+        assert_eq!(toast_message(&app), Some("adding task in background"));
         for _ in 0..100 {
             app.poll_pending_task_intake().await.unwrap();
             if app.pending_task_intake.is_none() {
@@ -1131,22 +1133,54 @@ mod authoring {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
 
-        assert!(matches!(
-            &app.overlay,
-            Some(OverlayState::AddTask(state))
-                if state.title.as_str() == "fix parsed dispatch"
-                    && state.description.lines == vec!["from parsed title".to_string()]
-                    && state.priority == "medium"
-        ));
+        let selected = app.widgets.table.selected().unwrap();
+        let task = &app.store.tasks[selected];
+        assert_eq!(task.task.title, "fix parsed dispatch");
+        assert_eq!(task.task.description, "from parsed title");
+        assert_eq!(task.task.priority, "medium");
         assert!(app.loading.is_none());
+        assert!(toast_message(&app).is_some_and(|message| message.starts_with("created task ")));
+    }
+
+    #[tokio::test]
+    async fn add_task_only_ctrl_n_exits_immediately() {
+        let mut app = test_app().await;
+        app.add_task_only = true;
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "add from popup").await;
+        app.handle_overlay_key(ctrl_n()).await.unwrap();
+
+        assert!(app.should_quit);
+        assert!(app.pending_task_intake.is_none());
+        assert!(app.overlay.is_none());
         assert_eq!(
-            toast_message(&app),
-            Some("parsed task draft, review and save")
+            app.add_task_only_message.as_deref(),
+            Some("adding task in background")
         );
     }
 
     #[tokio::test]
-    async fn add_task_ctrl_n_error_keeps_add_task_dialog() {
+    async fn add_task_only_natural_dialog_submit_exits_immediately() {
+        let mut app = test_app().await;
+        app.add_task_only = true;
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.begin_add_task_natural();
+        type_chars(&mut app, "dialog add from popup").await;
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        assert!(app.should_quit);
+        assert!(app.pending_task_intake.is_none());
+        assert!(app.overlay.is_none());
+        assert_eq!(
+            app.add_task_only_message.as_deref(),
+            Some("adding task in background")
+        );
+    }
+
+    #[tokio::test]
+    async fn add_task_ctrl_n_error_reopens_add_task_dialog() {
         let mut app = test_app().await;
         configure_task_intake_failure(&mut app, "parse-title-fail.sh");
 
@@ -1166,7 +1200,9 @@ mod authoring {
             Some(OverlayState::AddTask(state))
                 if state.title.as_str() == "raw natural title"
         ));
-        assert!(toast_message(&app).is_some_and(|message| message.contains("task intake failed")));
+        assert!(toast_message(&app).is_some_and(|message| {
+            message.contains("task intake failed") && message.contains("logged to")
+        }));
     }
 
     fn configure_task_intake(app: &mut App, script_name: &str, output: &str) {

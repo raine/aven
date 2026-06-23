@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use tokio::task::JoinHandle;
@@ -55,6 +56,7 @@ pub(super) struct PendingTaskIntake {
     handle: JoinHandle<Result<TaskDraft>>,
     retry: NaturalRetry,
     value: String,
+    create_on_success: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +88,7 @@ pub(crate) struct App {
     pub(crate) store: TuiStore,
     pub(crate) should_quit: bool,
     pub(crate) focus: Focus,
+    add_task_db_path: Option<PathBuf>,
     pub(crate) widgets: WidgetState,
     pub(crate) overlay: Option<OverlayState>,
     pub(crate) message: Option<Toast>,
@@ -139,6 +142,7 @@ impl App {
             needs_terminal_clear: false,
             add_task_only: false,
             add_task_only_message: None,
+            add_task_db_path: None,
             add_task_config: AppConfig::default(),
             loading: None,
             pending_task_intake: None,
@@ -152,6 +156,10 @@ impl App {
 
     pub(crate) fn set_config(&mut self, config: AppConfig) {
         self.add_task_config = config;
+    }
+
+    pub(crate) fn set_add_task_db_path(&mut self, db_path: PathBuf) {
+        self.add_task_db_path = Some(db_path);
     }
 
     pub(super) async fn move_selection(&mut self, delta: isize) -> Result<()> {
@@ -479,16 +487,16 @@ impl App {
     }
 
     pub(super) async fn submit_add_task_title_natural(&mut self, value: String) -> Result<()> {
-        self.submit_add_task_natural_with_retry(value, NaturalRetry::AddTask)
-            .await
+        if self.add_task_only {
+            self.submit_add_task_only_natural(value, NaturalRetry::AddTask)
+                .await
+        } else {
+            self.submit_add_task_natural_with_retry(value, NaturalRetry::AddTask, true)
+                .await
+        }
     }
 
-    pub(super) async fn submit_add_task_natural(&mut self, value: String) -> Result<()> {
-        self.submit_add_task_natural_with_retry(value, NaturalRetry::Dialog)
-            .await
-    }
-
-    async fn submit_add_task_natural_with_retry(
+    async fn submit_add_task_only_natural(
         &mut self,
         value: String,
         retry: NaturalRetry,
@@ -499,17 +507,63 @@ impl App {
             self.retry_add_task_natural(value, retry);
             return Ok(());
         }
+        let project = self.add_task_project_context();
+        spawn_add_task_only_natural(
+            raw,
+            self.store.active_workspace.id.as_str(),
+            self.add_task_db_path.as_deref(),
+            project.as_deref(),
+        )?;
+        self.add_task_only_message = Some("adding task in background".to_string());
+        self.should_quit = true;
+        Ok(())
+    }
+
+    pub(super) async fn submit_add_task_natural(&mut self, value: String) -> Result<()> {
+        if self.add_task_only {
+            self.submit_add_task_only_natural(value, NaturalRetry::Dialog)
+                .await
+        } else {
+            self.submit_add_task_natural_with_retry(value, NaturalRetry::Dialog, false)
+                .await
+        }
+    }
+
+    async fn submit_add_task_natural_with_retry(
+        &mut self,
+        value: String,
+        retry: NaturalRetry,
+        create_on_success: bool,
+    ) -> Result<()> {
+        let raw = value.trim();
+        if raw.is_empty() {
+            self.set_warning("task description is required");
+            self.retry_add_task_natural(value, retry);
+            return Ok(());
+        }
+        let project = self.add_task_project_context();
         let handle = self.store.spawn_task_intake(
             self.add_task_config.agent.task_intake.clone(),
             raw.to_string(),
+            project,
         );
-        self.loading = Some(LoadingState::new("parsing task with LLM"));
+        self.loading = Some(LoadingState::new(if create_on_success {
+            "adding task with LLM"
+        } else {
+            "parsing task with LLM"
+        }));
         self.pending_task_intake = Some(PendingTaskIntake {
             handle,
             retry,
             value: value.clone(),
+            create_on_success,
         });
-        self.retry_add_task_natural(value, retry);
+        if create_on_success {
+            self.overlay = None;
+            self.set_info("adding task in background");
+        } else {
+            self.retry_add_task_natural(value, retry);
+        }
         Ok(())
     }
 
@@ -522,6 +576,9 @@ impl App {
         };
         self.loading = None;
         match pending.handle.await? {
+            Ok(draft) if pending.create_on_success => {
+                self.submit_created_task(draft).await?;
+            }
             Ok(draft) => {
                 if self.authoring.apply_add_task_draft(draft) {
                     self.set_success("parsed task draft, review and save");
@@ -529,7 +586,14 @@ impl App {
                 }
             }
             Err(error) => {
-                self.set_error(format!("task intake failed: {error:#}"));
+                let log_path = std::env::var_os("AVEN_LOG_FILE")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(default_log_path_display);
+                tracing::warn!(error = %error, "task intake failed");
+                self.set_error(format!(
+                    "task intake failed: {error:#}; logged to {}",
+                    log_path.display()
+                ));
                 self.retry_add_task_natural(pending.value, pending.retry);
             }
         }
@@ -541,6 +605,16 @@ impl App {
             NaturalRetry::AddTask => self.begin_add_task_step(),
             NaturalRetry::Dialog => self.begin_add_task_natural_with_value(value),
         }
+    }
+
+    fn add_task_project_context(&self) -> Option<String> {
+        self.authoring
+            .selected_add_task_project()
+            .flatten()
+            .or_else(|| match &self.store.active_view {
+                SidebarTarget::Project(project) => Some(project.clone()),
+                _ => None,
+            })
     }
 
     async fn submit_created_task(&mut self, draft: TaskDraft) -> Result<()> {
@@ -841,6 +915,100 @@ impl App {
 
 fn description_overlay_from_value(value: String) -> OverlayState {
     OverlayState::multiline_input(OverlayRoute::EditDescription, "Edit description", "", value)
+}
+
+#[cfg(not(test))]
+fn spawn_add_task_only_natural(
+    input: &str,
+    workspace_id: &str,
+    db_path: Option<&Path>,
+    project: Option<&str>,
+) -> Result<()> {
+    let exe = std::env::current_exe()?;
+    let cwd = std::env::current_dir()?;
+    let log_path = current_log_path();
+    let stderr = open_spawn_log(&log_path)?;
+    let stdout = stderr.try_clone()?;
+    let mut command = std::process::Command::new(exe);
+    let Some(db_path) = db_path else {
+        anyhow::bail!("internal natural add requires a database path");
+    };
+    command
+        .arg("--db")
+        .arg(db_path)
+        .arg("internal")
+        .arg("natural-add")
+        .arg("--workspace-id")
+        .arg(workspace_id)
+        .arg("--input")
+        .arg(input);
+    if let Some(project) = project {
+        command.arg("--project").arg(project);
+    }
+    command
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::from(stdout))
+        .stderr(std::process::Stdio::from(stderr));
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    if let Some(db) = std::env::var_os("AVEN_DB") {
+        command.env("AVEN_DB", db);
+    }
+    if let Some(log_file) = std::env::var_os("AVEN_LOG_FILE") {
+        command.env("AVEN_LOG_FILE", log_file);
+    }
+    if let Some(log_filter) = std::env::var_os("AVEN_LOG") {
+        command.env("AVEN_LOG", log_filter);
+    }
+    let child = command.spawn()?;
+    tracing::info!(
+        pid = child.id(),
+        workspace_id = %workspace_id,
+        "spawned background natural add worker"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+fn spawn_add_task_only_natural(
+    _input: &str,
+    _workspace_id: &str,
+    _db_path: Option<&Path>,
+    _project: Option<&str>,
+) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn open_spawn_log(path: &std::path::Path) -> Result<std::fs::File> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    Ok(std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?)
+}
+
+#[cfg(not(test))]
+fn current_log_path() -> PathBuf {
+    std::env::var_os("AVEN_LOG_FILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(default_log_path_display)
+}
+
+fn default_log_path_display() -> PathBuf {
+    let mut dir = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| dirs::home_dir().map(|home| home.join(".local/state")))
+        .unwrap_or_else(|| PathBuf::from("~/.local/state"));
+    dir.push("aven");
+    dir.join("aven.log")
 }
 
 #[cfg(test)]

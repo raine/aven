@@ -16,18 +16,18 @@ use crate::workspaces::resolve_active_workspace;
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::cli::{
     AddArgs, BulkUpdateArgs, ConfigCommand, ConfigSubcommand, ConflictCommand, ConflictSubcommand,
-    LabelCommand, LabelSubcommand, ListArgs, NoteArgs, PrimeArgs, ProjectCommand,
-    ProjectPathSubcommand, ProjectSubcommand, RefArgs, SearchArgs, ShowArgs, TmuxAddTaskPopupArgs,
-    UpdateArgs, WorkspaceCommand, WorkspaceSubcommand,
+    InternalNaturalAddArgs, LabelCommand, LabelSubcommand, ListArgs, NoteArgs, PrimeArgs,
+    ProjectCommand, ProjectPathSubcommand, ProjectSubcommand, RefArgs, SearchArgs, ShowArgs,
+    TmuxAddTaskPopupArgs, UpdateArgs, WorkspaceCommand, WorkspaceSubcommand,
 };
 use crate::input::{read_optional_text, read_required_text};
 use crate::labels::list_labels;
 use crate::labels::resolve_labels_in_workspace;
 use crate::operations::{
     TaskDraft, TaskUpdate, add_note, add_project_path_operation, conflict_variant_value,
-    create_label_operation, create_project_operation, create_task, init_config, list_conflicts,
-    list_project_paths_operation, remove_project_path_operation, resolve_conflict,
-    set_task_deleted, show_config, task_conflicts, update_task,
+    create_label_operation, create_project_operation, create_task, create_task_in_workspace,
+    init_config, list_conflicts, list_project_paths_operation, remove_project_path_operation,
+    resolve_conflict, set_task_deleted, show_config, task_conflicts, update_task,
 };
 use crate::projects::{
     find_project_in_workspace, inferred_project_key_for_add_in_workspace, list_projects,
@@ -37,7 +37,9 @@ use crate::query::{self, SortDirection, TaskFilters, TaskSort};
 use crate::refs::{display_ref, display_suffix, resolve_task_ref};
 use crate::render::quote;
 use crate::task_render::{print_task, print_task_line_item};
-use crate::workspaces::{create_workspace, list_workspaces, rename_workspace};
+use crate::workspaces::{
+    create_workspace, list_workspaces, rename_workspace, set_active_workspace, workspace_for_id,
+};
 
 pub(crate) async fn cmd_add(
     conn: &mut SqliteConnection,
@@ -83,6 +85,62 @@ pub(crate) async fn cmd_add(
         task.priority,
         quote(&task.title)
     );
+    Ok(())
+}
+
+pub(crate) async fn cmd_internal_natural_add(
+    conn: &mut SqliteConnection,
+    config: &AppConfig,
+    args: InternalNaturalAddArgs,
+) -> Result<()> {
+    let workspace = workspace_for_id(conn, &args.workspace_id).await?;
+    set_active_workspace(workspace.clone());
+    let outcome = async {
+        let draft = crate::task_intake::parse_task_intake_in_workspace(
+            conn,
+            &config.agent.task_intake,
+            &args.input,
+            &workspace,
+            args.project.as_deref(),
+        )
+        .await?;
+        create_task_in_workspace(conn, &args.workspace_id, draft).await
+    }
+    .await;
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            tracing::error!(
+                workspace_id = %args.workspace_id,
+                has_project_context = args.project.is_some(),
+                error = %error,
+                "internal natural-add failed"
+            );
+            return Err(error);
+        }
+    };
+    let task = outcome.task;
+    tracing::info!(
+        workspace_id = %args.workspace_id,
+        task_id = %task.id,
+        project = %task.project_key,
+        "created task from internal natural-add"
+    );
+    println!(
+        "created {} ref={} project={} status={} priority={} title={}",
+        display_ref(conn, &task).await?,
+        display_suffix(conn, &task.id).await?,
+        task.project_key,
+        task.status,
+        task.priority,
+        quote(&task.title)
+    );
+    if config.sync.enabled
+        && let Ok(addr) = config.wake_addr()
+    {
+        tracing::debug!(wake_addr = %addr, "waking daemon after internal natural add");
+        crate::daemon::wake(addr);
+    }
     Ok(())
 }
 

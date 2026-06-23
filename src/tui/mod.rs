@@ -46,9 +46,11 @@ pub(crate) async fn run_add_task(
     pool: SqlitePool,
     project: Option<&str>,
     natural: bool,
+    db_path: std::path::PathBuf,
     config: crate::config::AppConfig,
 ) -> Result<()> {
-    let app = app::App::new(pool, project).await?;
+    let mut app = app::App::new(pool, project).await?;
+    app.set_add_task_db_path(db_path);
     let mut terminal = ratatui::init();
     let result = app.run_add_task_only(&mut terminal, natural, config).await;
     ratatui::restore();

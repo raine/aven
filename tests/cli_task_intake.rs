@@ -119,6 +119,69 @@ agent:
 }
 
 #[test]
+fn internal_natural_add_uses_explicit_workspace_id_and_project_context() {
+    let env = TestEnv::new();
+    let db = env.db("natural-internal.sqlite");
+    let command = env.path("task-intake.sh");
+    let prompt = env.path("prompt.txt");
+    fs::write(
+        &command,
+        format!(
+            "#!/bin/sh\ncat >'{}'\nprintf '%s\\n' '{{\"title\":\"fix slack sync\",\"description\":\"from model\",\"project\":null,\"priority\":\"none\",\"labels\":[]}}'\n",
+            prompt.display()
+        ),
+    )
+    .unwrap();
+    set_executable(&command);
+    env.write_config(&format!(
+        r#"
+local:
+  db_path: "{}"
+
+agent:
+  task_intake:
+    command: "{}"
+    args: []
+    timeout_seconds: 5
+    system_prompt: "Project={{inferred_project}}"
+"#,
+        db.display(),
+        command.display()
+    ));
+
+    ok(env.aven_config(["workspace", "create", "client"]));
+    let client_workspace_id = workspace_id(&db, "client");
+    ok(env.aven_config(["--workspace", "client", "project", "create", "app"]));
+
+    let out = ok(env.aven_config([
+        "internal",
+        "natural-add",
+        "--workspace-id",
+        &client_workspace_id,
+        "--project",
+        "app",
+        "--input",
+        "in slack, we need to fix sync",
+    ]));
+    let task_ref = extract_ref(&out);
+
+    let created = ok(env.aven_config(["--workspace", "client", "show", &task_ref, "--full"]));
+    contains_all(
+        &created,
+        &[
+            "project=app",
+            "title=\"fix slack sync\"",
+            "description<<EOF",
+        ],
+    );
+    let default_list = ok(env.aven_config(["list"]));
+    assert!(!default_list.contains("fix slack sync"));
+
+    let prompt = fs::read_to_string(prompt).unwrap();
+    assert!(prompt.contains("Project=app"));
+}
+
+#[test]
 fn tmux_add_task_popup_prints_binding() {
     let env = TestEnv::new();
     let db = env.db("tmux.sqlite");
@@ -140,6 +203,16 @@ fn tmux_add_task_popup_prints_binding() {
             "'aven tui --add-task-only --project app'",
         ],
     );
+}
+
+fn workspace_id(db: &std::path::Path, key: &str) -> String {
+    let output = std::process::Command::new("sqlite3")
+        .arg(db)
+        .arg(format!("SELECT id FROM workspaces WHERE key = '{key}'"))
+        .output()
+        .expect("read workspace id");
+    assert!(output.status.success(), "sqlite failed");
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
 
 #[cfg(unix)]

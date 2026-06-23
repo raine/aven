@@ -47,6 +47,8 @@ pub(crate) enum Commands {
     Skill,
     Doctor,
     Tmux(TmuxCommand),
+    #[command(hide = true)]
+    Internal(InternalCommand),
     Tui(TuiArgs),
 }
 
@@ -66,6 +68,28 @@ pub(crate) struct TuiArgs {
 pub(crate) struct TmuxCommand {
     #[command(subcommand)]
     pub(crate) command: TmuxSubcommand,
+}
+
+#[derive(Args)]
+pub(crate) struct InternalCommand {
+    #[command(subcommand)]
+    pub(crate) command: InternalSubcommand,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum InternalSubcommand {
+    #[command(name = "natural-add", hide = true)]
+    NaturalAdd(InternalNaturalAddArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct InternalNaturalAddArgs {
+    #[arg(long)]
+    pub(crate) workspace_id: String,
+    #[arg(long)]
+    pub(crate) project: Option<String>,
+    #[arg(long, allow_hyphen_values = true)]
+    pub(crate) input: String,
 }
 
 #[derive(Subcommand)]
