@@ -11,8 +11,8 @@ use crate::config::AppConfig;
 use crate::operations::TaskDraft;
 use crate::query::TaskSort;
 use crate::tui::authoring::{
-    ADD_NOTE_TITLE, ADD_TASK_TITLE_PRIORITY_TITLE, ADD_TASK_TITLE_PROJECT_TITLE, AddNoteSubmit,
-    AddTaskStep, AddTaskTitleSubmit, AuthoringState,
+    ADD_NOTE_TITLE, ADD_TASK_TITLE_PROJECT_TITLE, AddNoteSubmit, AddTaskStep, AddTaskTitleSubmit,
+    AuthoringState,
 };
 use crate::tui::config_overlay::{
     config_info_overlay, config_init_overlay, config_paths_overlay, config_status_overlay,
@@ -371,6 +371,7 @@ impl App {
             ),
             focus: context.step,
             project: context.project,
+            status: context.status,
             priority: context.priority,
         }));
     }
@@ -406,6 +407,28 @@ impl App {
             state.description.lines.join("\n"),
             state.focus,
         )
+    }
+
+    pub(super) fn set_add_task_status(&mut self, status: &str) {
+        if let Some(status) = self.authoring.apply_add_task_status(status) {
+            if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
+                state.status = status.clone();
+            } else {
+                self.begin_add_task_step();
+            }
+            self.set_info(format!("add task status={status}"));
+        }
+    }
+
+    pub(super) fn set_add_task_priority(&mut self, priority: &str) {
+        if let Some(priority) = self.authoring.apply_add_task_priority_value(priority) {
+            if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
+                state.priority = priority.clone();
+            } else {
+                self.begin_add_task_step();
+            }
+            self.set_info(format!("add task priority={priority}"));
+        }
     }
 
     pub(super) async fn submit_add_task_from_authoring(&mut self) -> Result<()> {
@@ -455,19 +478,6 @@ impl App {
         self.open_picker_overlay(
             OverlayRoute::AddTaskTitleProject,
             ADD_TASK_TITLE_PROJECT_TITLE,
-            items,
-            false,
-        );
-    }
-
-    pub(super) fn begin_add_task_title_priority(&mut self) {
-        let Some(selected) = self.authoring.selected_add_task_priority() else {
-            return;
-        };
-        let items = self.store.priority_picker_items(&selected);
-        self.open_picker_overlay(
-            OverlayRoute::AddTaskTitlePriority,
-            ADD_TASK_TITLE_PRIORITY_TITLE,
             items,
             false,
         );

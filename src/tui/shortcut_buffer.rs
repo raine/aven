@@ -90,6 +90,63 @@ impl ShortcutBuffer {
         self.codes.push(KeyCode::Char('x'));
     }
 
+    pub(crate) fn begin_add_task_status_prefix(&mut self) {
+        self.codes.clear();
+        self.codes.push(KeyCode::Char('t'));
+    }
+
+    pub(crate) fn has_add_task_status_prefix(&self) -> bool {
+        self.codes == [KeyCode::Char('t')]
+    }
+
+    pub(crate) fn take_add_task_status_request(&mut self, key: KeyEvent) -> Option<&'static str> {
+        if self.codes != [KeyCode::Char('t')] || !key.modifiers.is_empty() {
+            return None;
+        }
+
+        let status = match key.code {
+            KeyCode::Char('i') => Some("inbox"),
+            KeyCode::Char('b') => Some("backlog"),
+            KeyCode::Char('t') => Some("todo"),
+            KeyCode::Char('a') => Some("active"),
+            KeyCode::Char('d') => Some("done"),
+            KeyCode::Char('x') => Some("canceled"),
+            _ => None,
+        };
+        if status.is_some() || key.code == KeyCode::Esc {
+            self.clear();
+        }
+        status
+    }
+
+    pub(crate) fn begin_add_task_priority_prefix(&mut self) {
+        self.codes.clear();
+        self.codes.push(KeyCode::Char('r'));
+    }
+
+    pub(crate) fn has_add_task_priority_prefix(&self) -> bool {
+        self.codes == [KeyCode::Char('r')]
+    }
+
+    pub(crate) fn take_add_task_priority_request(&mut self, key: KeyEvent) -> Option<&'static str> {
+        if self.codes != [KeyCode::Char('r')] || !key.modifiers.is_empty() {
+            return None;
+        }
+
+        let priority = match key.code {
+            KeyCode::Char('n') => Some("none"),
+            KeyCode::Char('l') => Some("low"),
+            KeyCode::Char('m') => Some("medium"),
+            KeyCode::Char('h') => Some("high"),
+            KeyCode::Char('u') => Some("urgent"),
+            _ => None,
+        };
+        if priority.is_some() || key.code == KeyCode::Esc {
+            self.clear();
+        }
+        priority
+    }
+
     pub(crate) fn take_editor_open_request(&mut self, key: KeyEvent) -> bool {
         if self.codes != [KeyCode::Char('x')] {
             return false;

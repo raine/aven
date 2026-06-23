@@ -163,10 +163,14 @@ mod add_task_overlay {
             description_column: 0,
             focus: AddTaskStep::Title,
             project: "aven".to_string(),
+            status: "inbox".to_string(),
             priority: "high".to_string(),
+            status_prefix_active: false,
+            priority_prefix_active: false,
         }));
         assert!(rendered.contains("Add task"));
         assert!(rendered.contains("project: aven"));
+        assert!(rendered.contains("status: inbox"));
         assert!(rendered.contains("prio: high"));
         assert!(rendered.contains("Title"));
         assert!(rendered.contains("Description"));
@@ -187,7 +191,10 @@ mod add_task_overlay {
             description_column: 0,
             focus: AddTaskStep::Description,
             project: "aven".to_string(),
+            status: "inbox".to_string(),
             priority: "none".to_string(),
+            status_prefix_active: false,
+            priority_prefix_active: false,
         }));
         let hint_row = (0..buffer.area.height)
             .find(|row| buffer_row(&buffer, *row).contains("Ctrl+S create"))
@@ -209,7 +216,10 @@ mod add_task_overlay {
             description_column: 0,
             focus: AddTaskStep::Title,
             project: "aven".to_string(),
+            status: "inbox".to_string(),
             priority: "none".to_string(),
+            status_prefix_active: false,
+            priority_prefix_active: false,
         }));
         assert!(rendered.contains("Esc cancel"));
     }
@@ -224,9 +234,56 @@ mod add_task_overlay {
             description_column: 0,
             focus: AddTaskStep::Description,
             project: "aven".to_string(),
+            status: "inbox".to_string(),
             priority: "none".to_string(),
+            status_prefix_active: false,
+            priority_prefix_active: false,
         }));
         assert!(rendered.contains("Esc cancel"));
+    }
+
+    #[test]
+    fn add_task_overlay_replaces_footer_when_status_prefix_is_active() {
+        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            title: String::new(),
+            title_cursor: 0,
+            description: vec![String::new()],
+            description_row: 0,
+            description_column: 0,
+            focus: AddTaskStep::Title,
+            project: "aven".to_string(),
+            status: "inbox".to_string(),
+            priority: "none".to_string(),
+            status_prefix_active: true,
+            priority_prefix_active: false,
+        }));
+        assert!(rendered.contains("i inbox"));
+        assert!(rendered.contains("a active"));
+        assert!(rendered.contains("Esc cancel"));
+        assert!(!rendered.contains("Enter create"));
+        assert!(!rendered.contains("Ctrl+P project"));
+    }
+
+    #[test]
+    fn add_task_overlay_replaces_footer_when_priority_prefix_is_active() {
+        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            title: String::new(),
+            title_cursor: 0,
+            description: vec![String::new()],
+            description_row: 0,
+            description_column: 0,
+            focus: AddTaskStep::Title,
+            project: "aven".to_string(),
+            status: "inbox".to_string(),
+            priority: "none".to_string(),
+            status_prefix_active: false,
+            priority_prefix_active: true,
+        }));
+        assert!(rendered.contains("n none"));
+        assert!(rendered.contains("h high"));
+        assert!(rendered.contains("Esc cancel"));
+        assert!(!rendered.contains("Enter create"));
+        assert!(!rendered.contains("Ctrl+P project"));
     }
 
     #[test]
@@ -239,7 +296,10 @@ mod add_task_overlay {
             description_column: 7,
             focus: AddTaskStep::Description,
             project: "aven".to_string(),
+            status: "inbox".to_string(),
             priority: "none".to_string(),
+            status_prefix_active: false,
+            priority_prefix_active: false,
         }));
         let title_row = (0..buffer.area.height)
             .find(|row| buffer_row(&buffer, *row).contains(ADD_TASK_TITLE_PLACEHOLDER))
@@ -262,7 +322,10 @@ mod add_task_overlay {
                 description_column: 25,
                 focus: AddTaskStep::Description,
                 project: "aven".to_string(),
+                status: "inbox".to_string(),
                 priority: "none".to_string(),
+                status_prefix_active: false,
+                priority_prefix_active: false,
             },
             2,
             12,
@@ -286,7 +349,10 @@ mod add_task_overlay {
                 description_column: 25,
                 focus: AddTaskStep::Title,
                 project: "aven".to_string(),
+                status: "inbox".to_string(),
                 priority: "none".to_string(),
+                status_prefix_active: false,
+                priority_prefix_active: false,
             },
             2,
             12,
@@ -298,20 +364,21 @@ mod add_task_overlay {
 
     #[test]
     fn hint_lines_style_keys() {
-        let add_task_keys = styled_key_contents(add_task_hint_line(AddTaskStep::Title));
+        let add_task_keys =
+            styled_key_contents(add_task_hint_line(AddTaskStep::Title, false, false));
         assert_eq!(
             add_task_keys,
-            vec!["Enter", "Tab", "Ctrl+P", "Ctrl+R", "Ctrl+N", "Esc"]
+            vec!["Enter", "Tab", "Ctrl+T", "Ctrl+P", "Ctrl+R", "Esc"]
         );
 
         let multiline_keys = styled_key_contents(multiline_hint_line());
         assert_eq!(multiline_keys, vec!["Ctrl+S", "Esc"]);
 
         let add_task_description_keys =
-            styled_key_contents(add_task_hint_line(AddTaskStep::Description));
+            styled_key_contents(add_task_hint_line(AddTaskStep::Description, false, false));
         assert_eq!(
             add_task_description_keys,
-            vec!["Ctrl+S", "Ctrl+X Ctrl+E", "Tab", "Ctrl+P", "Ctrl+R", "Esc"]
+            vec!["Ctrl+S", "Ctrl+T", "Tab", "Ctrl+P", "Ctrl+R", "Esc"]
         );
 
         let add_task_description_editor_keys =
@@ -323,6 +390,12 @@ mod add_task_overlay {
 
         let add_task_natural_keys = styled_key_contents(add_task_natural_hint_line());
         assert_eq!(add_task_natural_keys, vec!["Ctrl+S", "Enter", "Esc"]);
+
+        let status_keys = styled_key_contents(add_task_status_hint_line());
+        assert_eq!(status_keys, vec!["i", "b", "t", "a", "d", "x", "Esc"]);
+
+        let priority_keys = styled_key_contents(add_task_priority_hint_line());
+        assert_eq!(priority_keys, vec!["n", "l", "m", "h", "u", "Esc"]);
 
         let confirm_keys = styled_key_contents(confirm_hint_line());
         assert_eq!(confirm_keys, vec!["y", "n", "Esc"]);
@@ -375,9 +448,10 @@ mod add_task_overlay {
 
     #[test]
     fn add_task_metadata_title_labels_values() {
-        let line = add_task_metadata_title("aven", "none", 60);
+        let line = add_task_metadata_title("aven", "todo", "none", 60);
         let rendered = line.to_string();
         assert!(rendered.contains("project: aven"));
+        assert!(rendered.contains("status: todo"));
         assert!(rendered.contains("prio: none"));
         assert!(rendered.contains(" · "));
         assert!(!rendered.contains("Tab"));
@@ -388,6 +462,18 @@ mod add_task_overlay {
             .find(|span| span.content == "aven")
             .unwrap();
         assert_eq!(project.style.fg, Some(theme::project_color("aven")));
+        let status = line
+            .spans
+            .iter()
+            .find(|span| span.content == "todo")
+            .unwrap();
+        assert_eq!(status.style.fg, theme::status_style("todo").fg);
+        let priority = line
+            .spans
+            .iter()
+            .find(|span| span.content == "none")
+            .unwrap();
+        assert_eq!(priority.style.fg, theme::priority_style("none").fg);
     }
 
     #[test]
@@ -847,7 +933,10 @@ mod route_specific_rendering {
                 description_column: 0,
                 focus: AddTaskStep::Title,
                 project: "aven".to_string(),
+                status: "inbox".to_string(),
                 priority: "high".to_string(),
+                status_prefix_active: false,
+                priority_prefix_active: false,
             }),
             OverlayView::TextInput(TextInputView {
                 route: OverlayRoute::MessageOnly,

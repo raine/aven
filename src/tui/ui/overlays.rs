@@ -22,7 +22,8 @@ pub(super) use text_panel::render_text_panel;
 #[cfg(test)]
 pub(super) use add_task::{
     ADD_TASK_TITLE_PLACEHOLDER, add_task_description_lines, add_task_hint_line,
-    add_task_metadata_title, add_task_title_input_line,
+    add_task_metadata_title, add_task_priority_hint_line, add_task_status_hint_line,
+    add_task_title_input_line,
 };
 
 #[cfg(test)]

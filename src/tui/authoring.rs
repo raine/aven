@@ -2,7 +2,6 @@ use crate::operations::TaskDraft;
 
 pub(crate) const ADD_NOTE_TITLE: &str = "Add note";
 pub(crate) const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: project";
-pub(crate) const ADD_TASK_TITLE_PRIORITY_TITLE: &str = "Add task: priority";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AddTaskStep {
@@ -16,6 +15,7 @@ struct AddTaskDraftState {
     description: String,
     project: Option<String>,
     inferred_project: Option<String>,
+    status: String,
     priority: String,
     step: AddTaskStep,
 }
@@ -27,6 +27,7 @@ impl Default for AddTaskDraftState {
             description: String::new(),
             project: None,
             inferred_project: None,
+            status: "inbox".to_string(),
             priority: "none".to_string(),
             step: AddTaskStep::Title,
         }
@@ -54,6 +55,7 @@ pub(crate) struct AddTaskContext {
     pub(crate) description: String,
     pub(crate) step: AddTaskStep,
     pub(crate) project: String,
+    pub(crate) status: String,
     pub(crate) priority: String,
 }
 
@@ -119,6 +121,7 @@ impl AuthoringState {
             description: draft.description.clone(),
             step: draft.step,
             project: project.to_string(),
+            status: draft.status.clone(),
             priority: draft.priority.clone(),
         })
     }
@@ -130,11 +133,15 @@ impl AuthoringState {
         Some(draft.project.clone())
     }
 
-    pub(crate) fn selected_add_task_priority(&self) -> Option<String> {
-        let AuthoringFlow::AddTask(draft) = self.flow.as_ref()? else {
+    pub(crate) fn apply_add_task_status(&mut self, status: &str) -> Option<String> {
+        let AuthoringFlow::AddTask(draft) = self.flow.as_mut()? else {
             return None;
         };
-        Some(draft.priority.clone())
+        if !crate::choices::STATUSES.contains(&status) {
+            return None;
+        }
+        draft.status = status.to_string();
+        Some(draft.status.clone())
     }
 
     pub(crate) fn capture_add_task_fields(
@@ -171,6 +178,17 @@ impl AuthoringState {
         true
     }
 
+    pub(crate) fn apply_add_task_priority_value(&mut self, priority: &str) -> Option<String> {
+        let AuthoringFlow::AddTask(draft) = self.flow.as_mut()? else {
+            return None;
+        };
+        if !crate::choices::PRIORITIES.contains(&priority) {
+            return None;
+        }
+        draft.priority = priority.to_string();
+        Some(draft.priority.clone())
+    }
+
     pub(crate) fn apply_add_task_draft(&mut self, task: TaskDraft) -> bool {
         let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
             return false;
@@ -178,6 +196,7 @@ impl AuthoringState {
         draft.title = task.title;
         draft.description = task.description;
         draft.project = task.project;
+        draft.status = task.status;
         draft.priority = task.priority;
         draft.step = AddTaskStep::Title;
         true
@@ -198,6 +217,7 @@ impl AuthoringState {
             title: trimmed.to_string(),
             description: draft.description.trim().to_string(),
             project: draft.project,
+            status: draft.status,
             priority: draft.priority,
             labels: Vec::new(),
         })
@@ -276,6 +296,20 @@ mod tests {
         ));
         assert!(state.apply_add_task_project(vec!["mobile-app".to_string()]));
         assert!(state.add_task_context().is_some());
+    }
+
+    #[test]
+    fn add_task_status_defaults_to_inbox_and_can_be_set() {
+        let mut state = AuthoringState::default();
+        state.begin_add_task(None, None);
+
+        assert_eq!(state.add_task_context().unwrap().status, "inbox");
+        assert_eq!(state.apply_add_task_status("todo").as_deref(), Some("todo"));
+        assert!(matches!(
+            state.submit_add_task(),
+            AddTaskTitleSubmit::ReopenTitle { .. }
+        ));
+        assert_eq!(state.add_task_context().unwrap().status, "todo");
     }
 
     #[test]

@@ -16,14 +16,14 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
     if let Some((project, priority)) = add_task_title_metadata(&state.title) {
         let dialog = Dialog::new("Add task", 74, 5);
         let width = dialog.area(frame).width;
-        let dialog = dialog.right_title(add_task_metadata_title(project, priority, width));
+        let dialog = dialog.right_title(add_task_metadata_title(project, "inbox", priority, width));
         let content = dialog.render_block(frame);
         let input =
             add_task_title_input_line(&state.input, Some(state.cursor), content.width as usize);
         let text = Text::from(vec![
             input,
             Line::from(""),
-            add_task_hint_line(AddTaskStep::Title),
+            add_task_hint_line(AddTaskStep::Title, false, false),
         ]);
         frame.render_widget(
             Paragraph::new(text).style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),

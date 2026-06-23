@@ -171,6 +171,48 @@ impl App {
             return Ok(());
         }
 
+        let had_add_task_status_prefix = self.pending_shortcut.has_add_task_status_prefix();
+        if let Some(status) = self.pending_shortcut.take_add_task_status_request(key) {
+            if let OverlayState::AddTask(state) = &overlay {
+                if self.capture_add_task_state(state) {
+                    self.overlay = Some(overlay);
+                    self.set_add_task_status(status);
+                }
+            } else {
+                self.overlay = Some(overlay);
+            }
+            return Ok(());
+        }
+        if had_add_task_status_prefix {
+            self.pending_shortcut.clear();
+            self.overlay = Some(overlay);
+            if key.code != KeyCode::Esc {
+                self.set_warning("invalid status shortcut");
+            }
+            return Ok(());
+        }
+
+        let had_add_task_priority_prefix = self.pending_shortcut.has_add_task_priority_prefix();
+        if let Some(priority) = self.pending_shortcut.take_add_task_priority_request(key) {
+            if let OverlayState::AddTask(state) = &overlay {
+                if self.capture_add_task_state(state) {
+                    self.overlay = Some(overlay);
+                    self.set_add_task_priority(priority);
+                }
+            } else {
+                self.overlay = Some(overlay);
+            }
+            return Ok(());
+        }
+        if had_add_task_priority_prefix {
+            self.pending_shortcut.clear();
+            self.overlay = Some(overlay);
+            if key.code != KeyCode::Esc {
+                self.set_warning("invalid priority shortcut");
+            }
+            return Ok(());
+        }
+
         if self.pending_shortcut.take_editor_open_request(key) {
             match &overlay {
                 OverlayState::MultilineInput(state)
@@ -215,9 +257,13 @@ impl App {
                 return Ok(());
             }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
-                if self.capture_add_task_state(state) {
-                    self.begin_add_task_title_priority();
-                }
+                self.pending_shortcut.begin_add_task_priority_prefix();
+                self.overlay = Some(overlay);
+                return Ok(());
+            }
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('t') {
+                self.pending_shortcut.begin_add_task_status_prefix();
+                self.overlay = Some(overlay);
                 return Ok(());
             }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('n') {

@@ -270,6 +270,7 @@ async fn parsed_output_to_draft(
         title: title.to_string(),
         description,
         project,
+        status: "inbox".to_string(),
         priority,
         labels,
     })

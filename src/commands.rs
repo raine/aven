@@ -70,6 +70,7 @@ pub(crate) async fn cmd_add(
             title: args.title,
             description,
             project: args.project,
+            status: "inbox".to_string(),
             priority: args.priority,
             labels: args.label,
         }

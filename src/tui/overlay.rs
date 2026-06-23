@@ -47,6 +47,7 @@ mod tests {
             ),
             focus,
             project: "aven".to_string(),
+            status: "inbox".to_string(),
             priority: "none".to_string(),
         }
     }

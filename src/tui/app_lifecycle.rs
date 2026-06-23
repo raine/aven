@@ -7,6 +7,7 @@ use ratatui::DefaultTerminal;
 
 use crate::config::AppConfig;
 use crate::tui::app::App;
+use crate::tui::overlay::OverlayView::AddTask;
 use crate::tui::overlay::{OverlayState, OverlayView};
 use crate::tui::ui::{self, ViewState, ViewSurface};
 
@@ -76,9 +77,15 @@ impl App {
     }
 
     pub(crate) fn view(&self) -> ViewState {
+        let mut overlay = self.overlay.as_ref().map(OverlayView::from);
+        if let Some(AddTask(state)) = &mut overlay {
+            state.status_prefix_active = self.pending_shortcut.has_add_task_status_prefix();
+            state.priority_prefix_active = self.pending_shortcut.has_add_task_priority_prefix();
+        }
+
         ViewState {
             focus: self.focus,
-            overlay: self.overlay.as_ref().map(OverlayView::from),
+            overlay,
             detail_underlay: self.detail_underlay(),
             message: self.message.clone(),
             pending_shortcut: self.pending_shortcut.labels(),

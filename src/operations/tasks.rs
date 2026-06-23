@@ -17,6 +17,7 @@ pub(crate) struct TaskDraft {
     pub(crate) title: String,
     pub(crate) description: String,
     pub(crate) project: Option<String>,
+    pub(crate) status: String,
     pub(crate) priority: String,
     pub(crate) labels: Vec<String>,
 }
@@ -64,6 +65,7 @@ pub(crate) async fn create_task_in_workspace(
     workspace_id: &str,
     draft: TaskDraft,
 ) -> Result<TaskOutcome> {
+    validate_choice("status", &draft.status, STATUSES)?;
     validate_choice("priority", &draft.priority, PRIORITIES)?;
     let id = new_id();
     let ts = now();
@@ -75,13 +77,14 @@ pub(crate) async fn create_task_in_workspace(
     let labels = resolve_labels_in_workspace(&mut tx, &workspace.id, &draft.labels).await?;
     sqlx::query(
         "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at, queue_activity_at)
-         VALUES (?, ?, ?, ?, ?, 'inbox', ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&workspace.id)
     .bind(&id)
     .bind(&draft.title)
     .bind(&draft.description)
     .bind(&project.key)
+    .bind(&draft.status)
     .bind(&draft.priority)
     .bind(&ts)
     .bind(&ts)
@@ -112,7 +115,7 @@ pub(crate) async fn create_task_in_workspace(
             "project_key": project.key,
             "project_name": project.name,
             "project_prefix": project.prefix,
-            "status": "inbox",
+            "status": draft.status,
             "priority": draft.priority,
             "labels": labels,
             "created_at": ts,

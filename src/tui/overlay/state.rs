@@ -270,6 +270,7 @@ pub(crate) struct AddTaskState {
     pub(crate) description: MultilineInputState,
     pub(crate) focus: AddTaskStep,
     pub(crate) project: String,
+    pub(crate) status: String,
     pub(crate) priority: String,
 }
 

@@ -48,7 +48,10 @@ pub(crate) struct AddTaskView {
     pub(crate) description_column: usize,
     pub(crate) focus: AddTaskStep,
     pub(crate) project: String,
+    pub(crate) status: String,
     pub(crate) priority: String,
+    pub(crate) status_prefix_active: bool,
+    pub(crate) priority_prefix_active: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,7 +116,10 @@ impl From<&OverlayState> for OverlayView {
                 description_column: state.description.column,
                 focus: state.focus,
                 project: state.project.clone(),
+                status: state.status.clone(),
                 priority: state.priority.clone(),
+                status_prefix_active: false,
+                priority_prefix_active: false,
             }),
             TextInput(state) => Self::TextInput(TextInputView {
                 route: state.route,

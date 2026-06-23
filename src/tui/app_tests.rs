@@ -14,7 +14,7 @@ use crate::tui::config_overlay::{
 use crate::tui::event::Action;
 use crate::tui::overlay::{
     CommandState, ConfirmState, LineEdit, MultilineInputState, OverlayRoute, OverlayState,
-    PickerItem, PickerMode, PickerState, TextInputState, TextPanelState,
+    OverlayView, PickerItem, PickerMode, PickerState, TextInputState, TextPanelState,
 };
 use crate::tui::store::SidebarTarget;
 use crate::tui::toast::ToastSeverity;
@@ -44,6 +44,7 @@ fn test_task_draft(title: &str) -> TaskDraft {
         title: title.to_string(),
         description: String::new(),
         project: None,
+        status: "inbox".to_string(),
         priority: "none".to_string(),
         labels: Vec::new(),
     }
@@ -100,6 +101,10 @@ fn ctrl_p() -> KeyEvent {
 
 fn ctrl_r() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)
+}
+
+fn ctrl_t() -> KeyEvent {
+    KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)
 }
 
 fn ctrl_n() -> KeyEvent {
@@ -672,6 +677,7 @@ mod filters_and_workspaces {
                 title: "Filtered task".to_string(),
                 description: String::new(),
                 project: None,
+                status: "inbox".to_string(),
                 priority: "urgent".to_string(),
                 labels: vec!["backend".to_string()],
             },
@@ -822,9 +828,86 @@ mod authoring {
         let selected = app.widgets.table.selected().unwrap();
         let task = &app.store.tasks[selected];
         assert_eq!(task.task.title, "Write docs");
+        assert_eq!(task.task.status, "inbox");
         assert_eq!(task.task.priority, "none");
         assert_eq!(task.task.description, "");
         assert!(task.labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_task_status_hotkey_selects_direct_status() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+
+        app.handle_overlay_key(ctrl_t()).await.unwrap();
+
+        assert_pending(&app, &["t"]);
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state)) if state.status == "inbox"
+        ));
+        assert!(matches!(
+            app.view().overlay,
+            Some(OverlayView::AddTask(state)) if state.status_prefix_active
+        ));
+        assert_eq!(toast_message(&app), None);
+
+        app.handle_overlay_key(key(KeyCode::Char('a')))
+            .await
+            .unwrap();
+
+        assert_pending_empty(&app);
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state)) if state.status == "active"
+        ));
+        assert_eq!(toast_message(&app), Some("add task status=active"));
+
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.title, "Write docs");
+        assert_eq!(app.store.tasks[selected].task.status, "active");
+    }
+
+    #[tokio::test]
+    async fn add_task_priority_hotkey_selects_direct_priority() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Fix release").await;
+
+        app.handle_overlay_key(ctrl_r()).await.unwrap();
+
+        assert_pending(&app, &["r"]);
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state)) if state.priority == "none"
+        ));
+        assert!(matches!(
+            app.view().overlay,
+            Some(OverlayView::AddTask(state)) if state.priority_prefix_active
+        ));
+        assert_eq!(toast_message(&app), None);
+
+        app.handle_overlay_key(key(KeyCode::Char('h')))
+            .await
+            .unwrap();
+
+        assert_pending_empty(&app);
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state)) if state.priority == "high"
+        ));
+        assert_eq!(toast_message(&app), Some("add task priority=high"));
+
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.title, "Fix release");
+        assert_eq!(app.store.tasks[selected].task.priority, "high");
     }
 
     #[tokio::test]
@@ -949,12 +1032,10 @@ mod authoring {
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         app.handle_overlay_key(ctrl_r()).await.unwrap();
 
-        assert!(matches!(
-            &app.overlay,
-            Some(OverlayState::Picker(state)) if state.route == OverlayRoute::AddTaskTitlePriority
-        ));
-        type_chars(&mut app, "high").await;
-        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert_pending(&app, &["r"]);
+        app.handle_overlay_key(key(KeyCode::Char('h')))
+            .await
+            .unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
         assert!(app.overlay.is_none());
@@ -1095,8 +1176,9 @@ mod authoring {
         ));
 
         app.handle_overlay_key(ctrl_r()).await.unwrap();
-        type_chars(&mut app, "high").await;
-        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Char('h')))
+            .await
+            .unwrap();
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
         let selected = app.widgets.table.selected().unwrap();
@@ -1622,6 +1704,7 @@ mod detail_mode {
                 title: "Detail target".to_string(),
                 description: "existing description".to_string(),
                 project: None,
+                status: "inbox".to_string(),
                 priority: "none".to_string(),
                 labels: vec!["bug".to_string()],
             },
@@ -2780,10 +2863,10 @@ mod overlay_submit_routes {
 
         app.handle_overlay_key(ctrl_r()).await.unwrap();
 
+        assert_pending(&app, &["r"]);
         assert!(matches!(
-            &app.overlay,
-            Some(OverlayState::Picker(state))
-                if state.route == OverlayRoute::AddTaskTitlePriority
+            app.view().overlay,
+            Some(OverlayView::AddTask(state)) if state.priority_prefix_active
         ));
     }
 

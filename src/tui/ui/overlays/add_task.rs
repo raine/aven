@@ -28,6 +28,7 @@ pub(in crate::tui::ui) fn render_add_task(frame: &mut Frame, state: &AddTaskView
     let content = dialog
         .right_title(add_task_metadata_title(
             &state.project,
+            &state.status,
             &state.priority,
             width,
         ))
@@ -44,6 +45,7 @@ pub(in crate::tui::ui) fn render_add_task_full_frame(
     let content = Dialog::new("Add task", area.width, area.height)
         .right_title(add_task_metadata_title(
             &state.project,
+            &state.status,
             &state.priority,
             area.width,
         ))
@@ -85,7 +87,11 @@ fn render_add_task_body(
     } else if lines.len() + 1 < content.height as usize {
         lines.push(Line::from(""));
     }
-    lines.push(add_task_hint_line(state.focus));
+    lines.push(add_task_hint_line(
+        state.focus,
+        state.status_prefix_active,
+        state.priority_prefix_active,
+    ));
     frame.render_widget(
         Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),
         content,
@@ -244,19 +250,53 @@ fn add_task_loading_line(loading: &LoadingState) -> Line<'static> {
     ])
 }
 
-pub(in crate::tui::ui) fn add_task_hint_line(focus: AddTaskStep) -> Line<'static> {
+pub(in crate::tui::ui) fn add_task_status_hint_line() -> Line<'static> {
+    dialog_hint_line(&[
+        ("i", "inbox"),
+        ("b", "backlog"),
+        ("t", "todo"),
+        ("a", "active"),
+        ("d", "done"),
+        ("x", "canceled"),
+        ("Esc", "cancel"),
+    ])
+}
+
+pub(in crate::tui::ui) fn add_task_priority_hint_line() -> Line<'static> {
+    dialog_hint_line(&[
+        ("n", "none"),
+        ("l", "low"),
+        ("m", "medium"),
+        ("h", "high"),
+        ("u", "urgent"),
+        ("Esc", "cancel"),
+    ])
+}
+
+pub(in crate::tui::ui) fn add_task_hint_line(
+    focus: AddTaskStep,
+    status_prefix_active: bool,
+    priority_prefix_active: bool,
+) -> Line<'static> {
+    if status_prefix_active {
+        return add_task_status_hint_line();
+    }
+    if priority_prefix_active {
+        return add_task_priority_hint_line();
+    }
+
     match focus {
         AddTaskStep::Title => dialog_hint_line(&[
             ("Enter", "create"),
             ("Tab", "description"),
+            ("Ctrl+T", "status"),
             ("Ctrl+P", "project"),
             ("Ctrl+R", "priority"),
-            ("Ctrl+N", "LLM"),
             ("Esc", "cancel"),
         ]),
         AddTaskStep::Description => dialog_hint_line(&[
             ("Ctrl+S", "create"),
-            ("Ctrl+X Ctrl+E", "editor"),
+            ("Ctrl+T", "status"),
             ("Tab", "title"),
             ("Ctrl+P", "project"),
             ("Ctrl+R", "priority"),
@@ -267,11 +307,22 @@ pub(in crate::tui::ui) fn add_task_hint_line(focus: AddTaskStep) -> Line<'static
 
 pub(in crate::tui::ui) fn add_task_metadata_title(
     project: &str,
+    status: &str,
     priority: &str,
     width: u16,
 ) -> Line<'static> {
-    let value_width = (width as usize).saturating_sub(24).max(4) / 2;
-    let value_style = Style::new().fg(Color::Rgb(194, 174, 255));
+    let status_style = theme::status_style(status);
+    let priority_style = theme::priority_style(priority);
+    if width < 60 {
+        return Line::from(vec![
+            Span::styled(" status: ", Style::new().fg(FG_MUTED)),
+            Span::styled(truncate_chars(status, 8), status_style),
+            Span::styled(" · ", Style::new().fg(FG_DIM)),
+            Span::styled("prio: ", Style::new().fg(FG_MUTED)),
+            Span::styled(truncate_chars(priority, 6), priority_style),
+        ]);
+    }
+    let value_width = (width as usize).saturating_sub(34).max(6) / 3;
     Line::from(vec![
         Span::styled(" project: ", Style::new().fg(FG_MUTED)),
         Span::styled(
@@ -279,7 +330,10 @@ pub(in crate::tui::ui) fn add_task_metadata_title(
             Style::new().fg(theme::project_color(project)),
         ),
         Span::styled(" · ", Style::new().fg(FG_DIM)),
+        Span::styled("status: ", Style::new().fg(FG_MUTED)),
+        Span::styled(truncate_chars(status, value_width), status_style),
+        Span::styled(" · ", Style::new().fg(FG_DIM)),
         Span::styled("prio: ", Style::new().fg(FG_MUTED)),
-        Span::styled(truncate_chars(priority, value_width), value_style),
+        Span::styled(truncate_chars(priority, value_width), priority_style),
     ])
 }

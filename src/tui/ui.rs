@@ -142,7 +142,7 @@ pub(crate) fn render(
             inline_title_editor.is_some() || inline_detail_title_editor.is_some(),
         );
     }
-    if !view.pending_shortcut.is_empty() {
+    if !view.pending_shortcut.is_empty() && !add_task_dialog_prefix_active(view) {
         render_prefix_hints(frame, view);
     }
     if let Some(toast) = &view.message {
@@ -151,6 +151,14 @@ pub(crate) fn render(
     if let Some(loading) = &view.loading {
         render_loading(frame, loading);
     }
+}
+
+fn add_task_dialog_prefix_active(view: &ViewState) -> bool {
+    matches!(
+        &view.overlay,
+        Some(OverlayView::AddTask(state))
+            if state.status_prefix_active || state.priority_prefix_active
+    )
 }
 
 fn render_add_task_surface(frame: &mut Frame, view: &ViewState) {
@@ -167,7 +175,7 @@ fn render_add_task_surface(frame: &mut Frame, view: &ViewState) {
     if let Some(overlay) = &view.overlay {
         render_add_task_surface_overlay(frame, view, overlay);
     }
-    if !view.pending_shortcut.is_empty() {
+    if !view.pending_shortcut.is_empty() && !add_task_dialog_prefix_active(view) {
         render_prefix_hints(frame, view);
     }
     if let Some(toast) = &view.message {
