@@ -203,8 +203,9 @@ The TUI is split into these layers:
     truncation, and toasts.
   - Overlay renderers live under `ui/overlays/` by overlay kind with a facade at
     `ui/overlays.rs`.
-  - Overlay dialogs share frame, clear, background, and footer hint styling
-    through dialog helpers.
+  - Overlay dialogs should use the shared dialog helpers in
+    `src/tui/ui/dialog.rs` for title edges, frame, clear, background, and
+    footer hint styling instead of assembling bespoke Ratatui blocks.
   - The task list region builds an explicit row model for group headers and task
     rows so rendering and scrolling use the same table structure.
   - The task description editor uses a terminal-sized multiline overlay with
