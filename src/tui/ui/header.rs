@@ -8,7 +8,9 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::render::quote;
 use crate::tui::store::{SidebarTarget, TuiStore};
-use crate::tui::theme::{ACCENT, BG, BG_PANEL, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, PINK};
+use crate::tui::theme::{
+    self, ACCENT, BG, BG_PANEL, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, PINK,
+};
 
 pub(super) fn render_header(frame: &mut Frame, store: &TuiStore, area: Rect) {
     frame.render_widget(
@@ -47,7 +49,7 @@ fn header_line(store: &TuiStore, width: u16) -> Paragraph<'static> {
     ];
     if show_view_badge(store, compact) {
         spans.extend([separator(), Span::styled("view ", Style::new().fg(FG_DIM))]);
-        spans.push(view_badge(store));
+        spans.extend(view_badge(store));
     }
     spans.push(separator());
     spans.extend(header_metrics(store, compact));
@@ -116,26 +118,37 @@ fn separator() -> Span<'static> {
     Span::styled(" │ ", Style::new().fg(BORDER))
 }
 
-fn view_badge(store: &TuiStore) -> Span<'static> {
-    Span::styled(
-        format!(" {} ", active_view_label(store)),
-        Style::new()
-            .fg(FG)
-            .bg(BG_PANEL)
-            .add_modifier(Modifier::BOLD),
-    )
+fn view_badge(store: &TuiStore) -> Vec<Span<'static>> {
+    let badge_style = Style::new()
+        .fg(FG)
+        .bg(BG_PANEL)
+        .add_modifier(Modifier::BOLD);
+    match &store.active_view {
+        SidebarTarget::Project(project) => vec![
+            Span::styled(" project ", badge_style),
+            Span::styled(
+                project.clone(),
+                badge_style.fg(theme::project_color(project)),
+            ),
+            Span::styled(" ", badge_style),
+        ],
+        _ => vec![Span::styled(
+            format!(" {} ", active_view_label(store)),
+            badge_style,
+        )],
+    }
 }
 
-fn active_view_label(store: &TuiStore) -> String {
-    match &store.active_view {
-        SidebarTarget::All => "queue".to_string(),
-        SidebarTarget::Inbox => "inbox".to_string(),
-        SidebarTarget::Active => "active".to_string(),
-        SidebarTarget::Backlog => "backlog".to_string(),
-        SidebarTarget::Todo => "todo".to_string(),
-        SidebarTarget::Done => "done".to_string(),
-        SidebarTarget::Conflicts => "conflicts".to_string(),
-        SidebarTarget::Project(project) => format!("project {project}"),
+fn active_view_label(store: &TuiStore) -> &'static str {
+    match store.active_view {
+        SidebarTarget::All => "queue",
+        SidebarTarget::Inbox => "inbox",
+        SidebarTarget::Active => "active",
+        SidebarTarget::Backlog => "backlog",
+        SidebarTarget::Todo => "todo",
+        SidebarTarget::Done => "done",
+        SidebarTarget::Conflicts => "conflicts",
+        SidebarTarget::Project(_) => "project",
     }
 }
 
@@ -180,40 +193,67 @@ fn active_order_spans(store: &TuiStore) -> Vec<Span<'static>> {
 fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
     let mut parts = Vec::new();
     if let Some(project) = &store.filters.project {
-        parts.push(format!("project={project}"));
+        parts.push(vec![
+            Span::styled(
+                "project=",
+                Style::new().fg(FG_MUTED).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                project.clone(),
+                Style::new()
+                    .fg(theme::project_color(project))
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]);
     }
     if let Some(label) = &store.filters.label {
-        parts.push(format!("label={label}"));
+        parts.push(vec![filter_part(format!("label={label}"))]);
     }
     if let Some(status) = &store.filters.status
         && !active_view_status_matches(store, status)
     {
-        parts.push(format!("status={status}"));
+        parts.push(vec![filter_part(format!("status={status}"))]);
     }
     if let Some(priority) = &store.filters.priority {
-        parts.push(format!("priority={priority}"));
+        parts.push(vec![filter_part(format!("priority={priority}"))]);
     }
     if store.filters.include_deleted {
-        parts.push("include_deleted".to_string());
+        parts.push(vec![filter_part("include_deleted")]);
     }
     if store.filters.conflicts_only && store.active_view != SidebarTarget::Conflicts {
-        parts.push("conflicts".to_string());
+        parts.push(vec![filter_part("conflicts")]);
     }
     if let Some(search) = &store.filters.search {
-        parts.push(format!("search={}", quote(search)));
+        parts.push(vec![filter_part(format!("search={}", quote(search)))]);
     }
     if parts.is_empty() {
         Vec::new()
     } else {
-        vec![
+        let mut spans = vec![
             separator(),
             Span::styled("filter ", Style::new().fg(FG_DIM)),
-            Span::styled(
-                parts.join(" "),
-                Style::new().fg(FG_MUTED).add_modifier(Modifier::BOLD),
-            ),
-        ]
+        ];
+        spans.extend(join_filter_parts(parts));
+        spans
     }
+}
+
+fn filter_part(content: impl Into<std::borrow::Cow<'static, str>>) -> Span<'static> {
+    Span::styled(
+        content,
+        Style::new().fg(FG_MUTED).add_modifier(Modifier::BOLD),
+    )
+}
+
+fn join_filter_parts(parts: Vec<Vec<Span<'static>>>) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for part in parts {
+        if !spans.is_empty() {
+            spans.push(filter_part(" "));
+        }
+        spans.extend(part);
+    }
+    spans
 }
 
 fn header_status(compact: bool) -> Paragraph<'static> {
@@ -310,6 +350,46 @@ mod tests {
         assert!(rendered.contains("include_deleted"));
         assert!(rendered.contains("conflicts"));
         assert!(rendered.contains("search="));
+    }
+
+    #[test]
+    fn header_colors_project_filter_with_project_color() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let pool = crate::db::open_db(&dir.path().join("test.db"))
+                .await
+                .unwrap();
+            let mut store = TuiStore::new(pool).await.unwrap();
+            store.filters.project = Some("mobile-app".to_string());
+            let spans = active_filter_spans(&store);
+            let project = spans
+                .iter()
+                .find(|span| span.content == "mobile-app")
+                .unwrap();
+            assert_eq!(project.style.fg, Some(theme::project_color("mobile-app")));
+            assert_eq!(project.style.bg, None);
+        });
+    }
+
+    #[test]
+    fn header_colors_project_view_with_project_color() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let pool = crate::db::open_db(&dir.path().join("test.db"))
+                .await
+                .unwrap();
+            let mut store = TuiStore::new(pool).await.unwrap();
+            store.active_view = SidebarTarget::Project("mobile-app".to_string());
+            let spans = view_badge(&store);
+            let project = spans
+                .iter()
+                .find(|span| span.content == "mobile-app")
+                .unwrap();
+            assert_eq!(project.style.fg, Some(theme::project_color("mobile-app")));
+            assert_eq!(project.style.bg, Some(BG_PANEL));
+        });
     }
 
     #[test]

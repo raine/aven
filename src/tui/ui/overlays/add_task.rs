@@ -13,7 +13,7 @@ use crate::tui::app::LoadingState;
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::AddTaskView;
 use crate::tui::text::cell_width_ranges;
-use crate::tui::theme::{FG, FG_DIM, FG_MUTED};
+use crate::tui::theme::{self, FG, FG_DIM, FG_MUTED};
 
 pub(in crate::tui::ui) fn render_add_task(frame: &mut Frame, state: &AddTaskView) {
     let expanded =
@@ -274,7 +274,10 @@ pub(in crate::tui::ui) fn add_task_metadata_title(
     let value_style = Style::new().fg(Color::Rgb(194, 174, 255));
     Line::from(vec![
         Span::styled(" project: ", Style::new().fg(FG_MUTED)),
-        Span::styled(truncate_chars(project, value_width), value_style),
+        Span::styled(
+            truncate_chars(project, value_width),
+            Style::new().fg(theme::project_color(project)),
+        ),
         Span::styled(" · ", Style::new().fg(FG_DIM)),
         Span::styled("prio: ", Style::new().fg(FG_MUTED)),
         Span::styled(truncate_chars(priority, value_width), value_style),

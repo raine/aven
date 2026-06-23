@@ -4,7 +4,7 @@ use crate::tui::overlay::{
     AddTaskView, ConfirmView, MultilineInputView, OverlayRoute, OverlayView, PickerItem,
     PickerMode, PickerView, TextInputView, TextPanelView,
 };
-use crate::tui::theme::{BG_ALT, FG, FG_DIM};
+use crate::tui::theme::{self, BG_ALT, FG, FG_DIM};
 use crate::tui::widgets::priority_icon;
 use ratatui::Frame;
 use ratatui::Terminal;
@@ -375,12 +375,19 @@ mod add_task_overlay {
 
     #[test]
     fn add_task_metadata_title_labels_values() {
-        let rendered = add_task_metadata_title("aven", "none", 60).to_string();
+        let line = add_task_metadata_title("aven", "none", 60);
+        let rendered = line.to_string();
         assert!(rendered.contains("project: aven"));
         assert!(rendered.contains("prio: none"));
         assert!(rendered.contains(" · "));
         assert!(!rendered.contains("Tab"));
         assert!(!rendered.contains("Ctrl+P"));
+        let project = line
+            .spans
+            .iter()
+            .find(|span| span.content == "aven")
+            .unwrap();
+        assert_eq!(project.style.fg, Some(theme::project_color("aven")));
     }
 
     #[test]
