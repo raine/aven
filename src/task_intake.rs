@@ -137,9 +137,14 @@ fn task_intake_prompt(
 fn default_task_intake_system_prompt() -> &'static str {
     "You turn raw task intake text into one Aven task payload.\n\n\
 Return only JSON with this shape:\n\
-{\"title\":\"short imperative task title\",\"description\":\"optional durable context\",\"project\":\"optional project key or name\",\"priority\":\"none|low|medium|high|urgent\",\"labels\":[\"existing-label\"]}\n\n\
+{\"title\":\"task title\",\"description\":\"optional durable context\",\"project\":\"optional project key or name\",\"priority\":\"none|low|medium|high|urgent\",\"labels\":[\"existing-label\"]}\n\n\
 Rules:\n\
 - The title is required and should be concise.\n\
+- Prefer a concise imperative task title that reads like an existing Aven task.\n\
+- Start with a capitalized action verb when it reads naturally.\n\
+- Include enough context to distinguish the task from nearby work.\n\
+- Keep meaningful casing for names, acronyms, file names, flags, and code identifiers.\n\
+- Avoid vague one-word titles, full sentences, leading \"please\", and trailing punctuation.\n\
 - Use project only when the text clearly names one of the available projects.\n\
 - Use only existing labels.\n\
 - Put durable context in description when helpful.\n\n\
