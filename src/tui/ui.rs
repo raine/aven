@@ -148,6 +148,9 @@ pub(crate) fn render(
     if let Some(toast) = &view.message {
         render_toast(frame, toast);
     }
+    if let Some(loading) = &view.loading {
+        render_loading(frame, loading);
+    }
 }
 
 fn render_add_task_surface(frame: &mut Frame, view: &ViewState) {
@@ -170,6 +173,21 @@ fn render_add_task_surface(frame: &mut Frame, view: &ViewState) {
     if let Some(toast) = &view.message {
         render_toast(frame, toast);
     }
+    if let Some(loading) = &view.loading {
+        render_loading(frame, loading);
+    }
+}
+
+fn render_loading(frame: &mut Frame, loading: &LoadingState) {
+    let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let frame_symbol = frames[loading.frame() % frames.len()];
+    render_toast(
+        frame,
+        &Toast::new(
+            format!("{frame_symbol} {}", loading.message),
+            crate::tui::toast::ToastSeverity::Info,
+        ),
+    );
 }
 
 fn render_add_task_surface_overlay(frame: &mut Frame, view: &ViewState, overlay: &OverlayView) {

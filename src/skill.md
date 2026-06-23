@@ -48,6 +48,20 @@ aven restore APP-7KQ9
   it.
 - Use `list --all` with normal filters to find deleted tasks.
 - Use `bulk-update --dry-run` before broad mutations.
+- `aven add --natural` sends raw intake text to `agent.task_intake.command`,
+  which must return JSON for a task draft.
+- The task intake command is configured as argv pieces, not a shell string. Use
+  `{prompt}` in `agent.task_intake.args` for commands such as `claude -p`;
+  otherwise the prompt is written to stdin.
+- Configure `agent.task_intake.system_prompt` as the full task intake prompt
+  template. Supported placeholders are `{priorities}`, `{inferred_project}`,
+  `{projects}`, `{labels}`, and `{input}`. Omit a placeholder to leave that
+  context out of the prompt.
+- Use `aven tmux add-task-popup --print-binding` for a tmux binding that opens
+  `aven tui --add-task-only` in a popup.
+- Use `aven tui --add-task` for the full TUI with the add-task dialog active.
+- Add `--natural` to either add-task entry point, or type natural-language text
+  in the add-task title field and press `Ctrl+N` to parse and prefill the form.
 
 ## Long input and secrets
 
