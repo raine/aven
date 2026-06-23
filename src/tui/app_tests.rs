@@ -1,6 +1,5 @@
 use super::*;
 use crate::operations::TaskDraft;
-use crate::tui::ui::ViewSurface;
 use crate::query::TaskSort;
 use crate::tui::app_conflicts::CONFLICT_CONFIRM_LOCAL_TITLE;
 use crate::tui::app_edit::{
@@ -19,6 +18,7 @@ use crate::tui::overlay::{
 };
 use crate::tui::store::SidebarTarget;
 use crate::tui::toast::ToastSeverity;
+use crate::tui::ui::ViewSurface;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use sqlx::SqlitePool;
 
@@ -1032,7 +1032,10 @@ mod authoring {
                     && state.description.lines == vec!["from parsed title".to_string()]
                     && state.priority == "medium"
         ));
-        assert_eq!(toast_message(&app), Some("parsed task draft, review and save"));
+        assert_eq!(
+            toast_message(&app),
+            Some("parsed task draft, review and save")
+        );
     }
 
     #[tokio::test]

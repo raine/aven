@@ -58,6 +58,17 @@ fn buffer_row(buffer: &ratatui::buffer::Buffer, row: u16) -> String {
         .collect()
 }
 
+fn assert_overlay_uses_dialog_chrome(overlay: OverlayView, title: &str) {
+    let buffer = overlay_buffer(overlay);
+    let title_row = (0..buffer.area.height)
+        .map(|row| buffer_row(&buffer, row))
+        .find(|row| row.contains(title))
+        .unwrap_or_else(|| panic!("missing overlay title {title:?}"));
+
+    assert!(title_row.contains(&format!("╭─{title}")), "{title_row}");
+    assert!(title_row.contains("─╮"), "{title_row}");
+}
+
 fn styled_key_contents(line: Line<'static>) -> Vec<String> {
     line.spans
         .iter()
@@ -813,6 +824,77 @@ mod picker_overlays {
 
 mod route_specific_rendering {
     use super::*;
+
+    #[test]
+    fn overlay_kinds_use_shared_dialog_chrome() {
+        let overlays = [
+            OverlayView::Search {
+                input: "query".to_string(),
+                cursor: 5,
+            },
+            OverlayView::AddTask(AddTaskView {
+                title: "ship dialogs".to_string(),
+                title_cursor: 12,
+                description: vec![String::new()],
+                description_row: 0,
+                description_column: 0,
+                focus: AddTaskStep::Title,
+                project: "aven".to_string(),
+                priority: "high".to_string(),
+            }),
+            OverlayView::TextInput(TextInputView {
+                route: OverlayRoute::MessageOnly,
+                title: "Edit title".to_string(),
+                prompt: "New title".to_string(),
+                input: "alpha".to_string(),
+                cursor: 5,
+            }),
+            OverlayView::MultilineInput(MultilineInputView {
+                route: OverlayRoute::MessageOnly,
+                title: "Description".to_string(),
+                prompt: "Body".to_string(),
+                lines: vec!["line one".to_string()],
+                row: 0,
+                column: 4,
+            }),
+            OverlayView::Picker(PickerView {
+                route: OverlayRoute::MessageOnly,
+                title: "Project".to_string(),
+                filter: "app".to_string(),
+                filter_cursor: 3,
+                items: vec![PickerItem {
+                    label: "APP app".to_string(),
+                    value: "app".to_string(),
+                    selected: false,
+                }],
+                selected: 0,
+                multi: true,
+                mode: PickerMode::Navigate,
+                visible_indices: vec![0],
+            }),
+            OverlayView::Confirm(ConfirmView {
+                title: "Delete".to_string(),
+                prompt: "Delete task?".to_string(),
+            }),
+            OverlayView::TextPanel(TextPanelView {
+                title: "Conflict details".to_string(),
+                lines: vec!["field=title".to_string()],
+                scroll: 0,
+            }),
+        ];
+
+        for (overlay, title) in overlays.into_iter().zip([
+            "Search",
+            "Add task",
+            "Edit title",
+            "Description",
+            "Project",
+            "Delete",
+            "Conflict details",
+        ]) {
+            assert_overlay_uses_dialog_chrome(overlay, title);
+        }
+    }
 
     #[test]
     fn add_note_route_uses_specialized_renderer_with_changed_title() {
