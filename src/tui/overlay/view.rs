@@ -5,11 +5,25 @@ use super::state::{OverlayRoute, OverlayState, OverlayState::*, PickerItem, Pick
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayView {
-    Help { scroll: u16 },
-    Detail { scroll: u16 },
-    DetailHelp { scroll: u16 },
-    Search { input: String, cursor: usize },
-    Command { input: String, cursor: usize },
+    Help {
+        scroll: u16,
+    },
+    Detail {
+        scroll: u16,
+    },
+    DetailHelp {
+        scroll: u16,
+    },
+    Search {
+        input: String,
+        cursor: usize,
+    },
+    Command {
+        input: String,
+        cursor: usize,
+        cycle_input: Option<String>,
+        highlighted: Option<String>,
+    },
     AddTask(AddTaskView),
     TextInput(TextInputView),
     MultilineInput(MultilineInputView),
@@ -85,9 +99,11 @@ impl From<&OverlayState> for OverlayView {
                 input: input.text.clone(),
                 cursor: input.cursor,
             },
-            Command { input } => Self::Command {
-                input: input.text.clone(),
-                cursor: input.cursor,
+            Command { state } => Self::Command {
+                input: state.input.text.clone(),
+                cursor: state.input.cursor,
+                cycle_input: state.cycle_input.clone(),
+                highlighted: state.highlighted.clone(),
             },
             AddTask(state) => Self::AddTask(AddTaskView {
                 title: state.title.text.clone(),

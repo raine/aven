@@ -284,7 +284,18 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
         OverlayView::Help { scroll } => render_help(frame, *scroll),
         OverlayView::DetailHelp { scroll } => render_detail_help(frame, *scroll),
         OverlayView::Search { input, cursor } => render_search(frame, input, *cursor),
-        OverlayView::Command { input, cursor } => render_command(frame, input, *cursor),
+        OverlayView::Command {
+            input,
+            cursor,
+            cycle_input,
+            highlighted,
+        } => render_command(
+            frame,
+            input,
+            *cursor,
+            cycle_input.as_deref(),
+            highlighted.as_deref(),
+        ),
         OverlayView::AddTask(state) => self::overlays::render_add_task(frame, state),
         OverlayView::TextInput(state)
             if state.route == OverlayRoute::EditTitle && inline_title_editor => {}

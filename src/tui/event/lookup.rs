@@ -109,18 +109,46 @@ fn command_match_rank(command: &CommandSpec, input: &str) -> Option<u8> {
         Some(0)
     } else if command.name.starts_with(input)
         || command.aliases.iter().any(|alias| alias.starts_with(input))
+        || dashless_eq(command.name, input)
+        || command
+            .aliases
+            .iter()
+            .any(|alias| dashless_eq(alias, input))
     {
         Some(1)
+    } else if dashless_starts_with(command.name, input)
+        || command
+            .aliases
+            .iter()
+            .any(|alias| dashless_starts_with(alias, input))
+    {
+        Some(2)
     } else if command
         .name
         .split('-')
         .skip(1)
         .any(|segment| segment.starts_with(input))
     {
-        Some(2)
+        Some(3)
     } else {
         None
     }
+}
+
+fn dashless_eq(value: &str, input: &str) -> bool {
+    if !value.contains('-') {
+        return false;
+    }
+    let dashless = value.chars().filter(|ch| *ch != '-').collect::<String>();
+    dashless == input
+}
+
+fn dashless_starts_with(value: &str, input: &str) -> bool {
+    if !value.contains('-') {
+        return false;
+    }
+    let dashless = value.chars().filter(|ch| *ch != '-').collect::<String>();
+    dashless.starts_with(input)
 }
 
 pub(crate) fn complete_command(input: &str) -> CommandCompletion {
@@ -128,23 +156,14 @@ pub(crate) fn complete_command(input: &str) -> CommandCompletion {
     if input.is_empty() {
         return CommandCompletion::Empty;
     }
-    let matches = COMMANDS
-        .iter()
-        .filter_map(|command| command_match_rank(command, input).map(|rank| (rank, command)))
-        .collect::<Vec<_>>();
-    let Some(best_rank) = matches.iter().map(|(rank, _)| *rank).min() else {
+    let names = best_match_names(input);
+    if names.is_empty() {
         return CommandCompletion::Missing;
-    };
-    let names = matches
-        .iter()
-        .filter(|(rank, _)| *rank == best_rank)
-        .map(|(_, command)| command.name)
-        .collect::<Vec<_>>();
-    let completion = if names.len() == 1 {
-        names[0].to_string()
-    } else {
-        common_prefix(&names)
-    };
+    }
+    if names.len() > 1 {
+        return CommandCompletion::Unchanged;
+    }
+    let completion = names[0].to_string();
     if completion.len() > input.len() {
         CommandCompletion::Completed(completion)
     } else {
@@ -152,20 +171,45 @@ pub(crate) fn complete_command(input: &str) -> CommandCompletion {
     }
 }
 
-fn common_prefix(values: &[&str]) -> String {
-    let Some((first, rest)) = values.split_first() else {
-        return String::new();
-    };
-    let mut prefix = (*first).to_string();
-    for value in rest {
-        while !value.starts_with(&prefix) {
-            let Some((index, _)) = prefix.char_indices().next_back() else {
-                return String::new();
-            };
-            prefix.truncate(index);
-        }
+pub(crate) fn command_cycle_options(input: &str) -> Vec<&'static str> {
+    let input = normalize_command_input(input);
+    if input.is_empty() {
+        return Vec::new();
     }
-    prefix
+    let matches = ranked_matches(input);
+    let Some(best_rank) = matches.iter().map(|(rank, _)| *rank).min() else {
+        return Vec::new();
+    };
+    if best_rank == 0 {
+        matches
+            .iter()
+            .filter(|(rank, _)| *rank == best_rank)
+            .map(|(_, command)| command.name)
+            .collect()
+    } else {
+        matches.iter().map(|(_, command)| command.name).collect()
+    }
+}
+
+fn best_match_names(input: &str) -> Vec<&'static str> {
+    let matches = ranked_matches(input);
+    let Some(best_rank) = matches.iter().map(|(rank, _)| *rank).min() else {
+        return Vec::new();
+    };
+    matches
+        .iter()
+        .filter(|(rank, _)| *rank == best_rank)
+        .map(|(_, command)| command.name)
+        .collect()
+}
+
+fn ranked_matches(input: &str) -> Vec<(u8, &'static CommandSpec)> {
+    let mut matches = COMMANDS
+        .iter()
+        .filter_map(|command| command_match_rank(command, input).map(|rank| (rank, command)))
+        .collect::<Vec<_>>();
+    matches.sort_by_key(|(rank, _)| *rank);
+    matches
 }
 
 pub(crate) fn prefix_hint_commands(

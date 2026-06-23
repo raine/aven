@@ -12,9 +12,10 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
             input.insert_paste(text);
             OverlayState::Search { input }
         }
-        OverlayState::Command { mut input } => {
-            input.insert_paste(text);
-            OverlayState::Command { input }
+        OverlayState::Command { mut state } => {
+            state.input.insert_paste(text);
+            state.reset_cycle();
+            OverlayState::Command { state }
         }
         OverlayState::AddTask(mut state) => {
             match state.focus {

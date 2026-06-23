@@ -13,8 +13,8 @@ use crate::tui::config_overlay::{
 };
 use crate::tui::event::Action;
 use crate::tui::overlay::{
-    ConfirmState, LineEdit, MultilineInputState, OverlayRoute, OverlayState, PickerItem,
-    PickerMode, PickerState, TextInputState, TextPanelState,
+    CommandState, ConfirmState, LineEdit, MultilineInputState, OverlayRoute, OverlayState,
+    PickerItem, PickerMode, PickerState, TextInputState, TextPanelState,
 };
 use crate::tui::store::SidebarTarget;
 use crate::tui::toast::ToastSeverity;
@@ -330,7 +330,7 @@ mod keyboard_dispatch {
                 input: LineEdit::new("q".to_string()),
             },
             OverlayState::Command {
-                input: LineEdit::new("ref".to_string()),
+                state: CommandState::new(LineEdit::new("ref".to_string())),
             },
             OverlayState::TextInput(TextInputState::new(
                 OverlayRoute::MessageOnly,
@@ -436,23 +436,70 @@ mod command_and_config_overlays {
 
         assert!(matches!(
             app.overlay,
-            Some(OverlayState::Command { input })
-                if input.text == "status-todo" && input.cursor == "status-todo".len()
+            Some(OverlayState::Command { state })
+                if state.input.text == "status-todo" && state.input.cursor == "status-todo".len()
         ));
     }
 
     #[tokio::test]
-    async fn command_overlay_tab_extends_to_shared_prefix() {
+    async fn command_overlay_tab_cycles_ambiguous_matches() {
         let mut app = test_app().await;
 
         app.begin_command();
         type_chars(&mut app, "stat").await;
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Command { state })
+                if state.input.text == "status-picker"
+                    && state.input.cursor == "status-picker".len()
+                    && state.cycle_input.as_deref() == Some("stat")
+                    && state.highlighted.as_deref() == Some("status-picker")
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Command { state })
+                if state.input.text == "status-inbox"
+                    && state.input.cursor == "status-inbox".len()
+                    && state.cycle_input.as_deref() == Some("stat")
+                    && state.highlighted.as_deref() == Some("status-inbox")
+        ));
+    }
+
+    #[tokio::test]
+    async fn command_overlay_single_completion_keeps_highlight_on_next_tab() {
+        let mut app = test_app().await;
+
+        app.begin_command();
+        type_chars(&mut app, ":todo").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Command { state })
+                if state.input.text == "status-todo"
+                    && state.highlighted.as_deref() == Some("status-todo")
+        ));
+    }
+
+    #[tokio::test]
+    async fn command_overlay_edit_resets_completion_cycle() {
+        let mut app = test_app().await;
+
+        app.begin_command();
+        type_chars(&mut app, "stat").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Backspace))
+            .await
+            .unwrap();
 
         assert!(matches!(
             app.overlay,
-            Some(OverlayState::Command { input })
-                if input.text == "status-" && input.cursor == "status-".len()
+            Some(OverlayState::Command { state })
+                if state.cycle_input.is_none() && state.highlighted.is_none()
         ));
     }
 

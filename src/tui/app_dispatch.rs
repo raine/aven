@@ -6,10 +6,11 @@ use crate::tui::app::{App, TaskRefKind};
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::conflict_flow::ConflictResolutionChoice;
 use crate::tui::event::{
-    Action, CommandCompletion, CommandLookup, complete_command, lookup_command,
+    Action, CommandCompletion, CommandLookup, command_cycle_options, complete_command,
+    lookup_command,
 };
 use crate::tui::navigation::{detail_task_delta, handle_detail_overlay_key};
-use crate::tui::overlay::{LineEdit, OverlayOutcome, OverlayRoute, OverlayState};
+use crate::tui::overlay::{CommandState, OverlayOutcome, OverlayRoute, OverlayState};
 use crate::tui::platform::is_editor_prefix_key;
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
 use crate::tui::ui::{detail_help_scroll_cap, help_scroll_cap};
@@ -103,22 +104,23 @@ impl App {
                     self.overlay = Some(OverlayState::Search { input });
                 }
             },
-            OverlayState::Command { mut input } => match key.code {
+            OverlayState::Command { mut state } => match key.code {
                 KeyCode::Esc => {}
                 KeyCode::Enter => {
-                    if let Some(action) = self.accept_command_input(input.as_str()) {
+                    if let Some(action) = self.accept_command_input(state.input.as_str()) {
                         self.execute(action).await?;
                     } else {
-                        self.overlay = Some(OverlayState::Command { input });
+                        self.overlay = Some(OverlayState::Command { state });
                     }
                 }
                 KeyCode::Tab | KeyCode::BackTab => {
-                    self.complete_command_input(&mut input);
-                    self.overlay = Some(OverlayState::Command { input });
+                    self.complete_command_input(&mut state, key.code == KeyCode::BackTab);
+                    self.overlay = Some(OverlayState::Command { state });
                 }
                 _ => {
-                    input.handle_key(key);
-                    self.overlay = Some(OverlayState::Command { input });
+                    state.input.handle_key(key);
+                    state.reset_cycle();
+                    self.overlay = Some(OverlayState::Command { state });
                 }
             },
             overlay => {
@@ -404,16 +406,54 @@ impl App {
         }
     }
 
-    fn complete_command_input(&mut self, input: &mut LineEdit) {
-        match complete_command(input.as_str()) {
+    fn complete_command_input(&mut self, state: &mut CommandState, reverse: bool) {
+        let cycle_input = state
+            .cycle_input
+            .clone()
+            .unwrap_or_else(|| state.input.text.clone());
+        let options = command_cycle_options(&cycle_input);
+        if options.len() > 1 {
+            state.cycle_index = if state.cycle_input.is_some() {
+                if reverse {
+                    state
+                        .cycle_index
+                        .checked_sub(1)
+                        .unwrap_or(options.len().saturating_sub(1))
+                } else {
+                    (state.cycle_index + 1) % options.len()
+                }
+            } else if reverse {
+                options.len().saturating_sub(1)
+            } else {
+                0
+            };
+            state.cycle_input = Some(cycle_input);
+            let completion = options[state.cycle_index].to_string();
+            state.input.text = completion;
+            state.input.cursor = state.input.text.len();
+            state.highlighted = Some(state.input.text.clone());
+            self.set_info(format!(
+                "command {} of {}",
+                state.cycle_index + 1,
+                options.len()
+            ));
+            return;
+        }
+
+        let highlighted = state.highlighted.clone();
+        state.reset_cycle();
+        state.highlighted = highlighted;
+        match complete_command(state.input.as_str()) {
             CommandCompletion::Completed(completion) => {
-                input.text = completion;
-                input.cursor = input.text.len();
+                state.input.text = completion;
+                state.input.cursor = state.input.text.len();
+                state.highlighted = Some(state.input.text.clone());
             }
             CommandCompletion::Empty => self.set_info("type a command prefix to complete"),
-            CommandCompletion::Missing => {
-                self.set_warning(format!("no command matches: {}", input.as_str().trim()))
-            }
+            CommandCompletion::Missing => self.set_warning(format!(
+                "no command matches: {}",
+                state.input.as_str().trim()
+            )),
             CommandCompletion::Unchanged => self.set_info("no further completion"),
         }
     }

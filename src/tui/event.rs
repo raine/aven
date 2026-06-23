@@ -12,9 +12,9 @@ pub(crate) use self::catalog::{
 pub(crate) use self::catalog::{DUE_SORT_REASON, PROJECT_PATH_FLOW_REASON};
 #[allow(unused_imports)]
 pub(crate) use self::lookup::{
-    CommandCompletion, CommandLookup, ShortcutLookup, complete_command, key_label, lookup_command,
-    matching_commands, prefix_hint_commands, resolve_shortcut, resolve_shortcut_for,
-    resolve_shortcut_in, shortcut_label,
+    CommandCompletion, CommandLookup, ShortcutLookup, command_cycle_options, complete_command,
+    key_label, lookup_command, matching_commands, prefix_hint_commands, resolve_shortcut,
+    resolve_shortcut_for, resolve_shortcut_in, shortcut_label,
 };
 
 #[cfg(test)]
@@ -164,6 +164,14 @@ mod tests {
     }
 
     #[test]
+    fn lookup_command_ignores_dashes() {
+        assert_eq!(
+            lookup_command(":statusin"),
+            CommandLookup::Found(Action::SetStatus("inbox"))
+        );
+    }
+
+    #[test]
     fn lookup_command_preserves_suffix_ambiguity() {
         assert_eq!(lookup_command(":done"), CommandLookup::Ambiguous);
     }
@@ -177,11 +185,37 @@ mod tests {
     }
 
     #[test]
-    fn complete_command_extends_to_shared_prefix() {
+    fn complete_command_fills_dashless_match() {
         assert_eq!(
-            complete_command("stat"),
-            CommandCompletion::Completed("status-".to_string())
+            complete_command(":statusin"),
+            CommandCompletion::Completed("status-inbox".to_string())
         );
+    }
+
+    #[test]
+    fn complete_command_reports_unchanged_for_ambiguous_match() {
+        assert_eq!(complete_command("stat"), CommandCompletion::Unchanged);
+    }
+
+    #[test]
+    fn command_cycle_options_keeps_lower_ranked_visible_matches() {
+        assert_eq!(
+            command_cycle_options("r"),
+            vec![
+                "refresh",
+                "restore",
+                "remove-project-path",
+                "move-right",
+                "copy-ref",
+                "order-reverse",
+                "conflict-use-remote"
+            ]
+        );
+    }
+
+    #[test]
+    fn command_cycle_options_limits_exact_match_to_exact_commands() {
+        assert_eq!(command_cycle_options("todo"), vec!["status-todo"]);
     }
 
     #[test]

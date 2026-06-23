@@ -11,9 +11,9 @@ pub(crate) use multiline::edit_multiline_input;
 #[cfg(test)]
 pub(crate) use picker::{normalize_picker_selection, visible_picker_indices};
 pub(crate) use state::{
-    AddTaskState, ConfirmSubmitRoute, MultilineInputState, MultilineSubmitRoute, OverlayOutcome,
-    OverlayRoute, OverlayState, OverlaySubmit, PickerItem, PickerMode, PickerSubmitRoute,
-    TextPanelState, TextSubmitRoute,
+    AddTaskState, CommandState, ConfirmSubmitRoute, MultilineInputState, MultilineSubmitRoute,
+    OverlayOutcome, OverlayRoute, OverlayState, OverlaySubmit, PickerItem, PickerMode,
+    PickerSubmitRoute, TextPanelState, TextSubmitRoute,
 };
 #[cfg(test)]
 pub(crate) use state::{ConfirmState, OverlaySubmitKind, PickerState, TextInputState};

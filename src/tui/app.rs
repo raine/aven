@@ -19,7 +19,8 @@ use crate::tui::config_overlay::{
 use crate::tui::conflict_flow::ConflictFlowState;
 use crate::tui::navigation::{next_index, next_selectable_sidebar};
 use crate::tui::overlay::{
-    AddTaskState, LineEdit, MultilineInputState, OverlayRoute, OverlayState, PickerItem,
+    AddTaskState, CommandState, LineEdit, MultilineInputState, OverlayRoute, OverlayState,
+    PickerItem,
 };
 use crate::tui::platform::{copy_to_clipboard, edit_text_externally};
 use crate::tui::shortcut_buffer::ShortcutBuffer;
@@ -305,7 +306,7 @@ impl App {
     pub(crate) fn begin_command(&mut self) {
         self.pending_shortcut.clear();
         self.overlay = Some(OverlayState::Command {
-            input: LineEdit::blank(),
+            state: CommandState::blank(),
         });
     }
 

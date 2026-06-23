@@ -9,13 +9,48 @@ pub(crate) enum OverlayState {
     Detail { scroll: u16 },
     DetailHelp { scroll: u16 },
     Search { input: LineEdit },
-    Command { input: LineEdit },
+    Command { state: CommandState },
     AddTask(AddTaskState),
     TextInput(TextInputState),
     MultilineInput(MultilineInputState),
     Picker(PickerState),
     Confirm(ConfirmState),
     TextPanel(TextPanelState),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CommandState {
+    pub(crate) input: LineEdit,
+    pub(crate) cycle_input: Option<String>,
+    pub(crate) cycle_index: usize,
+    pub(crate) highlighted: Option<String>,
+}
+
+impl CommandState {
+    pub(crate) fn blank() -> Self {
+        Self {
+            input: LineEdit::blank(),
+            cycle_input: None,
+            cycle_index: 0,
+            highlighted: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new(input: LineEdit) -> Self {
+        Self {
+            input,
+            cycle_input: None,
+            cycle_index: 0,
+            highlighted: None,
+        }
+    }
+
+    pub(crate) fn reset_cycle(&mut self) {
+        self.cycle_input = None;
+        self.cycle_index = 0;
+        self.highlighted = None;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

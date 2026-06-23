@@ -10,7 +10,7 @@ use super::input::input_line;
 use crate::tui::event::{
     CommandContext, CommandLifecycle, CommandSpec, matching_commands, prefix_hint_commands,
 };
-use crate::tui::theme::{ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, ORANGE};
+use crate::tui::theme::{ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, ORANGE, SELECTED_BG};
 
 struct HelpTopic {
     keys: &'static str,
@@ -369,25 +369,49 @@ fn help_command_line(command: &CommandSpec) -> Line<'static> {
 }
 
 fn command_line(command: &CommandSpec) -> Line<'static> {
+    command_line_with_highlight(command, false)
+}
+
+fn command_line_with_highlight(command: &CommandSpec, highlighted: bool) -> Line<'static> {
     let keys = command
         .keys
         .iter()
         .map(|key| key.label)
         .collect::<Vec<_>>()
         .join("/");
-    command_hint_line(
+    let mut line = command_hint_line(
         Span::styled(format!("{keys:<10}"), Style::new().fg(FG_MUTED)),
         command,
-    )
+    );
+    if highlighted {
+        line.style = line.style.bg(SELECTED_BG);
+        for span in &mut line.spans {
+            span.style = span.style.bg(SELECTED_BG);
+        }
+        line.spans
+            .push(Span::styled(" ".repeat(80), Style::new().bg(SELECTED_BG)));
+    }
+    line
 }
 
-pub(super) fn render_command(frame: &mut Frame, input: &str, cursor: usize) {
-    let matches = matching_commands(input);
+pub(super) fn render_command(
+    frame: &mut Frame,
+    input: &str,
+    cursor: usize,
+    cycle_input: Option<&str>,
+    highlighted: Option<&str>,
+) {
+    let matches = matching_commands(cycle_input.unwrap_or(input));
     let height = (matches.len().min(8) as u16).saturating_add(3);
 
     let mut lines = vec![input_line(":", input, cursor)];
     for command in matches.into_iter().take(8) {
-        lines.push(command_line(command));
+        let line = if highlighted == Some(command.name) {
+            command_line_with_highlight(command, true)
+        } else {
+            command_line(command)
+        };
+        lines.push(line);
     }
 
     Dialog::new("Command", 72, height).render_text(frame, Text::from(lines));
@@ -484,9 +508,23 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_command(frame, input, cursor))
+            .draw(|frame| render_command(frame, input, cursor, None, None))
             .unwrap();
         buffer_text(terminal.backend())
+    }
+
+    fn render_command_buffer(
+        input: &str,
+        cursor: usize,
+        cycle_input: Option<&str>,
+        highlighted: Option<&str>,
+    ) -> ratatui::buffer::Buffer {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_command(frame, input, cursor, cycle_input, highlighted))
+            .unwrap();
+        terminal.backend().buffer().clone()
     }
 
     fn buffer_text_from_rows(buffer: &ratatui::buffer::Buffer) -> String {
@@ -595,6 +633,30 @@ mod tests {
         let rendered = render_command_overlay("ref", 3);
         assert!(rendered.contains("Command"));
         assert!(rendered.contains(":ref"));
+    }
+
+    #[test]
+    fn command_overlay_highlights_cycled_command_row() {
+        let buffer = render_command_buffer("status-todo", 11, Some(":stat"), Some("status-todo"));
+        assert!((0..buffer.area.height).any(|row| {
+            buffer_row(&buffer, row).contains(":status-todo")
+                && (0..buffer.area.width).any(|column| {
+                    let cell = &buffer[(column, row)];
+                    cell.symbol() == " " && cell.style().bg == Some(SELECTED_BG)
+                })
+        }));
+    }
+
+    #[test]
+    fn command_overlay_does_not_highlight_without_cycle() {
+        let buffer = render_command_buffer("stat", 4, None, None);
+        assert!((0..buffer.area.height).all(|row| {
+            !buffer_row(&buffer, row).contains(":status-todo")
+                || (0..buffer.area.width).all(|column| {
+                    let cell = &buffer[(column, row)];
+                    cell.symbol() == " " || cell.style().bg != Some(SELECTED_BG)
+                })
+        }));
     }
 
     #[test]
