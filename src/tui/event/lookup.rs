@@ -80,14 +80,39 @@ pub(crate) fn resolve_shortcut_in(commands: &[CommandSpec], input: &[KeyCode]) -
 }
 
 pub(crate) fn matching_commands(input: &str) -> Vec<&'static CommandSpec> {
-    let input = input.trim();
+    let input = normalize_command_input(input);
     if input.is_empty() {
         return COMMANDS.iter().collect();
     }
-    COMMANDS
+    let mut matches = COMMANDS
         .iter()
-        .filter(|command| command.name == input || command.name.starts_with(input))
-        .collect()
+        .filter_map(|command| command_match_rank(command, input).map(|rank| (rank, command)))
+        .collect::<Vec<_>>();
+    matches.sort_by_key(|(rank, _)| *rank);
+    matches.into_iter().map(|(_, command)| command).collect()
+}
+
+fn normalize_command_input(input: &str) -> &str {
+    input.trim().strip_prefix(':').unwrap_or(input.trim())
+}
+
+fn command_match_rank(command: &CommandSpec, input: &str) -> Option<u8> {
+    if command.name == input || command.aliases.contains(&input) {
+        Some(0)
+    } else if command.name.starts_with(input)
+        || command.aliases.iter().any(|alias| alias.starts_with(input))
+    {
+        Some(1)
+    } else if command
+        .name
+        .split('-')
+        .skip(1)
+        .any(|segment| segment.starts_with(input))
+    {
+        Some(2)
+    } else {
+        None
+    }
 }
 
 pub(crate) fn prefix_hint_commands(
@@ -122,14 +147,27 @@ pub(crate) fn prefix_hint_commands(
 }
 
 pub(crate) fn lookup_command(input: &str) -> CommandLookup {
-    let input = input.trim();
+    let input = normalize_command_input(input);
     if input.is_empty() {
         return CommandLookup::Empty;
     }
-    let matches = matching_commands(input);
-    match matches.as_slice() {
-        [command] => CommandLookup::Found(command.action),
-        [] => CommandLookup::Missing,
-        _ => CommandLookup::Ambiguous,
+    let matches = COMMANDS
+        .iter()
+        .filter_map(|command| command_match_rank(command, input).map(|rank| (rank, command)))
+        .collect::<Vec<_>>();
+    let Some(best_rank) = matches.iter().map(|(rank, _)| *rank).min() else {
+        return CommandLookup::Missing;
+    };
+    let mut best_matches = matches
+        .into_iter()
+        .filter(|(rank, _)| *rank == best_rank)
+        .map(|(_, command)| command);
+    let Some(command) = best_matches.next() else {
+        return CommandLookup::Missing;
+    };
+    if best_matches.next().is_some() {
+        CommandLookup::Ambiguous
+    } else {
+        CommandLookup::Found(command.action)
     }
 }

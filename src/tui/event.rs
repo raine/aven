@@ -156,6 +156,19 @@ mod tests {
     }
 
     #[test]
+    fn lookup_command_finds_prefixed_suffix() {
+        assert_eq!(
+            lookup_command(":todo"),
+            CommandLookup::Found(Action::SetStatus("todo"))
+        );
+    }
+
+    #[test]
+    fn lookup_command_preserves_suffix_ambiguity() {
+        assert_eq!(lookup_command(":done"), CommandLookup::Ambiguous);
+    }
+
+    #[test]
     fn lookup_command_reports_ambiguous_prefix() {
         assert_eq!(lookup_command("s"), CommandLookup::Ambiguous);
     }

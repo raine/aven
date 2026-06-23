@@ -20,6 +20,7 @@ pub(crate) struct KeySequence {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CommandSpec {
     pub(crate) name: &'static str,
+    pub(crate) aliases: &'static [&'static str],
     pub(crate) description: &'static str,
     pub(crate) section: &'static str,
     pub(crate) keys: &'static [KeySequence],
@@ -38,8 +39,20 @@ impl CommandSpec {
         keys: &'static [KeySequence],
         action: Action,
     ) -> Self {
+        Self::implemented_with_aliases(name, &[], description, section, keys, action)
+    }
+
+    pub(crate) const fn implemented_with_aliases(
+        name: &'static str,
+        aliases: &'static [&'static str],
+        description: &'static str,
+        section: &'static str,
+        keys: &'static [KeySequence],
+        action: Action,
+    ) -> Self {
         Self {
             name,
+            aliases,
             description,
             section,
             keys,
@@ -57,6 +70,7 @@ impl CommandSpec {
     ) -> Self {
         Self {
             name,
+            aliases: &[],
             description,
             section,
             keys,
@@ -74,6 +88,7 @@ impl CommandSpec {
     ) -> Self {
         Self {
             name,
+            aliases: &[],
             description,
             section,
             keys,
@@ -377,8 +392,9 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetStatus("backlog"),
     ),
-    CommandSpec::implemented(
+    CommandSpec::implemented_with_aliases(
         "status-todo",
+        &["todo"],
         "set status to todo",
         "Status",
         &[KeySequence {
