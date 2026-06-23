@@ -10,6 +10,14 @@ pub(crate) enum CommandLookup {
     Missing,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CommandCompletion {
+    Empty,
+    Missing,
+    Unchanged,
+    Completed(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ShortcutLookup {
     Found(Action),
@@ -113,6 +121,51 @@ fn command_match_rank(command: &CommandSpec, input: &str) -> Option<u8> {
     } else {
         None
     }
+}
+
+pub(crate) fn complete_command(input: &str) -> CommandCompletion {
+    let input = normalize_command_input(input);
+    if input.is_empty() {
+        return CommandCompletion::Empty;
+    }
+    let matches = COMMANDS
+        .iter()
+        .filter_map(|command| command_match_rank(command, input).map(|rank| (rank, command)))
+        .collect::<Vec<_>>();
+    let Some(best_rank) = matches.iter().map(|(rank, _)| *rank).min() else {
+        return CommandCompletion::Missing;
+    };
+    let names = matches
+        .iter()
+        .filter(|(rank, _)| *rank == best_rank)
+        .map(|(_, command)| command.name)
+        .collect::<Vec<_>>();
+    let completion = if names.len() == 1 {
+        names[0].to_string()
+    } else {
+        common_prefix(&names)
+    };
+    if completion.len() > input.len() {
+        CommandCompletion::Completed(completion)
+    } else {
+        CommandCompletion::Unchanged
+    }
+}
+
+fn common_prefix(values: &[&str]) -> String {
+    let Some((first, rest)) = values.split_first() else {
+        return String::new();
+    };
+    let mut prefix = (*first).to_string();
+    for value in rest {
+        while !value.starts_with(&prefix) {
+            let Some((index, _)) = prefix.char_indices().next_back() else {
+                return String::new();
+            };
+            prefix.truncate(index);
+        }
+    }
+    prefix
 }
 
 pub(crate) fn prefix_hint_commands(

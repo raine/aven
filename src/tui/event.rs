@@ -12,9 +12,9 @@ pub(crate) use self::catalog::{
 pub(crate) use self::catalog::{DUE_SORT_REASON, PROJECT_PATH_FLOW_REASON};
 #[allow(unused_imports)]
 pub(crate) use self::lookup::{
-    CommandLookup, ShortcutLookup, key_label, lookup_command, matching_commands,
-    prefix_hint_commands, resolve_shortcut, resolve_shortcut_for, resolve_shortcut_in,
-    shortcut_label,
+    CommandCompletion, CommandLookup, ShortcutLookup, complete_command, key_label, lookup_command,
+    matching_commands, prefix_hint_commands, resolve_shortcut, resolve_shortcut_for,
+    resolve_shortcut_in, shortcut_label,
 };
 
 #[cfg(test)]
@@ -166,6 +166,27 @@ mod tests {
     #[test]
     fn lookup_command_preserves_suffix_ambiguity() {
         assert_eq!(lookup_command(":done"), CommandLookup::Ambiguous);
+    }
+
+    #[test]
+    fn complete_command_fills_unique_match() {
+        assert_eq!(
+            complete_command(":todo"),
+            CommandCompletion::Completed("status-todo".to_string())
+        );
+    }
+
+    #[test]
+    fn complete_command_extends_to_shared_prefix() {
+        assert_eq!(
+            complete_command("stat"),
+            CommandCompletion::Completed("status-".to_string())
+        );
+    }
+
+    #[test]
+    fn complete_command_reports_unchanged_when_fully_extended() {
+        assert_eq!(complete_command("status-"), CommandCompletion::Unchanged);
     }
 
     #[test]

@@ -5,9 +5,11 @@ use ratatui::layout::Size;
 use crate::tui::app::{App, TaskRefKind};
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::conflict_flow::ConflictResolutionChoice;
-use crate::tui::event::{Action, CommandLookup, lookup_command};
+use crate::tui::event::{
+    Action, CommandCompletion, CommandLookup, complete_command, lookup_command,
+};
 use crate::tui::navigation::{detail_task_delta, handle_detail_overlay_key};
-use crate::tui::overlay::{OverlayOutcome, OverlayRoute, OverlayState};
+use crate::tui::overlay::{LineEdit, OverlayOutcome, OverlayRoute, OverlayState};
 use crate::tui::platform::is_editor_prefix_key;
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
 use crate::tui::ui::{detail_help_scroll_cap, help_scroll_cap};
@@ -109,6 +111,10 @@ impl App {
                     } else {
                         self.overlay = Some(OverlayState::Command { input });
                     }
+                }
+                KeyCode::Tab | KeyCode::BackTab => {
+                    self.complete_command_input(&mut input);
+                    self.overlay = Some(OverlayState::Command { input });
                 }
                 _ => {
                     input.handle_key(key);
@@ -395,6 +401,20 @@ impl App {
                 self.set_warning(format!("unknown command: {}", input.trim()));
                 None
             }
+        }
+    }
+
+    fn complete_command_input(&mut self, input: &mut LineEdit) {
+        match complete_command(input.as_str()) {
+            CommandCompletion::Completed(completion) => {
+                input.text = completion;
+                input.cursor = input.text.len();
+            }
+            CommandCompletion::Empty => self.set_info("type a command prefix to complete"),
+            CommandCompletion::Missing => {
+                self.set_warning(format!("no command matches: {}", input.as_str().trim()))
+            }
+            CommandCompletion::Unchanged => self.set_info("no further completion"),
         }
     }
 

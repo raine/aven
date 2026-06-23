@@ -427,6 +427,36 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
+    async fn command_overlay_tab_completes_unique_suffix_alias() {
+        let mut app = test_app().await;
+
+        app.begin_command();
+        type_chars(&mut app, ":todo").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Command { input })
+                if input.text == "status-todo" && input.cursor == "status-todo".len()
+        ));
+    }
+
+    #[tokio::test]
+    async fn command_overlay_tab_extends_to_shared_prefix() {
+        let mut app = test_app().await;
+
+        app.begin_command();
+        type_chars(&mut app, "stat").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Command { input })
+                if input.text == "status-" && input.cursor == "status-".len()
+        ));
+    }
+
+    #[tokio::test]
     async fn search_replaces_existing_overlay() {
         let mut app = test_app().await;
         app.overlay = Some(OverlayState::Help { scroll: 0 });
