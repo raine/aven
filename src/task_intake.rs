@@ -144,7 +144,6 @@ Rules:\n\
 - Start with a capitalized action verb when it reads naturally.\n\
 - Include enough context to distinguish the task from nearby work.\n\
 - Keep meaningful casing for names, acronyms, file names, flags, and code identifiers.\n\
-- Avoid vague one-word titles, full sentences, leading \"please\", and trailing punctuation.\n\
 - Use project only when the text clearly names one of the available projects.\n\
 - Use only existing labels.\n\
 - Put durable context in description when helpful.\n\n\
