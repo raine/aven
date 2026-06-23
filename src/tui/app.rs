@@ -506,8 +506,9 @@ impl App {
         self.pending_task_intake = Some(PendingTaskIntake {
             handle,
             retry,
-            value,
+            value: value.clone(),
         });
+        self.retry_add_task_natural(value, retry);
         Ok(())
     }
 

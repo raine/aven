@@ -230,13 +230,21 @@ impl App {
             &overlay,
             OverlayState::MultilineInput(state) if state.route == OverlayRoute::AddTaskDescription
         );
+        let was_add_task_picker = matches!(
+            &overlay,
+            OverlayState::Picker(state)
+                if matches!(
+                    state.route,
+                    OverlayRoute::AddTaskTitleProject | OverlayRoute::AddTaskTitlePriority
+                )
+        );
         let outcome = crate::tui::overlay::handle_generic_overlay_key(key, overlay, scroll_cap);
         match outcome {
             OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
             OverlayOutcome::Cancelled if was_detail_help => {
                 self.overlay = Some(OverlayState::Detail { scroll: 0 })
             }
-            OverlayOutcome::Cancelled if was_add_task_description_editor => {
+            OverlayOutcome::Cancelled if was_add_task_description_editor || was_add_task_picker => {
                 self.begin_add_task_step()
             }
             OverlayOutcome::Cancelled if self.add_task_only => self.should_quit = true,

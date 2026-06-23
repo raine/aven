@@ -9,6 +9,7 @@ use super::super::input::{clipped_input_line, cursor_cell};
 use super::super::truncate::truncate_chars;
 use super::multiline::add_task_description_input_line;
 use super::shared::viewport_start_for_cursor;
+use crate::tui::app::LoadingState;
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::AddTaskView;
 use crate::tui::text::cell_width_ranges;
@@ -31,10 +32,14 @@ pub(in crate::tui::ui) fn render_add_task(frame: &mut Frame, state: &AddTaskView
             width,
         ))
         .render_block(frame);
-    render_add_task_body(frame, state, content);
+    render_add_task_body(frame, state, content, None);
 }
 
-pub(in crate::tui::ui) fn render_add_task_full_frame(frame: &mut Frame, state: &AddTaskView) {
+pub(in crate::tui::ui) fn render_add_task_full_frame(
+    frame: &mut Frame,
+    state: &AddTaskView,
+    loading: Option<&LoadingState>,
+) {
     let area = frame.area();
     let content = Dialog::new("Add task", area.width, area.height)
         .right_title(add_task_metadata_title(
@@ -43,10 +48,15 @@ pub(in crate::tui::ui) fn render_add_task_full_frame(frame: &mut Frame, state: &
             area.width,
         ))
         .render_block_at(frame, area);
-    render_add_task_body(frame, state, content);
+    render_add_task_body(frame, state, content, loading);
 }
 
-fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
+fn render_add_task_body(
+    frame: &mut Frame,
+    state: &AddTaskView,
+    content: Rect,
+    loading: Option<&LoadingState>,
+) {
     let description_rows = (content.height as usize).saturating_sub(5).max(1);
     let mut lines = vec![
         add_task_field_label("Title", state.focus == AddTaskStep::Title),
@@ -67,7 +77,12 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
         description_rows,
         content.width as usize,
     ));
-    while lines.len() + 1 < content.height as usize {
+    while lines.len() + 2 < content.height as usize {
+        lines.push(Line::from(""));
+    }
+    if let Some(loading) = loading {
+        lines.push(add_task_loading_line(loading));
+    } else if lines.len() + 1 < content.height as usize {
         lines.push(Line::from(""));
     }
     lines.push(add_task_hint_line(state.focus));
@@ -218,6 +233,15 @@ pub(in crate::tui::ui) fn add_task_description_visual_lines(
             }
         })
         .collect()
+}
+
+fn add_task_loading_line(loading: &LoadingState) -> Line<'static> {
+    let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let frame_symbol = frames[loading.frame() % frames.len()];
+    Line::from(vec![
+        Span::styled(frame_symbol, Style::new().fg(Color::Rgb(194, 174, 255))),
+        Span::styled(format!(" {}", loading.message), Style::new().fg(FG_MUTED)),
+    ])
 }
 
 pub(in crate::tui::ui) fn add_task_hint_line(focus: AddTaskStep) -> Line<'static> {

@@ -148,9 +148,6 @@ pub(crate) fn render(
     if let Some(toast) = &view.message {
         render_toast(frame, toast);
     }
-    if let Some(loading) = &view.loading {
-        render_loading(frame, loading);
-    }
 }
 
 fn render_add_task_surface(frame: &mut Frame, view: &ViewState) {
@@ -165,7 +162,7 @@ fn render_add_task_surface(frame: &mut Frame, view: &ViewState) {
     }
 
     if let Some(overlay) = &view.overlay {
-        render_add_task_surface_overlay(frame, overlay);
+        render_add_task_surface_overlay(frame, view, overlay);
     }
     if !view.pending_shortcut.is_empty() {
         render_prefix_hints(frame, view);
@@ -173,26 +170,13 @@ fn render_add_task_surface(frame: &mut Frame, view: &ViewState) {
     if let Some(toast) = &view.message {
         render_toast(frame, toast);
     }
-    if let Some(loading) = &view.loading {
-        render_loading(frame, loading);
-    }
 }
 
-fn render_loading(frame: &mut Frame, loading: &LoadingState) {
-    let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-    let frame_symbol = frames[loading.frame() % frames.len()];
-    render_toast(
-        frame,
-        &Toast::new(
-            format!("{frame_symbol} {}", loading.message),
-            crate::tui::toast::ToastSeverity::Info,
-        ),
-    );
-}
-
-fn render_add_task_surface_overlay(frame: &mut Frame, overlay: &OverlayView) {
+fn render_add_task_surface_overlay(frame: &mut Frame, view: &ViewState, overlay: &OverlayView) {
     match overlay {
-        OverlayView::AddTask(state) => self::overlays::render_add_task_full_frame(frame, state),
+        OverlayView::AddTask(state) => {
+            self::overlays::render_add_task_full_frame(frame, state, view.loading.as_ref())
+        }
         OverlayView::MultilineInput(state)
             if matches!(
                 state.route,

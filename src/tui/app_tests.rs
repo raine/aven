@@ -906,6 +906,23 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn add_task_picker_escape_returns_to_add_task_only_dialog() {
+        let mut app = test_app().await;
+        app.add_task_only = true;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(ctrl_p()).await.unwrap();
+
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(!app.should_quit);
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state)) if state.title.as_str() == "Write docs"
+        ));
+    }
+
+    #[tokio::test]
     async fn add_task_description_flow_creates_task_with_description() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
