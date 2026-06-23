@@ -65,7 +65,7 @@ fn assert_overlay_uses_dialog_chrome(overlay: OverlayView, title: &str) {
         .find(|row| row.contains(title))
         .unwrap_or_else(|| panic!("missing overlay title {title:?}"));
 
-    assert!(title_row.contains(&format!("╭─{title}")), "{title_row}");
+    assert!(title_row.contains(&format!("╭─ {title} ")), "{title_row}");
     assert!(title_row.contains("─╮"), "{title_row}");
 }
 

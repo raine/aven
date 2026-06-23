@@ -76,16 +76,21 @@ fn overlay_block(title: &str, width: u16) -> Block<'_> {
 }
 
 fn edge_title(title: &str, width: u16) -> Line<'_> {
-    let title = truncate_chars(title, width.saturating_sub(3) as usize);
+    let title = truncate_chars(title, width.saturating_sub(5) as usize);
     Line::from(vec![
-        Span::styled("─", Style::new().fg(ACCENT)),
+        Span::styled("─ ", Style::new().fg(ACCENT)),
         Span::raw(title),
+        Span::styled(" ", Style::new().fg(ACCENT)),
     ])
 }
 
 fn right_edge_title(title: Option<Line<'_>>) -> Line<'_> {
-    let mut title = title.unwrap_or_default();
-    title.spans.push(Span::styled("─", Style::new().fg(ACCENT)));
+    let Some(mut title) = title else {
+        return Line::from(Span::styled("─", Style::new().fg(ACCENT)));
+    };
+    title
+        .spans
+        .push(Span::styled(" ─", Style::new().fg(ACCENT)));
     title
 }
 
@@ -132,13 +137,13 @@ mod tests {
         let backend = ratatui::backend::TestBackend::new(20, 5);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| Dialog::new("abcdef", 5, 3).render_text(frame, ""))
+            .draw(|frame| Dialog::new("abcdef", 7, 3).render_text(frame, ""))
             .unwrap();
         let rendered = (0..terminal.backend().buffer().area.width)
             .map(|column| terminal.backend().buffer()[(column, 1)].symbol())
             .collect::<String>();
 
-        assert!(rendered.contains("─a"));
+        assert!(rendered.contains("─ a"));
         assert!(!rendered.contains("abcdef"));
     }
 

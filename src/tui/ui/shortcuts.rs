@@ -614,7 +614,7 @@ mod tests {
                 .find(|row| row.contains(title))
                 .unwrap();
 
-            assert!(title_row.contains(&format!("╭─{title}")), "{title_row}");
+            assert!(title_row.contains(&format!("╭─ {title} ")), "{title_row}");
             assert!(title_row.contains("─╮"), "{title_row}");
         }
     }
