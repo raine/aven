@@ -188,7 +188,7 @@ fn detail_content_lines(
                 Span::styled(note.created_at.clone(), Style::new().fg(FG_DIM)),
                 Span::styled("  you", Style::new().fg(ACCENT)),
             ]));
-            lines.extend(note_card_lines(&note.body, width));
+            lines.extend(quoted_block_lines(&note.body, width, Style::new().fg(FG)));
         }
     }
     lines
@@ -245,24 +245,6 @@ fn quoted_block_lines(body: &str, width: usize, style: Style) -> Vec<Line<'stati
         .map(|line| {
             let mut spans = line_with_base_style(line, style).spans;
             spans.insert(0, Span::styled("│ ", Style::new().fg(BORDER)));
-            Line::from(spans)
-        })
-        .collect()
-}
-
-fn note_card_lines(body: &str, width: usize) -> Vec<Line<'static>> {
-    let content_width = width.saturating_sub(4).max(1);
-    render_markdown(body, content_width)
-        .into_iter()
-        .map(|line| {
-            let line_width = line.width();
-            let mut spans = line_with_base_style(line, Style::new().fg(FG).bg(BG_PANEL)).spans;
-            let padding = content_width.saturating_sub(line_width);
-            spans.insert(0, Span::styled("  ", Style::new().bg(BG_PANEL)));
-            if padding > 0 {
-                spans.push(Span::styled(" ".repeat(padding), Style::new().bg(BG_PANEL)));
-            }
-            spans.push(Span::styled("  ", Style::new().bg(BG_PANEL)));
             Line::from(spans)
         })
         .collect()
@@ -440,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn detail_note_lines_keep_card_background() {
+    fn detail_note_lines_keep_quote_rail() {
         let mut item = detail_test_item();
         item.notes[0].body = "Use `aven` here".to_string();
         let lines = detail_content_lines(&item, 60, None);
@@ -453,21 +435,14 @@ mod tests {
         assert!(
             line.spans
                 .first()
-                .is_some_and(|span| span.style.bg == Some(BG_PANEL)),
-            "missing left card padding background"
-        );
-        assert!(
-            line.spans
-                .last()
-                .is_some_and(|span| span.style.bg == Some(BG_PANEL)),
-            "missing right card padding background"
+                .is_some_and(|span| span.content.as_ref() == "│ "),
+            "missing quote rail: {line:?}"
         );
         let code_span = line
             .spans
             .iter()
             .find(|span| span.content.as_ref() == "aven")
             .expect("missing rendered inline code span");
-        assert_eq!(code_span.style.bg, Some(BG_PANEL));
         assert_eq!(
             code_span.style.fg,
             Some(crate::tui::theme::BLUE),
@@ -476,11 +451,6 @@ mod tests {
         assert!(
             !line.to_string().contains('`'),
             "inline code markers leaked into rendered note text"
-        );
-        assert_eq!(
-            line.width(),
-            60,
-            "note card line should be padded to full width"
         );
     }
 
