@@ -16,7 +16,7 @@ use crate::tui::app::{Focus, WidgetState};
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::TuiStore;
 use crate::tui::theme::{
-    self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, SELECTED, SELECTED_INACTIVE,
+    self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, SELECTED, SELECTED_INACTIVE,
 };
 use crate::tui::widgets::{
     age_style, priority_icon, priority_short, status_chip, status_span, title_cell,
@@ -398,7 +398,10 @@ fn project_column_width(store: &TuiStore, narrow: bool) -> u16 {
 
 fn render_task_header(frame: &mut Frame, area: Rect, columns: [Constraint; 6]) {
     let cells = Layout::horizontal(columns).areas::<6>(area);
-    let style = Style::new().fg(BG).bg(BORDER).add_modifier(Modifier::BOLD);
+    let style = Style::new()
+        .fg(INVERSE_FG)
+        .bg(BORDER)
+        .add_modifier(Modifier::BOLD);
     frame.render_widget(Block::new().style(style), area);
     for (area, label) in cells
         .into_iter()

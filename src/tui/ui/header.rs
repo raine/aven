@@ -9,7 +9,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use crate::render::quote;
 use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::theme::{
-    self, ACCENT, BG, BG_PANEL, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, PINK,
+    self, ACCENT, BG, BG_PANEL, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, PINK,
 };
 
 pub(super) fn render_header(frame: &mut Frame, store: &TuiStore, area: Rect) {
@@ -165,7 +165,7 @@ fn active_view_status_matches(store: &TuiStore, status: &str) -> bool {
 
 fn metric(label: &str, count: i64, color: Color, active: bool) -> Vec<Span<'static>> {
     let fill = if active { color } else { BG_PANEL };
-    let fg = if active { BG } else { color };
+    let fg = if active { INVERSE_FG } else { color };
     let style = Style::new().fg(fg).bg(fill).add_modifier(Modifier::BOLD);
     let edge_style = Style::new().fg(fill).bg(BG);
     vec![

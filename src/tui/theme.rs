@@ -1,6 +1,7 @@
 use ratatui::style::{Color, Modifier, Style};
 
-pub(crate) const BG: Color = Color::Rgb(18, 19, 18);
+const DEFAULT_BG: Color = Color::Rgb(18, 19, 18);
+pub(crate) const INVERSE_FG: Color = DEFAULT_BG;
 pub(crate) const BG_ALT: Color = Color::Rgb(34, 35, 33);
 pub(crate) const BG_PANEL: Color = Color::Rgb(39, 40, 38);
 pub(crate) const FG: Color = Color::Rgb(239, 238, 232);
@@ -36,6 +37,8 @@ pub(crate) const SELECTED: Style = Style::new()
     .bg(SELECTED_BG)
     .add_modifier(Modifier::BOLD);
 pub(crate) const SELECTED_INACTIVE: Style = Style::new().fg(FG_MUTED).bg(BG_PANEL);
+
+pub(crate) const BG: Color = Color::Reset;
 
 pub(crate) fn priority_style(priority: &str) -> Style {
     let color = match priority {

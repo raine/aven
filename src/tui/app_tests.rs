@@ -175,6 +175,25 @@ async fn insert_title_conflict_for_task_id(
     app.refresh().await.unwrap();
 }
 
+mod theme_background {
+    use super::*;
+    use ratatui::style::Color;
+
+    #[tokio::test]
+    async fn tui_background_uses_terminal_background_for_main_surface() {
+        let mut app = test_app().await;
+
+        let backend = ratatui::backend::TestBackend::new(120, 30);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let view = app.view();
+        terminal
+            .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
+            .unwrap();
+
+        assert_eq!(terminal.backend().buffer()[(119, 10)].bg, Color::Reset);
+    }
+}
+
 mod keyboard_dispatch {
     use super::*;
 

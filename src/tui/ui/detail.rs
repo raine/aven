@@ -13,7 +13,9 @@ use crate::tui::app::WidgetState;
 use crate::tui::markdown::render_markdown;
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::TuiStore;
-use crate::tui::theme::{self, ACCENT, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, ORANGE, RED};
+use crate::tui::theme::{
+    self, ACCENT, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, ORANGE, RED,
+};
 use crate::tui::widgets::{priority_short, status_chip, status_span};
 
 #[derive(Debug)]
@@ -275,7 +277,10 @@ fn detail_metadata_lines(item: &TaskListItem) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from(Span::styled(
             " TASK ",
-            Style::new().fg(BG).bg(BORDER).add_modifier(Modifier::BOLD),
+            Style::new()
+                .fg(INVERSE_FG)
+                .bg(BORDER)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         metadata_label("PROJECT"),
