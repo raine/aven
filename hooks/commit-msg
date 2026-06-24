@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+max_line_length=80
+message_file=${1:-}
+
+if [[ -z "$message_file" ]]; then
+  echo "error: commit message file argument is required" >&2
+  exit 1
+fi
+
+if [[ ! -f "$message_file" ]]; then
+  echo "error: commit message file not found: $message_file" >&2
+  exit 1
+fi
+
+line_number=0
+failed=0
+
+while IFS= read -r line || [[ -n "$line" ]]; do
+  line_number=$((line_number + 1))
+
+  if [[ "$line" =~ ^[[:space:]]*# ]]; then
+    continue
+  fi
+
+  if [[ "$line" == *'\n'* ]]; then
+    printf 'error: commit message line %d contains a literal \\n escape\n' "$line_number" >&2
+    failed=1
+  fi
+
+  if ((${#line} > max_line_length)); then
+    printf 'error: commit message line %d is %d chars, max is %d\n' \
+      "$line_number" "${#line}" "$max_line_length" >&2
+    failed=1
+  fi
+done < "$message_file"
+
+if ((failed)); then
+  echo "wrap commit message lines at $max_line_length characters or less" >&2
+  exit 1
+fi
