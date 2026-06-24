@@ -48,7 +48,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Synced domain tables: `workspaces`, `tasks`, `projects`, `labels`, `task_labels`, `notes`.
 - Sync bookkeeping: `changes`, `field_versions`, `conflicts`, `meta`.
 - Local-only config: database path, sync settings, project path mappings, directory overrides.
-- Local-only TUI state: view, filter, selection, overlay, sort state, and `tui_undo_entries`.
+- Local-only TUI state: view, filter, selection, overlay, sort state, and `tui_undo_entries`; pending undo entries are cleared when a TUI store starts.
 
 `Task` and `Project` in `src/types.rs` are core records. Workspace-scoped tables include `workspace_id` in uniqueness and lookup paths. Many invariants are application-enforced rather than database-enforced, so do not write domain tables directly unless a change is intentionally bypassing sync and validation.
 
@@ -75,7 +75,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Keep TUI database access in `src/tui/store/`; keep `src/tui/ui/` rendering-only.
 - TUI overlays carry `OverlayRoute` so behavior survives title text changes.
 - Overlay dialogs should use shared helpers in `src/tui/ui/dialog.rs` for title edges, frame clearing, background, border, and footer hint styling.
-- Record a TUI undo entry for completed TUI mutations unless the action is undo itself.
+- Record a TUI undo entry for completed TUI mutations unless the action is undo itself; pending TUI undo entries are valid only within the current `TuiStore` lifecycle and are cleared on store startup.
 - Do not log auth tokens, raw sync payloads, task descriptions, note bodies, user-authored labels or project names, or secret config values.
 
 ## Change routing

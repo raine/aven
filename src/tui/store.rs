@@ -94,6 +94,10 @@ impl TuiStore {
             last_refresh: Instant::now(),
         };
         store.apply_active_view_filters();
+        {
+            let mut conn = store.pool.acquire().await?;
+            crate::undo::clear_pending_tui_undo_entries(&mut conn).await?;
+        }
         store.refresh(None).await?;
         Ok(store)
     }

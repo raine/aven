@@ -61,6 +61,17 @@ async fn pending_undo_count(pool: &sqlx::SqlitePool, workspace_id: &str) -> i64 
     .unwrap()
 }
 
+async fn consumed_undo_count(pool: &sqlx::SqlitePool, workspace_id: &str) -> i64 {
+    let mut conn = pool.acquire().await.unwrap();
+    sqlx::query_scalar(
+        "SELECT count(*) FROM tui_undo_entries WHERE workspace_id = ? AND undone_at IS NOT NULL",
+    )
+    .bind(workspace_id)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap()
+}
+
 async fn latest_payload(
     conn: &mut sqlx::SqliteConnection,
     entity_type: &str,
@@ -1128,10 +1139,9 @@ mod undo {
     }
 
     #[tokio::test]
-    async fn undo_title_edit_survives_store_restart() {
+    async fn undo_title_edit_expires_on_store_restart() {
         let (_dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) = create_selected_task(&mut store, "Before").await;
-        let display_ref = store.tasks[selected].display_ref.clone();
         store
             .update_title(Some(selected), "After".to_string())
             .await
@@ -1139,14 +1149,39 @@ mod undo {
         assert_eq!(store.tasks[selected].task.title, "After");
 
         let mut restarted = TuiStore::new(pool).await.unwrap();
-        let outcome = restarted.undo_last(None).await.unwrap().unwrap();
-        assert_eq!(outcome.message, format!("undid title {display_ref}"));
+        assert!(restarted.undo_last(None).await.unwrap().is_none());
         let index = restarted
             .tasks
             .iter()
             .position(|item| item.task.id == task_id)
             .unwrap();
-        assert_eq!(restarted.tasks[index].task.title, "Before");
+        assert_eq!(restarted.tasks[index].task.title, "After");
+    }
+
+    #[tokio::test]
+    async fn store_startup_clears_pending_undo_but_preserves_consumed_entries() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (_, selected) = create_selected_task(&mut store, "Before").await;
+        let workspace_id = store.active_workspace.id.clone();
+
+        store
+            .update_title(Some(selected), "After".to_string())
+            .await
+            .unwrap();
+        store.undo_last(None).await.unwrap().unwrap();
+
+        let consumed_before = consumed_undo_count(&pool, &workspace_id).await;
+        assert_eq!(consumed_before, 1);
+        assert_eq!(pending_undo_count(&pool, &workspace_id).await, 1);
+
+        drop(store);
+        let _restarted = TuiStore::new(pool.clone()).await.unwrap();
+
+        assert_eq!(pending_undo_count(&pool, &workspace_id).await, 0);
+        assert_eq!(
+            consumed_undo_count(&pool, &workspace_id).await,
+            consumed_before
+        );
     }
 
     #[tokio::test]
@@ -1519,7 +1554,7 @@ mod undo {
     }
 
     #[tokio::test]
-    async fn undo_is_workspace_scoped() {
+    async fn undo_is_workspace_scoped_within_running_store() {
         let (_dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) = create_selected_task(&mut store, "Scoped").await;
         store
@@ -1532,25 +1567,18 @@ mod undo {
             .await
             .unwrap();
         drop(conn);
-        crate::workspaces::set_active_workspace(other);
+        store.switch_workspace(other.key.clone()).await.unwrap();
+        assert!(store.undo_last(None).await.unwrap().is_none());
 
-        let mut other_store = TuiStore::new(pool.clone()).await.unwrap();
-        assert!(other_store.undo_last(None).await.unwrap().is_none());
-
-        crate::workspaces::set_active_workspace(crate::workspaces::Workspace {
-            id: crate::workspaces::DEFAULT_WORKSPACE_ID.to_string(),
-            key: "default".to_string(),
-            name: "default".to_string(),
-        });
-        let mut default_store = TuiStore::new(pool).await.unwrap();
-        default_store.undo_last(None).await.unwrap().unwrap();
-        default_store.refresh(Some(&task_id)).await.unwrap();
-        let index = default_store
+        store.switch_workspace("default".to_string()).await.unwrap();
+        store.undo_last(None).await.unwrap().unwrap();
+        store.refresh(Some(&task_id)).await.unwrap();
+        let index = store
             .tasks
             .iter()
             .position(|item| item.task.id == task_id)
             .unwrap();
-        assert_eq!(default_store.tasks[index].task.title, "Scoped");
+        assert_eq!(store.tasks[index].task.title, "Scoped");
     }
 
     #[tokio::test]
@@ -1660,6 +1688,7 @@ mod workspace_scoping {
             .await
             .unwrap();
 
+        crate::workspaces::set_active_workspace(store.active_workspace.clone());
         let reopened =
             TuiStore::new_with_initial_project(store.pool.clone(), Some("mobile-app".to_string()))
                 .await

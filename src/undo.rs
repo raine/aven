@@ -245,6 +245,13 @@ async fn prune_consumed_undo_entries(
     Ok(())
 }
 
+pub(crate) async fn clear_pending_tui_undo_entries(conn: &mut SqliteConnection) -> Result<()> {
+    sqlx::query("DELETE FROM tui_undo_entries WHERE undone_at IS NULL")
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
 pub(crate) async fn apply_latest_tui_undo(
     conn: &mut SqliteConnection,
     workspace_id: &str,
