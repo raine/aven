@@ -2,5 +2,17 @@ files:
   symlink:
     - CLAUDE.local.md
 
+post_create:
+  - |
+    set -euo pipefail
+    src="${AVEN_DB:-$HOME/.local/state/aven/db.sqlite}"
+    dest="$WM_WORKTREE_PATH/.aven/db.sqlite"
+    mkdir -p "$(dirname "$dest")"
+    if [ ! -e "$dest" ] && [ -e "$src" ]; then
+      sqlite3 "$src" ".backup '$dest'"
+    fi
+    printf "export AVEN_DB=%q\n" "$dest" > "$WM_WORKTREE_PATH/.envrc"
+    direnv allow "$WM_WORKTREE_PATH" >/dev/null 2>&1 || true
+
 pre_merge:
   - just pre-merge
