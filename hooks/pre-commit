@@ -9,14 +9,14 @@ fi
 
 stash_created=0
 
-staged_paths_are_markdown_only() {
+staged_paths_are_docs_or_media_only() {
   local path
   local found=0
 
   while IFS= read -r path; do
     found=1
     case "${path,,}" in
-      *.md|*.markdown) ;;
+      *.md|*.markdown|*.avif|*.gif|*.jpeg|*.jpg|*.png|*.svg|*.webp) ;;
       *) return 1 ;;
     esac
   done < <(git diff --cached --name-only --diff-filter=ACMRD)
@@ -48,8 +48,8 @@ hide_unstaged_changes() {
 git-format-staged
 hide_unstaged_changes
 
-if staged_paths_are_markdown_only; then
-  echo "skip pre-commit checks: only Markdown files staged"
+if staged_paths_are_docs_or_media_only; then
+  echo "skip pre-commit checks: only documentation or media files staged"
   exit 0
 fi
 
