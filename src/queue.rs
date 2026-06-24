@@ -17,11 +17,12 @@ pub(crate) struct QueueMeta {
     pub(crate) band: QueueBand,
     pub(crate) score: i32,
     pub(crate) idle_days: Option<i64>,
+    pub(crate) idle_seconds: Option<i64>,
 }
 
 impl QueueMeta {
     pub(crate) fn idle_seconds(self) -> Option<i64> {
-        self.idle_days.map(|days| days.saturating_mul(86_400))
+        self.idle_seconds
     }
 }
 
@@ -46,12 +47,9 @@ impl QueueBand {
 }
 
 pub(crate) fn queue_meta(task: &Task, has_conflict: bool, now_seconds: i64) -> QueueMeta {
-    let idle_days = unix_seconds(&task.queue_activity_at).map(|activity| {
-        now_seconds
-            .saturating_sub(activity)
-            .max(0)
-            .saturating_div(86_400)
-    });
+    let idle_seconds = unix_seconds(&task.queue_activity_at)
+        .map(|activity| now_seconds.saturating_sub(activity).max(0));
+    let idle_days = idle_seconds.map(|seconds| seconds.saturating_div(86_400));
     let idle = idle_days.unwrap_or(0);
     let score = status_score(&task.status)
         + priority_score(&task.priority)
@@ -61,6 +59,7 @@ pub(crate) fn queue_meta(task: &Task, has_conflict: bool, now_seconds: i64) -> Q
         band: queue_band(task, has_conflict, idle),
         score,
         idle_days,
+        idle_seconds,
     }
 }
 
@@ -220,5 +219,14 @@ mod tests {
     #[test]
     fn unix_seconds_parses_utc_timestamp() {
         assert_eq!(unix_seconds("1970-01-02T01:02:03Z"), Some(90_123));
+    }
+
+    #[test]
+    fn queue_meta_preserves_idle_seconds_for_display() {
+        let meta = queue_meta(&task("todo", "none", "1000"), false, 1000 + 59 * 60);
+
+        assert_eq!(meta.idle_seconds, Some(59 * 60));
+        assert_eq!(meta.idle_seconds(), Some(59 * 60));
+        assert_eq!(meta.idle_days, Some(0));
     }
 }

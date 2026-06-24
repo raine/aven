@@ -530,9 +530,13 @@ fn task_seconds_since(value: &str, now_seconds: i64) -> Option<i64> {
 }
 
 fn compact_age(age_seconds: i64) -> String {
-    let hours = age_seconds / 3_600;
+    let minutes = age_seconds / 60;
+    if minutes < 60 {
+        return format!("{}m", minutes.max(0));
+    }
+    let hours = minutes / 60;
     if hours < 24 {
-        return format!("{}h", hours.max(0));
+        return format!("{hours}h");
     }
     let days = hours / 24;
     if days < 14 {
@@ -868,12 +872,27 @@ mod tests {
         item.task.created_at = "2026-06-20T00:00:00Z".to_string();
         item.task.queue_activity_at = "1970-01-01T00:00:00Z".to_string();
         item.queue.idle_days = Some(9);
+        item.queue.idle_seconds = Some(9 * 86_400);
 
         let buffer = render_task_row_buffer_with_mode(&item, TaskRenderMode::Queue, None);
         let rendered = buffer_text(&buffer);
 
         assert!(rendered.contains("9d"));
         assert!(!rendered.contains("0h"));
+    }
+
+    #[test]
+    fn queue_render_mode_displays_sub_hour_idle_age_as_minutes() {
+        let mut item = task_item("queued");
+        item.queue.idle_days = Some(0);
+        item.queue.idle_seconds = Some(59 * 60);
+
+        let buffer = render_task_row_buffer_with_mode(&item, TaskRenderMode::Queue, None);
+        let rendered = buffer_text(&buffer);
+
+        assert!(rendered.contains("59m"));
+        assert!(!rendered.contains("0h"));
+        assert!(!rendered.contains("0m"));
     }
 
     #[test]
@@ -885,8 +904,15 @@ mod tests {
     }
 
     #[test]
-    fn compact_age_formats_hours_days_weeks_and_months() {
+    fn compact_age_formats_minutes_hours_days_weeks_and_months() {
+        assert_eq!(compact_age(-1), "0m");
+        assert_eq!(compact_age(0), "0m");
+        assert_eq!(compact_age(59), "0m");
+        assert_eq!(compact_age(60), "1m");
+        assert_eq!(compact_age(3_599), "59m");
         assert_eq!(compact_age(6 * 3_600), "6h");
+        assert_eq!(compact_age(3_600), "1h");
+        assert_eq!(compact_age(86_399), "23h");
         assert_eq!(compact_age(13 * 86_400), "13d");
         assert_eq!(compact_age(9 * 7 * 86_400), "9w");
         assert_eq!(compact_age(122 * 86_400), "4mo");
