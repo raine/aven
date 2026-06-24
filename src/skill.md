@@ -12,6 +12,8 @@ inspect tasks, update status, and leave durable handoff context.
 ## Task refs and values
 
 - Use refs printed by command output, preferably qualified refs like `APP-7KQ9`.
+- Do not mention task refs in commit messages, PR descriptions, or external
+  systems. They identify the user's local tasks.
 - The suffix is stable identity. The project prefix is display context and can
   change when a task moves projects.
 - Bare suffix refs work when unambiguous.
