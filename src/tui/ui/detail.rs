@@ -255,8 +255,13 @@ fn note_card_lines(body: &str, width: usize) -> Vec<Line<'static>> {
     render_markdown(body, content_width)
         .into_iter()
         .map(|line| {
+            let line_width = line.width();
             let mut spans = line_with_base_style(line, Style::new().fg(FG).bg(BG_PANEL)).spans;
+            let padding = content_width.saturating_sub(line_width);
             spans.insert(0, Span::styled("  ", Style::new().bg(BG_PANEL)));
+            if padding > 0 {
+                spans.push(Span::styled(" ".repeat(padding), Style::new().bg(BG_PANEL)));
+            }
             spans.push(Span::styled("  ", Style::new().bg(BG_PANEL)));
             Line::from(spans)
         })
@@ -408,6 +413,7 @@ mod tests {
         assert!(rendered.contains("Context"));
         assert!(rendered.contains("- One item"));
         assert!(rendered.contains("aven show"));
+        assert!(!rendered.contains("`aven show`"));
     }
 
     #[test]
@@ -456,11 +462,25 @@ mod tests {
                 .is_some_and(|span| span.style.bg == Some(BG_PANEL)),
             "missing right card padding background"
         );
+        let code_span = line
+            .spans
+            .iter()
+            .find(|span| span.content.as_ref() == "aven")
+            .expect("missing rendered inline code span");
+        assert_eq!(code_span.style.bg, Some(BG_PANEL));
+        assert_eq!(
+            code_span.style.fg,
+            Some(crate::tui::theme::BLUE),
+            "inline code foreground style was not preserved"
+        );
         assert!(
-            line.spans
-                .iter()
-                .any(|span| span.content.as_ref() == "aven" && span.style.bg == Some(BG_PANEL)),
-            "note body span missing card background"
+            !line.to_string().contains('`'),
+            "inline code markers leaked into rendered note text"
+        );
+        assert_eq!(
+            line.width(),
+            60,
+            "note card line should be padded to full width"
         );
     }
 
