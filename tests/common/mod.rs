@@ -45,7 +45,11 @@ impl TestEnv {
     }
 
     fn configure_command(&self, command: &mut Command) {
-        command.env("XDG_STATE_HOME", self.state_dir());
+        command
+            .env("XDG_STATE_HOME", self.state_dir())
+            .env("AVEN_CONFIG_DIR", self.config_dir().join("aven"))
+            .env_remove("AVEN_DB")
+            .env_remove("AVEN_SYNC_SERVER");
     }
 
     pub fn free_loopback_addr(&self) -> String {

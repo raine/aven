@@ -303,10 +303,12 @@ sync:
 "#,
     );
     let server = TestServer::start_configured(&server_env, "server.sqlite");
-    let client = server_env.db("client.sqlite");
-    ok(server_env.aven(&client, ["add", "auth missing", "--project", "app"]));
 
-    let error = fail(server_env.aven(&client, ["sync", "--server", &server.url]));
+    let client_env = TestEnv::new();
+    let client = client_env.db("client.sqlite");
+    ok(client_env.aven(&client, ["add", "auth missing", "--project", "app"]));
+
+    let error = fail(client_env.aven(&client, ["sync", "--server", &server.url]));
     contains_all(&error, &["401"]);
     assert_eq!(
         scalar_i64(
