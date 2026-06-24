@@ -326,7 +326,16 @@ pub(crate) enum ConfigSubcommand {
 }
 
 #[derive(Args)]
-pub(crate) struct DaemonArgs {}
+pub(crate) struct DaemonArgs {
+    #[command(subcommand)]
+    pub(crate) command: Option<DaemonSubcommand>,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum DaemonSubcommand {
+    Install,
+    Uninstall,
+}
 
 #[derive(Args)]
 pub(crate) struct ServerArgs {

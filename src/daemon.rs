@@ -13,6 +13,10 @@ use crate::db::open_db;
 use crate::signals::shutdown_signal;
 use crate::sync::run_sync_once;
 
+mod service;
+
+pub use service::{ServiceInstallArgs, install, uninstall};
+
 pub struct DaemonRunArgs {
     pub db_path: PathBuf,
     pub config: AppConfig,

@@ -126,6 +126,13 @@ Run the background daemon for the configured local database:
 aven daemon
 ```
 
+On macOS, install it as a user LaunchAgent:
+
+```sh
+aven daemon install
+aven daemon uninstall
+```
+
 The daemon wakes after successful local mutations when possible and also syncs
 periodically while it is running.
 

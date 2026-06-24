@@ -136,7 +136,12 @@ changes and pull changes after their local server cursor.
 
 Run automatic sync for the configured local database:
 
-  aven daemon run
+  aven daemon
+
+On macOS, install it as a user LaunchAgent:
+
+  aven daemon install
+  aven daemon uninstall
 
 The daemon uses the same local SQLite database as the CLI. CLI commands still
 work offline and write directly to SQLite. The daemon runs sync in the
