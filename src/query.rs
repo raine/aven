@@ -464,6 +464,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn search_filter_matches_titles_and_descriptions() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+
+        for (id, title, description, created_at) in [
+            (
+                "0000000000000501",
+                "Title match needle",
+                "plain body",
+                "001",
+            ),
+            (
+                "0000000000000502",
+                "Body only",
+                "body contains needle",
+                "002",
+            ),
+            ("0000000000000503", "Unrelated", "plain body", "003"),
+        ] {
+            sqlx::query(
+                "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at, queue_activity_at)
+                 VALUES (?, ?, ?, 'app', 'todo', 'none', ?, ?, ?)",
+            )
+            .bind(id)
+            .bind(title)
+            .bind(description)
+            .bind(created_at)
+            .bind(created_at)
+            .bind(created_at)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        }
+
+        let items = list_task_items(
+            &mut conn,
+            TaskFilters {
+                search: Some("needle".to_string()),
+                ..TaskFilters::default()
+            },
+            TaskSort::Created,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(listed_titles(&items), ["Title match needle", "Body only"]);
+    }
+
+    #[tokio::test]
     async fn queue_sort_ranks_conflicted_tasks_ahead_of_clean_peers() {
         let (_temp, mut conn) = test_conn().await;
         seed_default_project(&mut conn).await;
