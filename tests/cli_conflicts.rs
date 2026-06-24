@@ -77,6 +77,7 @@ fn resolve_conflict_by_variant_syncs() {
     let (a, b, task_ref) = title_conflict(&env, &server);
 
     let shown = ok(env.aven(&a, ["conflict", "show", &task_ref, "--field", "title"]));
+    contains_all(&shown, &["conflict", "value<<EOF"]);
     let token = shown
         .lines()
         .find_map(|line| line.strip_prefix("variant "))
@@ -94,6 +95,54 @@ fn resolve_conflict_by_variant_syncs() {
     let conflicts_b = ok(env.aven(&b, ["conflict", "list"]));
     contains_none(&conflicts_a, &[&task_ref]);
     contains_none(&conflicts_b, &[&task_ref]);
+}
+
+#[test]
+fn conflict_export_and_diff_write_variant_files() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let (a, b, task_ref) = synced_task(&env, &server, "description conflict export");
+    ok(env.aven(
+        &a,
+        ["update", &task_ref, "--description", "description from a\n"],
+    ));
+    ok(env.aven(
+        &b,
+        ["update", &task_ref, "--description", "description from b\n"],
+    ));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    sync(&env, &a, &server);
+
+    let diff = ok(env.aven(&a, ["conflict", "diff", &task_ref, "description"]));
+    contains_all(&diff, &["---", "+++", "description from"]);
+
+    let dir = env.path("conflicts");
+    let exported = ok(env.aven(
+        &a,
+        [
+            "conflict",
+            "export",
+            &task_ref,
+            "description",
+            "--dir",
+            dir.to_str().unwrap(),
+        ],
+    ));
+    contains_all(&exported, &["exported variant=", "path="]);
+
+    let mut names = Vec::new();
+    let mut bodies = Vec::new();
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        names.push(path.file_name().unwrap().to_string_lossy().to_string());
+        bodies.push(std::fs::read_to_string(path).unwrap());
+    }
+    names.sort();
+    bodies.sort();
+    assert!(names.iter().all(|name| name.starts_with("description-v")));
+    assert!(names.iter().all(|name| name.ends_with(".md")));
+    assert_eq!(bodies, vec!["description from a\n", "description from b\n"]);
 }
 
 #[test]

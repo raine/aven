@@ -1,10 +1,13 @@
 mod doctor;
 
+use std::fs;
 use std::path::Path;
 
 use std::collections::HashSet;
 
 use anyhow::{Result, bail};
+use sha2::{Digest, Sha256};
+use similar::TextDiff;
 use sqlx::SqliteConnection;
 
 use doctor::{DoctorRenderer, DoctorReport, sync_server_url_is_valid, workspace_counts};
@@ -18,16 +21,18 @@ use crate::cli::{
     AddArgs, BulkUpdateArgs, ConfigCommand, ConfigSubcommand, ConflictCommand, ConflictSubcommand,
     InternalNaturalAddArgs, LabelCommand, LabelSubcommand, ListArgs, NoteArgs, PrimeArgs,
     ProjectCommand, ProjectPathSubcommand, ProjectSubcommand, RefArgs, SearchArgs, ShowArgs,
-    TmuxAddTaskPopupArgs, UpdateArgs, WorkspaceCommand, WorkspaceSubcommand,
+    TextCommand, TextSubcommand, TmuxAddTaskPopupArgs, UpdateArgs, WorkspaceCommand,
+    WorkspaceSubcommand,
 };
 use crate::input::{read_optional_text, read_required_text};
 use crate::labels::list_labels;
 use crate::labels::resolve_labels_in_workspace;
 use crate::operations::{
-    TaskDraft, TaskUpdate, add_note, add_project_path_operation, conflict_variant_value,
-    create_label_operation, create_project_operation, create_task, create_task_in_workspace,
-    init_config, list_conflicts, list_project_paths_operation, remove_project_path_operation,
-    resolve_conflict, set_task_deleted, show_config, task_conflicts, update_task,
+    ConflictDetail, TaskDraft, TaskUpdate, add_note, add_project_path_operation,
+    conflict_variant_value, create_label_operation, create_project_operation, create_task,
+    create_task_in_workspace, init_config, list_conflicts, list_project_paths_operation,
+    remove_project_path_operation, resolve_conflict, set_task_deleted, show_config, task_conflicts,
+    update_task,
 };
 use crate::projects::{
     find_project_in_workspace, inferred_project_key_for_add_in_workspace, list_projects,
@@ -35,7 +40,8 @@ use crate::projects::{
 };
 use crate::query::{self, SortDirection, TaskFilters, TaskSort};
 use crate::refs::{display_ref, display_suffix, resolve_task_ref};
-use crate::render::quote;
+use crate::render::{print_multiline_block, quote};
+use crate::task_fields::TaskField;
 use crate::task_render::{print_task, print_task_line_item};
 use crate::workspaces::{
     create_workspace, list_workspaces, rename_workspace, set_active_workspace, workspace_for_id,
@@ -591,6 +597,95 @@ pub(crate) async fn cmd_note(conn: &mut SqliteConnection, args: NoteArgs) -> Res
     Ok(())
 }
 
+fn ensure_description_field(field: &str) -> Result<TaskField> {
+    match TaskField::parse(field) {
+        Some(TaskField::Description) => Ok(TaskField::Description),
+        Some(_) | None => {
+            bail!("error unsupported-text-field field={field} hint=\"supported: description\"")
+        }
+    }
+}
+
+fn sha256_hex(value: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(value.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn print_text_diff(from_label: &str, old: &str, to_label: &str, new: &str) {
+    let diff = TextDiff::from_lines(old, new);
+    let unified = diff
+        .unified_diff()
+        .context_radius(3)
+        .header(from_label, to_label)
+        .to_string();
+    if unified.is_empty() {
+        println!(" no changes");
+    } else {
+        print!("{unified}");
+    }
+}
+
+pub(crate) async fn cmd_text(conn: &mut SqliteConnection, args: TextCommand) -> Result<()> {
+    match args.command {
+        TextSubcommand::Get(args) => {
+            ensure_description_field(&args.field)?;
+            let task = resolve_task_ref(conn, &args.task_ref).await?;
+            let value = TaskField::Description.current_value(&task);
+            let hash = sha256_hex(&value);
+            let task_ref = display_ref(conn, &task).await?;
+            if let Some(path) = args.output {
+                fs::write(&path, value.as_bytes())?;
+                println!(
+                    "exported ref={task_ref} field=description sha256={hash} path={}",
+                    quote(&path.display().to_string())
+                );
+            } else if args.raw {
+                print!("{value}");
+            } else {
+                println!("ref={task_ref} field=description sha256={hash}");
+                print_multiline_block("description", &value);
+            }
+        }
+        TextSubcommand::Diff(args) => {
+            ensure_description_field(&args.field)?;
+            let task = resolve_task_ref(conn, &args.task_ref).await?;
+            let current = TaskField::Description.current_value(&task);
+            let candidate = fs::read_to_string(&args.file)?;
+            print_text_diff("current", &current, "candidate", &candidate);
+        }
+        TextSubcommand::Set(args) => {
+            ensure_description_field(&args.field)?;
+            let value = read_required_text(None, args.file.as_deref(), args.stdin, "text")?;
+            let task = resolve_task_ref(conn, &args.task_ref).await?;
+            let current = TaskField::Description.current_value(&task);
+            let actual = sha256_hex(&current);
+            if actual != args.if_sha256 {
+                bail!(
+                    "error text-hash-mismatch field=description expected={} actual={}",
+                    args.if_sha256,
+                    actual
+                );
+            }
+            let outcome = update_task(
+                conn,
+                &task.id,
+                TaskUpdate {
+                    description: Some(value),
+                    ..Default::default()
+                },
+            )
+            .await?;
+            println!(
+                "updated {} field=description sha256={}",
+                display_ref(conn, &outcome.task).await?,
+                sha256_hex(&outcome.task.description)
+            );
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn cmd_projects(conn: &mut SqliteConnection, args: SearchArgs) -> Result<()> {
     let projects = list_projects(conn, args.search.as_deref()).await?;
     for project in projects {
@@ -778,17 +873,47 @@ pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictComm
                     display_ref(conn, &task).await?,
                     detail.field
                 );
-                println!(
-                    "variant {} value={}",
-                    detail.variant_a,
-                    quote(&detail.local_value)
-                );
-                println!(
-                    "variant {} value={}",
-                    detail.variant_b,
-                    quote(&detail.remote_value)
-                );
+                println!("variant {}", detail.variant_a);
+                print_multiline_block("value", &detail.local_value);
+                println!("variant {}", detail.variant_b);
+                print_multiline_block("value", &detail.remote_value);
             }
+        }
+        ConflictSubcommand::Diff { task_ref, field } => {
+            let task = resolve_task_ref(conn, &task_ref).await?;
+            let detail = single_conflict(
+                task_conflicts(conn, &task.id, Some(&field)).await?,
+                &task.id,
+                &field,
+            )?;
+            print_text_diff("local", &detail.local_value, "remote", &detail.remote_value);
+        }
+        ConflictSubcommand::Export {
+            task_ref,
+            field,
+            dir,
+        } => {
+            let task = resolve_task_ref(conn, &task_ref).await?;
+            fs::create_dir_all(&dir)?;
+            let detail = single_conflict(
+                task_conflicts(conn, &task.id, Some(&field)).await?,
+                &task.id,
+                &field,
+            )?;
+            let path_a = dir.join(format!("{}-{}.md", detail.field, detail.variant_a));
+            fs::write(&path_a, &detail.local_value)?;
+            println!(
+                "exported variant={} path={}",
+                detail.variant_a,
+                quote(&path_a.display().to_string())
+            );
+            let path_b = dir.join(format!("{}-{}.md", detail.field, detail.variant_b));
+            fs::write(&path_b, &detail.remote_value)?;
+            println!(
+                "exported variant={} path={}",
+                detail.variant_b,
+                quote(&path_b.display().to_string())
+            );
         }
         ConflictSubcommand::Resolve {
             task_ref,
@@ -813,6 +938,23 @@ pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictComm
         }
     }
     Ok(())
+}
+
+fn single_conflict(
+    details: Vec<ConflictDetail>,
+    task_id: &str,
+    field: &str,
+) -> Result<ConflictDetail> {
+    let mut iter = details.into_iter();
+    let Some(detail) = iter.next() else {
+        bail!("error conflict-not-found task_id={task_id} field={field}");
+    };
+    if iter.next().is_some() {
+        bail!(
+            "error multiple-conflicts task_id={task_id} field={field} hint=\"use export to view all variants\""
+        );
+    }
+    Ok(detail)
 }
 
 pub(crate) async fn cmd_doctor(

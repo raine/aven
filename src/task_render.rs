@@ -4,7 +4,7 @@ use sqlx::{Row, SqliteConnection};
 use crate::db::task_has_conflict;
 use crate::query::TaskListItem;
 use crate::refs::display_ref;
-use crate::render::quote;
+use crate::render::{print_multiline_block, quote};
 use crate::types::Task;
 
 #[allow(dead_code)]
@@ -106,7 +106,8 @@ pub(crate) async fn print_task(conn: &mut SqliteConnection, task: &Task, full: b
         for note in notes {
             let created_at: String = note.get("created_at");
             let body: String = note.get("body");
-            println!("note created={} body={}", created_at, quote(&body));
+            println!("note created={created_at}");
+            print_multiline_block("body", &body);
         }
         print_conflicts(conn, task, None).await?;
     }
@@ -141,8 +142,10 @@ pub(crate) async fn print_conflicts(
             display_ref(conn, task).await?,
             field
         );
-        println!("variant {} value={}", variant_a, quote(&local_value));
-        println!("variant {} value={}", variant_b, quote(&remote_value));
+        println!("variant {variant_a}");
+        print_multiline_block("value", &local_value);
+        println!("variant {variant_b}");
+        print_multiline_block("value", &remote_value);
     }
     Ok(())
 }

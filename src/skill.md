@@ -57,6 +57,10 @@ aven restore APP-7KQ9
   work.
 - Avoid writing secrets into titles, descriptions, labels, projects, notes, or
   logs.
+- Use the safe text workflow for descriptions:
+  `aven text get <ref> description --output description.md`
+  `aven text diff <ref> description --file description.md`
+  `aven text set <ref> description --file description.md --if-sha256 <sha256>`
 
 ## Conflicts
 
@@ -65,6 +69,8 @@ aven conflict list
 aven conflict show APP-7KQ9
 aven conflict resolve APP-7KQ9 description --use <variant-token>
 aven conflict resolve APP-7KQ9 description --value-file value.md
+aven conflict diff APP-7KQ9 description
+aven conflict export APP-7KQ9 description --dir ./conflict-variants
 ```
 
 - Inspect conflicts before resolving them.

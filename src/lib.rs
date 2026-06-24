@@ -38,12 +38,13 @@ pub use cli::Cli;
 
 use cli::{
     Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand, InternalSubcommand,
-    TmuxSubcommand,
+    TextCommand, TextSubcommand, TmuxSubcommand,
 };
 use commands::{
     cmd_add, cmd_bulk_update, cmd_config, cmd_conflict, cmd_delete_restore, cmd_doctor,
     cmd_internal_natural_add, cmd_label, cmd_labels, cmd_list, cmd_note, cmd_prime, cmd_project,
-    cmd_projects, cmd_show, cmd_skill, cmd_tmux_add_task_popup, cmd_update, cmd_workspace,
+    cmd_projects, cmd_show, cmd_skill, cmd_text, cmd_tmux_add_task_popup, cmd_update,
+    cmd_workspace,
 };
 use db::open_db;
 use sync::{run_server, sync_client};
@@ -145,6 +146,7 @@ pub async fn run_cli() -> Result<()> {
                 Commands::Conflict(args) => cmd_conflict(&mut conn, args).await,
                 Commands::Sync(args) => sync_client(&mut conn, args, &config).await,
                 Commands::Workspace(args) => cmd_workspace(&mut conn, args).await,
+                Commands::Text(args) => cmd_text(&mut conn, args).await,
                 Commands::Doctor => {
                     cmd_doctor(
                         &mut conn,
@@ -197,6 +199,7 @@ fn command_needs_workspace(command: &Commands) -> bool {
             | Commands::Delete(_)
             | Commands::Restore(_)
             | Commands::Conflict(_)
+            | Commands::Text(_)
             | Commands::Tui(_)
     )
 }
@@ -215,6 +218,9 @@ fn command_should_wake(command: &Commands) -> bool {
                 | Commands::Restore(_)
                 | Commands::Conflict(ConflictCommand {
                     command: ConflictSubcommand::Resolve { .. }
+                })
+                | Commands::Text(TextCommand {
+                    command: TextSubcommand::Set { .. }
                 })
         )
 }

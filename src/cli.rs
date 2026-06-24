@@ -44,6 +44,7 @@ pub(crate) enum Commands {
     Server(ServerArgs),
     Sync(SyncArgs),
     Workspace(WorkspaceCommand),
+    Text(TextCommand),
     Skill,
     Doctor,
     Tmux(TmuxCommand),
@@ -293,6 +294,16 @@ pub(crate) enum ConflictSubcommand {
         #[arg(long)]
         field: Option<String>,
     },
+    Diff {
+        task_ref: String,
+        field: String,
+    },
+    Export {
+        task_ref: String,
+        field: String,
+        #[arg(long)]
+        dir: PathBuf,
+    },
     Show {
         task_ref: String,
         #[arg(long)]
@@ -317,6 +328,49 @@ pub(crate) enum ConflictSubcommand {
 pub(crate) struct ConfigCommand {
     #[command(subcommand)]
     pub(crate) command: ConfigSubcommand,
+}
+
+#[derive(Args)]
+pub(crate) struct TextCommand {
+    #[command(subcommand)]
+    pub(crate) command: TextSubcommand,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum TextSubcommand {
+    Get(TextGetArgs),
+    Diff(TextDiffArgs),
+    Set(TextSetArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct TextGetArgs {
+    pub(crate) task_ref: String,
+    pub(crate) field: String,
+    #[arg(long)]
+    pub(crate) raw: bool,
+    #[arg(long)]
+    pub(crate) output: Option<PathBuf>,
+}
+
+#[derive(Args)]
+pub(crate) struct TextDiffArgs {
+    pub(crate) task_ref: String,
+    pub(crate) field: String,
+    #[arg(long)]
+    pub(crate) file: PathBuf,
+}
+
+#[derive(Args)]
+pub(crate) struct TextSetArgs {
+    pub(crate) task_ref: String,
+    pub(crate) field: String,
+    #[arg(long)]
+    pub(crate) file: Option<PathBuf>,
+    #[arg(long)]
+    pub(crate) stdin: bool,
+    #[arg(long)]
+    pub(crate) if_sha256: String,
 }
 
 #[derive(Subcommand)]
