@@ -42,8 +42,10 @@ impl App {
         } else if key.code == KeyCode::Char('?') {
             self.toggle_help_at_height(terminal_size.height);
             Ok(())
-        } else {
+        } else if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT {
             self.handle_normal_key(key.code).await
+        } else {
+            Ok(())
         }
     }
 

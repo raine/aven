@@ -231,6 +231,26 @@ mod keyboard_dispatch {
     }
 
     #[tokio::test]
+    async fn normal_dispatch_ignores_modified_shortcuts() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Priority target")).await;
+
+        app.dispatch_key(ctrl_p(), (80, 24).into()).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_pending_empty(&app);
+
+        app.dispatch_key(key(KeyCode::Char('p')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state)) if state.title == EDIT_PRIORITY_TITLE
+        ));
+    }
+
+    #[tokio::test]
     async fn prefix_is_inactive_while_overlay_captures_input() {
         let mut app = test_app().await;
         app.begin_search();
