@@ -7,6 +7,7 @@ use crate::types::Task;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum QueueBand {
     NeedsAction,
+    Available,
     Focus,
     Soon,
     Triage,
@@ -28,6 +29,7 @@ impl QueueBand {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::NeedsAction => "needs action",
+            Self::Available => "available",
             Self::Blocked => "blocked",
             Self::Focus => "focus",
             Self::Soon => "soon",
@@ -40,12 +42,13 @@ impl QueueBand {
     pub(crate) fn order(self) -> u8 {
         match self {
             Self::NeedsAction => 0,
-            Self::Focus => 1,
-            Self::Soon => 2,
-            Self::Triage => 3,
-            Self::Blocked => 4,
-            Self::Later => 5,
-            Self::Epics => 6,
+            Self::Available => 1,
+            Self::Focus => 2,
+            Self::Soon => 3,
+            Self::Triage => 4,
+            Self::Blocked => 5,
+            Self::Later => 6,
+            Self::Epics => 7,
         }
     }
 }
@@ -57,17 +60,24 @@ pub(crate) fn queue_meta(
     dependent_count: i64,
     now_seconds: i64,
 ) -> QueueMeta {
-    let idle_seconds = unix_seconds(&task.queue_activity_at)
-        .map(|activity| now_seconds.saturating_sub(activity).max(0));
+    let available = available_since_defer(task, now_seconds);
+    let activity_at = if available {
+        &task.available_at
+    } else {
+        &task.queue_activity_at
+    };
+    let idle_seconds =
+        unix_seconds(activity_at).map(|activity| now_seconds.saturating_sub(activity).max(0));
     let idle_days = idle_seconds.map(|seconds| seconds.saturating_div(86_400));
     let idle = idle_days.unwrap_or(0);
     let score = status_score(task.status)
         + priority_score(task.priority)
         + idle_score(task.status, idle)
         + dependent_score(dependent_count)
+        + if available { 100 } else { 0 }
         + if has_conflict { 50 } else { 0 };
     QueueMeta {
-        band: queue_band(task, has_conflict, has_unresolved_blockers, idle),
+        band: queue_band(task, has_conflict, has_unresolved_blockers, idle, available),
         score,
         idle_days,
         idle_seconds,
@@ -108,11 +118,30 @@ pub(crate) fn unix_seconds(value: &str) -> Option<i64> {
     Some(unix_days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 
+pub(crate) fn available_since_defer(task: &Task, now_seconds: i64) -> bool {
+    if task.deleted || !task.status.is_open() {
+        return false;
+    }
+    let Some(available_at) = unix_seconds(&task.available_at) else {
+        return false;
+    };
+    if available_at > now_seconds {
+        return false;
+    }
+    let activity = unix_seconds(&task.queue_activity_at).unwrap_or(0);
+    activity < available_at || creation_seeded_queue_activity(task)
+}
+
+fn creation_seeded_queue_activity(task: &Task) -> bool {
+    task.queue_activity_at == task.created_at && task.updated_at == task.created_at
+}
+
 fn queue_band(
     task: &Task,
     has_conflict: bool,
     has_unresolved_blockers: bool,
     idle_days: i64,
+    available: bool,
 ) -> QueueBand {
     if task.is_epic {
         QueueBand::Epics
@@ -123,6 +152,8 @@ fn queue_band(
         QueueBand::NeedsAction
     } else if has_unresolved_blockers {
         QueueBand::Blocked
+    } else if available {
+        QueueBand::Available
     } else if task.status == TaskStatus::Active
         || (task.status == TaskStatus::Todo && task.priority == TaskPriority::High)
     {
@@ -200,6 +231,7 @@ mod tests {
             created_at: queue_activity_at.to_string(),
             updated_at: queue_activity_at.to_string(),
             queue_activity_at: queue_activity_at.to_string(),
+            available_at: String::new(),
             deleted: false,
             is_epic: false,
         }
@@ -286,6 +318,41 @@ mod tests {
 
         assert_eq!(old.band, QueueBand::Triage);
         assert!(old.score > fresh.score);
+    }
+
+    #[test]
+    fn deferred_task_surfaces_when_it_becomes_available() {
+        let mut deferred = task("inbox", "none", "1000");
+        deferred.available_at = "2000".to_string();
+
+        let meta = queue_meta(&deferred, false, false, 0, 2000);
+
+        assert_eq!(meta.band, QueueBand::Available);
+        assert_eq!(meta.idle_seconds, Some(0));
+    }
+
+    #[test]
+    fn activity_after_availability_acknowledges_resurfacing() {
+        let mut deferred = task("inbox", "none", "1000");
+        deferred.available_at = "2000".to_string();
+        deferred.updated_at = "2001".to_string();
+        deferred.queue_activity_at = "2001".to_string();
+
+        assert_eq!(
+            queue_meta(&deferred, false, false, 0, 2001).band,
+            QueueBand::Triage
+        );
+    }
+
+    #[test]
+    fn blocked_deferred_task_remains_blocked_when_available() {
+        let mut deferred = task("todo", "none", "1000");
+        deferred.available_at = "2000".to_string();
+
+        assert_eq!(
+            queue_meta(&deferred, false, true, 0, 2000).band,
+            QueueBand::Blocked
+        );
     }
 
     #[test]

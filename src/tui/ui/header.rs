@@ -411,6 +411,7 @@ fn active_view_label(store: &TuiStore) -> &'static str {
         TaskView::Backlog => "backlog",
         TaskView::Todo => "todo",
         TaskView::Done => "done",
+        TaskView::Upcoming => "upcoming",
         TaskView::Conflicts => "conflicts",
         TaskView::Search => "search",
         TaskView::RecentActions => "recent",
@@ -559,6 +560,7 @@ mod tests {
             todo: 2,
             conflicts: 1,
             done: 4,
+            upcoming: 0,
             epics: 0,
         };
         store

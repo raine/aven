@@ -164,7 +164,7 @@ async fn current_task(
         "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
                 p.key AS project_key, p.prefix AS project_prefix, t.status,
                 t.priority, t.created_at, t.updated_at, t.queue_activity_at,
-                t.deleted, t.is_epic
+                t.available_at, t.deleted, t.is_epic
          FROM tasks t
          JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
          WHERE t.workspace_id = ? AND t.id = ?",
@@ -296,6 +296,17 @@ async fn apply_scalar_field_value_in_workspace(
         .rows_affected(),
         TaskField::Priority => sqlx::query(
             "UPDATE tasks SET priority = ?, updated_at = ?, queue_activity_at = COALESCE(NULLIF(?, ''), queue_activity_at) WHERE workspace_id = ? AND id = ?",
+        )
+        .bind(value)
+        .bind(&ts)
+        .bind(activity_at)
+        .bind(workspace_id)
+        .bind(task_id)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected(),
+        TaskField::AvailableAt => sqlx::query(
+            "UPDATE tasks SET available_at = ?, updated_at = ?, queue_activity_at = COALESCE(NULLIF(?, ''), queue_activity_at) WHERE workspace_id = ? AND id = ?",
         )
         .bind(value)
         .bind(&ts)

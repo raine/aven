@@ -28,6 +28,36 @@ fn list_json_supports_limit() {
 }
 
 #[test]
+fn availability_hides_tasks_until_cleared() {
+    let env = TestEnv::new();
+    let db = env.db("availability.sqlite");
+    let created = ok(env.aven(
+        &db,
+        [
+            "add",
+            "deferred task",
+            "--project",
+            "app",
+            "--available-at",
+            "2099-01-01T00:00:00Z",
+        ],
+    ));
+    let task_ref = extract_ref(&created);
+
+    let regular = ok(env.aven(&db, ["list"]));
+    assert!(!regular.contains("deferred task"));
+    let upcoming = ok(env.aven(&db, ["list", "--upcoming", "--json"]));
+    let items: serde_json::Value = serde_json::from_str(&upcoming).unwrap();
+    assert_eq!(items[0]["ref"], task_ref);
+    assert_eq!(items[0]["available_at"], "2099-01-01T00:00:00Z");
+
+    ok(env.aven(&db, ["edit", &task_ref, "--clear-available-at"]));
+    let regular = ok(env.aven(&db, ["list", "--json"]));
+    let items: serde_json::Value = serde_json::from_str(&regular).unwrap();
+    assert_eq!(items[0]["available_at"], "");
+}
+
+#[test]
 fn show_json_returns_single_task() {
     let env = TestEnv::new();
     let db = env.db("show-json.sqlite");

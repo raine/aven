@@ -23,6 +23,7 @@ const TODO_MARKER: &str = "\u{f0ae}";
 const ACTIVE_MARKER: &str = "\u{f111}";
 const BACKLOG_MARKER: &str = "\u{f017}";
 const DONE_MARKER: &str = "\u{f00c}";
+const UPCOMING_MARKER: &str = "\u{f017}";
 const CONFLICT_MARKER: &str = "\u{f071}";
 const SEARCH_MARKER: &str = "\u{f002}";
 const RECENT_MARKER: &str = "\u{f1da}";
@@ -286,6 +287,7 @@ fn sidebar_icon(entry: &SidebarEntry) -> &'static str {
         Some(SidebarEntryTarget::View(TaskView::Active)) => ACTIVE_MARKER,
         Some(SidebarEntryTarget::View(TaskView::Backlog)) => BACKLOG_MARKER,
         Some(SidebarEntryTarget::View(TaskView::Done)) => DONE_MARKER,
+        Some(SidebarEntryTarget::View(TaskView::Upcoming)) => UPCOMING_MARKER,
         Some(SidebarEntryTarget::View(TaskView::Conflicts)) => CONFLICT_MARKER,
         Some(SidebarEntryTarget::View(TaskView::Search)) => SEARCH_MARKER,
         Some(SidebarEntryTarget::View(TaskView::RecentActions)) => RECENT_MARKER,
@@ -306,6 +308,7 @@ fn sidebar_label(entry: &SidebarEntry) -> String {
         Some(SidebarEntryTarget::View(TaskView::Backlog)) => "Backlog".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Todo)) => "All todo".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Done)) => "Done".to_string(),
+        Some(SidebarEntryTarget::View(TaskView::Upcoming)) => "Upcoming".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Conflicts)) => "Conflicts".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Search)) => "Search".to_string(),
         Some(SidebarEntryTarget::View(TaskView::RecentActions)) => "Recent actions".to_string(),

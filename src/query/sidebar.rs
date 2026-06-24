@@ -10,12 +10,13 @@ use super::fragments;
 fn sidebar_task_count_columns() -> String {
     format!(
         "\
-COALESCE(SUM(CASE WHEN {} THEN 1 ELSE 0 END), 0) AS open_count,
-COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'inbox' THEN 1 ELSE 0 END), 0) AS inbox_count,
-COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'active' THEN 1 ELSE 0 END), 0) AS active_count,
-COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'backlog' THEN 1 ELSE 0 END), 0) AS backlog_count,
-COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'todo' THEN 1 ELSE 0 END), 0) AS todo_count,
-COALESCE(SUM(CASE WHEN {} THEN 1 ELSE 0 END), 0) AS done_count",
+COALESCE(SUM(CASE WHEN {} AND (t.available_at = '' OR t.available_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) THEN 1 ELSE 0 END), 0) AS open_count,
+COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'inbox' AND (t.available_at = '' OR t.available_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) THEN 1 ELSE 0 END), 0) AS inbox_count,
+COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'active' AND (t.available_at = '' OR t.available_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) THEN 1 ELSE 0 END), 0) AS active_count,
+COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'backlog' AND (t.available_at = '' OR t.available_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) THEN 1 ELSE 0 END), 0) AS backlog_count,
+COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'todo' AND (t.available_at = '' OR t.available_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) THEN 1 ELSE 0 END), 0) AS todo_count,
+COALESCE(SUM(CASE WHEN {} THEN 1 ELSE 0 END), 0) AS done_count,
+COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status NOT IN ('done', 'canceled') AND t.available_at != '' AND t.available_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now') THEN 1 ELSE 0 END), 0) AS upcoming_count",
         fragments::open_task_clause("t"),
         fragments::terminal_status_clause("t"),
     )
@@ -41,7 +42,8 @@ fn sidebar_counts_sql(project_scoped: bool) -> String {
          (SELECT COUNT(*)
           FROM tasks ep
           WHERE ep.workspace_id = ?{task_project}
-            AND ep.deleted = 0 AND ep.status NOT IN ('done', 'canceled') AND ep.is_epic = 1) AS epics_count
+            AND ep.deleted = 0 AND ep.status NOT IN ('done', 'canceled') AND ep.is_epic = 1
+            AND (ep.available_at = '' OR ep.available_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))) AS epics_count
          FROM tasks t
          WHERE t.workspace_id = ?{task_project}",
         sidebar_task_count_columns(),
@@ -99,5 +101,6 @@ pub(crate) async fn sidebar_counts_for_scope_in_workspace(
         conflicts: row.get("conflicts_count"),
         done: row.get("done_count"),
         epics: row.get("epics_count"),
+        upcoming: row.get("upcoming_count"),
     })
 }

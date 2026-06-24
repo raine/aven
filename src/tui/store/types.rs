@@ -26,7 +26,9 @@ pub(crate) struct ConflictTarget {
 
 use std::collections::BTreeSet;
 
-use crate::query::{SortDirection, SyncHistoryStats, TaskFilters, TaskQueryMode, TaskSort};
+use crate::query::{
+    SortDirection, SyncHistoryStats, TaskAvailabilityFilter, TaskFilters, TaskQueryMode, TaskSort,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TaskScope {
@@ -44,6 +46,7 @@ pub(crate) enum TaskView {
     Backlog,
     Todo,
     Done,
+    Upcoming,
     Conflicts,
     Search,
     Epics,
@@ -74,6 +77,7 @@ pub(crate) enum TaskListRenderMode {
     Flat,
     Queue,
     Columns,
+    Upcoming,
     Epics,
 }
 
@@ -119,18 +123,36 @@ impl TaskViewState {
         match self.view {
             TaskView::Queue => {
                 filters.hide_done = true;
+                filters.availability = TaskAvailabilityFilter::Available;
             }
-            TaskView::Columns => {}
-            TaskView::Open => filters.hide_done = true,
-            TaskView::Inbox => filters.status = Some("inbox".to_string()),
-            TaskView::Active => filters.status = Some("active".to_string()),
-            TaskView::Backlog => filters.status = Some("backlog".to_string()),
-            TaskView::Todo => filters.status = Some("todo".to_string()),
+            TaskView::Columns => filters.availability = TaskAvailabilityFilter::Available,
+            TaskView::Open => {
+                filters.hide_done = true;
+                filters.availability = TaskAvailabilityFilter::Available;
+            }
+            TaskView::Inbox => {
+                filters.status = Some("inbox".to_string());
+                filters.availability = TaskAvailabilityFilter::Available;
+            }
+            TaskView::Active => {
+                filters.status = Some("active".to_string());
+                filters.availability = TaskAvailabilityFilter::Available;
+            }
+            TaskView::Backlog => {
+                filters.status = Some("backlog".to_string());
+                filters.availability = TaskAvailabilityFilter::Available;
+            }
+            TaskView::Todo => {
+                filters.status = Some("todo".to_string());
+                filters.availability = TaskAvailabilityFilter::Available;
+            }
             TaskView::Done => filters.statuses = vec!["done".to_string(), "canceled".to_string()],
+            TaskView::Upcoming => filters.availability = TaskAvailabilityFilter::Upcoming,
             TaskView::Conflicts => filters.conflicts_only = true,
             TaskView::Epics => {
                 filters.epics_only = true;
                 filters.hide_done = true;
+                filters.availability = TaskAvailabilityFilter::Available;
             }
             TaskView::Search => {
                 filters.include_deleted = true;
@@ -149,13 +171,18 @@ impl TaskViewState {
     }
 
     pub(crate) fn sort(&self) -> TaskSort {
-        self.order.into()
+        if self.view == TaskView::Upcoming {
+            TaskSort::AvailableAt
+        } else {
+            self.order.into()
+        }
     }
 
     pub(crate) fn render_mode(&self) -> TaskListRenderMode {
         match self.view {
             TaskView::Queue => TaskListRenderMode::Queue,
             TaskView::Columns => TaskListRenderMode::Columns,
+            TaskView::Upcoming => TaskListRenderMode::Upcoming,
             TaskView::Epics => TaskListRenderMode::Epics,
             TaskView::RecentActions => TaskListRenderMode::Flat,
             _ => TaskListRenderMode::Flat,

@@ -30,6 +30,7 @@ mod shortcut_buffer;
 mod store;
 mod text;
 mod theme;
+mod time;
 mod toast;
 mod ui;
 mod widgets;

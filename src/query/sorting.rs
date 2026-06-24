@@ -52,5 +52,11 @@ pub(super) fn push_sort(
         (TaskSort::Title, SortDirection::Desc) => {
             query.push(" ORDER BY lower(t.title) DESC, t.created_at DESC")
         }
+        (TaskSort::AvailableAt, SortDirection::Asc) => {
+            query.push(" ORDER BY t.available_at ASC, t.created_at ASC")
+        }
+        (TaskSort::AvailableAt, SortDirection::Desc) => {
+            query.push(" ORDER BY t.available_at DESC, t.created_at DESC")
+        }
     };
 }

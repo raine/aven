@@ -3,9 +3,9 @@ use std::collections::BTreeSet;
 use crate::query::TaskListItem;
 use crate::tui::store::{TaskListRenderMode, TuiStore};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct TaskGroupRow {
-    pub(super) label: &'static str,
+    pub(super) label: String,
     pub(super) count: usize,
 }
 
@@ -43,6 +43,7 @@ impl TaskListView {
     ) -> Self {
         let rows = match render_mode {
             TaskListRenderMode::Queue => queue_rows(tasks),
+            TaskListRenderMode::Upcoming => upcoming_rows(tasks, crate::queue::now_seconds()),
             TaskListRenderMode::Flat | TaskListRenderMode::Columns => task_rows(tasks),
             TaskListRenderMode::Epics => epics_rows(tasks, expanded_epic_ids),
         };
@@ -121,12 +122,34 @@ pub(super) fn queue_rows(tasks: &[TaskListItem]) -> Vec<TaskListRow> {
     rows
 }
 
-pub(super) fn queue_group_label(item: &TaskListItem) -> &'static str {
+pub(super) fn queue_group_label(item: &TaskListItem) -> String {
     match item.task.status.as_str() {
-        "done" => "done",
-        "canceled" => "canceled",
-        _ => item.queue.band.label(),
+        "done" => "done".to_string(),
+        "canceled" => "canceled".to_string(),
+        _ => item.queue.band.label().to_string(),
     }
+}
+
+pub(super) fn upcoming_rows(tasks: &[TaskListItem], now_seconds: i64) -> Vec<TaskListRow> {
+    let mut rows = Vec::new();
+    let mut index = 0;
+    while index < tasks.len() {
+        let label =
+            crate::tui::time::available_day_label(&tasks[index].task.available_at, now_seconds);
+        let start = index;
+        while index < tasks.len()
+            && crate::tui::time::available_day_label(&tasks[index].task.available_at, now_seconds)
+                == label
+        {
+            index += 1;
+        }
+        rows.push(TaskListRow::Group(TaskGroupRow {
+            label,
+            count: index - start,
+        }));
+        rows.extend((start..index).map(|task_index| TaskListRow::Task { task_index }));
+    }
+    rows
 }
 
 pub(super) fn task_list_visible_rows(
@@ -224,6 +247,7 @@ mod tests {
                 created_at: "2026-06-20T00:00:00Z".to_string(),
                 updated_at: "2026-06-20T00:00:00Z".to_string(),
                 queue_activity_at: "2026-06-20T00:00:00Z".to_string(),
+                available_at: String::new(),
                 deleted: false,
                 is_epic: false,
             },
@@ -265,22 +289,22 @@ mod tests {
             view.rows,
             vec![
                 TaskListRow::Group(TaskGroupRow {
-                    label: "focus",
+                    label: "focus".to_string(),
                     count: 1,
                 }),
                 TaskListRow::Task { task_index: 0 },
                 TaskListRow::Group(TaskGroupRow {
-                    label: "soon",
+                    label: "soon".to_string(),
                     count: 1,
                 }),
                 TaskListRow::Task { task_index: 1 },
                 TaskListRow::Group(TaskGroupRow {
-                    label: "triage",
+                    label: "triage".to_string(),
                     count: 1,
                 }),
                 TaskListRow::Task { task_index: 2 },
                 TaskListRow::Group(TaskGroupRow {
-                    label: "later",
+                    label: "later".to_string(),
                     count: 1,
                 }),
                 TaskListRow::Task { task_index: 3 },
@@ -301,12 +325,12 @@ mod tests {
             view.rows,
             vec![
                 TaskListRow::Group(TaskGroupRow {
-                    label: "later",
+                    label: "later".to_string(),
                     count: 1,
                 }),
                 TaskListRow::Task { task_index: 0 },
                 TaskListRow::Group(TaskGroupRow {
-                    label: "epics",
+                    label: "epics".to_string(),
                     count: 1,
                 }),
                 TaskListRow::Task { task_index: 1 },
@@ -328,17 +352,17 @@ mod tests {
             view.rows,
             vec![
                 TaskListRow::Group(TaskGroupRow {
-                    label: "later",
+                    label: "later".to_string(),
                     count: 1,
                 }),
                 TaskListRow::Task { task_index: 0 },
                 TaskListRow::Group(TaskGroupRow {
-                    label: "done",
+                    label: "done".to_string(),
                     count: 1,
                 }),
                 TaskListRow::Task { task_index: 1 },
                 TaskListRow::Group(TaskGroupRow {
-                    label: "canceled",
+                    label: "canceled".to_string(),
                     count: 1,
                 }),
                 TaskListRow::Task { task_index: 2 },
@@ -396,7 +420,7 @@ mod tests {
                 (
                     0,
                     &TaskListRow::Group(TaskGroupRow {
-                        label: "focus",
+                        label: "focus".to_string(),
                         count: 1
                     })
                 ),
@@ -404,7 +428,7 @@ mod tests {
                 (
                     2,
                     &TaskListRow::Group(TaskGroupRow {
-                        label: "soon",
+                        label: "soon".to_string(),
                         count: 1
                     })
                 ),
@@ -416,7 +440,7 @@ mod tests {
                 (
                     2,
                     &TaskListRow::Group(TaskGroupRow {
-                        label: "soon",
+                        label: "soon".to_string(),
                         count: 1
                     })
                 ),
@@ -424,7 +448,7 @@ mod tests {
                 (
                     4,
                     &TaskListRow::Group(TaskGroupRow {
-                        label: "triage",
+                        label: "triage".to_string(),
                         count: 1
                     })
                 ),

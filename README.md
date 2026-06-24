@@ -46,7 +46,8 @@ Docs: <https://aven.raine.dev>
   notes, so context stays with the task.
 
 - **Fast capture from anywhere.** Natural-language task intake, tmux popup
-  capture, and agent-friendly commands make it easy to add tasks.
+  capture, deferred availability, and agent-friendly commands make it easy to
+  add tasks and surface them when attention becomes useful.
 
 Inspired by Taskwarrior. See
 [aven and Taskwarrior](https://aven.raine.dev/taskwarrior/).

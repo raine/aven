@@ -98,6 +98,7 @@ pub(crate) struct TaskUndoSnapshot {
     pub(crate) project_key: String,
     pub(crate) status: String,
     pub(crate) priority: String,
+    pub(crate) available_at: String,
     pub(crate) deleted: bool,
     pub(crate) labels: Vec<String>,
 }
@@ -131,7 +132,7 @@ async fn task_field_value_for_field(
     task_field: TaskField,
 ) -> Result<String> {
     let row = sqlx::query(
-        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id, p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at, t.queue_activity_at, t.deleted, t.is_epic
+        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id, p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at, t.queue_activity_at, t.available_at, t.deleted, t.is_epic
          FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
          WHERE t.workspace_id = ? AND t.id = ?",
     )
@@ -165,7 +166,7 @@ pub(crate) async fn task_snapshot(
     task_id: &str,
 ) -> Result<TaskUndoSnapshot> {
     let row = sqlx::query(
-        "SELECT t.title, t.description, t.project_id, p.key AS project_key, t.status, t.priority, t.deleted, t.is_epic
+        "SELECT t.title, t.description, t.project_id, p.key AS project_key, t.status, t.priority, t.available_at, t.deleted, t.is_epic
          FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
          WHERE t.workspace_id = ? AND t.id = ?",
     )
@@ -182,6 +183,7 @@ pub(crate) async fn task_snapshot(
         project_key: row.get("project_key"),
         status: row.get("status"),
         priority: row.get("priority"),
+        available_at: row.get("available_at"),
         deleted: row.get::<i64, _>("deleted") != 0,
         labels,
     })

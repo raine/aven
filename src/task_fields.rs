@@ -12,17 +12,19 @@ pub(crate) enum TaskField {
     Project,
     Status,
     Priority,
+    AvailableAt,
     Deleted,
     IsEpic,
 }
 
 impl TaskField {
-    pub(crate) const VERSIONED: [TaskField; 7] = [
+    pub(crate) const VERSIONED: [TaskField; 8] = [
         TaskField::Title,
         TaskField::Description,
         TaskField::Project,
         TaskField::Status,
         TaskField::Priority,
+        TaskField::AvailableAt,
         TaskField::Deleted,
         TaskField::IsEpic,
     ];
@@ -34,6 +36,7 @@ impl TaskField {
             "project" => Some(Self::Project),
             "status" => Some(Self::Status),
             "priority" => Some(Self::Priority),
+            "available_at" => Some(Self::AvailableAt),
             "deleted" => Some(Self::Deleted),
             "is_epic" => Some(Self::IsEpic),
             _ => None,
@@ -63,6 +66,7 @@ impl TaskField {
             Self::Project => "project",
             Self::Status => "status",
             Self::Priority => "priority",
+            Self::AvailableAt => "available_at",
             Self::Deleted => "deleted",
             Self::IsEpic => "is_epic",
         }
@@ -72,6 +76,7 @@ impl TaskField {
         match self {
             Self::Status => TaskStatus::parse(value).map(|_| ()),
             Self::Priority => TaskPriority::parse(value).map(|_| ()),
+            Self::AvailableAt => crate::time_input::validate_available_at_value(value),
             Self::Deleted if matches!(value, "0" | "1") => Ok(()),
             Self::Deleted => anyhow::bail!("error invalid-deleted value={value}"),
             Self::IsEpic if matches!(value, "0" | "1") => Ok(()),
@@ -121,6 +126,7 @@ impl TaskField {
             Self::Project => task.project_id.clone(),
             Self::Status => task.status.as_str().to_string(),
             Self::Priority => task.priority.as_str().to_string(),
+            Self::AvailableAt => task.available_at.clone(),
             Self::Deleted => {
                 if task.deleted {
                     "1".to_string()
@@ -158,6 +164,7 @@ mod tests {
                 "project",
                 "status",
                 "priority",
+                "available_at",
                 "deleted",
                 "is_epic"
             ]

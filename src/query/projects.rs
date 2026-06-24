@@ -20,8 +20,8 @@ pub(crate) async fn list_project_items_in_workspace(
 ) -> Result<Vec<ProjectListItem>> {
     let sql = format!(
         "SELECT p.key, p.name, p.prefix,
-         COALESCE(SUM(CASE WHEN {} THEN 1 ELSE 0 END), 0) AS open_count,
-         COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'inbox' THEN 1 ELSE 0 END), 0) AS inbox_count
+         COALESCE(SUM(CASE WHEN {} AND (t.available_at = '' OR t.available_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) THEN 1 ELSE 0 END), 0) AS open_count,
+         COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'inbox' AND (t.available_at = '' OR t.available_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) THEN 1 ELSE 0 END), 0) AS inbox_count
          FROM projects p
          LEFT JOIN tasks t ON t.workspace_id = p.workspace_id AND t.project_id = p.id
          WHERE p.workspace_id = ? AND p.deleted = 0

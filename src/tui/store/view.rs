@@ -58,6 +58,9 @@ impl TuiStore {
 
     pub(crate) async fn show_view(&mut self, view: TaskView) -> Result<Option<usize>> {
         self.view_state.view = view;
+        if view == TaskView::Upcoming {
+            self.view_state.direction = SortDirection::Asc;
+        }
         if view != TaskView::Search {
             self.view_state.filter_modifiers.task_ids.clear();
         }

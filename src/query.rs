@@ -35,7 +35,8 @@ pub(crate) use tasks::{list_task_items, list_task_items_in_workspace};
 #[allow(unused_imports)]
 pub(crate) use types::{
     ProjectListItem, RecentActionItem, RecentActionTarget, SidebarCounts, SortDirection,
-    TaskDependencyLink, TaskFilters, TaskListItem, TaskNote, TaskQueryMode, TaskSort,
+    TaskAvailabilityFilter, TaskDependencyLink, TaskFilters, TaskListItem, TaskNote, TaskQueryMode,
+    TaskSort,
 };
 
 #[cfg(test)]

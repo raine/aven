@@ -48,6 +48,7 @@ struct TaskListRenderModel {
     row_count: usize,
     viewport_rows: usize,
     top_scroll: usize,
+    render_mode: TaskListRenderMode,
 }
 
 #[derive(Debug)]
@@ -206,7 +207,7 @@ fn render_task_list(
         return;
     }
 
-    render_task_header(frame, model.row_areas[0], model.columns);
+    render_task_header(frame, model.row_areas[0], model.columns, model.render_mode);
 
     for (index, row) in model.rows.iter().enumerate() {
         let Some(row_area) = model.row_areas.get(index + 1).copied() else {
@@ -214,7 +215,7 @@ fn render_task_list(
         };
         match row {
             TaskListRenderRow::Group(group) => {
-                render_group_row(frame, group.label, group.count, row_area);
+                render_group_row(frame, &group.label, group.count, row_area);
             }
             TaskListRenderRow::Task(row) => {
                 render_task_row_from_model(frame, row_area, &model.columns, row);
@@ -251,6 +252,7 @@ fn build_task_list_render_model(
             row_count: 0,
             viewport_rows: 0,
             top_scroll: 0,
+            render_mode: store.view_state.render_mode(),
         };
     }
 
@@ -279,7 +281,7 @@ fn build_task_list_render_model(
     let mut rows = Vec::new();
     for (_, row) in visible_rows {
         match row {
-            TaskListRow::Group(group) => rows.push(TaskListRenderRow::Group(*group)),
+            TaskListRow::Group(group) => rows.push(TaskListRenderRow::Group(group.clone())),
             TaskListRow::Task { task_index } => {
                 let Some(item) = store.tasks.get(*task_index) else {
                     rows.push(TaskListRenderRow::Task(TaskListTaskRow {
@@ -351,6 +353,7 @@ fn build_task_list_render_model(
         row_count: view.rows.len(),
         viewport_rows,
         top_scroll: task_list_top_scroll(&view),
+        render_mode: view.render_mode,
     }
 }
 
@@ -532,17 +535,34 @@ fn priority_column_width_from_tasks(tasks: &[TaskListItem]) -> u16 {
     }
 }
 
-fn render_task_header(frame: &mut Frame, area: Rect, columns: [Constraint; 8]) {
+fn render_task_header(
+    frame: &mut Frame,
+    area: Rect,
+    columns: [Constraint; 8],
+    render_mode: TaskListRenderMode,
+) {
     let cells = Layout::horizontal(columns).areas::<8>(area);
     let style = Style::new()
         .fg(INVERSE_FG)
         .bg(BORDER)
         .add_modifier(Modifier::BOLD);
     frame.render_widget(Block::new().style(style), area);
+    let time_header = match render_mode {
+        TaskListRenderMode::Queue => "IDLE",
+        TaskListRenderMode::Upcoming => "WHEN",
+        _ => "AGE",
+    };
     for (index, (area, label)) in cells
         .into_iter()
         .zip([
-            " REF", "TITLE", "LABELS", "", "PROJECT", "STATUS", "P", "AGE",
+            " REF",
+            "TITLE",
+            "LABELS",
+            "",
+            "PROJECT",
+            "STATUS",
+            "P",
+            time_header,
         ])
         .enumerate()
     {
@@ -617,14 +637,13 @@ fn render_task_row_cells(
 fn build_task_row_cells(
     item: &TaskListItem,
     now_seconds: i64,
-    _render_mode: TaskListRenderMode,
+    render_mode: TaskListRenderMode,
     inline_title_editor: Option<&TextInputView>,
     column_widths: &[usize; 8],
     marked: bool,
     selected_epic_id: Option<&str>,
 ) -> Vec<Line<'static>> {
-    let age_seconds = task_seconds_since(&item.task.created_at, now_seconds);
-    let age_style_input = &item.task.created_at;
+    let time = task_time_cell(item, now_seconds, render_mode);
     let title = inline_title_editor
         .map(|editor| inline_title_edit_cell(editor, column_widths[1]))
         .unwrap_or_else(|| title_cell(item, column_widths[1]));
@@ -640,11 +659,42 @@ fn build_task_row_cells(
             priority_icon(item.task.priority.as_str()),
             theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
         )),
-        Line::from(Span::styled(
-            age_seconds.map(compact_age).unwrap_or_default(),
-            age_style(age_style_input, now_seconds),
-        )),
+        time,
     ]
+}
+
+fn task_time_cell(
+    item: &TaskListItem,
+    now_seconds: i64,
+    render_mode: TaskListRenderMode,
+) -> Line<'static> {
+    match render_mode {
+        TaskListRenderMode::Upcoming => Line::from(Span::styled(
+            crate::tui::time::available_in_label(&item.task.available_at, now_seconds)
+                .unwrap_or_default(),
+            Style::new().fg(ACCENT),
+        )),
+        TaskListRenderMode::Queue => {
+            let style_input = if item.queue.band == crate::queue::QueueBand::Available {
+                &item.task.available_at
+            } else {
+                &item.task.queue_activity_at
+            };
+            Line::from(Span::styled(
+                item.queue
+                    .idle_seconds
+                    .map(crate::tui::time::compact_duration)
+                    .unwrap_or_default(),
+                age_style(style_input, now_seconds),
+            ))
+        }
+        _ => Line::from(Span::styled(
+            task_seconds_since(&item.task.created_at, now_seconds)
+                .map(compact_age)
+                .unwrap_or_default(),
+            age_style(&item.task.created_at, now_seconds),
+        )),
+    }
 }
 
 fn build_epic_parent_row_cells(
@@ -1076,6 +1126,7 @@ mod tests {
                 created_at: "2026-06-20T00:00:00Z".to_string(),
                 updated_at: "2026-06-20T00:00:00Z".to_string(),
                 queue_activity_at: "2026-06-20T00:00:00Z".to_string(),
+                available_at: String::new(),
                 deleted: false,
                 is_epic: false,
             },
@@ -1167,6 +1218,7 @@ mod tests {
                 status: item.task.status.as_str().to_string(),
                 priority: item.task.priority.as_str().to_string(),
                 labels: item.labels,
+                available_at: item.task.available_at,
                 is_epic: false,
             };
             store.create_task(draft, None).await.unwrap();
@@ -1252,7 +1304,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_row_age_uses_created_timestamp() {
+    fn queue_row_time_uses_queue_idle_duration() {
         let mut item = task_item("queued");
         item.task.created_at = "0".to_string();
         item.task.queue_activity_at = (9 * 86_400).to_string();
@@ -1268,7 +1320,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(cells[7].to_string(), "10d");
+        assert_eq!(cells[7].to_string(), "1d");
     }
 
     #[test]
@@ -1286,7 +1338,9 @@ mod tests {
             Constraint::Length(5),
         ];
         terminal
-            .draw(|frame| render_task_header(frame, frame.area(), columns))
+            .draw(|frame| {
+                render_task_header(frame, frame.area(), columns, TaskListRenderMode::Flat)
+            })
             .unwrap();
 
         let rendered = buffer_text(terminal.backend().buffer());

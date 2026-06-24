@@ -20,6 +20,7 @@ pub(crate) struct TaskDraft {
     pub(crate) status: String,
     pub(crate) priority: String,
     pub(crate) labels: Vec<String>,
+    pub(crate) available_at: String,
     pub(crate) is_epic: bool,
 }
 
@@ -35,6 +36,7 @@ pub(crate) struct TaskUpdate {
     pub(crate) project: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) priority: Option<String>,
+    pub(crate) available_at: Option<String>,
     pub(crate) is_epic: Option<bool>,
     pub(crate) add_labels: Vec<String>,
     pub(crate) remove_labels: Vec<String>,
@@ -77,6 +79,7 @@ pub(crate) async fn create_task_in_workspace(
 ) -> Result<TaskOutcome> {
     let status = TaskStatus::parse(&draft.status)?;
     let priority = TaskPriority::parse(&draft.priority)?;
+    crate::time_input::validate_available_at_value(&draft.available_at)?;
     let id = new_id();
     let ts = now();
     let mut tx = begin_immediate(conn).await?;
@@ -86,8 +89,8 @@ pub(crate) async fn create_task_in_workspace(
             .await?;
     let labels = resolve_labels_in_workspace(&mut tx, &workspace.id, &draft.labels).await?;
     sqlx::query(
-        "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, is_epic)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, available_at, is_epic)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&workspace.id)
     .bind(&id)
@@ -99,6 +102,7 @@ pub(crate) async fn create_task_in_workspace(
     .bind(&ts)
     .bind(&ts)
     .bind(&ts)
+    .bind(&draft.available_at)
     .bind(i64::from(draft.is_epic))
     .execute(&mut *tx)
     .await?;
@@ -127,6 +131,7 @@ pub(crate) async fn create_task_in_workspace(
             .set("project_prefix", project.prefix.clone())
             .set("status", status.as_str())
             .set("priority", priority.as_str())
+            .set("available_at", draft.available_at)
             .set("is_epic", if draft.is_epic { "1" } else { "0" })
             .set("labels", &labels)
             .set("created_at", ts),
@@ -159,6 +164,9 @@ pub(crate) async fn update_task(
     if let Some(priority) = update.priority.as_deref() {
         TaskPriority::parse(priority)?;
     }
+    if let Some(available_at) = update.available_at.as_deref() {
+        crate::time_input::validate_available_at_value(available_at)?;
+    }
     let mut changed = false;
     let mut tx = begin_immediate(conn).await?;
     if let Some(title) = update.title {
@@ -181,6 +189,9 @@ pub(crate) async fn update_task(
     }
     if let Some(priority) = update.priority {
         changed |= update_task_field(&mut tx, task_id, "priority", &priority).await?;
+    }
+    if let Some(available_at) = update.available_at {
+        changed |= update_task_field(&mut tx, task_id, "available_at", &available_at).await?;
     }
     if let Some(is_epic) = update.is_epic {
         if !is_epic {

@@ -41,6 +41,7 @@ async fn create_selected_task(store: &mut TuiStore, title: &str) -> (String, usi
                 status: "inbox".to_string(),
                 priority: "none".to_string(),
                 labels: Vec::new(),
+                available_at: String::new(),
                 is_epic: false,
             },
             None,
@@ -76,6 +77,7 @@ fn task_draft(title: &str) -> TaskDraft {
         status: "inbox".to_string(),
         priority: "none".to_string(),
         labels: Vec::new(),
+        available_at: String::new(),
         is_epic: false,
     }
 }

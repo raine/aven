@@ -252,6 +252,7 @@ mod tests {
                 created_at: String::new(),
                 updated_at: String::new(),
                 queue_activity_at: String::new(),
+                available_at: String::new(),
                 deleted: false,
                 is_epic: false,
             },

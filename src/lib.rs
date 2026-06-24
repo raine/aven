@@ -27,6 +27,7 @@ mod task_enrichment;
 mod task_fields;
 mod task_intake;
 mod task_render;
+mod time_input;
 mod tui;
 mod types;
 mod undo;

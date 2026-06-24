@@ -30,6 +30,7 @@ semver = { version = "1.0", features = ["serde"] }
 tar = "0.4"
 tempfile = "3.14"
 anyhow = "1.0"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 crossterm = "0.29"
 pulldown-cmark = "0.13"
 ratatui = "0.30"

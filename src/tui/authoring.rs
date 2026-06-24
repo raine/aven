@@ -11,16 +11,18 @@ pub(crate) enum AddTaskStep {
     Priority,
     Labels,
     Title,
+    AvailableAt,
     Description,
 }
 
 impl AddTaskStep {
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::Project,
         Self::Status,
         Self::Priority,
         Self::Labels,
         Self::Title,
+        Self::AvailableAt,
         Self::Description,
     ];
 
@@ -54,6 +56,7 @@ struct AddTaskDraftState {
     status: String,
     priority: String,
     labels: Vec<String>,
+    available_at: String,
     step: AddTaskStep,
 }
 
@@ -67,6 +70,7 @@ impl Default for AddTaskDraftState {
             status: "inbox".to_string(),
             priority: "none".to_string(),
             labels: Vec::new(),
+            available_at: String::new(),
             step: AddTaskStep::Title,
         }
     }
@@ -96,6 +100,7 @@ pub(crate) struct AddTaskContext {
     pub(crate) status: String,
     pub(crate) priority: String,
     pub(crate) labels: Vec<String>,
+    pub(crate) available_at: String,
 }
 
 #[cfg(test)]
@@ -164,6 +169,7 @@ impl AuthoringState {
             status: draft.status.clone(),
             priority: draft.priority.clone(),
             labels: draft.labels.clone(),
+            available_at: draft.available_at.clone(),
         })
     }
 
@@ -227,6 +233,14 @@ impl AuthoringState {
         true
     }
 
+    pub(crate) fn apply_add_task_available_at(&mut self, value: String) -> bool {
+        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
+            return false;
+        };
+        draft.available_at = value;
+        true
+    }
+
     pub(crate) fn apply_add_task_priority_value(&mut self, priority: &str) -> Option<String> {
         let AuthoringFlow::AddTask(draft) = self.flow.as_mut()? else {
             return None;
@@ -248,6 +262,7 @@ impl AuthoringState {
         draft.status = task.status;
         draft.priority = task.priority;
         draft.labels = task.labels;
+        draft.available_at = task.available_at;
         draft.step = AddTaskStep::Title;
         true
     }
@@ -271,6 +286,7 @@ impl AuthoringState {
             status: draft.status,
             priority: draft.priority,
             labels: draft.labels,
+            available_at: draft.available_at,
             is_epic: false,
         })
     }

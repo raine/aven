@@ -68,6 +68,20 @@ impl App {
             }
         }
 
+        let available_at = if state.available_at.text.trim().is_empty() {
+            String::new()
+        } else {
+            match crate::time_input::parse_available_at_input(&state.available_at.text) {
+                Ok(value) => value,
+                Err(error) => {
+                    state.focus = AddTaskStep::AvailableAt;
+                    state.mode = AddTaskMode::Compose;
+                    self.overlay = Some(OverlayState::AddTask(Box::new(state)));
+                    self.set_warning(format!("{error:#}"));
+                    return Ok(());
+                }
+            }
+        };
         let draft = TaskDraft {
             title: title.to_string(),
             description: state.description.lines.join("\n").trim().to_string(),
@@ -75,6 +89,7 @@ impl App {
             status: state.status.clone(),
             priority: state.priority.clone(),
             labels: state.labels.clone(),
+            available_at,
             is_epic: false,
         };
         if let Err(error) = self.submit_created_task(draft).await {

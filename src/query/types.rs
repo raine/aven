@@ -14,6 +14,15 @@ pub(crate) enum TaskSort {
     Priority,
     Project,
     Title,
+    AvailableAt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum TaskAvailabilityFilter {
+    #[default]
+    All,
+    Available,
+    Upcoming,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +55,7 @@ pub(crate) struct TaskFilters {
     pub(crate) blocked_only: bool,
     pub(crate) epics_only: bool,
     pub(crate) exclude_epics: bool,
+    pub(crate) availability: TaskAvailabilityFilter,
     pub(crate) search: Option<String>,
     pub(crate) task_ids: Vec<String>,
 }
@@ -153,4 +163,5 @@ pub(crate) struct SidebarCounts {
     pub(crate) conflicts: i64,
     pub(crate) done: i64,
     pub(crate) epics: i64,
+    pub(crate) upcoming: i64,
 }

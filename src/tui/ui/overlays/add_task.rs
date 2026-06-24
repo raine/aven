@@ -74,6 +74,9 @@ pub(crate) fn add_task_field_at(
             return Some(AddTaskStep::Title);
         }
         if relative_y == metadata_rows + 1 {
+            return Some(AddTaskStep::AvailableAt);
+        }
+        if relative_y == metadata_rows + 2 {
             return Some(AddTaskStep::Description);
         }
         return None;
@@ -82,7 +85,10 @@ pub(crate) fn add_task_field_at(
     if relative_y == title_y || relative_y == title_y + 1 {
         return Some(AddTaskStep::Title);
     }
-    if relative_y >= title_y + 3 {
+    if relative_y == title_y + 3 || relative_y == title_y + 4 {
+        return Some(AddTaskStep::AvailableAt);
+    }
+    if relative_y >= title_y + 6 {
         return Some(AddTaskStep::Description);
     }
     None
@@ -112,6 +118,15 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
                 &state.title
             },
             state.focus == AddTaskStep::Title,
+        ));
+        lines.push(compact_text_field(
+            "Available",
+            if state.available_at.is_empty() {
+                "Immediately"
+            } else {
+                &state.available_at
+            },
+            state.focus == AddTaskStep::AvailableAt,
         ));
         lines.push(compact_text_field(
             "Description",
@@ -157,6 +172,20 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
     } else {
         lines.push(Line::from(""));
     }
+    lines.push(add_task_field_label(
+        "Available",
+        state.focus == AddTaskStep::AvailableAt,
+    ));
+    lines.push(indent_add_task_input(add_task_title_input_line(
+        if state.available_at.is_empty() {
+            "Immediately, today, tomorrow, or a date"
+        } else {
+            &state.available_at
+        },
+        (state.focus == AddTaskStep::AvailableAt).then_some(state.available_at_cursor),
+        (content.width as usize).saturating_sub(2),
+    )));
+    lines.push(Line::from(""));
     lines.push(add_task_field_label(
         "Description",
         state.focus == AddTaskStep::Description,
@@ -724,6 +753,14 @@ pub(in crate::tui::ui) fn add_task_hint_line(
             ("Enter", "create"),
             ("↑/↓", "field"),
             ("Tab", "next"),
+            ("^N", "create with AI"),
+            ("F1", "help"),
+            ("Esc", "cancel"),
+        ]),
+        AddTaskStep::AvailableAt => dialog_hint_line(&[
+            ("↑/↓", "field"),
+            ("Tab", "next"),
+            ("^S", "create"),
             ("^N", "create with AI"),
             ("F1", "help"),
             ("Esc", "cancel"),

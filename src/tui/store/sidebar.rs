@@ -20,6 +20,7 @@ impl TuiStore {
             view_entry("Active", self.counts.active, TaskView::Active),
             view_entry("Backlog", self.counts.backlog, TaskView::Backlog),
             view_entry("Todo", self.counts.todo, TaskView::Todo),
+            view_entry("Upcoming", self.counts.upcoming, TaskView::Upcoming),
             view_entry("Done", self.counts.done, TaskView::Done),
             view_entry("Conflicts", self.counts.conflicts, TaskView::Conflicts),
             view_entry("Epics", self.counts.epics, TaskView::Epics),

@@ -769,6 +769,7 @@ pub(crate) struct AddTaskState {
     pub(crate) status: String,
     pub(crate) priority: String,
     pub(crate) labels: Vec<String>,
+    pub(crate) available_at: LineEdit,
     pub(crate) mode: AddTaskMode,
     pub(crate) title_error: bool,
 }
@@ -785,6 +786,7 @@ impl AddTaskState {
             || self.status != "inbox"
             || self.priority != "none"
             || !self.labels.is_empty()
+            || !self.available_at.text.trim().is_empty()
     }
 
     pub(crate) fn focus_next(&mut self, reverse: bool) {

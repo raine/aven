@@ -11,7 +11,9 @@ use crate::workspaces::active_workspace_id;
 use super::fragments;
 use super::hydration::build_task_list_items;
 use super::sorting::push_sort;
-use super::{SortDirection, TaskFilters, TaskListItem, TaskQueryMode, TaskSort};
+use super::{
+    SortDirection, TaskAvailabilityFilter, TaskFilters, TaskListItem, TaskQueryMode, TaskSort,
+};
 
 pub(crate) async fn list_task_items(
     conn: &mut SqliteConnection,
@@ -57,7 +59,7 @@ pub(crate) async fn list_task_items_in_workspace(
     let mut query = QueryBuilder::<Sqlite>::new(
         "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
          p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
-         t.queue_activity_at, t.deleted, t.is_epic
+         t.queue_activity_at, t.available_at, t.deleted, t.is_epic
          FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id",
     );
 
@@ -108,6 +110,7 @@ pub(crate) async fn list_task_items_in_workspace(
         query.push_bind(label);
         query.push(")");
     }
+    push_availability_filter(&mut query, &mut filters_added, filters.availability);
     if filters.conflicts_only {
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("EXISTS (SELECT 1 FROM conflicts c WHERE c.workspace_id = t.workspace_id AND c.task_id = t.id AND c.resolved = 0)");
@@ -186,6 +189,27 @@ pub(crate) async fn list_task_items_in_workspace(
         });
     }
     Ok(items)
+}
+
+fn push_availability_filter(
+    query: &mut QueryBuilder<Sqlite>,
+    filters_added: &mut usize,
+    availability: TaskAvailabilityFilter,
+) {
+    match availability {
+        TaskAvailabilityFilter::All => {}
+        TaskAvailabilityFilter::Available => {
+            push_filter_prefix(query, filters_added);
+            query.push("(t.available_at = '' OR t.available_at <= ");
+            query.push_bind(crate::ids::now());
+            query.push(")");
+        }
+        TaskAvailabilityFilter::Upcoming => {
+            push_filter_prefix(query, filters_added);
+            query.push("t.deleted = 0 AND t.status NOT IN ('done', 'canceled') AND t.available_at != '' AND t.available_at > ");
+            query.push_bind(crate::ids::now());
+        }
+    }
 }
 
 fn push_filter_prefix(query: &mut QueryBuilder<Sqlite>, filters: &mut usize) {

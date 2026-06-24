@@ -8,7 +8,7 @@ use crate::change_log::op_type;
 use crate::ids::BASE32;
 use crate::task_fields::TaskField;
 
-pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 5;
+pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 6;
 pub(crate) fn sync_server_url_is_valid(server: &str) -> bool {
     let Ok(url) = reqwest::Url::parse(server) else {
         return false;
@@ -293,6 +293,9 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             }
             if let Some(priority) = optional_string_payload("priority", &change.payload)? {
                 validate_sync_task_field_value(TaskField::Priority, &priority)?;
+            }
+            if let Some(available_at) = optional_string_payload("available_at", &change.payload)? {
+                validate_sync_task_field_value(TaskField::AvailableAt, &available_at)?;
             }
             if let Some(is_epic) = optional_string_payload("is_epic", &change.payload)? {
                 validate_sync_task_field_value(TaskField::IsEpic, &is_epic)?;

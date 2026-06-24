@@ -109,6 +109,8 @@ struct TaskRow {
     created_at: String,
     updated_at: String,
     queue_activity_at: String,
+    #[serde(default)]
+    available_at: String,
     deleted: i64,
     is_epic: i64,
 }
@@ -341,7 +343,7 @@ async fn scan_labels(conn: &mut SqliteConnection) -> Result<Vec<LabelRow>> {
 }
 
 async fn scan_tasks(conn: &mut SqliteConnection) -> Result<Vec<TaskRow>> {
-    tables::scan_rows(conn, "SELECT workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, deleted, is_epic FROM tasks").await
+    tables::scan_rows(conn, "SELECT workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, available_at, deleted, is_epic FROM tasks").await
 }
 
 async fn scan_task_labels(conn: &mut SqliteConnection) -> Result<Vec<TaskLabelRow>> {
@@ -728,7 +730,7 @@ pub(crate) async fn database_integrity_report(
     checks.push(count_check(
         conn,
         "field version tasks",
-        "SELECT count(*) FROM field_versions fv LEFT JOIN tasks t ON t.id = fv.entity_id WHERE t.id IS NULL AND fv.field IN ('title','description','status','priority','project','labels','deleted','is_epic')",
+        "SELECT count(*) FROM field_versions fv LEFT JOIN tasks t ON t.id = fv.entity_id WHERE t.id IS NULL AND fv.field IN ('title','description','status','priority','project','labels','available_at','deleted','is_epic')",
     )
     .await?);
     checks.push(count_check(

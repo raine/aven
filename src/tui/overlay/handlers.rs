@@ -37,6 +37,7 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
         OverlayState::AddTask(mut state) => {
             match state.focus {
                 AddTaskStep::Title => state.title.insert_paste(text),
+                AddTaskStep::AvailableAt => state.available_at.insert_paste(text),
                 AddTaskStep::Description => state.description.insert_paste(text),
                 _ => {}
             }
@@ -208,13 +209,21 @@ pub(crate) fn handle_generic_overlay_key(
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
                 KeyCode::Down if state.focus == AddTaskStep::Title => {
+                    state.focus = AddTaskStep::AvailableAt;
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
+                KeyCode::Up if state.focus == AddTaskStep::AvailableAt => {
+                    state.focus = AddTaskStep::Title;
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
+                KeyCode::Down if state.focus == AddTaskStep::AvailableAt => {
                     state.focus = AddTaskStep::Description;
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
                 KeyCode::Up
                     if state.focus == AddTaskStep::Description && state.description.row == 0 =>
                 {
-                    state.focus = AddTaskStep::Title;
+                    state.focus = AddTaskStep::AvailableAt;
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
                 KeyCode::F(1) => {
@@ -240,6 +249,7 @@ pub(crate) fn handle_generic_overlay_key(
                             state.title.handle_key(key);
                             state.title_error = false;
                         }
+                        AddTaskStep::AvailableAt => state.available_at.handle_key(key),
                         AddTaskStep::Description => {
                             edit_multiline_input(&mut state.description, key)
                         }
@@ -788,6 +798,7 @@ mod tests {
             status: "inbox".to_string(),
             priority: "none".to_string(),
             labels: Vec::new(),
+            available_at: LineEdit::blank(),
             mode: crate::tui::overlay::AddTaskMode::Compose,
             title_error: false,
         })

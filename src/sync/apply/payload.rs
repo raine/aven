@@ -16,6 +16,7 @@ pub(crate) struct CreateTaskPayload {
     pub(crate) project_id: String,
     pub(crate) status: Option<String>,
     pub(crate) priority: Option<String>,
+    pub(crate) available_at: Option<String>,
     pub(crate) is_epic: Option<String>,
     pub(crate) created_at: Option<String>,
 }
@@ -29,6 +30,7 @@ impl CreateTaskPayload {
             project_id: str_payload(payload, "project_id")?,
             status: optional_str_payload(payload, "status"),
             priority: optional_str_payload(payload, "priority"),
+            available_at: optional_str_payload(payload, "available_at"),
             is_epic: optional_str_payload(payload, "is_epic"),
             created_at: optional_str_payload(payload, "created_at"),
         })

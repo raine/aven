@@ -30,6 +30,8 @@ struct ParsedTaskPayload {
     priority: Option<String>,
     #[serde(default)]
     labels: Vec<String>,
+    #[serde(default)]
+    available_at: Option<String>,
 }
 
 pub(crate) struct TaskIntakeContext {
@@ -212,7 +214,7 @@ fn task_intake_prompt(
 fn default_task_intake_system_prompt() -> &'static str {
     "You turn raw task intake text into one Aven task payload.\n\n\
 Return only JSON with this shape:\n\
-{\"title\":\"task title\",\"description\":\"optional durable context\",\"project\":\"optional project key or name\",\"priority\":\"none|low|medium|high|urgent\",\"labels\":[\"existing-label\"]}\n\n\
+{\"title\":\"task title\",\"description\":\"optional durable context\",\"project\":\"optional project key or name\",\"priority\":\"none|low|medium|high|urgent\",\"labels\":[\"existing-label\"],\"available_at\":\"optional defer expression or empty\"}\n\n\
 Rules:\n\
 - The title is required and should be concise.\n\
 - Prefer a concise imperative task title that reads like an existing Aven task.\n\
@@ -221,6 +223,8 @@ Rules:\n\
 - Keep meaningful casing for names, acronyms, file names, flags, and code identifiers.\n\
 - Use project only when the text clearly names one of the available projects.\n\
 - Use only existing labels.\n\
+- Set available_at only when the task should not be worked before a stated time. Preserve relative expressions such as tomorrow for Aven to resolve.\n\
+- Do not set available_at for deadlines or due dates. Keep those in title or description.\n\
 - Put durable context in description when helpful.\n\n\
 Use only these priorities: {priorities}.\n\n\
 Inferred project: {inferred_project}\n\n\
@@ -294,6 +298,14 @@ pub(crate) async fn parsed_output_to_draft(
     let labels =
         resolve_labels_in_workspace(conn, context.workspace_id.as_str(), &parsed.labels).await?;
     let description = parsed.description.trim().to_string();
+    let available_at = parsed
+        .available_at
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(crate::time_input::parse_available_at_input)
+        .transpose()?
+        .unwrap_or_default();
     Ok(TaskDraft {
         title: title.to_string(),
         description,
@@ -301,6 +313,7 @@ pub(crate) async fn parsed_output_to_draft(
         status: "inbox".to_string(),
         priority,
         labels,
+        available_at,
         is_epic: false,
     })
 }

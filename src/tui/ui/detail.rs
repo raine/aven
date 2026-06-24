@@ -856,6 +856,20 @@ fn detail_metadata_lines(item: &TaskListItem) -> Vec<Line<'static>> {
             Style::new().fg(FG_MUTED),
         )),
     ];
+    if let Some(summary) = crate::tui::time::availability_summary(
+        &item.task.available_at,
+        item.queue.band == crate::queue::QueueBand::Available,
+        crate::queue::now_seconds(),
+    ) {
+        lines.extend([
+            Line::from(""),
+            metadata_label("AVAILABILITY"),
+            Line::from(Span::styled(
+                summary,
+                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+            )),
+        ]);
+    }
     lines.extend(detail_epic_metadata_lines(item));
     if item.has_conflict {
         lines.extend([
@@ -1685,6 +1699,7 @@ mod tests {
                 created_at: "2026-06-19T12:00:00Z".to_string(),
                 updated_at: "2026-06-20T12:00:00Z".to_string(),
                 queue_activity_at: "2026-06-20T12:00:00Z".to_string(),
+                available_at: String::new(),
                 deleted: false,
                 is_epic: false,
             },

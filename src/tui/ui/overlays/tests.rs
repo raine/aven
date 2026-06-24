@@ -139,6 +139,8 @@ fn add_task_view() -> AddTaskView {
         status: "inbox".to_string(),
         priority: "none".to_string(),
         labels: Vec::new(),
+        available_at: String::new(),
+        available_at_cursor: 0,
         mode: crate::tui::overlay::AddTaskMode::Compose,
         title_error: false,
         status_prefix_active: false,

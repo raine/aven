@@ -50,6 +50,7 @@ fn test_task_draft(title: &str) -> TaskDraft {
         status: "inbox".to_string(),
         priority: "none".to_string(),
         labels: Vec::new(),
+        available_at: String::new(),
         is_epic: false,
     }
 }
@@ -1455,6 +1456,7 @@ mod command_and_config_overlays {
                 status: "inbox".to_string(),
                 priority: "urgent".to_string(),
                 labels: Vec::new(),
+                available_at: String::new(),
                 is_epic: false,
             },
         )
@@ -1875,6 +1877,7 @@ mod filters_and_workspaces {
                         status: "inbox".to_string(),
                         priority: "none".to_string(),
                         labels: Vec::new(),
+                        available_at: String::new(),
                         is_epic: false,
                     },
                     None,
@@ -1916,6 +1919,7 @@ mod filters_and_workspaces {
                 status: "inbox".to_string(),
                 priority: "urgent".to_string(),
                 labels: vec!["backend".to_string()],
+                available_at: String::new(),
                 is_epic: false,
             },
         )
@@ -3014,6 +3018,7 @@ mod authoring {
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
 
         assert!(matches!(
             &app.overlay,
@@ -3047,6 +3052,7 @@ mod authoring {
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         type_chars(&mut app, "Include setup details").await;
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
@@ -3062,6 +3068,7 @@ mod authoring {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         type_chars(&mut app, "Details").await;
         app.handle_overlay_key(ctrl_x()).await.unwrap();
@@ -3080,6 +3087,7 @@ mod authoring {
     async fn add_task_description_ctrl_x_non_editor_key_clears_prefix_and_edits_text() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         app.handle_overlay_key(ctrl_x()).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Char('z')))
@@ -3100,6 +3108,7 @@ mod authoring {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         type_chars(&mut app, "Details").await;
         app.handle_overlay_key(ctrl_e()).await.unwrap();
@@ -3123,6 +3132,7 @@ mod authoring {
 
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         type_chars(&mut app, "Details").await;
         app.handle_overlay_key(ctrl_p()).await.unwrap();
@@ -3337,6 +3347,7 @@ mod authoring {
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         type_chars(&mut app, "Include setup details").await;
         app.handle_overlay_key(ctrl_n()).await.unwrap();
 
@@ -3514,12 +3525,17 @@ mod authoring {
         app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
         assert!(matches!(
             &app.overlay,
+            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::AvailableAt
+        ));
+        app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
             Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Description
         ));
         app.handle_overlay_key(key(KeyCode::Up)).await.unwrap();
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Title
+            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::AvailableAt
         ));
     }
 
@@ -3546,9 +3562,11 @@ mod authoring {
 
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-        for (column, row, expected) in
-            [(3, 5, AddTaskStep::Title), (3, 8, AddTaskStep::Description)]
-        {
+        for (column, row, expected) in [
+            (3, 5, AddTaskStep::Title),
+            (3, 8, AddTaskStep::AvailableAt),
+            (3, 11, AddTaskStep::Description),
+        ] {
             app.dispatch_mouse(task_row_click(column, row), (80, 24).into())
                 .await
                 .unwrap();
@@ -3559,6 +3577,23 @@ mod authoring {
                         && matches!(state.mode, crate::tui::overlay::AddTaskMode::Compose)
             ));
         }
+    }
+
+    #[tokio::test]
+    async fn add_task_composer_sets_availability() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Test rollout").await;
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+            panic!("expected composer");
+        };
+        state.available_at = crate::tui::overlay::LineEdit::new("tomorrow".to_string());
+
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+        app.store.show_view(TaskView::Upcoming).await.unwrap();
+
+        assert_eq!(app.store.tasks.len(), 1);
+        assert!(!app.store.tasks[0].task.available_at.is_empty());
     }
 
     #[tokio::test]
@@ -4355,6 +4390,7 @@ mod detail_mode {
                 status: "inbox".to_string(),
                 priority: "none".to_string(),
                 labels: vec!["bug".to_string()],
+                available_at: String::new(),
                 is_epic: false,
             },
         )

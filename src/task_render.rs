@@ -45,8 +45,13 @@ async fn print_task_line(conn: &mut SqliteConnection, task: &Task) -> Result<()>
     };
     let deleted = if task.deleted { " deleted=yes" } else { "" };
     let epic = if task.is_epic { " epic=yes" } else { "" };
+    let available_at = if task.available_at.is_empty() {
+        String::new()
+    } else {
+        format!(" available_at={}", task.available_at)
+    };
     println!(
-        "{} status={} priority={} labels={}{}{}{} title={}",
+        "{} status={} priority={} labels={}{}{}{}{} title={}",
         display_ref(conn, task).await?,
         task.status,
         task.priority,
@@ -54,6 +59,7 @@ async fn print_task_line(conn: &mut SqliteConnection, task: &Task) -> Result<()>
         conflict,
         deleted,
         epic,
+        available_at,
         quote(&task.title)
     );
     Ok(())
@@ -68,6 +74,10 @@ pub(crate) async fn print_task_line_item(item: &TaskListItem) -> Result<()> {
         .optional("conflicts", item.has_conflict.then(|| "yes".to_string()))
         .optional("deleted", item.task.deleted.then(|| "yes".to_string()))
         .optional("epic", item.task.is_epic.then(|| "yes".to_string()))
+        .optional(
+            "available_at",
+            (!item.task.available_at.is_empty()).then(|| item.task.available_at.clone()),
+        )
         .optional(
             "blocked_by",
             (item.unresolved_blocker_count > 0).then(|| item.unresolved_blocker_count.to_string()),
@@ -211,6 +221,7 @@ pub(crate) struct TaskLineJson {
     pub(crate) has_conflict: bool,
     pub(crate) blocked_by: i64,
     pub(crate) blocks: i64,
+    pub(crate) available_at: String,
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
 }
@@ -231,6 +242,7 @@ pub(crate) fn task_line_json_item(item: &TaskListItem) -> TaskLineJson {
         has_conflict: item.has_conflict,
         blocked_by: item.unresolved_blocker_count,
         blocks: item.dependent_count,
+        available_at: item.task.available_at.clone(),
         created_at: item.task.created_at.clone(),
         updated_at: item.task.updated_at.clone(),
     }
