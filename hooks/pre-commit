@@ -9,6 +9,12 @@ fi
 
 stash_created=0
 
+install_commit_msg_hook() {
+  local repo_root
+  repo_root="$(git rev-parse --show-toplevel)"
+  "$repo_root/scripts/install-git-hook-shims" commit-msg
+}
+
 staged_paths_are_docs_or_media_only() {
   local path
   local found=0
@@ -45,6 +51,7 @@ hide_unstaged_changes() {
   stash_created=1
 }
 
+install_commit_msg_hook
 git-format-staged
 hide_unstaged_changes
 

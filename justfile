@@ -34,6 +34,7 @@ check-full: check pre-merge
 # Configure Git to use the repository hooks
 install-hooks:
     git config core.hooksPath hooks
+    scripts/install-git-hook-shims
 
 # Install local tools used by quality gates
 install-quality-tools:
