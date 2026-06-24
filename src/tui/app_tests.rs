@@ -1072,6 +1072,7 @@ mod authoring {
         app.handle_overlay_key(ctrl_p()).await.unwrap();
 
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
 
         assert!(!app.should_quit);
         assert!(matches!(

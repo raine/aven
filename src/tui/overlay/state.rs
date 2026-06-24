@@ -206,6 +206,17 @@ impl OverlayRoute {
         }
     }
 
+    pub(crate) fn initial_picker_mode(self) -> PickerMode {
+        match self {
+            Self::AddTaskTitleProject
+            | Self::EditProject
+            | Self::FilterProject
+            | Self::ViewProject
+            | Self::DeleteProjectPicker => PickerMode::Filter,
+            _ => PickerMode::Navigate,
+        }
+    }
+
     pub(crate) fn confirm_submit_route(self) -> Option<ConfirmSubmitRoute> {
         match self {
             Self::ConflictConfirm => Some(ConfirmSubmitRoute::ConflictConfirm),
@@ -395,7 +406,7 @@ impl PickerState {
             items,
             selected,
             multi,
-            mode: PickerMode::Navigate,
+            mode: route.initial_picker_mode(),
         }
     }
 

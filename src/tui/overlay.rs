@@ -715,10 +715,33 @@ mod tests {
     }
 
     #[test]
+    fn project_pickers_open_in_filter_mode() {
+        for route in [
+            OverlayRoute::AddTaskTitleProject,
+            OverlayRoute::EditProject,
+            OverlayRoute::FilterProject,
+            OverlayRoute::ViewProject,
+            OverlayRoute::DeleteProjectPicker,
+        ] {
+            let state = PickerState::new(
+                route,
+                "Project",
+                vec![PickerItem {
+                    label: "One".to_string(),
+                    value: "one".to_string(),
+                    selected: false,
+                }],
+                false,
+            );
+            assert_eq!(state.mode, PickerMode::Filter);
+        }
+    }
+
+    #[test]
     fn picker_builder_defaults_to_first_item() {
         let state = PickerState::new(
-            OverlayRoute::EditProject,
-            "Project",
+            OverlayRoute::EditStatus,
+            "Status",
             vec![PickerItem {
                 label: "One".to_string(),
                 value: "one".to_string(),

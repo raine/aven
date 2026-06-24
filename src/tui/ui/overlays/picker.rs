@@ -75,16 +75,15 @@ pub(in crate::tui::ui) fn picker_hint_line(
 ) -> Line<'static> {
     let mut items = match mode {
         PickerMode::Navigate => vec![("j/k", "move"), ("/", "filter")],
-        PickerMode::Filter => vec![("type", "filter"), ("Up/Down", "move")],
+        PickerMode::Filter => vec![("type", "filter"), ("Up/Down", "move"), ("Esc", "normal")],
     };
     if multi {
         items.push(("Space", "toggle"));
     }
-    let esc_label = match mode {
-        PickerMode::Navigate => "cancel",
-        PickerMode::Filter => "normal",
-    };
-    items.extend([("Enter", submit_label), ("Esc", esc_label)]);
+    if matches!(mode, PickerMode::Navigate) {
+        items.push(("Esc", "cancel"));
+    }
+    items.push(("Enter", submit_label));
     dialog_hint_line(&items)
 }
 
