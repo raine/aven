@@ -7,6 +7,7 @@ use sqlx::SqliteConnection;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
+use tracing::{error, info};
 
 use crate::choices::{PRIORITIES, validate_choice};
 use crate::config::TaskIntakeConfig;
@@ -106,8 +107,35 @@ async fn parse_task_intake_with_context(
     input: &str,
     context: &TaskIntakeContext,
 ) -> Result<TaskDraft> {
-    let output = run_task_intake_command(config, context, input).await?;
-    parsed_output_to_draft(conn, context, &output).await
+    info!(
+        workspace_id = %context.workspace_id,
+        input = %input,
+        "task intake input received"
+    );
+    let outcome = async {
+        let output = run_task_intake_command(config, context, input).await?;
+        parsed_output_to_draft(conn, context, &output).await
+    }
+    .await;
+    match outcome {
+        Ok(draft) => {
+            info!(
+                workspace_id = %context.workspace_id,
+                input = %input,
+                "task intake input parsed"
+            );
+            Ok(draft)
+        }
+        Err(error) => {
+            error!(
+                workspace_id = %context.workspace_id,
+                input = %input,
+                error = %error,
+                "task intake input failed"
+            );
+            Err(error)
+        }
+    }
 }
 
 async fn run_task_intake_command(
