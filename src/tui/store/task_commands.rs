@@ -8,6 +8,12 @@ use crate::undo::UndoCommand;
 
 use super::TuiStore;
 
+#[derive(Clone, Copy)]
+enum StatusRefresh {
+    Default,
+    PreserveTask,
+}
+
 impl TuiStore {
     async fn update_selected_task<F>(
         &mut self,
@@ -36,31 +42,78 @@ impl TuiStore {
         index: Option<usize>,
         status: &str,
     ) -> Result<Option<MutationMessage>> {
-        if let Some(item) = self.selected_task(index).cloned() {
-            let before = item.task.status.clone();
-            self.activate_workspace();
-            let mut conn = self.pool.acquire().await?;
-            set_status(&mut conn, &item.task, status).await?;
-            drop(conn);
-            self.record_undo_commands(
-                &format!("status {}", item.display_ref),
-                vec![UndoCommand::SetTaskField {
-                    task_id: item.task.id.clone(),
-                    field: "status".to_string(),
-                    before,
-                    after: status.to_string(),
-                }],
-            )
-            .await?;
-            let message = format!("set {} status={status}", item.display_ref);
-            let result = if status == "done" {
-                self.refresh_index_message(index, message).await?
-            } else {
-                self.refresh_task_message(&item.task.id, message).await?
-            };
-            return Ok(Some(result));
-        }
-        Ok(None)
+        self.update_status_with_refresh(index, status, StatusRefresh::Default)
+            .await
+    }
+
+    pub(crate) async fn update_status_preserving_task(
+        &mut self,
+        index: Option<usize>,
+        status: &str,
+    ) -> Result<Option<MutationMessage>> {
+        self.update_status_with_refresh(index, status, StatusRefresh::PreserveTask)
+            .await
+    }
+
+    async fn update_status_with_refresh(
+        &mut self,
+        index: Option<usize>,
+        status: &str,
+        refresh: StatusRefresh,
+    ) -> Result<Option<MutationMessage>> {
+        let Some(mut item) = self.selected_task(index).cloned() else {
+            return Ok(None);
+        };
+
+        let before = item.task.status.clone();
+        self.activate_workspace();
+        let mut conn = self.pool.acquire().await?;
+        let task = set_status(&mut conn, &item.task, status).await?;
+        drop(conn);
+        self.record_undo_commands(
+            &format!("status {}", item.display_ref),
+            vec![UndoCommand::SetTaskField {
+                task_id: item.task.id.clone(),
+                field: "status".to_string(),
+                before,
+                after: status.to_string(),
+            }],
+        )
+        .await?;
+        let message = format!("set {} status={status}", item.display_ref);
+        item.task = task;
+        let result = match (status, refresh) {
+            ("done", StatusRefresh::PreserveTask) => {
+                self.refresh_preserved_task_message(index, item, message)
+                    .await?
+            }
+            ("done", StatusRefresh::Default) => self.refresh_index_message(index, message).await?,
+            _ => self.refresh_task_message(&item.task.id, message).await?,
+        };
+        Ok(Some(result))
+    }
+
+    async fn refresh_preserved_task_message(
+        &mut self,
+        selected: Option<usize>,
+        item: TaskListItem,
+        message: impl Into<String>,
+    ) -> Result<MutationMessage> {
+        self.refresh(None).await?;
+        let selected = match self
+            .tasks
+            .iter()
+            .position(|task| task.task.id == item.task.id)
+        {
+            Some(index) => Some(index),
+            None => {
+                let index = selected.unwrap_or(self.tasks.len()).min(self.tasks.len());
+                self.tasks.insert(index, item);
+                Some(index)
+            }
+        };
+
+        Ok(MutationMessage::new(message, selected))
     }
 
     pub(crate) async fn update_priority(

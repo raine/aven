@@ -1857,6 +1857,7 @@ mod detail_mode {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Next target")).await;
         let selected = create_and_select_task(&mut app, test_task_draft("Done target")).await;
+        let selected_task_id = app.store.tasks[selected].task.id.clone();
         let display_ref = app.store.tasks[selected].display_ref.clone();
         app.overlay = Some(OverlayState::Detail { scroll: 7 });
 
@@ -1872,6 +1873,35 @@ mod detail_mode {
             toast_message(&app),
             Some(format!("set {display_ref} status=done").as_str())
         );
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.id, selected_task_id);
+        assert_eq!(app.store.tasks[selected].task.status, "done");
+    }
+
+    #[tokio::test]
+    async fn detail_status_picker_done_keeps_same_task() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Next target")).await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Done target")).await;
+        let selected_task_id = app.store.tasks[selected].task.id.clone();
+        app.overlay = Some(OverlayState::Detail { scroll: 4 });
+
+        app.dispatch_key(key(KeyCode::Char('s')), (80, 24).into())
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Char('/')))
+            .await
+            .unwrap();
+        type_chars(&mut app, "done").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.id, selected_task_id);
+        assert_eq!(app.store.tasks[selected].task.status, "done");
     }
 
     #[tokio::test]

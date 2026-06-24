@@ -12,11 +12,17 @@ pub(crate) const EDIT_LABELS_TITLE: &str = "Edit task: labels";
 
 impl App {
     pub(super) async fn update_status(&mut self, status: &'static str) -> Result<()> {
-        if let Some(result) = self
-            .store
-            .update_status(self.widgets.table.selected(), status)
-            .await?
-        {
+        let preserve_done_detail = status == "done"
+            && (self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. })));
+        if let Some(result) = if preserve_done_detail {
+            self.store
+                .update_status_preserving_task(self.widgets.table.selected(), status)
+                .await?
+        } else {
+            self.store
+                .update_status(self.widgets.table.selected(), status)
+                .await?
+        } {
             self.apply_mutation_result(result);
         } else {
             self.set_info("no selected task to edit");
@@ -213,10 +219,17 @@ impl App {
     }
 
     pub(super) async fn submit_edit_status(&mut self, status: String) -> Result<()> {
-        let result = self
-            .store
-            .update_status(self.widgets.table.selected(), &status)
-            .await;
+        let preserve_done_detail = status == "done"
+            && (self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. })));
+        let result = if preserve_done_detail {
+            self.store
+                .update_status_preserving_task(self.widgets.table.selected(), &status)
+                .await
+        } else {
+            self.store
+                .update_status(self.widgets.table.selected(), &status)
+                .await
+        };
         self.apply_edit_mutation(result, |app| app.begin_status_picker());
         Ok(())
     }

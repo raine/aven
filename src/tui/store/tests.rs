@@ -369,6 +369,59 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
+    async fn update_status_preserving_task_keeps_done_item_in_filtered_view() {
+        let mut store = test_store().await;
+        let _ = store
+            .create_task(
+                TaskDraft {
+                    title: "Next target".to_string(),
+                    description: String::new(),
+                    project: None,
+                    status: "todo".to_string(),
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let (_, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Done target".to_string(),
+                    description: String::new(),
+                    project: None,
+                    status: "todo".to_string(),
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+        let task_id = store.tasks[selected].task.id.clone();
+
+        store.show_view(SidebarTarget::Todo).await.unwrap();
+        let selected = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+
+        let result = store
+            .update_status_preserving_task(Some(selected), "done")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result.selected, Some(selected));
+        assert_eq!(store.tasks[selected].task.id, task_id);
+        assert_eq!(store.tasks[selected].task.status, "done");
+        assert_eq!(store.counts.done, 1);
+    }
+
+    #[tokio::test]
     async fn add_note_to_task_writes_note() {
         let mut store = test_store().await;
         let (_, selected) = store
