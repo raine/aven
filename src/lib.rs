@@ -36,10 +36,7 @@ mod test_support;
 
 pub use cli::Cli;
 
-use cli::{
-    Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand, InternalSubcommand,
-    TmuxSubcommand,
-};
+use cli::{Commands, ConflictCommand, ConflictSubcommand, InternalSubcommand, TmuxSubcommand};
 use commands::{
     cmd_add, cmd_bulk_update, cmd_config, cmd_conflict, cmd_delete_restore, cmd_doctor,
     cmd_internal_natural_add, cmd_label, cmd_labels, cmd_list, cmd_note, cmd_prime, cmd_project,
@@ -77,14 +74,10 @@ pub async fn run_cli() -> Result<()> {
                 }
             }
         }
-        Commands::Daemon(args) => {
+        Commands::Daemon(_) => {
             let config = config::AppConfig::load()?;
             let db_path = config::resolve_db_path(cli.db, &config)?;
-            match args.command {
-                DaemonSubcommand::Run => {
-                    daemon::run(daemon::DaemonRunArgs { db_path, config }).await
-                }
-            }
+            daemon::run(daemon::DaemonRunArgs { db_path, config }).await
         }
         Commands::Tmux(args) => match args.command {
             TmuxSubcommand::AddTaskPopup(args) => cmd_tmux_add_task_popup(args),

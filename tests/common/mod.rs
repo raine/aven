@@ -341,7 +341,7 @@ impl TestProcess {
             command.env(key, value);
         }
         let child = command
-            .args(["daemon", "run"])
+            .args(["daemon"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

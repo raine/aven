@@ -123,7 +123,7 @@ aven sync --server http://127.0.0.1:<port>
 Run the background daemon for the configured local database:
 
 ```sh
-aven daemon run
+aven daemon
 ```
 
 The daemon wakes after successful local mutations when possible and also syncs

@@ -18,10 +18,7 @@ sync:
   server_url: "http://127.0.0.1:9"
 "#,
     );
-    contains_all(
-        &fail(env.aven_config(["daemon", "run"])),
-        &["error sync-disabled"],
-    );
+    contains_all(&fail(env.aven_config(["daemon"])), &["error sync-disabled"]);
 
     let env = TestEnv::new();
     env.write_config(
@@ -31,7 +28,7 @@ sync:
 "#,
     );
     contains_all(
-        &fail(env.aven_config(["daemon", "run"])),
+        &fail(env.aven_config(["daemon"])),
         &["error sync-server-required"],
     );
 
@@ -47,7 +44,7 @@ daemon:
 "#,
     );
     contains_all(
-        &fail(env.aven_config(["daemon", "run"])),
+        &fail(env.aven_config(["daemon"])),
         &["invalid daemon wake address"],
     );
 
@@ -63,7 +60,7 @@ daemon:
 "#,
     );
     contains_all(
-        &fail(env.aven_config(["daemon", "run"])),
+        &fail(env.aven_config(["daemon"])),
         &["error daemon-wake-requires-loopback"],
     );
 }
@@ -90,7 +87,7 @@ daemon:
         wake_addr
     ));
 
-    let error = fail(env.aven_config(["daemon", "run"]));
+    let error = fail(env.aven_config(["daemon"]));
     contains_all(
         &error,
         &[

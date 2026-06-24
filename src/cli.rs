@@ -40,7 +40,7 @@ pub(crate) enum Commands {
     Restore(RefArgs),
     Conflict(ConflictCommand),
     Config(ConfigCommand),
-    Daemon(DaemonCommand),
+    Daemon(DaemonArgs),
     Server(ServerArgs),
     Sync(SyncArgs),
     Workspace(WorkspaceCommand),
@@ -326,15 +326,7 @@ pub(crate) enum ConfigSubcommand {
 }
 
 #[derive(Args)]
-pub(crate) struct DaemonCommand {
-    #[command(subcommand)]
-    pub(crate) command: DaemonSubcommand,
-}
-
-#[derive(Subcommand)]
-pub(crate) enum DaemonSubcommand {
-    Run,
-}
+pub(crate) struct DaemonArgs {}
 
 #[derive(Args)]
 pub(crate) struct ServerArgs {
