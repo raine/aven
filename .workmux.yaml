@@ -15,7 +15,7 @@ post_create:
     if [ ! -e "$dest" ] && [ -e "$src" ]; then
       sqlite3 "$src" ".backup '$dest'"
     fi
-    printf "\nexport AVEN_DB=%q\n" "$dest" >> "$WM_WORKTREE_PATH/.envrc"
+    printf "\nexport AVEN_DEV_DB=%q\n" "$dest" >> "$WM_WORKTREE_PATH/.envrc"
     direnv allow "$WM_WORKTREE_PATH" >/dev/null 2>&1 || true
 
 pre_merge:

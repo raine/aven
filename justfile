@@ -161,13 +161,13 @@ install:
 install-dev:
     cargo build && ln -sf $(pwd)/target/debug/aven ~/.cargo/bin/aven
 
-# Run the application
+# Run the application against the dev database when configured
 run *ARGS:
-    cargo run -- "$@"
+    env ${AVEN_DEV_DB:+AVEN_DB="$AVEN_DEV_DB"} cargo run -- "$@"
 
-# Run the TUI
+# Run the TUI against the dev database when configured
 tui:
-    cargo run -- tui
+    env ${AVEN_DEV_DB:+AVEN_DB="$AVEN_DEV_DB"} cargo run -- tui
 
 # Internal release helper
 _release bump:
