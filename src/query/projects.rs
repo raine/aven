@@ -22,7 +22,7 @@ pub(crate) async fn list_project_items_in_workspace(
          COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status NOT IN ('done', 'canceled') THEN 1 ELSE 0 END), 0) AS open_count,
          COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'inbox' THEN 1 ELSE 0 END), 0) AS inbox_count
          FROM projects p
-         LEFT JOIN tasks t ON t.workspace_id = p.workspace_id AND t.project_key = p.key
+         LEFT JOIN tasks t ON t.workspace_id = p.workspace_id AND t.project_id = p.id
          WHERE p.workspace_id = ? AND p.deleted = 0
          GROUP BY p.key, p.name, p.prefix
          ORDER BY p.key",

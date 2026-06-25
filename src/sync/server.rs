@@ -282,6 +282,7 @@ fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
         }
         "create_project" => {
             ensure_entity_type(change, "project")?;
+            ensure_sync_id("entity_id", &change.entity_id)?;
             optional_workspace_payload(&change.payload)?;
             required_string_payload("key", &change.payload)?;
             required_string_payload("name", &change.payload)?;
@@ -299,10 +300,12 @@ fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
             ensure_sync_id("entity_id", &change.entity_id)?;
             optional_workspace_payload(&change.payload)?;
             required_string_payload("title", &change.payload)?;
+            let project_id = required_string_payload("project_id", &change.payload)?;
+            ensure_sync_id("project_id", &project_id)?;
             required_string_payload("project_key", &change.payload)?;
             optional_string_payload("description", &change.payload)?;
-            optional_string_payload("project_name", &change.payload)?;
-            optional_string_payload("project_prefix", &change.payload)?;
+            required_string_payload("project_name", &change.payload)?;
+            required_string_payload("project_prefix", &change.payload)?;
             if let Some(status) = optional_string_payload("status", &change.payload)? {
                 validate_sync_task_field_value(TaskField::Status, &status)?;
             }
@@ -325,6 +328,16 @@ fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("error invalid-sync-change field={field}"))?;
             let value = required_string_payload("value", &change.payload)?;
             validate_sync_task_field_value(task_field, &value)?;
+            if task_field == TaskField::Project {
+                let project_id = required_string_payload("project_id", &change.payload)?;
+                ensure_sync_id("project_id", &project_id)?;
+                if value != project_id {
+                    bail!("error invalid-sync-change project-value-mismatch");
+                }
+                required_string_payload("project_key", &change.payload)?;
+                required_string_payload("project_name", &change.payload)?;
+                required_string_payload("project_prefix", &change.payload)?;
+            }
         }
         "label_add" | "label_remove" => {
             ensure_entity_type(change, "task")?;

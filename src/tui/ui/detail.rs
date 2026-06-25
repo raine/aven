@@ -529,6 +529,7 @@ mod tests {
                 workspace_id: "workspace-1".to_string(),
                 title: "Fix token refresh race".to_string(),
                 description: "Two token refresh requests fire together.".to_string(),
+                project_id: "project-id".to_string(),
                 project_key: "app".to_string(),
                 project_prefix: "APP".to_string(),
                 status: "active".to_string(),

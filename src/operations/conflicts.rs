@@ -4,9 +4,12 @@ use sqlx::{Connection as _, Row, SqliteConnection};
 use tracing::info;
 
 use crate::db::{insert_change, set_field_version};
-use crate::mutation::apply_field_value_in_workspace;
+use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
+use crate::projects::{
+    resolve_existing_project_in_workspace, resolve_project_for_add_in_workspace,
+};
 use crate::refs::get_task;
-use crate::types::Task;
+use crate::types::{Project, Task};
 
 pub(crate) struct ConflictListItem {
     pub(crate) task_id: String,
@@ -37,20 +40,29 @@ pub(crate) async fn list_conflicts(
     field: Option<&str>,
 ) -> Result<Vec<ConflictListItem>> {
     let workspace_id = crate::workspaces::active_workspace_id();
+    let project_id = if let Some(project) = project_key {
+        Some(
+            resolve_existing_project_in_workspace(conn, &workspace_id, project)
+                .await?
+                .id,
+        )
+    } else {
+        None
+    };
     let rows = sqlx::query(
         r#"SELECT c.task_id, c.field, c.variant_a, c.variant_b,
-                 t.title, p.prefix, t.project_key
+                 t.title, p.prefix, p.key AS project_key
                  FROM conflicts c
                  JOIN tasks t ON t.workspace_id = c.workspace_id AND t.id = c.task_id
-                 JOIN projects p ON p.workspace_id = t.workspace_id AND p.key = t.project_key
+                 JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
                  WHERE c.workspace_id = ? AND c.resolved = 0
-                 AND (? IS NULL OR t.project_key = ?)
+                 AND (? IS NULL OR t.project_id = ?)
                  AND (? IS NULL OR c.field = ?)
                  ORDER BY c.created_at"#,
     )
     .bind(&workspace_id)
-    .bind(project_key)
-    .bind(project_key)
+    .bind(&project_id)
+    .bind(&project_id)
     .bind(field)
     .bind(field)
     .fetch_all(&mut *conn)
@@ -116,6 +128,31 @@ pub(crate) async fn conflict_variant_value(
     bail!("error unknown-variant token={token}")
 }
 
+async fn project_for_stored_value(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    value: &str,
+) -> Result<Project> {
+    if let Some(row) = sqlx::query(
+        "SELECT id, workspace_id, key, name, prefix
+         FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 0",
+    )
+    .bind(workspace_id)
+    .bind(value)
+    .fetch_optional(&mut *conn)
+    .await?
+    {
+        return Ok(Project {
+            id: row.get("id"),
+            workspace_id: row.get("workspace_id"),
+            key: row.get("key"),
+            name: row.get("name"),
+            prefix: row.get("prefix"),
+        });
+    }
+    resolve_project_for_add_in_workspace(conn, workspace_id, Some(value)).await
+}
+
 pub(crate) async fn resolve_conflict(
     conn: &mut SqliteConnection,
     task_id: &str,
@@ -135,18 +172,33 @@ pub(crate) async fn resolve_conflict(
     if result.rows_affected() != 1 {
         bail!("error conflict-not-found task_id={task_id} field={field}");
     }
-    apply_field_value_in_workspace(&mut tx, &workspace.id, task_id, field, value).await?;
+    let payload = if field == crate::task_fields::TaskField::Project.as_str() {
+        let project = project_for_stored_value(&mut tx, &workspace.id, value).await?;
+        apply_project_id_in_workspace(&mut tx, &workspace.id, task_id, &project.id).await?;
+        json!({
+            "workspace_id": &workspace.id,
+            "workspace_key": &workspace.key,
+            "value": &project.id,
+            "project_id": &project.id,
+            "project_key": &project.key,
+            "project_name": &project.name,
+            "project_prefix": &project.prefix,
+        })
+    } else {
+        apply_field_value_in_workspace(&mut tx, &workspace.id, task_id, field, value).await?;
+        json!({
+            "workspace_id": &workspace.id,
+            "workspace_key": &workspace.key,
+            "value": value,
+        })
+    };
     let change_id = insert_change(
         &mut tx,
         "task",
         task_id,
         Some(field),
         "resolve_field",
-        json!({
-            "workspace_id": &workspace.id,
-            "workspace_key": &workspace.key,
-            "value": value,
-        }),
+        payload,
         None,
     )
     .await?;

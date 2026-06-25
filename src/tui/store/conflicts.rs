@@ -47,6 +47,8 @@ impl TuiStore {
             crate::undo::conflict_row_id(&mut conn, &workspace_id, &target.task_id, &target.field)
                 .await?;
         let outcome = resolve_conflict(&mut conn, &target.task_id, &target.field, &value).await?;
+        let after =
+            task_field_value(&mut conn, &workspace_id, &target.task_id, &target.field).await?;
         drop(conn);
         self.record_undo_commands(
             &format!("conflict {} {}", target.display_ref, target.field),
@@ -54,7 +56,7 @@ impl TuiStore {
                 task_id: target.task_id.clone(),
                 field: target.field.clone(),
                 before,
-                after: value,
+                after,
                 conflict_id,
             }],
         )

@@ -42,10 +42,10 @@ pub(super) fn push_sort(
               t.created_at DESC",
         ),
         (TaskSort::Project, SortDirection::Asc) => {
-            query.push(" ORDER BY t.project_key ASC, t.created_at DESC")
+            query.push(" ORDER BY p.key ASC, t.created_at DESC")
         }
         (TaskSort::Project, SortDirection::Desc) => {
-            query.push(" ORDER BY t.project_key DESC, t.created_at DESC")
+            query.push(" ORDER BY p.key DESC, t.created_at DESC")
         }
         (TaskSort::Title, SortDirection::Asc) => {
             query.push(" ORDER BY lower(t.title) ASC, t.created_at DESC")

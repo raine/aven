@@ -255,11 +255,11 @@ mod tests {
     async fn resolves_short_refs_when_unambiguous() {
         let (_temp, mut conn) = test_conn().await;
         let project = create_project(&mut conn, "app").await.unwrap();
-        sqlx::query!(
-            "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
+        sqlx::query(
+            "INSERT INTO tasks(id, title, description, project_id, status, priority, created_at, updated_at)
              VALUES ('7KQ9A1X4MV2P8D6R', 'test', '', ?, 'inbox', 'none', 't', 't')",
-            project.key,
         )
+        .bind(project.id)
         .execute(&mut *conn)
         .await
         .unwrap();
@@ -272,12 +272,12 @@ mod tests {
         let (_temp, mut conn) = test_conn().await;
         let project = create_project(&mut conn, "app").await.unwrap();
         for id in ["7KQ9A1X4MV2P8D6R", "7KQZZZZZZZZZZZZZ"] {
-            sqlx::query!(
-                "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
+            sqlx::query(
+                "INSERT INTO tasks(id, title, description, project_id, status, priority, created_at, updated_at)
                  VALUES (?, 'test', '', ?, 'inbox', 'none', 't', 't')",
-                id,
-                project.key,
             )
+            .bind(id)
+            .bind(&project.id)
             .execute(&mut *conn)
             .await
             .unwrap();
@@ -289,11 +289,11 @@ mod tests {
     async fn creates_conflict_on_same_field_version_mismatch() {
         let (_temp, mut conn) = test_conn().await;
         let project = create_project(&mut conn, "app").await.unwrap();
-        sqlx::query!(
-            "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at)
+        sqlx::query(
+            "INSERT INTO tasks(id, title, description, project_id, status, priority, created_at, updated_at)
              VALUES ('7KQ9A1X4MV2P8D6R', 'local', '', ?, 'inbox', 'none', 't', 't')",
-            project.key,
         )
+        .bind(project.id)
         .execute(&mut *conn)
         .await
         .unwrap();

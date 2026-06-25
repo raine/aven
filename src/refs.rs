@@ -28,10 +28,10 @@ async fn get_task_scoped(
     id: &str,
 ) -> Result<Task> {
     let row = sqlx::query(
-        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_key,
-         p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
+        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
+         p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
          t.queue_activity_at, t.deleted
-         FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.key = t.project_key
+         FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
          WHERE t.id = ? AND (? IS NULL OR t.workspace_id = ?)",
     )
     .bind(id)
@@ -67,10 +67,10 @@ async fn resolve_task_ref_scoped(
     }
     let suffix = suffix.to_ascii_uppercase();
     let rows = sqlx::query(
-        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_key,
-         p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
+        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
+         p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
          t.queue_activity_at, t.deleted
-         FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.key = t.project_key
+         FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
          WHERE t.id LIKE ? || '%' AND (? IS NULL OR t.workspace_id = ?)
          ORDER BY t.id",
     )

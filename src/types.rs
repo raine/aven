@@ -4,6 +4,7 @@ pub(crate) struct Task {
     pub(crate) workspace_id: String,
     pub(crate) title: String,
     pub(crate) description: String,
+    pub(crate) project_id: String,
     pub(crate) project_key: String,
     pub(crate) project_prefix: String,
     pub(crate) status: String,
@@ -16,6 +17,7 @@ pub(crate) struct Task {
 
 #[derive(Debug, Clone)]
 pub(crate) struct Project {
+    pub(crate) id: String,
     pub(crate) workspace_id: String,
     pub(crate) key: String,
     pub(crate) name: String,

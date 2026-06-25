@@ -7,7 +7,7 @@ use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::db::{insert_change, set_field_version};
 use crate::ids::{new_id, now};
 use crate::labels::resolve_labels_in_workspace;
-use crate::mutation::set_task_field;
+use crate::mutation::{set_task_field, set_task_project};
 use crate::projects::resolve_project_for_add_in_workspace;
 use crate::refs::get_task;
 use crate::task_fields::TaskField;
@@ -76,14 +76,14 @@ pub(crate) async fn create_task_in_workspace(
             .await?;
     let labels = resolve_labels_in_workspace(&mut tx, &workspace.id, &draft.labels).await?;
     sqlx::query(
-        "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at, queue_activity_at)
+        "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&workspace.id)
     .bind(&id)
     .bind(&draft.title)
     .bind(&draft.description)
-    .bind(&project.key)
+    .bind(&project.id)
     .bind(&draft.status)
     .bind(&draft.priority)
     .bind(&ts)
@@ -112,9 +112,10 @@ pub(crate) async fn create_task_in_workspace(
             "workspace_key": &workspace.key,
             "title": draft.title,
             "description": draft.description,
-            "project_key": project.key,
-            "project_name": project.name,
-            "project_prefix": project.prefix,
+            "project_id": &project.id,
+            "project_key": &project.key,
+            "project_name": &project.name,
+            "project_prefix": &project.prefix,
             "status": draft.status,
             "priority": draft.priority,
             "labels": labels,
@@ -167,7 +168,7 @@ pub(crate) async fn update_task(
             Some(&project),
         )
         .await?;
-        update_task_field(&mut tx, task_id, "project", &project.key).await?;
+        set_task_project(&mut tx, task_id, &project).await?;
         changed = true;
     }
     if let Some(status) = update.status {

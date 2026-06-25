@@ -113,12 +113,12 @@ async fn ambiguous_ref_fails_with_choices() {
         ("7KQ1111111111111", "ambig one"),
         ("7KQ2222222222222", "ambig two"),
     ] {
-        sqlx::query!(
-            "INSERT INTO tasks(id,title,description,project_key,status,priority,created_at,updated_at)
-             VALUES (?, ?, '', 'ambig', 'inbox', 'none', 't', 't')",
-            id,
-            title,
+        sqlx::query(
+            "INSERT INTO tasks(id,title,description,project_id,status,priority,created_at,updated_at)
+             VALUES (?, ?, '', (SELECT id FROM projects WHERE key = 'ambig'), 'inbox', 'none', 't', 't')",
         )
+        .bind(id)
+        .bind(title)
         .execute(&pool)
         .await
         .unwrap();

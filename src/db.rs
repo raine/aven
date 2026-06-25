@@ -244,6 +244,7 @@ pub(crate) fn task_from_row(row: &SqliteRow) -> Result<Task> {
         workspace_id: row.try_get("workspace_id")?,
         title: row.try_get("title")?,
         description: row.try_get("description")?,
+        project_id: row.try_get("project_id")?,
         project_key: row.try_get("project_key")?,
         project_prefix: row.try_get("project_prefix")?,
         status: row.try_get("status")?,

@@ -873,10 +873,24 @@ pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictComm
                     display_ref(conn, &task).await?,
                     detail.field
                 );
+                let local_value = conflict_display_value(
+                    conn,
+                    &task.workspace_id,
+                    &detail.field,
+                    &detail.local_value,
+                )
+                .await?;
+                let remote_value = conflict_display_value(
+                    conn,
+                    &task.workspace_id,
+                    &detail.field,
+                    &detail.remote_value,
+                )
+                .await?;
                 println!("variant {}", detail.variant_a);
-                print_multiline_block("value", &detail.local_value);
+                print_multiline_block("value", &local_value);
                 println!("variant {}", detail.variant_b);
-                print_multiline_block("value", &detail.remote_value);
+                print_multiline_block("value", &remote_value);
             }
         }
         ConflictSubcommand::Diff { task_ref, field } => {
@@ -938,6 +952,28 @@ pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictComm
         }
     }
     Ok(())
+}
+
+async fn conflict_display_value(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    field: &str,
+    value: &str,
+) -> Result<String> {
+    if field != TaskField::Project.as_str() {
+        return Ok(value.to_string());
+    }
+    if let Some((key, prefix)) = sqlx::query_as::<_, (String, String)>(
+        "SELECT key, prefix FROM projects WHERE workspace_id = ? AND id = ?",
+    )
+    .bind(workspace_id)
+    .bind(value)
+    .fetch_optional(&mut *conn)
+    .await?
+    {
+        return Ok(format!("{key} prefix={prefix}"));
+    }
+    Ok(value.to_string())
 }
 
 fn single_conflict(

@@ -9,7 +9,7 @@ use sqlx::{Row, SqliteConnection};
 use crate::config::{AppConfig, ProjectOverrideConfig};
 use crate::db::insert_change;
 use crate::fuzzy::is_near;
-use crate::ids::now;
+use crate::ids::{new_id, now};
 use crate::render::{print_near_error, quote};
 use crate::types::Project;
 use crate::workspaces::{Workspace, active_workspace_id};
@@ -138,7 +138,7 @@ pub(crate) async fn find_project_in_workspace(
 ) -> Result<Option<Project>> {
     let key = normalize_key(input);
     let row = sqlx::query(
-        "SELECT workspace_id, key, name, prefix
+        "SELECT id, workspace_id, key, name, prefix
          FROM projects
          WHERE workspace_id = ? AND deleted = 0 AND (key = ? OR lower(name) = lower(?))",
     )
@@ -192,12 +192,23 @@ pub(crate) async fn create_project_in_workspace(
             change_id: None,
         });
     }
+    if let Some((project, change_id)) =
+        restore_deleted_project(conn, &workspace, &key, name).await?
+    {
+        return Ok(ProjectCreateOutcome {
+            project,
+            created: true,
+            change_id: Some(change_id),
+        });
+    }
     let prefix = unique_project_prefix(conn, &workspace.id, &key).await?;
+    let id = new_id();
     let ts = now();
     sqlx::query(
-        "INSERT INTO projects(workspace_id, key, name, prefix, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO projects(id, workspace_id, key, name, prefix, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
+    .bind(&id)
     .bind(&workspace.id)
     .bind(&key)
     .bind(name)
@@ -209,7 +220,7 @@ pub(crate) async fn create_project_in_workspace(
     let change_id = insert_change(
         conn,
         "project",
-        &key,
+        &id,
         None,
         "create_project",
         json!({
@@ -225,6 +236,7 @@ pub(crate) async fn create_project_in_workspace(
     .await?;
     Ok(ProjectCreateOutcome {
         project: Project {
+            id,
             workspace_id: workspace.id,
             key,
             name: name.to_string(),
@@ -233,6 +245,74 @@ pub(crate) async fn create_project_in_workspace(
         created: true,
         change_id: Some(change_id),
     })
+}
+
+async fn restore_deleted_project(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    key: &str,
+    name: &str,
+) -> Result<Option<(Project, String)>> {
+    let Some(row) = sqlx::query(
+        "SELECT id, workspace_id, key, prefix
+         FROM projects
+         WHERE workspace_id = ? AND key = ? AND deleted = 1",
+    )
+    .bind(&workspace.id)
+    .bind(key)
+    .fetch_optional(&mut *conn)
+    .await?
+    else {
+        return Ok(None);
+    };
+    let id: String = row.get("id");
+    let workspace_id: String = row.get("workspace_id");
+    let key: String = row.get("key");
+    let prefix: String = row.get("prefix");
+    let prefix = if prefix == id {
+        unique_project_prefix(conn, &workspace_id, &key).await?
+    } else {
+        prefix
+    };
+    let ts = now();
+    sqlx::query(
+        "UPDATE projects SET name = ?, prefix = ?, updated_at = ?, deleted = 0
+         WHERE workspace_id = ? AND id = ?",
+    )
+    .bind(name)
+    .bind(&prefix)
+    .bind(&ts)
+    .bind(&workspace_id)
+    .bind(&id)
+    .execute(&mut *conn)
+    .await?;
+    let change_id = insert_change(
+        conn,
+        "project",
+        &id,
+        None,
+        "create_project",
+        json!({
+            "workspace_id": &workspace.id,
+            "workspace_key": &workspace.key,
+            "key": &key,
+            "name": name,
+            "prefix": &prefix,
+            "created_at": ts
+        }),
+        None,
+    )
+    .await?;
+    Ok(Some((
+        Project {
+            id,
+            workspace_id,
+            key,
+            name: name.to_string(),
+            prefix,
+        },
+        change_id,
+    )))
 }
 
 async fn unique_project_prefix(
@@ -321,10 +401,10 @@ async fn project_from_path_mapping(
     let cwd = fs::canonicalize(env::current_dir()?)?;
     let root = git_root(&cwd)?.unwrap_or_else(|| cwd.clone());
     let rows = sqlx::query(
-        "SELECT p.workspace_id, p.key, p.name, p.prefix, pp.path
+        "SELECT p.id, p.workspace_id, p.key, p.name, p.prefix, pp.path
          FROM project_paths pp
-         JOIN projects p ON p.workspace_id = pp.workspace_id AND p.key = pp.project_key
-         WHERE pp.workspace_id = ?
+         JOIN projects p ON p.workspace_id = pp.workspace_id AND p.id = pp.project_id
+         WHERE pp.workspace_id = ? AND p.deleted = 0
          ORDER BY length(pp.path) DESC",
     )
     .bind(workspace_id)
@@ -582,14 +662,15 @@ pub(crate) async fn add_project_path_in_workspace(
     project_key: &str,
     path: &Path,
 ) -> Result<()> {
+    let project = resolve_existing_project_in_workspace(conn, workspace_id, project_key).await?;
     let path =
         fs::canonicalize(path).with_context(|| format!("could not resolve {}", path.display()))?;
     let path = path.display().to_string();
     sqlx::query(
-        "INSERT OR IGNORE INTO project_paths(workspace_id, project_key, path) VALUES (?, ?, ?)",
+        "INSERT OR IGNORE INTO project_paths(workspace_id, project_id, path) VALUES (?, ?, ?)",
     )
     .bind(workspace_id)
-    .bind(project_key)
+    .bind(&project.id)
     .bind(path)
     .execute(&mut *conn)
     .await?;
@@ -631,7 +712,7 @@ pub(crate) async fn list_projects_in_workspace(
 ) -> Result<Vec<Project>> {
     let search = search.map(normalize_key);
     let rows = sqlx::query(
-        "SELECT workspace_id, key, name, prefix
+        "SELECT id, workspace_id, key, name, prefix
          FROM projects
          WHERE workspace_id = ? AND deleted = 0
          ORDER BY key",
@@ -652,6 +733,7 @@ pub(crate) async fn list_projects_in_workspace(
 
 fn project_from_row(row: sqlx::sqlite::SqliteRow) -> Project {
     Project {
+        id: row.get("id"),
         workspace_id: row.get("workspace_id"),
         key: row.get("key"),
         name: row.get("name"),

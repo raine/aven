@@ -6,8 +6,8 @@ use tracing::{debug, info};
 use super::wire::ChangeWire;
 use crate::db::{conflict_exists, field_version, set_field_version};
 use crate::ids::now;
-use crate::mutation::apply_field_value_in_workspace;
-use crate::projects::{find_project_in_workspace, prefix_base};
+use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
+use crate::projects::prefix_base;
 use crate::refs::get_task;
 use crate::task_fields::TaskField;
 use crate::workspaces::{DEFAULT_WORKSPACE_ID, ensure_default_workspace};
@@ -74,17 +74,15 @@ pub(super) async fn apply_remote_change(
             let name = str_payload(&change.payload, "name")?;
             let prefix = str_payload(&change.payload, "prefix")?;
             let created_at = str_payload(&change.payload, "created_at").unwrap_or_else(|_| now());
-            sqlx::query(
-                "INSERT OR IGNORE INTO projects(workspace_id, key, name, prefix, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?)",
+            ensure_remote_project(
+                conn,
+                &workspace_id,
+                &change.entity_id,
+                &key,
+                &name,
+                &prefix,
+                &created_at,
             )
-            .bind(&workspace_id)
-            .bind(key)
-            .bind(name)
-            .bind(prefix)
-            .bind(&created_at)
-            .bind(&created_at)
-            .execute(&mut *conn)
             .await?;
         }
         "create_label" => {
@@ -176,28 +174,8 @@ async fn apply_remote_create_task(conn: &mut SqliteConnection, change: &ChangeWi
     {
         return Ok(());
     }
-    let project_key = str_payload(&change.payload, "project_key")?;
-    if find_project_in_workspace(conn, &workspace_id, &project_key)
-        .await?
-        .is_none()
-    {
-        let name =
-            str_payload(&change.payload, "project_name").unwrap_or_else(|_| project_key.clone());
-        let prefix = str_payload(&change.payload, "project_prefix")
-            .unwrap_or_else(|_| prefix_base(&project_key));
-        sqlx::query(
-            "INSERT OR IGNORE INTO projects(workspace_id, key, name, prefix, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&workspace_id)
-        .bind(&project_key)
-        .bind(&name)
-        .bind(&prefix)
-        .bind(&change.created_at)
-        .bind(&change.created_at)
-        .execute(&mut *conn)
-        .await?;
-    }
+    let project_id = str_payload(&change.payload, "project_id")?;
+    let project_id = ensure_project_for_payload(conn, &workspace_id, &project_id, change).await?;
     let title = str_payload(&change.payload, "title")?;
     let description = str_payload(&change.payload, "description").unwrap_or_default();
     let status = str_payload(&change.payload, "status").unwrap_or_else(|_| "inbox".to_string());
@@ -205,14 +183,14 @@ async fn apply_remote_create_task(conn: &mut SqliteConnection, change: &ChangeWi
     let created_at =
         str_payload(&change.payload, "created_at").unwrap_or_else(|_| change.created_at.clone());
     sqlx::query(
-        "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at, queue_activity_at)
+        "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&workspace_id)
     .bind(&change.entity_id)
     .bind(&title)
     .bind(&description)
-    .bind(&project_key)
+    .bind(&project_id)
     .bind(&status)
     .bind(&priority)
     .bind(&created_at)
@@ -246,6 +224,236 @@ async fn apply_remote_create_task(conn: &mut SqliteConnection, change: &ChangeWi
     Ok(())
 }
 
+async fn ensure_project_for_payload(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    project_id: &str,
+    change: &ChangeWire,
+) -> Result<String> {
+    let key = str_payload(&change.payload, "project_key")?;
+    let name = str_payload(&change.payload, "project_name").unwrap_or_else(|_| key.clone());
+    let prefix =
+        str_payload(&change.payload, "project_prefix").unwrap_or_else(|_| prefix_base(&key));
+    ensure_remote_project(
+        conn,
+        workspace_id,
+        project_id,
+        &key,
+        &name,
+        &prefix,
+        &change.created_at,
+    )
+    .await
+}
+
+async fn ensure_remote_project(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    remote_project_id: &str,
+    key: &str,
+    name: &str,
+    prefix: &str,
+    created_at: &str,
+) -> Result<String> {
+    if let Some(local_id) = project_id_alias(conn, workspace_id, remote_project_id).await? {
+        return Ok(local_id);
+    }
+    if let Some(existing_id) = live_project_by_id(conn, workspace_id, remote_project_id).await? {
+        return Ok(existing_id);
+    }
+    if let Some(local_id) = live_project_by_key(conn, workspace_id, key).await? {
+        insert_project_alias(conn, workspace_id, remote_project_id, &local_id).await?;
+        return Ok(local_id);
+    }
+    if deleted_project_by_id(conn, workspace_id, remote_project_id).await? {
+        restore_remote_project(
+            conn,
+            workspace_id,
+            remote_project_id,
+            key,
+            name,
+            prefix,
+            created_at,
+        )
+        .await?;
+        return Ok(remote_project_id.to_string());
+    }
+    if let Some(local_id) = deleted_project_by_key(conn, workspace_id, key).await? {
+        restore_remote_project(conn, workspace_id, &local_id, key, name, prefix, created_at)
+            .await?;
+        insert_project_alias(conn, workspace_id, remote_project_id, &local_id).await?;
+        return Ok(local_id);
+    }
+    let prefix = unique_remote_prefix(conn, workspace_id, prefix, key, None).await?;
+    sqlx::query(
+        "INSERT INTO projects(id, workspace_id, key, name, prefix, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(remote_project_id)
+    .bind(workspace_id)
+    .bind(key)
+    .bind(name)
+    .bind(&prefix)
+    .bind(created_at)
+    .bind(created_at)
+    .execute(&mut *conn)
+    .await?;
+    Ok(remote_project_id.to_string())
+}
+
+async fn live_project_by_id(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    project_id: &str,
+) -> Result<Option<String>> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT id FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 0",
+    )
+    .bind(workspace_id)
+    .bind(project_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(Into::into)
+}
+
+async fn live_project_by_key(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    key: &str,
+) -> Result<Option<String>> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT id FROM projects WHERE workspace_id = ? AND key = ? AND deleted = 0",
+    )
+    .bind(workspace_id)
+    .bind(key)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(Into::into)
+}
+
+async fn deleted_project_by_id(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    project_id: &str,
+) -> Result<bool> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 1",
+    )
+    .bind(workspace_id)
+    .bind(project_id)
+    .fetch_one(&mut *conn)
+    .await?
+        > 0)
+}
+
+async fn deleted_project_by_key(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    key: &str,
+) -> Result<Option<String>> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT id FROM projects WHERE workspace_id = ? AND key = ? AND deleted = 1",
+    )
+    .bind(workspace_id)
+    .bind(key)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(Into::into)
+}
+
+async fn restore_remote_project(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    project_id: &str,
+    key: &str,
+    name: &str,
+    prefix: &str,
+    updated_at: &str,
+) -> Result<()> {
+    let prefix = unique_remote_prefix(conn, workspace_id, prefix, key, Some(project_id)).await?;
+    sqlx::query(
+        "UPDATE projects SET name = ?, prefix = ?, updated_at = ?, deleted = 0
+         WHERE workspace_id = ? AND id = ?",
+    )
+    .bind(name)
+    .bind(&prefix)
+    .bind(updated_at)
+    .bind(workspace_id)
+    .bind(project_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn insert_project_alias(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    remote_project_id: &str,
+    local_project_id: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO project_id_aliases(workspace_id, remote_project_id, local_project_id)
+         VALUES (?, ?, ?)",
+    )
+    .bind(workspace_id)
+    .bind(remote_project_id)
+    .bind(local_project_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn unique_remote_prefix(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    preferred: &str,
+    key: &str,
+    ignore_project_id: Option<&str>,
+) -> Result<String> {
+    let base = if preferred.trim().is_empty() {
+        prefix_base(key)
+    } else {
+        preferred.to_string()
+    };
+    let mut candidate = base.clone();
+    let mut n = 2;
+    while sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM projects
+         WHERE workspace_id = ? AND prefix = ? AND (? IS NULL OR id != ?)",
+    )
+    .bind(workspace_id)
+    .bind(&candidate)
+    .bind(ignore_project_id)
+    .bind(ignore_project_id)
+    .fetch_one(&mut *conn)
+    .await?
+        > 0
+    {
+        candidate = format!("{}{}", base.chars().take(2).collect::<String>(), n);
+        n += 1;
+    }
+    Ok(candidate)
+}
+
+async fn project_id_alias(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    remote_project_id: &str,
+) -> Result<Option<String>> {
+    Ok(sqlx::query_scalar::<_, String>(
+        "SELECT a.local_project_id
+         FROM project_id_aliases a
+         JOIN projects p ON p.workspace_id = a.workspace_id
+          AND p.id = a.local_project_id
+          AND p.deleted = 0
+         WHERE a.workspace_id = ? AND a.remote_project_id = ?",
+    )
+    .bind(workspace_id)
+    .bind(remote_project_id)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
 pub(crate) async fn apply_remote_set_field(
     conn: &mut SqliteConnection,
     change: &ChangeWire,
@@ -256,6 +464,13 @@ pub(crate) async fn apply_remote_set_field(
         .as_deref()
         .context("field change missing field")?;
     let value = str_payload(&change.payload, "value")?;
+    let workspace_id = workspace_id_payload(conn, change).await?;
+    let value = if field == TaskField::Project.as_str() {
+        let project_id = str_payload(&change.payload, "project_id")?;
+        ensure_project_for_payload(conn, &workspace_id, &project_id, change).await?
+    } else {
+        value
+    };
     if !force {
         let current = field_version(conn, &change.entity_id, field).await?;
         if current != change.base_version {
@@ -263,8 +478,12 @@ pub(crate) async fn apply_remote_set_field(
             return Ok(());
         }
     }
-    let workspace_id = workspace_id_payload(conn, change).await?;
-    apply_field_value_in_workspace(conn, &workspace_id, &change.entity_id, field, &value).await?;
+    if field == TaskField::Project.as_str() {
+        apply_project_id_in_workspace(conn, &workspace_id, &change.entity_id, &value).await?;
+    } else {
+        apply_field_value_in_workspace(conn, &workspace_id, &change.entity_id, field, &value)
+            .await?;
+    }
     set_field_version(conn, &change.entity_id, field, &change.change_id).await?;
     if force {
         sqlx::query(

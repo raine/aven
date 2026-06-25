@@ -451,8 +451,8 @@ fn test_runtime() -> tokio::runtime::Runtime {
 pub async fn insert_task_fixtures(pool: &sqlx::SqlitePool, fixtures: &[(&str, &str, &str)]) {
     for (id, title, project_key) in fixtures {
         sqlx::query(
-            "INSERT INTO tasks(id,title,description,project_key,status,priority,created_at,updated_at)
-             VALUES (?, ?, '', ?, 'inbox', 'none', 't', 't')",
+            "INSERT INTO tasks(id,title,description,project_id,status,priority,created_at,updated_at)
+             VALUES (?, ?, '', (SELECT id FROM projects WHERE key = ?), 'inbox', 'none', 't', 't')",
         )
         .bind(id)
         .bind(title)

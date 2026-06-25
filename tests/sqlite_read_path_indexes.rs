@@ -22,11 +22,11 @@ const READ_PATH_INDEXES: &[(&str, &str)] = &[
     ),
     (
         "idx_tasks_workspace_project_deleted_updated",
-        "CREATE INDEX idx_tasks_workspace_project_deleted_updated ON tasks(workspace_id, project_key, deleted, updated_at DESC, created_at DESC)",
+        "CREATE INDEX idx_tasks_workspace_project_deleted_updated ON tasks(workspace_id, project_id, deleted, updated_at DESC, created_at DESC)",
     ),
     (
         "idx_tasks_workspace_project_deleted_status",
-        "CREATE INDEX idx_tasks_workspace_project_deleted_status ON tasks(workspace_id, project_key, deleted, status)",
+        "CREATE INDEX idx_tasks_workspace_project_deleted_status ON tasks(workspace_id, project_id, deleted, status)",
     ),
     (
         "idx_conflicts_workspace_resolved_created_task",
@@ -256,9 +256,9 @@ fn common_read_filters_have_workspace_scoped_query_plans() {
             &mut conn,
             "EXPLAIN QUERY PLAN
              SELECT t.id FROM tasks t
-             WHERE t.workspace_id = ? AND t.deleted = 0 AND t.project_key = ?
+             WHERE t.workspace_id = ? AND t.deleted = 0 AND t.project_id = ?
              ORDER BY t.updated_at DESC, t.created_at DESC",
-            &["0000000000000000", "app"],
+            &["0000000000000000", "APPPROJECT000001"],
             "idx_tasks_workspace_project_deleted_updated",
         )
         .await;
@@ -303,10 +303,12 @@ fn common_read_filters_have_workspace_scoped_query_plans() {
 
 async fn seed_plan_rows(conn: &mut SqliteConnection) {
     sqlx::query(
-        "INSERT INTO tasks(id, workspace_id, title, description, project_key, status, priority, created_at, updated_at)
+        "INSERT INTO projects(id, workspace_id, key, name, prefix, created_at, updated_at)
+         VALUES ('APPPROJECT000001', '0000000000000000', 'app2', 'app2', 'AP2', 't', 't');
+         INSERT INTO tasks(id, workspace_id, title, description, project_id, status, priority, created_at, updated_at)
          VALUES
-         ('0000000000001001', '0000000000000000', 'todo bug', '', 'app', 'todo', 'high', '001', '003'),
-         ('0000000000001002', '0000000000000000', 'active', '', 'app', 'active', 'low', '002', '004')",
+         ('0000000000001001', '0000000000000000', 'todo bug', '', 'APPPROJECT000001', 'todo', 'high', '001', '003'),
+         ('0000000000001002', '0000000000000000', 'active', '', 'APPPROJECT000001', 'active', 'low', '002', '004')",
     )
     .execute(&mut *conn)
     .await

@@ -64,7 +64,7 @@ impl TaskField {
         match self {
             Self::Title => task.title.clone(),
             Self::Description => task.description.clone(),
-            Self::Project => task.project_key.clone(),
+            Self::Project => task.project_id.clone(),
             Self::Status => task.status.clone(),
             Self::Priority => task.priority.clone(),
             Self::Deleted => {

@@ -651,6 +651,7 @@ mod tests {
                 workspace_id: "workspace-1".to_string(),
                 title: title.to_string(),
                 description: String::new(),
+                project_id: "project-id".to_string(),
                 project_key: "app".to_string(),
                 project_prefix: "APP".to_string(),
                 status: "todo".to_string(),

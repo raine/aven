@@ -23,8 +23,8 @@ mod tests {
 
     async fn seed_default_project(conn: &mut SqliteConnection) {
         sqlx::query(
-            "INSERT INTO projects(key, name, prefix, created_at, updated_at)
-             VALUES ('app', 'app', 'APP', 't', 't')",
+            "INSERT INTO projects(id, key, name, prefix, created_at, updated_at)
+             VALUES ('PROJECT000000001', 'app', 'app', 'APP', 't', 't')",
         )
         .execute(&mut *conn)
         .await
@@ -40,8 +40,8 @@ mod tests {
         created_at: &str,
     ) {
         sqlx::query(
-            "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at, queue_activity_at)
-             VALUES (?, ?, '', 'app', ?, ?, ?, ?, ?)",
+            "INSERT INTO tasks(id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at)
+             VALUES (?, ?, '', 'PROJECT000000001', ?, ?, ?, ?, ?)",
         )
         .bind(id)
         .bind(title)
@@ -122,9 +122,10 @@ mod tests {
         prefix: &str,
     ) {
         sqlx::query(
-            "INSERT INTO projects(workspace_id, key, name, prefix, created_at, updated_at)
-             VALUES (?, ?, ?, ?, 't', 't')",
+            "INSERT INTO projects(id, workspace_id, key, name, prefix, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 't', 't')",
         )
+        .bind(crate::ids::new_id())
         .bind(workspace_id)
         .bind(key)
         .bind(name)
@@ -155,12 +156,13 @@ mod tests {
         created_at: &str,
     ) {
         sqlx::query(
-            "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at, queue_activity_at)
-             VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at)
+             VALUES (?, ?, ?, '', (SELECT id FROM projects WHERE workspace_id = ? AND key = ?), ?, ?, ?, ?, ?)",
         )
         .bind(workspace_id)
         .bind(id)
         .bind(title)
+        .bind(workspace_id)
         .bind(project_key)
         .bind(status)
         .bind(priority)
@@ -535,8 +537,8 @@ mod tests {
             ("0000000000000503", "Unrelated", "plain body", "003"),
         ] {
             sqlx::query(
-                "INSERT INTO tasks(id, title, description, project_key, status, priority, created_at, updated_at, queue_activity_at)
-                 VALUES (?, ?, ?, 'app', 'todo', 'none', ?, ?, ?)",
+                "INSERT INTO tasks(id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at)
+                 VALUES (?, ?, ?, 'PROJECT000000001', 'todo', 'none', ?, ?, ?)",
             )
             .bind(id)
             .bind(title)
@@ -696,6 +698,47 @@ mod tests {
         assert_eq!(beta_counts.all, 0);
         assert_eq!(beta_counts.done, 1);
         assert_eq!(beta_counts.conflicts, 0);
+    }
+
+    #[tokio::test]
+    async fn project_filters_use_project_id_after_key_change() {
+        let (_temp, mut conn) = test_conn().await;
+        let outcome = crate::projects::create_project_in_workspace(
+            &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
+            "App",
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at)
+             VALUES (?, 'ABCDEF0000000000', 'kept', '', ?, 'todo', 'none', 't', 't', 't')",
+        )
+        .bind(crate::workspaces::DEFAULT_WORKSPACE_ID)
+        .bind(&outcome.project.id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE projects SET key = 'renamed-app' WHERE id = ?")
+            .bind(&outcome.project.id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let items = list_task_items(
+            &mut conn,
+            TaskFilters {
+                project: Some("renamed-app".to_string()),
+                ..TaskFilters::default()
+            },
+            TaskSort::Updated,
+            SortDirection::Desc,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].task.project_key, "renamed-app");
     }
 
     #[tokio::test]

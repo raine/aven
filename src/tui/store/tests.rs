@@ -149,7 +149,7 @@ mod domain_mutations_and_pickers {
     }
 
     #[tokio::test]
-    async fn delete_project_allows_only_deleted_tasks_to_reference_project() {
+    async fn delete_project_blocks_when_deleted_tasks_reference_project() {
         let mut store = test_store().await;
         store
             .create_project("Mobile App".to_string())
@@ -176,11 +176,11 @@ mod domain_mutations_and_pickers {
             .unwrap();
         store.update_deleted(Some(selected), true).await.unwrap();
 
-        let outcome = store.delete_project("mobile-app").await.unwrap();
+        let error = store.delete_project("mobile-app").await.unwrap_err();
 
-        assert_eq!(outcome.message, "deleted project mobile-app");
+        assert!(error.to_string().contains("project-has-tasks"));
         assert!(
-            !store
+            store
                 .projects
                 .iter()
                 .any(|project| project.key == "mobile-app")
@@ -1503,11 +1503,12 @@ mod undo {
             .key
             .clone();
         sqlx::query(
-            "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at)
-             VALUES (?, ?, 'Uses project', '', ?, 'inbox', 'none', ?, ?)",
+            "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at)
+             VALUES (?, ?, 'Uses project', '', (SELECT id FROM projects WHERE workspace_id = ? AND key = ?), 'inbox', 'none', ?, ?)",
         )
         .bind(&workspace_id)
         .bind(crate::ids::new_id())
+        .bind(&workspace_id)
         .bind(&project_key)
         .bind(crate::ids::now())
         .bind(crate::ids::now())
@@ -1589,6 +1590,69 @@ mod undo {
         store.undo_last(None).await.unwrap();
         store.refresh(Some(&task_id)).await.unwrap();
         assert_eq!(store.tasks[selected].task.title, "Before");
+        assert!(store.tasks[selected].has_conflict);
+    }
+
+    #[tokio::test]
+    async fn undo_project_conflict_resolution_uses_project_ids() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        store.create_project("Ops".to_string()).await.unwrap();
+        let (task_id, selected) = create_selected_task(&mut store, "Before").await;
+        let display_ref = store.tasks[selected].display_ref.clone();
+        let workspace_id = store.active_workspace.id.clone();
+
+        let mut conn = pool.acquire().await.unwrap();
+        let app_id: String =
+            sqlx::query_scalar("SELECT id FROM projects WHERE workspace_id = ? AND key = 'aven'")
+                .bind(&workspace_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        let ops_id: String =
+            sqlx::query_scalar("SELECT id FROM projects WHERE workspace_id = ? AND key = 'ops'")
+                .bind(&workspace_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        sqlx::query(
+            "INSERT INTO conflicts(workspace_id, task_id, field, base_version, local_value,
+             remote_value, local_change_id, remote_change_id, variant_a, variant_b, created_at,
+             resolved)
+             VALUES (?, ?, 'project', NULL, ?, ?, NULL, ?, 'a', 'b', ?, 0)",
+        )
+        .bind(&workspace_id)
+        .bind(&task_id)
+        .bind(&app_id)
+        .bind(&ops_id)
+        .bind(crate::ids::new_id())
+        .bind(crate::ids::now())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+        store.refresh(Some(&task_id)).await.unwrap();
+
+        store
+            .resolve_conflict_value(
+                ConflictTarget {
+                    task_id: task_id.clone(),
+                    display_ref,
+                    field: "project".to_string(),
+                    variant_a: "a".to_string(),
+                    local_value: app_id,
+                    variant_b: "b".to_string(),
+                    remote_value: ops_id,
+                },
+                "ops".to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(store.tasks[selected].task.project_key, "ops");
+        assert!(!store.tasks[selected].has_conflict);
+
+        store.undo_last(None).await.unwrap();
+        store.refresh(Some(&task_id)).await.unwrap();
+        assert_eq!(store.tasks[selected].task.project_key, "aven");
         assert!(store.tasks[selected].has_conflict);
     }
 
@@ -1757,9 +1821,10 @@ mod workspace_scoping {
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at)
-             VALUES (?, 'other-task', 'Other task', '', 'mobile-app', 'todo', 'none', 't', 't')",
+            "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at)
+             VALUES (?, 'other-task', 'Other task', '', (SELECT id FROM projects WHERE workspace_id = ? AND key = 'mobile-app'), 'todo', 'none', 't', 't')",
         )
+        .bind(&other.id)
         .bind(&other.id)
         .execute(&mut *conn)
         .await
@@ -1938,9 +2003,10 @@ mod workspace_scoping {
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO projects(workspace_id, key, name, prefix, created_at, updated_at)
-             VALUES (?, 'client', 'Client', 'CLI', 't', 't')",
+            "INSERT INTO projects(id, workspace_id, key, name, prefix, created_at, updated_at)
+             VALUES (?, ?, 'client', 'Client', 'CLI', 't', 't')",
         )
+        .bind(crate::ids::new_id())
         .bind(&other.id)
         .execute(&mut *conn)
         .await
@@ -1953,11 +2019,12 @@ mod workspace_scoping {
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at)
-             VALUES (?, ?, 'Client workspace task', '', 'client', 'todo', 'none', 't', 't')",
+            "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at)
+             VALUES (?, ?, 'Client workspace task', '', (SELECT id FROM projects WHERE workspace_id = ? AND key = 'client'), 'todo', 'none', 't', 't')",
         )
         .bind(&other.id)
         .bind(crate::ids::new_id())
+        .bind(&other.id)
         .execute(&mut *conn)
         .await
         .unwrap();

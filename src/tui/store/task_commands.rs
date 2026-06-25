@@ -259,7 +259,7 @@ impl TuiStore {
         let Some(item) = self.selected_task(index).cloned() else {
             return Ok(None);
         };
-        let before = item.task.project_key.clone();
+        let before = item.task.project_id.clone();
         self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
         let outcome = update_task_operation(
@@ -278,7 +278,7 @@ impl TuiStore {
                 task_id: item.task.id.clone(),
                 field: "project".to_string(),
                 before,
-                after: outcome.task.project_key.clone(),
+                after: outcome.task.project_id.clone(),
             }],
         )
         .await?;

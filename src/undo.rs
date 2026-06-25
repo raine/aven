@@ -5,10 +5,11 @@ use sqlx::{Connection as _, Row, SqliteConnection};
 
 use crate::db::{conflict_exists, field_version, insert_change, set_field_version};
 use crate::ids::{new_id, now};
-use crate::mutation::apply_field_value_in_workspace;
+use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
 use crate::operations::update_task_labels_in_workspace;
-use crate::projects::project_has_config_mapping;
+use crate::projects::{project_has_config_mapping, resolve_project_for_add_in_workspace};
 use crate::task_fields::TaskField;
+use crate::types::Project;
 use crate::workspaces::workspace_key_for_id;
 
 tokio::task_local! {
@@ -71,6 +72,7 @@ pub(crate) enum UndoCommand {
 pub(crate) struct TaskUndoSnapshot {
     pub(crate) title: String,
     pub(crate) description: String,
+    pub(crate) project_id: String,
     pub(crate) project_key: String,
     pub(crate) status: String,
     pub(crate) priority: String,
@@ -94,8 +96,9 @@ pub(crate) async fn task_field_value(
         .ok_or_else(|| anyhow::anyhow!("error unknown-field field={field}"))?;
 
     let row = sqlx::query(
-        "SELECT title, description, project_key, status, priority, deleted
-         FROM tasks WHERE workspace_id = ? AND id = ?",
+        "SELECT t.title, t.description, t.project_id, p.key AS project_key, t.status, t.priority, t.deleted
+         FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
+         WHERE t.workspace_id = ? AND t.id = ?",
     )
     .bind(workspace_id)
     .bind(task_id)
@@ -106,7 +109,7 @@ pub(crate) async fn task_field_value(
     Ok(match task_field {
         TaskField::Title => row.get("title"),
         TaskField::Description => row.get("description"),
-        TaskField::Project => row.get("project_key"),
+        TaskField::Project => row.get("project_id"),
         TaskField::Status => row.get("status"),
         TaskField::Priority => row.get("priority"),
         TaskField::Deleted => {
@@ -140,8 +143,9 @@ pub(crate) async fn task_snapshot(
     task_id: &str,
 ) -> Result<TaskUndoSnapshot> {
     let row = sqlx::query(
-        "SELECT title, description, project_key, status, priority, deleted
-         FROM tasks WHERE workspace_id = ? AND id = ?",
+        "SELECT t.title, t.description, t.project_id, p.key AS project_key, t.status, t.priority, t.deleted
+         FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
+         WHERE t.workspace_id = ? AND t.id = ?",
     )
     .bind(workspace_id)
     .bind(task_id)
@@ -152,6 +156,7 @@ pub(crate) async fn task_snapshot(
     Ok(TaskUndoSnapshot {
         title: row.get("title"),
         description: row.get("description"),
+        project_id: row.get("project_id"),
         project_key: row.get("project_key"),
         status: row.get("status"),
         priority: row.get("priority"),
@@ -350,7 +355,7 @@ async fn apply_undo_command(
                 bail!("error undo-state-changed task_id={task_id} field={field}");
             }
             if before != after {
-                if field == "project" && !project_exists(conn, workspace_id, before).await? {
+                if field == "project" && !project_id_exists(conn, workspace_id, before).await? {
                     bail!("error undo-state-changed task_id={task_id} field={field}");
                 }
                 set_task_field_in_workspace(conn, workspace_id, task_id, field, before).await?;
@@ -486,20 +491,45 @@ async fn apply_undo_command(
     }
 }
 
-async fn project_exists(
+async fn project_id_exists(
     conn: &mut SqliteConnection,
     workspace_id: &str,
-    project_key: &str,
+    project_id: &str,
 ) -> Result<bool> {
     Ok(sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM projects
-         WHERE workspace_id = ? AND key = ? AND deleted = 0",
+         WHERE workspace_id = ? AND id = ? AND deleted = 0",
     )
     .bind(workspace_id)
-    .bind(project_key)
+    .bind(project_id)
     .fetch_one(&mut *conn)
     .await?
         > 0)
+}
+
+async fn project_for_stored_value(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    value: &str,
+) -> Result<Project> {
+    if let Some(row) = sqlx::query(
+        "SELECT id, workspace_id, key, name, prefix
+         FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 0",
+    )
+    .bind(workspace_id)
+    .bind(value)
+    .fetch_optional(&mut *conn)
+    .await?
+    {
+        return Ok(Project {
+            id: row.get("id"),
+            workspace_id: row.get("workspace_id"),
+            key: row.get("key"),
+            name: row.get("name"),
+            prefix: row.get("prefix"),
+        });
+    }
+    resolve_project_for_add_in_workspace(conn, workspace_id, Some(value)).await
 }
 
 async fn set_task_field_in_workspace(
@@ -517,19 +547,34 @@ async fn set_task_field_in_workspace(
         );
     }
     let base = field_version(conn, task_id, field).await?;
-    apply_field_value_in_workspace(conn, workspace_id, task_id, field, value).await?;
     let workspace_key = workspace_key_for_id(conn, workspace_id).await?;
+    let payload = if field == TaskField::Project.as_str() {
+        let project = project_for_stored_value(conn, workspace_id, value).await?;
+        apply_project_id_in_workspace(conn, workspace_id, task_id, &project.id).await?;
+        serde_json::json!({
+            "workspace_id": workspace_id,
+            "workspace_key": workspace_key,
+            "value": &project.id,
+            "project_id": &project.id,
+            "project_key": &project.key,
+            "project_name": &project.name,
+            "project_prefix": &project.prefix,
+        })
+    } else {
+        apply_field_value_in_workspace(conn, workspace_id, task_id, field, value).await?;
+        serde_json::json!({
+            "workspace_id": workspace_id,
+            "workspace_key": workspace_key,
+            "value": value,
+        })
+    };
     let change_id = insert_change(
         conn,
         "task",
         task_id,
         Some(field),
         "set_field",
-        serde_json::json!({
-            "workspace_id": workspace_id,
-            "workspace_key": workspace_key,
-            "value": value,
-        }),
+        payload,
         base.as_deref(),
     )
     .await?;
@@ -665,7 +710,7 @@ async fn delete_created_project(
     expected_prefix: &str,
 ) -> Result<()> {
     let row = sqlx::query(
-        "SELECT name, prefix FROM projects WHERE workspace_id = ? AND key = ? AND deleted = 0",
+        "SELECT id, name, prefix FROM projects WHERE workspace_id = ? AND key = ? AND deleted = 0",
     )
     .bind(workspace_id)
     .bind(project_key)
@@ -674,6 +719,7 @@ async fn delete_created_project(
     let Some(row) = row else {
         bail!("error undo-state-changed project_key={project_key}");
     };
+    let project_id: String = row.get("id");
     let name: String = row.get("name");
     let prefix: String = row.get("prefix");
     if name != expected_name || prefix != expected_prefix {
@@ -683,19 +729,19 @@ async fn delete_created_project(
         bail!("error undo-state-changed project_key={project_key}");
     }
     let task_refs: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM tasks WHERE workspace_id = ? AND project_key = ?")
+        sqlx::query_scalar("SELECT count(*) FROM tasks WHERE workspace_id = ? AND project_id = ?")
             .bind(workspace_id)
-            .bind(project_key)
+            .bind(&project_id)
             .fetch_one(&mut *conn)
             .await?;
     if task_refs > 0 {
         bail!("error undo-state-changed project_key={project_key}");
     }
     let path_refs: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM project_paths WHERE workspace_id = ? AND project_key = ?",
+        "SELECT count(*) FROM project_paths WHERE workspace_id = ? AND project_id = ?",
     )
     .bind(workspace_id)
-    .bind(project_key)
+    .bind(&project_id)
     .fetch_one(&mut *conn)
     .await?;
     let workspace_key = workspace_key_for_id(conn, workspace_id).await?;

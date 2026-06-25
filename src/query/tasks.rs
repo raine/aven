@@ -38,12 +38,8 @@ pub(crate) async fn list_task_items_in_workspace(
         validate_choice("priority", priority, PRIORITIES)?;
     }
 
-    let project_key = if let Some(project) = filters.project.as_deref() {
-        Some(
-            resolve_existing_project_in_workspace(conn, workspace_id, project)
-                .await?
-                .key,
-        )
+    let project = if let Some(project) = filters.project.as_deref() {
+        Some(resolve_existing_project_in_workspace(conn, workspace_id, project).await?)
     } else {
         None
     };
@@ -54,10 +50,10 @@ pub(crate) async fn list_task_items_in_workspace(
     };
 
     let mut query = QueryBuilder::<Sqlite>::new(
-        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_key,
-         p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
+        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
+         p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
          t.queue_activity_at, t.deleted
-         FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.key = t.project_key",
+         FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id",
     );
 
     let mut filters_added = 0;
@@ -72,10 +68,10 @@ pub(crate) async fn list_task_items_in_workspace(
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("t.status NOT IN ('done', 'canceled')");
     }
-    if let Some(project_key) = project_key {
+    if let Some(project) = project {
         push_filter_prefix(&mut query, &mut filters_added);
-        query.push("t.project_key = ");
-        query.push_bind(project_key);
+        query.push("t.project_id = ");
+        query.push_bind(project.id);
     }
     if let Some(status) = filters.status {
         push_filter_prefix(&mut query, &mut filters_added);

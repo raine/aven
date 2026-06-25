@@ -464,12 +464,12 @@ fn display_suffix_ignores_other_workspaces() {
     let alpha_id = "ABCD000000000000";
     let beta_id = "ABCDE00000000000";
     let sql = "
-        INSERT INTO projects(workspace_id, key, name, prefix, created_at, updated_at)
-        SELECT id, 'app', 'app', 'APP', 't', 't' FROM workspaces WHERE key IN ('alpha', 'beta');
-        INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at)
-        SELECT id, 'ABCD000000000000', 'alpha task', '', 'app', 'inbox', 'none', 't', 't' FROM workspaces WHERE key = 'alpha';
-        INSERT INTO tasks(workspace_id, id, title, description, project_key, status, priority, created_at, updated_at)
-        SELECT id, 'ABCDE00000000000', 'beta task', '', 'app', 'inbox', 'none', 't', 't' FROM workspaces WHERE key = 'beta';
+        INSERT INTO projects(id, workspace_id, key, name, prefix, created_at, updated_at)
+        SELECT 'PROJECT' || key || '000000', id, 'app', 'app', 'APP', 't', 't' FROM workspaces WHERE key IN ('alpha', 'beta');
+        INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at)
+        SELECT w.id, 'ABCD000000000000', 'alpha task', '', p.id, 'inbox', 'none', 't', 't' FROM workspaces w JOIN projects p ON p.workspace_id = w.id WHERE w.key = 'alpha';
+        INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at)
+        SELECT w.id, 'ABCDE00000000000', 'beta task', '', p.id, 'inbox', 'none', 't', 't' FROM workspaces w JOIN projects p ON p.workspace_id = w.id WHERE w.key = 'beta';
         INSERT INTO conflicts(workspace_id, task_id, field, local_value, remote_value, remote_change_id, variant_a, variant_b, created_at)
         SELECT id, 'ABCD000000000000', 'title', 'local', 'remote', 'REMOTECHANGE0000', 'a', 'b', 't' FROM workspaces WHERE key = 'alpha';
     ";

@@ -58,6 +58,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Priority values are `none`, `low`, `medium`, `high`, and `urgent`.
 - New entity IDs come from `crate::ids::new_id()`, which returns 16 Crockford Base32 characters from 80 random bits.
 - Timestamps come from `crate::ids::now()` and are UTC strings.
+- Project IDs are stable identity. Project keys and names are lookup and display fields.
 - Projects normalize names into keys with lowercase words joined by `-`.
 - Project prefixes are generated to be unique and are display context, not task identity.
 - Labels normalize before storage and must exist before assignment.

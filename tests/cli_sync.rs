@@ -13,6 +13,15 @@ fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
     contains_all(&output, &["synced", "cursor="]);
 }
 
+fn exec_sql(db: &std::path::Path, sql: &str) {
+    let output = std::process::Command::new("sqlite3")
+        .arg(db)
+        .arg(sql)
+        .output()
+        .expect("run sqlite");
+    assert!(output.status.success(), "sqlite failed");
+}
+
 fn wire_change(op_type: &str, entity_type: &str, entity_id: &str, payload: Value) -> Value {
     json!({
         "change_id": "0123456789ABCDEF",
@@ -33,11 +42,27 @@ fn task_change(op_type: &str, payload: Value) -> Value {
     wire_change(op_type, "task", "0123456789ABCDE0", payload)
 }
 
+fn create_task_payload(title: &str, project_key: &str, extra: Value) -> Value {
+    let mut payload = json!({
+        "title": title,
+        "project_id": "0123456789ABCDE1",
+        "project_key": project_key,
+        "project_name": project_key,
+        "project_prefix": "APP",
+    });
+    let object = payload.as_object_mut().expect("payload object");
+    let extra = extra.as_object().expect("extra payload object");
+    for (key, value) in extra {
+        object.insert(key.clone(), value.clone());
+    }
+    payload
+}
+
 async fn post_sync(server: &TestServer, change: Value) -> reqwest::Response {
     reqwest::Client::new()
         .post(format!("{}/sync", server.url))
         .json(&json!({
-            "protocol_version": 1,
+            "protocol_version": 2,
             "client_id": "client-a",
             "after": 0,
             "changes": [change],
@@ -51,7 +76,7 @@ async fn assert_server_log_empty(server: &TestServer) {
     let response = reqwest::Client::new()
         .post(format!("{}/sync", server.url))
         .json(&json!({
-            "protocol_version": 1,
+            "protocol_version": 2,
             "client_id": "audit-client",
             "after": 0,
             "changes": [],
@@ -189,6 +214,266 @@ fn offline_creates_converge() {
         &list_b,
         &[&a_ref, &b_ref, "offline from a", "offline from b"],
     );
+}
+
+#[test]
+fn project_ids_survive_key_drift_across_sync() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("client-a.sqlite");
+    let b = env.db("client-b.sqlite");
+
+    let seed_ref = extract_ref(&ok(env.aven(&a, ["add", "seed", "--project", "app"])));
+    ok(env.aven(&a, ["project", "create", "Ops"]));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    exec_sql(
+        &a,
+        "UPDATE projects SET key = 'renamed-ops', name = 'Renamed Ops' WHERE key = 'ops'",
+    );
+    let drift_ref = extract_ref(&ok(
+        env.aven(&a, ["add", "after drift", "--project", "renamed-ops"])
+    ));
+    ok(env.aven(&a, ["update", &seed_ref, "--project", "renamed-ops"]));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    let drift = ok(env.aven(&b, ["show", &drift_ref]));
+    contains_all(&drift, &["after drift", "OPS-"]);
+    contains_none(&drift, &["renamed-ops"]);
+    let seed = ok(env.aven(&b, ["show", &seed_ref]));
+    contains_all(&seed, &["seed", "OPS-"]);
+    contains_none(&seed, &["renamed-ops"]);
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT count(*) FROM projects WHERE key = 'renamed-ops'"
+        ),
+        0
+    );
+}
+
+#[test]
+fn same_key_remote_project_writes_alias() {
+    use std::io::{BufRead as _, BufReader, Write as _};
+    use std::net::TcpListener;
+    use std::thread;
+
+    let env = TestEnv::new();
+    let db = env.db("project-collision.sqlite");
+    ok(env.aven(&db, ["add", "local seed", "--project", "app"]));
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake sync server");
+    let url = format!("http://{}", listener.local_addr().expect("fake sync addr"));
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept sync request");
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+        let mut line = String::new();
+        loop {
+            line.clear();
+            reader.read_line(&mut line).expect("read request line");
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+        }
+        let body = serde_json::json!({
+            "protocol_version": 2,
+            "cursor": 1,
+            "changes": [wire_change(
+                "create_task",
+                "task",
+                "CCCCCCCCCCCCCCCC",
+                json!({
+                    "title": "remote collision",
+                    "project_id": "BBBBBBBBBBBBBBBB",
+                    "project_key": "app",
+                    "project_name": "app",
+                    "project_prefix": "APP",
+                })
+            )]
+        })
+        .to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .expect("write fake response");
+    });
+
+    ok(env.aven(&db, ["sync", "--server", &url]));
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM tasks
+             WHERE id = 'CCCCCCCCCCCCCCCC'
+               AND project_id = (SELECT id FROM projects WHERE key = 'app')",
+        ),
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM projects WHERE id = 'BBBBBBBBBBBBBBBB'",
+        ),
+        0
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM project_id_aliases
+             WHERE remote_project_id = 'BBBBBBBBBBBBBBBB'
+               AND local_project_id = (SELECT id FROM projects WHERE key = 'app')",
+        ),
+        1
+    );
+    server.join().expect("fake sync server exits");
+}
+
+#[test]
+fn prefix_only_remote_project_collision_gets_unique_prefix() {
+    use std::io::{BufRead as _, BufReader, Write as _};
+    use std::net::TcpListener;
+    use std::thread;
+
+    let env = TestEnv::new();
+    let db = env.db("prefix-collision.sqlite");
+    ok(env.aven(&db, ["project", "create", "App"]));
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake sync server");
+    let url = format!("http://{}", listener.local_addr().expect("fake sync addr"));
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept sync request");
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+        let mut line = String::new();
+        loop {
+            line.clear();
+            reader.read_line(&mut line).expect("read request line");
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+        }
+        let body = serde_json::json!({
+            "protocol_version": 2,
+            "cursor": 1,
+            "changes": [wire_change(
+                "create_task",
+                "task",
+                "CCCCCCCCCCCCCCCC",
+                json!({
+                    "title": "remote prefix collision",
+                    "project_id": "BBBBBBBBBBBBBBBB",
+                    "project_key": "service",
+                    "project_name": "service",
+                    "project_prefix": "APP",
+                })
+            )]
+        })
+        .to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .expect("write fake response");
+    });
+
+    ok(env.aven(&db, ["sync", "--server", &url]));
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM projects WHERE id = 'BBBBBBBBBBBBBBBB' AND key = 'service' AND prefix != 'APP'",
+        ),
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM project_id_aliases WHERE remote_project_id = 'BBBBBBBBBBBBBBBB'",
+        ),
+        0
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM tasks WHERE id = 'CCCCCCCCCCCCCCCC' AND project_id = 'BBBBBBBBBBBBBBBB'",
+        ),
+        1
+    );
+    server.join().expect("fake sync server exits");
+}
+
+#[test]
+fn stale_project_id_alias_is_ignored_for_remote_task_create() {
+    use std::io::{BufRead as _, BufReader, Write as _};
+    use std::net::TcpListener;
+    use std::thread;
+
+    let env = TestEnv::new();
+    let db = env.db("stale-alias.sqlite");
+    ok(env.aven(&db, ["add", "local seed", "--project", "app"]));
+    exec_sql(
+        &db,
+        "INSERT INTO project_id_aliases(workspace_id, remote_project_id, local_project_id)
+         VALUES ('0000000000000000', 'BBBBBBBBBBBBBBBB', 'DDDDDDDDDDDDDDDD')",
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake sync server");
+    let url = format!("http://{}", listener.local_addr().expect("fake sync addr"));
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept sync request");
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+        let mut line = String::new();
+        loop {
+            line.clear();
+            reader.read_line(&mut line).expect("read request line");
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+        }
+        let body = serde_json::json!({
+            "protocol_version": 2,
+            "cursor": 1,
+            "changes": [wire_change(
+                "create_task",
+                "task",
+                "CCCCCCCCCCCCCCCC",
+                json!({
+                    "title": "remote with stale alias",
+                    "project_id": "BBBBBBBBBBBBBBBB",
+                    "project_key": "remote",
+                    "project_name": "remote",
+                    "project_prefix": "REM",
+                })
+            )]
+        })
+        .to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .expect("write fake response");
+    });
+
+    ok(env.aven(&db, ["sync", "--server", &url]));
+
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM projects WHERE id = 'BBBBBBBBBBBBBBBB'",
+        ),
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM tasks WHERE id = 'CCCCCCCCCCCCCCCC' AND project_id = 'BBBBBBBBBBBBBBBB'",
+        ),
+        1
+    );
+    server.join().expect("fake sync server exits");
 }
 
 #[test]
@@ -556,6 +841,22 @@ async fn sync_server_rejects_invalid_status_priority_and_deleted_values() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
 
+    let mut bad_project = task_change(
+        "set_field",
+        json!({
+            "value": "0123456789ABCDE1",
+            "project_id": "FEDCBA9876543210",
+            "project_key": "app",
+            "project_name": "app",
+            "project_prefix": "APP",
+        }),
+    );
+    bad_project
+        .as_object_mut()
+        .expect("change object")
+        .insert("field".to_string(), json!("project"));
+    rejected_sync(&server, bad_project, "project-value-mismatch").await;
+
     let mut bad_status = task_change("set_field", json!({ "value": "blocked" }));
     bad_status
         .as_object_mut()
@@ -565,21 +866,13 @@ async fn sync_server_rejects_invalid_status_priority_and_deleted_values() {
 
     let bad_priority = task_change(
         "create_task",
-        json!({
-            "title": "bad priority",
-            "project_key": "app",
-            "priority": "soon",
-        }),
+        create_task_payload("bad priority", "app", json!({ "priority": "soon" })),
     );
     rejected_sync(&server, bad_priority, "invalid-priority").await;
 
     let bad_create_status = task_change(
         "create_task",
-        json!({
-            "title": "bad status",
-            "project_key": "app",
-            "status": "blocked",
-        }),
+        create_task_payload("bad status", "app", json!({ "status": "blocked" })),
     );
     rejected_sync(&server, bad_create_status, "invalid-status").await;
 
@@ -704,7 +997,7 @@ fn missing_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=0 server=1",
+        "error sync-protocol-unsupported client=0 server=2",
     );
 }
 
@@ -724,7 +1017,7 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=0 server=1",
+        "error sync-protocol-unsupported client=0 server=2",
     );
 }
 
@@ -733,7 +1026,7 @@ fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let body = serde_json::json!({
-        "protocol_version": 2,
+        "protocol_version": 3,
         "client_id": "new-client",
         "after": 0,
         "changes": [project_change_json("new-version-change", "new-version")]
@@ -744,7 +1037,7 @@ fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=2 server=1",
+        "error sync-protocol-unsupported client=3 server=2",
     );
 }
 
@@ -790,7 +1083,7 @@ fn wrong_response_protocol_version_is_rejected() {
     let error = fail(env.aven(&db, ["sync", "--server", &url]));
     contains_all(
         &error,
-        &["error sync-protocol-unsupported client=1 server=0"],
+        &["error sync-protocol-unsupported client=2 server=0"],
     );
     assert_eq!(
         scalar_i64(&db, "SELECT count(*) FROM changes"),
