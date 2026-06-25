@@ -442,12 +442,15 @@ pub(super) fn render_prefix_hints(frame: &mut Frame, view: &ViewState) {
     if lines.is_empty() {
         return;
     }
-    let height = (lines.len().min(8) as u16).saturating_add(2);
+    let visible_rows = prefix_hint_visible_rows(frame.area().height, lines.len());
     let title = format!("{} …", view.pending_shortcut.join(" "));
-    Dialog::new(&title, 72, height).render_text(
-        frame,
-        Text::from(lines.into_iter().take(8).collect::<Vec<_>>()),
-    );
+    let content = Dialog::new(&title, 72, visible_rows.saturating_add(2)).render_block(frame);
+    render_scrollable_help_lines(frame, content, lines, 0);
+}
+
+fn prefix_hint_visible_rows(frame_height: u16, line_count: usize) -> u16 {
+    let available_rows = frame_height.saturating_sub(4).max(1);
+    (line_count as u16).min(available_rows)
 }
 
 #[cfg(test)]
@@ -547,7 +550,9 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(rendered.contains(":status-active"));
+        assert!(rendered.contains(":priority-medium"));
         assert!(rendered.contains(" a "));
+        assert!(rendered.contains(" m "));
     }
 
     #[test]
@@ -560,6 +565,13 @@ mod tests {
             .join("\n");
         assert!(rendered.contains(":detail-edit-title"));
         assert!(rendered.contains(" t "));
+    }
+
+    #[test]
+    fn prefix_hint_visible_rows_uses_available_terminal_height() {
+        assert_eq!(prefix_hint_visible_rows(30, 20), 20);
+        assert_eq!(prefix_hint_visible_rows(10, 20), 6);
+        assert_eq!(prefix_hint_visible_rows(2, 20), 1);
     }
 
     #[test]
