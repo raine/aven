@@ -297,6 +297,7 @@ pub(in crate::tui::ui) fn add_task_hint_line(
         ]),
         AddTaskStep::Description => dialog_hint_line(&[
             ("^S", "create"),
+            ("^N", "LLM"),
             ("^T", "status"),
             ("Tab", "title"),
             ("^P", "project"),

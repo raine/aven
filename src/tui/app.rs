@@ -496,7 +496,12 @@ impl App {
         ));
     }
 
-    pub(super) async fn submit_add_task_title_natural(&mut self, value: String) -> Result<()> {
+    pub(super) async fn submit_add_task_title_natural(
+        &mut self,
+        title: String,
+        description: String,
+    ) -> Result<()> {
+        let value = add_task_natural_intake(&title, &description);
         if self.add_task_only {
             self.submit_add_task_only_natural(value, NaturalRetry::AddTask)
                 .await
@@ -925,6 +930,17 @@ impl App {
 
 fn description_overlay_from_value(value: String) -> OverlayState {
     OverlayState::multiline_input(OverlayRoute::EditDescription, "Edit description", "", value)
+}
+
+fn add_task_natural_intake(title: &str, description: &str) -> String {
+    let title = title.trim();
+    let description = description.trim();
+    match (title.is_empty(), description.is_empty()) {
+        (false, false) => format!("Title:\n{title}\n\nDescription:\n{description}"),
+        (false, true) => title.to_string(),
+        (true, false) => format!("Description:\n{description}"),
+        (true, true) => String::new(),
+    }
 }
 
 #[cfg(not(test))]

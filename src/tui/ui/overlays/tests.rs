@@ -378,7 +378,7 @@ mod add_task_overlay {
             styled_key_contents(add_task_hint_line(AddTaskStep::Description, false, false));
         assert_eq!(
             add_task_description_keys,
-            vec!["^S", "^T", "Tab", "^P", "^R", "Esc"]
+            vec!["^S", "^N", "^T", "Tab", "^P", "^R", "Esc"]
         );
 
         let add_task_description_editor_keys =

@@ -1265,6 +1265,39 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn add_task_ctrl_n_from_description_sends_title_and_description() {
+        let mut app = test_app().await;
+        let capture = configure_task_intake_capture(
+            &mut app,
+            "parse-description.sh",
+            r#"{"title":"parsed docs task","description":"parsed handoff","project":null,"priority":"none","labels":[]}"#,
+        );
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        type_chars(&mut app, "Include setup details").await;
+        app.handle_overlay_key(ctrl_n()).await.unwrap();
+
+        for _ in 0..100 {
+            app.poll_pending_task_intake().await.unwrap();
+            if app.pending_task_intake.is_none() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let prompt = std::fs::read_to_string(capture).unwrap();
+        assert!(prompt.contains(
+            "Raw intake text:\nTitle:\nWrite docs\n\nDescription:\nInclude setup details"
+        ));
+        let selected = app.widgets.table.selected().unwrap();
+        let task = &app.store.tasks[selected];
+        assert_eq!(task.task.title, "parsed docs task");
+        assert_eq!(task.task.description, "parsed handoff");
+    }
+
+    #[tokio::test]
     async fn add_task_only_ctrl_n_exits_immediately() {
         let mut app = test_app().await;
         app.add_task_only = true;
@@ -1339,6 +1372,30 @@ mod authoring {
         app.add_task_config.agent.task_intake.command = Some(command.display().to_string());
         app.add_task_config.agent.task_intake.args = Vec::new();
         app.add_task_config.agent.task_intake.timeout_seconds = Some(5);
+    }
+
+    fn configure_task_intake_capture(
+        app: &mut App,
+        script_name: &str,
+        output: &str,
+    ) -> std::path::PathBuf {
+        let dir = tempfile::tempdir().unwrap().keep();
+        let command = dir.join(script_name);
+        let capture = dir.join("prompt.txt");
+        std::fs::write(
+            &command,
+            format!(
+                "#!/bin/sh\ncat > '{}'\nprintf '%s\\n' '{}'\n",
+                capture.display(),
+                output
+            ),
+        )
+        .unwrap();
+        set_executable(&command);
+        app.add_task_config.agent.task_intake.command = Some(command.display().to_string());
+        app.add_task_config.agent.task_intake.args = Vec::new();
+        app.add_task_config.agent.task_intake.timeout_seconds = Some(5);
+        capture
     }
 
     fn configure_task_intake_failure(app: &mut App, script_name: &str) {
