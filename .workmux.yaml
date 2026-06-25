@@ -1,10 +1,13 @@
 files:
   symlink:
     - CLAUDE.local.md
+    - .env
+    - .envrc
 
 post_create:
   - |
     set -euo pipefail
+    direnv allow
     src="${AVEN_DB:-$HOME/.local/state/aven/db.sqlite}"
     dest="$WM_WORKTREE_PATH/.aven/db.sqlite"
     mkdir -p "$(dirname "$dest")"
