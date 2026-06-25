@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -21,14 +19,18 @@ pub(super) fn render_header(frame: &mut Frame, store: &TuiStore, area: Rect) {
             .style(Style::new().bg(BG)),
         area,
     );
-    let content_area = Rect { height: 1, ..area };
+    let content_area = Rect {
+        height: 1,
+        width: area.width.saturating_sub(1),
+        ..area
+    };
     if area.width >= 84 {
-        let status_width = if area.width < 120 { 9 } else { 26 };
+        let status_width = header_status_width(store);
         let [left, right] =
             Layout::horizontal([Constraint::Fill(1), Constraint::Length(status_width)])
                 .areas(content_area);
         frame.render_widget(header_line(store, left.width), left);
-        frame.render_widget(header_status(store, area.width < 120), right);
+        frame.render_widget(header_status(store), right);
     } else {
         frame.render_widget(header_line(store, content_area.width), content_area);
     }
@@ -257,18 +259,17 @@ fn join_filter_parts(parts: Vec<Vec<Span<'static>>>) -> Vec<Span<'static>> {
     spans
 }
 
-fn header_status(store: &TuiStore, compact: bool) -> Paragraph<'static> {
+fn header_status_width(store: &TuiStore) -> u16 {
+    let (_, label) = sync_status_label(store);
+    label.len() as u16 + 2
+}
+
+fn header_status(store: &TuiStore) -> Paragraph<'static> {
     let (dot_color, label) = sync_status_label(store);
-    let mut spans = vec![
+    let spans = vec![
         Span::styled("●", Style::new().fg(dot_color)),
         Span::styled(format!(" {label}"), Style::new().fg(FG_DIM)),
     ];
-    if !compact {
-        spans.push(Span::styled(
-            format!("  {}", today_short()),
-            Style::new().fg(FG_DIM),
-        ));
-    }
     Paragraph::new(Line::from(spans))
         .alignment(Alignment::Right)
         .style(Style::new().fg(FG_DIM).bg(BG))
@@ -286,37 +287,6 @@ fn sync_status_label(store: &TuiStore) -> (Color, String) {
         return (ORANGE, format!("sync {}", status.pending_changes));
     }
     (GREEN, "sync".to_string())
-}
-
-fn today_short() -> String {
-    let days = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| (duration.as_secs() / 86_400) as i64)
-        .unwrap_or(0);
-    let (_, month, day, weekday) = civil_from_unix_days(days);
-    let months = [
-        "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    let weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    format!(
-        "{} {} {}",
-        weekdays[weekday as usize], months[month as usize], day
-    )
-}
-
-fn civil_from_unix_days(days: i64) -> (i64, u32, u32, u32) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = mp + if mp < 10 { 3 } else { -9 };
-    let year = y + if month <= 2 { 1 } else { 0 };
-    let weekday = (days + 4).rem_euclid(7);
-    (year, month as u32, day as u32, weekday as u32)
 }
 
 #[cfg(test)]
