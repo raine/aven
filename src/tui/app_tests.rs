@@ -593,18 +593,8 @@ mod command_and_config_overlays {
             panic!("expected text panel");
         };
         assert_eq!(panel.title, CONFIG_STATUS_TITLE);
-        assert!(
-            panel
-                .lines
-                .iter()
-                .any(|line| line.contains("sync enabled:"))
-        );
-        assert!(
-            panel
-                .lines
-                .iter()
-                .any(|line| line.contains("daemon state: not checked from TUI"))
-        );
+        assert!(panel.lines.iter().any(|line| line.contains("enabled:")));
+        assert!(panel.lines.iter().any(|line| line.contains("daemon wake:")));
     }
 
     #[tokio::test]

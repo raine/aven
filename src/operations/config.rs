@@ -13,10 +13,6 @@ pub(crate) struct ConfigInitOutcome {
     pub(crate) path: PathBuf,
 }
 
-pub(crate) struct ConfigStatusOutcome {
-    pub(crate) lines: Vec<String>,
-}
-
 pub(crate) struct ConfigPathsOutcome {
     pub(crate) lines: Vec<String>,
 }
@@ -25,26 +21,6 @@ pub(crate) fn show_config() -> Result<ConfigShowOutcome> {
     let config = app_config::AppConfig::load()?;
     let text = serde_yaml::to_string(&config)?;
     Ok(ConfigShowOutcome { path, text })
-}
-
-pub(crate) fn show_config_status() -> Result<ConfigStatusOutcome> {
-    let config = app_config::AppConfig::load()?;
-    let sync_server = app_config::resolve_sync_server(None, &config)
-        .unwrap_or_else(|error| format!("unavailable ({error:#})"));
-    let wake_addr = config.wake_addr().map_or_else(
-        |error| format!("invalid ({error:#})"),
-        |addr| addr.to_string(),
-    );
-    Ok(ConfigStatusOutcome {
-        lines: vec![
-            format!("sync enabled: {}", config.sync.enabled),
-            format!("sync server: {sync_server}"),
-            format!("sync interval seconds: {}", config.sync_interval_seconds()),
-            format!("daemon wake address: {wake_addr}"),
-            "daemon state: not checked from TUI".to_string(),
-            "sync state: not checked from TUI".to_string(),
-        ],
-    })
 }
 
 pub(crate) fn show_config_paths() -> Result<ConfigPathsOutcome> {

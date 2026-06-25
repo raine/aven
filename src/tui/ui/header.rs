@@ -9,7 +9,8 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use crate::render::quote;
 use crate::tui::store::{SidebarTarget, TuiStore};
 use crate::tui::theme::{
-    self, ACCENT, BG, BG_PANEL, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, PINK,
+    self, ACCENT, BG, BG_PANEL, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, ORANGE,
+    PINK, RED,
 };
 
 pub(super) fn render_header(frame: &mut Frame, store: &TuiStore, area: Rect) {
@@ -27,7 +28,7 @@ pub(super) fn render_header(frame: &mut Frame, store: &TuiStore, area: Rect) {
             Layout::horizontal([Constraint::Fill(1), Constraint::Length(status_width)])
                 .areas(content_area);
         frame.render_widget(header_line(store, left.width), left);
-        frame.render_widget(header_status(area.width < 120), right);
+        frame.render_widget(header_status(store, area.width < 120), right);
     } else {
         frame.render_widget(header_line(store, content_area.width), content_area);
     }
@@ -256,10 +257,11 @@ fn join_filter_parts(parts: Vec<Vec<Span<'static>>>) -> Vec<Span<'static>> {
     spans
 }
 
-fn header_status(compact: bool) -> Paragraph<'static> {
+fn header_status(store: &TuiStore, compact: bool) -> Paragraph<'static> {
+    let (dot_color, label) = sync_status_label(store);
     let mut spans = vec![
-        Span::styled("●", Style::new().fg(GREEN)),
-        Span::styled(" local", Style::new().fg(FG_DIM)),
+        Span::styled("●", Style::new().fg(dot_color)),
+        Span::styled(format!(" {label}"), Style::new().fg(FG_DIM)),
     ];
     if !compact {
         spans.push(Span::styled(
@@ -270,6 +272,20 @@ fn header_status(compact: bool) -> Paragraph<'static> {
     Paragraph::new(Line::from(spans))
         .alignment(Alignment::Right)
         .style(Style::new().fg(FG_DIM).bg(BG))
+}
+
+fn sync_status_label(store: &TuiStore) -> (Color, String) {
+    let status = &store.sync_status;
+    if status.has_sync_error() || status.conflicts > 0 {
+        return (RED, "sync!".to_string());
+    }
+    if !status.enabled {
+        return (FG_DIM, "local".to_string());
+    }
+    if status.pending_changes > 0 {
+        return (ORANGE, format!("sync {}", status.pending_changes));
+    }
+    (GREEN, "sync".to_string())
 }
 
 fn today_short() -> String {
@@ -487,6 +503,7 @@ mod tests {
             store.counts.all = 34;
             store.counts.todo = 33;
             store.counts.inbox = 1;
+            store.sync_status = crate::tui::store::TuiSyncStatus::default();
             let backend = TestBackend::new(96, 10);
             let mut terminal = Terminal::new(backend).unwrap();
             terminal
@@ -496,6 +513,44 @@ mod tests {
         });
         assert!(rendered.contains("inbox 1"));
         assert!(rendered.contains("● local"));
+    }
+
+    #[test]
+    fn header_sync_status_shows_pending_changes() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let pool = crate::db::open_db(&dir.path().join("test.db"))
+                .await
+                .unwrap();
+            let mut store = TuiStore::new(pool).await.unwrap();
+            store.sync_status.enabled = true;
+            store.sync_status.pending_changes = 72;
+
+            let (color, label) = sync_status_label(&store);
+
+            assert_eq!(color, ORANGE);
+            assert_eq!(label, "sync 72");
+        });
+    }
+
+    #[test]
+    fn header_sync_status_marks_conflicts() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let pool = crate::db::open_db(&dir.path().join("test.db"))
+                .await
+                .unwrap();
+            let mut store = TuiStore::new(pool).await.unwrap();
+            store.sync_status.enabled = true;
+            store.sync_status.conflicts = 1;
+
+            let (color, label) = sync_status_label(&store);
+
+            assert_eq!(color, RED);
+            assert_eq!(label, "sync!");
+        });
     }
 
     #[test]

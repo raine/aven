@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::tui::overlay::{OverlayRoute, OverlayState, TextPanelState};
 use crate::tui::store::TuiStore;
 
-pub(crate) const CONFIG_STATUS_TITLE: &str = "Config status";
+pub(crate) const CONFIG_STATUS_TITLE: &str = "Sync status";
 pub(crate) const CONFIG_INFO_TITLE: &str = "Configuration";
 pub(crate) const CONFIG_PATHS_TITLE: &str = "Config paths";
 pub(crate) const CONFIG_INIT_TITLE: &str = "Initialize configuration";

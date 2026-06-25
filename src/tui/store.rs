@@ -20,7 +20,9 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 
 pub(crate) use pickers::deleted_picker_items;
-pub(crate) use types::{ConflictTarget, MutationMessage, SidebarEntry, SidebarTarget};
+pub(crate) use types::{
+    ConflictTarget, MutationMessage, SidebarEntry, SidebarTarget, TuiSyncStatus,
+};
 
 use crate::labels::list_labels_in_workspace;
 use crate::projects::{
@@ -45,6 +47,7 @@ pub(crate) struct TuiStore {
     pub(crate) filters: TaskFilters,
     pub(crate) sort: TaskSort,
     pub(crate) sort_direction: SortDirection,
+    pub(crate) sync_status: TuiSyncStatus,
     pub(crate) last_refresh: Instant,
 }
 
@@ -91,6 +94,7 @@ impl TuiStore {
             filters: TaskFilters::default(),
             sort: TaskSort::Queue,
             sort_direction: SortDirection::Asc,
+            sync_status: TuiSyncStatus::default(),
             last_refresh: Instant::now(),
         };
         store.apply_active_view_filters();
@@ -125,6 +129,7 @@ impl TuiStore {
             self.sort_direction,
         )
         .await?;
+        self.sync_status = self.load_sync_status(&mut conn).await?;
         self.rebuild_sidebar();
         self.last_refresh = Instant::now();
         Ok(self.restored_task_selection(selected_id))

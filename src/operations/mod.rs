@@ -5,8 +5,8 @@ mod tasks;
 
 #[allow(unused_imports)]
 pub(crate) use config::{
-    ConfigInitOutcome, ConfigPathsOutcome, ConfigShowOutcome, ConfigStatusOutcome, init_config,
-    show_config, show_config_paths, show_config_status,
+    ConfigInitOutcome, ConfigPathsOutcome, ConfigShowOutcome, init_config, show_config,
+    show_config_paths,
 };
 #[allow(unused_imports)]
 pub(crate) use conflicts::{
