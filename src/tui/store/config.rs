@@ -12,10 +12,6 @@ use super::TuiStore;
 use super::types::{SyncStatusCheck, TuiSyncStatus};
 
 impl TuiStore {
-    pub(crate) fn config_status_lines(&self) -> Result<Vec<String>> {
-        Ok(self.sync_status.lines())
-    }
-
     pub(crate) fn config_info_lines(&self) -> Result<Vec<String>> {
         let outcome = show_config_operation()?;
         let mut lines = vec![
@@ -94,6 +90,12 @@ impl TuiStore {
             conflicts,
             sync_cursor: get_meta(conn, "sync_cursor").await?,
             local_sequence: get_meta(conn, "local_seq").await?,
+            last_attempt: get_meta(conn, "sync_last_attempt_at").await?,
+            last_success: get_meta(conn, "sync_last_success_at").await?,
+            last_error: get_meta(conn, "sync_last_error").await?,
+            last_pushed: get_meta(conn, "sync_last_pushed").await?,
+            last_pulled: get_meta(conn, "sync_last_pulled").await?,
+            last_cursor: get_meta(conn, "sync_last_cursor").await?,
         })
     }
 }

@@ -8,9 +8,7 @@ use crate::tui::app_edit::{
 };
 use crate::tui::app_filters::{FILTER_PROJECT_TITLE, SWITCH_WORKSPACE_TITLE};
 use crate::tui::authoring::AddTaskStep;
-use crate::tui::config_overlay::{
-    CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PATHS_TITLE, CONFIG_STATUS_TITLE,
-};
+use crate::tui::config_overlay::{CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PATHS_TITLE};
 use crate::tui::event::Action;
 use crate::tui::overlay::{
     CommandState, ConfirmState, LineEdit, MultilineInputState, OverlayRoute, OverlayState,
@@ -413,6 +411,7 @@ mod keyboard_dispatch {
                 lines: vec!["line".to_string()],
                 scroll: 0,
             }),
+            OverlayState::SyncStatus(Box::default()),
         ];
 
         for overlay in overlays {
@@ -584,17 +583,15 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
-    async fn config_status_opens_text_panel() {
+    async fn config_status_opens_sync_status() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
 
-        let Some(OverlayState::TextPanel(panel)) = app.overlay else {
-            panic!("expected text panel");
+        let Some(OverlayState::SyncStatus(status)) = app.overlay else {
+            panic!("expected sync status");
         };
-        assert_eq!(panel.title, CONFIG_STATUS_TITLE);
-        assert!(panel.lines.iter().any(|line| line.contains("enabled:")));
-        assert!(panel.lines.iter().any(|line| line.contains("daemon wake:")));
+        assert_eq!(*status, app.store.sync_status);
     }
 
     #[tokio::test]

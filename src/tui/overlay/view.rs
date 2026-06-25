@@ -1,4 +1,5 @@
 use crate::tui::authoring::AddTaskStep;
+use crate::tui::store::TuiSyncStatus;
 
 use super::picker::visible_picker_indices;
 use super::state::{OverlayRoute, OverlayState, OverlayState::*, PickerItem, PickerMode};
@@ -30,6 +31,7 @@ pub(crate) enum OverlayView {
     Picker(PickerView),
     Confirm(ConfirmView),
     TextPanel(TextPanelView),
+    SyncStatus(Box<TuiSyncStatus>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,6 +158,7 @@ impl From<&OverlayState> for OverlayView {
                 lines: state.lines.clone(),
                 scroll: state.scroll,
             }),
+            SyncStatus(state) => Self::SyncStatus(state.clone()),
         }
     }
 }

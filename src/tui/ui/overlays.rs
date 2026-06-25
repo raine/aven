@@ -4,6 +4,7 @@ mod multiline;
 mod picker;
 mod search;
 mod shared;
+mod sync_status;
 mod text_input;
 mod text_panel;
 
@@ -16,6 +17,7 @@ pub(super) use multiline::{
 pub(super) use picker::render_picker;
 pub(super) use search::render_search;
 pub(super) use shared::tail_viewport_start;
+pub(super) use sync_status::render_sync_status;
 pub(super) use text_input::render_text_input;
 pub(super) use text_panel::render_text_panel;
 
@@ -34,6 +36,9 @@ pub(super) use multiline::{
     add_note_input_line, add_task_description_input_line, description_editor_lines,
     description_input_line, multiline_hint_line,
 };
+
+#[cfg(test)]
+pub(super) use sync_status::sync_status_lines_for_test;
 
 #[cfg(test)]
 mod tests;

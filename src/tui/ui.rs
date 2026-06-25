@@ -15,8 +15,8 @@ use self::detail::render_detail_underlay;
 use self::footer::{FooterMode, footer_bar};
 use self::header::render_header;
 use self::overlays::{
-    render_confirm, render_multiline_input, render_picker, render_search, render_text_input,
-    render_text_panel,
+    render_confirm, render_multiline_input, render_picker, render_search, render_sync_status,
+    render_text_input, render_text_panel,
 };
 use self::shortcuts::{render_command, render_detail_help, render_help, render_prefix_hints};
 use self::sidebar::{render_sidebar, render_sidebar_overlay};
@@ -312,6 +312,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
         OverlayView::Picker(state) => render_picker(frame, state),
         OverlayView::Confirm(state) => render_confirm(frame, state),
         OverlayView::TextPanel(state) => render_text_panel(frame, state),
+        OverlayView::SyncStatus(state) => render_sync_status(frame, state),
         OverlayView::Detail { .. } => {}
     }
 }

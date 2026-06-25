@@ -21,7 +21,7 @@ use sqlx::SqlitePool;
 
 pub(crate) use pickers::deleted_picker_items;
 pub(crate) use types::{
-    ConflictTarget, MutationMessage, SidebarEntry, SidebarTarget, TuiSyncStatus,
+    ConflictTarget, MutationMessage, SidebarEntry, SidebarTarget, SyncStatusCheck, TuiSyncStatus,
 };
 
 use crate::labels::list_labels_in_workspace;

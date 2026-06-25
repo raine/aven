@@ -12,6 +12,7 @@ use super::wire::{
 use crate::cli::SyncArgs;
 use crate::config;
 use crate::db::{get_meta, set_meta};
+use crate::ids::now;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SyncSummary {
@@ -38,6 +39,24 @@ pub(crate) async fn run_sync_once(
     conn: &mut SqliteConnection,
     server: &str,
     auth_token: Option<&str>,
+) -> Result<SyncSummary> {
+    let attempted_at = now();
+    set_meta(conn, "sync_last_attempt_at", &attempted_at).await?;
+    match run_sync_once_inner(conn, server, auth_token, &attempted_at).await {
+        Ok(summary) => Ok(summary),
+        Err(error) => {
+            let error_text = format!("{error:#}");
+            set_meta(conn, "sync_last_error", &error_text).await?;
+            Err(error)
+        }
+    }
+}
+
+async fn run_sync_once_inner(
+    conn: &mut SqliteConnection,
+    server: &str,
+    auth_token: Option<&str>,
+    attempted_at: &str,
 ) -> Result<SyncSummary> {
     validate_sync_server(conn, server).await?;
     let client_id = get_meta(conn, "client_id")
@@ -83,6 +102,11 @@ pub(crate) async fn run_sync_once(
         applied += 1;
     }
     set_meta(&mut tx, "sync_cursor", &response.cursor.to_string()).await?;
+    set_meta(&mut tx, "sync_last_success_at", attempted_at).await?;
+    set_meta(&mut tx, "sync_last_error", "").await?;
+    set_meta(&mut tx, "sync_last_pushed", &pushed.to_string()).await?;
+    set_meta(&mut tx, "sync_last_pulled", &applied.to_string()).await?;
+    set_meta(&mut tx, "sync_last_cursor", &response.cursor.to_string()).await?;
     tx.commit().await?;
     info!(
         server = %server,

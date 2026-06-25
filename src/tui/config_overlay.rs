@@ -9,9 +9,8 @@ pub(crate) const CONFIG_PATHS_TITLE: &str = "Config paths";
 pub(crate) const CONFIG_INIT_TITLE: &str = "Initialize configuration";
 
 pub(crate) fn config_status_overlay(store: &TuiStore) -> Result<OverlayState> {
-    Ok(OverlayState::TextPanel(TextPanelState::new(
-        CONFIG_STATUS_TITLE,
-        store.config_status_lines()?,
+    Ok(OverlayState::SyncStatus(Box::new(
+        store.sync_status.clone(),
     )))
 }
 

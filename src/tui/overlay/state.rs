@@ -1,5 +1,6 @@
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::text_input::LineEdit;
+use crate::tui::store::TuiSyncStatus;
 use crate::tui::text::{char_boundary_at_or_before, normalize_pasted_newlines};
 
 #[allow(dead_code)]
@@ -16,6 +17,7 @@ pub(crate) enum OverlayState {
     Picker(PickerState),
     Confirm(ConfirmState),
     TextPanel(TextPanelState),
+    SyncStatus(Box<TuiSyncStatus>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

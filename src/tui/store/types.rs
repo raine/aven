@@ -74,6 +74,12 @@ pub(crate) struct TuiSyncStatus {
     pub(crate) conflicts: i64,
     pub(crate) sync_cursor: Option<String>,
     pub(crate) local_sequence: Option<String>,
+    pub(crate) last_attempt: Option<String>,
+    pub(crate) last_success: Option<String>,
+    pub(crate) last_error: Option<String>,
+    pub(crate) last_pushed: Option<String>,
+    pub(crate) last_pulled: Option<String>,
+    pub(crate) last_cursor: Option<String>,
 }
 
 impl Default for TuiSyncStatus {
@@ -92,6 +98,12 @@ impl Default for TuiSyncStatus {
             conflicts: 0,
             sync_cursor: None,
             local_sequence: None,
+            last_attempt: None,
+            last_success: None,
+            last_error: None,
+            last_pushed: None,
+            last_pulled: None,
+            last_cursor: None,
         }
     }
 }
@@ -99,6 +111,7 @@ impl Default for TuiSyncStatus {
 impl TuiSyncStatus {
     pub(crate) fn has_sync_error(&self) -> bool {
         self.config_error.is_some()
+            || self.last_error_value().is_some()
             || (self.enabled
                 && (!self
                     .configured_server
@@ -109,74 +122,7 @@ impl TuiSyncStatus {
                     || !self.daemon_wake.ok))
     }
 
-    pub(crate) fn lines(&self) -> Vec<String> {
-        let mut lines = vec![
-            format!("enabled: {}", yes_no(self.enabled)),
-            format!(
-                "configured server: {}",
-                check_value(self.configured_server.as_ref(), "not configured")
-            ),
-            format!(
-                "pinned server: {}",
-                self.pinned_server.as_deref().unwrap_or("none")
-            ),
-        ];
-        if let Some(error) = &self.config_error {
-            lines.push(format!("config: {error} (check failed)"));
-        }
-        if let Some(server_match) = &self.server_match {
-            lines.push(format!(
-                "server match: {}",
-                if server_match.ok {
-                    "yes".to_string()
-                } else {
-                    server_match.value.clone()
-                }
-            ));
-        }
-        lines.extend([
-            format!(
-                "daemon server: {}",
-                check_value(self.daemon_server.as_ref(), "not configured")
-            ),
-            format!(
-                "auth token: {}",
-                if self.auth_token_configured {
-                    "configured"
-                } else {
-                    "not configured"
-                }
-            ),
-            format!("interval: {} seconds", self.interval_seconds),
-            format!("daemon wake: {}", self.daemon_wake.value),
-            String::new(),
-            format!("pending changes: {}", self.pending_changes),
-            format!("conflicts: {}", self.conflicts),
-            format!(
-                "sync cursor: {}",
-                self.sync_cursor.as_deref().unwrap_or("missing")
-            ),
-            format!(
-                "local sequence: {}",
-                self.local_sequence.as_deref().unwrap_or("missing")
-            ),
-        ]);
-        lines
+    pub(crate) fn last_error_value(&self) -> Option<&str> {
+        self.last_error.as_deref().filter(|error| !error.is_empty())
     }
-}
-
-fn check_value(check: Option<&SyncStatusCheck>, fallback: &str) -> String {
-    check
-        .map(|check| {
-            if check.ok {
-                check.value.clone()
-            } else {
-                format!("{} (check failed)", check.value)
-            }
-        })
-        .unwrap_or_else(|| fallback.to_string())
-}
-
-fn yes_no(value: bool) -> &'static str {
-    if value { "yes" } else { "no" }
 }

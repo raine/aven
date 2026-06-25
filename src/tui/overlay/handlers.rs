@@ -128,6 +128,10 @@ pub(crate) fn handle_generic_overlay_key(
             }
             _ => OverlayOutcome::None(OverlayState::TextPanel(state)),
         },
+        OverlayState::SyncStatus(state) => match key.code {
+            KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
+            _ => OverlayOutcome::None(OverlayState::SyncStatus(state)),
+        },
         OverlayState::Help { mut scroll } => match key.code {
             KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
             KeyCode::Char('j') | KeyCode::Down => {
