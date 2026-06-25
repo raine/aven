@@ -48,7 +48,7 @@ enum TaskListRow {
 
 #[derive(Debug)]
 struct TaskListRenderModel {
-    columns: [Constraint; 6],
+    columns: [Constraint; 7],
     row_areas: Vec<Rect>,
     rows: Vec<TaskListRenderRow>,
     scroll: usize,
@@ -280,11 +280,12 @@ fn build_task_list_render_model(
     }
 }
 
-fn task_list_columns(store: &TuiStore, narrow: bool) -> [Constraint; 6] {
+fn task_list_columns(store: &TuiStore, narrow: bool) -> [Constraint; 7] {
     let project_width = project_column_width(store, narrow);
     [
         Constraint::Length(12),
         Constraint::Fill(1),
+        Constraint::Length(6),
         Constraint::Length(project_width),
         Constraint::Length(10),
         Constraint::Length(3),
@@ -292,11 +293,11 @@ fn task_list_columns(store: &TuiStore, narrow: bool) -> [Constraint; 6] {
     ]
 }
 
-fn task_list_column_widths(columns: &[Constraint; 6], width: u16) -> [usize; 6] {
+fn task_list_column_widths(columns: &[Constraint; 7], width: u16) -> [usize; 7] {
     if width == 0 {
-        return [0; 6];
+        return [0; 7];
     }
-    let cells = Layout::horizontal(*columns).areas::<6>(Rect::new(0, 0, width, 1));
+    let cells = Layout::horizontal(*columns).areas::<7>(Rect::new(0, 0, width, 1));
     [
         cells[0].width as usize,
         cells[1].width as usize,
@@ -304,6 +305,7 @@ fn task_list_column_widths(columns: &[Constraint; 6], width: u16) -> [usize; 6] 
         cells[3].width as usize,
         cells[4].width as usize,
         cells[5].width as usize,
+        cells[6].width as usize,
     ]
 }
 
@@ -396,8 +398,8 @@ fn project_column_width(store: &TuiStore, narrow: bool) -> u16 {
         .min(max_width)
 }
 
-fn render_task_header(frame: &mut Frame, area: Rect, columns: [Constraint; 6]) {
-    let cells = Layout::horizontal(columns).areas::<6>(area);
+fn render_task_header(frame: &mut Frame, area: Rect, columns: [Constraint; 7]) {
+    let cells = Layout::horizontal(columns).areas::<7>(area);
     let style = Style::new()
         .fg(INVERSE_FG)
         .bg(BORDER)
@@ -405,7 +407,7 @@ fn render_task_header(frame: &mut Frame, area: Rect, columns: [Constraint; 6]) {
     frame.render_widget(Block::new().style(style), area);
     for (area, label) in cells
         .into_iter()
-        .zip([" REF", "TITLE", "PROJECT", "STATUS", "P", "IDLE"])
+        .zip([" REF", "TITLE", "", "PROJECT", "STATUS", "P", "IDLE"])
     {
         frame.render_widget(Paragraph::new(label).style(style), area);
     }
@@ -439,7 +441,7 @@ fn row_style(selected: bool, focused: bool) -> Style {
 fn render_task_row_from_model(
     frame: &mut Frame,
     area: Rect,
-    columns: &[Constraint; 6],
+    columns: &[Constraint; 7],
     row: &TaskListTaskRow,
 ) {
     render_task_row_cells(frame, area, row.style, columns, &row.cells);
@@ -449,11 +451,11 @@ fn render_task_row_cells(
     frame: &mut Frame,
     area: Rect,
     style: Style,
-    columns: &[Constraint; 6],
+    columns: &[Constraint; 7],
     values: &[Line<'static>],
 ) {
     frame.render_widget(Block::new().style(style), area);
-    let areas = Layout::horizontal(columns).areas::<6>(area);
+    let areas = Layout::horizontal(columns).areas::<7>(area);
     for (area, value) in areas.into_iter().zip(values) {
         frame.render_widget(Paragraph::new(value.clone()).style(style), area);
     }
@@ -464,7 +466,7 @@ fn build_task_row_cells(
     now_seconds: i64,
     render_mode: TaskRenderMode,
     inline_title_editor: Option<&TextInputView>,
-    column_widths: &[usize; 6],
+    column_widths: &[usize; 7],
 ) -> Vec<Line<'static>> {
     let age_seconds = if render_mode.uses_queue_age() {
         item.queue.idle_seconds()
@@ -482,7 +484,8 @@ fn build_task_row_cells(
     vec![
         task_ref_cell(item),
         title,
-        project_cell(item, column_widths[2]),
+        metadata_cell(item),
+        project_cell(item, column_widths[3]),
         status_chip(&item.task.status),
         Line::from(Span::styled(
             priority_icon(&item.task.priority),
@@ -503,7 +506,18 @@ fn blank_task_row_cells() -> Vec<Line<'static>> {
         Line::from(""),
         Line::from(""),
         Line::from(""),
+        Line::from(""),
     ]
+}
+
+fn metadata_cell(item: &TaskListItem) -> Line<'static> {
+    if item.notes.is_empty() {
+        return Line::from("");
+    }
+    Line::from(Span::styled(
+        "✎",
+        Style::new().fg(FG_MUTED).remove_modifier(Modifier::BOLD),
+    ))
 }
 
 fn inline_title_edit_cell(editor: &TextInputView, max_width: usize) -> Line<'static> {
@@ -671,6 +685,7 @@ mod tests {
         let columns = [
             Constraint::Length(12),
             Constraint::Fill(1),
+            Constraint::Length(6),
             Constraint::Length(9),
             Constraint::Length(10),
             Constraint::Length(3),
@@ -992,6 +1007,54 @@ mod tests {
     }
 
     #[test]
+    fn metadata_cell_shows_note_marker() {
+        let mut item = task_item("documented");
+        item.task.description = "details".to_string();
+        item.notes = vec![
+            crate::query::TaskNote {
+                body: "one".to_string(),
+                created_at: "001".to_string(),
+            },
+            crate::query::TaskNote {
+                body: "two".to_string(),
+                created_at: "002".to_string(),
+            },
+        ];
+
+        assert_eq!(metadata_cell(&item).to_string(), "✎");
+    }
+
+    #[test]
+    fn metadata_cell_ignores_description_without_notes() {
+        let mut item = task_item("plain");
+        item.task.description = "details".to_string();
+
+        assert_eq!(metadata_cell(&item).to_string(), "");
+    }
+
+    #[test]
+    fn task_row_cells_insert_metadata_between_title_and_project() {
+        let mut item = task_item("documented");
+        item.task.description = "details".to_string();
+        item.notes = vec![crate::query::TaskNote {
+            body: "one".to_string(),
+            created_at: "001".to_string(),
+        }];
+
+        let cells = build_task_row_cells(
+            &item,
+            0,
+            TaskRenderMode::Default,
+            None,
+            &[12, 40, 6, 9, 10, 3, 5],
+        );
+
+        assert_eq!(cells.len(), 7);
+        assert_eq!(cells[2].to_string(), "✎");
+        assert_eq!(cells[3].to_string(), "app ");
+    }
+
+    #[test]
     fn task_row_cells_use_inline_title_when_selected() {
         let item = task_item("original title");
         let editor = TextInputView {
@@ -1007,7 +1070,7 @@ mod tests {
             0,
             TaskRenderMode::Default,
             Some(&editor),
-            &[12, 40, 9, 10, 3, 5],
+            &[12, 40, 6, 9, 10, 3, 5],
         );
 
         assert!(cells[1].to_string().contains("edited title"));

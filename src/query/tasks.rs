@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
+use sqlx::{QueryBuilder, Sqlite, SqliteConnection};
 
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::db::task_from_row;
@@ -11,7 +11,7 @@ use crate::task_enrichment::load_task_enrichment;
 use crate::workspaces::active_workspace_id;
 
 use super::sorting::push_sort;
-use super::{SortDirection, TaskFilters, TaskListItem, TaskNote, TaskSort};
+use super::{SortDirection, TaskFilters, TaskListItem, TaskSort};
 
 pub(crate) async fn list_task_items(
     conn: &mut SqliteConnection,
@@ -129,7 +129,10 @@ pub(crate) async fn list_task_items_in_workspace(
             .labels_by_task
             .remove(&task.id)
             .unwrap_or_default();
-        let notes = notes_for_task(conn, &task.workspace_id, &task.id).await?;
+        let notes = enrichment
+            .notes_by_task
+            .remove(&task.id)
+            .unwrap_or_default();
         let has_conflict = enrichment.conflicted_task_ids.contains(&task.id);
         let queue = queue_meta(&task, has_conflict, now_seconds);
         items.push(TaskListItem {
@@ -148,28 +151,6 @@ pub(crate) async fn list_task_items_in_workspace(
         }
     }
     Ok(items)
-}
-
-async fn notes_for_task(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-    task_id: &str,
-) -> Result<Vec<TaskNote>> {
-    let rows = sqlx::query(
-        "SELECT body, created_at FROM notes
-         WHERE workspace_id = ? AND task_id = ? ORDER BY created_at DESC, id DESC",
-    )
-    .bind(workspace_id)
-    .bind(task_id)
-    .fetch_all(&mut *conn)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| TaskNote {
-            body: row.get("body"),
-            created_at: row.get("created_at"),
-        })
-        .collect())
 }
 
 fn push_filter_prefix(query: &mut QueryBuilder<Sqlite>, filters: &mut usize) {

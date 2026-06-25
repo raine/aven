@@ -432,6 +432,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_items_include_description_and_note_metadata() {
+        let (_temp, mut conn) = test_conn().await;
+        let workspace_id = crate::workspaces::active_workspace_id();
+        seed_default_project(&mut conn).await;
+        insert_test_task(
+            &mut conn,
+            "0000000000000501",
+            "documented",
+            "todo",
+            "none",
+            "001",
+        )
+        .await;
+        sqlx::query("UPDATE tasks SET description = 'details' WHERE workspace_id = ? AND id = ?")
+            .bind(&workspace_id)
+            .bind("0000000000000501")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO notes(workspace_id, id, task_id, body, created_at, change_id)
+             VALUES (?, 'note-0501-a', '0000000000000501', 'older', '001', 'change-0501-a'),
+                    (?, 'note-0501-b', '0000000000000501', 'newer', '002', 'change-0501-b')",
+        )
+        .bind(&workspace_id)
+        .bind(&workspace_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let items = list_task_items(
+            &mut conn,
+            TaskFilters::default(),
+            TaskSort::Created,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(items[0].task.description, "details");
+        assert_eq!(
+            items[0]
+                .notes
+                .iter()
+                .map(|note| note.body.as_str())
+                .collect::<Vec<_>>(),
+            ["newer", "older"]
+        );
+    }
+
+    #[tokio::test]
     async fn list_items_preserve_display_refs_with_hidden_collisions() {
         let (_temp, mut conn) = test_conn().await;
         seed_default_project(&mut conn).await;
