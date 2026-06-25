@@ -694,6 +694,49 @@ mod filters_and_workspaces {
     }
 
     #[tokio::test]
+    async fn filter_done_shortcut_keeps_project_scope() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        app.store.create_project("Ops".to_string()).await.unwrap();
+        for (title, project) in [("Mobile done", "mobile-app"), ("Ops done", "ops")] {
+            let (_, selected) = app
+                .store
+                .create_task(
+                    TaskDraft {
+                        title: title.to_string(),
+                        description: String::new(),
+                        project: Some(project.to_string()),
+                        status: "inbox".to_string(),
+                        priority: "none".to_string(),
+                        labels: Vec::new(),
+                    },
+                    None,
+                )
+                .await
+                .unwrap();
+            app.store.update_status(selected, "done").await.unwrap();
+        }
+        let selected = app
+            .store
+            .show_view(SidebarTarget::Project("mobile-app".to_string()))
+            .await
+            .unwrap();
+        app.apply_filter_selection(selected);
+
+        app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+
+        assert_eq!(app.store.filters.project.as_deref(), Some("mobile-app"));
+        assert_eq!(app.store.filters.status.as_deref(), Some("done"));
+        assert_eq!(app.store.tasks.len(), 1);
+        assert_eq!(app.store.tasks[0].task.title, "Mobile done");
+        assert_eq!(toast_message(&app), Some("status filter applied"));
+    }
+
+    #[tokio::test]
     async fn filter_shortcuts_apply_label_status_priority_and_deleted() {
         let mut app = test_app().await;
         app.store.create_label("backend".to_string()).await.unwrap();

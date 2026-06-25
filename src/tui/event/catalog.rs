@@ -805,6 +805,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::BeginFilterStatus,
     ),
     CommandSpec::implemented(
+        "filter-done",
+        "filter by done status",
+        "Filters",
+        &[KeySequence {
+            codes: &[KeyCode::Char('f'), KeyCode::Char('d')],
+            label: "f d",
+        }],
+        Action::FilterStatus("done"),
+    ),
+    CommandSpec::implemented(
         "filter-priority",
         "filter by priority",
         "Filters",
@@ -1219,21 +1229,21 @@ pub(crate) const COMMAND_DOMAINS: &[CommandDomain] = &[
     CommandDomain {
         section: "Filters",
         start: 54,
-        end: 60,
+        end: 61,
     },
     CommandDomain {
         section: "Order",
-        start: 60,
-        end: 67,
+        start: 61,
+        end: 68,
     },
     CommandDomain {
         section: "Conflict",
-        start: 67,
-        end: 74,
+        start: 68,
+        end: 75,
     },
     CommandDomain {
         section: "Config",
-        start: 74,
-        end: 78,
+        start: 75,
+        end: 79,
     },
 ];

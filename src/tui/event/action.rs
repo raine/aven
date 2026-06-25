@@ -69,6 +69,7 @@ pub(crate) enum Action {
     BeginFilterLabel,
     BeginFilterStatus,
     BeginFilterPriority,
+    FilterStatus(&'static str),
     BeginSwitchWorkspace,
     ClearFilters,
     ToggleDeletedFilter,

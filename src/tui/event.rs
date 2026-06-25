@@ -61,6 +61,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginFilterLabel
             | Action::BeginFilterStatus
             | Action::BeginFilterPriority
+            | Action::FilterStatus(_)
             | Action::BeginSwitchWorkspace
             | Action::ClearFilters
             | Action::ToggleDeletedFilter
@@ -716,6 +717,10 @@ mod tests {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('p')]),
             ShortcutLookup::Found(Action::BeginFilterProject)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('d')]),
+            ShortcutLookup::Found(Action::FilterStatus("done"))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('c')]),

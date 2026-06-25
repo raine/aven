@@ -394,6 +394,7 @@ impl App {
             Action::BeginFilterLabel => self.begin_filter_label(),
             Action::BeginFilterStatus => self.begin_filter_status(),
             Action::BeginFilterPriority => self.begin_filter_priority(),
+            Action::FilterStatus(status) => self.filter_status(status.to_string()).await?,
             Action::BeginSwitchWorkspace => self.begin_switch_workspace().await?,
             Action::ClearFilters => self.clear_filters().await?,
             Action::ToggleDeletedFilter => self.toggle_deleted_filter().await?,

@@ -933,6 +933,45 @@ mod views_filters_and_sort {
     }
 
     #[tokio::test]
+    async fn status_filter_preserves_project_scope() {
+        let mut store = test_store().await;
+        store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        store.create_project("Ops".to_string()).await.unwrap();
+        for (title, project) in [("Mobile done", "mobile-app"), ("Ops done", "ops")] {
+            let (_, selected) = store
+                .create_task(
+                    TaskDraft {
+                        title: title.to_string(),
+                        description: String::new(),
+                        project: Some(project.to_string()),
+                        status: "inbox".to_string(),
+                        priority: "none".to_string(),
+                        labels: Vec::new(),
+                    },
+                    None,
+                )
+                .await
+                .unwrap();
+            store.update_status(selected, "done").await.unwrap();
+        }
+
+        store
+            .show_view(SidebarTarget::Project("mobile-app".to_string()))
+            .await
+            .unwrap();
+        store.filter_status("done".to_string()).await.unwrap();
+
+        assert_eq!(store.active_view, SidebarTarget::All);
+        assert_eq!(store.filters.project.as_deref(), Some("mobile-app"));
+        assert_eq!(store.filters.status.as_deref(), Some("done"));
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.title, "Mobile done");
+    }
+
+    #[tokio::test]
     async fn done_view_shows_done_tasks() {
         let mut store = test_store().await;
         let (_, selected) = store

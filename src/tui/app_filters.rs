@@ -165,16 +165,20 @@ impl App {
         Ok(())
     }
 
+    pub(super) async fn filter_status(&mut self, status: String) -> Result<()> {
+        let selected = self.store.filter_status(status).await?;
+        self.apply_filter_selection(selected);
+        self.set_success("status filter applied");
+        Ok(())
+    }
+
     pub(super) async fn submit_filter_status(&mut self, values: Vec<String>) -> Result<()> {
         let Some(status) =
             self.filter_value_or_reopen(values, "no matching status", Self::begin_filter_status)
         else {
             return Ok(());
         };
-        let selected = self.store.filter_status(status).await?;
-        self.apply_filter_selection(selected);
-        self.set_success("status filter applied");
-        Ok(())
+        self.filter_status(status).await
     }
 
     pub(super) async fn submit_filter_priority(&mut self, values: Vec<String>) -> Result<()> {
