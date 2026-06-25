@@ -76,6 +76,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::ShowConfigStatus
             | Action::ShowConfigInfo
             | Action::ShowConfigPaths
+            | Action::ShowDatabaseStats
             | Action::BeginConfigInit
             | Action::Undo
     )
@@ -603,6 +604,7 @@ mod tests {
             "config-show",
             "config-status",
             "config-paths",
+            "database-stats",
             "config-init",
         ] {
             assert!(
@@ -801,6 +803,10 @@ mod tests {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('C'), KeyCode::Char('d')]),
             ShortcutLookup::Found(Action::ShowConfigPaths)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('C'), KeyCode::Char('D')]),
+            ShortcutLookup::Found(Action::ShowDatabaseStats)
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('C'), KeyCode::Char('i')]),

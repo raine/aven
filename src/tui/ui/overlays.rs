@@ -1,5 +1,6 @@
 mod add_task;
 mod confirm;
+mod database_stats;
 mod multiline;
 mod picker;
 mod search;
@@ -10,6 +11,7 @@ mod text_panel;
 
 pub(super) use add_task::{render_add_task, render_add_task_full_frame};
 pub(super) use confirm::render_confirm;
+pub(super) use database_stats::render_database_stats;
 pub(super) use multiline::{
     add_task_description_hint_line, add_task_free_text_input_line, add_task_natural_hint_line,
     render_multiline_input,

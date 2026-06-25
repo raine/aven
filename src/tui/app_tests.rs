@@ -613,6 +613,61 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
+    async fn database_stats_opens_text_panel() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Stats target")).await;
+        let selected = app.widgets.table.selected();
+        app.store.update_status(selected, "done").await.unwrap();
+        create_and_select_task(
+            &mut app,
+            TaskDraft {
+                title: "Urgent task".to_string(),
+                description: String::new(),
+                project: None,
+                status: "inbox".to_string(),
+                priority: "urgent".to_string(),
+                labels: Vec::new(),
+            },
+        )
+        .await;
+        app.store
+            .update_deleted(app.widgets.table.selected(), true)
+            .await
+            .unwrap();
+
+        app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
+
+        let Some(OverlayState::DatabaseStats { stats, scroll }) = app.overlay else {
+            panic!("expected database stats");
+        };
+        assert_eq!(scroll, 0);
+        assert_eq!(stats.total_tasks, 2);
+        assert_eq!(stats.open_tasks, 0);
+        assert_eq!(stats.deleted_tasks, 1);
+        assert_eq!(stats.statuses.done, 1);
+        assert_eq!(stats.priorities.urgent, 0);
+        assert_eq!(stats.notes, 0);
+        assert!(stats.sqlite_page_size > 0);
+        assert!(stats.sqlite_page_count > 0);
+    }
+
+    #[tokio::test]
+    async fn command_panel_runs_database_stats() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Stats target")).await;
+
+        app.begin_command();
+        type_chars(&mut app, "database-stats").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::DatabaseStats { .. })
+        ));
+    }
+
+    #[tokio::test]
     async fn config_init_requires_confirmation() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('C')).await.unwrap();

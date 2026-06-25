@@ -59,6 +59,47 @@ impl SyncStatusCheck {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct DatabaseStatsStatusCounts {
+    pub(crate) inbox: i64,
+    pub(crate) backlog: i64,
+    pub(crate) todo: i64,
+    pub(crate) active: i64,
+    pub(crate) done: i64,
+    pub(crate) canceled: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct DatabaseStatsPriorityCounts {
+    pub(crate) none: i64,
+    pub(crate) low: i64,
+    pub(crate) medium: i64,
+    pub(crate) high: i64,
+    pub(crate) urgent: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct TuiDatabaseStats {
+    pub(crate) workspace_name: String,
+    pub(crate) workspace_key: String,
+    pub(crate) total_tasks: i64,
+    pub(crate) open_tasks: i64,
+    pub(crate) deleted_tasks: i64,
+    pub(crate) statuses: DatabaseStatsStatusCounts,
+    pub(crate) priorities: DatabaseStatsPriorityCounts,
+    pub(crate) projects: i64,
+    pub(crate) labels: i64,
+    pub(crate) notes: i64,
+    pub(crate) task_labels: i64,
+    pub(crate) pending_changes: i64,
+    pub(crate) conflicts: i64,
+    pub(crate) sqlite_page_size: i64,
+    pub(crate) sqlite_page_count: i64,
+    pub(crate) sqlite_freelist_count: i64,
+    pub(crate) latest_created_at: Option<String>,
+    pub(crate) latest_updated_at: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TuiSyncStatus {
     pub(crate) enabled: bool,

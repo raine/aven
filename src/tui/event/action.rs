@@ -84,6 +84,7 @@ pub(crate) enum Action {
     ShowConfigStatus,
     ShowConfigInfo,
     ShowConfigPaths,
+    ShowDatabaseStats,
     BeginConfigInit,
     Undo,
     Planned {

@@ -16,6 +16,7 @@ use crate::tui::authoring::{
 };
 use crate::tui::config_overlay::{
     config_info_overlay, config_init_overlay, config_paths_overlay, config_status_overlay,
+    database_stats_overlay,
 };
 use crate::tui::conflict_flow::ConflictFlowState;
 use crate::tui::navigation::{next_index, next_selectable_sidebar};
@@ -876,6 +877,13 @@ impl App {
     pub(super) fn show_config_paths(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
         self.overlay = Some(config_paths_overlay(&self.store)?);
+        Ok(())
+    }
+
+    pub(super) async fn show_database_stats(&mut self) -> Result<()> {
+        self.pending_shortcut.clear();
+        self.store.load_database_stats().await?;
+        self.overlay = Some(database_stats_overlay(&self.store)?);
         Ok(())
     }
 

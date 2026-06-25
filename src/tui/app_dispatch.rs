@@ -415,6 +415,7 @@ impl App {
             Action::ShowConfigStatus => self.show_config_status()?,
             Action::ShowConfigInfo => self.show_config_info()?,
             Action::ShowConfigPaths => self.show_config_paths()?,
+            Action::ShowDatabaseStats => self.show_database_stats().await?,
             Action::BeginConfigInit => self.begin_config_init()?,
             Action::Undo => self.undo_last().await?,
             Action::Planned { name, reason } => {

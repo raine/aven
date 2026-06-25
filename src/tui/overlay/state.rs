@@ -1,16 +1,26 @@
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::text_input::LineEdit;
-use crate::tui::store::TuiSyncStatus;
+use crate::tui::store::{TuiDatabaseStats, TuiSyncStatus};
 use crate::tui::text::{char_boundary_at_or_before, normalize_pasted_newlines};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayState {
-    Help { scroll: u16 },
-    Detail { scroll: u16 },
-    DetailHelp { scroll: u16 },
-    Search { input: LineEdit },
-    Command { state: CommandState },
+    Help {
+        scroll: u16,
+    },
+    Detail {
+        scroll: u16,
+    },
+    DetailHelp {
+        scroll: u16,
+    },
+    Search {
+        input: LineEdit,
+    },
+    Command {
+        state: CommandState,
+    },
     AddTask(AddTaskState),
     TextInput(TextInputState),
     MultilineInput(MultilineInputState),
@@ -18,6 +28,10 @@ pub(crate) enum OverlayState {
     Confirm(ConfirmState),
     TextPanel(TextPanelState),
     SyncStatus(Box<TuiSyncStatus>),
+    DatabaseStats {
+        stats: Box<TuiDatabaseStats>,
+        scroll: u16,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

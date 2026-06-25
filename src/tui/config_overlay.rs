@@ -7,6 +7,7 @@ pub(crate) const CONFIG_STATUS_TITLE: &str = "Sync status";
 pub(crate) const CONFIG_INFO_TITLE: &str = "Configuration";
 pub(crate) const CONFIG_PATHS_TITLE: &str = "Config paths";
 pub(crate) const CONFIG_INIT_TITLE: &str = "Initialize configuration";
+pub(crate) const DATABASE_STATS_TITLE: &str = "Database stats";
 
 pub(crate) fn config_status_overlay(store: &TuiStore) -> Result<OverlayState> {
     Ok(OverlayState::SyncStatus(Box::new(
@@ -26,6 +27,13 @@ pub(crate) fn config_paths_overlay(store: &TuiStore) -> Result<OverlayState> {
         CONFIG_PATHS_TITLE,
         store.config_path_lines()?,
     )))
+}
+
+pub(crate) fn database_stats_overlay(store: &TuiStore) -> Result<OverlayState> {
+    Ok(OverlayState::DatabaseStats {
+        stats: Box::new(store.db_stats.clone()),
+        scroll: 0,
+    })
 }
 
 pub(crate) fn config_init_overlay() -> Result<OverlayState> {

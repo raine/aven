@@ -1018,6 +1018,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ShowConfigPaths,
     ),
     CommandSpec::implemented(
+        "database-stats",
+        "show database statistics",
+        "Config",
+        &[KeySequence {
+            codes: &[KeyCode::Char('C'), KeyCode::Char('D')],
+            label: "C D",
+        }],
+        Action::ShowDatabaseStats,
+    ),
+    CommandSpec::implemented(
         "config-init",
         "initialize configuration",
         "Config",
@@ -1244,6 +1254,6 @@ pub(crate) const COMMAND_DOMAINS: &[CommandDomain] = &[
     CommandDomain {
         section: "Config",
         start: 75,
-        end: 79,
+        end: 80,
     },
 ];

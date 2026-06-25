@@ -1,11 +1,14 @@
 use super::*;
 use crate::tui::authoring::AddTaskStep;
-use crate::tui::config_overlay::CONFIG_STATUS_TITLE;
+use crate::tui::config_overlay::{CONFIG_STATUS_TITLE, DATABASE_STATS_TITLE};
 use crate::tui::overlay::{
     AddTaskView, ConfirmView, MultilineInputView, OverlayRoute, OverlayView, PickerItem,
     PickerMode, PickerView, TextInputView, TextPanelView,
 };
-use crate::tui::store::{SyncStatusCheck, TuiSyncStatus};
+use crate::tui::store::{
+    DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts, SyncStatusCheck, TuiDatabaseStats,
+    TuiSyncStatus,
+};
 use crate::tui::theme::{self, ACCENT, BG_ALT, FG, FG_DIM, GREEN, RED};
 use crate::tui::widgets::priority_icon;
 use ratatui::Frame;
@@ -32,6 +35,9 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
         OverlayView::Confirm(state) => render_confirm(frame, state),
         OverlayView::TextPanel(state) => render_text_panel(frame, state),
         OverlayView::SyncStatus(state) => render_sync_status(frame, state),
+        OverlayView::DatabaseStats { stats, scroll } => {
+            render_database_stats(frame, stats, *scroll)
+        }
         OverlayView::Detail { .. } => {}
         _ => unreachable!("test helper only renders non-help overlays"),
     }
@@ -914,6 +920,74 @@ mod picker_overlays {
             assert!(rendered.contains("claude-code"));
             assert!(rendered.contains("Enter submit"));
             assert!(rendered.contains(title));
+        }
+    }
+}
+
+mod database_stats_overlay {
+    use super::*;
+
+    #[test]
+    fn database_stats_overlay_renders_like_sync_status() {
+        let rendered = render_overlay_view(OverlayView::DatabaseStats {
+            stats: Box::new(database_stats()),
+            scroll: 0,
+        });
+
+        assert!(rendered.contains(DATABASE_STATS_TITLE));
+        assert!(rendered.contains("WORKSPACE"));
+        assert!(rendered.contains("TASKS"));
+        assert!(rendered.contains("main db size"));
+        assert!(rendered.contains("4.0 MiB"));
+        assert!(rendered.contains("Enter/Esc close"));
+        assert!(!rendered.contains('▲'));
+        assert!(!rendered.contains('▼'));
+    }
+
+    #[test]
+    fn database_stats_overlay_scroll_changes_visible_content() {
+        let backend = TestBackend::new(100, 18);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render_non_help_overlay_content(
+                    frame,
+                    &OverlayView::DatabaseStats {
+                        stats: Box::new(database_stats()),
+                        scroll: 8,
+                    },
+                )
+            })
+            .unwrap();
+        let rendered = buffer_text(terminal.backend());
+
+        assert!(rendered.contains("LATEST TASK TIMESTAMPS"));
+        assert!(!rendered.contains("WORKSPACE"));
+    }
+
+    fn database_stats() -> TuiDatabaseStats {
+        TuiDatabaseStats {
+            workspace_name: "Default".to_string(),
+            workspace_key: "default".to_string(),
+            total_tasks: 3,
+            open_tasks: 1,
+            statuses: DatabaseStatsStatusCounts {
+                inbox: 1,
+                done: 2,
+                ..DatabaseStatsStatusCounts::default()
+            },
+            priorities: DatabaseStatsPriorityCounts {
+                urgent: 1,
+                ..DatabaseStatsPriorityCounts::default()
+            },
+            projects: 1,
+            labels: 2,
+            notes: 3,
+            task_labels: 2,
+            pending_changes: 4,
+            sqlite_page_size: 4096,
+            sqlite_page_count: 1024,
+            ..TuiDatabaseStats::default()
         }
     }
 }

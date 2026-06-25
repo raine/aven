@@ -616,6 +616,7 @@ mod tests {
         assert!(rendered.contains(":config-status"));
         assert!(rendered.contains(":config-show"));
         assert!(rendered.contains(":config-paths"));
+        assert!(rendered.contains(":database-stats"));
         assert!(rendered.contains(":config-init"));
         assert!(!rendered.contains("planned"));
     }

@@ -1,5 +1,5 @@
 use crate::tui::authoring::AddTaskStep;
-use crate::tui::store::TuiSyncStatus;
+use crate::tui::store::{TuiDatabaseStats, TuiSyncStatus};
 
 use super::picker::visible_picker_indices;
 use super::state::{OverlayRoute, OverlayState, OverlayState::*, PickerItem, PickerMode};
@@ -32,6 +32,10 @@ pub(crate) enum OverlayView {
     Confirm(ConfirmView),
     TextPanel(TextPanelView),
     SyncStatus(Box<TuiSyncStatus>),
+    DatabaseStats {
+        stats: Box<TuiDatabaseStats>,
+        scroll: u16,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,6 +163,10 @@ impl From<&OverlayState> for OverlayView {
                 scroll: state.scroll,
             }),
             SyncStatus(state) => Self::SyncStatus(state.clone()),
+            DatabaseStats { stats, scroll } => Self::DatabaseStats {
+                stats: stats.clone(),
+                scroll: *scroll,
+            },
         }
     }
 }

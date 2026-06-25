@@ -4,6 +4,7 @@ mod domain;
 mod pickers;
 mod sidebar;
 mod sort;
+mod stats;
 mod task_commands;
 mod task_creation;
 mod types;
@@ -21,8 +22,11 @@ use sqlx::SqlitePool;
 
 pub(crate) use pickers::deleted_picker_items;
 pub(crate) use types::{
-    ConflictTarget, MutationMessage, SidebarEntry, SidebarTarget, SyncStatusCheck, TuiSyncStatus,
+    ConflictTarget, MutationMessage, SidebarEntry, SidebarTarget, SyncStatusCheck,
+    TuiDatabaseStats, TuiSyncStatus,
 };
+#[cfg(test)]
+pub(crate) use types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts};
 
 use crate::labels::list_labels_in_workspace;
 use crate::projects::{
@@ -48,6 +52,7 @@ pub(crate) struct TuiStore {
     pub(crate) sort: TaskSort,
     pub(crate) sort_direction: SortDirection,
     pub(crate) sync_status: TuiSyncStatus,
+    pub(crate) db_stats: TuiDatabaseStats,
     pub(crate) last_refresh: Instant,
 }
 
@@ -95,6 +100,7 @@ impl TuiStore {
             sort: TaskSort::Queue,
             sort_direction: SortDirection::Asc,
             sync_status: TuiSyncStatus::default(),
+            db_stats: TuiDatabaseStats::default(),
             last_refresh: Instant::now(),
         };
         store.apply_active_view_filters();

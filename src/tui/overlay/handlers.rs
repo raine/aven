@@ -132,6 +132,18 @@ pub(crate) fn handle_generic_overlay_key(
             KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
             _ => OverlayOutcome::None(OverlayState::SyncStatus(state)),
         },
+        OverlayState::DatabaseStats { stats, mut scroll } => match key.code {
+            KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
+            KeyCode::Char('j') | KeyCode::Down => {
+                scroll = scroll.saturating_add(1);
+                OverlayOutcome::None(OverlayState::DatabaseStats { stats, scroll })
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                scroll = scroll.saturating_sub(1);
+                OverlayOutcome::None(OverlayState::DatabaseStats { stats, scroll })
+            }
+            _ => OverlayOutcome::None(OverlayState::DatabaseStats { stats, scroll }),
+        },
         OverlayState::Help { mut scroll } => match key.code {
             KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
             KeyCode::Char('j') | KeyCode::Down => {
