@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
 use serde_json::Value;
-use sqlx::{Connection as _, SqliteConnection, SqlitePool};
+use sqlx::{SqliteConnection, SqlitePool};
 use tokio::net::TcpListener;
 use tracing::{error, info, warn};
 
@@ -18,7 +18,7 @@ use super::wire::{
 };
 use crate::cli::ServerArgs;
 use crate::config;
-use crate::db::open_db;
+use crate::db::{begin_immediate, open_db};
 use crate::ids::BASE32;
 use crate::signals::shutdown_signal;
 use crate::task_fields::TaskField;
@@ -185,7 +185,7 @@ async fn handle_sync(
     info!(client_id = %client_id, after, change_count, "sync request received");
 
     let mut conn = state.pool.acquire().await.map_err(internal_error)?;
-    let mut tx = conn.begin().await.map_err(internal_error)?;
+    let mut tx = begin_immediate(&mut conn).await.map_err(internal_error)?;
     let mut accepted_count = 0_i64;
     for change in request.changes {
         validate_incoming_change(&change).map_err(invalid_sync_change)?;

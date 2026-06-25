@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde_json::json;
-use sqlx::{Connection as _, SqliteConnection};
+use sqlx::SqliteConnection;
 use tracing::info;
 
 use crate::config;
 use crate::config_edit::{self, ProjectPathMappingEdit};
-use crate::db::insert_change;
+use crate::db::{begin_immediate, insert_change};
 use crate::ids::now;
 use crate::labels::normalize_label;
 use crate::projects::{
@@ -144,7 +144,7 @@ pub(crate) async fn delete_project_operation(
     let project = resolve_existing_project_in_workspace(conn, &workspace.id, project).await?;
     let config_mapping =
         project_has_config_mapping(&workspace.id, &workspace.key, &project.key).unwrap_or(false);
-    let mut tx = conn.begin().await?;
+    let mut tx = begin_immediate(conn).await?;
     let task_refs: i64 =
         sqlx::query_scalar("SELECT count(*) FROM tasks WHERE workspace_id = ? AND project_id = ?")
             .bind(&project.workspace_id)

@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use sqlx::{Connection as _, Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
 
 use crate::ids::{new_id, now};
 use crate::types::Task;
@@ -179,6 +179,12 @@ pub(crate) async fn set_meta(conn: &mut SqliteConnection, key: &str, value: &str
     .execute(&mut *conn)
     .await?;
     Ok(())
+}
+
+pub(crate) async fn begin_immediate(
+    conn: &mut SqliteConnection,
+) -> sqlx::Result<Transaction<'_, Sqlite>> {
+    conn.begin_with("BEGIN IMMEDIATE").await
 }
 
 async fn insert_meta_if_missing(conn: &mut SqliteConnection, key: &str, value: &str) -> Result<()> {

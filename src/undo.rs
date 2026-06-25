@@ -1,9 +1,11 @@
 use std::collections::BTreeSet;
 
 use anyhow::{Result, bail, ensure};
-use sqlx::{Connection as _, Row, SqliteConnection};
+use sqlx::{Row, SqliteConnection};
 
-use crate::db::{conflict_exists, field_version, insert_change, set_field_version};
+use crate::db::{
+    begin_immediate, conflict_exists, field_version, insert_change, set_field_version,
+};
 use crate::ids::{new_id, now};
 use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
 use crate::operations::update_task_labels_in_workspace;
@@ -261,7 +263,7 @@ pub(crate) async fn apply_latest_tui_undo(
     conn: &mut SqliteConnection,
     workspace_id: &str,
 ) -> Result<Option<UndoOutcome>> {
-    let mut tx = conn.begin().await?;
+    let mut tx = begin_immediate(conn).await?;
     let row = sqlx::query(
         "SELECT id, summary, payload FROM tui_undo_entries
          WHERE workspace_id = ? AND undone_at IS NULL

@@ -1,10 +1,10 @@
 use anyhow::Result;
 use serde_json::json;
-use sqlx::{Connection as _, SqliteConnection};
+use sqlx::SqliteConnection;
 use tracing::info;
 
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
-use crate::db::{insert_change, set_field_version};
+use crate::db::{begin_immediate, insert_change, set_field_version};
 use crate::ids::{new_id, now};
 use crate::labels::resolve_labels_in_workspace;
 use crate::mutation::{set_task_field, set_task_project};
@@ -69,7 +69,7 @@ pub(crate) async fn create_task_in_workspace(
     validate_choice("priority", &draft.priority, PRIORITIES)?;
     let id = new_id();
     let ts = now();
-    let mut tx = conn.begin().await?;
+    let mut tx = begin_immediate(conn).await?;
     let workspace = crate::workspaces::workspace_for_id(&mut tx, workspace_id).await?;
     let project =
         resolve_project_for_add_in_workspace(&mut tx, &workspace.id, draft.project.as_deref())
@@ -152,7 +152,7 @@ pub(crate) async fn update_task(
         validate_choice("priority", priority, PRIORITIES)?;
     }
     let mut changed = false;
-    let mut tx = conn.begin().await?;
+    let mut tx = begin_immediate(conn).await?;
     if let Some(title) = update.title {
         update_task_field(&mut tx, task_id, "title", &title).await?;
         changed = true;
@@ -314,7 +314,7 @@ pub(crate) async fn add_note(
     let note_id = new_id();
     let workspace = crate::workspaces::active_workspace();
     let ts = now();
-    let mut tx = conn.begin().await?;
+    let mut tx = begin_immediate(conn).await?;
     let change_id = insert_change(
         &mut tx,
         "task",

@@ -1,9 +1,9 @@
 use anyhow::{Result, bail};
 use serde_json::json;
-use sqlx::{Connection as _, Row, SqliteConnection};
+use sqlx::{Row, SqliteConnection};
 use tracing::info;
 
-use crate::db::{insert_change, set_field_version};
+use crate::db::{begin_immediate, insert_change, set_field_version};
 use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
 use crate::projects::{
     resolve_existing_project_in_workspace, resolve_project_for_add_in_workspace,
@@ -160,7 +160,7 @@ pub(crate) async fn resolve_conflict(
     value: &str,
 ) -> Result<ConflictOutcome> {
     let workspace = crate::workspaces::active_workspace();
-    let mut tx = conn.begin().await?;
+    let mut tx = begin_immediate(conn).await?;
     let result = sqlx::query(
         "UPDATE conflicts SET resolved = 1 WHERE workspace_id = ? AND task_id = ? AND field = ? AND resolved = 0",
     )

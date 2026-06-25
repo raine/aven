@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use sqlx::{Connection as _, SqliteConnection};
+use sqlx::SqliteConnection;
 use tracing::info;
 
 use super::apply::apply_remote_change;
@@ -11,7 +11,7 @@ use super::wire::{
 };
 use crate::cli::SyncArgs;
 use crate::config;
-use crate::db::{get_meta, set_meta};
+use crate::db::{begin_immediate, get_meta, set_meta};
 use crate::ids::now;
 
 #[derive(Debug, Clone, Copy)]
@@ -91,7 +91,7 @@ async fn run_sync_once_inner(
         .await?;
     validate_sync_protocol_version(SYNC_PROTOCOL_VERSION, response.protocol_version)?;
     let mut applied = 0;
-    let mut tx = conn.begin().await?;
+    let mut tx = begin_immediate(conn).await?;
     for change in &response.changes {
         if change_exists(&mut tx, &change.change_id).await? {
             update_change_server_seq(&mut tx, &change.change_id, change.server_seq).await?;
