@@ -135,7 +135,7 @@ pub(crate) fn handle_generic_overlay_key(
         OverlayState::DatabaseStats { stats, mut scroll } => match key.code {
             KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
             KeyCode::Char('j') | KeyCode::Down => {
-                scroll = scroll.saturating_add(1);
+                scroll = scroll.saturating_add(1).min(help_scroll_cap);
                 OverlayOutcome::None(OverlayState::DatabaseStats { stats, scroll })
             }
             KeyCode::Char('k') | KeyCode::Up => {

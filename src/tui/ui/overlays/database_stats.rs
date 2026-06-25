@@ -14,10 +14,11 @@ pub(in crate::tui::ui) fn render_database_stats(
     stats: &TuiDatabaseStats,
     scroll: u16,
 ) {
-    let width = frame.area().width.saturating_sub(8).clamp(72, 104);
+    let width = frame.area().width.saturating_sub(8).clamp(72, 86);
     let lines = database_stats_lines(stats);
-    let height = frame.area().height.saturating_sub(2).clamp(12, 28);
-    let visible_rows = height.saturating_sub(2) as usize;
+    let height = frame.area().height.saturating_sub(1).clamp(12, 30);
+    let content_rows = height.saturating_sub(2);
+    let visible_rows = content_rows.saturating_sub(2) as usize;
     let start = scroll_start(scroll, lines.len(), visible_rows);
     let visible = lines
         .iter()
@@ -32,12 +33,29 @@ pub(in crate::tui::ui) fn render_database_stats(
         Dialog::new(DATABASE_STATS_TITLE, width, height)
     };
     let content = dialog.render_block(frame);
+    let stats_area = Rect {
+        height: content.height.saturating_sub(2),
+        ..content
+    };
+    let hint_area = Rect {
+        y: content.y + content.height.saturating_sub(1),
+        height: 1,
+        ..content
+    };
 
     frame.render_widget(
         Paragraph::new(Text::from(visible)).style(Style::new().fg(FG).bg(BG_ALT)),
-        content,
+        stats_area,
     );
-    render_scrollbar(frame, content, lines.len(), scroll);
+    frame.render_widget(
+        Paragraph::new(dialog_hint_line(&[
+            ("j/k", "scroll"),
+            ("Enter/Esc", "close"),
+        ]))
+        .style(Style::new().fg(FG).bg(BG_ALT)),
+        hint_area,
+    );
+    render_scrollbar(frame, stats_area, lines.len(), scroll);
 }
 
 fn database_stats_lines(stats: &TuiDatabaseStats) -> Vec<Line<'static>> {
@@ -231,10 +249,6 @@ fn database_stats_lines(stats: &TuiDatabaseStats) -> Vec<Line<'static>> {
             lines.push(Line::from(""));
         }
     }
-    lines.push(dialog_hint_line(&[
-        ("j/k", "scroll"),
-        ("Enter/Esc", "close"),
-    ]));
     lines
 }
 
@@ -321,11 +335,11 @@ fn scroll_start(scroll: u16, content_height: usize, visible_rows: usize) -> usiz
 }
 
 fn scrollbar_position(start: usize, content_height: usize, visible_rows: usize) -> usize {
-    if content_height <= visible_rows {
-        0
-    } else {
-        start * content_height.saturating_sub(visible_rows) / content_height.saturating_sub(1)
-    }
+    let max_start = content_height.saturating_sub(visible_rows);
+    start
+        .saturating_mul(content_height.saturating_sub(1))
+        .checked_div(max_start)
+        .unwrap_or(0)
 }
 
 fn scroll_title(scroll: u16, content_height: usize, visible_rows: usize) -> Option<String> {
@@ -335,8 +349,21 @@ fn scroll_title(scroll: u16, content_height: usize, visible_rows: usize) -> Opti
     let total = content_height
         .saturating_sub(visible_rows)
         .saturating_add(1);
-    let current = (scroll as usize).saturating_add(1).min(total);
+    let current = scroll_start(scroll, content_height, visible_rows)
+        .saturating_add(1)
+        .min(total);
     Some(format!(" {current}/{total} "))
+}
+
+pub(crate) fn database_stats_scroll_cap(frame_height: u16) -> u16 {
+    let content_rows = frame_height
+        .saturating_sub(1)
+        .clamp(12, 30)
+        .saturating_sub(2);
+    let visible_rows = content_rows.saturating_sub(2) as usize;
+    database_stats_lines(&TuiDatabaseStats::default())
+        .len()
+        .saturating_sub(visible_rows) as u16
 }
 
 fn format_bytes(bytes: i64) -> String {

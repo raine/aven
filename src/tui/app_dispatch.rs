@@ -13,7 +13,7 @@ use crate::tui::navigation::{detail_task_delta, handle_detail_overlay_key};
 use crate::tui::overlay::{CommandState, OverlayOutcome, OverlayRoute, OverlayState};
 use crate::tui::platform::is_editor_prefix_key;
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
-use crate::tui::ui::{detail_help_scroll_cap, help_scroll_cap};
+use crate::tui::ui::{database_stats_scroll_cap, detail_help_scroll_cap, help_scroll_cap};
 
 impl App {
     pub(super) fn dispatch_paste(&mut self, text: &str) {
@@ -281,6 +281,7 @@ impl App {
 
         let scroll_cap = match overlay {
             OverlayState::DetailHelp { .. } => detail_help_scroll_cap(terminal_size.height),
+            OverlayState::DatabaseStats { .. } => database_stats_scroll_cap(terminal_size.height),
             _ => help_scroll_cap(terminal_size.height),
         };
         let was_detail_help = matches!(overlay, OverlayState::DetailHelp { .. });

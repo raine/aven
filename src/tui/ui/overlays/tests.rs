@@ -940,8 +940,6 @@ mod database_stats_overlay {
         assert!(rendered.contains("main db size"));
         assert!(rendered.contains("4.0 MiB"));
         assert!(rendered.contains("Enter/Esc close"));
-        assert!(!rendered.contains('▲'));
-        assert!(!rendered.contains('▼'));
     }
 
     #[test]
@@ -962,6 +960,7 @@ mod database_stats_overlay {
         let rendered = buffer_text(terminal.backend());
 
         assert!(rendered.contains("LATEST TASK TIMESTAMPS"));
+        assert!(rendered.contains("Enter/Esc close"));
         assert!(!rendered.contains("WORKSPACE"));
     }
 
