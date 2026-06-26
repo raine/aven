@@ -19,7 +19,7 @@ use crate::tui::platform::is_editor_prefix_key;
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
 use crate::tui::ui::{
     database_stats_scroll_cap, detail_help_scroll_cap, help_scroll_cap, task_at_position,
-    text_panel_scroll_cap,
+    task_status_at_position, text_panel_scroll_cap,
 };
 
 impl App {
@@ -75,6 +75,11 @@ impl App {
                 return self.handle_task_list_wheel(-1, terminal_size).await;
             }
             MouseEventKind::Down(MouseButton::Left) => {}
+            MouseEventKind::Down(MouseButton::Right) => {
+                return self
+                    .handle_task_status_right_click(mouse, terminal_size)
+                    .await;
+            }
             _ => return Ok(()),
         }
 
@@ -232,6 +237,34 @@ impl App {
                 body.height,
             )
         }
+    }
+
+    async fn handle_task_status_right_click(
+        &mut self,
+        mouse: MouseEvent,
+        terminal_size: Size,
+    ) -> Result<()> {
+        self.last_task_click = None;
+        if self.overlay.is_some() || terminal_size.width < 70 || terminal_size.height < 18 {
+            return Ok(());
+        }
+        if Self::sidebar_contains_mouse(terminal_size, self.focus, mouse.column, mouse.row) {
+            return Ok(());
+        }
+        let Some(hit) = task_status_at_position(
+            &self.store,
+            &self.widgets.table,
+            Self::task_area_for_mouse(terminal_size),
+            mouse.column,
+            mouse.row,
+        ) else {
+            return Ok(());
+        };
+
+        self.focus = Focus::Tasks;
+        self.widgets.table.select(Some(hit.task_index));
+        self.show_status_menu(mouse.column, mouse.row);
+        Ok(())
     }
 
     fn sidebar_contains_mouse(terminal_size: Size, focus: Focus, column: u16, row: u16) -> bool {

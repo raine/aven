@@ -146,6 +146,15 @@ fn left_click(column: u16, row: u16) -> MouseEvent {
     click_at(column, row)
 }
 
+fn right_click(column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
 fn wheel_down(column: u16, row: u16) -> MouseEvent {
     MouseEvent {
         kind: MouseEventKind::ScrollDown,
@@ -1614,6 +1623,23 @@ mod task_row_mouse {
         task_row_click(task_area.x + 1, task_area.y + 1 + viewport_row)
     }
 
+    fn status_right_click_event(app: &App, size: (u16, u16), task_index: usize) -> MouseEvent {
+        let task_area = task_list_area(size);
+        let table = &app.widgets.table;
+        for row in task_area.y..task_area.y.saturating_add(task_area.height) {
+            for column in task_area.x..task_area.x.saturating_add(task_area.width) {
+                if crate::tui::ui::task_status_at_position(
+                    &app.store, table, task_area, column, row,
+                )
+                .is_some_and(|hit| hit.task_index == task_index)
+                {
+                    return right_click(column, row);
+                }
+            }
+        }
+        panic!("expected status hit target");
+    }
+
     #[tokio::test]
     async fn task_row_click_selects_task() {
         let mut app = test_app().await;
@@ -1625,6 +1651,68 @@ mod task_row_mouse {
         assert_eq!(app.widgets.table.selected(), Some(0));
         assert_eq!(app.focus, Focus::Tasks);
         assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn status_right_click_opens_status_menu_for_clicked_task() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("task one")).await;
+        create_and_select_task(&mut app, test_task_draft("task two")).await;
+        app.widgets.table.select(Some(1));
+
+        let click = status_right_click_event(&app, (140, 24), 0);
+        app.dispatch_mouse(click, (140, 24).into()).await.unwrap();
+
+        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.focus, Focus::Tasks);
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::HeaderMenu(state))
+                if state.kind == crate::tui::overlay::HeaderMenuKind::Status
+                    && state.column == click.column
+                    && state.row == click.row
+                    && state.items.iter().any(|item| item.label == "inbox" && item.selected)
+        ));
+    }
+
+    #[tokio::test]
+    async fn status_right_click_ignores_non_status_columns() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("task one")).await;
+        create_and_select_task(&mut app, test_task_draft("task two")).await;
+        app.widgets.table.select(Some(1));
+
+        let click = row_column_task_click_event((140, 24), 1);
+        app.dispatch_mouse(right_click(click.column, click.row), (140, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.widgets.table.selected(), Some(1));
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn status_right_click_reuses_status_update_and_undo() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("task one")).await;
+
+        let size = (140, 24).into();
+        let click = status_right_click_event(&app, (140, 24), 0);
+        app.dispatch_mouse(click, size).await.unwrap();
+        let Some(OverlayState::HeaderMenu(state)) = app.overlay.as_ref() else {
+            panic!("expected status menu");
+        };
+        let area = state.area(size.width, size.height);
+        app.dispatch_mouse(left_click(area.x + 1, area.y + 4), size)
+            .await
+            .unwrap();
+
+        assert_eq!(app.store.tasks[0].task.status, "active");
+        assert!(toast_message(&app).is_some_and(|message| message.ends_with("status=active")));
+
+        app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
+        assert_eq!(app.store.tasks[0].task.status, "inbox");
+        assert!(app.message.as_ref().unwrap().message.contains("undid"));
     }
 
     #[tokio::test]

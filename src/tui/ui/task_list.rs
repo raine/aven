@@ -220,6 +220,27 @@ pub(crate) fn task_at_position(
     let table_area = task_list_areas(area).table_area;
     let view = TaskListView::new(store);
     let candidate = task_list_hit_in_view(&view, table_state, table_area, column, row)?;
+    task_list_hit(store, candidate)
+}
+
+pub(crate) fn task_status_at_position(
+    store: &TuiStore,
+    table_state: &TableState,
+    area: Rect,
+    column: u16,
+    row: u16,
+) -> Option<TaskListHit> {
+    let table_area = task_list_areas(area).table_area;
+    let view = TaskListView::new(store);
+    let candidate = task_list_hit_in_view(&view, table_state, table_area, column, row)?;
+    let status_area = task_list_status_area(store, table_area, candidate.viewport_row);
+    if column < status_area.x || column >= status_area.x.saturating_add(status_area.width) {
+        return None;
+    }
+    task_list_hit(store, candidate)
+}
+
+fn task_list_hit(store: &TuiStore, candidate: TaskListHitCandidate) -> Option<TaskListHit> {
     let task_id = store
         .tasks
         .get(candidate.task_index)
@@ -229,6 +250,17 @@ pub(crate) fn task_at_position(
         task_id,
         viewport_row: candidate.viewport_row,
     })
+}
+
+fn task_list_status_area(store: &TuiStore, table_area: Rect, visual_row: u16) -> Rect {
+    let columns = task_list_columns(store, table_area.width < 90);
+    let row_area = Rect::new(
+        table_area.x,
+        table_area.y.saturating_add(1).saturating_add(visual_row),
+        table_area.width,
+        1,
+    );
+    Layout::horizontal(columns).areas::<7>(row_area)[4]
 }
 
 pub(super) fn render_tasks(
@@ -754,6 +786,7 @@ fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::operations::TaskDraft;
     use crate::queue::QueueBand;
     use crate::tui::overlay::OverlayRoute;
     use ratatui::Terminal;
@@ -834,6 +867,32 @@ mod tests {
 
     fn task_id(task: &mut TaskListItem, id: &str) {
         task.task.id = id.to_string();
+    }
+
+    async fn test_store_with_tasks(tasks: Vec<TaskListItem>) -> TuiStore {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let workspace = crate::workspaces::ensure_default_workspace(&mut conn)
+            .await
+            .unwrap();
+        crate::workspaces::set_active_workspace(workspace);
+        drop(conn);
+        let mut store = TuiStore::new(pool).await.unwrap();
+        for item in tasks {
+            let draft = TaskDraft {
+                title: item.task.title,
+                description: item.task.description,
+                project: None,
+                status: item.task.status,
+                priority: item.task.priority,
+                labels: Vec::new(),
+            };
+            store.create_task(draft, None).await.unwrap();
+        }
+        store
     }
 
     #[test]
@@ -1047,6 +1106,47 @@ mod tests {
         let hit = task_list_hit_in_view(&view, &table_state, Rect::new(0, 0, 80, 5), 79, 4);
 
         assert!(hit.is_none());
+    }
+
+    #[tokio::test]
+    async fn task_status_at_position_only_hits_status_column() {
+        let store = test_store_with_tasks(vec![task_item("task")]).await;
+        let table_state = TableState::default();
+        let area = Rect::new(0, 0, 140, 10);
+        let task_id = store.tasks[0].task.id.clone();
+
+        let status_area = task_list_status_area(&store, area, 1);
+        let hit = task_status_at_position(&store, &table_state, area, status_area.x, 2).unwrap();
+        assert_eq!(hit.task_index, 0);
+        assert_eq!(hit.task_id, task_id);
+
+        assert!(
+            task_status_at_position(&store, &table_state, area, status_area.x - 1, 2).is_none()
+        );
+        assert!(
+            task_status_at_position(
+                &store,
+                &table_state,
+                area,
+                status_area.x.saturating_add(status_area.width),
+                2
+            )
+            .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn task_status_at_position_respects_wide_sidebar_offset() {
+        let store = test_store_with_tasks(vec![task_item("task")]).await;
+        let table_state = TableState::default();
+        let area = Rect::new(26, 2, 114, 18);
+        let task_id = store.tasks[0].task.id.clone();
+
+        let status_area = task_list_status_area(&store, area, 1);
+        let hit = task_status_at_position(&store, &table_state, area, status_area.x, 4).unwrap();
+
+        assert_eq!(hit.task_index, 0);
+        assert_eq!(hit.task_id, task_id);
     }
 
     #[test]
