@@ -1,4 +1,8 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+pub(super) const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(120);
+pub(super) const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const TOAST_TTL: Duration = Duration::from_secs(4);
 
 use anyhow::Result;
 use crossterm::event::{
@@ -50,12 +54,36 @@ impl App {
     }
 
     async fn run_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+        let mut needs_redraw = true;
         while !self.should_quit {
-            self.poll_pending_task_intake().await?;
-            let view = self.view();
-            terminal.draw(|frame| ui::render(frame, &self.store, &mut self.widgets, &view))?;
+            if self.poll_pending_task_intake().await? {
+                needs_redraw = true;
+            }
 
-            if event::poll(Duration::from_millis(120))? {
+            if self.refresh_is_due() {
+                match self.refresh().await {
+                    Ok(()) => needs_redraw = true,
+                    Err(error) => {
+                        self.set_error(format!("refresh failed: {error:#}"));
+                        needs_redraw = true;
+                    }
+                }
+                self.schedule_next_refresh();
+            }
+
+            if self.clear_expired_message() {
+                needs_redraw = true;
+            }
+
+            if needs_redraw {
+                let view = self.view();
+                terminal.draw(|frame| ui::render(frame, &self.store, &mut self.widgets, &view))?;
+                needs_redraw = false;
+            }
+
+            let timeout = self.next_poll_timeout();
+            if event::poll(timeout)? {
+                needs_redraw = true;
                 match event::read()? {
                     Event::Key(key) => {
                         let result = self.dispatch_key(key, terminal.size()?).await;
@@ -76,15 +104,9 @@ impl App {
                     }
                     _ => {}
                 }
+            } else if self.has_time_based_redraw() {
+                needs_redraw = true;
             }
-
-            if self.store.last_refresh.elapsed() >= Duration::from_secs(5)
-                && let Err(error) = self.refresh().await
-            {
-                self.set_error(format!("refresh failed: {error:#}"));
-            }
-
-            self.clear_expired_message();
         }
         Ok(())
     }
@@ -137,13 +159,51 @@ impl App {
         Ok(())
     }
 
-    fn clear_expired_message(&mut self) {
+    pub(super) fn clear_expired_message(&mut self) -> bool {
         if self
             .message_at
-            .is_some_and(|time| time.elapsed() >= Duration::from_secs(4))
+            .is_some_and(|time| time.elapsed() >= TOAST_TTL)
         {
             self.message = None;
             self.message_at = None;
+            return true;
         }
+        false
+    }
+
+    pub(super) fn has_time_based_redraw(&self) -> bool {
+        self.loading.is_some() || self.message_at.is_some() || self.refresh_is_due()
+    }
+
+    pub(super) fn next_poll_timeout(&self) -> Duration {
+        let mut timeout = self.refresh_timeout();
+
+        if let Some(message_at) = self.message_at {
+            timeout = timeout.min(
+                TOAST_TTL
+                    .checked_sub(message_at.elapsed())
+                    .unwrap_or_default(),
+            );
+        }
+
+        if self.loading.is_some() || self.pending_task_intake.is_some() {
+            timeout = timeout.min(INPUT_POLL_INTERVAL);
+        }
+
+        timeout
+    }
+
+    pub(super) fn refresh_is_due(&self) -> bool {
+        Instant::now() >= self.next_refresh_at
+    }
+
+    pub(super) fn refresh_timeout(&self) -> Duration {
+        self.next_refresh_at
+            .checked_duration_since(Instant::now())
+            .unwrap_or_default()
+    }
+
+    pub(super) fn schedule_next_refresh(&mut self) {
+        self.next_refresh_at = Instant::now() + REFRESH_INTERVAL;
     }
 }

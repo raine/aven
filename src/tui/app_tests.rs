@@ -2069,6 +2069,106 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn idle_poll_timeout_uses_refresh_deadline() {
+        let app = test_app().await;
+
+        let timeout = app.next_poll_timeout();
+
+        assert!(timeout <= std::time::Duration::from_secs(5));
+        assert!(timeout > std::time::Duration::from_secs(4));
+        assert!(!app.has_time_based_redraw());
+    }
+
+    #[tokio::test]
+    async fn refresh_attempt_schedules_next_deadline() {
+        let mut app = test_app().await;
+        app.next_refresh_at = std::time::Instant::now() - std::time::Duration::from_secs(1);
+
+        assert!(app.refresh_is_due());
+        app.schedule_next_refresh();
+
+        assert!(!app.refresh_is_due());
+        assert!(app.refresh_timeout() <= std::time::Duration::from_secs(5));
+        assert!(app.refresh_timeout() > std::time::Duration::from_secs(4));
+    }
+
+    #[tokio::test]
+    async fn loading_poll_timeout_uses_spinner_cadence() {
+        let mut app = test_app().await;
+        app.loading = Some(LoadingState::new("parsing task with LLM"));
+
+        assert_eq!(
+            app.next_poll_timeout(),
+            std::time::Duration::from_millis(120)
+        );
+        assert!(app.has_time_based_redraw());
+    }
+
+    #[tokio::test]
+    async fn toast_expiry_clears_message_once() {
+        let mut app = test_app().await;
+        app.set_success("created task APP-TEST");
+        let first_timeout = app.next_poll_timeout();
+        app.message_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(5));
+
+        assert!(first_timeout <= std::time::Duration::from_secs(4));
+        assert!(app.clear_expired_message());
+        assert!(app.message.is_none());
+        assert!(!app.clear_expired_message());
+    }
+
+    #[tokio::test]
+    async fn unfinished_task_intake_poll_does_not_request_redraw() {
+        let mut app = test_app().await;
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            Ok(test_task_draft("pending task"))
+        });
+        app.loading = Some(LoadingState::new("adding task with LLM"));
+        app.pending_task_intake = Some(PendingTaskIntake {
+            handle,
+            retry: NaturalRetry::AddTask,
+            value: "pending task".to_string(),
+            create_on_success: true,
+        });
+
+        assert!(!app.poll_pending_task_intake().await.unwrap());
+        let pending = app.pending_task_intake.take().unwrap();
+        pending.handle.abort();
+    }
+
+    #[tokio::test]
+    async fn finished_task_intake_poll_requests_redraw() {
+        let mut app = test_app().await;
+        let handle = tokio::spawn(async { Ok(test_task_draft("ready task")) });
+        app.loading = Some(LoadingState::new("adding task with LLM"));
+        app.pending_task_intake = Some(PendingTaskIntake {
+            handle,
+            retry: NaturalRetry::AddTask,
+            value: "ready task".to_string(),
+            create_on_success: true,
+        });
+
+        for _ in 0..100 {
+            if app
+                .pending_task_intake
+                .as_ref()
+                .unwrap()
+                .handle
+                .is_finished()
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+
+        assert!(app.poll_pending_task_intake().await.unwrap());
+        assert!(app.pending_task_intake.is_none());
+        assert!(app.loading.is_none());
+        assert!(toast_message(&app).is_some_and(|message| message.starts_with("created task ")));
+    }
+
+    #[tokio::test]
     async fn add_task_ctrl_n_creates_task_in_background_in_full_tui() {
         let mut app = test_app().await;
         configure_task_intake(

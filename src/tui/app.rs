@@ -114,6 +114,7 @@ pub(crate) struct App {
     pub(super) add_task_config: AppConfig,
     pub(super) loading: Option<LoadingState>,
     pub(super) pending_task_intake: Option<PendingTaskIntake>,
+    pub(super) next_refresh_at: Instant,
     pub(crate) last_task_click: Option<TaskRowClick>,
 }
 
@@ -134,6 +135,7 @@ impl App {
     }
 
     fn new_with_store(store: TuiStore) -> Result<Self> {
+        let next_refresh_at = store.last_refresh + crate::tui::app_lifecycle::REFRESH_INTERVAL;
         let mut app = Self {
             store,
             should_quit: false,
@@ -158,6 +160,7 @@ impl App {
             add_task_config: AppConfig::default(),
             loading: None,
             pending_task_intake: None,
+            next_refresh_at,
             last_task_click: None,
         };
         app.widgets.sidebar.select(app.store.sidebar_selection());
@@ -598,12 +601,12 @@ impl App {
         Ok(())
     }
 
-    pub(super) async fn poll_pending_task_intake(&mut self) -> Result<()> {
+    pub(super) async fn poll_pending_task_intake(&mut self) -> Result<bool> {
         let Some(pending) = self
             .pending_task_intake
             .take_if(|pending| pending.handle.is_finished())
         else {
-            return Ok(());
+            return Ok(false);
         };
         self.loading = None;
         match pending.handle.await? {
@@ -628,7 +631,7 @@ impl App {
                 self.retry_add_task_natural(pending.value, pending.retry);
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     fn retry_add_task_natural(&mut self, value: String, retry: NaturalRetry) {
