@@ -422,9 +422,33 @@ fn header_menu_line(
             Span::styled(name.to_string(), row_style),
         ]);
     } else {
-        spans.push(Span::styled(label.to_string(), row_style));
+        spans.push(Span::styled(
+            label.to_string(),
+            header_menu_label_style(kind, label, row_style, selected),
+        ));
     }
     Line::from(spans)
+}
+
+fn header_menu_label_style(
+    kind: HeaderMenuKind,
+    label: &str,
+    row_style: Style,
+    selected: bool,
+) -> Style {
+    if matches!(kind, HeaderMenuKind::View)
+        && matches!(label, "active" | "todo" | "inbox" | "backlog" | "done")
+    {
+        let bg = row_style.bg.unwrap_or(BG_PANEL);
+        let style = crate::tui::theme::status_style(label).bg(bg);
+        if selected {
+            style.add_modifier(Modifier::BOLD)
+        } else {
+            style
+        }
+    } else {
+        row_style
+    }
 }
 
 fn project_prefix_and_name(label: &str) -> Option<(&str, &str)> {
