@@ -198,10 +198,9 @@ fn task_list_hit_in_view(
         return None;
     }
 
-    let row_index = scroll.saturating_add(visual_row);
-    let viewport_row = row_index.saturating_sub(scroll);
-    let row = view.rows.get(row_index)?;
-    let viewport_row = u16::try_from(viewport_row).ok()?;
+    let viewport_rows = task_list_visible_rows(view, scroll, viewport_rows);
+    let (_, row) = *viewport_rows.get(visual_row)?;
+    let viewport_row = u16::try_from(visual_row).ok()?;
     match row {
         TaskListRow::Task { task_index } => Some(TaskListHitCandidate {
             task_index: *task_index,
@@ -338,7 +337,7 @@ fn build_task_list_render_model(
         row_areas.get(1).map_or(area.width, |area| area.width),
     );
     let mut rows = Vec::new();
-    for row in view.rows.iter().skip(scroll).take(viewport_rows) {
+    for (_, row) in task_list_visible_rows(&view, scroll, viewport_rows) {
         match row {
             TaskListRow::Group(group) => rows.push(TaskListRenderRow::Group(*group)),
             TaskListRow::Task { task_index } => {
@@ -402,6 +401,27 @@ fn task_list_column_widths(columns: &[Constraint; 7], width: u16) -> [usize; 7] 
         cells[5].width as usize,
         cells[6].width as usize,
     ]
+}
+
+fn task_list_visible_rows(
+    view: &TaskListView,
+    scroll: usize,
+    viewport_rows: usize,
+) -> Vec<(usize, &TaskListRow)> {
+    let mut rows = Vec::new();
+    if let Some(TaskListRow::Task { .. }) = view.rows.get(scroll)
+        && let Some(group @ TaskListRow::Group(_)) = view.rows.get(scroll.saturating_sub(1))
+    {
+        rows.push((scroll.saturating_sub(1), group));
+    }
+    rows.extend(
+        view.rows
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .take(viewport_rows.saturating_sub(rows.len())),
+    );
+    rows
 }
 
 fn task_list_scroll(
@@ -916,6 +936,51 @@ mod tests {
         assert_eq!(view.visual_row(0), 1);
         assert_eq!(view.visual_row(1), 3);
         assert_eq!(view.visual_row(2), 4);
+    }
+
+    #[test]
+    fn queue_view_keeps_group_header_with_first_visible_task() {
+        let tasks = vec![
+            task_item_with("todo high", "todo", QueueBand::Focus),
+            task_item_with("inbox", "inbox", QueueBand::Triage),
+            task_item_with("todo medium", "todo", QueueBand::Triage),
+        ];
+        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks);
+
+        assert_eq!(
+            task_list_visible_rows(&view, 1, 3),
+            vec![
+                (
+                    0,
+                    &TaskListRow::Group(TaskGroupRow {
+                        label: "focus",
+                        count: 1
+                    })
+                ),
+                (1, &TaskListRow::Task { task_index: 0 }),
+                (
+                    2,
+                    &TaskListRow::Group(TaskGroupRow {
+                        label: "triage",
+                        count: 2
+                    })
+                ),
+            ]
+        );
+        assert_eq!(
+            task_list_visible_rows(&view, 3, 3),
+            vec![
+                (
+                    2,
+                    &TaskListRow::Group(TaskGroupRow {
+                        label: "triage",
+                        count: 2
+                    })
+                ),
+                (3, &TaskListRow::Task { task_index: 1 }),
+                (4, &TaskListRow::Task { task_index: 2 }),
+            ]
+        );
     }
 
     #[test]
