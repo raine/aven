@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tokio::task::JoinHandle;
 
@@ -34,6 +34,14 @@ const DELETE_PROJECT_TITLE: &str = "Delete project";
 const DELETE_TASK_TITLE: &str = "Delete task";
 const ADD_LABEL_TITLE: &str = "Add label";
 const ADD_TASK_NATURAL_TITLE: &str = "Add task: natural language";
+pub(crate) const TASK_ROW_DOUBLE_CLICK: Duration = Duration::from_millis(500);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TaskRowClick {
+    pub(crate) task_id: String,
+    pub(crate) viewport_row: u16,
+    pub(crate) at: Instant,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TaskRefKind {
@@ -106,6 +114,7 @@ pub(crate) struct App {
     pub(super) add_task_config: AppConfig,
     pub(super) loading: Option<LoadingState>,
     pub(super) pending_task_intake: Option<PendingTaskIntake>,
+    pub(crate) last_task_click: Option<TaskRowClick>,
 }
 
 impl App {
@@ -149,6 +158,7 @@ impl App {
             add_task_config: AppConfig::default(),
             loading: None,
             pending_task_intake: None,
+            last_task_click: None,
         };
         app.widgets.sidebar.select(app.store.sidebar_selection());
         app.widgets

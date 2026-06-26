@@ -138,6 +138,10 @@ fn mouse_wheel(kind: MouseEventKind) -> MouseEvent {
     }
 }
 
+fn task_row_click(column: u16, row: u16) -> MouseEvent {
+    click_at(column, row)
+}
+
 #[tokio::test]
 async fn sidebar_click_selects_project_scope_in_wide_layout() {
     let mut app = test_app().await;
@@ -1395,6 +1399,146 @@ mod filters_and_workspaces {
             .await
             .unwrap();
         assert_eq!(app.widgets.table.selected(), Some(0));
+    }
+}
+
+mod task_row_mouse {
+    use super::*;
+    use ratatui::layout::Rect;
+
+    fn task_list_area(size: (u16, u16)) -> Rect {
+        let (width, height) = size;
+        let body = Rect::new(0, 2, width, height.saturating_sub(4));
+        if body.width < 100 {
+            body
+        } else {
+            let sidebar_width = body.width.min(26);
+            Rect::new(
+                sidebar_width,
+                body.y,
+                body.width.saturating_sub(sidebar_width),
+                body.height,
+            )
+        }
+    }
+
+    fn row_column_task_click_event(size: (u16, u16), viewport_row: u16) -> MouseEvent {
+        let task_area = task_list_area(size);
+        task_row_click(task_area.x + 1, task_area.y + 1 + viewport_row)
+    }
+
+    #[tokio::test]
+    async fn task_row_click_selects_task() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("task one")).await;
+
+        let click = row_column_task_click_event((80, 24), 1);
+        app.dispatch_mouse(click, (80, 24).into()).await.unwrap();
+
+        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.focus, Focus::Tasks);
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn task_row_click_opens_detail_on_double_click() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("task one")).await;
+
+        let click = row_column_task_click_event((80, 24), 1);
+        app.dispatch_mouse(click, (80, 24).into()).await.unwrap();
+        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert!(app.overlay.is_none());
+        assert!(app.last_task_click.is_some());
+
+        app.dispatch_mouse(click, (80, 24).into()).await.unwrap();
+        assert!(app.last_task_click.is_none());
+        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn task_row_click_wide_layout_respects_sidebar_offset() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("task one")).await;
+        create_and_select_task(&mut app, test_task_draft("task two")).await;
+        app.widgets.table.select(Some(1));
+        app.focus = Focus::Tasks;
+
+        let sidebar = crate::tui::ui::sidebar_layout(Rect::new(0, 0, 140, 24), Focus::Tasks)
+            .unwrap()
+            .sidebar;
+        let sidebar_click = task_row_click(
+            sidebar.x.saturating_add(sidebar.width).saturating_sub(1),
+            sidebar.y + 2,
+        );
+        app.dispatch_mouse(sidebar_click, (140, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(app.widgets.table.selected(), Some(1));
+        assert_eq!(app.focus, Focus::Tasks);
+
+        let click = row_column_task_click_event((140, 24), 1);
+        app.dispatch_mouse(click, (140, 24).into()).await.unwrap();
+
+        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.focus, Focus::Tasks);
+    }
+
+    #[tokio::test]
+    async fn task_row_click_preview_area_miss_is_ignored() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("task one")).await;
+        create_and_select_task(&mut app, test_task_draft("task two")).await;
+        app.widgets.table.select(Some(1));
+
+        let task_area = task_list_area((140, 40));
+        let preview_row = task_area.y + task_area.height.saturating_sub(3);
+        let click = task_row_click(task_area.x + 1, preview_row);
+        app.dispatch_mouse(click, (140, 40).into()).await.unwrap();
+
+        assert_eq!(app.widgets.table.selected(), Some(1));
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn task_row_click_stale_state_is_reset_after_non_task_hit() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("task one")).await;
+
+        let row_click = row_column_task_click_event((80, 24), 1);
+        app.dispatch_mouse(row_click, (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_mouse(task_row_click(10, 23), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_mouse(row_click, (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn task_row_click_ignores_narrow_sidebar_overlay() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("task one")).await;
+        app.focus = Focus::Sidebar;
+
+        let overlay = crate::tui::ui::sidebar_layout(Rect::new(0, 0, 80, 40), Focus::Sidebar)
+            .expect("sidebar overlay should exist in narrow layout")
+            .sidebar;
+        let click = task_row_click(overlay.x + 1, overlay.y + 1);
+        app.dispatch_mouse(click, (80, 40).into()).await.unwrap();
+
+        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert!(app.overlay.is_none());
+        assert_eq!(app.focus, Focus::Sidebar);
     }
 }
 

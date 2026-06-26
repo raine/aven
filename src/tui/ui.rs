@@ -30,6 +30,7 @@ use self::toast::render_toast;
 pub(crate) use self::detail::detail_scroll_cap;
 pub(crate) use self::overlays::{database_stats_scroll_cap, text_panel_scroll_cap};
 pub(crate) use self::shortcuts::{detail_help_scroll_cap, help_scroll_cap};
+pub(crate) use self::task_list::task_at_position;
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout};

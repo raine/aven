@@ -1,8 +1,9 @@
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::Size;
+use ratatui::layout::{Rect, Size};
+use std::time::Instant;
 
-use crate::tui::app::{App, Focus, TaskRefKind};
+use crate::tui::app::{App, Focus, TASK_ROW_DOUBLE_CLICK, TaskRefKind};
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::conflict_flow::ConflictResolutionChoice;
 use crate::tui::event::{
@@ -16,7 +17,8 @@ use crate::tui::overlay::{CommandState, OverlayOutcome, OverlayRoute, OverlaySta
 use crate::tui::platform::is_editor_prefix_key;
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
 use crate::tui::ui::{
-    database_stats_scroll_cap, detail_help_scroll_cap, help_scroll_cap, text_panel_scroll_cap,
+    database_stats_scroll_cap, detail_help_scroll_cap, help_scroll_cap, task_at_position,
+    text_panel_scroll_cap,
 };
 
 impl App {
@@ -75,6 +77,11 @@ impl App {
             _ => return Ok(()),
         }
 
+        self.last_task_click = self
+            .last_task_click
+            .as_ref()
+            .filter(|last| last.at.elapsed() <= TASK_ROW_DOUBLE_CLICK)
+            .cloned();
         if matches!(self.overlay, Some(OverlayState::HeaderMenu(_))) {
             let Some(OverlayState::HeaderMenu(state)) = self.overlay.take() else {
                 return Ok(());
@@ -103,6 +110,7 @@ impl App {
         if let Some(target) =
             crate::tui::ui::header_target_at(&self.store, header, mouse.column, mouse.row)
         {
+            self.last_task_click = None;
             return match target {
                 crate::tui::ui::HeaderTarget::Workspace { column } => {
                     self.show_workspace_menu(column, mouse.row).await?;
@@ -125,6 +133,37 @@ impl App {
             };
         }
 
+        if !Self::sidebar_contains_mouse(terminal_size, self.focus, mouse.column, mouse.row)
+            && let Some(hit) = task_at_position(
+                &self.store,
+                &self.widgets.table,
+                Self::task_area_for_mouse(terminal_size),
+                mouse.column,
+                mouse.row,
+            )
+        {
+            self.focus = Focus::Tasks;
+            self.widgets.table.select(Some(hit.task_index));
+            let now = Instant::now();
+            let is_double_click = self.last_task_click.as_ref().is_some_and(|previous| {
+                previous.task_id == hit.task_id
+                    && previous.viewport_row == hit.viewport_row
+                    && now.duration_since(previous.at) <= TASK_ROW_DOUBLE_CLICK
+            });
+            if is_double_click {
+                self.last_task_click = None;
+                self.overlay = Some(OverlayState::Detail { scroll: 0 });
+            } else {
+                self.last_task_click = Some(crate::tui::app::TaskRowClick {
+                    task_id: hit.task_id,
+                    viewport_row: hit.viewport_row,
+                    at: now,
+                });
+            }
+            return Ok(());
+        }
+
+        self.last_task_click = None;
         if let Some(click) = crate::tui::ui::sidebar_click_at(
             &self.store.sidebar_entries,
             &self.widgets.sidebar,
@@ -138,6 +177,27 @@ impl App {
         }
 
         Ok(())
+    }
+
+    fn task_area_for_mouse(terminal_size: Size) -> Rect {
+        let body_height = terminal_size.height.saturating_sub(4);
+        let body = Rect::new(0, 2, terminal_size.width, body_height);
+        if body.width < 100 {
+            body
+        } else {
+            let sidebar_width = body.width.min(26);
+            Rect::new(sidebar_width, body.y, body.width.saturating_sub(sidebar_width), body.height)
+        }
+    }
+
+    fn sidebar_contains_mouse(terminal_size: Size, focus: Focus, column: u16, row: u16) -> bool {
+        let terminal = Rect::new(0, 0, terminal_size.width, terminal_size.height);
+        crate::tui::ui::sidebar_layout(terminal, focus).is_some_and(|layout| {
+            column >= layout.sidebar.x
+                && column < layout.sidebar.x.saturating_add(layout.sidebar.width)
+                && row >= layout.sidebar.y
+                && row < layout.sidebar.y.saturating_add(layout.sidebar.height)
+        })
     }
 
     async fn handle_task_list_wheel(&mut self, delta: isize, terminal_size: Size) -> Result<()> {

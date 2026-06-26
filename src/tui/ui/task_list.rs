@@ -125,6 +125,113 @@ fn queue_group_label(item: &TaskListItem) -> &'static str {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TaskListAreas {
+    table_area: Rect,
+    preview_area: Rect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TaskListHit {
+    pub(crate) task_index: usize,
+    pub(crate) task_id: String,
+    pub(crate) viewport_row: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TaskListHitCandidate {
+    task_index: usize,
+    viewport_row: u16,
+}
+
+fn task_list_areas(area: Rect) -> TaskListAreas {
+    let [table_area, preview_area] = if area.height >= 24 {
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(8)]).areas(area)
+    } else {
+        [area, Rect::default()]
+    };
+    TaskListAreas {
+        table_area,
+        preview_area,
+    }
+}
+
+fn task_list_hit_in_view(
+    view: &TaskListView,
+    table_state: &TableState,
+    table_area: Rect,
+    column: u16,
+    row: u16,
+) -> Option<TaskListHitCandidate> {
+    if column < table_area.x || column >= table_area.x.saturating_add(table_area.width) {
+        return None;
+    }
+    if row <= table_area.y || row >= table_area.y.saturating_add(table_area.height) {
+        return None;
+    }
+    let viewport_rows = table_area.height.saturating_sub(1) as usize;
+    if view.rows.len() > viewport_rows
+        && column
+            == table_area
+                .x
+                .saturating_add(table_area.width)
+                .saturating_sub(1)
+    {
+        return None;
+    }
+    if viewport_rows == 0 {
+        return None;
+    }
+    let scroll = task_list_scroll(
+        table_state.offset(),
+        table_state
+            .selected()
+            .map(|selected| view.visual_row(selected))
+            .unwrap_or(0),
+        view.rows.len(),
+        viewport_rows,
+    );
+
+    let visual_row = row - table_area.y - 1;
+    let visual_row = usize::from(visual_row);
+    if visual_row >= viewport_rows {
+        return None;
+    }
+
+    let row_index = scroll.saturating_add(visual_row);
+    let viewport_row = row_index.saturating_sub(scroll);
+    let row = view.rows.get(row_index)?;
+    let viewport_row = u16::try_from(viewport_row).ok()?;
+    match row {
+        TaskListRow::Task { task_index } => Some(TaskListHitCandidate {
+            task_index: *task_index,
+            viewport_row,
+        }),
+        TaskListRow::Group(_) => None,
+    }
+}
+
+pub(crate) fn task_at_position(
+    store: &TuiStore,
+    table_state: &TableState,
+    area: Rect,
+    column: u16,
+    row: u16,
+) -> Option<TaskListHit> {
+    let table_area = task_list_areas(area).table_area;
+    let view = TaskListView::new(store);
+    let candidate = task_list_hit_in_view(&view, table_state, table_area, column, row)?;
+    let task_id = store
+        .tasks
+        .get(candidate.task_index)
+        .map(|item| item.task.id.clone())?;
+    Some(TaskListHit {
+        task_index: candidate.task_index,
+        task_id,
+        viewport_row: candidate.viewport_row,
+    })
+}
+
 pub(super) fn render_tasks(
     frame: &mut Frame,
     store: &TuiStore,
@@ -133,11 +240,10 @@ pub(super) fn render_tasks(
     area: Rect,
     inline_title_editor: Option<&TextInputView>,
 ) {
-    let [table_area, preview_area] = if area.height >= 24 {
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(8)]).areas(area)
-    } else {
-        [area, Rect::default()]
-    };
+    let TaskListAreas {
+        table_area,
+        preview_area,
+    } = task_list_areas(area);
     render_task_list(
         frame,
         store,
@@ -706,6 +812,10 @@ mod tests {
         item
     }
 
+    fn task_id(task: &mut TaskListItem, id: &str) {
+        task.task.id = id.to_string();
+    }
+
     #[test]
     fn project_filtered_queue_view_groups_by_queue_band() {
         let tasks = vec![
@@ -806,6 +916,72 @@ mod tests {
         assert_eq!(view.visual_row(0), 1);
         assert_eq!(view.visual_row(1), 3);
         assert_eq!(view.visual_row(2), 4);
+    }
+
+    #[test]
+    fn task_at_position_skips_queue_group_rows() {
+        let mut tasks = vec![
+            task_item_with("todo high", "todo", QueueBand::Focus),
+            task_item_with("todo medium", "todo", QueueBand::Focus),
+            task_item_with("inbox", "inbox", QueueBand::Triage),
+        ];
+        task_id(&mut tasks[0], "task-1");
+        task_id(&mut tasks[1], "task-2");
+        task_id(&mut tasks[2], "task-3");
+        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks);
+        let table_area = Rect::new(0, 0, 80, 10);
+        let table_state = TableState::default();
+
+        let header_hit = task_list_hit_in_view(
+            &view,
+            &table_state,
+            table_area,
+            table_area.x + 1,
+            table_area.y + 1,
+        );
+        assert!(header_hit.is_none());
+
+        let first_task = task_list_hit_in_view(
+            &view,
+            &table_state,
+            table_area,
+            table_area.x + 1,
+            table_area.y + 2,
+        )
+        .unwrap();
+        assert_eq!(first_task.task_index, 0);
+        assert_eq!(first_task.viewport_row, 1);
+    }
+
+    #[test]
+    fn task_at_position_respects_scroll_position() {
+        let mut tasks = Vec::new();
+        for index in 0..20 {
+            let mut item = task_item(&format!("task {index}"));
+            task_id(&mut item, &format!("task-{index:02}"));
+            tasks.push(item);
+        }
+        let view = TaskListView::from_tasks(TaskListRenderMode::Flat, &tasks);
+        let mut table_state = TableState::default();
+        table_state.select(Some(10));
+
+        let hit = task_list_hit_in_view(&view, &table_state, Rect::new(0, 0, 80, 5), 1, 4).unwrap();
+        assert_eq!(hit.task_index, 10);
+        assert_eq!(hit.viewport_row, 3);
+    }
+
+    #[test]
+    fn task_at_position_ignores_scrollbar_column() {
+        let tasks = (0..20)
+            .map(|index| task_item(&format!("task {index}")))
+            .collect::<Vec<_>>();
+        let view = TaskListView::from_tasks(TaskListRenderMode::Flat, &tasks);
+        let mut table_state = TableState::default();
+        table_state.select(Some(10));
+
+        let hit = task_list_hit_in_view(&view, &table_state, Rect::new(0, 0, 80, 5), 79, 4);
+
+        assert!(hit.is_none());
     }
 
     #[test]
