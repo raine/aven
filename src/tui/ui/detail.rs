@@ -379,8 +379,8 @@ pub(crate) fn detail_metadata_target_at(
     let body = detail_body_area(Rect::new(0, 0, terminal_width, terminal_height));
     let line = metadata_content_row(layout.metadata_area, body, column, row)?;
     let target = match line {
-        7 => DetailMetadataTarget::Status,
-        10 => DetailMetadataTarget::Priority,
+        6 => DetailMetadataTarget::Status,
+        9 => DetailMetadataTarget::Priority,
         _ => return None,
     };
     Some((target, column, row))
@@ -549,14 +549,14 @@ mod tests {
     #[test]
     fn detail_metadata_target_maps_status_and_priority_values() {
         assert_eq!(
-            detail_metadata_target_at(120, 30, 88, 9),
-            Some((DetailMetadataTarget::Status, 88, 9))
+            detail_metadata_target_at(120, 30, 88, 8),
+            Some((DetailMetadataTarget::Status, 88, 8))
         );
         assert_eq!(
-            detail_metadata_target_at(120, 30, 88, 12),
-            Some((DetailMetadataTarget::Priority, 88, 12))
+            detail_metadata_target_at(120, 30, 88, 11),
+            Some((DetailMetadataTarget::Priority, 88, 11))
         );
-        assert_eq!(detail_metadata_target_at(120, 30, 88, 8), None);
+        assert_eq!(detail_metadata_target_at(120, 30, 88, 7), None);
         assert_eq!(detail_metadata_target_at(80, 30, 70, 9), None);
     }
 

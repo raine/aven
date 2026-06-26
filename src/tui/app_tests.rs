@@ -188,8 +188,8 @@ fn confirm_hint_click(app: &App, column: u16, size: ratatui::layout::Size) -> Mo
 
 fn detail_metadata_click(target: crate::tui::ui::DetailMetadataTarget) -> MouseEvent {
     let row = match target {
-        crate::tui::ui::DetailMetadataTarget::Status => 9,
-        crate::tui::ui::DetailMetadataTarget::Priority => 12,
+        crate::tui::ui::DetailMetadataTarget::Status => 8,
+        crate::tui::ui::DetailMetadataTarget::Priority => 11,
     };
     left_click(88, row)
 }
