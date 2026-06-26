@@ -45,10 +45,16 @@ Inspired by Taskwarrior. See [Why not Taskwarrior?](#why-not-taskwarrior).
 
 ## Quick start
 
-Install the binary globally from a local checkout:
+### Quick install
 
 ```sh
-cargo install --path .
+curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install | bash
+```
+
+### Homebrew (macOS/Linux)
+
+```sh
+brew install raine/aven/aven
 ```
 
 Create a config file:
