@@ -1,55 +1,63 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use clap::builder::styling::{AnsiColor, Effects, Styles};
+use clap::builder::styling::{Color, Effects, RgbColor, Styles};
 use clap::{Args, Parser, Subcommand};
 
+const ACCENT: Color = Color::Rgb(RgbColor(166, 139, 255));
+const BLUE: Color = Color::Rgb(RgbColor(70, 128, 203));
+const FG_MUTED: Color = Color::Rgb(RgbColor(191, 188, 180));
+const RED: Color = Color::Rgb(RgbColor(239, 82, 86));
+const GREEN: Color = Color::Rgb(RgbColor(137, 199, 82));
+
 const STYLES: Styles = Styles::styled()
-    .header(AnsiColor::Green.on_default().effects(Effects::BOLD))
-    .usage(AnsiColor::Green.on_default().effects(Effects::BOLD))
-    .literal(AnsiColor::Cyan.on_default().effects(Effects::BOLD))
-    .placeholder(AnsiColor::Cyan.on_default());
+    .header(ACCENT.on_default().effects(Effects::BOLD))
+    .usage(ACCENT.on_default().effects(Effects::BOLD))
+    .literal(BLUE.on_default().effects(Effects::BOLD))
+    .placeholder(FG_MUTED.on_default())
+    .valid(GREEN.on_default())
+    .invalid(RED.on_default());
 
 const TOP_LEVEL_HELP: &str = concat!(
     "Local-first task manager\n\n",
-    "\x1b[1;32mUsage:\x1b[0m aven [\x1b[1;36mOPTIONS\x1b[0m] <\x1b[36mCOMMAND\x1b[0m>\n\n",
-    "\x1b[1;32mTask commands:\x1b[0m\n",
-    "  \x1b[1;36madd\x1b[0m          Create a task\n",
-    "  \x1b[1;36mdep\x1b[0m          Manage task dependencies\n",
-    "  \x1b[1;36mshow\x1b[0m         Show task details\n",
-    "  \x1b[1;36mlist\x1b[0m         List tasks\n",
-    "  \x1b[1;36mbulk-update\x1b[0m  Update multiple tasks at once\n",
-    "  \x1b[1;36mprime\x1b[0m        Generate agent-facing workspace context\n",
-    "  \x1b[1;36mupdate\x1b[0m       Update task fields\n",
-    "  \x1b[1;36mnote\x1b[0m         Append a note to a task\n",
-    "  \x1b[1;36mdelete\x1b[0m       Delete a task\n",
-    "  \x1b[1;36mrestore\x1b[0m      Restore a deleted task\n",
-    "  \x1b[1;36mtext\x1b[0m         Safely edit long text fields\n\n",
-    "\x1b[1;32mProject and label commands:\x1b[0m\n",
-    "  \x1b[1;36mprojects\x1b[0m     List or search projects\n",
-    "  \x1b[1;36mlabels\x1b[0m       List or search labels\n",
-    "  \x1b[1;36mlabel\x1b[0m        Manage labels\n",
-    "  \x1b[1;36mproject\x1b[0m      Manage projects\n",
-    "  \x1b[1;36mworkspace\x1b[0m    Manage workspaces\n\n",
-    "\x1b[1;32mConflict commands:\x1b[0m\n",
-    "  \x1b[1;36mconflict\x1b[0m     Inspect and resolve sync conflicts\n\n",
-    "\x1b[1;32mSetup and diagnostics:\x1b[0m\n",
-    "  \x1b[1;36mconfig\x1b[0m       Manage local configuration\n",
-    "  \x1b[1;36mskill\x1b[0m        Print a Claude Code skill primer\n",
-    "  \x1b[1;36mdoctor\x1b[0m       Diagnose configuration and workspace state\n\n",
-    "\x1b[1;32mSync and service commands:\x1b[0m\n",
-    "  \x1b[1;36mdaemon\x1b[0m       Run or manage the background daemon\n",
-    "  \x1b[1;36mserver\x1b[0m       Run the sync server\n",
-    "  \x1b[1;36msync\x1b[0m         Sync with a remote server\n\n",
-    "\x1b[1;32mInteractive commands:\x1b[0m\n",
-    "  \x1b[1;36mtmux\x1b[0m         Open tmux popups\n",
-    "  \x1b[1;36mtui\x1b[0m          Open the terminal UI\n\n",
-    "\x1b[1;32mHelp:\x1b[0m\n",
-    "  \x1b[1;36mhelp\x1b[0m         Print this message or the help of the given subcommand(s)\n\n",
-    "\x1b[1;32mOptions:\x1b[0m\n",
-    "      \x1b[1;36m--db\x1b[0m <\x1b[36mDB\x1b[0m>                Use a specific SQLite database path\n",
-    "      \x1b[1;36m--workspace\x1b[0m <\x1b[36mWORKSPACE\x1b[0m>  Use a specific workspace by name or key\n",
-    "  \x1b[1;36m-h\x1b[0m, \x1b[1;36m--help\x1b[0m                   Print help\n",
+    "\x1b[1;38;2;166;139;255mUsage:\x1b[0m aven [\x1b[1;38;2;70;128;203mOPTIONS\x1b[0m] <\x1b[38;2;191;188;180mCOMMAND\x1b[0m>\n\n",
+    "\x1b[1;38;2;166;139;255mTask commands:\x1b[0m\n",
+    "  \x1b[1;38;2;70;128;203madd\x1b[0m          Create a task\n",
+    "  \x1b[1;38;2;70;128;203mdep\x1b[0m          Manage task dependencies\n",
+    "  \x1b[1;38;2;70;128;203mshow\x1b[0m         Show task details\n",
+    "  \x1b[1;38;2;70;128;203mlist\x1b[0m         List tasks\n",
+    "  \x1b[1;38;2;70;128;203mbulk-update\x1b[0m  Update multiple tasks at once\n",
+    "  \x1b[1;38;2;70;128;203mprime\x1b[0m        Generate agent-facing workspace context\n",
+    "  \x1b[1;38;2;70;128;203mupdate\x1b[0m       Update task fields\n",
+    "  \x1b[1;38;2;70;128;203mnote\x1b[0m         Append a note to a task\n",
+    "  \x1b[1;38;2;70;128;203mdelete\x1b[0m       Delete a task\n",
+    "  \x1b[1;38;2;70;128;203mrestore\x1b[0m      Restore a deleted task\n",
+    "  \x1b[1;38;2;70;128;203mtext\x1b[0m         Safely edit long text fields\n\n",
+    "\x1b[1;38;2;166;139;255mProject and label commands:\x1b[0m\n",
+    "  \x1b[1;38;2;70;128;203mprojects\x1b[0m     List or search projects\n",
+    "  \x1b[1;38;2;70;128;203mlabels\x1b[0m       List or search labels\n",
+    "  \x1b[1;38;2;70;128;203mlabel\x1b[0m        Manage labels\n",
+    "  \x1b[1;38;2;70;128;203mproject\x1b[0m      Manage projects\n",
+    "  \x1b[1;38;2;70;128;203mworkspace\x1b[0m    Manage workspaces\n\n",
+    "\x1b[1;38;2;166;139;255mConflict commands:\x1b[0m\n",
+    "  \x1b[1;38;2;70;128;203mconflict\x1b[0m     Inspect and resolve sync conflicts\n\n",
+    "\x1b[1;38;2;166;139;255mSetup and diagnostics:\x1b[0m\n",
+    "  \x1b[1;38;2;70;128;203mconfig\x1b[0m       Manage local configuration\n",
+    "  \x1b[1;38;2;70;128;203mskill\x1b[0m        Print a Claude Code skill primer\n",
+    "  \x1b[1;38;2;70;128;203mdoctor\x1b[0m       Diagnose configuration and workspace state\n\n",
+    "\x1b[1;38;2;166;139;255mSync and service commands:\x1b[0m\n",
+    "  \x1b[1;38;2;70;128;203mdaemon\x1b[0m       Run or manage the background daemon\n",
+    "  \x1b[1;38;2;70;128;203mserver\x1b[0m       Run the sync server\n",
+    "  \x1b[1;38;2;70;128;203msync\x1b[0m         Sync with a remote server\n\n",
+    "\x1b[1;38;2;166;139;255mInteractive commands:\x1b[0m\n",
+    "  \x1b[1;38;2;70;128;203mtmux\x1b[0m         Open tmux popups\n",
+    "  \x1b[1;38;2;70;128;203mtui\x1b[0m          Open the terminal UI\n\n",
+    "\x1b[1;38;2;166;139;255mHelp:\x1b[0m\n",
+    "  \x1b[1;38;2;70;128;203mhelp\x1b[0m         Print this message or the help of the given subcommand(s)\n\n",
+    "\x1b[1;38;2;166;139;255mOptions:\x1b[0m\n",
+    "      \x1b[1;38;2;70;128;203m--db\x1b[0m <\x1b[38;2;191;188;180mDB\x1b[0m>                Use a specific SQLite database path\n",
+    "      \x1b[1;38;2;70;128;203m--workspace\x1b[0m <\x1b[38;2;191;188;180mWORKSPACE\x1b[0m>  Use a specific workspace by name or key\n",
+    "  \x1b[1;38;2;70;128;203m-h\x1b[0m, \x1b[1;38;2;70;128;203m--help\x1b[0m                   Print help\n",
 );
 
 #[derive(Parser)]
