@@ -335,11 +335,15 @@ fn lifecycle_badge(lifecycle: CommandLifecycle) -> Option<Span<'static>> {
     }
 }
 
-fn command_hint_line(leading: Span<'static>, command: &CommandSpec) -> Line<'static> {
+fn command_hint_line(
+    leading: Span<'static>,
+    command: &CommandSpec,
+    command_name_width: usize,
+) -> Line<'static> {
     let mut spans = vec![
         leading,
         Span::styled(
-            format!(":{:<18}", command.name),
+            format!(":{:<command_name_width$}", command.name),
             command_name_style(command),
         ),
     ];
@@ -348,6 +352,16 @@ fn command_hint_line(leading: Span<'static>, command: &CommandSpec) -> Line<'sta
     }
     spans.push(Span::styled(command.description, Style::new().fg(FG_DIM)));
     Line::from(spans)
+}
+
+fn command_name_width(commands: &[&CommandSpec]) -> usize {
+    commands
+        .iter()
+        .map(|command| command.name.len())
+        .max()
+        .unwrap_or(18)
+        .max(18)
+        .saturating_add(2)
 }
 
 fn help_command_line(command: &CommandSpec) -> Line<'static> {
@@ -382,6 +396,7 @@ fn command_line_with_highlight(command: &CommandSpec, highlighted: bool) -> Line
     let mut line = command_hint_line(
         Span::styled(format!("{keys:<10}"), Style::new().fg(FG_MUTED)),
         command,
+        18,
     );
     if highlighted {
         line.style = line.style.bg(SELECTED_BG);
@@ -418,7 +433,14 @@ pub(super) fn render_command(
 }
 
 fn prefix_hint_lines(context: CommandContext, pending: &[String]) -> Vec<Line<'static>> {
-    prefix_hint_commands(context, pending)
+    let matches = prefix_hint_commands(context, pending);
+    let command_name_width = command_name_width(
+        &matches
+            .iter()
+            .map(|(command, _, _)| *command)
+            .collect::<Vec<_>>(),
+    );
+    matches
         .into_iter()
         .map(|(command, _, next_key)| {
             command_hint_line(
@@ -427,6 +449,7 @@ fn prefix_hint_lines(context: CommandContext, pending: &[String]) -> Vec<Line<'s
                     Style::new().fg(FG_MUTED).bg(BG_PANEL),
                 ),
                 command,
+                command_name_width,
             )
         })
         .collect()
@@ -565,6 +588,19 @@ mod tests {
             .join("\n");
         assert!(rendered.contains(":detail-edit-title"));
         assert!(rendered.contains(" t "));
+    }
+
+    #[test]
+    fn detail_prefix_hint_lines_align_command_descriptions() {
+        let lines = prefix_hint_lines(CommandContext::Detail, &["e".to_string()]);
+        let rendered = lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains(":detail-edit-title        edit selected task title"));
+        assert!(rendered.contains(":detail-edit-description  edit selected task description"));
     }
 
     #[test]
