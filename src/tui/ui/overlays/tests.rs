@@ -784,6 +784,7 @@ mod picker_overlays {
                 selected: false,
             }],
             selected: 0,
+            scroll: 0,
             multi: true,
             mode: PickerMode::Navigate,
             visible_indices: vec![0],
@@ -809,6 +810,7 @@ mod picker_overlays {
                 selected: false,
             }],
             selected: 0,
+            scroll: 0,
             multi: false,
             mode: PickerMode::Filter,
             visible_indices: vec![0],
@@ -834,6 +836,7 @@ mod picker_overlays {
                     selected: false,
                 }],
                 selected: 0,
+                scroll: 0,
                 multi: false,
                 mode: PickerMode::Navigate,
                 visible_indices: vec![0],
@@ -846,7 +849,7 @@ mod picker_overlays {
     }
 
     #[test]
-    fn picker_viewport_keeps_selected_item_visible() {
+    fn picker_viewport_uses_scroll_position() {
         let items = (0..12)
             .map(|index| PickerItem {
                 label: format!("Item {index}"),
@@ -861,11 +864,13 @@ mod picker_overlays {
             filter_cursor: 0,
             items,
             selected: 10,
+            scroll: 3,
             multi: false,
             mode: PickerMode::Navigate,
             visible_indices: (0..12).collect(),
         }));
         assert!(rendered.contains("▸ Item 10"));
+        assert!(rendered.contains("Item 3"));
         assert!(!rendered.contains("Item 0"));
     }
 
@@ -882,6 +887,7 @@ mod picker_overlays {
                 selected: false,
             }],
             selected: 0,
+            scroll: 0,
             multi: false,
             mode: PickerMode::Navigate,
             visible_indices: vec![0],
@@ -910,6 +916,7 @@ mod picker_overlays {
                     selected: false,
                 }],
                 selected: 0,
+                scroll: 0,
                 multi: false,
                 mode: PickerMode::Navigate,
                 visible_indices: vec![0],
@@ -1110,6 +1117,7 @@ mod route_specific_rendering {
                     selected: false,
                 }],
                 selected: 0,
+                scroll: 0,
                 multi: true,
                 mode: PickerMode::Navigate,
                 visible_indices: vec![0],
@@ -1221,6 +1229,7 @@ mod route_specific_rendering {
                     selected: false,
                 }],
                 selected: 0,
+                scroll: 0,
                 multi: false,
                 mode: PickerMode::Navigate,
                 visible_indices: vec![0],
@@ -1244,6 +1253,7 @@ mod route_specific_rendering {
                 selected: false,
             }],
             selected: 0,
+            scroll: 0,
             multi: false,
             mode: PickerMode::Navigate,
             visible_indices: vec![0],
@@ -1265,6 +1275,7 @@ mod route_specific_rendering {
                 selected: false,
             }],
             selected: 0,
+            scroll: 0,
             multi: false,
             mode: PickerMode::Navigate,
             visible_indices: vec![0],

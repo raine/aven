@@ -34,6 +34,40 @@ pub(crate) fn normalize_picker_selection(state: &mut PickerState) {
         .unwrap_or(0);
 }
 
+pub(crate) fn normalize_picker_scroll(state: &mut PickerState, viewport_rows: usize) {
+    let visible = visible_picker_indices(state);
+    let selected_position = visible
+        .iter()
+        .position(|index| *index == state.selected)
+        .unwrap_or(0);
+    state.scroll = picker_viewport_start(
+        state.scroll,
+        selected_position,
+        visible.len(),
+        viewport_rows,
+    );
+}
+
+pub(crate) fn picker_viewport_start(
+    current_start: usize,
+    selected_position: usize,
+    row_count: usize,
+    viewport_rows: usize,
+) -> usize {
+    if viewport_rows == 0 || row_count <= viewport_rows {
+        return 0;
+    }
+    let max_start = row_count - viewport_rows;
+    let start = current_start.min(max_start);
+    if selected_position <= start {
+        selected_position
+    } else if selected_position >= start + viewport_rows {
+        selected_position.saturating_sub(viewport_rows.saturating_sub(1))
+    } else {
+        start
+    }
+}
+
 pub(crate) fn handle_picker_key(state: PickerState, key: KeyEvent) -> OverlayOutcome {
     match state.mode {
         PickerMode::Navigate => handle_picker_navigation_key(state, key),
@@ -158,4 +192,5 @@ fn move_picker_selection(state: &mut PickerState, delta: isize) {
         next as usize
     };
     state.selected = visible[next];
+    normalize_picker_scroll(state, crate::tui::overlay::GENERIC_PICKER_VIEWPORT_ROWS);
 }

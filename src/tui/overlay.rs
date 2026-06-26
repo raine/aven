@@ -16,6 +16,7 @@ pub(crate) use layout::{
 };
 #[cfg(test)]
 pub(crate) use multiline::edit_multiline_input;
+pub(crate) use picker::picker_viewport_start;
 #[cfg(test)]
 pub(crate) use picker::{normalize_picker_selection, visible_picker_indices};
 pub(crate) use state::{
@@ -339,6 +340,7 @@ mod tests {
                 },
             ],
             selected: 1,
+            scroll: 0,
             multi: false,
             mode: PickerMode::Navigate,
         };
@@ -360,6 +362,7 @@ mod tests {
                 selected: false,
             }],
             selected: 0,
+            scroll: 0,
             multi: false,
             mode: PickerMode::Navigate,
         };
@@ -379,6 +382,7 @@ mod tests {
                 selected: false,
             }],
             selected: 0,
+            scroll: 0,
             multi: false,
             mode: PickerMode::Navigate,
         };
@@ -473,6 +477,48 @@ mod tests {
         assert_eq!(state.selected, 0);
     }
 
+    #[test]
+    fn picker_scroll_stays_at_bottom_until_selection_reaches_top_edge() {
+        let mut state = picker_state_with_items(10);
+        state.selected = 9;
+        state.scroll = 2;
+
+        for expected_selected in (2..9).rev() {
+            let OverlayOutcome::None(OverlayState::Picker(next)) =
+                handle(key(KeyCode::Up), OverlayState::Picker(state))
+            else {
+                panic!("expected picker state");
+            };
+            assert_eq!(next.selected, expected_selected);
+            assert_eq!(next.scroll, 2);
+            state = next;
+        }
+
+        let OverlayOutcome::None(OverlayState::Picker(next)) =
+            handle(key(KeyCode::Up), OverlayState::Picker(state))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(next.selected, 1);
+        assert_eq!(next.scroll, 1);
+    }
+
+    #[test]
+    fn picker_scroll_moves_down_after_bottom_edge() {
+        let state = picker_state_with_items(10);
+        let mut next = state;
+        for expected_selected in 1..=8 {
+            let OverlayOutcome::None(OverlayState::Picker(state)) =
+                handle(key(KeyCode::Down), OverlayState::Picker(next))
+            else {
+                panic!("expected picker state");
+            };
+            next = state;
+            assert_eq!(next.selected, expected_selected);
+        }
+        assert_eq!(next.scroll, 1);
+    }
+
     fn picker_navigation_state() -> PickerState {
         PickerState {
             route: OverlayRoute::MessageOnly,
@@ -491,7 +537,27 @@ mod tests {
                 },
             ],
             selected: 0,
+            scroll: 0,
             multi: false,
+            mode: PickerMode::Navigate,
+        }
+    }
+
+    fn picker_state_with_items(count: usize) -> PickerState {
+        PickerState {
+            route: OverlayRoute::EditLabels,
+            title: "Pick".to_string(),
+            filter: LineEdit::blank(),
+            items: (0..count)
+                .map(|index| PickerItem {
+                    label: format!("Label {index}"),
+                    value: format!("label-{index}"),
+                    selected: false,
+                })
+                .collect(),
+            selected: 0,
+            scroll: 0,
+            multi: true,
             mode: PickerMode::Navigate,
         }
     }
@@ -607,6 +673,7 @@ mod tests {
                     selected: false,
                 }],
                 selected: 0,
+                scroll: 0,
                 multi: false,
                 mode: PickerMode::Navigate,
             }),
@@ -714,6 +781,7 @@ mod tests {
                     selected: false,
                 }],
                 selected: 0,
+                scroll: 0,
                 multi: false,
                 mode: PickerMode::Navigate,
             }),
@@ -858,6 +926,7 @@ mod tests {
                 selected: false,
             }],
             selected: 0,
+            scroll: 0,
             multi: false,
             mode: PickerMode::Navigate,
         }));

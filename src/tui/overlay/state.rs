@@ -538,6 +538,7 @@ impl PickerState {
             filter: LineEdit::blank(),
             items,
             selected,
+            scroll: 0,
             multi,
             mode: route.initial_picker_mode(),
         }
@@ -575,6 +576,7 @@ pub(crate) struct PickerState {
     pub(crate) filter: LineEdit,
     pub(crate) items: Vec<PickerItem>,
     pub(crate) selected: usize,
+    pub(crate) scroll: usize,
     pub(crate) multi: bool,
     pub(crate) mode: PickerMode,
 }

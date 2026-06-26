@@ -4,10 +4,9 @@ use ratatui::text::{Line, Span, Text};
 
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::input::{input_line, prefixed_input_line};
-use super::shared::selected_viewport_start;
 use crate::tui::overlay::{
     GENERIC_PICKER_VIEWPORT_ROWS, GENERIC_PICKER_WIDTH, OverlayRoute, PROJECT_PICKER_VIEWPORT_ROWS,
-    PROJECT_PICKER_WIDTH, PickerItem, PickerMode, PickerView,
+    PROJECT_PICKER_WIDTH, PickerItem, PickerMode, PickerView, picker_viewport_start,
 };
 use crate::tui::theme::{self, ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, SELECTED};
 use crate::tui::widgets::priority_icon;
@@ -21,8 +20,7 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, state: &PickerView) {
     let visible_count = state.visible_indices.len().max(1);
     let viewport_rows = GENERIC_PICKER_VIEWPORT_ROWS;
     let height = (visible_count.min(viewport_rows) as u16).saturating_add(5);
-    let selected_position =
-        selected_viewport_start(&state.visible_indices, state.selected, viewport_rows);
+    let selected_position = picker_visible_start(state, viewport_rows);
     let mut lines = vec![
         input_line("/", &state.filter, state.filter_cursor),
         Line::from(""),
@@ -60,6 +58,20 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, state: &PickerView) {
         .render_text(frame, Text::from(lines));
 }
 
+fn picker_visible_start(state: &PickerView, viewport_rows: usize) -> usize {
+    let selected_position = state
+        .visible_indices
+        .iter()
+        .position(|index| *index == state.selected)
+        .unwrap_or(0);
+    picker_viewport_start(
+        state.scroll,
+        selected_position,
+        state.visible_indices.len(),
+        viewport_rows,
+    )
+}
+
 pub(in crate::tui::ui) fn priority_picker_line(item: &PickerItem, selected: bool) -> Line<'static> {
     let marker = if selected { "▸ " } else { "  " };
     Line::from(vec![
@@ -94,8 +106,7 @@ pub(in crate::tui::ui) fn picker_hint_line(
 fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'static str) {
     let viewport_rows = PROJECT_PICKER_VIEWPORT_ROWS;
     let height = (viewport_rows as u16).saturating_add(6);
-    let selected_position =
-        selected_viewport_start(&state.visible_indices, state.selected, viewport_rows);
+    let selected_position = picker_visible_start(state, viewport_rows);
     let mut lines = vec![
         prefixed_input_line(
             Span::styled("/", Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),

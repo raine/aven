@@ -3,7 +3,7 @@ use ratatui::widgets::{Block, Borders, Padding};
 
 use crate::tui::text::char_count_ranges;
 
-use super::{OverlayRoute, PickerView};
+use super::{OverlayRoute, PickerView, picker_viewport_start};
 
 pub(crate) const GENERIC_PICKER_VIEWPORT_ROWS: usize = 8;
 pub(crate) const PROJECT_PICKER_VIEWPORT_ROWS: usize = 10;
@@ -54,18 +54,6 @@ pub(crate) fn dialog_inner_area(area: Rect) -> Rect {
         .inner(area)
 }
 
-pub(crate) fn selected_viewport_start(
-    visible_indices: &[usize],
-    selected: usize,
-    viewport_rows: usize,
-) -> usize {
-    visible_indices
-        .iter()
-        .position(|index| *index == selected)
-        .unwrap_or(0)
-        .saturating_sub(viewport_rows.saturating_sub(1))
-}
-
 pub(crate) fn picker_layout(state: &PickerView, terminal_size: Size) -> PickerLayout {
     if project_picker_layout(state.route) {
         let height = (PROJECT_PICKER_VIEWPORT_ROWS as u16).saturating_add(6);
@@ -79,11 +67,7 @@ pub(crate) fn picker_layout(state: &PickerView, terminal_size: Size) -> PickerLa
             inner: dialog_inner_area(area),
             list_start: 2,
             viewport_rows: PROJECT_PICKER_VIEWPORT_ROWS,
-            visible_start: selected_viewport_start(
-                &state.visible_indices,
-                state.selected,
-                PROJECT_PICKER_VIEWPORT_ROWS,
-            ),
+            visible_start: picker_visible_start(state, PROJECT_PICKER_VIEWPORT_ROWS),
         };
     }
 
@@ -99,12 +83,22 @@ pub(crate) fn picker_layout(state: &PickerView, terminal_size: Size) -> PickerLa
         inner: dialog_inner_area(area),
         list_start: 2,
         viewport_rows: GENERIC_PICKER_VIEWPORT_ROWS,
-        visible_start: selected_viewport_start(
-            &state.visible_indices,
-            state.selected,
-            GENERIC_PICKER_VIEWPORT_ROWS,
-        ),
+        visible_start: picker_visible_start(state, GENERIC_PICKER_VIEWPORT_ROWS),
     }
+}
+
+fn picker_visible_start(state: &PickerView, viewport_rows: usize) -> usize {
+    let selected_position = state
+        .visible_indices
+        .iter()
+        .position(|index| *index == state.selected)
+        .unwrap_or(0);
+    picker_viewport_start(
+        state.scroll,
+        selected_position,
+        state.visible_indices.len(),
+        viewport_rows,
+    )
 }
 
 pub(crate) fn confirm_layout(terminal_size: Size, prompt: &str) -> ConfirmLayout {

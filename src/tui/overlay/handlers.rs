@@ -7,7 +7,8 @@ use crate::tui::ui::text_panel_scroll_cap;
 
 use super::multiline::edit_multiline_input;
 use super::picker::{
-    handle_picker_key, normalize_picker_selection, picker_submit_outcome, visible_picker_indices,
+    handle_picker_key, normalize_picker_scroll, normalize_picker_selection, picker_submit_outcome,
+    visible_picker_indices,
 };
 use super::state::{
     ConfirmState, HeaderMenuState, OrderMenuState, OverlayOutcome, OverlayState, OverlaySubmit,
@@ -45,6 +46,10 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
         OverlayState::Picker(mut state) => {
             state.filter.insert_paste(text);
             normalize_picker_selection(&mut state);
+            normalize_picker_scroll(
+                &mut state,
+                crate::tui::overlay::GENERIC_PICKER_VIEWPORT_ROWS,
+            );
             OverlayState::Picker(state)
         }
         other => other,
@@ -271,6 +276,7 @@ fn picker_mouse_target(
         multi: state.multi,
         mode: state.mode,
         visible_indices: visible_picker_indices(state),
+        scroll: state.scroll,
     };
     let layout = picker_layout(&view, terminal_size);
     if !contains(layout.area, column, row) {

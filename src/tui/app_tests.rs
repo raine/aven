@@ -612,6 +612,7 @@ mod keyboard_dispatch {
                     selected: false,
                 }],
                 selected: 0,
+                scroll: 0,
                 multi: false,
                 mode: PickerMode::Navigate,
             }),
