@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState};
 
 use super::truncate::truncate_chars;
 use crate::tui::app::{Focus, WidgetState};
@@ -13,6 +13,107 @@ use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, PINK, RED, SELECTED, SELECTED_INACTIVE,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SidebarClick {
+    pub(crate) entry_index: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SidebarLayout {
+    pub(crate) sidebar: Rect,
+    pub(crate) content: Rect,
+    pub(crate) overlay: bool,
+}
+
+pub(crate) fn sidebar_layout(terminal: Rect, focus: Focus) -> Option<SidebarLayout> {
+    if terminal.width < 70 || terminal.height < 18 {
+        return None;
+    }
+
+    let body = Rect {
+        x: terminal.x,
+        y: terminal.y + 2,
+        width: terminal.width,
+        height: terminal.height.saturating_sub(4),
+    };
+
+    let overlay = body.width < 100;
+    if overlay && focus != Focus::Sidebar {
+        return None;
+    }
+
+    let sidebar = if overlay {
+        sidebar_overlay_area(body)
+    } else {
+        Rect {
+            x: body.x,
+            y: body.y,
+            width: body.width.min(26),
+            height: body.height,
+        }
+    };
+
+    Some(SidebarLayout {
+        sidebar,
+        content: sidebar_content_area(sidebar, overlay),
+        overlay,
+    })
+}
+
+pub(crate) fn sidebar_overlay_area(area: Rect) -> Rect {
+    Rect {
+        x: area.x + 2,
+        y: area.y + 1,
+        width: area.width.saturating_sub(4).min(34),
+        height: area.height.saturating_sub(2).min(24),
+    }
+}
+
+pub(crate) fn sidebar_content_area(sidebar: Rect, overlay: bool) -> Rect {
+    if overlay {
+        Rect {
+            x: sidebar.x + 1,
+            y: sidebar.y + 1,
+            width: sidebar.width.saturating_sub(2),
+            height: sidebar.height.saturating_sub(2),
+        }
+    } else {
+        Rect {
+            x: sidebar.x,
+            y: sidebar.y,
+            width: sidebar.width.saturating_sub(1),
+            height: sidebar.height,
+        }
+    }
+}
+
+pub(crate) fn sidebar_click_at(
+    entries: &[SidebarEntry],
+    state: &ListState,
+    focus: Focus,
+    terminal: Rect,
+    column: u16,
+    row: u16,
+) -> Option<SidebarClick> {
+    let layout = sidebar_layout(terminal, focus)?;
+    if column < layout.content.x
+        || column >= layout.content.x.saturating_add(layout.content.width)
+        || row < layout.content.y
+        || row >= layout.content.y.saturating_add(layout.content.height)
+    {
+        return None;
+    }
+
+    let entry_index = usize::from(row - layout.content.y).saturating_add(state.offset());
+    entries.get(entry_index).and_then(|entry| {
+        if entry.target.is_some() {
+            Some(SidebarClick { entry_index })
+        } else {
+            None
+        }
+    })
+}
+
 pub(super) fn render_sidebar_overlay(
     frame: &mut Frame,
     store: &TuiStore,
@@ -20,14 +121,7 @@ pub(super) fn render_sidebar_overlay(
     focus: Focus,
     area: Rect,
 ) {
-    let width = area.width.saturating_sub(4).min(34);
-    let height = area.height.saturating_sub(2).min(24);
-    let area = Rect {
-        x: area.x + 2,
-        y: area.y + 1,
-        width,
-        height,
-    };
+    let area = sidebar_overlay_area(area);
     frame.render_widget(Clear, area);
     render_sidebar(frame, store, widgets, focus, area, true);
 }

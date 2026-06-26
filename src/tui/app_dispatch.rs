@@ -90,23 +90,43 @@ impl App {
             width: terminal_size.width,
             height: 2,
         };
-        match crate::tui::ui::header_target_at(&self.store, header, mouse.column, mouse.row) {
-            Some(crate::tui::ui::HeaderTarget::Workspace { column }) => {
-                self.show_workspace_menu(column, mouse.row).await?
-            }
-            Some(crate::tui::ui::HeaderTarget::Scope { column }) => {
-                self.show_scope_menu(column, mouse.row)
-            }
-            Some(crate::tui::ui::HeaderTarget::View { column }) => {
-                self.show_view_menu(column, mouse.row)
-            }
-            Some(crate::tui::ui::HeaderTarget::MetricView(view)) => self.show_view(view).await?,
-            Some(crate::tui::ui::HeaderTarget::Order { column }) => {
-                self.show_order_menu(column, mouse.row)
-            }
-            Some(crate::tui::ui::HeaderTarget::SyncStatus) => self.show_config_status()?,
-            None => {}
+        if let Some(target) =
+            crate::tui::ui::header_target_at(&self.store, header, mouse.column, mouse.row)
+        {
+            return match target {
+                crate::tui::ui::HeaderTarget::Workspace { column } => {
+                    self.show_workspace_menu(column, mouse.row).await?;
+                    Ok(())
+                }
+                crate::tui::ui::HeaderTarget::Scope { column } => {
+                    self.show_scope_menu(column, mouse.row);
+                    Ok(())
+                }
+                crate::tui::ui::HeaderTarget::View { column } => {
+                    self.show_view_menu(column, mouse.row);
+                    Ok(())
+                }
+                crate::tui::ui::HeaderTarget::MetricView(view) => self.show_view(view).await,
+                crate::tui::ui::HeaderTarget::Order { column } => {
+                    self.show_order_menu(column, mouse.row);
+                    Ok(())
+                }
+                crate::tui::ui::HeaderTarget::SyncStatus => self.show_config_status(),
+            };
         }
+
+        if let Some(click) = crate::tui::ui::sidebar_click_at(
+            &self.store.sidebar_entries,
+            &self.widgets.sidebar,
+            self.focus,
+            ratatui::layout::Rect::new(0, 0, terminal_size.width, terminal_size.height),
+            mouse.column,
+            mouse.row,
+        ) {
+            self.widgets.sidebar.select(Some(click.entry_index));
+            self.apply_sidebar_selection().await?;
+        }
+
         Ok(())
     }
 

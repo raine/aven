@@ -117,10 +117,14 @@ fn ctrl_u() -> KeyEvent {
 }
 
 fn header_click(column: u16) -> MouseEvent {
+    click_at(column, 0)
+}
+
+fn click_at(column: u16, row: u16) -> MouseEvent {
     MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column,
-        row: 0,
+        row,
         modifiers: KeyModifiers::NONE,
     }
 }
@@ -132,6 +136,139 @@ fn mouse_wheel(kind: MouseEventKind) -> MouseEvent {
         row: 0,
         modifiers: KeyModifiers::NONE,
     }
+}
+
+#[tokio::test]
+async fn sidebar_click_selects_project_scope_in_wide_layout() {
+    let mut app = test_app().await;
+    app.store
+        .create_project("Mobile App".to_string())
+        .await
+        .unwrap();
+    app.refresh().await.unwrap();
+
+    let project_row = app
+        .store
+        .sidebar_entries
+        .iter()
+        .position(|entry| {
+            matches!(
+                &entry.target,
+                Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(project)))
+                    if project == "mobile-app"
+            )
+        })
+        .unwrap() as u16;
+    let terminal_size: ratatui::layout::Size = (140, 24).into();
+    let layout = crate::tui::ui::sidebar_layout(
+        ratatui::layout::Rect::new(0, 0, terminal_size.width, terminal_size.height),
+        Focus::Tasks,
+    )
+    .unwrap();
+    let row = layout.content.y + project_row;
+
+    app.dispatch_mouse(click_at(layout.content.x, row), terminal_size)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        app.store.view_state.scope,
+        TaskScope::Project("mobile-app".to_string())
+    );
+    assert_eq!(app.focus, Focus::Tasks);
+    assert_eq!(app.widgets.sidebar.selected(), Some(project_row as usize));
+    assert!(app.overlay.is_none());
+}
+
+#[tokio::test]
+async fn sidebar_click_selects_saved_view_in_narrow_overlay() {
+    let mut app = test_app().await;
+    app.focus = Focus::Sidebar;
+
+    let view_row = app
+        .store
+        .sidebar_entries
+        .iter()
+        .position(|entry| {
+            matches!(
+                &entry.target,
+                Some(SidebarEntryTarget::View(TaskView::Open))
+            )
+        })
+        .unwrap() as u16;
+    let terminal_size: ratatui::layout::Size = (90, 24).into();
+    let layout = crate::tui::ui::sidebar_layout(
+        ratatui::layout::Rect::new(0, 0, terminal_size.width, terminal_size.height),
+        Focus::Sidebar,
+    )
+    .unwrap();
+    let row = layout.content.y + view_row;
+
+    app.dispatch_mouse(click_at(layout.content.x, row), terminal_size)
+        .await
+        .unwrap();
+
+    assert_eq!(app.store.view_state.view, TaskView::Open);
+    assert_eq!(app.focus, Focus::Tasks);
+    assert_eq!(app.widgets.sidebar.selected(), Some(view_row as usize));
+    assert!(app.overlay.is_none());
+}
+
+#[tokio::test]
+async fn sidebar_click_uses_scroll_offset_in_wide_layout() {
+    let mut app = test_app().await;
+    for index in 0..25 {
+        app.store
+            .create_project(format!("Project {index}"))
+            .await
+            .unwrap();
+    }
+    app.refresh().await.unwrap();
+
+    let project_index = app
+        .store
+        .sidebar_entries
+        .iter()
+        .position(|entry| {
+            matches!(
+                &entry.target,
+                Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(project)))
+                    if project == "project-24"
+            )
+        })
+        .unwrap();
+    app.focus = Focus::Sidebar;
+    app.widgets.sidebar.select(Some(project_index));
+
+    let terminal_size: ratatui::layout::Size = (120, 24).into();
+    let backend = ratatui::backend::TestBackend::new(terminal_size.width, terminal_size.height);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let view = app.view();
+    terminal
+        .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
+        .unwrap();
+
+    let offset = app.widgets.sidebar.offset();
+    assert!(offset > 0);
+    let layout = crate::tui::ui::sidebar_layout(
+        ratatui::layout::Rect::new(0, 0, terminal_size.width, terminal_size.height),
+        Focus::Sidebar,
+    )
+    .unwrap();
+    let visible_row = u16::try_from(project_index - offset).unwrap();
+
+    app.dispatch_mouse(
+        click_at(layout.content.x, layout.content.y + visible_row),
+        terminal_size,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        app.store.view_state.scope,
+        TaskScope::Project("project-24".to_string())
+    );
+    assert_eq!(app.widgets.sidebar.selected(), Some(project_index));
 }
 
 async fn type_chars(app: &mut App, input: &str) {

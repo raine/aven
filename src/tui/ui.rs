@@ -13,6 +13,8 @@ mod task_list;
 mod toast;
 mod truncate;
 
+pub(crate) use self::sidebar::{sidebar_click_at, sidebar_layout};
+
 use self::detail::render_detail_underlay;
 use self::footer::{FooterMode, footer_bar};
 use self::header::render_header;
@@ -118,13 +120,27 @@ pub(crate) fn render(
     let inline_detail_title_editor = inline_detail_title_editor(view);
     if body.width < 100 {
         render_tasks(frame, store, widgets, view.focus, body, inline_title_editor);
-        if view.focus == Focus::Sidebar {
+        if let Some(layout) = crate::tui::ui::sidebar_layout(inner, view.focus)
+            && layout.overlay
+        {
             render_sidebar_overlay(frame, store, widgets, view.focus, body);
         }
     } else {
-        let [sidebar, main] =
-            Layout::horizontal([Constraint::Max(26), Constraint::Fill(1)]).areas(body);
-        render_sidebar(frame, store, widgets, view.focus, sidebar, false);
+        let layout = crate::tui::ui::sidebar_layout(inner, view.focus).unwrap();
+        let main = ratatui::layout::Rect {
+            x: layout.sidebar.x.saturating_add(layout.sidebar.width),
+            y: body.y,
+            width: body.width.saturating_sub(layout.sidebar.width),
+            height: body.height,
+        };
+        render_sidebar(
+            frame,
+            store,
+            widgets,
+            view.focus,
+            layout.sidebar,
+            layout.overlay,
+        );
         render_tasks(frame, store, widgets, view.focus, main, inline_title_editor);
     }
     frame.render_widget(footer_bar(view.footer_mode(), footer.width), footer);
