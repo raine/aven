@@ -11,7 +11,8 @@ use crate::tui::event::{
     lookup_command,
 };
 use crate::tui::navigation::{
-    detail_scroll_with_delta, detail_task_delta, handle_detail_overlay_key, scroll_with_delta,
+    detail_scroll_with_delta, detail_task_delta, handle_detail_overlay_key, next_index,
+    scroll_with_delta,
 };
 use crate::tui::overlay::{CommandState, OverlayOutcome, OverlayRoute, OverlayState};
 use crate::tui::platform::is_editor_prefix_key;
@@ -199,7 +200,12 @@ impl App {
             body
         } else {
             let sidebar_width = body.width.min(26);
-            Rect::new(sidebar_width, body.y, body.width.saturating_sub(sidebar_width), body.height)
+            Rect::new(
+                sidebar_width,
+                body.y,
+                body.width.saturating_sub(sidebar_width),
+                body.height,
+            )
         }
     }
 
@@ -223,7 +229,14 @@ impl App {
             return Ok(());
         }
 
-        self.move_selection(delta).await
+        let next = next_index(
+            self.widgets.table.selected(),
+            self.store.tasks.len(),
+            delta,
+            false,
+        );
+        self.widgets.table.select(next);
+        Ok(())
     }
 
     fn dispatch_mouse_scroll(&mut self, kind: MouseEventKind, terminal_size: Size) -> bool {

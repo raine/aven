@@ -1370,7 +1370,7 @@ mod filters_and_workspaces {
     }
 
     #[tokio::test]
-    async fn mouse_wheel_wraps_task_selection() {
+    async fn mouse_wheel_stops_at_task_list_edges() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("first")).await;
         create_and_select_task(&mut app, test_task_draft("second")).await;
@@ -1379,12 +1379,13 @@ mod filters_and_workspaces {
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollUp), (80, 24).into())
             .await
             .unwrap();
-        assert_eq!(app.widgets.table.selected(), Some(1));
+        assert_eq!(app.widgets.table.selected(), Some(0));
 
+        app.widgets.table.select(Some(1));
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
             .await
             .unwrap();
-        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.widgets.table.selected(), Some(1));
     }
 
     #[tokio::test]
