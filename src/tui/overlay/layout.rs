@@ -3,7 +3,7 @@ use ratatui::widgets::{Block, Borders, Padding};
 
 use crate::tui::text::char_count_ranges;
 
-use super::{OverlayRoute, PickerView, picker_viewport_start};
+use super::{OverlayRoute, PickerView, TagComboboxView, picker_viewport_start};
 
 pub(crate) const GENERIC_PICKER_VIEWPORT_ROWS: usize = 8;
 pub(crate) const PROJECT_PICKER_VIEWPORT_ROWS: usize = 10;
@@ -11,6 +11,8 @@ pub(crate) const GENERIC_PICKER_WIDTH: u16 = 60;
 pub(crate) const PROJECT_PICKER_WIDTH: u16 = 70;
 pub(crate) const TEXT_PANEL_VISIBLE_ROWS: usize = 12;
 pub(crate) const TEXT_PANEL_WIDTH: u16 = 60;
+pub(crate) const TAG_COMBOBOX_VIEWPORT_ROWS: usize = 7;
+pub(crate) const TAG_COMBOBOX_WIDTH: u16 = 68;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PickerLayout {
@@ -33,6 +35,18 @@ pub(crate) struct TextPanelLayout {
     pub(crate) area: Rect,
     pub(crate) inner: Rect,
     pub(crate) visible_rows: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TagComboboxLayout {
+    pub(crate) area: Rect,
+    pub(crate) inner: Rect,
+    pub(crate) chip_start: u16,
+    pub(crate) input_row: u16,
+    pub(crate) list_start: u16,
+    pub(crate) hint_row: u16,
+    pub(crate) viewport_rows: usize,
+    pub(crate) visible_start: usize,
 }
 
 pub(crate) fn dialog_area(area: Rect, width: u16, height: u16) -> Rect {
@@ -128,6 +142,33 @@ pub(crate) fn text_panel_scroll_cap(line_count: usize) -> u16 {
     line_count
         .saturating_sub(TEXT_PANEL_VISIBLE_ROWS)
         .min(u16::MAX as usize) as u16
+}
+
+pub(crate) fn tag_combobox_layout(
+    state: &TagComboboxView,
+    terminal_size: Size,
+) -> TagComboboxLayout {
+    let height = TAG_COMBOBOX_VIEWPORT_ROWS.saturating_add(6) as u16;
+    let area = dialog_area(
+        Rect::new(0, 0, terminal_size.width, terminal_size.height),
+        TAG_COMBOBOX_WIDTH,
+        height,
+    );
+    TagComboboxLayout {
+        area,
+        inner: dialog_inner_area(area),
+        chip_start: 0,
+        input_row: 0,
+        list_start: 2,
+        hint_row: height.saturating_sub(3),
+        viewport_rows: TAG_COMBOBOX_VIEWPORT_ROWS,
+        visible_start: state
+            .visible_indices
+            .iter()
+            .position(|index| *index == state.highlighted)
+            .unwrap_or(0)
+            .saturating_sub(TAG_COMBOBOX_VIEWPORT_ROWS.saturating_sub(1)),
+    }
 }
 
 pub(crate) fn text_panel_layout(terminal_size: Size, line_count: usize) -> TextPanelLayout {

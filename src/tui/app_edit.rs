@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+use crate::labels::normalize_label;
 use crate::tui::app::App;
 use crate::tui::overlay::{OverlayRoute, OverlayState};
 
@@ -217,11 +218,12 @@ impl App {
             .unwrap()
             .labels
             .clone();
-        let mut items = self.store.label_picker_items();
-        for picker_item in &mut items {
-            picker_item.selected = labels.contains(&picker_item.value);
-        }
-        self.open_picker_overlay(OverlayRoute::EditLabels, EDIT_LABELS_TITLE, items, true);
+        self.overlay = Some(OverlayState::tag_combobox(
+            OverlayRoute::EditLabels,
+            EDIT_LABELS_TITLE,
+            self.store.labels.clone(),
+            labels,
+        ));
     }
 
     pub(super) async fn submit_edit_status(&mut self, status: String) -> Result<()> {
@@ -290,6 +292,16 @@ impl App {
     }
 
     pub(super) async fn submit_edit_labels(&mut self, labels: Vec<String>) -> Result<()> {
+        for label in &labels {
+            let label = normalize_label(label);
+            if !self.store.labels.contains(&label) {
+                if let Err(error) = self.store.create_label(label).await {
+                    self.set_error(format!("{error:#}"));
+                    self.begin_edit_labels();
+                    return Ok(());
+                }
+            }
+        }
         let result = self
             .store
             .update_labels(self.widgets.table.selected(), labels)

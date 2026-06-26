@@ -12,9 +12,12 @@ use super::picker::{
 };
 use super::state::{
     ConfirmState, HeaderMenuState, OrderMenuState, OverlayOutcome, OverlayState, OverlaySubmit,
-    PickerMode, PickerState, TextPanelState,
+    PickerMode, PickerState, TagComboboxState, TextPanelState,
 };
-use crate::tui::overlay::{confirm_layout, picker_layout, text_panel_layout};
+use super::tag_combobox::{
+    handle_tag_combobox_key, normalize_tag_combobox_highlight, tag_combobox_matches,
+};
+use crate::tui::overlay::{confirm_layout, picker_layout, tag_combobox_layout, text_panel_layout};
 use crate::tui::store::TaskOrder;
 
 pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) -> OverlayState {
@@ -52,6 +55,11 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
             );
             OverlayState::Picker(state)
         }
+        OverlayState::TagCombobox(mut state) => {
+            state.input.insert_paste(text);
+            normalize_tag_combobox_highlight(&mut state);
+            OverlayState::TagCombobox(state)
+        }
         other => other,
     }
 }
@@ -63,6 +71,7 @@ pub(crate) fn handle_generic_overlay_mouse(
 ) -> OverlayOutcome {
     match overlay {
         OverlayState::Picker(state) => handle_picker_mouse(state, mouse, terminal_size),
+        OverlayState::TagCombobox(state) => handle_tag_combobox_mouse(state, mouse, terminal_size),
         OverlayState::Confirm(state) => handle_confirm_mouse(state, mouse, terminal_size),
         OverlayState::TextPanel(state) => handle_text_panel_mouse(state, mouse, terminal_size),
         other => OverlayOutcome::None(other),
@@ -134,6 +143,7 @@ pub(crate) fn handle_generic_overlay_key(
             }
         }
         OverlayState::Picker(state) => handle_picker_key(state, key),
+        OverlayState::TagCombobox(state) => handle_tag_combobox_key(state, key),
         OverlayState::HeaderMenu(state) => handle_header_menu_key(state, key),
         OverlayState::OrderMenu(state) => handle_order_menu_key(state, key),
         OverlayState::Confirm(state) => match key.code {
@@ -231,6 +241,121 @@ enum ConfirmMouseTarget {
     Cancel,
     Interior,
     Outside,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TagComboboxMouseTarget {
+    Outside,
+    Input,
+    Row(usize),
+    Interior,
+}
+
+fn handle_tag_combobox_mouse(
+    mut state: TagComboboxState,
+    mouse: MouseEvent,
+    terminal_size: Size,
+) -> OverlayOutcome {
+    match mouse.kind {
+        MouseEventKind::ScrollDown => {
+            move_tag_combobox_highlight(&mut state, 1);
+            return OverlayOutcome::None(OverlayState::TagCombobox(state));
+        }
+        MouseEventKind::ScrollUp => {
+            move_tag_combobox_highlight(&mut state, -1);
+            return OverlayOutcome::None(OverlayState::TagCombobox(state));
+        }
+        MouseEventKind::Down(MouseButton::Left) => {}
+        _ => return OverlayOutcome::None(OverlayState::TagCombobox(state)),
+    }
+
+    match tag_combobox_mouse_target(&state, mouse.column, mouse.row, terminal_size) {
+        TagComboboxMouseTarget::Outside => OverlayOutcome::Cancelled,
+        TagComboboxMouseTarget::Input => OverlayOutcome::None(OverlayState::TagCombobox(state)),
+        TagComboboxMouseTarget::Row(index) => {
+            state.highlighted = index;
+            let Some(label) = state.options.get(index).cloned() else {
+                return OverlayOutcome::None(OverlayState::TagCombobox(state));
+            };
+            if let Some(selected) = state.selected.iter().position(|item| item == &label) {
+                state.selected.remove(selected);
+            } else {
+                state.selected.push(label);
+            }
+            OverlayOutcome::None(OverlayState::TagCombobox(state))
+        }
+        TagComboboxMouseTarget::Interior => OverlayOutcome::None(OverlayState::TagCombobox(state)),
+    }
+}
+
+fn tag_combobox_mouse_target(
+    state: &TagComboboxState,
+    column: u16,
+    row: u16,
+    terminal_size: Size,
+) -> TagComboboxMouseTarget {
+    let view = crate::tui::overlay::TagComboboxView {
+        route: state.route,
+        title: state.title.clone(),
+        input: state.input.text.clone(),
+        input_cursor: state.input.cursor,
+        completion: None,
+        options: state.options.clone(),
+        selected: state.selected.clone(),
+        highlighted: state.highlighted,
+        visible_indices: tag_combobox_matches(state),
+        visible_start: 0,
+    };
+    let layout = tag_combobox_layout(&view, terminal_size);
+    if !layout
+        .area
+        .contains(ratatui::layout::Position { x: column, y: row })
+    {
+        return TagComboboxMouseTarget::Outside;
+    }
+    let inner_column = column.saturating_sub(layout.inner.x);
+    let inner_row = row.saturating_sub(layout.inner.y);
+    if inner_column >= layout.inner.width {
+        return TagComboboxMouseTarget::Interior;
+    }
+    if inner_row == layout.input_row {
+        return TagComboboxMouseTarget::Input;
+    }
+    if inner_row >= layout.list_start
+        && inner_row
+            < layout
+                .list_start
+                .saturating_add(layout.viewport_rows as u16)
+    {
+        let offset = (inner_row - layout.list_start) as usize;
+        let visible = tag_combobox_matches(state);
+        return visible
+            .get(layout.visible_start + offset)
+            .copied()
+            .map(TagComboboxMouseTarget::Row)
+            .unwrap_or(TagComboboxMouseTarget::Interior);
+    }
+    TagComboboxMouseTarget::Interior
+}
+
+fn move_tag_combobox_highlight(state: &mut TagComboboxState, delta: isize) {
+    let matches = tag_combobox_matches(state);
+    if matches.is_empty() {
+        return;
+    }
+    let current = matches
+        .iter()
+        .position(|index| *index == state.highlighted)
+        .unwrap_or(0);
+    let next = current as isize + delta;
+    let next = if next < 0 {
+        matches.len() - 1
+    } else if next >= matches.len() as isize {
+        0
+    } else {
+        next as usize
+    };
+    state.highlighted = matches[next];
 }
 
 fn handle_picker_mouse(

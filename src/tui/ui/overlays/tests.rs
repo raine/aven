@@ -3,7 +3,7 @@ use crate::tui::authoring::AddTaskStep;
 use crate::tui::config_overlay::{CONFIG_STATUS_TITLE, DATABASE_STATS_TITLE};
 use crate::tui::overlay::{
     AddTaskView, ConfirmView, MultilineInputView, OverlayRoute, OverlayView, PickerItem,
-    PickerMode, PickerView, TextInputView, TextPanelView,
+    PickerMode, PickerView, TagComboboxView, TextInputView, TextPanelView,
 };
 use crate::tui::store::{
     DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts, SyncStatusCheck, TuiDatabaseStats,
@@ -32,6 +32,7 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
         OverlayView::TextInput(state) => render_text_input(frame, state),
         OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
         OverlayView::Picker(state) => render_picker(frame, state),
+        OverlayView::TagCombobox(state) => render_tag_combobox(frame, state),
         OverlayView::Confirm(state) => render_confirm(frame, state),
         OverlayView::TextPanel(state) => render_text_panel(frame, state),
         OverlayView::SyncStatus(state) => render_sync_status(frame, state),
@@ -969,6 +970,27 @@ mod picker_overlays {
     }
 
     #[test]
+    fn tag_combobox_shows_selected_labels_input_completion_and_matches() {
+        let rendered = render_overlay_view(OverlayView::TagCombobox(TagComboboxView {
+            route: OverlayRoute::EditLabels,
+            title: "Edit task: labels".to_string(),
+            input: "bu".to_string(),
+            input_cursor: 2,
+            completion: Some("g".to_string()),
+            options: vec!["bug".to_string(), "feature".to_string()],
+            selected: vec!["feature".to_string()],
+            highlighted: 0,
+            visible_indices: vec![0],
+            visible_start: 0,
+        }));
+
+        assert!(rendered.contains("Edit task: labels"));
+        assert!(rendered.contains("feature"));
+        assert!(rendered.contains("bu"));
+        assert!(rendered.contains("bug"));
+    }
+
+    #[test]
     fn edit_project_uses_structured_project_picker() {
         for (route, title) in [
             (OverlayRoute::EditProject, "Edit project"),
@@ -1191,6 +1213,18 @@ mod route_specific_rendering {
                 mode: PickerMode::Navigate,
                 visible_indices: vec![0],
             }),
+            OverlayView::TagCombobox(TagComboboxView {
+                route: OverlayRoute::EditLabels,
+                title: "Labels".to_string(),
+                input: String::new(),
+                input_cursor: 0,
+                completion: None,
+                options: vec!["bug".to_string()],
+                selected: Vec::new(),
+                highlighted: 0,
+                visible_indices: vec![0],
+                visible_start: 0,
+            }),
             OverlayView::Confirm(ConfirmView {
                 title: "Delete".to_string(),
                 prompt: "Delete task?".to_string(),
@@ -1209,6 +1243,7 @@ mod route_specific_rendering {
             "Edit title",
             "Description",
             "Project",
+            "Labels",
             "Delete",
             "Conflict details",
             CONFIG_STATUS_TITLE,

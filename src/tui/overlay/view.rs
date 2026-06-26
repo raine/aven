@@ -1,11 +1,13 @@
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::store::{TaskOrder, TuiDatabaseStats, TuiSyncStatus};
 
+use super::layout::TAG_COMBOBOX_VIEWPORT_ROWS;
 use super::picker::visible_picker_indices;
 use super::state::{
     HeaderMenuItem, HeaderMenuKind, HeaderMenuState, OrderMenuState, OverlayRoute, OverlayState,
     OverlayState::*, PickerItem, PickerMode,
 };
+use super::tag_combobox::{tag_combobox_completion, tag_combobox_matches};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayView {
@@ -32,6 +34,7 @@ pub(crate) enum OverlayView {
     TextInput(TextInputView),
     MultilineInput(MultilineInputView),
     Picker(PickerView),
+    TagCombobox(TagComboboxView),
     HeaderMenu(HeaderMenuView),
     OrderMenu(OrderMenuView),
     Confirm(ConfirmView),
@@ -96,6 +99,20 @@ pub(crate) struct PickerView {
     pub(crate) multi: bool,
     pub(crate) mode: PickerMode,
     pub(crate) visible_indices: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TagComboboxView {
+    pub(crate) route: OverlayRoute,
+    pub(crate) title: String,
+    pub(crate) input: String,
+    pub(crate) input_cursor: usize,
+    pub(crate) completion: Option<String>,
+    pub(crate) options: Vec<String>,
+    pub(crate) selected: Vec<String>,
+    pub(crate) highlighted: usize,
+    pub(crate) visible_indices: Vec<usize>,
+    pub(crate) visible_start: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,6 +215,25 @@ impl From<&OverlayState> for OverlayView {
                 mode: state.mode,
                 visible_indices: visible_picker_indices(state),
             }),
+            TagCombobox(state) => {
+                let visible_indices = tag_combobox_matches(state);
+                Self::TagCombobox(TagComboboxView {
+                    route: state.route,
+                    title: state.title.clone(),
+                    input: state.input.text.clone(),
+                    input_cursor: state.input.cursor,
+                    completion: tag_combobox_completion(state),
+                    options: state.options.clone(),
+                    selected: state.selected.clone(),
+                    highlighted: state.highlighted,
+                    visible_start: visible_indices
+                        .iter()
+                        .position(|index| *index == state.highlighted)
+                        .unwrap_or(0)
+                        .saturating_sub(TAG_COMBOBOX_VIEWPORT_ROWS.saturating_sub(1)),
+                    visible_indices,
+                })
+            }
             HeaderMenu(state) => Self::HeaderMenu(HeaderMenuView::from(state)),
             OrderMenu(state) => Self::OrderMenu(OrderMenuView::from(state)),
             Confirm(state) => Self::Confirm(ConfirmView {

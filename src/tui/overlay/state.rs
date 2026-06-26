@@ -26,6 +26,7 @@ pub(crate) enum OverlayState {
     TextInput(TextInputState),
     MultilineInput(MultilineInputState),
     Picker(PickerState),
+    TagCombobox(TagComboboxState),
     HeaderMenu(HeaderMenuState),
     OrderMenu(OrderMenuState),
     Confirm(ConfirmState),
@@ -588,6 +589,16 @@ pub(crate) struct PickerState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TagComboboxState {
+    pub(crate) route: OverlayRoute,
+    pub(crate) title: String,
+    pub(crate) input: LineEdit,
+    pub(crate) options: Vec<String>,
+    pub(crate) selected: Vec<String>,
+    pub(crate) highlighted: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PickerItem {
     pub(crate) label: String,
     pub(crate) value: String,
@@ -697,6 +708,26 @@ impl OverlayState {
         multi: bool,
     ) -> Self {
         Self::Picker(PickerState::new(route, title, items, multi))
+    }
+
+    pub(crate) fn tag_combobox(
+        route: OverlayRoute,
+        title: impl Into<String>,
+        options: Vec<String>,
+        selected: Vec<String>,
+    ) -> Self {
+        let highlighted = options
+            .iter()
+            .position(|label| selected.contains(label))
+            .unwrap_or(0);
+        Self::TagCombobox(TagComboboxState {
+            route,
+            title: title.into(),
+            input: LineEdit::blank(),
+            options,
+            selected,
+            highlighted,
+        })
     }
 
     pub(crate) fn confirm(
