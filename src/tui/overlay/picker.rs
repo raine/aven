@@ -108,7 +108,7 @@ fn handle_picker_filter_key(mut state: PickerState, key: KeyEvent) -> OverlayOut
     }
 }
 
-fn picker_submit_outcome(state: PickerState) -> OverlayOutcome {
+pub(super) fn picker_submit_outcome(state: PickerState) -> OverlayOutcome {
     let values = if state.multi {
         state
             .items

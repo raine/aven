@@ -82,6 +82,7 @@ impl App {
             .as_ref()
             .filter(|last| last.at.elapsed() <= TASK_ROW_DOUBLE_CLICK)
             .cloned();
+
         if matches!(self.overlay, Some(OverlayState::HeaderMenu(_))) {
             let Some(OverlayState::HeaderMenu(state)) = self.overlay.take() else {
                 return Ok(());
@@ -97,6 +98,18 @@ impl App {
             return self
                 .submit_order_menu_at(state, mouse.column, mouse.row, terminal_size)
                 .await;
+        }
+        if matches!(
+            self.overlay,
+            Some(OverlayState::Picker(_) | OverlayState::Confirm(_) | OverlayState::TextPanel(_))
+        ) {
+            self.last_task_click = None;
+            let Some(overlay) = self.overlay.take() else {
+                return Ok(());
+            };
+            self.handle_overlay_mouse(overlay, mouse, terminal_size)
+                .await?;
+            return Ok(());
         }
         if self.overlay.is_some() || terminal_size.width < 70 || terminal_size.height < 18 {
             return Ok(());
@@ -330,6 +343,30 @@ impl App {
         Ok(())
     }
 
+    async fn handle_overlay_mouse(
+        &mut self,
+        overlay: OverlayState,
+        mouse: MouseEvent,
+        terminal_size: Size,
+    ) -> Result<()> {
+        let was_add_task_picker = matches!(
+            &overlay,
+            OverlayState::Picker(state)
+                if matches!(
+                    state.route,
+                    OverlayRoute::AddTaskTitleProject | OverlayRoute::AddTaskTitlePriority
+                )
+        );
+        let outcome =
+            crate::tui::overlay::handle_generic_overlay_mouse(overlay, mouse, terminal_size);
+        self.apply_generic_overlay_outcome(outcome, false, false, was_add_task_picker)
+            .await?;
+        if self.detail_context && self.overlay.is_none() {
+            self.restore_detail_overlay(true);
+        }
+        Ok(())
+    }
+
     async fn handle_generic_overlay_key(
         &mut self,
         key: KeyEvent,
@@ -490,6 +527,22 @@ impl App {
                 )
         );
         let outcome = crate::tui::overlay::handle_generic_overlay_key(key, overlay, scroll_cap);
+        self.apply_generic_overlay_outcome(
+            outcome,
+            was_detail_help,
+            was_add_task_description_editor,
+            was_add_task_picker,
+        )
+        .await
+    }
+
+    async fn apply_generic_overlay_outcome(
+        &mut self,
+        outcome: OverlayOutcome,
+        was_detail_help: bool,
+        was_add_task_description_editor: bool,
+        was_add_task_picker: bool,
+    ) -> Result<()> {
         match outcome {
             OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
             OverlayOutcome::Cancelled if was_detail_help => {

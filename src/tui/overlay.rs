@@ -1,11 +1,19 @@
 mod handlers;
+mod layout;
 mod multiline;
 mod picker;
 mod state;
 mod text_input;
 mod view;
 
-pub(crate) use handlers::{handle_generic_overlay_key, handle_generic_overlay_paste};
+pub(crate) use handlers::{
+    handle_generic_overlay_key, handle_generic_overlay_mouse, handle_generic_overlay_paste,
+};
+pub(crate) use layout::{
+    GENERIC_PICKER_VIEWPORT_ROWS, GENERIC_PICKER_WIDTH, PROJECT_PICKER_VIEWPORT_ROWS,
+    PROJECT_PICKER_WIDTH, TEXT_PANEL_VISIBLE_ROWS, TEXT_PANEL_WIDTH, confirm_layout, confirm_width,
+    dialog_area, picker_layout, text_panel_layout, text_panel_scroll_cap,
+};
 #[cfg(test)]
 pub(crate) use multiline::edit_multiline_input;
 #[cfg(test)]

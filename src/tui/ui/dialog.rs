@@ -1,10 +1,11 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Flex, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 
 use super::truncate::truncate_chars;
+use crate::tui::overlay::dialog_area;
 use crate::tui::theme::{ACCENT, BG_ALT, FG, FG_MUTED};
 
 pub(super) struct Dialog<'a> {
@@ -37,7 +38,7 @@ impl<'a> Dialog<'a> {
     }
 
     pub(super) fn area(&self, frame: &Frame) -> Rect {
-        centered(frame.area(), self.width, self.height)
+        dialog_area(frame.area(), self.width, self.height)
     }
 
     pub(super) fn render_block(self, frame: &mut Frame) -> Rect {
@@ -107,18 +108,6 @@ pub(super) fn dialog_hint_line(items: &[(&str, &str)]) -> Line<'static> {
         spans.push(Span::styled(format!(" {label}"), Style::new().fg(FG_MUTED)));
     }
     Line::from(spans)
-}
-
-fn centered(area: Rect, width: u16, height: u16) -> Rect {
-    let [area] = Layout::horizontal([Constraint::Length(width.min(area.width.saturating_sub(2)))])
-        .flex(Flex::Center)
-        .areas(area);
-    let [area] = Layout::vertical([Constraint::Length(
-        height.min(area.height.saturating_sub(2)),
-    )])
-    .flex(Flex::Center)
-    .areas(area);
-    area
 }
 
 #[cfg(test)]

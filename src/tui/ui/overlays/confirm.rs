@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::text::{Line, Text};
 
 use super::super::dialog::{Dialog, dialog_hint_line};
-use crate::tui::overlay::ConfirmView;
+use crate::tui::overlay::{ConfirmView, confirm_width};
 use crate::tui::text::char_count_ranges;
 
 pub(in crate::tui::ui) fn render_confirm(frame: &mut Frame, state: &ConfirmView) {
@@ -17,13 +17,6 @@ pub(in crate::tui::ui) fn render_confirm(frame: &mut Frame, state: &ConfirmView)
     Dialog::new(&state.title, width, height)
         .wrap()
         .render_text(frame, text);
-}
-
-pub(in crate::tui::ui) fn confirm_width(frame_width: u16, prompt: &str) -> u16 {
-    let prompt_width = prompt.chars().count().saturating_add(4) as u16;
-    prompt_width
-        .clamp(32, 80)
-        .min(frame_width.saturating_sub(4).max(32))
 }
 
 pub(in crate::tui::ui) fn confirm_hint_line() -> ratatui::text::Line<'static> {

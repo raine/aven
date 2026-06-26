@@ -5,7 +5,10 @@ use ratatui::text::{Line, Span, Text};
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::input::{input_line, prefixed_input_line};
 use super::shared::selected_viewport_start;
-use crate::tui::overlay::{OverlayRoute, PickerItem, PickerMode, PickerView};
+use crate::tui::overlay::{
+    GENERIC_PICKER_VIEWPORT_ROWS, GENERIC_PICKER_WIDTH, OverlayRoute, PROJECT_PICKER_VIEWPORT_ROWS,
+    PROJECT_PICKER_WIDTH, PickerItem, PickerMode, PickerView,
+};
 use crate::tui::theme::{self, ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, SELECTED};
 use crate::tui::widgets::priority_icon;
 
@@ -16,7 +19,7 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, state: &PickerView) {
     }
 
     let visible_count = state.visible_indices.len().max(1);
-    let viewport_rows = 8usize;
+    let viewport_rows = GENERIC_PICKER_VIEWPORT_ROWS;
     let height = (visible_count.min(viewport_rows) as u16).saturating_add(5);
     let selected_position =
         selected_viewport_start(&state.visible_indices, state.selected, viewport_rows);
@@ -53,7 +56,8 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, state: &PickerView) {
         state.multi,
         priority_picker_submit_label(state.route).unwrap_or("submit"),
     ));
-    Dialog::new(&state.title, 60, height.saturating_add(1)).render_text(frame, Text::from(lines));
+    Dialog::new(&state.title, GENERIC_PICKER_WIDTH, height.saturating_add(1))
+        .render_text(frame, Text::from(lines));
 }
 
 pub(in crate::tui::ui) fn priority_picker_line(item: &PickerItem, selected: bool) -> Line<'static> {
@@ -88,7 +92,7 @@ pub(in crate::tui::ui) fn picker_hint_line(
 }
 
 fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'static str) {
-    let viewport_rows = 10usize;
+    let viewport_rows = PROJECT_PICKER_VIEWPORT_ROWS;
     let height = (viewport_rows as u16).saturating_add(6);
     let selected_position =
         selected_viewport_start(&state.visible_indices, state.selected, viewport_rows);
@@ -126,7 +130,7 @@ fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'
     }
     lines.push(Line::from(""));
     lines.push(project_picker_hint_line(state.mode, submit_label));
-    Dialog::new(&state.title, 70, height).render_text(frame, Text::from(lines));
+    Dialog::new(&state.title, PROJECT_PICKER_WIDTH, height).render_text(frame, Text::from(lines));
 }
 
 pub(in crate::tui::ui) fn project_picker_submit_label(route: OverlayRoute) -> Option<&'static str> {

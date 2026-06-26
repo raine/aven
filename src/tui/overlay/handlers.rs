@@ -1,12 +1,19 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::{Rect, Size};
 
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::navigation::scroll_with_delta;
 use crate::tui::ui::text_panel_scroll_cap;
 
 use super::multiline::edit_multiline_input;
-use super::picker::{handle_picker_key, normalize_picker_selection};
-use super::state::{HeaderMenuState, OrderMenuState, OverlayOutcome, OverlayState, OverlaySubmit};
+use super::picker::{
+    handle_picker_key, normalize_picker_selection, picker_submit_outcome, visible_picker_indices,
+};
+use super::state::{
+    ConfirmState, HeaderMenuState, OrderMenuState, OverlayOutcome, OverlayState, OverlaySubmit,
+    PickerMode, PickerState, TextPanelState,
+};
+use crate::tui::overlay::{confirm_layout, picker_layout, text_panel_layout};
 use crate::tui::store::TaskOrder;
 
 pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) -> OverlayState {
@@ -41,6 +48,19 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
             OverlayState::Picker(state)
         }
         other => other,
+    }
+}
+
+pub(crate) fn handle_generic_overlay_mouse(
+    overlay: OverlayState,
+    mouse: MouseEvent,
+    terminal_size: Size,
+) -> OverlayOutcome {
+    match overlay {
+        OverlayState::Picker(state) => handle_picker_mouse(state, mouse, terminal_size),
+        OverlayState::Confirm(state) => handle_confirm_mouse(state, mouse, terminal_size),
+        OverlayState::TextPanel(state) => handle_text_panel_mouse(state, mouse, terminal_size),
+        other => OverlayOutcome::None(other),
     }
 }
 
@@ -189,6 +209,169 @@ pub(crate) fn handle_generic_overlay_key(
         },
         other => OverlayOutcome::None(other),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PickerMouseTarget {
+    Outside,
+    Filter,
+    Row(usize),
+    Interior,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfirmMouseTarget {
+    Yes,
+    No,
+    Cancel,
+    Interior,
+    Outside,
+}
+
+fn handle_picker_mouse(
+    mut state: PickerState,
+    mouse: MouseEvent,
+    terminal_size: Size,
+) -> OverlayOutcome {
+    if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+        return OverlayOutcome::None(OverlayState::Picker(state));
+    }
+    match picker_mouse_target(&state, mouse.column, mouse.row, terminal_size) {
+        PickerMouseTarget::Outside => OverlayOutcome::Cancelled,
+        PickerMouseTarget::Filter => {
+            state.mode = PickerMode::Filter;
+            OverlayOutcome::None(OverlayState::Picker(state))
+        }
+        PickerMouseTarget::Row(index) => {
+            state.selected = index;
+            if state.multi {
+                state.items[index].selected = !state.items[index].selected;
+                OverlayOutcome::None(OverlayState::Picker(state))
+            } else {
+                picker_submit_outcome(state)
+            }
+        }
+        PickerMouseTarget::Interior => OverlayOutcome::None(OverlayState::Picker(state)),
+    }
+}
+
+fn picker_mouse_target(
+    state: &PickerState,
+    column: u16,
+    row: u16,
+    terminal_size: Size,
+) -> PickerMouseTarget {
+    let view = crate::tui::overlay::PickerView {
+        route: state.route,
+        title: state.title.clone(),
+        filter: state.filter.text.clone(),
+        filter_cursor: state.filter.cursor,
+        items: state.items.clone(),
+        selected: state.selected,
+        multi: state.multi,
+        mode: state.mode,
+        visible_indices: visible_picker_indices(state),
+    };
+    let layout = picker_layout(&view, terminal_size);
+    if !contains(layout.area, column, row) {
+        return PickerMouseTarget::Outside;
+    }
+    if !contains(layout.inner, column, row) {
+        return PickerMouseTarget::Interior;
+    }
+    let inner_row = row.saturating_sub(layout.inner.y);
+    if inner_row == 0 {
+        return PickerMouseTarget::Filter;
+    }
+    let Some(row_offset) = inner_row.checked_sub(layout.list_start) else {
+        return PickerMouseTarget::Interior;
+    };
+    if row_offset >= layout.viewport_rows as u16 {
+        return PickerMouseTarget::Interior;
+    }
+    let visible_position = layout.visible_start.saturating_add(row_offset as usize);
+    match view.visible_indices.get(visible_position) {
+        Some(index) => PickerMouseTarget::Row(*index),
+        None => PickerMouseTarget::Interior,
+    }
+}
+
+fn handle_confirm_mouse(
+    state: ConfirmState,
+    mouse: MouseEvent,
+    terminal_size: Size,
+) -> OverlayOutcome {
+    if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+        return OverlayOutcome::None(OverlayState::Confirm(state));
+    }
+    match confirm_mouse_target(&state.prompt, mouse.column, mouse.row, terminal_size) {
+        ConfirmMouseTarget::Yes => OverlayOutcome::Submitted(OverlaySubmit::Confirm {
+            route: state.route,
+            title: state.title,
+        }),
+        ConfirmMouseTarget::No | ConfirmMouseTarget::Cancel | ConfirmMouseTarget::Outside => {
+            OverlayOutcome::Cancelled
+        }
+        ConfirmMouseTarget::Interior => OverlayOutcome::None(OverlayState::Confirm(state)),
+    }
+}
+
+fn confirm_mouse_target(
+    prompt: &str,
+    column: u16,
+    row: u16,
+    terminal_size: Size,
+) -> ConfirmMouseTarget {
+    let layout = confirm_layout(terminal_size, prompt);
+    if !contains(layout.area, column, row) {
+        return ConfirmMouseTarget::Outside;
+    }
+    if !contains(layout.inner, column, row) {
+        return ConfirmMouseTarget::Interior;
+    }
+    if row.saturating_sub(layout.inner.y) != layout.hint_row {
+        return ConfirmMouseTarget::Interior;
+    }
+    match column.saturating_sub(layout.inner.x) {
+        0..=4 => ConfirmMouseTarget::Yes,
+        7..=10 => ConfirmMouseTarget::No,
+        13..=22 => ConfirmMouseTarget::Cancel,
+        _ => ConfirmMouseTarget::Interior,
+    }
+}
+
+fn handle_text_panel_mouse(
+    mut state: TextPanelState,
+    mouse: MouseEvent,
+    terminal_size: Size,
+) -> OverlayOutcome {
+    let cap = text_panel_scroll_cap(&state.lines);
+    match mouse.kind {
+        MouseEventKind::ScrollDown => {
+            state.scroll = scroll_with_delta(state.scroll, 1, cap);
+            OverlayOutcome::None(OverlayState::TextPanel(state))
+        }
+        MouseEventKind::ScrollUp => {
+            state.scroll = scroll_with_delta(state.scroll, -1, cap);
+            OverlayOutcome::None(OverlayState::TextPanel(state))
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            let layout = text_panel_layout(terminal_size, state.lines.len());
+            if contains(layout.area, mouse.column, mouse.row) {
+                OverlayOutcome::None(OverlayState::TextPanel(state))
+            } else {
+                OverlayOutcome::Cancelled
+            }
+        }
+        _ => OverlayOutcome::None(OverlayState::TextPanel(state)),
+    }
+}
+
+fn contains(area: Rect, column: u16, row: u16) -> bool {
+    column >= area.x
+        && column < area.x.saturating_add(area.width)
+        && row >= area.y
+        && row < area.y.saturating_add(area.height)
 }
 
 fn handle_header_menu_key(mut state: HeaderMenuState, key: KeyEvent) -> OverlayOutcome {

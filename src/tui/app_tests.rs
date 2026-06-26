@@ -142,6 +142,50 @@ fn task_row_click(column: u16, row: u16) -> MouseEvent {
     click_at(column, row)
 }
 
+fn left_click(column: u16, row: u16) -> MouseEvent {
+    click_at(column, row)
+}
+
+fn wheel_down(column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+#[track_caller]
+fn picker_row_click(app: &App, visible_row: u16, size: ratatui::layout::Size) -> MouseEvent {
+    let Some(overlay) = app.overlay.as_ref() else {
+        panic!("expected overlay");
+    };
+    let OverlayView::Picker(view) = OverlayView::from(overlay) else {
+        panic!("expected picker overlay");
+    };
+    let layout = crate::tui::overlay::picker_layout(&view, size);
+    left_click(
+        layout.inner.x.saturating_add(2),
+        layout
+            .inner
+            .y
+            .saturating_add(layout.list_start)
+            .saturating_add(visible_row),
+    )
+}
+
+#[track_caller]
+fn confirm_hint_click(app: &App, column: u16, size: ratatui::layout::Size) -> MouseEvent {
+    let Some(OverlayState::Confirm(state)) = app.overlay.as_ref() else {
+        panic!("expected confirm overlay");
+    };
+    let layout = crate::tui::overlay::confirm_layout(size, &state.prompt);
+    left_click(
+        layout.inner.x.saturating_add(column),
+        layout.inner.y.saturating_add(layout.hint_row),
+    )
+}
+
 #[tokio::test]
 async fn sidebar_click_selects_project_scope_in_wide_layout() {
     let mut app = test_app().await;
@@ -1399,6 +1443,95 @@ mod filters_and_workspaces {
             .await
             .unwrap();
         assert_eq!(app.widgets.table.selected(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn picker_row_click_submits_clicked_row() {
+        let mut app = test_app().await;
+        let size = (100, 24).into();
+        app.begin_filter_priority();
+
+        app.dispatch_mouse(picker_row_click(&app, 2, size), size)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            app.store.view_state.filter_modifiers.priority.as_deref(),
+            Some("medium")
+        );
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn picker_row_click_toggles_multi_select_row() {
+        let mut app = test_app().await;
+        let size = (100, 24).into();
+        app.store.create_label("bug".to_string()).await.unwrap();
+        create_and_select_task(&mut app, test_task_draft("Labeled target")).await;
+        app.begin_edit_labels();
+
+        app.dispatch_mouse(picker_row_click(&app, 0, size), size)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(state))
+                if state.items.iter().any(|item| item.value == "bug" && item.selected)
+        ));
+    }
+
+    #[tokio::test]
+    async fn confirm_hint_click_confirms_and_cancels() {
+        let mut app = test_app().await;
+        let size = (100, 24).into();
+        app.overlay = Some(OverlayState::Confirm(ConfirmState {
+            route: OverlayRoute::MessageOnly,
+            title: "Confirm".to_string(),
+            prompt: "Continue?".to_string(),
+        }));
+
+        app.dispatch_mouse(confirm_hint_click(&app, 0, size), size)
+            .await
+            .unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(toast_message(&app), Some("confirmed Confirm"));
+
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::Confirm(ConfirmState {
+            route: OverlayRoute::MessageOnly,
+            title: "Confirm".to_string(),
+            prompt: "Continue?".to_string(),
+        }));
+
+        app.dispatch_mouse(confirm_hint_click(&app, 7, size), size)
+            .await
+            .unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(app.message.is_none());
+    }
+
+    #[tokio::test]
+    async fn text_panel_mouse_scrolls_and_closes_outside() {
+        let mut app = test_app().await;
+        let size = (100, 24).into();
+        app.overlay = Some(OverlayState::TextPanel(TextPanelState::new(
+            "Panel",
+            (0..20).map(|index| format!("line {index}")).collect(),
+        )));
+
+        app.dispatch_mouse(wheel_down(50, 12), size).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::TextPanel(TextPanelState { scroll: 1, .. }))
+        ));
+
+        app.dispatch_mouse(left_click(0, 0), size).await.unwrap();
+
+        assert!(app.overlay.is_none());
     }
 }
 
