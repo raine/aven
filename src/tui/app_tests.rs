@@ -125,6 +125,15 @@ fn header_click(column: u16) -> MouseEvent {
     }
 }
 
+fn mouse_wheel(kind: MouseEventKind) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column: 0,
+        row: 0,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
 async fn type_chars(app: &mut App, input: &str) {
     for ch in input.chars() {
         app.handle_overlay_key(key(KeyCode::Char(ch)))
@@ -1143,6 +1152,100 @@ mod filters_and_workspaces {
 
         assert_eq!(app.store.view_state.view, TaskView::Queue);
         assert!(matches!(app.overlay, Some(OverlayState::Search { .. })));
+    }
+
+    #[tokio::test]
+    async fn mouse_wheel_moves_task_selection_down_and_up() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("first")).await;
+        create_and_select_task(&mut app, test_task_draft("second")).await;
+        app.widgets.table.select(Some(0));
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(app.widgets.table.selected(), Some(1));
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollUp), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(app.widgets.table.selected(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn mouse_wheel_wraps_task_selection() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("first")).await;
+        create_and_select_task(&mut app, test_task_draft("second")).await;
+        app.widgets.table.select(Some(0));
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollUp), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(app.widgets.table.selected(), Some(1));
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(app.widgets.table.selected(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn mouse_wheel_ignored_with_overlay() {
+        let mut app = test_app().await;
+        let _ = create_and_select_task(&mut app, test_task_draft("task")).await;
+        app.begin_search();
+        let selected = app.widgets.table.selected();
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.widgets.table.selected(), selected);
+        assert!(matches!(app.overlay, Some(OverlayState::Search { .. })));
+    }
+
+    #[tokio::test]
+    async fn mouse_wheel_ignored_in_sidebar_focus() {
+        let mut app = test_app().await;
+        let _ = create_and_select_task(&mut app, test_task_draft("task")).await;
+        app.focus = Focus::Sidebar;
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.focus, Focus::Sidebar);
+    }
+
+    #[tokio::test]
+    async fn mouse_wheel_ignored_with_detail_underlay() {
+        let mut app = test_app().await;
+        let _ = create_and_select_task(&mut app, test_task_draft("task")).await;
+        app.detail_context = true;
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.widgets.table.selected(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn mouse_wheel_ignored_for_small_terminal() {
+        let mut app = test_app().await;
+        let _ = create_and_select_task(&mut app, test_task_draft("task")).await;
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (69, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(app.widgets.table.selected(), Some(0));
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 17).into())
+            .await
+            .unwrap();
+        assert_eq!(app.widgets.table.selected(), Some(0));
     }
 }
 

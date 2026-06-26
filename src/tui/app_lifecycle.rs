@@ -111,7 +111,7 @@ impl App {
         }
     }
 
-    fn detail_underlay(&self) -> bool {
+    pub(super) fn detail_underlay(&self) -> bool {
         self.detail_context
             || matches!(
                 self.overlay,

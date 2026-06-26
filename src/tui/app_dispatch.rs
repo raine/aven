@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Size;
 
-use crate::tui::app::{App, TaskRefKind};
+use crate::tui::app::{App, Focus, TaskRefKind};
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::conflict_flow::ConflictResolutionChoice;
 use crate::tui::event::{
@@ -54,9 +54,17 @@ impl App {
         mouse: MouseEvent,
         terminal_size: Size,
     ) -> Result<()> {
-        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
-            return Ok(());
+        match mouse.kind {
+            MouseEventKind::ScrollDown => {
+                return self.handle_task_list_wheel(1, terminal_size).await;
+            }
+            MouseEventKind::ScrollUp => {
+                return self.handle_task_list_wheel(-1, terminal_size).await;
+            }
+            MouseEventKind::Down(MouseButton::Left) => {}
+            _ => return Ok(()),
         }
+
         if matches!(self.overlay, Some(OverlayState::HeaderMenu(_))) {
             let Some(OverlayState::HeaderMenu(state)) = self.overlay.take() else {
                 return Ok(());
@@ -73,7 +81,7 @@ impl App {
                 .submit_order_menu_at(state, mouse.column, mouse.row, terminal_size)
                 .await;
         }
-        if self.overlay_captures_input() || terminal_size.width < 70 || terminal_size.height < 18 {
+        if self.overlay.is_some() || terminal_size.width < 70 || terminal_size.height < 18 {
             return Ok(());
         }
         let header = ratatui::layout::Rect {
@@ -100,6 +108,19 @@ impl App {
             None => {}
         }
         Ok(())
+    }
+
+    async fn handle_task_list_wheel(&mut self, delta: isize, terminal_size: Size) -> Result<()> {
+        if self.overlay.is_some()
+            || terminal_size.width < 70
+            || terminal_size.height < 18
+            || self.detail_underlay()
+            || self.focus != Focus::Tasks
+        {
+            return Ok(());
+        }
+
+        self.move_selection(delta).await
     }
 
     fn overlay_captures_input(&self) -> bool {
