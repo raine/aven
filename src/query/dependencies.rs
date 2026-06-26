@@ -70,6 +70,11 @@ async fn query_dependency_items(
         .await?
     };
 
+    let subject_is_open = if blocks_only {
+        subject_task_is_open(conn, workspace_id, task_id).await?
+    } else {
+        true
+    };
     let mut rows_tasks = rows
         .iter()
         .map(crate::db::task_from_row)
@@ -80,7 +85,9 @@ async fn query_dependency_items(
         .zip(rows_tasks.drain(..))
         .map(|(row, task)| {
             let created_at: String = row.get("dependency_created_at");
-            let unresolved = !task.deleted && !matches!(task.status.as_str(), "done" | "canceled");
+            let task_is_open =
+                !task.deleted && !matches!(task.status.as_str(), "done" | "canceled");
+            let unresolved = task_is_open && (!blocks_only || subject_is_open);
             let display_ref = display_refs
                 .get(&task.id)
                 .cloned()
@@ -104,6 +111,22 @@ async fn query_dependency_items(
         })
     });
     Ok(items)
+}
+
+async fn subject_task_is_open(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+) -> Result<bool> {
+    let open: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM tasks
+         WHERE workspace_id = ? AND id = ? AND deleted = 0 AND status NOT IN ('done', 'canceled')",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(open > 0)
 }
 
 fn status_order(status: &str) -> u8 {

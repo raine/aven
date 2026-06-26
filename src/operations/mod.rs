@@ -15,7 +15,9 @@ pub(crate) use conflicts::{
     resolve_conflict, task_conflicts,
 };
 #[allow(unused_imports)]
-pub(crate) use dependencies::{DependencyOutcome, add_task_dependency, remove_task_dependency};
+pub(crate) use dependencies::{
+    DependencyOutcome, add_task_dependency, dependency_path_exists, remove_task_dependency,
+};
 #[allow(unused_imports)]
 pub(crate) use projects::{
     LabelOutcome, ProjectDeleteOutcome, ProjectOutcome, ProjectPathOutcome,

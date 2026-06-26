@@ -7,6 +7,7 @@ use super::wire::ChangeWire;
 use crate::db::{conflict_exists, field_version, set_field_version};
 use crate::ids::now;
 use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
+use crate::operations::dependency_path_exists;
 use crate::projects::prefix_base;
 use crate::refs::get_task;
 use crate::task_fields::TaskField;
@@ -161,26 +162,49 @@ pub(super) async fn apply_remote_change(
         "dependency_add" => {
             let workspace_id = workspace_id_payload(conn, change).await?;
             let depends_on_task_id = str_payload(&change.payload, "depends_on_task_id")?;
-            let existing: i64 = sqlx::query_scalar::<_, i64>(
-                "SELECT count(*) FROM tasks WHERE workspace_id = ? AND id IN (?, ?)",
+            ensure_dependency_tasks_exist(
+                conn,
+                &workspace_id,
+                &change.entity_id,
+                &depends_on_task_id,
+            )
+            .await?;
+            if dependency_path_exists(conn, &workspace_id, &depends_on_task_id, &change.entity_id)
+                .await?
+            {
+                if !remote_dependency_wins(&change.entity_id, &depends_on_task_id) {
+                    return Ok(());
+                }
+                sqlx::query(
+                    "DELETE FROM task_dependencies
+                     WHERE workspace_id = ? AND task_id = ? AND depends_on_task_id = ?",
+                )
+                .bind(&workspace_id)
+                .bind(&depends_on_task_id)
+                .bind(&change.entity_id)
+                .execute(&mut *conn)
+                .await?;
+                if dependency_path_exists(
+                    conn,
+                    &workspace_id,
+                    &depends_on_task_id,
+                    &change.entity_id,
+                )
+                .await?
+                {
+                    return Ok(());
+                }
+            }
+            sqlx::query(
+                "INSERT OR IGNORE INTO task_dependencies(workspace_id, task_id, depends_on_task_id, created_at)
+                 VALUES (?, ?, ?, ?)",
             )
             .bind(&workspace_id)
             .bind(&change.entity_id)
             .bind(&depends_on_task_id)
-            .fetch_one(&mut *conn)
+            .bind(&change.created_at)
+            .execute(&mut *conn)
             .await?;
-            if existing == 2 {
-                sqlx::query(
-                    "INSERT OR IGNORE INTO task_dependencies(workspace_id, task_id, depends_on_task_id, created_at)
-                     VALUES (?, ?, ?, ?)",
-                )
-                .bind(&workspace_id)
-                .bind(&change.entity_id)
-                .bind(&depends_on_task_id)
-                .bind(&change.created_at)
-                .execute(&mut *conn)
-                .await?;
-            }
         }
         "dependency_remove" => {
             let workspace_id = workspace_id_payload(conn, change).await?;
@@ -197,6 +221,32 @@ pub(super) async fn apply_remote_change(
         _ => {}
     }
     Ok(())
+}
+
+async fn ensure_dependency_tasks_exist(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+    depends_on_task_id: &str,
+) -> Result<()> {
+    let existing: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM tasks WHERE workspace_id = ? AND id IN (?, ?)",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .bind(depends_on_task_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    if existing != 2 {
+        bail!(
+            "error dependency-missing-task task_id={task_id} depends_on_task_id={depends_on_task_id}"
+        );
+    }
+    Ok(())
+}
+
+fn remote_dependency_wins(task_id: &str, depends_on_task_id: &str) -> bool {
+    task_id < depends_on_task_id
 }
 
 async fn apply_remote_create_task(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {

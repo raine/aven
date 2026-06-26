@@ -8,6 +8,16 @@ use common::{
 };
 use serde_json::{Value, json};
 
+const DEFAULT_WORKSPACE_ID: &str = "0000000000000000";
+const REMOTE_PROJECT_ID: &str = "0000000000000001";
+const SYNC_TASK_A_ID: &str = "AAAAAAAAAAAAAAAA";
+const SYNC_TASK_B_ID: &str = "BBBBBBBBBBBBBBBB";
+const SYNC_DEP_CHANGE_ID: &str = "CCCCCCCCCCCCCCCC";
+const SYNC_TASK_A_CHANGE_ID: &str = "DDDDDDDDDDDDDDDD";
+const SYNC_TASK_B_CHANGE_ID: &str = "EEEEEEEEEEEEEEEE";
+const SYNC_OPPOSITE_DEP_CHANGE_ID: &str = "FFFFFFFFFFFFFFFF";
+const SYNC_CLIENT_ID: &str = "GGGGGGGGGGGGGGGG";
+
 fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
     let output = ok(env.aven(db, ["sync", "--server", &server.url]));
     contains_all(&output, &["synced", "cursor="]);
@@ -54,6 +64,24 @@ fn dependency_change(
     entity_id: &str,
     depends_on_task_id: &str,
 ) -> Value {
+    dependency_change_with_payload(
+        op_type,
+        change_id,
+        entity_id,
+        json!({
+            "workspace_id": "0000000000000000",
+            "workspace_key": "default",
+            "depends_on_task_id": depends_on_task_id,
+        }),
+    )
+}
+
+fn dependency_change_with_payload(
+    op_type: &str,
+    change_id: &str,
+    entity_id: &str,
+    payload: Value,
+) -> Value {
     json!({
         "change_id": change_id,
         "client_id": "client-a",
@@ -62,9 +90,7 @@ fn dependency_change(
         "entity_id": entity_id,
         "field": null,
         "op_type": op_type,
-        "payload": {
-            "depends_on_task_id": depends_on_task_id,
-        },
+        "payload": payload,
         "base_version": null,
         "created_at": "2026-01-01T00:00:00Z",
         "server_seq": null,
@@ -162,6 +188,85 @@ fn project_change_json(change_id: &str, key: &str) -> serde_json::Value {
         "created_at": "2026-01-01T00:00:00Z",
         "server_seq": null
     })
+}
+
+fn remote_task_change(change_id: &str, task_id: &str, title: &str, server_seq: i64) -> Value {
+    json!({
+        "change_id": change_id,
+        "client_id": SYNC_CLIENT_ID,
+        "local_seq": server_seq,
+        "entity_type": "task",
+        "entity_id": task_id,
+        "field": null,
+        "op_type": "create_task",
+        "payload": {
+            "workspace_id": DEFAULT_WORKSPACE_ID,
+            "workspace_key": "default",
+            "title": title,
+            "project_id": REMOTE_PROJECT_ID,
+            "project_key": "app",
+            "project_name": "app",
+            "project_prefix": "APP"
+        },
+        "base_version": null,
+        "created_at": format!("2026-01-01T00:00:{server_seq:02}Z"),
+        "server_seq": server_seq,
+    })
+}
+
+fn remote_dependency_change(
+    change_id: &str,
+    task_id: &str,
+    depends_on_task_id: &str,
+    server_seq: i64,
+) -> Value {
+    json!({
+        "change_id": change_id,
+        "client_id": SYNC_CLIENT_ID,
+        "local_seq": server_seq,
+        "entity_type": "task",
+        "entity_id": task_id,
+        "field": null,
+        "op_type": "dependency_add",
+        "payload": {
+            "workspace_id": DEFAULT_WORKSPACE_ID,
+            "workspace_key": "default",
+            "depends_on_task_id": depends_on_task_id
+        },
+        "base_version": null,
+        "created_at": format!("2026-01-01T00:00:{server_seq:02}Z"),
+        "server_seq": server_seq,
+    })
+}
+
+fn start_fake_sync_server(response: Value) -> (String, std::thread::JoinHandle<()>) {
+    use std::io::{BufRead as _, BufReader, Write as _};
+    use std::net::TcpListener;
+    use std::thread;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake sync server");
+    let url = format!("http://{}", listener.local_addr().expect("fake sync addr"));
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept sync request");
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+        let mut line = String::new();
+        loop {
+            line.clear();
+            reader.read_line(&mut line).expect("read request line");
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+        }
+        let body = response.to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .expect("write fake response");
+    });
+    (url, server)
 }
 
 fn assert_sync_protocol_rejected(
@@ -1022,9 +1127,17 @@ fn dependency_sync_changes_are_idempotent() {
 }
 
 #[tokio::test]
-async fn sync_server_rejects_malformed_dependency_task_ids() {
+async fn sync_server_rejects_malformed_dependency_payloads() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
+
+    let missing_workspace = dependency_change_with_payload(
+        "dependency_add",
+        "0123456789ABCDE6",
+        "0123456789ABCDE2",
+        json!({ "depends_on_task_id": "0123456789ABCDE3" }),
+    );
+    rejected_sync(&server, missing_workspace, "workspace_id").await;
 
     let bad_add = dependency_change(
         "dependency_add",
@@ -1075,6 +1188,53 @@ fn valid_offline_batch_with_related_operations_still_syncs() {
 
     let full = ok(env.aven(&b, ["show", &task_ref, "--full"]));
     contains_all(&full, &["offline batch", "labels=offline", "batch note"]);
+}
+
+#[test]
+fn out_of_order_dependency_sync_does_not_advance_cursor() {
+    let env = TestEnv::new();
+    let db = env.db("dependency-out-of-order.sqlite");
+    let (url, server) = start_fake_sync_server(json!({
+        "protocol_version": 3,
+        "cursor": 3,
+        "changes": [
+            remote_dependency_change(SYNC_DEP_CHANGE_ID, SYNC_TASK_B_ID, SYNC_TASK_A_ID, 1),
+            remote_task_change(SYNC_TASK_A_CHANGE_ID, SYNC_TASK_A_ID, "remote parent", 2),
+            remote_task_change(SYNC_TASK_B_CHANGE_ID, SYNC_TASK_B_ID, "remote child", 3),
+        ]
+    }));
+
+    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    contains_all(&error, &["error dependency-missing-task"]);
+    assert_eq!(scalar_i64(&db, "SELECT count(*) FROM task_dependencies"), 0);
+    assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("0"));
+    server.join().expect("fake sync server exits");
+}
+
+#[test]
+fn sync_cycle_edges_converge_deterministically() {
+    let env = TestEnv::new();
+    let db = env.db("dependency-cycle-convergence.sqlite");
+    let (url, server) = start_fake_sync_server(json!({
+        "protocol_version": 3,
+        "cursor": 4,
+        "changes": [
+            remote_task_change(SYNC_TASK_A_CHANGE_ID, SYNC_TASK_A_ID, "cycle task a", 1),
+            remote_task_change(SYNC_TASK_B_CHANGE_ID, SYNC_TASK_B_ID, "cycle task b", 2),
+            remote_dependency_change(SYNC_DEP_CHANGE_ID, SYNC_TASK_B_ID, SYNC_TASK_A_ID, 3),
+            remote_dependency_change(SYNC_OPPOSITE_DEP_CHANGE_ID, SYNC_TASK_A_ID, SYNC_TASK_B_ID, 4),
+        ]
+    }));
+
+    ok(env.aven(&db, ["sync", "--server", &url]));
+    assert_eq!(
+        query_sql_scalar(
+            &db,
+            "SELECT task_id || '>' || depends_on_task_id FROM task_dependencies",
+        ),
+        "AAAAAAAAAAAAAAAA>BBBBBBBBBBBBBBBB"
+    );
+    server.join().expect("fake sync server exits");
 }
 
 #[test]

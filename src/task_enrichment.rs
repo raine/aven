@@ -201,6 +201,8 @@ async fn dependent_counts_for_tasks(
         let mut query = QueryBuilder::<Sqlite>::new(
             "SELECT d.depends_on_task_id, COUNT(*) AS dependents
              FROM task_dependencies d
+             JOIN tasks blocker
+              ON blocker.workspace_id = d.workspace_id AND blocker.id = d.depends_on_task_id
              JOIN tasks dependent
               ON dependent.workspace_id = d.workspace_id AND dependent.id = d.task_id
              WHERE d.workspace_id = ",
@@ -214,7 +216,8 @@ async fn dependent_counts_for_tasks(
             }
         }
         query.push(
-            ") AND dependent.deleted = 0 AND dependent.status NOT IN ('done', 'canceled')
+            ") AND blocker.deleted = 0 AND blocker.status NOT IN ('done', 'canceled')
+             AND dependent.deleted = 0 AND dependent.status NOT IN ('done', 'canceled')
              GROUP BY d.depends_on_task_id",
         );
 

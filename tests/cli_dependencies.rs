@@ -106,6 +106,12 @@ fn dependency_filter_ignores_done_canceled_and_deleted_blockers() {
         &blocked,
         &[&done_blocked, &canceled_blocked, &deleted_blocked],
     );
+
+    let all = ok(env.aven(&db, ["list", "--all"]));
+    contains_none(&all, &["blocks=1"]);
+
+    let done_dep_list = ok(env.aven(&db, ["dep", "list", &done_blocker]));
+    contains_all(&done_dep_list, &["blocks open=0 total=1"]);
 }
 
 #[test]

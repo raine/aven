@@ -357,7 +357,7 @@ fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
         "dependency_add" | "dependency_remove" => {
             ensure_entity_type(change, "task")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
-            optional_workspace_payload(&change.payload)?;
+            required_workspace_payload(&change.payload)?;
             let depends_on_task_id =
                 required_string_payload("depends_on_task_id", &change.payload)?;
             ensure_sync_id("depends_on_task_id", &depends_on_task_id)?;
