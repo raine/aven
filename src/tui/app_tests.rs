@@ -989,7 +989,7 @@ mod filters_and_workspaces {
         assert!(matches!(
             app.overlay,
             Some(OverlayState::OrderMenu(state))
-                if state.column == 127 && state.row == 0 && state.selected == TaskOrder::Created
+                if state.column == 114 && state.row == 0 && state.selected == TaskOrder::Created
         ));
 
         app.dispatch_mouse(

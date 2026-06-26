@@ -16,7 +16,7 @@ use crate::tui::theme::{
 pub(crate) enum HeaderTarget {
     Scope(TaskScopeTarget),
     View(TaskView),
-    Order,
+    Order { column: u16 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,7 +74,20 @@ pub(crate) fn header_target_at(
     header_hitboxes(store, line_width)
         .into_iter()
         .find(|hitbox| local_x >= hitbox.start && local_x < hitbox.end)
-        .map(|hitbox| hitbox.target)
+        .map(|hitbox| {
+            hitbox
+                .target
+                .with_origin(area.x.saturating_add(hitbox.start))
+        })
+}
+
+impl HeaderTarget {
+    fn with_origin(self, column: u16) -> Self {
+        match self {
+            Self::Order { .. } => Self::Order { column },
+            target => target,
+        }
+    }
 }
 
 fn header_line(store: &TuiStore, width: u16) -> Paragraph<'static> {
@@ -155,7 +168,7 @@ fn header_hitboxes(store: &TuiStore, width: u16) -> Vec<HeaderHitbox> {
             &mut hitboxes,
             &mut x,
             spans_width(active_order_spans(store)),
-            HeaderTarget::Order,
+            HeaderTarget::Order { column: 0 },
         );
     }
     hitboxes
@@ -510,7 +523,7 @@ mod tests {
         );
         assert_eq!(
             header_target_at(&store, area, 128, 0),
-            Some(HeaderTarget::Order)
+            Some(HeaderTarget::Order { column: 123 })
         );
         assert_eq!(header_target_at(&store, area, 36, 1), None);
     }

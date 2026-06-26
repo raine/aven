@@ -77,8 +77,8 @@ impl App {
         match crate::tui::ui::header_target_at(&self.store, header, mouse.column, mouse.row) {
             Some(crate::tui::ui::HeaderTarget::Scope(scope)) => self.show_scope(scope).await?,
             Some(crate::tui::ui::HeaderTarget::View(view)) => self.show_view(view).await?,
-            Some(crate::tui::ui::HeaderTarget::Order) => {
-                self.show_order_menu(mouse.column, mouse.row)
+            Some(crate::tui::ui::HeaderTarget::Order { column }) => {
+                self.show_order_menu(column, mouse.row)
             }
             None => {}
         }
