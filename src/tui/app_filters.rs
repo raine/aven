@@ -208,11 +208,11 @@ fn order_menu_order_at(
         return None;
     }
     match row.saturating_sub(area.y) {
-        2 => Some(TaskOrder::Created),
-        3 => Some(TaskOrder::Updated),
-        4 => Some(TaskOrder::Priority),
-        5 => Some(TaskOrder::Project),
-        6 => Some(TaskOrder::Title),
+        1 => Some(TaskOrder::Created),
+        2 => Some(TaskOrder::Updated),
+        3 => Some(TaskOrder::Priority),
+        4 => Some(TaskOrder::Project),
+        5 => Some(TaskOrder::Title),
         _ => None,
     }
 }

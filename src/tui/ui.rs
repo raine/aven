@@ -312,10 +312,7 @@ fn render_order_menu(frame: &mut Frame, state: &OrderMenuView) {
         .style(Style::new().bg(BG_ALT));
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let mut lines = vec![Line::from(Span::styled(
-        "click an option",
-        Style::new().fg(FG_DIM).bg(BG_ALT),
-    ))];
+    let mut lines = Vec::new();
     for (order, key, label) in order_menu_items() {
         lines.push(order_menu_line(order, key, label, state.selected));
     }

@@ -996,7 +996,7 @@ mod filters_and_workspaces {
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 column: 130,
-                row: 6,
+                row: 5,
                 modifiers: KeyModifiers::NONE,
             },
             (140, 24).into(),

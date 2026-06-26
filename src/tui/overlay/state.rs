@@ -78,7 +78,7 @@ pub(crate) struct TextPanelState {
 }
 
 pub(crate) const ORDER_MENU_WIDTH: u16 = 20;
-pub(crate) const ORDER_MENU_HEIGHT: u16 = 8;
+pub(crate) const ORDER_MENU_HEIGHT: u16 = 7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct OrderMenuState {
