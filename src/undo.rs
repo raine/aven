@@ -3,14 +3,15 @@ use std::collections::BTreeSet;
 use anyhow::{Result, bail, ensure};
 use sqlx::{Row, SqliteConnection};
 
-use crate::config;
-use crate::config_edit;
 use crate::db::{
     begin_immediate, conflict_exists, field_version, insert_change, set_field_version,
 };
 use crate::ids::{new_id, now};
 use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
-use crate::operations::update_task_labels_in_workspace;
+use crate::operations::{
+    ProjectMetadata, insert_project_metadata_change, rename_config_project_mapping,
+    set_project_metadata, update_task_labels_in_workspace,
+};
 use crate::projects::{project_has_config_mapping, resolve_project_for_add_in_workspace};
 use crate::task_fields::TaskField;
 use crate::types::Project;
@@ -508,12 +509,12 @@ async fn apply_undo_command(
                 conn,
                 workspace_id,
                 project_id,
-                ProjectMetadataUndoSnapshot {
+                ProjectMetadata {
                     key: before_key,
                     name: before_name,
                     prefix: before_prefix,
                 },
-                ProjectMetadataUndoSnapshot {
+                ProjectMetadata {
                     key: after_key,
                     name: after_name,
                     prefix: after_prefix,
@@ -837,19 +838,14 @@ async fn delete_created_project(
     Ok(())
 }
 
-struct ProjectMetadataUndoSnapshot<'a> {
-    key: &'a str,
-    name: &'a str,
-    prefix: &'a str,
-}
-
 async fn set_project_metadata_for_undo(
     conn: &mut SqliteConnection,
     workspace_id: &str,
     project_id: &str,
-    before: ProjectMetadataUndoSnapshot<'_>,
-    after: ProjectMetadataUndoSnapshot<'_>,
+    before: ProjectMetadata<'_>,
+    after: ProjectMetadata<'_>,
 ) -> Result<()> {
+    let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
     let row = sqlx::query(
         "SELECT key, name, prefix
          FROM projects
@@ -892,39 +888,9 @@ async fn set_project_metadata_for_undo(
     if prefix_refs > 0 {
         bail!("error undo-state-changed project_id={project_id}");
     }
-    let ts = now();
-    sqlx::query(
-        "UPDATE projects SET key = ?, name = ?, prefix = ?, updated_at = ?
-         WHERE workspace_id = ? AND id = ?",
-    )
-    .bind(before.key)
-    .bind(before.name)
-    .bind(before.prefix)
-    .bind(&ts)
-    .bind(workspace_id)
-    .bind(project_id)
-    .execute(&mut *conn)
-    .await?;
-    let workspace_key = workspace_key_for_id(conn, workspace_id).await?;
-    let config_path = config::config_file_path()?;
-    config_edit::rename_project_path(&config_path, workspace_id, after.key, before.key)?;
-    insert_change(
-        conn,
-        "project",
-        project_id,
-        None,
-        "set_project_metadata",
-        serde_json::json!({
-            "workspace_id": workspace_id,
-            "workspace_key": workspace_key,
-            "key": before.key,
-            "name": before.name,
-            "prefix": before.prefix,
-            "updated_at": ts,
-        }),
-        None,
-    )
-    .await?;
+    set_project_metadata(conn, &workspace, project_id, before, false).await?;
+    rename_config_project_mapping(&workspace, after.key, before.key)?;
+    insert_project_metadata_change(conn, &workspace, project_id, before, &now()).await?;
     Ok(())
 }
 

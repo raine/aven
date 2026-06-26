@@ -49,6 +49,13 @@ pub(crate) struct ProjectRenameOutcome {
     pub(crate) config_mapping: bool,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct ProjectMetadata<'a> {
+    pub(crate) key: &'a str,
+    pub(crate) name: &'a str,
+    pub(crate) prefix: &'a str,
+}
+
 struct ProjectPathTarget {
     workspace: Workspace,
     project: Project,
@@ -234,49 +241,21 @@ pub(crate) async fn rename_project_operation(
             config_mapping,
         });
     }
-    let ts = now();
     let mut tx = begin_immediate(conn).await?;
-    let updated = sqlx::query(
-        "UPDATE projects SET key = ?, name = ?, prefix = ?, updated_at = ?
-         WHERE workspace_id = ? AND id = ? AND deleted = 0",
-    )
-    .bind(&key)
-    .bind(new_name)
-    .bind(&prefix)
-    .bind(&ts)
-    .bind(&workspace.id)
-    .bind(&previous.id)
-    .execute(&mut *tx)
-    .await?;
-    if updated.rows_affected() != 1 {
-        bail!("error project-rename-race project={}", previous.key);
-    }
-    insert_change(
+    let project = set_project_metadata(
         &mut tx,
-        "project",
+        workspace,
         &previous.id,
-        None,
-        "set_project_metadata",
-        json!({
-            "workspace_id": &workspace.id,
-            "workspace_key": &workspace.key,
-            "key": &key,
-            "name": new_name,
-            "prefix": &prefix,
-            "updated_at": &ts,
-        }),
-        None,
+        ProjectMetadata {
+            key: &key,
+            name: new_name,
+            prefix: &prefix,
+        },
+        true,
     )
     .await?;
     let config_mapping = rename_config_project_mapping(workspace, &previous.key, &key)?;
     tx.commit().await?;
-    let project = Project {
-        id: previous.id.clone(),
-        workspace_id: previous.workspace_id.clone(),
-        key,
-        name: new_name.to_string(),
-        prefix,
-    };
     info!(project_id = %project.id, project_key = %project.key, "project renamed");
     Ok(ProjectRenameOutcome {
         previous,
@@ -286,7 +265,68 @@ pub(crate) async fn rename_project_operation(
     })
 }
 
-fn rename_config_project_mapping(
+pub(crate) async fn set_project_metadata(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    project_id: &str,
+    metadata: ProjectMetadata<'_>,
+    record_change: bool,
+) -> Result<Project> {
+    let ts = now();
+    let updated = sqlx::query(
+        "UPDATE projects SET key = ?, name = ?, prefix = ?, updated_at = ?
+         WHERE workspace_id = ? AND id = ? AND deleted = 0",
+    )
+    .bind(metadata.key)
+    .bind(metadata.name)
+    .bind(metadata.prefix)
+    .bind(&ts)
+    .bind(&workspace.id)
+    .bind(project_id)
+    .execute(&mut *conn)
+    .await?;
+    if updated.rows_affected() != 1 {
+        bail!("error project-metadata-target-missing project_id={project_id}");
+    }
+    if record_change {
+        insert_project_metadata_change(conn, workspace, project_id, metadata, &ts).await?;
+    }
+    Ok(Project {
+        id: project_id.to_string(),
+        workspace_id: workspace.id.clone(),
+        key: metadata.key.to_string(),
+        name: metadata.name.to_string(),
+        prefix: metadata.prefix.to_string(),
+    })
+}
+
+pub(crate) async fn insert_project_metadata_change(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    project_id: &str,
+    metadata: ProjectMetadata<'_>,
+    updated_at: &str,
+) -> Result<String> {
+    insert_change(
+        conn,
+        "project",
+        project_id,
+        None,
+        "set_project_metadata",
+        json!({
+            "workspace_id": &workspace.id,
+            "workspace_key": &workspace.key,
+            "key": metadata.key,
+            "name": metadata.name,
+            "prefix": metadata.prefix,
+            "updated_at": updated_at,
+        }),
+        None,
+    )
+    .await
+}
+
+pub(crate) fn rename_config_project_mapping(
     workspace: &Workspace,
     old_project: &str,
     new_project: &str,

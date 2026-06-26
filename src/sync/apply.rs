@@ -4,12 +4,10 @@ use sqlx::{Row, SqliteConnection};
 use tracing::{debug, info};
 
 use super::wire::ChangeWire;
-use crate::config;
-use crate::config_edit;
 use crate::db::{conflict_exists, field_version, set_field_version};
 use crate::ids::now;
 use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
-use crate::operations::dependency_path_exists;
+use crate::operations::{ProjectMetadata, dependency_path_exists, set_project_metadata};
 use crate::projects::{normalize_key, prefix_base};
 use crate::refs::get_task;
 use crate::task_fields::TaskField;
@@ -326,29 +324,24 @@ async fn apply_remote_set_project_metadata(
     let previous_key = live_project_key_by_id(conn, &workspace_id, &project_id)
         .await?
         .context("project metadata target missing")?;
-    let updated_at = str_payload(&change.payload, "updated_at").unwrap_or_else(|_| now());
     let key = unique_remote_key(conn, &workspace_id, &key, Some(&project_id)).await?;
     let prefix =
         unique_remote_prefix(conn, &workspace_id, &prefix, &key, Some(&project_id)).await?;
-    let updated = sqlx::query(
-        "UPDATE projects SET key = ?, name = ?, prefix = ?, updated_at = ?
-         WHERE workspace_id = ? AND id = ? AND deleted = 0",
+    let workspace = crate::workspaces::workspace_for_id(conn, &workspace_id).await?;
+    set_project_metadata(
+        conn,
+        &workspace,
+        &project_id,
+        ProjectMetadata {
+            key: &key,
+            name: &name,
+            prefix: &prefix,
+        },
+        false,
     )
-    .bind(&key)
-    .bind(&name)
-    .bind(&prefix)
-    .bind(&updated_at)
-    .bind(&workspace_id)
-    .bind(&project_id)
-    .execute(&mut *conn)
     .await?;
-    ensure!(
-        updated.rows_affected() == 1,
-        "project metadata target missing"
-    );
     if previous_key != key {
-        let config_path = config::config_file_path()?;
-        config_edit::rename_project_path(&config_path, &workspace_id, &previous_key, &key)?;
+        crate::operations::rename_config_project_mapping(&workspace, &previous_key, &key)?;
     }
     Ok(())
 }

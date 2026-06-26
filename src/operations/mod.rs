@@ -20,10 +20,11 @@ pub(crate) use dependencies::{
 };
 #[allow(unused_imports)]
 pub(crate) use projects::{
-    LabelOutcome, ProjectDeleteOutcome, ProjectOutcome, ProjectPathOutcome, ProjectRenameOutcome,
-    add_project_path_operation, create_label_operation, create_label_operation_in_workspace,
-    create_project_operation, delete_project_operation, list_project_paths_operation,
-    remove_project_path_operation, rename_project_operation,
+    LabelOutcome, ProjectDeleteOutcome, ProjectMetadata, ProjectOutcome, ProjectPathOutcome,
+    ProjectRenameOutcome, add_project_path_operation, create_label_operation,
+    create_label_operation_in_workspace, create_project_operation, delete_project_operation,
+    insert_project_metadata_change, list_project_paths_operation, remove_project_path_operation,
+    rename_config_project_mapping, rename_project_operation, set_project_metadata,
 };
 #[allow(unused_imports)]
 pub(crate) use tasks::{
