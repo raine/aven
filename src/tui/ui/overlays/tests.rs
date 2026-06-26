@@ -159,23 +159,50 @@ mod text_input {
     }
 
     #[test]
-    fn add_project_route_uses_placeholder_style() {
-        let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
-            route: OverlayRoute::AddProject,
-            title: "Add project".to_string(),
-            prompt: "project name:".to_string(),
-            input: String::new(),
-            cursor: 0,
-        }));
-        assert!(rendered.contains("Add project"));
-        assert!(rendered.contains(ADD_PROJECT_NAME_PLACEHOLDER));
-        assert!(!rendered.contains("project name:"));
-        assert!(rendered.contains("Enter submit"));
+    fn placeholder_text_input_routes_use_placeholder_style() {
+        for (route, title, prompt, placeholder) in [
+            (
+                OverlayRoute::AddProject,
+                "Add project",
+                "project name:",
+                ADD_PROJECT_NAME_PLACEHOLDER,
+            ),
+            (
+                OverlayRoute::AddLabel,
+                "Add label",
+                "label name:",
+                ADD_LABEL_NAME_PLACEHOLDER,
+            ),
+            (
+                OverlayRoute::RenameProjectName,
+                "Rename project",
+                "new project name:",
+                RENAME_PROJECT_NAME_PLACEHOLDER,
+            ),
+            (
+                OverlayRoute::ConflictManual,
+                "Resolve manually",
+                "manual value for field=title:",
+                CONFLICT_MANUAL_VALUE_PLACEHOLDER,
+            ),
+        ] {
+            let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
+                route,
+                title: title.to_string(),
+                prompt: prompt.to_string(),
+                input: String::new(),
+                cursor: 0,
+            }));
+            assert!(rendered.contains(title), "{route:?}");
+            assert!(rendered.contains(placeholder), "{route:?}");
+            assert!(!rendered.contains(prompt), "{route:?}");
+            assert!(rendered.contains("Enter submit"), "{route:?}");
+        }
     }
 
     #[test]
-    fn add_project_empty_input_shows_placeholder() {
-        let line = add_project_name_input_line("", 0, 20);
+    fn empty_placeholder_text_input_shows_placeholder() {
+        let line = placeholder_text_input_line("", 0, 20, ADD_PROJECT_NAME_PLACEHOLDER);
         assert_eq!(line.spans[0].content.as_ref(), "E");
         assert_eq!(line.spans[0].style.fg, Some(BG_ALT));
         assert_eq!(line.spans[0].style.bg, Some(FG));
@@ -711,6 +738,22 @@ mod multiline_overlays {
         assert!(rendered.contains("Ctrl+S submit"));
         assert!(!rendered.contains("^S parse"));
         assert!(!rendered.contains("Describe the task in natural language..."));
+    }
+
+    #[test]
+    fn conflict_manual_multiline_uses_placeholder_style() {
+        let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+            route: OverlayRoute::ConflictManual,
+            title: "Resolve manually".to_string(),
+            prompt: "manual value for field=description:".to_string(),
+            lines: vec![String::new()],
+            row: 0,
+            column: 0,
+        }));
+        assert!(rendered.contains("Resolve manually"));
+        assert!(rendered.contains(CONFLICT_MANUAL_BODY_PLACEHOLDER));
+        assert!(!rendered.contains("manual value for field=description:"));
+        assert!(rendered.contains("Ctrl+S submit"));
     }
 
     #[test]

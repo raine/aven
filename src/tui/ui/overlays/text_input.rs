@@ -13,8 +13,8 @@ use crate::tui::overlay::{OverlayRoute, TextInputView};
 use crate::tui::theme::{FG, FG_DIM};
 
 pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInputView) {
-    if state.route == OverlayRoute::AddProject {
-        render_add_project_input(frame, state);
+    if let Some(placeholder) = text_input_placeholder(state.route) {
+        render_placeholder_text_input(frame, state, placeholder);
         return;
     }
 
@@ -63,12 +63,34 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
 }
 
 pub(in crate::tui::ui) const ADD_PROJECT_NAME_PLACEHOLDER: &str = "Enter project name here...";
+pub(in crate::tui::ui) const ADD_LABEL_NAME_PLACEHOLDER: &str = "Enter label name here...";
+pub(in crate::tui::ui) const RENAME_PROJECT_NAME_PLACEHOLDER: &str = "Enter project name here...";
+pub(in crate::tui::ui) const CONFLICT_MANUAL_VALUE_PLACEHOLDER: &str = "Enter manual value here...";
 
-fn render_add_project_input(frame: &mut Frame, state: &TextInputView) {
+fn text_input_placeholder(route: OverlayRoute) -> Option<&'static str> {
+    match route {
+        OverlayRoute::AddProject => Some(ADD_PROJECT_NAME_PLACEHOLDER),
+        OverlayRoute::AddLabel => Some(ADD_LABEL_NAME_PLACEHOLDER),
+        OverlayRoute::RenameProjectName => Some(RENAME_PROJECT_NAME_PLACEHOLDER),
+        OverlayRoute::ConflictManual => Some(CONFLICT_MANUAL_VALUE_PLACEHOLDER),
+        _ => None,
+    }
+}
+
+fn render_placeholder_text_input(
+    frame: &mut Frame,
+    state: &TextInputView,
+    placeholder: &'static str,
+) {
     let dialog = Dialog::new(&state.title, 54, 5);
     let content = dialog.render_block(frame);
     let text = Text::from(vec![
-        add_project_name_input_line(&state.input, state.cursor, content.width as usize),
+        placeholder_text_input_line(
+            &state.input,
+            state.cursor,
+            content.width as usize,
+            placeholder,
+        ),
         Line::from(""),
         dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
     ]);
@@ -78,15 +100,16 @@ fn render_add_project_input(frame: &mut Frame, state: &TextInputView) {
     );
 }
 
-pub(in crate::tui::ui) fn add_project_name_input_line(
+pub(in crate::tui::ui) fn placeholder_text_input_line(
     input: &str,
     cursor: usize,
     width: usize,
+    placeholder: &'static str,
 ) -> Line<'static> {
     if input.is_empty() {
         return Line::from(vec![
-            super::super::input::cursor_cell(&ADD_PROJECT_NAME_PLACEHOLDER[..1]),
-            Span::styled(&ADD_PROJECT_NAME_PLACEHOLDER[1..], Style::new().fg(FG_DIM)),
+            super::super::input::cursor_cell(&placeholder[..1]),
+            Span::styled(&placeholder[1..], Style::new().fg(FG_DIM)),
         ]);
     }
     Line::from(input_cursor_spans(

@@ -6,26 +6,30 @@ use ratatui::widgets::Paragraph;
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::input::{InputWidth, input_cursor_spans, input_line};
 use super::shared::{tail_viewport_start, viewport_start_for_cursor};
-use crate::tui::overlay::MultilineInputView;
+use crate::tui::overlay::{MultilineInputView, OverlayRoute};
 use crate::tui::text::{char_boundary_at_or_before, char_count_ranges, char_count_segment_index};
 use crate::tui::theme::{FG, FG_DIM, FG_MUTED};
 
 pub(in crate::tui::ui) fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
     match state.route {
-        crate::tui::overlay::OverlayRoute::AddNote => {
+        OverlayRoute::AddNote => {
             render_add_note_input(frame, state);
             return;
         }
-        crate::tui::overlay::OverlayRoute::EditDescription => {
+        OverlayRoute::EditDescription => {
             render_description_input(frame, state);
             return;
         }
-        crate::tui::overlay::OverlayRoute::AddTaskDescription => {
+        OverlayRoute::AddTaskDescription => {
             render_add_task_description_input(frame, state);
             return;
         }
-        crate::tui::overlay::OverlayRoute::AddTaskNatural => {
+        OverlayRoute::AddTaskNatural => {
             render_add_task_natural_input(frame, state);
+            return;
+        }
+        OverlayRoute::ConflictManual => {
+            render_conflict_manual_input(frame, state);
             return;
         }
         _ => {}
@@ -105,6 +109,15 @@ fn render_add_task_natural_input(frame: &mut Frame, state: &MultilineInputView) 
         state,
         "Describe the task in natural language...",
         add_task_natural_hint_line(),
+    );
+}
+
+fn render_conflict_manual_input(frame: &mut Frame, state: &MultilineInputView) {
+    render_add_task_free_text_input(
+        frame,
+        state,
+        CONFLICT_MANUAL_BODY_PLACEHOLDER,
+        multiline_hint_line(),
     );
 }
 
@@ -245,6 +258,8 @@ pub(in crate::tui::ui) fn add_task_free_text_input_line(
         None => Line::from(line.to_string()),
     }
 }
+
+pub(in crate::tui::ui) const CONFLICT_MANUAL_BODY_PLACEHOLDER: &str = "Enter manual value here...";
 
 pub(in crate::tui::ui) fn add_task_description_hint_line() -> Line<'static> {
     dialog_hint_line(&[
