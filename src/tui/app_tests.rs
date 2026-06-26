@@ -1390,6 +1390,7 @@ mod filters_and_workspaces {
                 selected: false,
             }],
             selected: 0,
+            scroll: 0,
             multi: false,
             mode: PickerMode::Navigate,
         }));
