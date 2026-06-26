@@ -3216,6 +3216,41 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn detail_undo_after_status_menu_keeps_task_identity() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Other task")).await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Undo target")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_mouse(
+            detail_metadata_click(crate::tui::ui::DetailMetadataTarget::Status),
+            (120, 30).into(),
+        )
+        .await
+        .unwrap();
+        app.dispatch_mouse(left_click(90, 14), (120, 30).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+
+        app.dispatch_key(key(KeyCode::Char('u')), (120, 30).into())
+            .await
+            .unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.id, task_id);
+        assert_eq!(app.store.tasks[selected].task.status, "inbox");
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+    }
+
+    #[tokio::test]
     async fn cancel_add_note_from_detail_returns_to_detail() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Note target")).await;

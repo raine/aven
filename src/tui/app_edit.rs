@@ -70,7 +70,13 @@ impl App {
     }
 
     pub(super) async fn undo_last(&mut self) -> Result<()> {
-        match self.store.undo_last(self.widgets.table.selected()).await? {
+        let selected =
+            if self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. })) {
+                None
+            } else {
+                self.widgets.table.selected()
+            };
+        match self.store.undo_last(selected).await? {
             Some(result) => self.apply_mutation_result(result),
             None => self.set_info("nothing to undo"),
         }
