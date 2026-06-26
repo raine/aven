@@ -36,7 +36,9 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::tui::app::{Focus, LoadingState, WidgetState};
-use crate::tui::overlay::{OrderMenuView, OverlayRoute, OverlayView, TextInputView};
+use crate::tui::overlay::{
+    HeaderMenuKind, HeaderMenuView, OrderMenuView, OverlayRoute, OverlayView, TextInputView,
+};
 use crate::tui::store::{TaskOrder, TuiStore};
 use crate::tui::theme::{ACCENT, BG, BG_ALT, BG_PANEL, FG, FG_DIM, SELECTED};
 use crate::tui::toast::Toast;
@@ -290,6 +292,56 @@ fn inline_detail_title_editor(view: &ViewState) -> Option<&TextInputView> {
     edit_title_view(view)
 }
 
+fn render_header_menu(frame: &mut Frame, state: &HeaderMenuView) {
+    use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+
+    let menu_state = crate::tui::overlay::HeaderMenuState {
+        kind: state.kind,
+        column: state.column,
+        row: state.row,
+        selected: state.selected,
+        items: state.items.clone(),
+    };
+    let area = menu_state.area(frame.area().width, frame.area().height);
+    frame.render_widget(Clear, area);
+    let block = Block::new()
+        .title(menu_title(header_menu_title(state.kind)))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(ACCENT))
+        .style(Style::new().bg(BG_ALT));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let prefix_width = if matches!(state.kind, HeaderMenuKind::Scope) {
+        state
+            .items
+            .iter()
+            .map(|item| project_prefix_and_name(&item.label).map_or(0, |(prefix, _)| prefix.len()))
+            .max()
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let lines = state
+        .items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            header_menu_line(
+                state.kind,
+                index == state.selected,
+                &item.key,
+                &item.label,
+                prefix_width,
+            )
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG_ALT)),
+        inner,
+    );
+}
+
 fn render_order_menu(frame: &mut Frame, state: &OrderMenuView) {
     use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
@@ -301,11 +353,7 @@ fn render_order_menu(frame: &mut Frame, state: &OrderMenuView) {
     let area = menu_state.area(frame.area().width, frame.area().height);
     frame.render_widget(Clear, area);
     let block = Block::new()
-        .title(Line::from(vec![
-            Span::styled("─ ", Style::new().fg(ACCENT)),
-            Span::styled("order", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-            Span::styled(" ", Style::new().fg(ACCENT)),
-        ]))
+        .title(menu_title("order"))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(ACCENT))
@@ -324,6 +372,65 @@ fn render_order_menu(frame: &mut Frame, state: &OrderMenuView) {
         Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG_ALT)),
         inner,
     );
+}
+
+fn menu_title(title: &'static str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled("─ ", Style::new().fg(ACCENT)),
+        Span::styled(title, Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" ", Style::new().fg(ACCENT)),
+    ])
+}
+
+fn header_menu_title(kind: HeaderMenuKind) -> &'static str {
+    match kind {
+        HeaderMenuKind::Workspace => "workspace",
+        HeaderMenuKind::Scope => "scope",
+        HeaderMenuKind::View => "view",
+    }
+}
+
+fn header_menu_line(
+    kind: HeaderMenuKind,
+    selected: bool,
+    key: &str,
+    label: &str,
+    prefix_width: usize,
+) -> Line<'static> {
+    let row_style = if selected {
+        SELECTED
+    } else {
+        Style::new().fg(FG).bg(BG_PANEL)
+    };
+    let marker = if selected { "▸" } else { " " };
+    let mut spans = vec![
+        Span::styled(format!("{marker} "), row_style),
+        Span::styled(format!("{key:<2}"), row_style.add_modifier(Modifier::BOLD)),
+        Span::styled(" ", row_style),
+    ];
+    if matches!(kind, HeaderMenuKind::Scope)
+        && let Some((prefix, name)) = project_prefix_and_name(label)
+    {
+        spans.extend([
+            Span::styled(
+                format!("{prefix:<prefix_width$}"),
+                row_style
+                    .fg(crate::tui::theme::project_color(name))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ", row_style),
+            Span::styled(name.to_string(), row_style),
+        ]);
+    } else {
+        spans.push(Span::styled(label.to_string(), row_style));
+    }
+    Line::from(spans)
+}
+
+fn project_prefix_and_name(label: &str) -> Option<(&str, &str)> {
+    label
+        .split_once(' ')
+        .filter(|(prefix, name)| !prefix.is_empty() && !name.is_empty())
 }
 
 fn order_menu_line(
@@ -379,6 +486,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
         OverlayView::TextInput(state) => render_text_input(frame, state),
         OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
         OverlayView::Picker(state) => render_picker(frame, state),
+        OverlayView::HeaderMenu(state) => render_header_menu(frame, state),
         OverlayView::OrderMenu(state) => render_order_menu(frame, state),
         OverlayView::Confirm(state) => render_confirm(frame, state),
         OverlayView::TextPanel(state) => render_text_panel(frame, state),

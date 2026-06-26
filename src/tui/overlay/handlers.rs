@@ -4,7 +4,7 @@ use crate::tui::authoring::AddTaskStep;
 
 use super::multiline::edit_multiline_input;
 use super::picker::{handle_picker_key, normalize_picker_selection};
-use super::state::{OrderMenuState, OverlayOutcome, OverlayState, OverlaySubmit};
+use super::state::{HeaderMenuState, OrderMenuState, OverlayOutcome, OverlayState, OverlaySubmit};
 use crate::tui::store::TaskOrder;
 
 pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) -> OverlayState {
@@ -107,6 +107,7 @@ pub(crate) fn handle_generic_overlay_key(
             }
         }
         OverlayState::Picker(state) => handle_picker_key(state, key),
+        OverlayState::HeaderMenu(state) => handle_header_menu_key(state, key),
         OverlayState::OrderMenu(state) => handle_order_menu_key(state, key),
         OverlayState::Confirm(state) => match key.code {
             KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => OverlayOutcome::Cancelled,
@@ -183,6 +184,38 @@ pub(crate) fn handle_generic_overlay_key(
             _ => OverlayOutcome::None(OverlayState::Detail { scroll }),
         },
         other => OverlayOutcome::None(other),
+    }
+}
+
+fn handle_header_menu_key(mut state: HeaderMenuState, key: KeyEvent) -> OverlayOutcome {
+    match key.code {
+        KeyCode::Esc => OverlayOutcome::Cancelled,
+        KeyCode::Enter => match state.selected_action() {
+            Some(action) => OverlayOutcome::Submitted(OverlaySubmit::HeaderMenu { action }),
+            None => OverlayOutcome::Cancelled,
+        },
+        KeyCode::Char('j') | KeyCode::Down => {
+            if !state.items.is_empty() {
+                state.selected = (state.selected + 1) % state.items.len();
+            }
+            OverlayOutcome::None(OverlayState::HeaderMenu(state))
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            if !state.items.is_empty() {
+                state.selected = state
+                    .selected
+                    .checked_sub(1)
+                    .unwrap_or(state.items.len().saturating_sub(1));
+            }
+            OverlayOutcome::None(OverlayState::HeaderMenu(state))
+        }
+        KeyCode::Char(ch) => match state.items.iter().find(|item| item.key == ch.to_string()) {
+            Some(item) => OverlayOutcome::Submitted(OverlaySubmit::HeaderMenu {
+                action: item.action.clone(),
+            }),
+            None => OverlayOutcome::None(OverlayState::HeaderMenu(state)),
+        },
+        _ => OverlayOutcome::None(OverlayState::HeaderMenu(state)),
     }
 }
 

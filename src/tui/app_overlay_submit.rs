@@ -32,6 +32,9 @@ impl App {
             } => {
                 self.handle_picker_submit(route, title, values).await?;
             }
+            OverlaySubmit::HeaderMenu { action } => {
+                self.submit_header_menu(action).await?;
+            }
             OverlaySubmit::Order { order } => {
                 self.submit_order_menu(order).await?;
             }

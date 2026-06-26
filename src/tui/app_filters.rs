@@ -1,7 +1,10 @@
 use anyhow::Result;
 
 use crate::tui::app::{App, Focus};
-use crate::tui::overlay::{OrderMenuState, OverlayRoute, OverlayState};
+use crate::tui::overlay::{
+    HeaderMenuAction, HeaderMenuItem, HeaderMenuKind, HeaderMenuState, OrderMenuState,
+    OverlayRoute, OverlayState,
+};
 use crate::tui::store::{TaskOrder, TaskScope, TaskScopeTarget, TaskView};
 
 pub(crate) const FILTER_LABEL_TITLE: &str = "Filter: label";
@@ -80,6 +83,91 @@ impl App {
         Ok(())
     }
 
+    pub(super) async fn show_workspace_menu(&mut self, column: u16, row: u16) -> Result<()> {
+        self.pending_shortcut.clear();
+        self.store.refresh(None).await?;
+        let items = self
+            .store
+            .workspace_picker_items()
+            .into_iter()
+            .enumerate()
+            .map(|(index, item)| HeaderMenuItem {
+                key: (index + 1).to_string(),
+                label: item.label,
+                selected: item.selected,
+                action: HeaderMenuAction::Workspace(item.value),
+            })
+            .collect();
+        self.overlay = Some(OverlayState::header_menu(
+            HeaderMenuKind::Workspace,
+            column,
+            row,
+            items,
+        ));
+        Ok(())
+    }
+
+    pub(super) fn show_scope_menu(&mut self, column: u16, row: u16) {
+        self.pending_shortcut.clear();
+        let selected_project = match &self.store.view_state.scope {
+            TaskScope::Project(project) => project.as_str(),
+            TaskScope::Workspace => "",
+        };
+        let mut items = vec![HeaderMenuItem {
+            key: "w".to_string(),
+            label: "workspace".to_string(),
+            selected: matches!(self.store.view_state.scope, TaskScope::Workspace),
+            action: HeaderMenuAction::WorkspaceScope,
+        }];
+        items.extend(
+            self.store
+                .existing_project_picker_items(selected_project)
+                .into_iter()
+                .enumerate()
+                .map(|(index, item)| HeaderMenuItem {
+                    key: (index + 1).to_string(),
+                    label: item.label,
+                    selected: item.selected,
+                    action: HeaderMenuAction::ProjectScope(item.value),
+                }),
+        );
+        self.overlay = Some(OverlayState::header_menu(
+            HeaderMenuKind::Scope,
+            column,
+            row,
+            items,
+        ));
+    }
+
+    pub(super) fn show_view_menu(&mut self, column: u16, row: u16) {
+        self.pending_shortcut.clear();
+        let selected = self.store.view_state.view;
+        let items = [
+            ("q", "queue", TaskView::Queue),
+            ("o", "open", TaskView::Open),
+            ("t", "todo", TaskView::Todo),
+            ("i", "inbox", TaskView::Inbox),
+            ("a", "active", TaskView::Active),
+            ("b", "backlog", TaskView::Backlog),
+            ("d", "done", TaskView::Done),
+            ("c", "conflicts", TaskView::Conflicts),
+        ]
+        .into_iter()
+        .map(|(key, label, view)| HeaderMenuItem {
+            key: key.to_string(),
+            label: label.to_string(),
+            selected: selected == view,
+            action: HeaderMenuAction::View(view),
+        })
+        .collect();
+        self.overlay = Some(OverlayState::header_menu(
+            HeaderMenuKind::View,
+            column,
+            row,
+            items,
+        ));
+    }
+
     pub(super) fn show_order_menu(&mut self, column: u16, row: u16) {
         self.pending_shortcut.clear();
         self.overlay = Some(OverlayState::order_menu(
@@ -87,6 +175,37 @@ impl App {
             row,
             self.store.view_state.order,
         ));
+    }
+
+    pub(super) async fn submit_header_menu(&mut self, action: HeaderMenuAction) -> Result<()> {
+        self.overlay = None;
+        match action {
+            HeaderMenuAction::Workspace(workspace) => {
+                let (message, selected) = self.store.switch_workspace(workspace).await?;
+                self.apply_filter_selection(selected);
+                self.set_success(message);
+                Ok(())
+            }
+            HeaderMenuAction::WorkspaceScope => self.show_scope(TaskScopeTarget::Workspace).await,
+            HeaderMenuAction::ProjectScope(project) => {
+                self.show_scope(TaskScopeTarget::Project(project)).await
+            }
+            HeaderMenuAction::View(view) => self.show_view(view).await,
+        }
+    }
+
+    pub(super) async fn submit_header_menu_at(
+        &mut self,
+        state: HeaderMenuState,
+        column: u16,
+        row: u16,
+        terminal_size: ratatui::layout::Size,
+    ) -> Result<()> {
+        let Some(action) = header_menu_action_at(&state, column, row, terminal_size) else {
+            self.overlay = None;
+            return Ok(());
+        };
+        self.submit_header_menu(action).await
     }
 
     pub(super) async fn submit_order_menu(&mut self, order: TaskOrder) -> Result<()> {
@@ -191,6 +310,24 @@ impl App {
         self.set_success(message);
         Ok(())
     }
+}
+
+fn header_menu_action_at(
+    state: &HeaderMenuState,
+    column: u16,
+    row: u16,
+    terminal_size: ratatui::layout::Size,
+) -> Option<HeaderMenuAction> {
+    let area = state.area(terminal_size.width, terminal_size.height);
+    if column < area.x
+        || column >= area.x.saturating_add(area.width)
+        || row < area.y
+        || row >= area.y.saturating_add(area.height)
+    {
+        return None;
+    }
+    let item_index = row.saturating_sub(area.y).checked_sub(1)? as usize;
+    state.items.get(item_index).map(|item| item.action.clone())
 }
 
 fn order_menu_order_at(

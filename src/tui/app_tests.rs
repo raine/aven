@@ -945,7 +945,7 @@ mod filters_and_workspaces {
     }
 
     #[tokio::test]
-    async fn header_click_changes_scope_and_view() {
+    async fn header_click_opens_scope_menu_and_selects_scope() {
         let mut app = test_app().await;
         app.store
             .create_project("Mobile App".to_string())
@@ -961,11 +961,105 @@ mod filters_and_workspaces {
         app.dispatch_mouse(header_click(36), (140, 24).into())
             .await
             .unwrap();
-        assert_eq!(
-            app.store.view_state.scope,
-            TaskScope::Project("mobile-app".to_string())
-        );
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::HeaderMenu(state))
+                if state.column == 28
+                    && state.row == 0
+                    && state.items.iter().any(|item| item.label == "workspace")
+                    && state.items.iter().any(|item| item.label.contains("Mobile App"))
+        ));
+
+        app.dispatch_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 30,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            },
+            (140, 24).into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(app.store.view_state.scope, TaskScope::Workspace);
         assert_eq!(toast_message(&app), Some("scope updated"));
+    }
+
+    #[tokio::test]
+    async fn header_click_opens_view_menu_and_selects_view() {
+        let mut app = test_app().await;
+
+        app.dispatch_mouse(header_click(58), (140, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::HeaderMenu(state))
+                if state.column == 48
+                    && state.row == 0
+                    && state.items.iter().any(|item| item.label == "inbox")
+        ));
+
+        app.dispatch_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 50,
+                row: 5,
+                modifiers: KeyModifiers::NONE,
+            },
+            (140, 24).into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(app.store.view_state.view, TaskView::Inbox);
+        assert!(app.overlay.is_none());
+        assert_eq!(toast_message(&app), Some("view updated"));
+    }
+
+    #[tokio::test]
+    async fn header_click_opens_workspace_menu_and_switches_workspace() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        crate::workspaces::create_workspace(&mut conn, "Client Work")
+            .await
+            .unwrap();
+        drop(conn);
+
+        app.dispatch_mouse(header_click(10), (140, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::HeaderMenu(state))
+                if state.column == 8
+                    && state.row == 0
+                    && state.items.iter().any(|item| item.label.contains("Client Work"))
+        ));
+
+        app.dispatch_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 10,
+                row: 3,
+                modifiers: KeyModifiers::NONE,
+            },
+            (140, 24).into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(app.store.active_workspace.key, "client-work");
+        assert!(app.overlay.is_none());
+        assert!(
+            toast_message(&app)
+                .is_some_and(|message| message.contains("switched workspace to client-work"))
+        );
+
+        reset_default_workspace(&pool).await;
+    }
+
+    #[tokio::test]
+    async fn header_metric_click_still_selects_view_directly() {
+        let mut app = test_app().await;
 
         app.dispatch_mouse(header_click(65), (140, 24).into())
             .await
@@ -973,7 +1067,21 @@ mod filters_and_workspaces {
         assert_eq!(app.store.view_state.view, TaskView::Queue);
         assert_eq!(toast_message(&app), Some("view updated"));
 
-        app.dispatch_mouse(header_click(104), (140, 24).into())
+        let mut app = test_app().await;
+        let inbox_column = (0..140)
+            .find(|column| {
+                matches!(
+                    crate::tui::ui::header_target_at(
+                        &app.store,
+                        ratatui::layout::Rect::new(0, 0, 140, 2),
+                        *column,
+                        0,
+                    ),
+                    Some(crate::tui::ui::HeaderTarget::MetricView(TaskView::Inbox))
+                )
+            })
+            .unwrap();
+        app.dispatch_mouse(header_click(inbox_column), (140, 24).into())
             .await
             .unwrap();
         assert_eq!(app.store.view_state.view, TaskView::Inbox);

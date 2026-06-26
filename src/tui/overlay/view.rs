@@ -3,7 +3,8 @@ use crate::tui::store::{TaskOrder, TuiDatabaseStats, TuiSyncStatus};
 
 use super::picker::visible_picker_indices;
 use super::state::{
-    OrderMenuState, OverlayRoute, OverlayState, OverlayState::*, PickerItem, PickerMode,
+    HeaderMenuItem, HeaderMenuKind, HeaderMenuState, OrderMenuState, OverlayRoute, OverlayState,
+    OverlayState::*, PickerItem, PickerMode,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +32,7 @@ pub(crate) enum OverlayView {
     TextInput(TextInputView),
     MultilineInput(MultilineInputView),
     Picker(PickerView),
+    HeaderMenu(HeaderMenuView),
     OrderMenu(OrderMenuView),
     Confirm(ConfirmView),
     TextPanel(TextPanelView),
@@ -93,6 +95,27 @@ pub(crate) struct PickerView {
     pub(crate) multi: bool,
     pub(crate) mode: PickerMode,
     pub(crate) visible_indices: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HeaderMenuView {
+    pub(crate) kind: HeaderMenuKind,
+    pub(crate) column: u16,
+    pub(crate) row: u16,
+    pub(crate) selected: usize,
+    pub(crate) items: Vec<HeaderMenuItem>,
+}
+
+impl From<&HeaderMenuState> for HeaderMenuView {
+    fn from(state: &HeaderMenuState) -> Self {
+        Self {
+            kind: state.kind,
+            column: state.column,
+            row: state.row,
+            selected: state.selected,
+            items: state.items.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,6 +196,7 @@ impl From<&OverlayState> for OverlayView {
                 mode: state.mode,
                 visible_indices: visible_picker_indices(state),
             }),
+            HeaderMenu(state) => Self::HeaderMenu(HeaderMenuView::from(state)),
             OrderMenu(state) => Self::OrderMenu(OrderMenuView::from(state)),
             Confirm(state) => Self::Confirm(ConfirmView {
                 title: state.title.clone(),

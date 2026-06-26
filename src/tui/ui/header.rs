@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::render::quote;
-use crate::tui::store::{TaskScope, TaskScopeTarget, TaskView, TuiStore};
+use crate::tui::store::{TaskScope, TaskView, TuiStore};
 use crate::tui::theme::{
     self, ACCENT, BG, BG_PANEL, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, ORANGE,
     PINK, RED,
@@ -14,8 +14,10 @@ use crate::tui::theme::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HeaderTarget {
-    Scope(TaskScopeTarget),
-    View(TaskView),
+    Workspace { column: u16 },
+    Scope { column: u16 },
+    View { column: u16 },
+    MetricView(TaskView),
     Order { column: u16 },
     SyncStatus,
 }
@@ -90,6 +92,9 @@ pub(crate) fn header_target_at(
 impl HeaderTarget {
     fn with_origin(self, column: u16) -> Self {
         match self {
+            Self::Workspace { .. } => Self::Workspace { column },
+            Self::Scope { .. } => Self::Scope { column },
+            Self::View { .. } => Self::View { column },
             Self::Order { .. } => Self::Order { column },
             target => target,
         }
@@ -134,28 +139,34 @@ fn header_hitboxes(store: &TuiStore, width: u16) -> Vec<HeaderHitbox> {
     let mut x = 0;
     push_text(&mut x, " aven");
     push_text(&mut x, separator_text());
+    let workspace_start = x;
     push_text(&mut x, if compact { "ws " } else { "workspace " });
     push_text(&mut x, &store.active_workspace.key);
-    push_text(&mut x, separator_text());
-    push_text(&mut x, "scope ");
-    push_target(
+    push_hitbox(
         &mut hitboxes,
-        &mut x,
-        spans_width(scope_badge(store)),
-        match &store.view_state.scope {
-            TaskScope::Workspace => HeaderTarget::Scope(TaskScopeTarget::Workspace),
-            TaskScope::Project(project) => {
-                HeaderTarget::Scope(TaskScopeTarget::Project(project.clone()))
-            }
-        },
+        workspace_start,
+        x,
+        HeaderTarget::Workspace { column: 0 },
     );
     push_text(&mut x, separator_text());
-    push_text(&mut x, "view ");
-    push_target(
+    let scope_start = x;
+    push_text(&mut x, "scope ");
+    push_text(&mut x, &spans_text(scope_badge(store)));
+    push_hitbox(
         &mut hitboxes,
-        &mut x,
-        spans_width(view_badge(store)),
-        HeaderTarget::View(store.view_state.view),
+        scope_start,
+        x,
+        HeaderTarget::Scope { column: 0 },
+    );
+    push_text(&mut x, separator_text());
+    let view_start = x;
+    push_text(&mut x, "view ");
+    push_text(&mut x, &spans_text(view_badge(store)));
+    push_hitbox(
+        &mut hitboxes,
+        view_start,
+        x,
+        HeaderTarget::View { column: 0 },
     );
     push_text(&mut x, separator_text());
     for (index, (text, target)) in header_metric_targets(store, compact)
@@ -194,17 +205,21 @@ fn push_text(x: &mut u16, text: &str) {
 fn push_target(hitboxes: &mut Vec<HeaderHitbox>, x: &mut u16, width: u16, target: HeaderTarget) {
     let start = *x;
     *x = x.saturating_add(width);
-    if start < *x {
-        hitboxes.push(HeaderHitbox {
-            start,
-            end: *x,
-            target,
-        });
+    push_hitbox(hitboxes, start, *x, target);
+}
+
+fn push_hitbox(hitboxes: &mut Vec<HeaderHitbox>, start: u16, end: u16, target: HeaderTarget) {
+    if start < end {
+        hitboxes.push(HeaderHitbox { start, end, target });
     }
 }
 
 fn spans_width(spans: Vec<Span<'static>>) -> u16 {
-    Line::from(spans).to_string().width() as u16
+    spans_text(spans).width() as u16
+}
+
+fn spans_text(spans: Vec<Span<'static>>) -> String {
+    Line::from(spans).to_string()
 }
 
 fn separator_text() -> &'static str {
@@ -226,7 +241,10 @@ fn header_metric_targets(store: &TuiStore, compact: bool) -> Vec<(String, Header
     header_metric_entries(store, compact)
         .into_iter()
         .map(|(label, count, _, _, target)| {
-            (format!("{label} {count}"), HeaderTarget::View(target))
+            (
+                format!("{label} {count}"),
+                HeaderTarget::MetricView(target),
+            )
         })
         .collect()
 }
@@ -514,18 +532,24 @@ mod tests {
         let area = Rect::new(0, 0, 140, 2);
 
         assert_eq!(
-            header_target_at(&store, area, 36, 0),
-            Some(HeaderTarget::Scope(TaskScopeTarget::Project(
-                "mobile-app".to_string()
-            )))
+            header_target_at(&store, area, 10, 0),
+            Some(HeaderTarget::Workspace { column: 8 })
         );
         assert_eq!(
-            header_target_at(&store, area, 65, 0),
-            Some(HeaderTarget::View(TaskView::Queue))
+            header_target_at(&store, area, 36, 0),
+            Some(HeaderTarget::Scope { column: 28 })
+        );
+        assert_eq!(
+            header_target_at(&store, area, 58, 0),
+            Some(HeaderTarget::View { column: 57 })
+        );
+        assert_eq!(
+            header_target_at(&store, area, 75, 0),
+            Some(HeaderTarget::MetricView(TaskView::Queue))
         );
         assert_eq!(
             header_target_at(&store, area, 104, 0),
-            Some(HeaderTarget::View(TaskView::Inbox))
+            Some(HeaderTarget::MetricView(TaskView::Inbox))
         );
         assert_eq!(
             header_target_at(&store, area, 128, 0),

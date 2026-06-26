@@ -57,6 +57,14 @@ impl App {
         if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
             return Ok(());
         }
+        if matches!(self.overlay, Some(OverlayState::HeaderMenu(_))) {
+            let Some(OverlayState::HeaderMenu(state)) = self.overlay.take() else {
+                return Ok(());
+            };
+            return self
+                .submit_header_menu_at(state, mouse.column, mouse.row, terminal_size)
+                .await;
+        }
         if matches!(self.overlay, Some(OverlayState::OrderMenu(_))) {
             let Some(OverlayState::OrderMenu(state)) = self.overlay.take() else {
                 return Ok(());
@@ -75,8 +83,16 @@ impl App {
             height: 2,
         };
         match crate::tui::ui::header_target_at(&self.store, header, mouse.column, mouse.row) {
-            Some(crate::tui::ui::HeaderTarget::Scope(scope)) => self.show_scope(scope).await?,
-            Some(crate::tui::ui::HeaderTarget::View(view)) => self.show_view(view).await?,
+            Some(crate::tui::ui::HeaderTarget::Workspace { column }) => {
+                self.show_workspace_menu(column, mouse.row).await?
+            }
+            Some(crate::tui::ui::HeaderTarget::Scope { column }) => {
+                self.show_scope_menu(column, mouse.row)
+            }
+            Some(crate::tui::ui::HeaderTarget::View { column }) => {
+                self.show_view_menu(column, mouse.row)
+            }
+            Some(crate::tui::ui::HeaderTarget::MetricView(view)) => self.show_view(view).await?,
             Some(crate::tui::ui::HeaderTarget::Order { column }) => {
                 self.show_order_menu(column, mouse.row)
             }
