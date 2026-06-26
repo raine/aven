@@ -3119,7 +3119,7 @@ mod detail_mode {
         ));
         assert!(app.view().detail_underlay);
 
-        app.handle_overlay_key(key(KeyCode::Char('a')))
+        app.dispatch_mouse(left_click(90, 13), (120, 30).into())
             .await
             .unwrap();
 
@@ -3128,6 +3128,30 @@ mod detail_mode {
             Some(OverlayState::Detail { scroll: 0 })
         ));
         assert_eq!(app.store.tasks[selected].task.status, "active");
+    }
+
+    #[tokio::test]
+    async fn detail_status_menu_empty_click_returns_to_detail_without_selecting_task() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Hidden task")).await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Visible task")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_mouse(
+            detail_metadata_click(crate::tui::ui::DetailMetadataTarget::Status),
+            (120, 30).into(),
+        )
+        .await
+        .unwrap();
+        app.dispatch_mouse(left_click(110, 20), (120, 30).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.widgets.table.selected(), Some(selected));
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
     }
 
     #[tokio::test]
@@ -3158,7 +3182,7 @@ mod detail_mode {
         ));
         assert!(app.view().detail_underlay);
 
-        app.handle_overlay_key(key(KeyCode::Char('u')))
+        app.dispatch_mouse(left_click(90, 17), (120, 30).into())
             .await
             .unwrap();
 

@@ -107,17 +107,23 @@ impl App {
             let Some(OverlayState::HeaderMenu(state)) = self.overlay.take() else {
                 return Ok(());
             };
-            return self
-                .submit_header_menu_at(state, mouse.column, mouse.row, terminal_size)
-                .await;
+            self.submit_header_menu_at(state, mouse.column, mouse.row, terminal_size)
+                .await?;
+            if self.detail_context && self.overlay.is_none() {
+                self.restore_detail_overlay(true);
+            }
+            return Ok(());
         }
         if matches!(self.overlay, Some(OverlayState::OrderMenu(_))) {
             let Some(OverlayState::OrderMenu(state)) = self.overlay.take() else {
                 return Ok(());
             };
-            return self
-                .submit_order_menu_at(state, mouse.column, mouse.row, terminal_size)
-                .await;
+            self.submit_order_menu_at(state, mouse.column, mouse.row, terminal_size)
+                .await?;
+            if self.detail_context && self.overlay.is_none() {
+                self.restore_detail_overlay(true);
+            }
+            return Ok(());
         }
         if let Some(OverlayState::Detail { scroll }) = self.overlay
             && self.handle_detail_mouse_click(mouse, terminal_size, scroll)
