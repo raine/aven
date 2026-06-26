@@ -980,6 +980,20 @@ mod filters_and_workspaces {
     }
 
     #[tokio::test]
+    async fn header_click_opens_sync_status() {
+        let mut app = test_app().await;
+
+        app.dispatch_mouse(header_click(135), (140, 24).into())
+            .await
+            .unwrap();
+
+        let Some(OverlayState::SyncStatus(status)) = app.overlay else {
+            panic!("expected sync status");
+        };
+        assert_eq!(*status, app.store.sync_status);
+    }
+
+    #[tokio::test]
     async fn header_click_opens_order_menu_and_selects_order() {
         let mut app = test_app().await;
 

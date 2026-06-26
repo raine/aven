@@ -17,6 +17,7 @@ pub(crate) enum HeaderTarget {
     Scope(TaskScopeTarget),
     View(TaskView),
     Order { column: u16 },
+    SyncStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,7 +68,12 @@ pub(crate) fn header_target_at(
     } else {
         content_width
     };
-    if x >= area.x.saturating_add(line_width) {
+    let content_end = area.x.saturating_add(content_width);
+    let status_start = area.x.saturating_add(line_width);
+    if area.width >= 84 && x >= status_start && x < content_end {
+        return Some(HeaderTarget::SyncStatus);
+    }
+    if x >= status_start {
         return None;
     }
     let local_x = x.saturating_sub(area.x);
@@ -524,6 +530,10 @@ mod tests {
         assert_eq!(
             header_target_at(&store, area, 128, 0),
             Some(HeaderTarget::Order { column: 123 })
+        );
+        assert_eq!(
+            header_target_at(&store, area, 135, 0),
+            Some(HeaderTarget::SyncStatus)
         );
         assert_eq!(header_target_at(&store, area, 36, 1), None);
     }

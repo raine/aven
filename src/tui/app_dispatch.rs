@@ -80,6 +80,7 @@ impl App {
             Some(crate::tui::ui::HeaderTarget::Order { column }) => {
                 self.show_order_menu(column, mouse.row)
             }
+            Some(crate::tui::ui::HeaderTarget::SyncStatus) => self.show_config_status()?,
             None => {}
         }
         Ok(())
