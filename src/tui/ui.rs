@@ -40,7 +40,7 @@ use crate::tui::overlay::{
     HeaderMenuKind, HeaderMenuView, OrderMenuView, OverlayRoute, OverlayView, TextInputView,
 };
 use crate::tui::store::{TaskOrder, TuiStore};
-use crate::tui::theme::{ACCENT, BG, BG_ALT, BG_PANEL, FG, FG_DIM, SELECTED};
+use crate::tui::theme::{ACCENT, BG, BG_ALT, BG_PANEL, FG, FG_DIM, GREEN, PINK, SELECTED};
 use crate::tui::toast::Toast;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -436,11 +436,17 @@ fn header_menu_label_style(
     row_style: Style,
     selected: bool,
 ) -> Style {
-    if matches!(kind, HeaderMenuKind::View)
-        && matches!(label, "active" | "todo" | "inbox" | "backlog" | "done")
-    {
+    if matches!(kind, HeaderMenuKind::View) {
         let bg = row_style.bg.unwrap_or(BG_PANEL);
-        let style = crate::tui::theme::status_style(label).bg(bg);
+        let style = match label {
+            "queue" => Style::new().fg(ACCENT).bg(bg),
+            "open" => Style::new().fg(GREEN).bg(bg),
+            "conflicts" => Style::new().fg(PINK).bg(bg),
+            "active" | "todo" | "inbox" | "backlog" | "done" => {
+                crate::tui::theme::status_style(label).bg(bg)
+            }
+            _ => row_style,
+        };
         if selected {
             style.add_modifier(Modifier::BOLD)
         } else {
