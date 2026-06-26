@@ -118,7 +118,9 @@ pub(crate) async fn list_task_items_in_workspace(
         query.push(")");
     }
 
-    push_sort(&mut query, sort, direction);
+    if mode == TaskQueryMode::Flat {
+        push_sort(&mut query, sort, direction);
+    }
 
     let rows = query.build().fetch_all(&mut *conn).await?;
     let tasks = rows
