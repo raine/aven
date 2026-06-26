@@ -41,6 +41,8 @@ pub(crate) struct TaskFilters {
     pub(crate) include_deleted: bool,
     pub(crate) hide_done: bool,
     pub(crate) conflicts_only: bool,
+    pub(crate) ready_only: bool,
+    pub(crate) blocked_only: bool,
     pub(crate) search: Option<String>,
 }
 
@@ -51,6 +53,8 @@ pub(crate) struct TaskListItem {
     pub(crate) labels: Vec<String>,
     pub(crate) notes: Vec<TaskNote>,
     pub(crate) has_conflict: bool,
+    pub(crate) unresolved_blocker_count: i64,
+    pub(crate) dependent_count: i64,
     pub(crate) queue: QueueMeta,
 }
 

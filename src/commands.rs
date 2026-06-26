@@ -19,20 +19,20 @@ use crate::workspaces::resolve_active_workspace;
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::cli::{
     AddArgs, BulkUpdateArgs, ConfigCommand, ConfigSubcommand, ConflictCommand, ConflictSubcommand,
-    InternalNaturalAddArgs, LabelCommand, LabelSubcommand, ListArgs, NoteArgs, PrimeArgs,
-    ProjectCommand, ProjectPathSubcommand, ProjectSubcommand, RefArgs, SearchArgs, ShowArgs,
-    TextCommand, TextSubcommand, TmuxAddTaskPopupArgs, UpdateArgs, WorkspaceCommand,
-    WorkspaceSubcommand,
+    DepCommand, DepSubcommand, InternalNaturalAddArgs, LabelCommand, LabelSubcommand, ListArgs,
+    NoteArgs, PrimeArgs, ProjectCommand, ProjectPathSubcommand, ProjectSubcommand, RefArgs,
+    SearchArgs, ShowArgs, TextCommand, TextSubcommand, TmuxAddTaskPopupArgs, UpdateArgs,
+    WorkspaceCommand, WorkspaceSubcommand,
 };
 use crate::input::{read_optional_text, read_required_text};
 use crate::labels::list_labels;
 use crate::labels::resolve_labels_in_workspace;
 use crate::operations::{
     ConflictDetail, TaskDraft, TaskUpdate, add_note, add_project_path_operation,
-    conflict_variant_value, create_label_operation, create_project_operation, create_task,
-    create_task_in_workspace, init_config, list_conflicts, list_project_paths_operation,
-    remove_project_path_operation, resolve_conflict, set_task_deleted, show_config, task_conflicts,
-    update_task,
+    add_task_dependency, conflict_variant_value, create_label_operation, create_project_operation,
+    create_task, create_task_in_workspace, init_config, list_conflicts,
+    list_project_paths_operation, remove_project_path_operation, remove_task_dependency,
+    resolve_conflict, set_task_deleted, show_config, task_conflicts, update_task,
 };
 use crate::projects::{
     find_project_in_workspace, inferred_project_key_for_add_in_workspace, list_projects,
@@ -190,6 +190,16 @@ pub(crate) async fn cmd_show(conn: &mut SqliteConnection, args: ShowArgs) -> Res
 }
 
 pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Result<()> {
+    if args.ready && args.blocked {
+        bail!(
+            "error list-dependency-filter-conflict hint=\"pass at most one of --ready or --blocked\""
+        );
+    }
+    if (args.ready || args.blocked) && args.all {
+        bail!(
+            "error list-dependency-filter-all-conflict hint=\"dependency filters only include open tasks\""
+        );
+    }
     let filters = TaskFilters {
         project: args.project,
         status: args.status,
@@ -199,6 +209,8 @@ pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Res
         include_deleted: args.all,
         hide_done: false,
         conflicts_only: false,
+        ready_only: args.ready,
+        blocked_only: args.blocked,
         search: None,
     };
     for item in query::list_task_items(
@@ -211,6 +223,66 @@ pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Res
     .await?
     {
         print_task_line_item(&item).await?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn cmd_dep(conn: &mut SqliteConnection, args: DepCommand) -> Result<()> {
+    match args.command {
+        DepSubcommand::Add(args) => {
+            let task = resolve_task_ref(conn, &args.task_ref).await?;
+            let depends_on = resolve_task_ref(conn, &args.depends_on_ref).await?;
+            let outcome = add_task_dependency(conn, &task.id, &depends_on.id).await?;
+            println!(
+                "dependency-added {} changed={} depends_on={}",
+                display_ref(conn, &outcome.task).await?,
+                if outcome.changed { "yes" } else { "none" },
+                display_ref(conn, &outcome.depends_on).await?,
+            );
+        }
+        DepSubcommand::Remove(args) => {
+            let task = resolve_task_ref(conn, &args.task_ref).await?;
+            let depends_on = resolve_task_ref(conn, &args.depends_on_ref).await?;
+            let outcome = remove_task_dependency(conn, &task.id, &depends_on.id).await?;
+            println!(
+                "dependency-removed {} changed={} depends_on={}",
+                display_ref(conn, &outcome.task).await?,
+                if outcome.changed { "yes" } else { "none" },
+                display_ref(conn, &outcome.depends_on).await?,
+            );
+        }
+        DepSubcommand::List(args) => {
+            let task = resolve_task_ref(conn, &args.task_ref).await?;
+            let summary =
+                query::task_dependency_summary(conn, &task.workspace_id, &task.id).await?;
+            let depends_on_open = summary
+                .depends_on
+                .iter()
+                .filter(|item| item.unresolved)
+                .count();
+            let blocks_open = summary.blocks.iter().filter(|item| item.unresolved).count();
+            println!(
+                "depends_on open={depends_on_open} total={}",
+                summary.depends_on.len()
+            );
+            for item in summary.depends_on {
+                println!(
+                    "- {} status={} title={}",
+                    item.display_ref,
+                    item.task.status,
+                    quote(&item.task.title)
+                );
+            }
+            println!("blocks open={blocks_open} total={}", summary.blocks.len());
+            for item in summary.blocks {
+                println!(
+                    "- {} status={} title={}",
+                    item.display_ref,
+                    item.task.status,
+                    quote(&item.task.title)
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -248,6 +320,8 @@ pub(crate) async fn cmd_bulk_update(
         include_deleted: args.include_deleted,
         hide_done: false,
         conflicts_only: false,
+        ready_only: false,
+        blocked_only: false,
         search: None,
     };
     let items = query::list_task_items(
@@ -546,6 +620,8 @@ pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> R
         include_deleted: false,
         hide_done: true,
         conflicts_only: false,
+        ready_only: false,
+        blocked_only: false,
         search: None,
     };
     let items = query::list_task_items(

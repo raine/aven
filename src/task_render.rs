@@ -2,7 +2,7 @@ use anyhow::Result;
 use sqlx::{Row, SqliteConnection};
 
 use crate::db::task_has_conflict;
-use crate::query::TaskListItem;
+use crate::query::{TaskListItem, task_dependency_summary};
 use crate::refs::display_ref;
 use crate::render::{print_multiline_block, quote};
 use crate::types::Task;
@@ -65,14 +65,26 @@ pub(crate) async fn print_task_line_item(item: &TaskListItem) -> Result<()> {
     } else {
         ""
     };
+    let blocked_by = if item.unresolved_blocker_count > 0 {
+        format!(" blocked_by={}", item.unresolved_blocker_count)
+    } else {
+        String::new()
+    };
+    let blocks = if item.dependent_count > 0 {
+        format!(" blocks={}", item.dependent_count)
+    } else {
+        String::new()
+    };
     println!(
-        "{} status={} priority={} labels={}{}{} title={}",
+        "{} status={} priority={} labels={}{}{}{}{} title={}",
         item.display_ref,
         item.task.status,
         item.task.priority,
         labels,
         conflict,
         deleted,
+        blocked_by,
+        blocks,
         quote(&item.task.title)
     );
     Ok(())
@@ -95,6 +107,7 @@ pub(crate) async fn print_task(conn: &mut SqliteConnection, task: &Task, full: b
             }
             println!("EOF");
         }
+        print_task_dependencies(conn, task).await?;
         let notes = sqlx::query(
             "SELECT body, created_at FROM notes
              WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, id",
@@ -110,6 +123,38 @@ pub(crate) async fn print_task(conn: &mut SqliteConnection, task: &Task, full: b
             print_multiline_block("body", &body);
         }
         print_conflicts(conn, task, None).await?;
+    }
+    Ok(())
+}
+
+async fn print_task_dependencies(conn: &mut SqliteConnection, task: &Task) -> Result<()> {
+    let summary = task_dependency_summary(conn, &task.workspace_id, &task.id).await?;
+    let depends_on_open = summary
+        .depends_on
+        .iter()
+        .filter(|item| item.unresolved)
+        .count();
+    let blocks_open = summary.blocks.iter().filter(|item| item.unresolved).count();
+    println!(
+        "depends_on open={depends_on_open} total={}",
+        summary.depends_on.len()
+    );
+    for item in summary.depends_on {
+        println!(
+            "- {} status={} title={}",
+            item.display_ref,
+            item.task.status,
+            quote(&item.task.title)
+        );
+    }
+    println!("blocks open={blocks_open} total={}", summary.blocks.len());
+    for item in summary.blocks {
+        println!(
+            "- {} status={} title={}",
+            item.display_ref,
+            item.task.status,
+            quote(&item.task.title)
+        );
     }
     Ok(())
 }

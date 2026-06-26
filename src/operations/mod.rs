@@ -1,5 +1,6 @@
 mod config;
 mod conflicts;
+mod dependencies;
 mod projects;
 mod tasks;
 
@@ -13,6 +14,8 @@ pub(crate) use conflicts::{
     ConflictDetail, ConflictListItem, ConflictOutcome, conflict_variant_value, list_conflicts,
     resolve_conflict, task_conflicts,
 };
+#[allow(unused_imports)]
+pub(crate) use dependencies::{DependencyOutcome, add_task_dependency, remove_task_dependency};
 #[allow(unused_imports)]
 pub(crate) use projects::{
     LabelOutcome, ProjectDeleteOutcome, ProjectOutcome, ProjectPathOutcome,

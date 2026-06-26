@@ -6,6 +6,7 @@ use crate::types::Task;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum QueueBand {
     NeedsAction,
+    Blocked,
     Focus,
     Triage,
     #[default]
@@ -30,6 +31,7 @@ impl QueueBand {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::NeedsAction => "needs action",
+            Self::Blocked => "blocked",
             Self::Focus => "focus",
             Self::Triage => "triage",
             Self::Later => "later",
@@ -39,14 +41,20 @@ impl QueueBand {
     pub(crate) fn order(self) -> u8 {
         match self {
             Self::NeedsAction => 0,
-            Self::Focus => 1,
-            Self::Triage => 2,
-            Self::Later => 3,
+            Self::Blocked => 1,
+            Self::Focus => 2,
+            Self::Triage => 3,
+            Self::Later => 4,
         }
     }
 }
 
-pub(crate) fn queue_meta(task: &Task, has_conflict: bool, now_seconds: i64) -> QueueMeta {
+pub(crate) fn queue_meta(
+    task: &Task,
+    has_conflict: bool,
+    has_unresolved_blockers: bool,
+    now_seconds: i64,
+) -> QueueMeta {
     let idle_seconds = unix_seconds(&task.queue_activity_at)
         .map(|activity| now_seconds.saturating_sub(activity).max(0));
     let idle_days = idle_seconds.map(|seconds| seconds.saturating_div(86_400));
@@ -56,7 +64,7 @@ pub(crate) fn queue_meta(task: &Task, has_conflict: bool, now_seconds: i64) -> Q
         + idle_score(&task.status, idle)
         + if has_conflict { 50 } else { 0 };
     QueueMeta {
-        band: queue_band(task, has_conflict, idle),
+        band: queue_band(task, has_conflict, has_unresolved_blockers, idle),
         score,
         idle_days,
         idle_seconds,
@@ -97,9 +105,16 @@ pub(crate) fn unix_seconds(value: &str) -> Option<i64> {
     Some(unix_days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 
-fn queue_band(task: &Task, has_conflict: bool, idle_days: i64) -> QueueBand {
+fn queue_band(
+    task: &Task,
+    has_conflict: bool,
+    has_unresolved_blockers: bool,
+    idle_days: i64,
+) -> QueueBand {
     if has_conflict || task.priority == "urgent" || (task.status == "active" && idle_days >= 7) {
         QueueBand::NeedsAction
+    } else if has_unresolved_blockers {
+        QueueBand::Blocked
     } else if task.status == "active" || (task.status == "todo" && task.priority == "high") {
         QueueBand::Focus
     } else if task.status == "inbox" || (task.status == "todo" && task.priority == "medium") {
@@ -179,11 +194,11 @@ mod tests {
         let conflicted = task("todo", "none", "1000");
 
         assert_eq!(
-            queue_meta(&urgent, false, 1000).band,
+            queue_meta(&urgent, false, false, 1000).band,
             QueueBand::NeedsAction
         );
         assert_eq!(
-            queue_meta(&conflicted, true, 1000).band,
+            queue_meta(&conflicted, true, false, 1000).band,
             QueueBand::NeedsAction
         );
     }
@@ -191,11 +206,11 @@ mod tests {
     #[test]
     fn active_and_high_todo_are_focus() {
         assert_eq!(
-            queue_meta(&task("active", "none", "1000"), false, 1000).band,
+            queue_meta(&task("active", "none", "1000"), false, false, 1000).band,
             QueueBand::Focus
         );
         assert_eq!(
-            queue_meta(&task("todo", "high", "1000"), false, 1000).band,
+            queue_meta(&task("todo", "high", "1000"), false, false, 1000).band,
             QueueBand::Focus
         );
     }
@@ -203,15 +218,15 @@ mod tests {
     #[test]
     fn old_active_tasks_need_action() {
         assert_eq!(
-            queue_meta(&task("active", "none", "0"), false, 8 * 86_400).band,
+            queue_meta(&task("active", "none", "0"), false, false, 8 * 86_400).band,
             QueueBand::NeedsAction
         );
     }
 
     #[test]
     fn old_inbox_tasks_gain_triage_weight() {
-        let old = queue_meta(&task("inbox", "none", "0"), false, 14 * 86_400);
-        let fresh = queue_meta(&task("inbox", "none", "0"), false, 0);
+        let old = queue_meta(&task("inbox", "none", "0"), false, false, 14 * 86_400);
+        let fresh = queue_meta(&task("inbox", "none", "0"), false, false, 0);
 
         assert_eq!(old.band, QueueBand::Triage);
         assert!(old.score > fresh.score);
@@ -224,7 +239,7 @@ mod tests {
 
     #[test]
     fn queue_meta_preserves_idle_seconds_for_display() {
-        let meta = queue_meta(&task("todo", "none", "1000"), false, 1000 + 59 * 60);
+        let meta = queue_meta(&task("todo", "none", "1000"), false, false, 1000 + 59 * 60);
 
         assert_eq!(meta.idle_seconds, Some(59 * 60));
         assert_eq!(meta.idle_seconds(), Some(59 * 60));

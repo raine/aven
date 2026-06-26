@@ -37,11 +37,11 @@ mod test_support;
 pub use cli::Cli;
 
 use cli::{
-    Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand, InternalSubcommand,
-    TextCommand, TextSubcommand, TmuxSubcommand,
+    Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand, DepCommand, DepSubcommand,
+    InternalSubcommand, TextCommand, TextSubcommand, TmuxSubcommand,
 };
 use commands::{
-    cmd_add, cmd_bulk_update, cmd_config, cmd_conflict, cmd_delete_restore, cmd_doctor,
+    cmd_add, cmd_bulk_update, cmd_config, cmd_conflict, cmd_delete_restore, cmd_dep, cmd_doctor,
     cmd_internal_natural_add, cmd_label, cmd_labels, cmd_list, cmd_note, cmd_prime, cmd_project,
     cmd_projects, cmd_show, cmd_skill, cmd_text, cmd_tmux_add_task_popup, cmd_update,
     cmd_workspace,
@@ -133,6 +133,7 @@ pub async fn run_cli() -> Result<()> {
                 Commands::Add(args) => cmd_add(&mut conn, &config, args).await,
                 Commands::Show(args) => cmd_show(&mut conn, args).await,
                 Commands::List(args) => cmd_list(&mut conn, args).await,
+                Commands::Dep(args) => cmd_dep(&mut conn, args).await,
                 Commands::BulkUpdate(args) => cmd_bulk_update(&mut conn, args).await,
                 Commands::Prime(args) => cmd_prime(&mut conn, args).await,
                 Commands::Update(args) => cmd_update(&mut conn, args).await,
@@ -188,6 +189,7 @@ fn command_needs_workspace(command: &Commands) -> bool {
         Commands::Add(_)
             | Commands::Show(_)
             | Commands::List(_)
+            | Commands::Dep(_)
             | Commands::BulkUpdate(_)
             | Commands::Prime(_)
             | Commands::Update(_)
@@ -211,6 +213,9 @@ fn command_should_wake(command: &Commands) -> bool {
             Commands::Add(_)
                 | Commands::Update(_)
                 | Commands::Note(_)
+                | Commands::Dep(DepCommand {
+                    command: DepSubcommand::Add { .. } | DepSubcommand::Remove { .. }
+                })
                 | Commands::Label(_)
                 | Commands::Project(_)
                 | Commands::Workspace(_)

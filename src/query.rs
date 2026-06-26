@@ -1,9 +1,12 @@
+mod dependencies;
 mod projects;
 mod sidebar;
 mod sorting;
 mod tasks;
 mod types;
 
+#[allow(unused_imports)]
+pub(crate) use dependencies::{TaskDependencyItem, TaskDependencySummary, task_dependency_summary};
 #[allow(unused_imports)]
 pub(crate) use projects::{list_project_items, list_project_items_in_workspace};
 #[allow(unused_imports)]

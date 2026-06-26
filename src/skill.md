@@ -31,8 +31,13 @@ inspect tasks, update status, and leave durable handoff context.
 aven list --project app
 aven list --status todo
 aven list --all
+aven list --ready
+aven list --blocked
 aven show APP-7KQ9 --full
 aven add "fix conflict display" --priority high --label bug
+aven dep add APP-7KQ9 APP-7KQ0
+aven dep remove APP-7KQ9 APP-7KQ0
+aven dep list APP-7KQ9
 aven update APP-7KQ9 --status active
 aven update APP-7KQ9 --title "clearer title" --priority medium
 aven note APP-7KQ9 "durable handoff context"
@@ -48,6 +53,9 @@ aven restore APP-7KQ9
   does not exist yet. Pass `--project` only if project is specified by user.
 - Use `list --all` with normal filters to find deleted tasks.
 - Use `bulk-update --dry-run` before broad mutations.
+- Use `list --ready` when selecting new work to avoid blocked or completed tasks.
+- Inspect dependency context with `show <ref> --full` before changing task order or
+  status. The `depends_on` and `blocks` sections show blockers and dependents.
 
 ## Long input and secrets
 

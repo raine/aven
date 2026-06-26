@@ -22,6 +22,16 @@ fn exec_sql(db: &std::path::Path, sql: &str) {
     assert!(output.status.success(), "sqlite failed");
 }
 
+fn query_sql_scalar(db: &std::path::Path, sql: &str) -> String {
+    let output = std::process::Command::new("sqlite3")
+        .arg(db)
+        .arg(sql)
+        .output()
+        .expect("run sqlite");
+    assert!(output.status.success(), "sqlite failed");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
 fn wire_change(op_type: &str, entity_type: &str, entity_id: &str, payload: Value) -> Value {
     json!({
         "change_id": "0123456789ABCDEF",
@@ -32,6 +42,29 @@ fn wire_change(op_type: &str, entity_type: &str, entity_id: &str, payload: Value
         "field": null,
         "op_type": op_type,
         "payload": payload,
+        "base_version": null,
+        "created_at": "2026-01-01T00:00:00Z",
+        "server_seq": null,
+    })
+}
+
+fn dependency_change(
+    op_type: &str,
+    change_id: &str,
+    entity_id: &str,
+    depends_on_task_id: &str,
+) -> Value {
+    json!({
+        "change_id": change_id,
+        "client_id": "client-a",
+        "local_seq": 1,
+        "entity_type": "task",
+        "entity_id": entity_id,
+        "field": null,
+        "op_type": op_type,
+        "payload": {
+            "depends_on_task_id": depends_on_task_id,
+        },
         "base_version": null,
         "created_at": "2026-01-01T00:00:00Z",
         "server_seq": null,
@@ -62,7 +95,7 @@ async fn post_sync(server: &TestServer, change: Value) -> reqwest::Response {
     reqwest::Client::new()
         .post(format!("{}/sync", server.url))
         .json(&json!({
-            "protocol_version": 2,
+            "protocol_version": 3,
             "client_id": "client-a",
             "after": 0,
             "changes": [change],
@@ -76,7 +109,7 @@ async fn assert_server_log_empty(server: &TestServer) {
     let response = reqwest::Client::new()
         .post(format!("{}/sync", server.url))
         .json(&json!({
-            "protocol_version": 2,
+            "protocol_version": 3,
             "client_id": "audit-client",
             "after": 0,
             "changes": [],
@@ -277,7 +310,7 @@ fn same_key_remote_project_writes_alias() {
             }
         }
         let body = serde_json::json!({
-            "protocol_version": 2,
+            "protocol_version": 3,
             "cursor": 1,
             "changes": [wire_change(
                 "create_task",
@@ -354,7 +387,7 @@ fn prefix_only_remote_project_collision_gets_unique_prefix() {
             }
         }
         let body = serde_json::json!({
-            "protocol_version": 2,
+            "protocol_version": 3,
             "cursor": 1,
             "changes": [wire_change(
                 "create_task",
@@ -432,7 +465,7 @@ fn stale_project_id_alias_is_ignored_for_remote_task_create() {
             }
         }
         let body = serde_json::json!({
-            "protocol_version": 2,
+            "protocol_version": 3,
             "cursor": 1,
             "changes": [wire_change(
                 "create_task",
@@ -915,6 +948,101 @@ async fn sync_server_rejects_malformed_ids() {
     rejected_sync(&server, bad_note_id, "note_id").await;
 }
 
+#[test]
+fn dependency_sync_changes_are_idempotent() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("client-a.sqlite");
+    let b = env.db("client-b.sqlite");
+
+    let parent = extract_ref(&ok(
+        env.aven(&a, ["add", "dependency parent", "--project", "app"])
+    ));
+    let child = extract_ref(&ok(
+        env.aven(&a, ["add", "dependency child", "--project", "app"])
+    ));
+
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    sync(&env, &a, &server);
+
+    let add_once = ok(env.aven(&a, ["dep", "add", &child, &parent]));
+    contains_all(&add_once, &["dependency-added", "changed=yes"]);
+    let add_twice = ok(env.aven(&a, ["dep", "add", &child, &parent]));
+    contains_all(&add_twice, &["dependency-added", "changed=none"]);
+
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    assert_eq!(
+        query_sql_scalar(
+            &a,
+            "SELECT count(*) FROM task_dependencies
+             WHERE task_id = (SELECT id FROM tasks WHERE title = 'dependency child')
+               AND depends_on_task_id = (SELECT id FROM tasks WHERE title = 'dependency parent')",
+        ),
+        "1"
+    );
+    assert_eq!(
+        query_sql_scalar(
+            &b,
+            "SELECT count(*) FROM task_dependencies
+             WHERE task_id = (SELECT id FROM tasks WHERE title = 'dependency child')
+               AND depends_on_task_id = (SELECT id FROM tasks WHERE title = 'dependency parent')",
+        ),
+        "1"
+    );
+
+    let remove_once = ok(env.aven(&a, ["dep", "remove", &child, &parent]));
+    contains_all(&remove_once, &["dependency-removed", "changed=yes"]);
+    let remove_twice = ok(env.aven(&a, ["dep", "remove", &child, &parent]));
+    contains_all(&remove_twice, &["dependency-removed", "changed=none"]);
+
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    assert_eq!(
+        query_sql_scalar(
+            &a,
+            "SELECT count(*) FROM task_dependencies
+             WHERE task_id = (SELECT id FROM tasks WHERE title = 'dependency child')
+               AND depends_on_task_id = (SELECT id FROM tasks WHERE title = 'dependency parent')",
+        ),
+        "0"
+    );
+    assert_eq!(
+        query_sql_scalar(
+            &b,
+            "SELECT count(*) FROM task_dependencies
+             WHERE task_id = (SELECT id FROM tasks WHERE title = 'dependency child')
+               AND depends_on_task_id = (SELECT id FROM tasks WHERE title = 'dependency parent')",
+        ),
+        "0"
+    );
+}
+
+#[tokio::test]
+async fn sync_server_rejects_malformed_dependency_task_ids() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+
+    let bad_add = dependency_change(
+        "dependency_add",
+        "0123456789ABCDE7",
+        "0123456789ABCDE2",
+        "not-a-task-id",
+    );
+    rejected_sync(&server, bad_add, "depends_on_task_id").await;
+
+    let bad_remove = dependency_change(
+        "dependency_remove",
+        "0123456789ABCDE8",
+        "0123456789ABCDE3",
+        "not-a-task-id",
+    );
+    rejected_sync(&server, bad_remove, "depends_on_task_id").await;
+}
+
 #[tokio::test]
 async fn sync_server_rejects_client_supplied_server_sequence() {
     let env = TestEnv::new();
@@ -997,7 +1125,7 @@ fn missing_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=0 server=2",
+        "error sync-protocol-unsupported client=0 server=3",
     );
 }
 
@@ -1017,7 +1145,7 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=0 server=2",
+        "error sync-protocol-unsupported client=0 server=3",
     );
 }
 
@@ -1026,7 +1154,7 @@ fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let body = serde_json::json!({
-        "protocol_version": 3,
+        "protocol_version": 4,
         "client_id": "new-client",
         "after": 0,
         "changes": [project_change_json("new-version-change", "new-version")]
@@ -1037,7 +1165,7 @@ fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=3 server=2",
+        "error sync-protocol-unsupported client=4 server=3",
     );
 }
 
@@ -1083,7 +1211,7 @@ fn wrong_response_protocol_version_is_rejected() {
     let error = fail(env.aven(&db, ["sync", "--server", &url]));
     contains_all(
         &error,
-        &["error sync-protocol-unsupported client=2 server=0"],
+        &["error sync-protocol-unsupported client=3 server=0"],
     );
     assert_eq!(
         scalar_i64(&db, "SELECT count(*) FROM changes"),

@@ -158,6 +158,42 @@ pub(super) async fn apply_remote_change(
                 .execute(&mut *conn)
                 .await?;
         }
+        "dependency_add" => {
+            let workspace_id = workspace_id_payload(conn, change).await?;
+            let depends_on_task_id = str_payload(&change.payload, "depends_on_task_id")?;
+            let existing: i64 = sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM tasks WHERE workspace_id = ? AND id IN (?, ?)",
+            )
+            .bind(&workspace_id)
+            .bind(&change.entity_id)
+            .bind(&depends_on_task_id)
+            .fetch_one(&mut *conn)
+            .await?;
+            if existing == 2 {
+                sqlx::query(
+                    "INSERT OR IGNORE INTO task_dependencies(workspace_id, task_id, depends_on_task_id, created_at)
+                     VALUES (?, ?, ?, ?)",
+                )
+                .bind(&workspace_id)
+                .bind(&change.entity_id)
+                .bind(&depends_on_task_id)
+                .bind(&change.created_at)
+                .execute(&mut *conn)
+                .await?;
+            }
+        }
+        "dependency_remove" => {
+            let workspace_id = workspace_id_payload(conn, change).await?;
+            let depends_on_task_id = str_payload(&change.payload, "depends_on_task_id")?;
+            sqlx::query(
+                "DELETE FROM task_dependencies WHERE workspace_id = ? AND task_id = ? AND depends_on_task_id = ?",
+            )
+            .bind(&workspace_id)
+            .bind(&change.entity_id)
+            .bind(&depends_on_task_id)
+            .execute(&mut *conn)
+            .await?;
+        }
         _ => {}
     }
     Ok(())

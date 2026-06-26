@@ -654,6 +654,8 @@ mod tests {
             labels: Vec::new(),
             notes: Vec::new(),
             has_conflict: false,
+            unresolved_blocker_count: 0,
+            dependent_count: 0,
             queue: Default::default(),
         }
     }

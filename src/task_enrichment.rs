@@ -10,6 +10,8 @@ pub(crate) struct TaskEnrichment {
     pub(crate) labels_by_task: HashMap<String, Vec<String>>,
     pub(crate) notes_by_task: HashMap<String, Vec<TaskNote>>,
     pub(crate) conflicted_task_ids: HashSet<String>,
+    pub(crate) unresolved_blocker_counts_by_task: HashMap<String, i64>,
+    pub(crate) dependent_counts_by_task: HashMap<String, i64>,
 }
 
 pub(crate) async fn load_task_enrichment(
@@ -21,6 +23,13 @@ pub(crate) async fn load_task_enrichment(
         labels_by_task: labels_for_tasks(conn, workspace_id, task_ids).await?,
         notes_by_task: notes_for_tasks(conn, workspace_id, task_ids).await?,
         conflicted_task_ids: tasks_with_unresolved_conflicts(conn, workspace_id, task_ids).await?,
+        unresolved_blocker_counts_by_task: unresolved_blocker_counts_for_tasks(
+            conn,
+            workspace_id,
+            task_ids,
+        )
+        .await?,
+        dependent_counts_by_task: dependent_counts_for_tasks(conn, workspace_id, task_ids).await?,
     })
 }
 
@@ -134,6 +143,89 @@ async fn tasks_with_unresolved_conflicts(
         }
     }
     Ok(conflicted)
+}
+
+async fn unresolved_blocker_counts_for_tasks(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_ids: &[String],
+) -> Result<HashMap<String, i64>> {
+    let mut counts = HashMap::new();
+    if task_ids.is_empty() {
+        return Ok(counts);
+    }
+    for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT d.task_id, COUNT(*) AS blockers
+             FROM task_dependencies d
+             JOIN tasks blocker
+              ON blocker.workspace_id = d.workspace_id AND blocker.id = d.depends_on_task_id
+             WHERE d.workspace_id = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(" AND d.task_id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for task_id in chunk {
+                separated.push_bind(task_id);
+            }
+        }
+        query.push(
+            ") AND blocker.deleted = 0 AND blocker.status NOT IN ('done', 'canceled')
+             GROUP BY d.task_id",
+        );
+
+        for row in query.build().fetch_all(&mut *conn).await? {
+            counts.insert(row.get("task_id"), row.get::<i64, _>("blockers"));
+        }
+    }
+    Ok(counts)
+}
+
+async fn dependent_counts_for_tasks(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_ids: &[String],
+) -> Result<HashMap<String, i64>> {
+    let mut counts = HashMap::new();
+    if task_ids.is_empty() {
+        return Ok(counts);
+    }
+    for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT d.depends_on_task_id, COUNT(*) AS dependents
+             FROM task_dependencies d
+             JOIN tasks dependent
+              ON dependent.workspace_id = d.workspace_id AND dependent.id = d.task_id
+             WHERE d.workspace_id = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(" AND d.depends_on_task_id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for task_id in chunk {
+                separated.push_bind(task_id);
+            }
+        }
+        query.push(
+            ") AND dependent.deleted = 0 AND dependent.status NOT IN ('done', 'canceled')
+             GROUP BY d.depends_on_task_id",
+        );
+
+        for row in query.build().fetch_all(&mut *conn).await? {
+            counts.insert(
+                row.get("depends_on_task_id"),
+                row.get::<i64, _>("dependents"),
+            );
+        }
+    }
+    Ok(counts)
 }
 
 #[cfg(test)]

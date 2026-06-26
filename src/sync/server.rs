@@ -354,6 +354,17 @@ fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
             required_string_payload("body", &change.payload)?;
             required_string_payload("created_at", &change.payload)?;
         }
+        "dependency_add" | "dependency_remove" => {
+            ensure_entity_type(change, "task")?;
+            ensure_sync_id("entity_id", &change.entity_id)?;
+            optional_workspace_payload(&change.payload)?;
+            let depends_on_task_id =
+                required_string_payload("depends_on_task_id", &change.payload)?;
+            ensure_sync_id("depends_on_task_id", &depends_on_task_id)?;
+            if change.entity_id == depends_on_task_id {
+                bail!("error invalid-sync-change dependency-self");
+            }
+        }
         _ => bail!("error invalid-sync-change op_type={}", change.op_type),
     }
     Ok(())

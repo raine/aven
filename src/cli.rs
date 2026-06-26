@@ -26,6 +26,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub(crate) enum Commands {
     Add(AddArgs),
+    Dep(DepCommand),
     Show(ShowArgs),
     List(ListArgs),
     BulkUpdate(BulkUpdateArgs),
@@ -150,6 +151,40 @@ pub(crate) struct ListArgs {
     pub(crate) label: Option<String>,
     #[arg(long)]
     pub(crate) all: bool,
+    #[arg(long)]
+    pub(crate) ready: bool,
+    #[arg(long)]
+    pub(crate) blocked: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct DepCommand {
+    #[command(subcommand)]
+    pub(crate) command: DepSubcommand,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum DepSubcommand {
+    Add(DepAddArgs),
+    Remove(DepRemoveArgs),
+    List(DepListArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct DepAddArgs {
+    pub(crate) task_ref: String,
+    pub(crate) depends_on_ref: String,
+}
+
+#[derive(Args)]
+pub(crate) struct DepRemoveArgs {
+    pub(crate) task_ref: String,
+    pub(crate) depends_on_ref: String,
+}
+
+#[derive(Args)]
+pub(crate) struct DepListArgs {
+    pub(crate) task_ref: String,
 }
 
 #[derive(Args)]

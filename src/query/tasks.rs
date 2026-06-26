@@ -109,6 +109,30 @@ pub(crate) async fn list_task_items_in_workspace(
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("EXISTS (SELECT 1 FROM conflicts c WHERE c.workspace_id = t.workspace_id AND c.task_id = t.id AND c.resolved = 0)");
     }
+    if filters.ready_only || filters.blocked_only {
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push("t.deleted = 0");
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push("t.status NOT IN ('done', 'canceled')");
+    }
+    if filters.ready_only {
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push(
+                "NOT EXISTS (SELECT 1 FROM task_dependencies d
+                 JOIN tasks blocker ON blocker.workspace_id = d.workspace_id AND blocker.id = d.depends_on_task_id
+                 WHERE d.workspace_id = t.workspace_id AND d.task_id = t.id
+                   AND blocker.deleted = 0 AND blocker.status NOT IN ('done', 'canceled'))",
+            );
+    }
+    if filters.blocked_only {
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push(
+                "EXISTS (SELECT 1 FROM task_dependencies d
+                 JOIN tasks blocker ON blocker.workspace_id = d.workspace_id AND blocker.id = d.depends_on_task_id
+                 WHERE d.workspace_id = t.workspace_id AND d.task_id = t.id
+                   AND blocker.deleted = 0 AND blocker.status NOT IN ('done', 'canceled'))",
+            );
+    }
     if let Some(search) = filters.search.filter(|search| !search.is_empty()) {
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("(t.title LIKE ");
@@ -146,13 +170,28 @@ pub(crate) async fn list_task_items_in_workspace(
             .remove(&task.id)
             .unwrap_or_default();
         let has_conflict = enrichment.conflicted_task_ids.contains(&task.id);
-        let queue = queue_meta(&task, has_conflict, now_seconds);
+        let unresolved_blocker_count = *enrichment
+            .unresolved_blocker_counts_by_task
+            .get(&task.id)
+            .unwrap_or(&0);
+        let dependent_count = *enrichment
+            .dependent_counts_by_task
+            .get(&task.id)
+            .unwrap_or(&0);
+        let queue = queue_meta(
+            &task,
+            has_conflict,
+            unresolved_blocker_count > 0,
+            now_seconds,
+        );
         items.push(TaskListItem {
             task,
             display_ref,
             labels,
             notes,
             has_conflict,
+            unresolved_blocker_count,
+            dependent_count,
             queue,
         });
     }

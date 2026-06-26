@@ -546,6 +546,8 @@ mod tests {
                 created_at: "2026-06-20T12:00:00Z".to_string(),
             }],
             has_conflict: true,
+            unresolved_blocker_count: 0,
+            dependent_count: 0,
             queue: Default::default(),
         }
     }

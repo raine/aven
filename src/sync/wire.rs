@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 2;
+pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ChangeWire {

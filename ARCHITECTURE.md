@@ -46,7 +46,7 @@
 
 SQLite stores synced task data and local UI state. Config files store local routing and service settings.
 
-- Synced domain tables: `workspaces`, `tasks`, `projects`, `labels`, `task_labels`, `notes`.
+- Synced domain tables: `workspaces`, `tasks`, `projects`, `labels`, `task_labels`, `notes`, `task_dependencies`.
 - Sync bookkeeping: `changes`, `field_versions`, `conflicts`, `meta`.
 - Local-only config: database path, sync settings, project path mappings, directory overrides.
 - Local-only TUI state: view, filter, selection, overlay, sort state, and `tui_undo_entries`; pending undo entries are cleared when a TUI store starts.
@@ -88,6 +88,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 | --- | --- | --- | --- |
 | Add or change a CLI command | `src/cli.rs`, `src/lib.rs`, `src/commands.rs` | `src/operations/` for writes, `src/input.rs` for text input, `src/task_render.rs` for task output | focused `tests/cli_*.rs` |
 | Add a task scalar field | migration, `src/types.rs`, `src/task_fields.rs`, `src/mutation.rs` | `src/operations/tasks.rs`, `src/sync/apply.rs`, `src/sync/wire.rs`, `src/query/`, CLI and TUI renderers | sync, conflict, CLI, and TUI tests |
+| Add task dependency relations | `src/operations/dependencies.rs`, `src/query/dependencies.rs` | `src/commands.rs`, `src/task_render.rs`, `src/sync/apply.rs`, `src/sync/server.rs` | `tests/cli_dependencies.rs`, `tests/cli_sync.rs` |
 | Change task list, filters, sorting, or refs | `src/query/`, `src/query.rs`, `src/refs.rs`, `src/queue.rs` | CLI list rendering, `src/tui/store/types.rs`, `src/tui/store/view.rs`, indexes | `tests/tui_query.rs`, `tests/sqlite_read_path_indexes.rs`, focused CLI tests |
 | Add or change a TUI action | `src/tui/event/catalog.rs`, `src/tui/app_dispatch.rs`, `src/tui/app.rs` | flow helpers, overlays, store module, undo | `src/tui/app_tests.rs`, `src/tui/store/tests.rs`, overlay tests |
 | Add or change TUI overlay rendering | `src/tui/overlay.rs`, `src/tui/overlay/`, `src/tui/ui/overlays.rs`, `src/tui/ui/overlays/` | `OverlayRoute`, shared dialog helpers, input helpers, theme | overlay rendering tests in `src/tui/ui/overlays/tests.rs` |
