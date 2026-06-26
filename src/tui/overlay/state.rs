@@ -1,6 +1,6 @@
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::text_input::LineEdit;
-use crate::tui::store::{TuiDatabaseStats, TuiSyncStatus};
+use crate::tui::store::{TaskOrder, TuiDatabaseStats, TuiSyncStatus};
 use crate::tui::text::{char_boundary_at_or_before, normalize_pasted_newlines};
 
 #[allow(dead_code)]
@@ -25,6 +25,7 @@ pub(crate) enum OverlayState {
     TextInput(TextInputState),
     MultilineInput(MultilineInputState),
     Picker(PickerState),
+    OrderMenu(OrderMenuState),
     Confirm(ConfirmState),
     TextPanel(TextPanelState),
     SyncStatus(Box<TuiSyncStatus>),
@@ -74,6 +75,34 @@ pub(crate) struct TextPanelState {
     pub(crate) title: String,
     pub(crate) lines: Vec<String>,
     pub(crate) scroll: u16,
+}
+
+pub(crate) const ORDER_MENU_WIDTH: u16 = 20;
+pub(crate) const ORDER_MENU_HEIGHT: u16 = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OrderMenuState {
+    pub(crate) column: u16,
+    pub(crate) row: u16,
+    pub(crate) selected: TaskOrder,
+}
+
+impl OrderMenuState {
+    pub(crate) fn area(&self, terminal_width: u16, terminal_height: u16) -> ratatui::layout::Rect {
+        let width = ORDER_MENU_WIDTH.min(terminal_width);
+        let height = ORDER_MENU_HEIGHT.min(terminal_height);
+        let x = self.column.min(terminal_width.saturating_sub(width));
+        let y = self
+            .row
+            .saturating_add(1)
+            .min(terminal_height.saturating_sub(height));
+        ratatui::layout::Rect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
 }
 
 impl TextPanelState {
@@ -497,6 +526,9 @@ pub(crate) enum OverlaySubmit {
         title: String,
         values: Vec<String>,
     },
+    Order {
+        order: TaskOrder,
+    },
     Confirm {
         route: OverlayRoute,
         title: String,
@@ -517,6 +549,7 @@ impl OverlaySubmit {
             Self::Text { title, .. } => format!("submitted {title}"),
             Self::Multiline { title, .. } => format!("submitted {title}"),
             Self::Picker { title, .. } => format!("selected {title}"),
+            Self::Order { order } => format!("selected order {order:?}"),
             Self::Confirm { title, .. } => format!("confirmed {title}"),
         }
     }
@@ -576,5 +609,13 @@ impl OverlayState {
 
     pub(crate) fn captures_input(&self) -> bool {
         true
+    }
+
+    pub(crate) fn order_menu(column: u16, row: u16, selected: TaskOrder) -> Self {
+        Self::OrderMenu(OrderMenuState {
+            column,
+            row,
+            selected,
+        })
     }
 }

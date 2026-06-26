@@ -4,7 +4,8 @@ use crate::tui::authoring::AddTaskStep;
 
 use super::multiline::edit_multiline_input;
 use super::picker::{handle_picker_key, normalize_picker_selection};
-use super::state::{OverlayOutcome, OverlayState, OverlaySubmit};
+use super::state::{OrderMenuState, OverlayOutcome, OverlayState, OverlaySubmit};
+use crate::tui::store::TaskOrder;
 
 pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) -> OverlayState {
     match overlay {
@@ -106,6 +107,7 @@ pub(crate) fn handle_generic_overlay_key(
             }
         }
         OverlayState::Picker(state) => handle_picker_key(state, key),
+        OverlayState::OrderMenu(state) => handle_order_menu_key(state, key),
         OverlayState::Confirm(state) => match key.code {
             KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => OverlayOutcome::Cancelled,
             KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -181,5 +183,58 @@ pub(crate) fn handle_generic_overlay_key(
             _ => OverlayOutcome::None(OverlayState::Detail { scroll }),
         },
         other => OverlayOutcome::None(other),
+    }
+}
+
+fn handle_order_menu_key(mut state: OrderMenuState, key: KeyEvent) -> OverlayOutcome {
+    match key.code {
+        KeyCode::Esc => OverlayOutcome::Cancelled,
+        KeyCode::Enter => OverlayOutcome::Submitted(OverlaySubmit::Order {
+            order: state.selected,
+        }),
+        KeyCode::Char('j') | KeyCode::Down => {
+            state.selected = next_order(state.selected);
+            OverlayOutcome::None(OverlayState::OrderMenu(state))
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            state.selected = previous_order(state.selected);
+            OverlayOutcome::None(OverlayState::OrderMenu(state))
+        }
+        KeyCode::Char('c') => OverlayOutcome::Submitted(OverlaySubmit::Order {
+            order: TaskOrder::Created,
+        }),
+        KeyCode::Char('u') => OverlayOutcome::Submitted(OverlaySubmit::Order {
+            order: TaskOrder::Updated,
+        }),
+        KeyCode::Char('p') => OverlayOutcome::Submitted(OverlaySubmit::Order {
+            order: TaskOrder::Priority,
+        }),
+        KeyCode::Char('g') => OverlayOutcome::Submitted(OverlaySubmit::Order {
+            order: TaskOrder::Project,
+        }),
+        KeyCode::Char('t') => OverlayOutcome::Submitted(OverlaySubmit::Order {
+            order: TaskOrder::Title,
+        }),
+        _ => OverlayOutcome::None(OverlayState::OrderMenu(state)),
+    }
+}
+
+fn next_order(order: TaskOrder) -> TaskOrder {
+    match order {
+        TaskOrder::Created => TaskOrder::Updated,
+        TaskOrder::Updated => TaskOrder::Priority,
+        TaskOrder::Priority => TaskOrder::Project,
+        TaskOrder::Project => TaskOrder::Title,
+        TaskOrder::Title => TaskOrder::Created,
+    }
+}
+
+fn previous_order(order: TaskOrder) -> TaskOrder {
+    match order {
+        TaskOrder::Created => TaskOrder::Title,
+        TaskOrder::Updated => TaskOrder::Created,
+        TaskOrder::Priority => TaskOrder::Updated,
+        TaskOrder::Project => TaskOrder::Priority,
+        TaskOrder::Title => TaskOrder::Project,
     }
 }

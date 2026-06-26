@@ -980,6 +980,38 @@ mod filters_and_workspaces {
     }
 
     #[tokio::test]
+    async fn header_click_opens_order_menu_and_selects_order() {
+        let mut app = test_app().await;
+        let selected = app.store.show_view(TaskView::Open).await.unwrap();
+        app.apply_filter_selection(selected);
+
+        app.dispatch_mouse(header_click(127), (140, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::OrderMenu(state))
+                if state.column == 127 && state.row == 0 && state.selected == TaskOrder::Created
+        ));
+
+        app.dispatch_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 130,
+                row: 6,
+                modifiers: KeyModifiers::NONE,
+            },
+            (140, 24).into(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(app.store.view_state.order, TaskOrder::Project);
+        assert!(app.overlay.is_none());
+        assert_eq!(toast_message(&app), Some("order project asc"));
+    }
+
+    #[tokio::test]
     async fn header_click_ignores_capturing_overlay() {
         let mut app = test_app().await;
         app.begin_search();

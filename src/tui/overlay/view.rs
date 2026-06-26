@@ -1,8 +1,10 @@
 use crate::tui::authoring::AddTaskStep;
-use crate::tui::store::{TuiDatabaseStats, TuiSyncStatus};
+use crate::tui::store::{TaskOrder, TuiDatabaseStats, TuiSyncStatus};
 
 use super::picker::visible_picker_indices;
-use super::state::{OverlayRoute, OverlayState, OverlayState::*, PickerItem, PickerMode};
+use super::state::{
+    OrderMenuState, OverlayRoute, OverlayState, OverlayState::*, PickerItem, PickerMode,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayView {
@@ -29,6 +31,7 @@ pub(crate) enum OverlayView {
     TextInput(TextInputView),
     MultilineInput(MultilineInputView),
     Picker(PickerView),
+    OrderMenu(OrderMenuView),
     Confirm(ConfirmView),
     TextPanel(TextPanelView),
     SyncStatus(Box<TuiSyncStatus>),
@@ -93,6 +96,23 @@ pub(crate) struct PickerView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OrderMenuView {
+    pub(crate) column: u16,
+    pub(crate) row: u16,
+    pub(crate) selected: TaskOrder,
+}
+
+impl From<&OrderMenuState> for OrderMenuView {
+    fn from(state: &OrderMenuState) -> Self {
+        Self {
+            column: state.column,
+            row: state.row,
+            selected: state.selected,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConfirmView {
     pub(crate) title: String,
     pub(crate) prompt: String,
@@ -153,6 +173,7 @@ impl From<&OverlayState> for OverlayView {
                 mode: state.mode,
                 visible_indices: visible_picker_indices(state),
             }),
+            OrderMenu(state) => Self::OrderMenu(OrderMenuView::from(state)),
             Confirm(state) => Self::Confirm(ConfirmView {
                 title: state.title.clone(),
                 prompt: state.prompt.clone(),

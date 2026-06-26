@@ -12,15 +12,15 @@ pub(crate) use multiline::edit_multiline_input;
 pub(crate) use picker::{normalize_picker_selection, visible_picker_indices};
 pub(crate) use state::{
     AddTaskState, CommandState, ConfirmSubmitRoute, MultilineInputState, MultilineSubmitRoute,
-    OverlayOutcome, OverlayRoute, OverlayState, OverlaySubmit, PickerItem, PickerMode,
-    PickerSubmitRoute, TextPanelState, TextSubmitRoute,
+    OrderMenuState, OverlayOutcome, OverlayRoute, OverlayState, OverlaySubmit, PickerItem,
+    PickerMode, PickerSubmitRoute, TextPanelState, TextSubmitRoute,
 };
 #[cfg(test)]
 pub(crate) use state::{ConfirmState, OverlaySubmitKind, PickerState, TextInputState};
 pub(crate) use text_input::LineEdit;
 pub(crate) use view::{
-    AddTaskView, ConfirmView, MultilineInputView, OverlayView, PickerView, TextInputView,
-    TextPanelView,
+    AddTaskView, ConfirmView, MultilineInputView, OrderMenuView, OverlayView, PickerView,
+    TextInputView, TextPanelView,
 };
 
 #[cfg(test)]

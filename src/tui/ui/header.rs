@@ -16,6 +16,7 @@ use crate::tui::theme::{
 pub(crate) enum HeaderTarget {
     Scope(TaskScopeTarget),
     View(TaskView),
+    Order,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,6 +147,16 @@ fn header_hitboxes(store: &TuiStore, width: u16) -> Vec<HeaderHitbox> {
             push_text(&mut x, " ");
         }
         push_target(&mut hitboxes, &mut x, text.width() as u16, target);
+    }
+    let filter_width = spans_width(active_filter_spans(store));
+    push_text(&mut x, &" ".repeat(filter_width as usize));
+    if !compact || width >= 84 {
+        push_target(
+            &mut hitboxes,
+            &mut x,
+            spans_width(active_order_spans(store)),
+            HeaderTarget::Order,
+        );
     }
     hitboxes
         .into_iter()
@@ -496,6 +507,10 @@ mod tests {
         assert_eq!(
             header_target_at(&store, area, 104, 0),
             Some(HeaderTarget::View(TaskView::Inbox))
+        );
+        assert_eq!(
+            header_target_at(&store, area, 128, 0),
+            Some(HeaderTarget::Order)
         );
         assert_eq!(header_target_at(&store, area, 36, 1), None);
     }

@@ -31,14 +31,14 @@ pub(crate) use self::shortcuts::{detail_help_scroll_cap, help_scroll_cap};
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout};
-use ratatui::style::Style;
-use ratatui::text::{Line, Text};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::tui::app::{Focus, LoadingState, WidgetState};
-use crate::tui::overlay::{OverlayRoute, OverlayView, TextInputView};
-use crate::tui::store::TuiStore;
-use crate::tui::theme::{BG, FG};
+use crate::tui::overlay::{OrderMenuView, OverlayRoute, OverlayView, TextInputView};
+use crate::tui::store::{TaskOrder, TuiStore};
+use crate::tui::theme::{ACCENT, BG, BG_ALT, BG_PANEL, FG, FG_DIM, SELECTED};
 use crate::tui::toast::Toast;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -290,6 +290,75 @@ fn inline_detail_title_editor(view: &ViewState) -> Option<&TextInputView> {
     edit_title_view(view)
 }
 
+fn render_order_menu(frame: &mut Frame, state: &OrderMenuView) {
+    use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+
+    let menu_state = crate::tui::overlay::OrderMenuState {
+        column: state.column,
+        row: state.row,
+        selected: state.selected,
+    };
+    let area = menu_state.area(frame.area().width, frame.area().height);
+    frame.render_widget(Clear, area);
+    let block = Block::new()
+        .title(Line::from(vec![
+            Span::styled("─ ", Style::new().fg(ACCENT)),
+            Span::styled("order", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+            Span::styled(" ", Style::new().fg(ACCENT)),
+        ]))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(ACCENT))
+        .style(Style::new().bg(BG_ALT));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let mut lines = vec![Line::from(Span::styled(
+        "click an option",
+        Style::new().fg(FG_DIM).bg(BG_ALT),
+    ))];
+    for (order, key, label) in order_menu_items() {
+        lines.push(order_menu_line(order, key, label, state.selected));
+    }
+    lines.push(Line::from(vec![
+        Span::styled("Esc", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" close", Style::new().fg(FG_DIM)),
+    ]));
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG_ALT)),
+        inner,
+    );
+}
+
+fn order_menu_line(
+    order: TaskOrder,
+    key: &'static str,
+    label: &'static str,
+    selected: TaskOrder,
+) -> Line<'static> {
+    let row_style = if order == selected {
+        SELECTED
+    } else {
+        Style::new().fg(FG).bg(BG_PANEL)
+    };
+    let marker = if order == selected { "▸" } else { " " };
+    Line::from(vec![
+        Span::styled(format!("{marker} "), row_style),
+        Span::styled(format!("{key:<2}"), row_style.add_modifier(Modifier::BOLD)),
+        Span::styled(" ", row_style),
+        Span::styled(label, row_style),
+    ])
+}
+
+fn order_menu_items() -> [(TaskOrder, &'static str, &'static str); 5] {
+    [
+        (TaskOrder::Created, "c", "created"),
+        (TaskOrder::Updated, "u", "updated"),
+        (TaskOrder::Priority, "p", "priority"),
+        (TaskOrder::Project, "g", "project"),
+        (TaskOrder::Title, "t", "title"),
+    ]
+}
+
 fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title_editor: bool) {
     match overlay {
         OverlayView::Help { scroll } => render_help(frame, *scroll),
@@ -313,6 +382,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
         OverlayView::TextInput(state) => render_text_input(frame, state),
         OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
         OverlayView::Picker(state) => render_picker(frame, state),
+        OverlayView::OrderMenu(state) => render_order_menu(frame, state),
         OverlayView::Confirm(state) => render_confirm(frame, state),
         OverlayView::TextPanel(state) => render_text_panel(frame, state),
         OverlayView::SyncStatus(state) => render_sync_status(frame, state),

@@ -1,8 +1,8 @@
 use anyhow::Result;
 
 use crate::tui::app::{App, Focus};
-use crate::tui::overlay::OverlayRoute;
-use crate::tui::store::{TaskScope, TaskScopeTarget, TaskView};
+use crate::tui::overlay::{OrderMenuState, OverlayRoute, OverlayState};
+use crate::tui::store::{TaskOrder, TaskScope, TaskScopeTarget, TaskView};
 
 pub(crate) const FILTER_LABEL_TITLE: &str = "Filter: label";
 pub(crate) const FILTER_PRIORITY_TITLE: &str = "Filter: priority";
@@ -78,6 +78,34 @@ impl App {
         self.apply_filter_selection(selected);
         self.set_info("scope updated");
         Ok(())
+    }
+
+    pub(super) fn show_order_menu(&mut self, column: u16, row: u16) {
+        self.pending_shortcut.clear();
+        self.overlay = Some(OverlayState::order_menu(
+            column,
+            row,
+            self.store.view_state.order,
+        ));
+    }
+
+    pub(super) async fn submit_order_menu(&mut self, order: TaskOrder) -> Result<()> {
+        self.overlay = None;
+        self.set_sort(order).await
+    }
+
+    pub(super) async fn submit_order_menu_at(
+        &mut self,
+        state: OrderMenuState,
+        column: u16,
+        row: u16,
+        terminal_size: ratatui::layout::Size,
+    ) -> Result<()> {
+        let Some(order) = order_menu_order_at(state, column, row, terminal_size) else {
+            self.overlay = None;
+            return Ok(());
+        };
+        self.submit_order_menu(order).await
     }
 
     pub(super) fn apply_filter_selection(&mut self, selected: Option<usize>) {
@@ -162,5 +190,29 @@ impl App {
         self.apply_filter_selection(selected);
         self.set_success(message);
         Ok(())
+    }
+}
+
+fn order_menu_order_at(
+    state: OrderMenuState,
+    column: u16,
+    row: u16,
+    terminal_size: ratatui::layout::Size,
+) -> Option<TaskOrder> {
+    let area = state.area(terminal_size.width, terminal_size.height);
+    if column < area.x
+        || column >= area.x.saturating_add(area.width)
+        || row < area.y
+        || row >= area.y.saturating_add(area.height)
+    {
+        return None;
+    }
+    match row.saturating_sub(area.y) {
+        2 => Some(TaskOrder::Created),
+        3 => Some(TaskOrder::Updated),
+        4 => Some(TaskOrder::Priority),
+        5 => Some(TaskOrder::Project),
+        6 => Some(TaskOrder::Title),
+        _ => None,
     }
 }
