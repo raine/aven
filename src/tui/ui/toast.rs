@@ -36,12 +36,18 @@ fn toast_tone(severity: ToastSeverity) -> ToastTone {
 pub(super) fn render_toast(frame: &mut Frame, toast: &Toast) {
     let tone = toast_tone(toast.severity);
     let fill = BG_PANEL;
-    let content = Line::from(vec![
+    let mut spans = vec![
         Span::styled("", Style::new().fg(fill).bg(BG)),
         Span::styled("▌", Style::new().fg(tone.color).bg(fill)),
         Span::styled(" ", Style::new().bg(fill)),
-        Span::styled(tone.icon, Style::new().fg(tone.color).bg(fill)),
-        Span::styled(" ", Style::new().bg(fill)),
+    ];
+    if toast.icon {
+        spans.extend([
+            Span::styled(tone.icon, Style::new().fg(tone.color).bg(fill)),
+            Span::styled(" ", Style::new().bg(fill)),
+        ]);
+    }
+    spans.extend([
         Span::styled(
             toast.message.as_str(),
             Style::new().fg(FG).bg(fill).add_modifier(Modifier::BOLD),
@@ -49,8 +55,10 @@ pub(super) fn render_toast(frame: &mut Frame, toast: &Toast) {
         Span::styled(" ", Style::new().bg(fill)),
         Span::styled("", Style::new().fg(fill).bg(BG)),
     ]);
+    let content = Line::from(spans);
+    let chrome_width = if toast.icon { 7 } else { 5 };
     let width = (toast.message.chars().count() as u16)
-        .saturating_add(7)
+        .saturating_add(chrome_width)
         .clamp(20, frame.area().width.saturating_sub(5));
     let height = 1.min(frame.area().height);
     let x = frame.area().right().saturating_sub(width.saturating_add(3));
@@ -127,5 +135,22 @@ mod tests {
             .unwrap();
         let rendered = buffer_text(terminal.backend());
         assert!(rendered.contains("• nothing to undo"));
+    }
+
+    #[test]
+    fn iconless_info_toast_omits_dot() {
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render_toast(
+                    frame,
+                    &Toast::new("⠋ adding task with LLM", ToastSeverity::Info).without_icon(),
+                )
+            })
+            .unwrap();
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains("⠋ adding task with LLM"));
+        assert!(!rendered.contains("• ⠋ adding task with LLM"));
     }
 }

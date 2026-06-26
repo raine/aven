@@ -138,7 +138,7 @@ async fn parse_task_intake_with_context(
     }
 }
 
-async fn run_task_intake_command(
+pub(crate) async fn run_task_intake_command(
     config: &TaskIntakeConfig,
     context: &TaskIntakeContext,
     input: &str,
@@ -263,7 +263,7 @@ fn task_intake_labels_prompt(context: &TaskIntakeContext) -> String {
     }
 }
 
-async fn parsed_output_to_draft(
+pub(crate) async fn parsed_output_to_draft(
     conn: &mut SqliteConnection,
     context: &TaskIntakeContext,
     output: &str,

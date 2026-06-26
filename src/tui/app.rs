@@ -68,24 +68,59 @@ pub(super) struct PendingTaskIntake {
     create_on_success: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LoadingState {
-    pub(crate) message: String,
-    pub(crate) started_at: Instant,
+pub(super) struct ReadyTaskIntake {
+    outcome: Result<TaskDraft>,
+    retry: NaturalRetry,
+    value: String,
+    create_on_success: bool,
 }
 
-impl LoadingState {
-    pub(crate) fn new(message: impl Into<String>) -> Self {
-        Self {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Notification {
+    Toast {
+        toast: Toast,
+        created_at: Instant,
+    },
+    Loading {
+        message: String,
+        started_at: Instant,
+    },
+}
+
+impl Notification {
+    pub(crate) fn toast(message: impl Into<String>, severity: ToastSeverity) -> Self {
+        Self::Toast {
+            toast: Toast::new(message, severity),
+            created_at: Instant::now(),
+        }
+    }
+
+    pub(crate) fn loading(message: impl Into<String>) -> Self {
+        Self::Loading {
             message: message.into(),
             started_at: Instant::now(),
         }
     }
 
-    pub(crate) fn frame(&self) -> usize {
-        let elapsed = self.started_at.elapsed().as_millis() as usize;
-        elapsed / 120
+    pub(crate) fn toast_view(&self) -> Toast {
+        match self {
+            Self::Toast { toast, .. } => toast.clone(),
+            Self::Loading {
+                message,
+                started_at,
+            } => Toast::new(
+                format!("{} {message}", loading_frame(*started_at)),
+                ToastSeverity::Info,
+            )
+            .without_icon(),
+        }
     }
+}
+
+fn loading_frame(started_at: Instant) -> &'static str {
+    let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let elapsed = started_at.elapsed().as_millis() as usize;
+    frames[(elapsed / 120) % frames.len()]
 }
 
 pub(crate) struct WidgetState {
@@ -100,8 +135,7 @@ pub(crate) struct App {
     add_task_db_path: Option<PathBuf>,
     pub(crate) widgets: WidgetState,
     pub(crate) overlay: Option<OverlayState>,
-    pub(crate) message: Option<Toast>,
-    pub(crate) message_at: Option<Instant>,
+    pub(crate) notification: Option<Notification>,
     pub(super) pending_shortcut: ShortcutBuffer,
     pub(super) detail_context: bool,
     pub(super) authoring: AuthoringState,
@@ -112,8 +146,8 @@ pub(crate) struct App {
     pub(super) add_task_only: bool,
     pub(super) add_task_only_message: Option<String>,
     pub(super) add_task_config: AppConfig,
-    pub(super) loading: Option<LoadingState>,
     pub(super) pending_task_intake: Option<PendingTaskIntake>,
+    pub(super) ready_task_intake: Option<ReadyTaskIntake>,
     pub(super) next_refresh_at: Instant,
     pub(crate) last_task_click: Option<TaskRowClick>,
 }
@@ -145,8 +179,7 @@ impl App {
                 table: TableState::default(),
             },
             overlay: None,
-            message: None,
-            message_at: None,
+            notification: None,
             pending_shortcut: ShortcutBuffer::default(),
             detail_context: false,
             authoring: AuthoringState::default(),
@@ -158,8 +191,8 @@ impl App {
             add_task_only_message: None,
             add_task_db_path: None,
             add_task_config: AppConfig::default(),
-            loading: None,
             pending_task_intake: None,
+            ready_task_intake: None,
             next_refresh_at,
             last_task_click: None,
         };
@@ -581,7 +614,7 @@ impl App {
             raw.to_string(),
             project,
         );
-        self.loading = Some(LoadingState::new(if create_on_success {
+        self.notification = Some(Notification::loading(if create_on_success {
             "adding task with LLM"
         } else {
             "parsing task with LLM"
@@ -594,7 +627,6 @@ impl App {
         });
         if create_on_success {
             self.overlay = None;
-            self.set_info("adding task in background");
         } else {
             self.retry_add_task_natural(value, retry);
         }
@@ -602,15 +634,33 @@ impl App {
     }
 
     pub(super) async fn poll_pending_task_intake(&mut self) -> Result<bool> {
+        if let Some(ready) = self.ready_task_intake.take() {
+            self.finish_ready_task_intake(ready).await?;
+            return Ok(true);
+        }
+
         let Some(pending) = self
             .pending_task_intake
             .take_if(|pending| pending.handle.is_finished())
         else {
             return Ok(false);
         };
-        self.loading = None;
-        match pending.handle.await? {
-            Ok(draft) if pending.create_on_success => {
+        let ready = ReadyTaskIntake {
+            outcome: pending.handle.await?,
+            retry: pending.retry,
+            value: pending.value,
+            create_on_success: pending.create_on_success,
+        };
+        if ready.outcome.is_err() {
+            self.set_error("task intake failed");
+        }
+        self.ready_task_intake = Some(ready);
+        Ok(true)
+    }
+
+    async fn finish_ready_task_intake(&mut self, ready: ReadyTaskIntake) -> Result<()> {
+        match ready.outcome {
+            Ok(draft) if ready.create_on_success => {
                 self.submit_created_task(draft).await?;
             }
             Ok(draft) => {
@@ -628,10 +678,10 @@ impl App {
                     "task intake failed: {error:#}; logged to {}",
                     log_path.display()
                 ));
-                self.retry_add_task_natural(pending.value, pending.retry);
+                self.retry_add_task_natural(ready.value, ready.retry);
             }
         }
-        Ok(true)
+        Ok(())
     }
 
     fn retry_add_task_natural(&mut self, value: String, retry: NaturalRetry) {
@@ -898,8 +948,7 @@ impl App {
     }
 
     fn set_toast(&mut self, message: impl Into<String>, severity: ToastSeverity) {
-        self.message = Some(Toast::new(message, severity));
-        self.message_at = Some(Instant::now());
+        self.notification = Some(Notification::toast(message, severity));
     }
 
     pub(super) fn show_config_status(&mut self) -> Result<()> {

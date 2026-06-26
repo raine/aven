@@ -19,12 +19,16 @@ use crate::tui::ui::ViewSurface;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use sqlx::SqlitePool;
 
-fn toast_message(app: &App) -> Option<&str> {
-    app.message.as_ref().map(|toast| toast.message.as_str())
+fn toast_message(app: &App) -> Option<String> {
+    app.notification
+        .as_ref()
+        .map(|notification| notification.toast_view().message)
 }
 
 fn toast_severity(app: &App) -> Option<ToastSeverity> {
-    app.message.as_ref().map(|toast| toast.severity)
+    app.notification
+        .as_ref()
+        .map(|notification| notification.toast_view().severity)
 }
 
 async fn test_app() -> App {
@@ -521,7 +525,10 @@ mod keyboard_dispatch {
         app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('z')).await.unwrap();
         assert_pending_empty(&app);
-        assert_eq!(toast_message(&app), Some("invalid shortcut: m z"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("invalid shortcut: m z")
+        );
     }
 
     #[tokio::test]
@@ -538,7 +545,7 @@ mod keyboard_dispatch {
         app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
         assert_eq!(app.store.view_state.order, TaskOrder::Priority);
-        assert_eq!(toast_message(&app), Some("order priority asc"));
+        assert_eq!(toast_message(&app).as_deref(), Some("order priority asc"));
     }
 
     #[tokio::test]
@@ -547,7 +554,7 @@ mod keyboard_dispatch {
         app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
         assert_eq!(app.store.sort_direction_label(), "desc");
-        assert_eq!(toast_message(&app), Some("order created desc"));
+        assert_eq!(toast_message(&app).as_deref(), Some("order created desc"));
     }
 
     #[tokio::test]
@@ -556,7 +563,7 @@ mod keyboard_dispatch {
         app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
         assert_eq!(
-            toast_message(&app),
+            toast_message(&app).as_deref(),
             Some(":order-due is disabled: tasks do not have due dates")
         );
     }
@@ -579,7 +586,7 @@ mod keyboard_dispatch {
         app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
         assert_eq!(
-            toast_message(&app),
+            toast_message(&app).as_deref(),
             Some(":order-due is disabled: tasks do not have due dates")
         );
 
@@ -587,7 +594,7 @@ mod keyboard_dispatch {
         type_chars(&mut app, "order-due").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         assert_eq!(
-            toast_message(&app),
+            toast_message(&app).as_deref(),
             Some(":order-due is disabled: tasks do not have due dates")
         );
         assert!(app.overlay.is_none());
@@ -688,7 +695,7 @@ mod command_and_config_overlays {
             .unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
-        assert_eq!(toast_message(&app), Some("ambiguous command: s"));
+        assert_eq!(toast_message(&app).as_deref(), Some("ambiguous command: s"));
 
         app.begin_command();
         for ch in "zzzz".chars() {
@@ -698,7 +705,10 @@ mod command_and_config_overlays {
         }
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
-        assert_eq!(toast_message(&app), Some("unknown command: zzzz"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("unknown command: zzzz")
+        );
     }
 
     #[tokio::test]
@@ -920,7 +930,7 @@ mod command_and_config_overlays {
             .await
             .unwrap();
         assert!(app.overlay.is_none());
-        assert!(app.message.is_none());
+        assert!(app.notification.is_none());
     }
 
     #[tokio::test]
@@ -1023,7 +1033,7 @@ mod filters_and_workspaces {
         assert_eq!(app.store.view_state.view, TaskView::Done);
         assert_eq!(app.store.tasks.len(), 1);
         assert_eq!(app.store.tasks[0].task.title, "Mobile done");
-        assert_eq!(toast_message(&app), Some("view updated"));
+        assert_eq!(toast_message(&app).as_deref(), Some("view updated"));
     }
 
     #[tokio::test]
@@ -1054,7 +1064,7 @@ mod filters_and_workspaces {
             app.store.view_state.filter_modifiers.label.as_deref(),
             Some("backend")
         );
-        assert_eq!(toast_message(&app), Some("label filter applied"));
+        assert_eq!(toast_message(&app).as_deref(), Some("label filter applied"));
         app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Char('/')))
@@ -1070,7 +1080,10 @@ mod filters_and_workspaces {
         app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
         assert!(app.store.view_state.filter_modifiers.include_deleted);
-        assert_eq!(toast_message(&app), Some("showing deleted tasks"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("showing deleted tasks")
+        );
     }
 
     #[tokio::test]
@@ -1104,7 +1117,7 @@ mod filters_and_workspaces {
         assert_eq!(app.store.view_state.scope, TaskScope::Workspace);
         assert_eq!(app.store.view_state.view, TaskView::Todo);
         assert_eq!(
-            toast_message(&app),
+            toast_message(&app).as_deref(),
             Some("project scope missing is no longer available")
         );
         assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
@@ -1153,7 +1166,7 @@ mod filters_and_workspaces {
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
 
         assert_eq!(app.store.view_state.view, TaskView::Todo);
-        assert_eq!(toast_message(&app), Some("filters cleared"));
+        assert_eq!(toast_message(&app).as_deref(), Some("filters cleared"));
         assert_eq!(toast_severity(&app), Some(ToastSeverity::Success));
     }
 
@@ -1206,7 +1219,7 @@ mod filters_and_workspaces {
         .await
         .unwrap();
         assert_eq!(app.store.view_state.scope, TaskScope::Workspace);
-        assert_eq!(toast_message(&app), Some("scope updated"));
+        assert_eq!(toast_message(&app).as_deref(), Some("scope updated"));
     }
 
     #[tokio::test]
@@ -1237,7 +1250,7 @@ mod filters_and_workspaces {
         .unwrap();
         assert_eq!(app.store.view_state.view, TaskView::Inbox);
         assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app), Some("view updated"));
+        assert_eq!(toast_message(&app).as_deref(), Some("view updated"));
     }
 
     #[tokio::test]
@@ -1289,7 +1302,7 @@ mod filters_and_workspaces {
             .await
             .unwrap();
         assert_eq!(app.store.view_state.view, TaskView::Queue);
-        assert_eq!(toast_message(&app), Some("view updated"));
+        assert_eq!(toast_message(&app).as_deref(), Some("view updated"));
 
         let mut app = test_app().await;
         let inbox_column = (0..140)
@@ -1353,7 +1366,7 @@ mod filters_and_workspaces {
         assert_eq!(app.store.view_state.view, TaskView::Open);
         assert_eq!(app.store.view_state.order, TaskOrder::Project);
         assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app), Some("order project asc"));
+        assert_eq!(toast_message(&app).as_deref(), Some("order project asc"));
     }
 
     #[tokio::test]
@@ -1559,7 +1572,7 @@ mod filters_and_workspaces {
             .unwrap();
 
         assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app), Some("confirmed Confirm"));
+        assert_eq!(toast_message(&app).as_deref(), Some("confirmed Confirm"));
 
         let mut app = test_app().await;
         app.overlay = Some(OverlayState::Confirm(ConfirmState {
@@ -1573,7 +1586,7 @@ mod filters_and_workspaces {
             .unwrap();
 
         assert!(app.overlay.is_none());
-        assert!(app.message.is_none());
+        assert!(app.notification.is_none());
     }
 
     #[tokio::test]
@@ -1712,7 +1725,7 @@ mod task_row_mouse {
 
         app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
         assert_eq!(app.store.tasks[0].task.status, "inbox");
-        assert!(app.message.as_ref().unwrap().message.contains("undid"));
+        assert!(toast_message(&app).is_some_and(|message| message.contains("undid")));
     }
 
     #[tokio::test]
@@ -1878,7 +1891,10 @@ mod authoring {
             &app.overlay,
             Some(OverlayState::AddTask(state)) if state.status == "active"
         ));
-        assert_eq!(toast_message(&app), Some("add task status=active"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("add task status=active")
+        );
 
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
@@ -1916,7 +1932,10 @@ mod authoring {
             &app.overlay,
             Some(OverlayState::AddTask(state)) if state.priority == "high"
         ));
-        assert_eq!(toast_message(&app), Some("add task priority=high"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("add task priority=high")
+        );
 
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
@@ -2235,13 +2254,17 @@ mod authoring {
     #[tokio::test]
     async fn loading_poll_timeout_uses_spinner_cadence() {
         let mut app = test_app().await;
-        app.loading = Some(LoadingState::new("parsing task with LLM"));
+        app.notification = Some(Notification::loading("parsing task with LLM"));
 
         assert_eq!(
             app.next_poll_timeout(),
             std::time::Duration::from_millis(120)
         );
         assert!(app.has_time_based_redraw());
+        assert_eq!(toast_severity(&app), Some(ToastSeverity::Info));
+        assert!(toast_message(&app).is_some_and(|message| {
+            message.contains("parsing task with LLM") && !message.contains("•")
+        }));
     }
 
     #[tokio::test]
@@ -2249,12 +2272,15 @@ mod authoring {
         let mut app = test_app().await;
         app.set_success("created task APP-TEST");
         let first_timeout = app.next_poll_timeout();
-        app.message_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(5));
+        app.notification = Some(Notification::Toast {
+            toast: crate::tui::toast::Toast::new("created task APP-TEST", ToastSeverity::Success),
+            created_at: std::time::Instant::now() - std::time::Duration::from_secs(5),
+        });
 
         assert!(first_timeout <= std::time::Duration::from_secs(4));
-        assert!(app.clear_expired_message());
-        assert!(app.message.is_none());
-        assert!(!app.clear_expired_message());
+        assert!(app.clear_expired_notification());
+        assert!(app.notification.is_none());
+        assert!(!app.clear_expired_notification());
     }
 
     #[tokio::test]
@@ -2264,7 +2290,7 @@ mod authoring {
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
             Ok(test_task_draft("pending task"))
         });
-        app.loading = Some(LoadingState::new("adding task with LLM"));
+        app.notification = Some(Notification::loading("adding task with LLM"));
         app.pending_task_intake = Some(PendingTaskIntake {
             handle,
             retry: NaturalRetry::AddTask,
@@ -2281,7 +2307,7 @@ mod authoring {
     async fn finished_task_intake_poll_requests_redraw() {
         let mut app = test_app().await;
         let handle = tokio::spawn(async { Ok(test_task_draft("ready task")) });
-        app.loading = Some(LoadingState::new("adding task with LLM"));
+        app.notification = Some(Notification::loading("adding task with LLM"));
         app.pending_task_intake = Some(PendingTaskIntake {
             handle,
             retry: NaturalRetry::AddTask,
@@ -2304,7 +2330,14 @@ mod authoring {
 
         assert!(app.poll_pending_task_intake().await.unwrap());
         assert!(app.pending_task_intake.is_none());
-        assert!(app.loading.is_none());
+        assert!(app.ready_task_intake.is_some());
+        assert!(matches!(
+            app.notification.as_ref(),
+            Some(Notification::Loading { message, .. }) if message == "adding task with LLM"
+        ));
+
+        assert!(app.poll_pending_task_intake().await.unwrap());
+        assert!(app.ready_task_intake.is_none());
         assert!(toast_message(&app).is_some_and(|message| message.starts_with("created task ")));
     }
 
@@ -2322,14 +2355,16 @@ mod authoring {
         app.handle_overlay_key(ctrl_n()).await.unwrap();
 
         assert!(matches!(
-            app.loading.as_ref(),
-            Some(loading) if loading.message == "adding task with LLM"
+            app.notification.as_ref(),
+            Some(Notification::Loading { message, .. }) if message == "adding task with LLM"
         ));
         assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app), Some("adding task in background"));
+        assert!(
+            toast_message(&app).is_some_and(|message| message.contains("adding task with LLM"))
+        );
         for _ in 0..100 {
             app.poll_pending_task_intake().await.unwrap();
-            if app.pending_task_intake.is_none() {
+            if toast_message(&app).is_some_and(|message| message.starts_with("created task ")) {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -2340,7 +2375,6 @@ mod authoring {
         assert_eq!(task.task.title, "fix parsed dispatch");
         assert_eq!(task.task.description, "from parsed title");
         assert_eq!(task.task.priority, "medium");
-        assert!(app.loading.is_none());
         assert!(toast_message(&app).is_some_and(|message| message.starts_with("created task ")));
     }
 
@@ -2361,7 +2395,9 @@ mod authoring {
 
         for _ in 0..100 {
             app.poll_pending_task_intake().await.unwrap();
-            if app.pending_task_intake.is_none() {
+            if capture.exists()
+                && toast_message(&app).is_some_and(|message| message.starts_with("created task "))
+            {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -2424,7 +2460,8 @@ mod authoring {
         app.handle_overlay_key(ctrl_n()).await.unwrap();
         for _ in 0..100 {
             app.poll_pending_task_intake().await.unwrap();
-            if app.pending_task_intake.is_none() {
+            if matches!(&app.overlay, Some(OverlayState::AddTask(state)) if state.title.as_str() == "raw natural title")
+            {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -2514,7 +2551,10 @@ mod authoring {
         app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-        assert_eq!(toast_message(&app), Some("task title is required"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("task title is required")
+        );
         assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
         assert!(matches!(
             &app.overlay,
@@ -2530,7 +2570,10 @@ mod authoring {
         app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
 
         assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app), Some("no selected task for note"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("no selected task for note")
+        );
         assert_eq!(toast_severity(&app), Some(ToastSeverity::Info));
     }
 
@@ -2541,7 +2584,10 @@ mod authoring {
         app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
 
         assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app), Some("no selected task for note"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("no selected task for note")
+        );
     }
 
     #[tokio::test]
@@ -2831,7 +2877,7 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
         ));
-        assert_eq!(toast_message(&app), Some("selected next task"));
+        assert_eq!(toast_message(&app).as_deref(), Some("selected next task"));
 
         app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
             .await
@@ -2841,7 +2887,10 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
         ));
-        assert_eq!(toast_message(&app), Some("selected previous task"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("selected previous task")
+        );
     }
 
     #[tokio::test]
@@ -3062,7 +3111,10 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll: 5 })
         ));
-        assert_eq!(toast_message(&app), Some("invalid shortcut: e z"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("invalid shortcut: e z")
+        );
     }
 
     #[tokio::test]
@@ -3152,7 +3204,7 @@ mod detail_mode {
             Some(OverlayState::Detail { scroll: 7 })
         ));
         assert_eq!(
-            toast_message(&app),
+            toast_message(&app).as_deref(),
             Some(format!("set {display_ref} status=done").as_str())
         );
         let selected = app.widgets.table.selected().unwrap();
@@ -3301,7 +3353,7 @@ mod detail_mode {
             Some(OverlayState::Detail { scroll: 5 })
         ));
         assert_eq!(app.store.tasks[selected].task.title, "Before");
-        assert!(app.message.as_ref().unwrap().message.contains("undid"));
+        assert!(toast_message(&app).is_some_and(|message| message.contains("undid")));
     }
 
     #[tokio::test]
@@ -3372,7 +3424,10 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
         ));
-        assert_eq!(toast_message(&app), Some("note body is required"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("note body is required")
+        );
     }
 }
 
@@ -3389,7 +3444,10 @@ mod task_editing {
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
         assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app), Some("note body is required"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("note body is required")
+        );
     }
 
     #[tokio::test]
@@ -3403,10 +3461,13 @@ mod task_editing {
             [KeyCode::Char('m'), KeyCode::Char('D')],
             [KeyCode::Char('m'), KeyCode::Char('r')],
         ] {
-            app.message = None;
+            app.notification = None;
             app.handle_normal_key(sequence[0]).await.unwrap();
             app.handle_normal_key(sequence[1]).await.unwrap();
-            assert_eq!(toast_message(&app), Some("no selected task to edit"));
+            assert_eq!(
+                toast_message(&app).as_deref(),
+                Some("no selected task to edit")
+            );
         }
     }
 
@@ -3428,7 +3489,10 @@ mod task_editing {
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
         assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app), Some("created project mobile-app"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("created project mobile-app")
+        );
         assert!(
             app.store
                 .projects
@@ -3461,7 +3525,10 @@ mod task_editing {
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
         assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app), Some("created label needs-review"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("created label needs-review")
+        );
         assert!(app.store.labels.iter().any(|label| label == "needs-review"));
         assert!(
             app.store
@@ -3740,7 +3807,10 @@ mod task_editing {
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
 
         assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app), Some("no selected task to edit"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("no selected task to edit")
+        );
     }
 
     #[tokio::test]
@@ -3789,7 +3859,10 @@ mod task_editing {
 
         app.copy_selected_ref(TaskRefKind::Short);
 
-        assert_eq!(toast_message(&app), Some("no selected task to copy"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("no selected task to copy")
+        );
     }
 
     #[tokio::test]
@@ -3804,7 +3877,7 @@ mod task_editing {
 
         app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
         assert_eq!(app.store.tasks[selected].task.title, "Before");
-        assert!(app.message.as_ref().unwrap().message.contains("undid"));
+        assert!(toast_message(&app).is_some_and(|message| message.contains("undid")));
     }
 
     #[tokio::test]
@@ -3849,7 +3922,7 @@ mod task_editing {
     async fn undo_reports_nothing_to_undo() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
-        assert_eq!(toast_message(&app), Some("nothing to undo"));
+        assert_eq!(toast_message(&app).as_deref(), Some("nothing to undo"));
         assert_eq!(toast_severity(&app), Some(ToastSeverity::Info));
     }
 }
@@ -3890,7 +3963,7 @@ mod delete_and_restore {
 
         assert!(app.overlay.is_none());
         assert!(!app.store.tasks[selected].task.deleted);
-        assert!(app.message.is_none());
+        assert!(app.notification.is_none());
     }
 
     #[tokio::test]
@@ -3909,7 +3982,7 @@ mod delete_and_restore {
         assert!(app.store.tasks[selected].task.deleted);
         assert!(!app.store.view_state.filter_modifiers.include_deleted);
         assert_eq!(
-            toast_message(&app),
+            toast_message(&app).as_deref(),
             Some(format!("deleted {display_ref}").as_str())
         );
     }
@@ -3961,7 +4034,7 @@ mod delete_and_restore {
                 ..
             }))
         ));
-        assert!(app.message.is_none());
+        assert!(app.notification.is_none());
     }
 
     #[tokio::test]
@@ -3981,7 +4054,7 @@ mod delete_and_restore {
                 ..
             }))
         ));
-        assert!(app.message.is_none());
+        assert!(app.notification.is_none());
     }
 
     #[tokio::test]
@@ -4036,7 +4109,7 @@ mod delete_and_restore {
             .unwrap();
 
         assert_eq!(
-            toast_message(&app),
+            toast_message(&app).as_deref(),
             Some("renamed project sideagent prefix=SDG")
         );
         assert!(
@@ -4070,7 +4143,10 @@ mod delete_and_restore {
             .await
             .unwrap();
 
-        assert_eq!(toast_message(&app), Some("deleted project mobile-app"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("deleted project mobile-app")
+        );
         assert!(
             !app.store
                 .projects
@@ -4120,7 +4196,10 @@ mod conflicts {
         app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
         assert_eq!(app.store.view_state.view, TaskView::Conflicts);
         assert_eq!(app.store.view_state.view, TaskView::Conflicts);
-        assert_eq!(toast_message(&app), Some("no unresolved conflicts"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("no unresolved conflicts")
+        );
     }
 
     #[tokio::test]
@@ -4185,7 +4264,10 @@ mod conflicts {
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
         assert_eq!(app.widgets.table.selected(), Some(second));
-        assert_eq!(toast_message(&app), Some("selected next conflict"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("selected next conflict")
+        );
     }
 
     #[tokio::test]
@@ -4284,7 +4366,7 @@ mod conflicts {
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         assert_eq!(
-            toast_message(&app),
+            toast_message(&app).as_deref(),
             Some("no selected task for conflict resolution")
         );
     }
@@ -4317,7 +4399,7 @@ mod overlay_submit_routes {
         )));
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app), Some("submitted Title"));
+        assert_eq!(toast_message(&app).as_deref(), Some("submitted Title"));
     }
 
     #[tokio::test]
@@ -4332,7 +4414,10 @@ mod overlay_submit_routes {
 
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-        assert_eq!(toast_message(&app), Some("created project mobile-app"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("created project mobile-app")
+        );
     }
 
     #[tokio::test]
@@ -4385,7 +4470,7 @@ mod overlay_submit_routes {
             .unwrap();
 
         assert_eq!(
-            toast_message(&app),
+            toast_message(&app).as_deref(),
             Some("conflict confirmation is not active")
         );
     }
@@ -4443,6 +4528,6 @@ mod overlay_submit_routes {
             .await
             .unwrap();
         assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app), Some("confirmed Delete"));
+        assert_eq!(toast_message(&app).as_deref(), Some("confirmed Delete"));
     }
 }

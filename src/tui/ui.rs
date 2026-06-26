@@ -38,7 +38,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Paragraph};
 
-use crate::tui::app::{Focus, LoadingState, WidgetState};
+use crate::tui::app::{Focus, WidgetState};
 use crate::tui::overlay::{
     HeaderMenuKind, HeaderMenuView, OrderMenuView, OverlayRoute, OverlayView, TextInputView,
 };
@@ -57,10 +57,9 @@ pub(crate) struct ViewState {
     pub(crate) focus: Focus,
     pub(crate) overlay: Option<OverlayView>,
     pub(crate) detail_underlay: bool,
-    pub(crate) message: Option<Toast>,
+    pub(crate) notification: Option<Toast>,
     pub(crate) pending_shortcut: Vec<String>,
     pub(crate) surface: ViewSurface,
-    pub(crate) loading: Option<LoadingState>,
 }
 
 impl ViewState {
@@ -167,11 +166,8 @@ pub(crate) fn render(
     if !view.pending_shortcut.is_empty() && !add_task_dialog_prefix_active(view) {
         render_prefix_hints(frame, view);
     }
-    if let Some(toast) = &view.message {
+    if let Some(toast) = &view.notification {
         render_toast(frame, toast);
-    }
-    if let Some(loading) = &view.loading {
-        render_loading(frame, loading);
     }
 }
 
@@ -200,31 +196,14 @@ fn render_add_task_surface(frame: &mut Frame, view: &ViewState) {
     if !view.pending_shortcut.is_empty() && !add_task_dialog_prefix_active(view) {
         render_prefix_hints(frame, view);
     }
-    if let Some(toast) = &view.message {
+    if let Some(toast) = &view.notification {
         render_toast(frame, toast);
     }
-    if let Some(loading) = &view.loading {
-        render_loading(frame, loading);
-    }
 }
 
-fn render_loading(frame: &mut Frame, loading: &LoadingState) {
-    let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-    let frame_symbol = frames[loading.frame() % frames.len()];
-    render_toast(
-        frame,
-        &Toast::new(
-            format!("{frame_symbol} {}", loading.message),
-            crate::tui::toast::ToastSeverity::Info,
-        ),
-    );
-}
-
-fn render_add_task_surface_overlay(frame: &mut Frame, view: &ViewState, overlay: &OverlayView) {
+fn render_add_task_surface_overlay(frame: &mut Frame, _view: &ViewState, overlay: &OverlayView) {
     match overlay {
-        OverlayView::AddTask(state) => {
-            self::overlays::render_add_task_full_frame(frame, state, view.loading.as_ref())
-        }
+        OverlayView::AddTask(state) => self::overlays::render_add_task_full_frame(frame, state),
         OverlayView::MultilineInput(state)
             if matches!(
                 state.route,

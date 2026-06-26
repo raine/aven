@@ -71,7 +71,7 @@ impl App {
                 self.schedule_next_refresh();
             }
 
-            if self.clear_expired_message() {
+            if self.clear_expired_notification() {
                 needs_redraw = true;
             }
 
@@ -122,9 +122,11 @@ impl App {
             focus: self.focus,
             overlay,
             detail_underlay: self.detail_underlay(),
-            message: self.message.clone(),
+            notification: self
+                .notification
+                .as_ref()
+                .map(|notification| notification.toast_view()),
             pending_shortcut: self.pending_shortcut.labels(),
-            loading: self.loading.clone(),
             surface: if self.add_task_only {
                 ViewSurface::AddTask
             } else {
@@ -159,34 +161,40 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn clear_expired_message(&mut self) -> bool {
-        if self
-            .message_at
-            .is_some_and(|time| time.elapsed() >= TOAST_TTL)
-        {
-            self.message = None;
-            self.message_at = None;
+    pub(super) fn clear_expired_notification(&mut self) -> bool {
+        if matches!(
+            self.notification,
+            Some(crate::tui::app::Notification::Toast { created_at, .. })
+                if created_at.elapsed() >= TOAST_TTL
+        ) {
+            self.notification = None;
             return true;
         }
         false
     }
 
     pub(super) fn has_time_based_redraw(&self) -> bool {
-        self.loading.is_some() || self.message_at.is_some() || self.refresh_is_due()
+        self.notification.is_some() || self.refresh_is_due()
     }
 
     pub(super) fn next_poll_timeout(&self) -> Duration {
         let mut timeout = self.refresh_timeout();
 
-        if let Some(message_at) = self.message_at {
-            timeout = timeout.min(
-                TOAST_TTL
-                    .checked_sub(message_at.elapsed())
-                    .unwrap_or_default(),
-            );
+        match &self.notification {
+            Some(crate::tui::app::Notification::Toast { created_at, .. }) => {
+                timeout = timeout.min(
+                    TOAST_TTL
+                        .checked_sub(created_at.elapsed())
+                        .unwrap_or_default(),
+                );
+            }
+            Some(crate::tui::app::Notification::Loading { .. }) => {
+                timeout = timeout.min(INPUT_POLL_INTERVAL);
+            }
+            None => {}
         }
 
-        if self.loading.is_some() || self.pending_task_intake.is_some() {
+        if self.pending_task_intake.is_some() || self.ready_task_intake.is_some() {
             timeout = timeout.min(INPUT_POLL_INTERVAL);
         }
 

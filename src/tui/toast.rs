@@ -10,6 +10,7 @@ pub(crate) enum ToastSeverity {
 pub(crate) struct Toast {
     pub(crate) message: String,
     pub(crate) severity: ToastSeverity,
+    pub(crate) icon: bool,
 }
 
 impl Toast {
@@ -17,6 +18,12 @@ impl Toast {
         Self {
             message: message.into(),
             severity,
+            icon: true,
         }
+    }
+
+    pub(crate) fn without_icon(mut self) -> Self {
+        self.icon = false;
+        self
     }
 }

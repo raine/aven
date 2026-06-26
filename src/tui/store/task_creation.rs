@@ -22,14 +22,18 @@ impl TuiStore {
         let workspace = self.active_workspace.clone();
         tokio::spawn(async move {
             crate::workspaces::set_active_workspace(workspace);
+            let context = {
+                let mut conn = pool.acquire().await?;
+                crate::task_intake::TaskIntakeContext::load_with_project(
+                    &mut conn,
+                    project.as_deref(),
+                )
+                .await?
+            };
+            let output =
+                crate::task_intake::run_task_intake_command(&config, &context, &input).await?;
             let mut conn = pool.acquire().await?;
-            crate::task_intake::parse_task_intake_with_project(
-                &mut conn,
-                &config,
-                &input,
-                project.as_deref(),
-            )
-            .await
+            crate::task_intake::parsed_output_to_draft(&mut conn, &context, &output).await
         })
     }
 
