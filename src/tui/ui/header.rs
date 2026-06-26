@@ -3,13 +3,27 @@ use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
 use crate::render::quote;
-use crate::tui::store::{TaskScope, TaskView, TuiStore};
+use crate::tui::store::{TaskScope, TaskScopeTarget, TaskView, TuiStore};
 use crate::tui::theme::{
     self, ACCENT, BG, BG_PANEL, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, ORANGE,
     PINK, RED,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum HeaderTarget {
+    Scope(TaskScopeTarget),
+    View(TaskView),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HeaderHitbox {
+    start: u16,
+    end: u16,
+    target: HeaderTarget,
+}
 
 pub(super) fn render_header(frame: &mut Frame, store: &TuiStore, area: Rect) {
     frame.render_widget(
@@ -36,7 +50,37 @@ pub(super) fn render_header(frame: &mut Frame, store: &TuiStore, area: Rect) {
     }
 }
 
+pub(crate) fn header_target_at(
+    store: &TuiStore,
+    area: Rect,
+    x: u16,
+    y: u16,
+) -> Option<HeaderTarget> {
+    if y != area.y || x < area.x || x >= area.x.saturating_add(area.width) {
+        return None;
+    }
+    let content_width = area.width.saturating_sub(1);
+    let line_width = if area.width >= 84 {
+        let status_width = header_status_width(store);
+        content_width.saturating_sub(status_width)
+    } else {
+        content_width
+    };
+    if x >= area.x.saturating_add(line_width) {
+        return None;
+    }
+    let local_x = x.saturating_sub(area.x);
+    header_hitboxes(store, line_width)
+        .into_iter()
+        .find(|hitbox| local_x >= hitbox.start && local_x < hitbox.end)
+        .map(|hitbox| hitbox.target)
+}
+
 fn header_line(store: &TuiStore, width: u16) -> Paragraph<'static> {
+    Paragraph::new(Line::from(header_spans(store, width))).style(Style::new().fg(FG).bg(BG))
+}
+
+fn header_spans(store: &TuiStore, width: u16) -> Vec<Span<'static>> {
     let compact = width < 120;
     let mut spans = vec![
         Span::styled(" aven", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
@@ -61,33 +105,85 @@ fn header_line(store: &TuiStore, width: u16) -> Paragraph<'static> {
     if !compact || width >= 84 {
         spans.extend(active_order_spans(store));
     }
-    Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BG))
+    spans
+}
+
+fn header_hitboxes(store: &TuiStore, width: u16) -> Vec<HeaderHitbox> {
+    let compact = width < 120;
+    let mut hitboxes = Vec::new();
+    let mut x = 0;
+    push_text(&mut x, " aven");
+    push_text(&mut x, separator_text());
+    push_text(&mut x, if compact { "ws " } else { "workspace " });
+    push_text(&mut x, &store.active_workspace.key);
+    push_text(&mut x, separator_text());
+    push_text(&mut x, "scope ");
+    push_target(
+        &mut hitboxes,
+        &mut x,
+        spans_width(scope_badge(store)),
+        match &store.view_state.scope {
+            TaskScope::Workspace => HeaderTarget::Scope(TaskScopeTarget::Workspace),
+            TaskScope::Project(project) => {
+                HeaderTarget::Scope(TaskScopeTarget::Project(project.clone()))
+            }
+        },
+    );
+    push_text(&mut x, separator_text());
+    push_text(&mut x, "view ");
+    push_target(
+        &mut hitboxes,
+        &mut x,
+        spans_width(view_badge(store)),
+        HeaderTarget::View(store.view_state.view),
+    );
+    push_text(&mut x, separator_text());
+    for (index, (text, target)) in header_metric_targets(store, compact)
+        .into_iter()
+        .enumerate()
+    {
+        if index > 0 {
+            push_text(&mut x, " ");
+        }
+        push_target(&mut hitboxes, &mut x, text.width() as u16, target);
+    }
+    hitboxes
+        .into_iter()
+        .filter(|hitbox| hitbox.start < width && hitbox.end > 0)
+        .map(|mut hitbox| {
+            hitbox.end = hitbox.end.min(width);
+            hitbox
+        })
+        .collect()
+}
+
+fn push_text(x: &mut u16, text: &str) {
+    *x = x.saturating_add(text.width() as u16);
+}
+
+fn push_target(hitboxes: &mut Vec<HeaderHitbox>, x: &mut u16, width: u16, target: HeaderTarget) {
+    let start = *x;
+    *x = x.saturating_add(width);
+    if start < *x {
+        hitboxes.push(HeaderHitbox {
+            start,
+            end: *x,
+            target,
+        });
+    }
+}
+
+fn spans_width(spans: Vec<Span<'static>>) -> u16 {
+    Line::from(spans).to_string().width() as u16
+}
+
+fn separator_text() -> &'static str {
+    " │ "
 }
 
 fn header_metrics(store: &TuiStore, compact: bool) -> Vec<Span<'static>> {
-    let view = store.view_state.view;
-    let metrics = [
-        ("queue", store.counts.open, ACCENT, view == TaskView::Queue),
-        ("open", store.counts.open, GREEN, view == TaskView::Open),
-        ("todo", store.counts.todo, BLUE, view == TaskView::Todo),
-        (
-            "inbox",
-            store.counts.inbox,
-            FG_MUTED,
-            view == TaskView::Inbox,
-        ),
-        (
-            "conflicts",
-            store.counts.conflicts,
-            PINK,
-            view == TaskView::Conflicts,
-        ),
-    ];
     let mut spans = Vec::new();
-    for (label, count, color, active) in metrics {
-        if compact && count == 0 && !active {
-            continue;
-        }
+    for (label, count, color, active, _) in header_metric_entries(store, compact) {
         if !spans.is_empty() {
             spans.push(Span::raw(" "));
         }
@@ -96,8 +192,65 @@ fn header_metrics(store: &TuiStore, compact: bool) -> Vec<Span<'static>> {
     spans
 }
 
+fn header_metric_targets(store: &TuiStore, compact: bool) -> Vec<(String, HeaderTarget)> {
+    header_metric_entries(store, compact)
+        .into_iter()
+        .map(|(label, count, _, _, target)| {
+            (format!("{label} {count}"), HeaderTarget::View(target))
+        })
+        .collect()
+}
+
+fn header_metric_entries(
+    store: &TuiStore,
+    compact: bool,
+) -> Vec<(&'static str, i64, Color, bool, TaskView)> {
+    let view = store.view_state.view;
+    let metrics = [
+        (
+            "queue",
+            store.counts.open,
+            ACCENT,
+            view == TaskView::Queue,
+            TaskView::Queue,
+        ),
+        (
+            "open",
+            store.counts.open,
+            GREEN,
+            view == TaskView::Open,
+            TaskView::Open,
+        ),
+        (
+            "todo",
+            store.counts.todo,
+            BLUE,
+            view == TaskView::Todo,
+            TaskView::Todo,
+        ),
+        (
+            "inbox",
+            store.counts.inbox,
+            FG_MUTED,
+            view == TaskView::Inbox,
+            TaskView::Inbox,
+        ),
+        (
+            "conflicts",
+            store.counts.conflicts,
+            PINK,
+            view == TaskView::Conflicts,
+            TaskView::Conflicts,
+        ),
+    ];
+    metrics
+        .into_iter()
+        .filter(|(_, count, _, active, _)| !compact || *count > 0 || *active)
+        .collect()
+}
+
 fn separator() -> Span<'static> {
-    Span::styled(" │ ", Style::new().fg(BORDER))
+    Span::styled(separator_text(), Style::new().fg(BORDER))
 }
 
 fn scope_badge(store: &TuiStore) -> Vec<Span<'static>> {
@@ -322,5 +475,28 @@ mod tests {
 
         assert_eq!(spans_text(view_badge(&store)), " queue ");
         assert_eq!(spans_text(active_order_spans(&store)), " │ order ranked");
+    }
+
+    #[tokio::test]
+    async fn header_hitboxes_map_clicks_to_scope_and_views() {
+        let mut store = test_store().await;
+        store.view_state.scope = TaskScope::Project("mobile-app".to_string());
+        let area = Rect::new(0, 0, 140, 2);
+
+        assert_eq!(
+            header_target_at(&store, area, 36, 0),
+            Some(HeaderTarget::Scope(TaskScopeTarget::Project(
+                "mobile-app".to_string()
+            )))
+        );
+        assert_eq!(
+            header_target_at(&store, area, 65, 0),
+            Some(HeaderTarget::View(TaskView::Queue))
+        );
+        assert_eq!(
+            header_target_at(&store, area, 104, 0),
+            Some(HeaderTarget::View(TaskView::Inbox))
+        );
+        assert_eq!(header_target_at(&store, area, 36, 1), None);
     }
 }

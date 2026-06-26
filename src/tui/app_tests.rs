@@ -16,7 +16,7 @@ use crate::tui::overlay::{
 use crate::tui::store::{SidebarEntryTarget, TaskOrder, TaskScope, TaskScopeTarget, TaskView};
 use crate::tui::toast::ToastSeverity;
 use crate::tui::ui::ViewSurface;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use sqlx::SqlitePool;
 
 fn toast_message(app: &App) -> Option<&str> {
@@ -114,6 +114,15 @@ fn ctrl_d() -> KeyEvent {
 
 fn ctrl_u() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)
+}
+
+fn header_click(column: u16) -> MouseEvent {
+    MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row: 0,
+        modifiers: KeyModifiers::NONE,
+    }
 }
 
 async fn type_chars(app: &mut App, input: &str) {
@@ -933,6 +942,54 @@ mod filters_and_workspaces {
 
         assert_eq!(app.store.view_state.view, TaskView::Conflicts);
         assert_eq!(app.store.view_state.view, TaskView::Conflicts);
+    }
+
+    #[tokio::test]
+    async fn header_click_changes_scope_and_view() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        let selected = app
+            .store
+            .show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
+            .await
+            .unwrap();
+        app.apply_filter_selection(selected);
+
+        app.dispatch_mouse(header_click(36), (140, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.store.view_state.scope,
+            TaskScope::Project("mobile-app".to_string())
+        );
+        assert_eq!(toast_message(&app), Some("scope updated"));
+
+        app.dispatch_mouse(header_click(65), (140, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(app.store.view_state.view, TaskView::Queue);
+        assert_eq!(toast_message(&app), Some("view updated"));
+
+        app.dispatch_mouse(header_click(104), (140, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(app.store.view_state.view, TaskView::Inbox);
+    }
+
+    #[tokio::test]
+    async fn header_click_ignores_capturing_overlay() {
+        let mut app = test_app().await;
+        app.begin_search();
+
+        app.dispatch_mouse(header_click(45), (140, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.store.view_state.view, TaskView::Queue);
+        assert!(matches!(app.overlay, Some(OverlayState::Search { .. })));
     }
 }
 

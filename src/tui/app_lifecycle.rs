@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event};
+use crossterm::event::{
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event,
+};
 use crossterm::execute;
 use ratatui::DefaultTerminal;
 
@@ -13,9 +16,13 @@ use crate::tui::ui::{self, ViewState, ViewSurface};
 
 impl App {
     pub(crate) async fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        execute!(std::io::stdout(), EnableBracketedPaste)?;
+        execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
         let result = self.run_loop(terminal).await;
-        execute!(std::io::stdout(), DisableBracketedPaste)?;
+        execute!(
+            std::io::stdout(),
+            DisableBracketedPaste,
+            DisableMouseCapture
+        )?;
         result
     }
 
@@ -61,6 +68,12 @@ impl App {
                         }
                     }
                     Event::Paste(text) => self.dispatch_paste(&text),
+                    Event::Mouse(mouse) => {
+                        let result = self.dispatch_mouse(mouse, terminal.size()?).await;
+                        if let Err(error) = result {
+                            self.set_error(format!("{error:#}"));
+                        }
+                    }
                     _ => {}
                 }
             }

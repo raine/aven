@@ -2,6 +2,8 @@ mod detail;
 mod dialog;
 mod footer;
 mod header;
+
+pub(crate) use self::header::{HeaderTarget, header_target_at};
 mod input;
 mod overlays;
 mod shortcuts;

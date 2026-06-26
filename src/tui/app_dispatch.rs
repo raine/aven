@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Size;
 
 use crate::tui::app::{App, TaskRefKind};
@@ -47,6 +47,31 @@ impl App {
         } else {
             Ok(())
         }
+    }
+
+    pub(crate) async fn dispatch_mouse(
+        &mut self,
+        mouse: MouseEvent,
+        terminal_size: Size,
+    ) -> Result<()> {
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return Ok(());
+        }
+        if self.overlay_captures_input() || terminal_size.width < 70 || terminal_size.height < 18 {
+            return Ok(());
+        }
+        let header = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: terminal_size.width,
+            height: 2,
+        };
+        match crate::tui::ui::header_target_at(&self.store, header, mouse.column, mouse.row) {
+            Some(crate::tui::ui::HeaderTarget::Scope(scope)) => self.show_scope(scope).await?,
+            Some(crate::tui::ui::HeaderTarget::View(view)) => self.show_view(view).await?,
+            None => {}
+        }
+        Ok(())
     }
 
     fn overlay_captures_input(&self) -> bool {
