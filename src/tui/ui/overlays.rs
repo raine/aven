@@ -23,6 +23,7 @@ pub(super) use shared::tail_viewport_start;
 pub(super) use sync_status::render_sync_status;
 pub(super) use text_input::render_text_input;
 pub(super) use text_panel::render_text_panel;
+pub(crate) use text_panel::text_panel_scroll_cap;
 
 #[cfg(test)]
 pub(super) use add_task::{

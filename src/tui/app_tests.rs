@@ -309,13 +309,25 @@ async fn insert_title_conflict_for_task_id(
     local: &str,
     remote: &str,
 ) {
+    insert_conflict_for_task_id(pool, app, task_id, "title", local, remote).await;
+}
+
+async fn insert_conflict_for_task_id(
+    pool: &SqlitePool,
+    app: &mut App,
+    task_id: &str,
+    field: &str,
+    local: &str,
+    remote: &str,
+) {
     let mut conn = pool.acquire().await.unwrap();
     sqlx::query(
         "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
          local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
-         VALUES (?, 'title', NULL, ?, ?, NULL, ?, 'a', 'b', ?, 0)",
+         VALUES (?, ?, NULL, ?, ?, NULL, ?, 'a', 'b', ?, 0)",
     )
     .bind(task_id)
+    .bind(field)
     .bind(local)
     .bind(remote)
     .bind(crate::ids::new_id())
@@ -2163,6 +2175,112 @@ mod detail_mode {
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn detail_mouse_wheel_updates_detail_offset() {
+        let mut app = test_app().await;
+        let mut draft = test_task_draft("Mouse detail scroll target");
+        draft.description = (0..100)
+            .map(|index| format!("line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        create_and_select_task(&mut app, draft).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 1 })
+        ));
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollUp), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn detail_mouse_wheel_clamps_detail_offset() {
+        let mut app = test_app().await;
+        let mut draft = test_task_draft("Mouse detail clamp target");
+        draft.description = (0..100)
+            .map(|index| format!("line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let selected = create_and_select_task(&mut app, draft).await;
+        let expected = crate::tui::ui::detail_scroll_cap(&app.store.tasks[selected], 80, 24);
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        for _ in 0..200 {
+            app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
+                .await
+                .unwrap();
+        }
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll }) if scroll == expected
+        ));
+    }
+
+    #[tokio::test]
+    async fn detail_mouse_wheel_scrolls_conflict_text_panel() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let selected =
+            create_and_select_task(&mut app, test_task_draft("Conflict mouse scroll target")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        for index in 0..20 {
+            insert_conflict_for_task_id(
+                &pool,
+                &mut app,
+                &task_id,
+                &format!("field-{index}"),
+                &format!("local value {index}"),
+                &format!("remote value {index}"),
+            )
+            .await;
+        }
+
+        app.show_conflict_details().await.unwrap();
+        let expected = match app.overlay.as_ref() {
+            Some(OverlayState::TextPanel(panel)) => {
+                crate::tui::ui::text_panel_scroll_cap(&panel.lines)
+            }
+            Some(overlay) => panic!("unexpected overlay for conflict details: {overlay:?}"),
+            None => panic!("expected conflict details overlay"),
+        };
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::TextPanel(ref panel)) if panel.scroll == 1
+        ));
+
+        for _ in 0..200 {
+            app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
+                .await
+                .unwrap();
+        }
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::TextPanel(ref panel)) if panel.scroll == expected
+        ));
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollUp), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::TextPanel(ref panel)) if panel.scroll == expected.saturating_sub(1)
         ));
     }
 

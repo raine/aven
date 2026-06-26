@@ -509,7 +509,9 @@ mod tests {
     fn text_panel_scrolls_with_navigation_keys() {
         let state = TextPanelState {
             title: "Conflicts".to_string(),
-            lines: vec!["one".to_string(), "two".to_string()],
+            lines: (0..20)
+                .map(|index| format!("line {index}"))
+                .collect::<Vec<_>>(),
             scroll: 0,
         };
         let OverlayOutcome::None(OverlayState::TextPanel(state)) =
@@ -524,6 +526,34 @@ mod tests {
             panic!("expected scrolled text panel");
         };
         assert_eq!(state.scroll, 0);
+    }
+
+    #[test]
+    fn text_panel_navigation_scroll_is_capped() {
+        let mut state = TextPanelState {
+            title: "Conflicts".to_string(),
+            lines: (0..20)
+                .map(|index| format!("line {index}"))
+                .collect::<Vec<_>>(),
+            scroll: 0,
+        };
+        let expected = crate::tui::ui::text_panel_scroll_cap(&state.lines);
+        for _ in 0..30 {
+            let OverlayOutcome::None(OverlayState::TextPanel(next)) =
+                handle(key(KeyCode::Down), OverlayState::TextPanel(state))
+            else {
+                panic!("expected scrolled text panel");
+            };
+            state = next;
+        }
+        assert_eq!(state.scroll, expected);
+
+        let OverlayOutcome::None(OverlayState::TextPanel(next)) =
+            handle(key(KeyCode::Up), OverlayState::TextPanel(state))
+        else {
+            panic!("expected scrolled text panel");
+        };
+        assert_eq!(next.scroll, expected.saturating_sub(1));
     }
 
     #[test]

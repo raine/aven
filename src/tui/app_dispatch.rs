@@ -9,11 +9,15 @@ use crate::tui::event::{
     Action, CommandCompletion, CommandLookup, command_cycle_options, complete_command,
     lookup_command,
 };
-use crate::tui::navigation::{detail_task_delta, handle_detail_overlay_key};
+use crate::tui::navigation::{
+    detail_scroll_with_delta, detail_task_delta, handle_detail_overlay_key, scroll_with_delta,
+};
 use crate::tui::overlay::{CommandState, OverlayOutcome, OverlayRoute, OverlayState};
 use crate::tui::platform::is_editor_prefix_key;
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
-use crate::tui::ui::{database_stats_scroll_cap, detail_help_scroll_cap, help_scroll_cap};
+use crate::tui::ui::{
+    database_stats_scroll_cap, detail_help_scroll_cap, help_scroll_cap, text_panel_scroll_cap,
+};
 
 impl App {
     pub(super) fn dispatch_paste(&mut self, text: &str) {
@@ -56,9 +60,15 @@ impl App {
     ) -> Result<()> {
         match mouse.kind {
             MouseEventKind::ScrollDown => {
+                if self.dispatch_mouse_scroll(mouse.kind, terminal_size) {
+                    return Ok(());
+                }
                 return self.handle_task_list_wheel(1, terminal_size).await;
             }
             MouseEventKind::ScrollUp => {
+                if self.dispatch_mouse_scroll(mouse.kind, terminal_size) {
+                    return Ok(());
+                }
                 return self.handle_task_list_wheel(-1, terminal_size).await;
             }
             MouseEventKind::Down(MouseButton::Left) => {}
@@ -141,6 +151,34 @@ impl App {
         }
 
         self.move_selection(delta).await
+    }
+
+    fn dispatch_mouse_scroll(&mut self, kind: MouseEventKind, terminal_size: Size) -> bool {
+        let delta = match kind {
+            MouseEventKind::ScrollDown => 1,
+            MouseEventKind::ScrollUp => -1,
+            _ => return false,
+        };
+
+        match &mut self.overlay {
+            Some(OverlayState::Detail { scroll }) => {
+                let task = self.store.selected_task(self.widgets.table.selected());
+                *scroll = detail_scroll_with_delta(
+                    *scroll,
+                    delta,
+                    terminal_size.width,
+                    terminal_size.height,
+                    task,
+                );
+                true
+            }
+            Some(OverlayState::TextPanel(state)) => {
+                let cap = text_panel_scroll_cap(&state.lines);
+                state.scroll = scroll_with_delta(state.scroll, delta, cap);
+                true
+            }
+            _ => false,
+        }
     }
 
     fn overlay_captures_input(&self) -> bool {

@@ -8,6 +8,31 @@ use crate::tui::overlay::{OverlayOutcome, OverlayState};
 use crate::tui::store::SidebarEntry;
 use crate::tui::ui::detail_scroll_cap;
 
+pub(crate) fn scroll_with_delta(scroll: u16, delta: isize, cap: u16) -> u16 {
+    let scroll = scroll.min(cap);
+    let next = scroll as isize + delta;
+    if next < 0 {
+        0
+    } else if next > cap as isize {
+        cap
+    } else {
+        next as u16
+    }
+}
+
+pub(crate) fn detail_scroll_with_delta(
+    scroll: u16,
+    delta: isize,
+    terminal_width: u16,
+    terminal_height: u16,
+    task: Option<&TaskListItem>,
+) -> u16 {
+    let cap = task
+        .map(|task| detail_scroll_cap(task, terminal_width, terminal_height))
+        .unwrap_or(0);
+    scroll_with_delta(scroll, delta, cap)
+}
+
 pub(crate) fn handle_detail_overlay_key(
     key: KeyEvent,
     overlay: OverlayState,
@@ -15,40 +40,59 @@ pub(crate) fn handle_detail_overlay_key(
     terminal_height: u16,
     task: Option<&TaskListItem>,
 ) -> OverlayOutcome {
-    let OverlayState::Detail { mut scroll } = overlay else {
+    let OverlayState::Detail { scroll } = overlay else {
         return OverlayOutcome::None(overlay);
     };
+    let scroll = detail_scroll_with_delta(scroll, 0, terminal_width, terminal_height, task);
     let page = detail_page_scroll_rows(terminal_height);
-    let scroll_cap = task
-        .map(|task| detail_scroll_cap(task, terminal_width, terminal_height))
-        .unwrap_or(0);
-    scroll = scroll.min(scroll_cap);
     match key.code {
         KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => OverlayOutcome::Cancelled,
-        KeyCode::Char('j') | KeyCode::Down => {
-            scroll = scroll.saturating_add(1).min(scroll_cap);
-            OverlayOutcome::None(OverlayState::Detail { scroll })
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            scroll = scroll.saturating_sub(1);
-            OverlayOutcome::None(OverlayState::Detail { scroll })
-        }
+        KeyCode::Char('j') | KeyCode::Down => OverlayOutcome::None(OverlayState::Detail {
+            scroll: detail_scroll_with_delta(scroll, 1, terminal_width, terminal_height, task),
+        }),
+        KeyCode::Char('k') | KeyCode::Up => OverlayOutcome::None(OverlayState::Detail {
+            scroll: detail_scroll_with_delta(scroll, -1, terminal_width, terminal_height, task),
+        }),
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            scroll = scroll.saturating_add(page).min(scroll_cap);
-            OverlayOutcome::None(OverlayState::Detail { scroll })
+            OverlayOutcome::None(OverlayState::Detail {
+                scroll: detail_scroll_with_delta(
+                    scroll,
+                    page as isize,
+                    terminal_width,
+                    terminal_height,
+                    task,
+                ),
+            })
         }
         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            scroll = scroll.saturating_sub(page);
-            OverlayOutcome::None(OverlayState::Detail { scroll })
+            OverlayOutcome::None(OverlayState::Detail {
+                scroll: detail_scroll_with_delta(
+                    scroll,
+                    -(page as isize),
+                    terminal_width,
+                    terminal_height,
+                    task,
+                ),
+            })
         }
-        KeyCode::PageDown => {
-            scroll = scroll.saturating_add(page).min(scroll_cap);
-            OverlayOutcome::None(OverlayState::Detail { scroll })
-        }
-        KeyCode::PageUp => {
-            scroll = scroll.saturating_sub(page);
-            OverlayOutcome::None(OverlayState::Detail { scroll })
-        }
+        KeyCode::PageDown => OverlayOutcome::None(OverlayState::Detail {
+            scroll: detail_scroll_with_delta(
+                scroll,
+                page as isize,
+                terminal_width,
+                terminal_height,
+                task,
+            ),
+        }),
+        KeyCode::PageUp => OverlayOutcome::None(OverlayState::Detail {
+            scroll: detail_scroll_with_delta(
+                scroll,
+                -(page as isize),
+                terminal_width,
+                terminal_height,
+                task,
+            ),
+        }),
         _ => OverlayOutcome::None(OverlayState::Detail { scroll }),
     }
 }
@@ -209,6 +253,29 @@ mod tests {
     fn detail_up_scroll_moves_after_resisted_down_scroll() {
         let OverlayOutcome::None(OverlayState::Detail { scroll }) = handle_detail_overlay_key(
             KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
+            OverlayState::Detail { scroll: 4 },
+            80,
+            24,
+            None,
+        ) else {
+            panic!("expected detail overlay");
+        };
+
+        assert_eq!(scroll, 0);
+    }
+
+    #[test]
+    fn scroll_with_delta_caps_to_range() {
+        assert_eq!(scroll_with_delta(2, 3, 5), 5);
+        assert_eq!(scroll_with_delta(2, -1, 5), 1);
+        assert_eq!(scroll_with_delta(2, -3, 5), 0);
+        assert_eq!(scroll_with_delta(8, 5, 7), 7);
+    }
+
+    #[test]
+    fn ignored_detail_keys_clamp_stale_scroll_to_cap() {
+        let OverlayOutcome::None(OverlayState::Detail { scroll }) = handle_detail_overlay_key(
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
             OverlayState::Detail { scroll: 4 },
             80,
             24,

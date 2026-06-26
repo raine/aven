@@ -5,11 +5,20 @@ use super::super::dialog::Dialog;
 use super::super::dialog::dialog_hint_line;
 use crate::tui::overlay::TextPanelView;
 
+pub(crate) const TEXT_PANEL_VISIBLE_ROWS: usize = 12;
+
+pub(crate) fn text_panel_scroll_cap(lines: &[String]) -> u16 {
+    lines
+        .len()
+        .saturating_sub(TEXT_PANEL_VISIBLE_ROWS)
+        .min(u16::MAX as usize) as u16
+}
+
 pub(in crate::tui::ui) fn render_text_panel(frame: &mut Frame, state: &TextPanelView) {
-    let visible_rows = 12usize;
+    let visible_rows = TEXT_PANEL_VISIBLE_ROWS;
     let content_rows = state.lines.len().min(visible_rows).max(1);
     let height = (content_rows as u16).saturating_add(4).min(16);
-    let start = (state.scroll as usize).min(state.lines.len().saturating_sub(1));
+    let start = (state.scroll as usize).min(text_panel_scroll_cap(&state.lines) as usize);
     let mut lines = state
         .lines
         .iter()

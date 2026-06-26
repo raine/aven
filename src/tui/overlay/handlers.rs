@@ -1,6 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::tui::authoring::AddTaskStep;
+use crate::tui::navigation::scroll_with_delta;
+use crate::tui::ui::text_panel_scroll_cap;
 
 use super::multiline::edit_multiline_input;
 use super::picker::{handle_picker_key, normalize_picker_selection};
@@ -122,11 +124,13 @@ pub(crate) fn handle_generic_overlay_key(
         OverlayState::TextPanel(mut state) => match key.code {
             KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
             KeyCode::Char('j') | KeyCode::Down => {
-                state.scroll = state.scroll.saturating_add(1);
+                let cap = text_panel_scroll_cap(&state.lines);
+                state.scroll = scroll_with_delta(state.scroll, 1, cap);
                 OverlayOutcome::None(OverlayState::TextPanel(state))
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                state.scroll = state.scroll.saturating_sub(1);
+                let cap = text_panel_scroll_cap(&state.lines);
+                state.scroll = scroll_with_delta(state.scroll, -1, cap);
                 OverlayOutcome::None(OverlayState::TextPanel(state))
             }
             _ => OverlayOutcome::None(OverlayState::TextPanel(state)),
