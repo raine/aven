@@ -186,6 +186,14 @@ fn confirm_hint_click(app: &App, column: u16, size: ratatui::layout::Size) -> Mo
     )
 }
 
+fn detail_metadata_click(target: crate::tui::ui::DetailMetadataTarget) -> MouseEvent {
+    let row = match target {
+        crate::tui::ui::DetailMetadataTarget::Status => 9,
+        crate::tui::ui::DetailMetadataTarget::Priority => 12,
+    };
+    left_click(88, row)
+}
+
 #[tokio::test]
 async fn sidebar_click_selects_project_scope_in_wide_layout() {
     let mut app = test_app().await;
@@ -3087,6 +3095,78 @@ mod detail_mode {
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, selected_task_id);
         assert_eq!(app.store.tasks[selected].task.status, "done");
+    }
+
+    #[tokio::test]
+    async fn detail_status_mouse_click_opens_menu_and_returns_to_detail() {
+        let mut app = test_app().await;
+        let selected =
+            create_and_select_task(&mut app, test_task_draft("Status click target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+
+        app.dispatch_mouse(
+            detail_metadata_click(crate::tui::ui::DetailMetadataTarget::Status),
+            (120, 30).into(),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::HeaderMenu(state))
+                if state.kind == crate::tui::overlay::HeaderMenuKind::Status
+                    && state.items.iter().any(|item| item.label == "inbox" && item.selected)
+        ));
+        assert!(app.view().detail_underlay);
+
+        app.handle_overlay_key(key(KeyCode::Char('a')))
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert_eq!(app.store.tasks[selected].task.status, "active");
+    }
+
+    #[tokio::test]
+    async fn detail_priority_mouse_click_opens_menu_and_returns_to_detail() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                priority: "medium".to_string(),
+                ..test_task_draft("Priority click target")
+            },
+        )
+        .await;
+        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+
+        app.dispatch_mouse(
+            detail_metadata_click(crate::tui::ui::DetailMetadataTarget::Priority),
+            (120, 30).into(),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::HeaderMenu(state))
+                if state.kind == crate::tui::overlay::HeaderMenuKind::Priority
+                    && state.items.iter().any(|item| item.label == "medium" && item.selected)
+        ));
+        assert!(app.view().detail_underlay);
+
+        app.handle_overlay_key(key(KeyCode::Char('u')))
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert_eq!(app.store.tasks[selected].task.priority, "urgent");
     }
 
     #[tokio::test]

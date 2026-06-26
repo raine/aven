@@ -32,6 +32,12 @@ struct DetailContentRenderModel {
     scrollbar_position: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DetailMetadataTarget {
+    Status,
+    Priority,
+}
+
 fn render_detail(
     frame: &mut Frame,
     item: &TaskListItem,
@@ -53,12 +59,7 @@ fn render_detail(
 }
 
 fn detail_content_layout(frame_area: Rect) -> DetailContentLayout {
-    let [_, body, _] = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Fill(1),
-        Constraint::Length(2),
-    ])
-    .areas(frame_area);
+    let body = detail_body_area(frame_area);
 
     let [content_area, metadata_area] = if body.width >= 96 {
         Layout::horizontal([Constraint::Fill(1), Constraint::Length(34)]).areas(body)
@@ -71,6 +72,16 @@ fn detail_content_layout(frame_area: Rect) -> DetailContentLayout {
         content_area,
         metadata_area,
     }
+}
+
+fn detail_body_area(frame_area: Rect) -> Rect {
+    let [_, body, _] = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Fill(1),
+        Constraint::Length(2),
+    ])
+    .areas(frame_area);
+    body
 }
 
 fn keycap_style() -> Style {
@@ -355,6 +366,37 @@ fn metadata_label(label: &'static str) -> Line<'static> {
     ))
 }
 
+pub(crate) fn detail_metadata_target_at(
+    terminal_width: u16,
+    terminal_height: u16,
+    column: u16,
+    row: u16,
+) -> Option<(DetailMetadataTarget, u16, u16)> {
+    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    if layout.metadata_area.width == 0 {
+        return None;
+    }
+    let body = detail_body_area(Rect::new(0, 0, terminal_width, terminal_height));
+    let line = metadata_content_row(layout.metadata_area, body, column, row)?;
+    let target = match line {
+        7 => DetailMetadataTarget::Status,
+        10 => DetailMetadataTarget::Priority,
+        _ => return None,
+    };
+    Some((target, column, row))
+}
+
+fn metadata_content_row(metadata_area: Rect, body: Rect, column: u16, row: u16) -> Option<u16> {
+    if column <= metadata_area.x
+        || column >= metadata_area.x.saturating_add(metadata_area.width)
+        || row < body.y
+        || row >= body.y.saturating_add(body.height)
+    {
+        return None;
+    }
+    Some(row.saturating_sub(body.y))
+}
+
 pub(super) fn render_detail_underlay(
     frame: &mut Frame,
     store: &TuiStore,
@@ -502,6 +544,20 @@ mod tests {
 
         assert_eq!(narrow.metadata_area, Rect::default());
         assert_eq!(narrow.content_area.x, 2);
+    }
+
+    #[test]
+    fn detail_metadata_target_maps_status_and_priority_values() {
+        assert_eq!(
+            detail_metadata_target_at(120, 30, 88, 9),
+            Some((DetailMetadataTarget::Status, 88, 9))
+        );
+        assert_eq!(
+            detail_metadata_target_at(120, 30, 88, 12),
+            Some((DetailMetadataTarget::Priority, 88, 12))
+        );
+        assert_eq!(detail_metadata_target_at(120, 30, 88, 8), None);
+        assert_eq!(detail_metadata_target_at(80, 30, 70, 9), None);
     }
 
     #[test]

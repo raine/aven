@@ -119,6 +119,11 @@ impl App {
                 .submit_order_menu_at(state, mouse.column, mouse.row, terminal_size)
                 .await;
         }
+        if let Some(OverlayState::Detail { scroll }) = self.overlay
+            && self.handle_detail_mouse_click(mouse, terminal_size, scroll)
+        {
+            return Ok(());
+        }
         if matches!(
             self.overlay,
             Some(OverlayState::Picker(_) | OverlayState::Confirm(_) | OverlayState::TextPanel(_))
@@ -231,6 +236,32 @@ impl App {
                 && row >= layout.sidebar.y
                 && row < layout.sidebar.y.saturating_add(layout.sidebar.height)
         })
+    }
+
+    fn handle_detail_mouse_click(
+        &mut self,
+        mouse: MouseEvent,
+        terminal_size: Size,
+        scroll: u16,
+    ) -> bool {
+        let Some((target, column, row)) = crate::tui::ui::detail_metadata_target_at(
+            terminal_size.width,
+            terminal_size.height,
+            mouse.column,
+            mouse.row,
+        ) else {
+            return false;
+        };
+        self.last_task_click = None;
+        self.detail_context = true;
+        match target {
+            crate::tui::ui::DetailMetadataTarget::Status => self.show_status_menu(column, row),
+            crate::tui::ui::DetailMetadataTarget::Priority => self.show_priority_menu(column, row),
+        }
+        if self.overlay.is_none() {
+            self.overlay = Some(OverlayState::Detail { scroll });
+        }
+        true
     }
 
     async fn handle_task_list_wheel(&mut self, delta: isize, terminal_size: Size) -> Result<()> {

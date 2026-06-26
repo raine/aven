@@ -27,7 +27,7 @@ use self::sidebar::{render_sidebar, render_sidebar_overlay};
 use self::task_list::render_tasks;
 use self::toast::render_toast;
 
-pub(crate) use self::detail::detail_scroll_cap;
+pub(crate) use self::detail::{DetailMetadataTarget, detail_metadata_target_at, detail_scroll_cap};
 pub(crate) use self::overlays::{database_stats_scroll_cap, text_panel_scroll_cap};
 pub(crate) use self::shortcuts::{detail_help_scroll_cap, help_scroll_cap};
 pub(crate) use self::task_list::task_at_position;
@@ -404,6 +404,8 @@ fn header_menu_title(kind: HeaderMenuKind) -> &'static str {
         HeaderMenuKind::Workspace => "workspace",
         HeaderMenuKind::Scope => "scope",
         HeaderMenuKind::View => "view",
+        HeaderMenuKind::Status => "status",
+        HeaderMenuKind::Priority => "priority",
     }
 }
 
@@ -453,17 +455,25 @@ fn header_menu_label_style(
     row_style: Style,
     selected: bool,
 ) -> Style {
-    if matches!(kind, HeaderMenuKind::View) {
+    if matches!(kind, HeaderMenuKind::View | HeaderMenuKind::Status) {
         let bg = row_style.bg.unwrap_or(BG_PANEL);
         let style = match label {
             "queue" => Style::new().fg(ACCENT).bg(bg),
             "open" => Style::new().fg(GREEN).bg(bg),
             "conflicts" => Style::new().fg(PINK).bg(bg),
-            "active" | "todo" | "inbox" | "backlog" | "done" => {
+            "active" | "todo" | "inbox" | "backlog" | "done" | "canceled" => {
                 crate::tui::theme::status_style(label).bg(bg)
             }
             _ => row_style,
         };
+        if selected {
+            style.add_modifier(Modifier::BOLD)
+        } else {
+            style
+        }
+    } else if matches!(kind, HeaderMenuKind::Priority) {
+        let bg = row_style.bg.unwrap_or(BG_PANEL);
+        let style = crate::tui::theme::priority_style(label).bg(bg);
         if selected {
             style.add_modifier(Modifier::BOLD)
         } else {
