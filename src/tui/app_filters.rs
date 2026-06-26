@@ -1,55 +1,34 @@
 use anyhow::Result;
 
 use crate::tui::app::{App, Focus};
-use crate::tui::event::ViewTarget;
 use crate::tui::overlay::OverlayRoute;
-use crate::tui::store::SidebarTarget;
+use crate::tui::store::{TaskScope, TaskScopeTarget, TaskView};
 
-pub(crate) const FILTER_PROJECT_TITLE: &str = "Filter: project";
 pub(crate) const FILTER_LABEL_TITLE: &str = "Filter: label";
-pub(crate) const FILTER_STATUS_TITLE: &str = "Filter: status";
 pub(crate) const FILTER_PRIORITY_TITLE: &str = "Filter: priority";
-pub(crate) const VIEW_PROJECT_TITLE: &str = "Go: project";
+pub(crate) const SCOPE_PROJECT_TITLE: &str = "Scope: project";
 pub(crate) const SWITCH_WORKSPACE_TITLE: &str = "Switch workspace";
 
 impl App {
-    pub(super) fn begin_filter_project(&mut self) {
-        self.pending_shortcut.clear();
-        let selected = self.store.filters.project.as_deref().unwrap_or_default();
-        let items = self.store.existing_project_picker_items(selected);
-        self.open_picker_overlay(
-            OverlayRoute::FilterProject,
-            FILTER_PROJECT_TITLE,
-            items,
-            false,
-        );
-    }
-
     pub(super) fn begin_filter_label(&mut self) {
         self.pending_shortcut.clear();
         let mut items = self.store.label_picker_items();
         for item in &mut items {
-            item.selected = Some(&item.value) == self.store.filters.label.as_ref();
+            item.selected =
+                Some(&item.value) == self.store.view_state.filter_modifiers.label.as_ref();
         }
         self.open_picker_overlay(OverlayRoute::FilterLabel, FILTER_LABEL_TITLE, items, false);
     }
 
-    pub(super) fn begin_filter_status(&mut self) {
-        self.pending_shortcut.clear();
-        let items = self
-            .store
-            .status_picker_items(self.store.filters.status.as_deref());
-        self.open_picker_overlay(
-            OverlayRoute::FilterStatus,
-            FILTER_STATUS_TITLE,
-            items,
-            false,
-        );
-    }
-
     pub(super) fn begin_filter_priority(&mut self) {
         self.pending_shortcut.clear();
-        let selected = self.store.filters.priority.as_deref().unwrap_or_default();
+        let selected = self
+            .store
+            .view_state
+            .filter_modifiers
+            .priority
+            .as_deref()
+            .unwrap_or_default();
         let items = self.store.priority_picker_items(selected);
         self.open_picker_overlay(
             OverlayRoute::FilterPriority,
@@ -72,33 +51,32 @@ impl App {
         Ok(())
     }
 
-    fn begin_view_project(&mut self) {
+    pub(super) fn begin_scope_project(&mut self) {
         self.pending_shortcut.clear();
-        let selected = match &self.store.active_view {
-            SidebarTarget::Project(project) => project.as_str(),
-            _ => "",
+        let selected = match &self.store.view_state.scope {
+            TaskScope::Project(project) => project.as_str(),
+            TaskScope::Workspace => "",
         };
         let items = self.store.existing_project_picker_items(selected);
-        self.open_picker_overlay(OverlayRoute::ViewProject, VIEW_PROJECT_TITLE, items, false);
+        self.open_picker_overlay(
+            OverlayRoute::ScopeProject,
+            SCOPE_PROJECT_TITLE,
+            items,
+            false,
+        );
     }
 
-    pub(super) async fn show_view(&mut self, target: ViewTarget) -> Result<()> {
-        let sidebar_target = match target {
-            ViewTarget::All => SidebarTarget::All,
-            ViewTarget::Inbox => SidebarTarget::Inbox,
-            ViewTarget::Active => SidebarTarget::Active,
-            ViewTarget::Backlog => SidebarTarget::Backlog,
-            ViewTarget::Todo => SidebarTarget::Todo,
-            ViewTarget::Done => SidebarTarget::Done,
-            ViewTarget::Conflicts => SidebarTarget::Conflicts,
-            ViewTarget::Project => {
-                self.begin_view_project();
-                return Ok(());
-            }
-        };
-        let selected = self.store.show_view(sidebar_target).await?;
+    pub(super) async fn show_view(&mut self, view: TaskView) -> Result<()> {
+        let selected = self.store.show_view(view).await?;
         self.apply_filter_selection(selected);
         self.set_info("view updated");
+        Ok(())
+    }
+
+    pub(super) async fn show_scope(&mut self, scope: TaskScopeTarget) -> Result<()> {
+        let selected = self.store.show_scope(scope).await?;
+        self.apply_filter_selection(selected);
+        self.set_info("scope updated");
         Ok(())
     }
 
@@ -119,7 +97,7 @@ impl App {
     pub(super) async fn toggle_deleted_filter(&mut self) -> Result<()> {
         let selected = self.store.toggle_deleted_filter().await?;
         self.apply_filter_selection(selected);
-        let message = if self.store.filters.include_deleted {
+        let message = if self.store.view_state.filter_modifiers.include_deleted {
             "showing deleted tasks"
         } else {
             "hiding deleted tasks"
@@ -141,18 +119,6 @@ impl App {
         Some(value)
     }
 
-    pub(super) async fn submit_filter_project(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(project) =
-            self.filter_value_or_reopen(values, "no matching project", Self::begin_filter_project)
-        else {
-            return Ok(());
-        };
-        let selected = self.store.filter_project(project).await?;
-        self.apply_filter_selection(selected);
-        self.set_success("project filter applied");
-        Ok(())
-    }
-
     pub(super) async fn submit_filter_label(&mut self, values: Vec<String>) -> Result<()> {
         let Some(label) =
             self.filter_value_or_reopen(values, "no matching label", Self::begin_filter_label)
@@ -163,22 +129,6 @@ impl App {
         self.apply_filter_selection(selected);
         self.set_success("label filter applied");
         Ok(())
-    }
-
-    pub(super) async fn filter_status(&mut self, status: String) -> Result<()> {
-        let selected = self.store.filter_status(status).await?;
-        self.apply_filter_selection(selected);
-        self.set_success("status filter applied");
-        Ok(())
-    }
-
-    pub(super) async fn submit_filter_status(&mut self, values: Vec<String>) -> Result<()> {
-        let Some(status) =
-            self.filter_value_or_reopen(values, "no matching status", Self::begin_filter_status)
-        else {
-            return Ok(());
-        };
-        self.filter_status(status).await
     }
 
     pub(super) async fn submit_filter_priority(&mut self, values: Vec<String>) -> Result<()> {
@@ -195,18 +145,12 @@ impl App {
         Ok(())
     }
 
-    pub(super) async fn submit_view_project(&mut self, values: Vec<String>) -> Result<()> {
+    pub(super) async fn submit_scope_project(&mut self, values: Vec<String>) -> Result<()> {
         let Some(project) = self.require_picker_value(values, "no matching project") else {
-            self.begin_view_project();
+            self.begin_scope_project();
             return Ok(());
         };
-        let selected = self
-            .store
-            .show_view(SidebarTarget::Project(project))
-            .await?;
-        self.apply_filter_selection(selected);
-        self.set_info("project view selected");
-        Ok(())
+        self.show_scope(TaskScopeTarget::Project(project)).await
     }
 
     pub(super) async fn submit_switch_workspace(&mut self, values: Vec<String>) -> Result<()> {

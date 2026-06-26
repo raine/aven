@@ -185,20 +185,14 @@ impl App {
             Some(PickerSubmitRoute::EditLabels) => {
                 self.submit_edit_labels(values).await?;
             }
-            Some(PickerSubmitRoute::FilterProject) => {
-                self.submit_filter_project(values).await?;
-            }
             Some(PickerSubmitRoute::FilterLabel) => {
                 self.submit_filter_label(values).await?;
-            }
-            Some(PickerSubmitRoute::FilterStatus) => {
-                self.submit_filter_status(values).await?;
             }
             Some(PickerSubmitRoute::FilterPriority) => {
                 self.submit_filter_priority(values).await?;
             }
-            Some(PickerSubmitRoute::ViewProject) => {
-                self.submit_view_project(values).await?;
+            Some(PickerSubmitRoute::ScopeProject) => {
+                self.submit_scope_project(values).await?;
             }
             Some(PickerSubmitRoute::DeleteProjectPicker) => {
                 self.submit_delete_project_picker(values);

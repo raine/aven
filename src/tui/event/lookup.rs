@@ -2,7 +2,7 @@ use crossterm::event::KeyCode;
 
 use super::{Action, COMMANDS, CommandContext, CommandSpec, KeySequence};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CommandLookup {
     Empty,
     Found(Action),
@@ -18,7 +18,7 @@ pub(crate) enum CommandCompletion {
     Completed(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ShortcutLookup {
     Found(Action),
     Prefix,

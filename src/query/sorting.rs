@@ -8,7 +8,6 @@ pub(super) fn push_sort(
     direction: SortDirection,
 ) {
     match (sort, direction) {
-        (TaskSort::Queue, _) => query.push(" ORDER BY t.created_at ASC"),
         (TaskSort::Created, SortDirection::Asc) => query.push(" ORDER BY t.created_at ASC"),
         (TaskSort::Created, SortDirection::Desc) => query.push(" ORDER BY t.created_at DESC"),
         (TaskSort::Updated, SortDirection::Asc) => {

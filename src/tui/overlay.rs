@@ -719,8 +719,7 @@ mod tests {
         for route in [
             OverlayRoute::AddTaskTitleProject,
             OverlayRoute::EditProject,
-            OverlayRoute::FilterProject,
-            OverlayRoute::ViewProject,
+            OverlayRoute::ScopeProject,
             OverlayRoute::DeleteProjectPicker,
         ] {
             let state = PickerState::new(

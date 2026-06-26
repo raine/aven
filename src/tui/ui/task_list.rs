@@ -10,11 +10,11 @@ use ratatui::widgets::{
 use super::input::clipped_input_line;
 use super::task_display::{description_or_placeholder, labels_display};
 use super::truncate::truncate_chars;
-use crate::query::{TaskListItem, TaskSort};
+use crate::query::TaskListItem;
 use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::app::{Focus, WidgetState};
 use crate::tui::overlay::TextInputView;
-use crate::tui::store::TuiStore;
+use crate::tui::store::{TaskListRenderMode, TuiStore};
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, SELECTED, SELECTED_INACTIVE,
 };
@@ -22,13 +22,7 @@ use crate::tui::widgets::{
     age_style, priority_icon, priority_short, status_chip, status_span, title_cell,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TaskRenderMode {
-    Default,
-    Queue,
-}
-
-impl TaskRenderMode {
+impl TaskListRenderMode {
     fn uses_queue_age(self) -> bool {
         matches!(self, Self::Queue)
     }
@@ -71,23 +65,18 @@ struct TaskListTaskRow {
 
 struct TaskListView {
     rows: Vec<TaskListRow>,
-    render_mode: TaskRenderMode,
+    render_mode: TaskListRenderMode,
 }
 
 impl TaskListView {
     fn new(store: &TuiStore) -> Self {
-        Self::from_tasks(store.sort, &store.tasks)
+        Self::from_tasks(store.view_state.render_mode(), &store.tasks)
     }
 
-    fn from_tasks(sort: TaskSort, tasks: &[TaskListItem]) -> Self {
-        let render_mode = if sort == TaskSort::Queue {
-            TaskRenderMode::Queue
-        } else {
-            TaskRenderMode::Default
-        };
+    fn from_tasks(render_mode: TaskListRenderMode, tasks: &[TaskListItem]) -> Self {
         let rows = match render_mode {
-            TaskRenderMode::Queue => queue_rows(tasks),
-            TaskRenderMode::Default => task_rows(tasks),
+            TaskListRenderMode::Queue => queue_rows(tasks),
+            TaskListRenderMode::Flat => task_rows(tasks),
         };
         Self { rows, render_mode }
     }
@@ -464,7 +453,7 @@ fn render_task_row_cells(
 fn build_task_row_cells(
     item: &TaskListItem,
     now_seconds: i64,
-    render_mode: TaskRenderMode,
+    render_mode: TaskListRenderMode,
     inline_title_editor: Option<&TextInputView>,
     column_widths: &[usize; 7],
 ) -> Vec<Line<'static>> {
@@ -673,12 +662,12 @@ mod tests {
         item: &TaskListItem,
         inline_title_editor: Option<&TextInputView>,
     ) -> ratatui::buffer::Buffer {
-        render_task_row_buffer_with_mode(item, TaskRenderMode::Default, inline_title_editor)
+        render_task_row_buffer_with_mode(item, TaskListRenderMode::Flat, inline_title_editor)
     }
 
     fn render_task_row_buffer_with_mode(
         item: &TaskListItem,
-        render_mode: TaskRenderMode,
+        render_mode: TaskListRenderMode,
         inline_title_editor: Option<&TextInputView>,
     ) -> ratatui::buffer::Buffer {
         let backend = TestBackend::new(80, 1);
@@ -724,9 +713,9 @@ mod tests {
             task_item_with("backlog", "backlog", QueueBand::Later),
         ];
 
-        let view = TaskListView::from_tasks(TaskSort::Queue, &tasks);
+        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks);
 
-        assert_eq!(view.render_mode, TaskRenderMode::Queue);
+        assert_eq!(view.render_mode, TaskListRenderMode::Queue);
         assert_eq!(
             view.rows,
             vec![
@@ -758,7 +747,7 @@ mod tests {
             task_item_with("canceled", "canceled", QueueBand::Later),
         ];
 
-        let view = TaskListView::from_tasks(TaskSort::Queue, &tasks);
+        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks);
 
         assert_eq!(
             view.rows,
@@ -790,9 +779,9 @@ mod tests {
             task_item_with("todo 2", "todo", QueueBand::Later),
         ];
 
-        let view = TaskListView::from_tasks(TaskSort::Priority, &tasks);
+        let view = TaskListView::from_tasks(TaskListRenderMode::Flat, &tasks);
 
-        assert_eq!(view.render_mode, TaskRenderMode::Default);
+        assert_eq!(view.render_mode, TaskListRenderMode::Flat);
         assert_eq!(
             view.rows,
             vec![
@@ -810,7 +799,7 @@ mod tests {
             task_item_with("inbox", "inbox", QueueBand::Triage),
             task_item_with("todo medium", "todo", QueueBand::Triage),
         ];
-        let view = TaskListView::from_tasks(TaskSort::Queue, &tasks);
+        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks);
 
         assert_eq!(view.visual_row(0), 1);
         assert_eq!(view.visual_row(1), 3);
@@ -893,7 +882,7 @@ mod tests {
         item.queue.idle_days = Some(9);
         item.queue.idle_seconds = Some(9 * 86_400);
 
-        let buffer = render_task_row_buffer_with_mode(&item, TaskRenderMode::Queue, None);
+        let buffer = render_task_row_buffer_with_mode(&item, TaskListRenderMode::Queue, None);
         let rendered = buffer_text(&buffer);
 
         assert!(rendered.contains("9d"));
@@ -906,7 +895,7 @@ mod tests {
         item.queue.idle_days = Some(0);
         item.queue.idle_seconds = Some(59 * 60);
 
-        let buffer = render_task_row_buffer_with_mode(&item, TaskRenderMode::Queue, None);
+        let buffer = render_task_row_buffer_with_mode(&item, TaskListRenderMode::Queue, None);
         let rendered = buffer_text(&buffer);
 
         assert!(rendered.contains("59m"));
@@ -916,7 +905,7 @@ mod tests {
 
     #[test]
     fn empty_task_view_has_no_rows() {
-        let view = TaskListView::from_tasks(TaskSort::Queue, &[]);
+        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &[]);
 
         assert!(view.rows.is_empty());
         assert_eq!(view.visual_row(0), 0);
@@ -1045,7 +1034,7 @@ mod tests {
         let cells = build_task_row_cells(
             &item,
             0,
-            TaskRenderMode::Default,
+            TaskListRenderMode::Flat,
             None,
             &[12, 40, 6, 9, 10, 3, 5],
         );
@@ -1069,7 +1058,7 @@ mod tests {
         let cells = build_task_row_cells(
             &item,
             0,
-            TaskRenderMode::Default,
+            TaskListRenderMode::Flat,
             Some(&editor),
             &[12, 40, 6, 9, 10, 3, 5],
         );

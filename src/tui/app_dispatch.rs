@@ -362,16 +362,7 @@ impl App {
             Action::BeginSearch => self.begin_search(),
             Action::BeginCommand => self.begin_command(),
             Action::Refresh => self.refresh().await?,
-            Action::CycleSort => {
-                self.store.cycle_sort();
-                self.refresh().await?;
-                self.set_info(format!(
-                    "order {} {}",
-                    self.store.sort_label(),
-                    self.store.sort_direction_label()
-                ));
-            }
-            Action::SetSort(sort) => self.set_sort(sort).await?,
+            Action::SetOrder(order) => self.set_sort(order).await?,
             Action::ReverseSort => self.reverse_sort().await?,
             Action::SetStatus(status) => self.update_status(status).await?,
             Action::SetPriority(priority) => self.set_exact_priority(priority).await?,
@@ -391,15 +382,17 @@ impl App {
             Action::BeginAddLabel => self.begin_add_label(),
             Action::BeginAddTask => self.begin_add_task().await?,
             Action::BeginAddNote => self.begin_add_note(),
-            Action::BeginFilterProject => self.begin_filter_project(),
             Action::BeginFilterLabel => self.begin_filter_label(),
-            Action::BeginFilterStatus => self.begin_filter_status(),
             Action::BeginFilterPriority => self.begin_filter_priority(),
-            Action::FilterStatus(status) => self.filter_status(status.to_string()).await?,
+            Action::BeginScopeProject => self.begin_scope_project(),
             Action::BeginSwitchWorkspace => self.begin_switch_workspace().await?,
             Action::ClearFilters => self.clear_filters().await?,
             Action::ToggleDeletedFilter => self.toggle_deleted_filter().await?,
-            Action::ShowView(target) => self.show_view(target).await?,
+            Action::ShowView(view) => self.show_view(view).await?,
+            Action::ShowWorkspaceScope => {
+                self.show_scope(crate::tui::store::TaskScopeTarget::Workspace)
+                    .await?
+            }
             Action::BeginConflictList => self.open_conflict_list().await?,
             Action::ShowConflictDetails => self.show_conflict_details().await?,
             Action::NextConflict => self.move_to_conflict(1),

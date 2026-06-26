@@ -2,8 +2,13 @@ use crate::queue::QueueMeta;
 use crate::types::Task;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TaskQueryMode {
+    Flat,
+    RankedQueue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TaskSort {
-    Queue,
     Created,
     Updated,
     Priority,
@@ -30,6 +35,7 @@ impl SortDirection {
 pub(crate) struct TaskFilters {
     pub(crate) project: Option<String>,
     pub(crate) status: Option<String>,
+    pub(crate) statuses: Vec<String>,
     pub(crate) priority: Option<String>,
     pub(crate) label: Option<String>,
     pub(crate) include_deleted: bool,
@@ -65,7 +71,7 @@ pub(crate) struct ProjectListItem {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SidebarCounts {
-    pub(crate) all: i64,
+    pub(crate) open: i64,
     pub(crate) inbox: i64,
     pub(crate) active: i64,
     pub(crate) backlog: i64,

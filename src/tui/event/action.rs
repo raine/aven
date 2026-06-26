@@ -1,21 +1,9 @@
 use crossterm::event::KeyCode;
 
-use crate::query::TaskSort;
+use crate::tui::store::{TaskOrder, TaskView};
 
 #[cfg(test)]
 use super::{ShortcutLookup, resolve_shortcut};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ViewTarget {
-    All,
-    Inbox,
-    Backlog,
-    Todo,
-    Active,
-    Done,
-    Project,
-    Conflicts,
-}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,8 +32,7 @@ pub(crate) enum Action {
     SearchChar(char),
     CommandChar(char),
     Refresh,
-    CycleSort,
-    SetSort(TaskSort),
+    SetOrder(TaskOrder),
     ReverseSort,
     SetStatus(&'static str),
     SetPriority(&'static str),
@@ -65,15 +52,14 @@ pub(crate) enum Action {
     BeginAddNote,
     BeginAddProject,
     BeginAddLabel,
-    BeginFilterProject,
     BeginFilterLabel,
-    BeginFilterStatus,
     BeginFilterPriority,
-    FilterStatus(&'static str),
+    BeginScopeProject,
     BeginSwitchWorkspace,
     ClearFilters,
     ToggleDeletedFilter,
-    ShowView(ViewTarget),
+    ShowView(TaskView),
+    ShowWorkspaceScope,
     BeginConflictList,
     ShowConflictDetails,
     NextConflict,

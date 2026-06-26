@@ -7,12 +7,15 @@ mod types;
 #[allow(unused_imports)]
 pub(crate) use projects::{list_project_items, list_project_items_in_workspace};
 #[allow(unused_imports)]
-pub(crate) use sidebar::{sidebar_counts, sidebar_counts_in_workspace};
+pub(crate) use sidebar::{
+    sidebar_counts, sidebar_counts_for_scope_in_workspace, sidebar_counts_in_workspace,
+};
 #[allow(unused_imports)]
 pub(crate) use tasks::{list_task_items, list_task_items_in_workspace};
 #[allow(unused_imports)]
 pub(crate) use types::{
-    ProjectListItem, SidebarCounts, SortDirection, TaskFilters, TaskListItem, TaskNote, TaskSort,
+    ProjectListItem, SidebarCounts, SortDirection, TaskFilters, TaskListItem, TaskNote,
+    TaskQueryMode, TaskSort,
 };
 
 #[cfg(test)]
@@ -235,7 +238,8 @@ mod tests {
                 hide_done: true,
                 ..TaskFilters::default()
             },
-            TaskSort::Queue,
+            TaskQueryMode::RankedQueue,
+            TaskSort::Created,
             SortDirection::Asc,
         )
         .await
@@ -265,7 +269,8 @@ mod tests {
                 hide_done: true,
                 ..TaskFilters::default()
             },
-            TaskSort::Queue,
+            TaskQueryMode::RankedQueue,
+            TaskSort::Created,
             SortDirection::Asc,
         )
         .await
@@ -273,8 +278,8 @@ mod tests {
         assert_eq!(listed_titles(&items), ["todo task"]);
 
         let counts = sidebar_counts(&mut conn).await.unwrap();
-        assert_eq!(counts.all, 1);
-        assert_eq!(counts.done, 1);
+        assert_eq!(counts.open, 1);
+        assert_eq!(counts.done, 2);
     }
 
     #[tokio::test]
@@ -294,6 +299,7 @@ mod tests {
         let items = list_task_items(
             &mut conn,
             TaskFilters::default(),
+            TaskQueryMode::Flat,
             TaskSort::Priority,
             SortDirection::Asc,
         )
@@ -320,6 +326,7 @@ mod tests {
         let items = list_task_items(
             &mut conn,
             TaskFilters::default(),
+            TaskQueryMode::Flat,
             TaskSort::Created,
             SortDirection::Desc,
         )
@@ -330,6 +337,7 @@ mod tests {
         let items = list_task_items(
             &mut conn,
             TaskFilters::default(),
+            TaskQueryMode::Flat,
             TaskSort::Created,
             SortDirection::Asc,
         )
@@ -367,7 +375,8 @@ mod tests {
                 conflicts_only: true,
                 ..TaskFilters::default()
             },
-            TaskSort::Queue,
+            TaskQueryMode::RankedQueue,
+            TaskSort::Created,
             SortDirection::Asc,
         )
         .await
@@ -418,6 +427,7 @@ mod tests {
         let items = list_task_items(
             &mut conn,
             TaskFilters::default(),
+            TaskQueryMode::Flat,
             TaskSort::Created,
             SortDirection::Asc,
         )
@@ -467,6 +477,7 @@ mod tests {
         let items = list_task_items(
             &mut conn,
             TaskFilters::default(),
+            TaskQueryMode::Flat,
             TaskSort::Created,
             SortDirection::Asc,
         )
@@ -506,6 +517,7 @@ mod tests {
                 hide_done: true,
                 ..TaskFilters::default()
             },
+            TaskQueryMode::Flat,
             TaskSort::Created,
             SortDirection::Asc,
         )
@@ -557,6 +569,7 @@ mod tests {
                 search: Some("needle".to_string()),
                 ..TaskFilters::default()
             },
+            TaskQueryMode::Flat,
             TaskSort::Created,
             SortDirection::Asc,
         )
@@ -594,7 +607,8 @@ mod tests {
         let items = list_task_items(
             &mut conn,
             TaskFilters::default(),
-            TaskSort::Queue,
+            TaskQueryMode::RankedQueue,
+            TaskSort::Created,
             SortDirection::Asc,
         )
         .await
@@ -650,6 +664,7 @@ mod tests {
                 conflicts_only: true,
                 ..TaskFilters::default()
             },
+            TaskQueryMode::Flat,
             TaskSort::Created,
             SortDirection::Asc,
         )
@@ -663,6 +678,7 @@ mod tests {
             &mut conn,
             &beta.id,
             TaskFilters::default(),
+            TaskQueryMode::Flat,
             TaskSort::Created,
             SortDirection::Asc,
         )
@@ -687,7 +703,7 @@ mod tests {
         let alpha_counts = sidebar_counts_in_workspace(&mut conn, &alpha_id)
             .await
             .unwrap();
-        assert_eq!(alpha_counts.all, 1);
+        assert_eq!(alpha_counts.open, 1);
         assert_eq!(alpha_counts.todo, 1);
         assert_eq!(alpha_counts.conflicts, 1);
         assert_eq!(alpha_counts.done, 0);
@@ -695,7 +711,7 @@ mod tests {
         let beta_counts = sidebar_counts_in_workspace(&mut conn, &beta.id)
             .await
             .unwrap();
-        assert_eq!(beta_counts.all, 0);
+        assert_eq!(beta_counts.open, 0);
         assert_eq!(beta_counts.done, 1);
         assert_eq!(beta_counts.conflicts, 0);
     }
@@ -731,6 +747,7 @@ mod tests {
                 project: Some("renamed-app".to_string()),
                 ..TaskFilters::default()
             },
+            TaskQueryMode::Flat,
             TaskSort::Updated,
             SortDirection::Desc,
         )
@@ -777,6 +794,7 @@ mod tests {
         let wrapper_tasks = list_task_items(
             &mut conn,
             TaskFilters::default(),
+            TaskQueryMode::Flat,
             TaskSort::Created,
             SortDirection::Asc,
         )
@@ -786,6 +804,7 @@ mod tests {
             &mut conn,
             &beta.id,
             TaskFilters::default(),
+            TaskQueryMode::Flat,
             TaskSort::Created,
             SortDirection::Asc,
         )
@@ -797,6 +816,6 @@ mod tests {
         );
         assert_eq!(listed_titles(&wrapper_tasks), ["beta task"]);
         assert_eq!(list_project_items(&mut conn).await.unwrap()[0].key, "beta");
-        assert_eq!(sidebar_counts(&mut conn).await.unwrap().all, 1);
+        assert_eq!(sidebar_counts(&mut conn).await.unwrap().open, 1);
     }
 }

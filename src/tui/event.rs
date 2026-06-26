@@ -2,7 +2,7 @@ mod action;
 mod catalog;
 mod lookup;
 
-pub(crate) use self::action::{Action, ViewTarget};
+pub(crate) use self::action::Action;
 #[allow(unused_imports)]
 pub(crate) use self::catalog::{
     COMMAND_DOMAINS, COMMANDS, CommandContext, CommandDomain, CommandLifecycle, CommandSpec,
@@ -36,8 +36,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginSearch
             | Action::BeginCommand
             | Action::Refresh
-            | Action::CycleSort
-            | Action::SetSort(_)
+            | Action::SetOrder(_)
             | Action::ReverseSort
             | Action::SetStatus(_)
             | Action::SetPriority(_)
@@ -57,15 +56,14 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginAddNote
             | Action::BeginAddProject
             | Action::BeginAddLabel
-            | Action::BeginFilterProject
             | Action::BeginFilterLabel
-            | Action::BeginFilterStatus
             | Action::BeginFilterPriority
-            | Action::FilterStatus(_)
+            | Action::BeginScopeProject
             | Action::BeginSwitchWorkspace
             | Action::ClearFilters
             | Action::ToggleDeletedFilter
             | Action::ShowView(_)
+            | Action::ShowWorkspaceScope
             | Action::BeginConflictList
             | Action::ShowConflictDetails
             | Action::NextConflict
@@ -85,8 +83,6 @@ fn implemented_action_is_handled(action: Action) -> bool {
 #[cfg(test)]
 mod tests {
     use crossterm::event::KeyCode;
-
-    use crate::query::TaskSort;
 
     use super::*;
 
@@ -406,6 +402,7 @@ mod tests {
         assert_eq!(Action::from_normal_key(KeyCode::Char('u')), Action::Undo);
         assert_eq!(Action::from_normal_key(KeyCode::Char('z')), Action::None);
         assert_eq!(Action::from_normal_key(KeyCode::Char('g')), Action::None);
+        assert_eq!(Action::from_normal_key(KeyCode::Char('v')), Action::None);
     }
 
     #[test]
@@ -593,8 +590,8 @@ mod tests {
             "copy-ref",
             "copy-id",
             "status-active",
-            "filter-project",
-            "order-queue",
+            "scope-project",
+            "scope-all",
             "order-due",
             "order-priority",
             "order-reverse",
@@ -717,12 +714,12 @@ mod tests {
     #[test]
     fn resolves_filter_shortcuts() {
         assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('p')]),
-            ShortcutLookup::Found(Action::BeginFilterProject)
+            resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('l')]),
+            ShortcutLookup::Found(Action::BeginFilterLabel)
         );
         assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('d')]),
-            ShortcutLookup::Found(Action::FilterStatus("done"))
+            resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('r')]),
+            ShortcutLookup::Found(Action::BeginFilterPriority)
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('c')]),
@@ -733,12 +730,24 @@ mod tests {
     #[test]
     fn resolves_view_shortcuts() {
         assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('a')]),
-            ShortcutLookup::Found(Action::ShowView(ViewTarget::All))
+            resolve_shortcut(&[KeyCode::Char('v')]),
+            ShortcutLookup::Prefix
         );
         assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('c')]),
-            ShortcutLookup::Found(Action::ShowView(ViewTarget::Conflicts))
+            resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('q')]),
+            ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskView::Queue))
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('c')]),
+            ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskView::Conflicts))
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('p')]),
+            ShortcutLookup::Found(Action::BeginScopeProject)
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('s')]),
+            ShortcutLookup::Found(Action::ShowWorkspaceScope)
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('w')]),
@@ -854,15 +863,15 @@ mod tests {
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('c')]),
-            ShortcutLookup::Found(Action::SetSort(TaskSort::Created))
+            ShortcutLookup::Found(Action::SetOrder(crate::tui::store::TaskOrder::Created))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('p')]),
-            ShortcutLookup::Found(Action::SetSort(TaskSort::Priority))
+            ShortcutLookup::Found(Action::SetOrder(crate::tui::store::TaskOrder::Priority))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('u')]),
-            ShortcutLookup::Found(Action::SetSort(TaskSort::Updated))
+            ShortcutLookup::Found(Action::SetOrder(crate::tui::store::TaskOrder::Updated))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('r')]),

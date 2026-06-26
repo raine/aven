@@ -6,7 +6,9 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem};
 
 use super::truncate::truncate_chars;
 use crate::tui::app::{Focus, WidgetState};
-use crate::tui::store::{SidebarEntry, SidebarTarget, TuiStore};
+use crate::tui::store::{
+    SidebarEntry, SidebarEntryTarget, TaskScope, TaskScopeTarget, TaskView, TuiStore,
+};
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, PINK, RED, SELECTED, SELECTED_INACTIVE,
 };
@@ -63,11 +65,13 @@ pub(super) fn render_sidebar(
                 sidebar_icon(entry)
             };
             let label = sidebar_label(entry);
-            let is_active_view = entry.target.as_ref() == Some(&store.active_view);
+            let is_active_view = sidebar_entry_active(entry, store);
             let color = match &entry.target {
-                Some(SidebarTarget::Project(project)) => theme::project_color(project),
-                Some(SidebarTarget::Active) => FG_MUTED,
-                Some(SidebarTarget::Todo) => FG_DIM,
+                Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(project))) => {
+                    theme::project_color(project)
+                }
+                Some(SidebarEntryTarget::View(TaskView::Active)) => FG_MUTED,
+                Some(SidebarEntryTarget::View(TaskView::Todo)) => FG_DIM,
                 _ => FG,
             };
             let label_style = if is_active_view {
@@ -116,7 +120,6 @@ pub(super) fn render_sidebar(
     let list = List::new(items)
         .block(
             Block::new()
-                .title(" VIEWS ")
                 .borders(borders)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::new().fg(BORDER))
@@ -137,30 +140,47 @@ fn badge(count: i64, active: bool) -> Span<'static> {
     )
 }
 
+fn sidebar_entry_active(entry: &SidebarEntry, store: &TuiStore) -> bool {
+    match &entry.target {
+        Some(SidebarEntryTarget::View(view)) => *view == store.view_state.view,
+        Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => {
+            store.view_state.scope == TaskScope::Workspace
+        }
+        Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(project))) => {
+            store.scope_project() == Some(project.as_str())
+        }
+        None => false,
+    }
+}
+
 fn sidebar_icon(entry: &SidebarEntry) -> &'static str {
     match entry.target {
-        Some(SidebarTarget::All) => "○",
-        Some(SidebarTarget::Inbox) => "▣",
-        Some(SidebarTarget::Todo) => "□",
-        Some(SidebarTarget::Active) => "●",
-        Some(SidebarTarget::Backlog) => "◌",
-        Some(SidebarTarget::Done) => "✓",
-        Some(SidebarTarget::Conflicts) => "!",
-        Some(SidebarTarget::Project(_)) => "●",
+        Some(SidebarEntryTarget::View(TaskView::Queue)) => "○",
+        Some(SidebarEntryTarget::View(TaskView::Inbox)) => "▣",
+        Some(SidebarEntryTarget::View(TaskView::Todo)) => "□",
+        Some(SidebarEntryTarget::View(TaskView::Active)) => "●",
+        Some(SidebarEntryTarget::View(TaskView::Backlog)) => "◌",
+        Some(SidebarEntryTarget::View(TaskView::Done)) => "✓",
+        Some(SidebarEntryTarget::View(TaskView::Conflicts)) => "!",
+        Some(SidebarEntryTarget::View(TaskView::Open)) => "○",
+        Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => "◆",
+        Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(_))) => "●",
         None => " ",
     }
 }
 
 fn sidebar_label(entry: &SidebarEntry) -> String {
     match entry.target {
-        Some(SidebarTarget::All) => "Queue".to_string(),
-        Some(SidebarTarget::Inbox) => "Inbox".to_string(),
-        Some(SidebarTarget::Active) => "All active".to_string(),
-        Some(SidebarTarget::Backlog) => "Backlog".to_string(),
-        Some(SidebarTarget::Todo) => "All todo".to_string(),
-        Some(SidebarTarget::Done) => "Done".to_string(),
-        Some(SidebarTarget::Conflicts) => "Conflicts".to_string(),
-        Some(SidebarTarget::Project(_)) => entry
+        Some(SidebarEntryTarget::View(TaskView::Queue)) => "Queue".to_string(),
+        Some(SidebarEntryTarget::View(TaskView::Inbox)) => "Inbox".to_string(),
+        Some(SidebarEntryTarget::View(TaskView::Active)) => "All active".to_string(),
+        Some(SidebarEntryTarget::View(TaskView::Backlog)) => "Backlog".to_string(),
+        Some(SidebarEntryTarget::View(TaskView::Todo)) => "All todo".to_string(),
+        Some(SidebarEntryTarget::View(TaskView::Done)) => "Done".to_string(),
+        Some(SidebarEntryTarget::View(TaskView::Conflicts)) => "Conflicts".to_string(),
+        Some(SidebarEntryTarget::View(TaskView::Open)) => "Open".to_string(),
+        Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => "Workspace".to_string(),
+        Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(_))) => entry
             .label
             .split_once(' ')
             .map(|(_, name)| name)
@@ -225,7 +245,9 @@ mod tests {
             label: "APP very-long-project-name".to_string(),
             count: 12,
             section: false,
-            target: Some(SidebarTarget::Project("very-long-project-name".to_string())),
+            target: Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(
+                "very-long-project-name".to_string(),
+            ))),
         };
 
         let rendered = sidebar_entry_line(

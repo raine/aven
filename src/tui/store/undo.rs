@@ -54,7 +54,7 @@ impl TuiStore {
         drop(conn);
 
         if let Some(include_deleted) = outcome.include_deleted {
-            self.filters.include_deleted = include_deleted;
+            self.view_state.filter_modifiers.include_deleted = include_deleted;
         }
 
         let selected = if selected.is_some() {

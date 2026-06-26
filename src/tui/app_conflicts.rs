@@ -6,7 +6,7 @@ use crate::tui::conflict_flow::{
 };
 use crate::tui::overlay::{OverlayRoute, OverlayState, PickerItem, TextPanelState};
 use crate::tui::store::deleted_picker_items;
-use crate::tui::store::{ConflictTarget, SidebarTarget};
+use crate::tui::store::{ConflictTarget, TaskView};
 
 pub(crate) const CONFLICT_FIELD_TITLE: &str = "Conflict: field";
 pub(crate) const CONFLICT_CONFIRM_LOCAL_TITLE: &str = "Resolve conflict: local";
@@ -16,7 +16,7 @@ pub(crate) const CONFLICT_DETAILS_TITLE: &str = "Conflict details";
 
 impl App {
     pub(super) async fn open_conflict_list(&mut self) -> Result<()> {
-        let selected = self.store.show_view(SidebarTarget::Conflicts).await?;
+        let selected = self.store.show_view(TaskView::Conflicts).await?;
         self.apply_filter_selection(selected);
         let count = self
             .store

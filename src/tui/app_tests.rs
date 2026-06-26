@@ -1,12 +1,11 @@
 use super::*;
 use crate::operations::TaskDraft;
-use crate::query::TaskSort;
 use crate::tui::app_conflicts::CONFLICT_CONFIRM_LOCAL_TITLE;
 use crate::tui::app_edit::{
     EDIT_DESCRIPTION_TITLE, EDIT_LABELS_TITLE, EDIT_PRIORITY_TITLE, EDIT_PROJECT_TITLE,
     EDIT_STATUS_TITLE, EDIT_TITLE_TITLE,
 };
-use crate::tui::app_filters::{FILTER_PROJECT_TITLE, SWITCH_WORKSPACE_TITLE};
+use crate::tui::app_filters::{SCOPE_PROJECT_TITLE, SWITCH_WORKSPACE_TITLE};
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::config_overlay::{CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PATHS_TITLE};
 use crate::tui::event::Action;
@@ -14,7 +13,7 @@ use crate::tui::overlay::{
     CommandState, ConfirmState, LineEdit, MultilineInputState, OverlayRoute, OverlayState,
     OverlayView, PickerItem, PickerMode, PickerState, TextInputState, TextPanelState,
 };
-use crate::tui::store::SidebarTarget;
+use crate::tui::store::{SidebarEntryTarget, TaskOrder, TaskScope, TaskScopeTarget, TaskView};
 use crate::tui::toast::ToastSeverity;
 use crate::tui::ui::ViewSurface;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -306,7 +305,7 @@ mod keyboard_dispatch {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
-        assert_eq!(app.store.sort, TaskSort::Priority);
+        assert_eq!(app.store.view_state.order, TaskOrder::Priority);
         assert_eq!(toast_message(&app), Some("order priority asc"));
     }
 
@@ -316,7 +315,7 @@ mod keyboard_dispatch {
         app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
         assert_eq!(app.store.sort_direction_label(), "desc");
-        assert_eq!(toast_message(&app), Some("order queue desc"));
+        assert_eq!(toast_message(&app), Some("order created desc"));
     }
 
     #[tokio::test]
@@ -732,24 +731,24 @@ mod filters_and_workspaces {
     use super::*;
 
     #[tokio::test]
-    async fn filter_project_shortcut_opens_project_picker() {
+    async fn scope_project_shortcut_opens_project_picker() {
         let mut app = test_app().await;
         app.store
             .create_project("Mobile App".to_string())
             .await
             .unwrap();
 
-        app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::Picker(PickerState { title, .. })) if title == FILTER_PROJECT_TITLE
+            Some(OverlayState::Picker(PickerState { title, .. })) if title == SCOPE_PROJECT_TITLE
         ));
     }
 
     #[tokio::test]
-    async fn filter_done_shortcut_keeps_project_scope() {
+    async fn done_view_shortcut_keeps_project_scope() {
         let mut app = test_app().await;
         app.store
             .create_project("Mobile App".to_string())
@@ -776,19 +775,22 @@ mod filters_and_workspaces {
         }
         let selected = app
             .store
-            .show_view(SidebarTarget::Project("mobile-app".to_string()))
+            .show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
             .await
             .unwrap();
         app.apply_filter_selection(selected);
 
-        app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('v')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
 
-        assert_eq!(app.store.filters.project.as_deref(), Some("mobile-app"));
-        assert_eq!(app.store.filters.status.as_deref(), Some("done"));
+        assert_eq!(
+            app.store.view_state.scope,
+            TaskScope::Project("mobile-app".to_string())
+        );
+        assert_eq!(app.store.view_state.view, TaskView::Done);
         assert_eq!(app.store.tasks.len(), 1);
         assert_eq!(app.store.tasks[0].task.title, "Mobile done");
-        assert_eq!(toast_message(&app), Some("status filter applied"));
+        assert_eq!(toast_message(&app), Some("view updated"));
     }
 
     #[tokio::test]
@@ -815,18 +817,11 @@ mod filters_and_workspaces {
             .unwrap();
         type_chars(&mut app, "backend").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-        assert_eq!(app.store.filters.label.as_deref(), Some("backend"));
+        assert_eq!(
+            app.store.view_state.filter_modifiers.label.as_deref(),
+            Some("backend")
+        );
         assert_eq!(toast_message(&app), Some("label filter applied"));
-
-        app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
-        app.handle_overlay_key(key(KeyCode::Char('/')))
-            .await
-            .unwrap();
-        type_chars(&mut app, "inbox").await;
-        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-        assert_eq!(app.store.filters.status.as_deref(), Some("inbox"));
-
         app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Char('/')))
@@ -834,11 +829,14 @@ mod filters_and_workspaces {
             .unwrap();
         type_chars(&mut app, "urgent").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-        assert_eq!(app.store.filters.priority.as_deref(), Some("urgent"));
+        assert_eq!(
+            app.store.view_state.filter_modifiers.priority.as_deref(),
+            Some("urgent")
+        );
 
         app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
-        assert!(app.store.filters.include_deleted);
+        assert!(app.store.view_state.filter_modifiers.include_deleted);
         assert_eq!(toast_message(&app), Some("showing deleted tasks"));
     }
 
@@ -863,6 +861,23 @@ mod filters_and_workspaces {
     }
 
     #[tokio::test]
+    async fn refresh_reports_invalid_project_scope_fallback() {
+        let mut app = test_app().await;
+        app.store.view_state.scope = TaskScope::Project("missing".to_string());
+        app.store.view_state.view = TaskView::Todo;
+
+        app.refresh().await.unwrap();
+
+        assert_eq!(app.store.view_state.scope, TaskScope::Workspace);
+        assert_eq!(app.store.view_state.view, TaskView::Todo);
+        assert_eq!(
+            toast_message(&app),
+            Some("project scope missing is no longer available")
+        );
+        assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
+    }
+
+    #[tokio::test]
     async fn switch_workspace_changes_active_workspace() {
         let (_dir, pool, mut app) = test_app_with_pool().await;
         create_and_select_task(&mut app, test_task_draft("Default only")).await;
@@ -874,8 +889,7 @@ mod filters_and_workspaces {
         drop(conn);
         app.refresh().await.unwrap();
 
-        app.store.filters.status = Some("todo".to_string());
-        app.store.active_view = SidebarTarget::Todo;
+        app.store.view_state.view = TaskView::Todo;
 
         let (message, selected) = app
             .store
@@ -886,8 +900,7 @@ mod filters_and_workspaces {
         app.set_success(message);
 
         assert_eq!(app.store.active_workspace.key, "client-work");
-        assert_eq!(app.store.active_view, SidebarTarget::All);
-        assert!(app.store.filters.status.is_none());
+        assert_eq!(app.store.view_state.view, TaskView::Todo);
         assert!(app.store.tasks.is_empty());
         assert!(app.overlay.is_none());
         assert!(
@@ -901,14 +914,12 @@ mod filters_and_workspaces {
     #[tokio::test]
     async fn clear_filters_shortcut_resets_default_view() {
         let mut app = test_app().await;
-        app.store.filters.status = Some("todo".to_string());
-        app.store.active_view = SidebarTarget::Todo;
+        app.store.view_state.view = TaskView::Todo;
 
         app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
 
-        assert_eq!(app.store.active_view, SidebarTarget::All);
-        assert!(app.store.filters.status.is_none());
+        assert_eq!(app.store.view_state.view, TaskView::Todo);
         assert_eq!(toast_message(&app), Some("filters cleared"));
         assert_eq!(toast_severity(&app), Some(ToastSeverity::Success));
     }
@@ -917,11 +928,11 @@ mod filters_and_workspaces {
     async fn go_conflicts_shortcut_sets_conflicts_view() {
         let mut app = test_app().await;
 
-        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('v')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
 
-        assert_eq!(app.store.active_view, SidebarTarget::Conflicts);
-        assert!(app.store.filters.conflicts_only);
+        assert_eq!(app.store.view_state.view, TaskView::Conflicts);
+        assert_eq!(app.store.view_state.view, TaskView::Conflicts);
     }
 }
 
@@ -1119,7 +1130,7 @@ mod authoring {
             .unwrap();
         let selected = app
             .store
-            .show_view(SidebarTarget::Project("mobile-app".to_string()))
+            .show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
             .await
             .unwrap();
         app.apply_filter_selection(selected);
@@ -1132,7 +1143,10 @@ mod authoring {
         let task = &app.store.tasks[selected];
         assert_eq!(task.task.title, "Write docs");
         assert_eq!(task.task.project_key, "mobile-app");
-        assert_eq!(app.store.filters.project.as_deref(), Some("mobile-app"));
+        assert_eq!(
+            app.store.view_state.scope,
+            TaskScope::Project("mobile-app".to_string())
+        );
     }
 
     #[tokio::test]
@@ -2462,17 +2476,13 @@ mod task_editing {
         create_and_select_task(&mut app, test_task_draft("Status alias")).await;
 
         app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
-        let selected = app.store.show_view(SidebarTarget::Done).await.unwrap();
+        let selected = app.store.show_view(TaskView::Done).await.unwrap();
         app.widgets.table.select(selected);
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.status, "done");
 
         app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
-        let selected = app
-            .store
-            .filter_status("canceled".to_string())
-            .await
-            .unwrap();
+        let selected = app.store.show_view(TaskView::Done).await.unwrap();
         app.widgets.table.select(selected);
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.status, "canceled");
@@ -2679,7 +2689,7 @@ mod delete_and_restore {
 
         let selected = app.widgets.table.selected().unwrap();
         assert!(app.store.tasks[selected].task.deleted);
-        assert!(!app.store.filters.include_deleted);
+        assert!(!app.store.view_state.filter_modifiers.include_deleted);
         assert_eq!(
             toast_message(&app),
             Some(format!("deleted {display_ref}").as_str())
@@ -2749,7 +2759,10 @@ mod delete_and_restore {
             .sidebar_entries
             .iter()
             .position(|entry| {
-                entry.target == Some(SidebarTarget::Project("mobile-app".to_string()))
+                entry.target
+                    == Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(
+                        "mobile-app".to_string(),
+                    )))
             })
             .unwrap();
         app.widgets.sidebar.select(Some(project_index));
@@ -2807,7 +2820,10 @@ mod delete_and_restore {
             .sidebar_entries
             .iter()
             .position(|entry| {
-                entry.target == Some(SidebarTarget::Project("mobile-app".to_string()))
+                entry.target
+                    == Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(
+                        "mobile-app".to_string(),
+                    )))
             })
             .unwrap();
         app.widgets.sidebar.select(Some(project_index));
@@ -2829,8 +2845,8 @@ mod conflicts {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
-        assert_eq!(app.store.active_view, SidebarTarget::Conflicts);
-        assert!(app.store.filters.conflicts_only);
+        assert_eq!(app.store.view_state.view, TaskView::Conflicts);
+        assert_eq!(app.store.view_state.view, TaskView::Conflicts);
         assert_eq!(toast_message(&app), Some("no unresolved conflicts"));
     }
 

@@ -38,7 +38,7 @@ use crate::projects::{
     find_project_in_workspace, inferred_project_key_for_add_in_workspace, list_projects,
     resolve_existing_project_in_workspace,
 };
-use crate::query::{self, SortDirection, TaskFilters, TaskSort};
+use crate::query::{self, SortDirection, TaskFilters, TaskQueryMode, TaskSort};
 use crate::refs::{display_ref, display_suffix, resolve_task_ref};
 use crate::render::{print_multiline_block, quote};
 use crate::task_fields::TaskField;
@@ -193,6 +193,7 @@ pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Res
     let filters = TaskFilters {
         project: args.project,
         status: args.status,
+        statuses: Vec::new(),
         priority: args.priority,
         label: args.label,
         include_deleted: args.all,
@@ -200,8 +201,14 @@ pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Res
         conflicts_only: false,
         search: None,
     };
-    for item in
-        query::list_task_items(conn, filters, TaskSort::Updated, SortDirection::Desc).await?
+    for item in query::list_task_items(
+        conn,
+        filters,
+        TaskQueryMode::Flat,
+        TaskSort::Updated,
+        SortDirection::Desc,
+    )
+    .await?
     {
         print_task_line_item(&item).await?;
     }
@@ -235,6 +242,7 @@ pub(crate) async fn cmd_bulk_update(
     let filters = TaskFilters {
         project: args.project.clone(),
         status: args.status.clone(),
+        statuses: Vec::new(),
         priority: args.priority.clone(),
         label: args.filter_label.clone(),
         include_deleted: args.include_deleted,
@@ -242,8 +250,14 @@ pub(crate) async fn cmd_bulk_update(
         conflicts_only: false,
         search: None,
     };
-    let items =
-        query::list_task_items(conn, filters, TaskSort::Updated, SortDirection::Desc).await?;
+    let items = query::list_task_items(
+        conn,
+        filters,
+        TaskQueryMode::Flat,
+        TaskSort::Updated,
+        SortDirection::Desc,
+    )
+    .await?;
     let matched = items.len();
     let mut planned = Vec::with_capacity(matched);
     for item in items {
@@ -526,6 +540,7 @@ pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> R
     let filters = TaskFilters {
         project: Some(project),
         status: None,
+        statuses: Vec::new(),
         priority: None,
         label: None,
         include_deleted: false,
@@ -533,8 +548,14 @@ pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> R
         conflicts_only: false,
         search: None,
     };
-    let items =
-        query::list_task_items(conn, filters, TaskSort::Updated, SortDirection::Desc).await?;
+    let items = query::list_task_items(
+        conn,
+        filters,
+        TaskQueryMode::Flat,
+        TaskSort::Updated,
+        SortDirection::Desc,
+    )
+    .await?;
     if items.is_empty() {
         println!("No open issues.");
         return Ok(());

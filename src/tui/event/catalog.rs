@@ -1,8 +1,8 @@
 use crossterm::event::KeyCode;
 
-use crate::query::TaskSort;
+use crate::tui::store::{TaskOrder, TaskView};
 
-use super::{Action, ViewTarget};
+use super::Action;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandLifecycle {
@@ -127,6 +127,7 @@ pub(crate) const NORMAL_HELP_SECTIONS: &[&str] = &[
     "Status",
     "Priority",
     "Views",
+    "Scope",
     "Add/Create",
     "Metadata",
     "Edit",
@@ -451,92 +452,105 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "show queue view",
         "Views",
         &[KeySequence {
-            codes: &[KeyCode::Char('g'), KeyCode::Char('a')],
-            label: "g a",
+            codes: &[KeyCode::Char('v'), KeyCode::Char('q')],
+            label: "v q",
         }],
-        Action::ShowView(ViewTarget::All),
+        Action::ShowView(TaskView::Queue),
     ),
     CommandSpec::implemented(
-        "view-all",
-        "show queue view",
+        "view-open",
+        "show open task view",
         "Views",
-        &[],
-        Action::ShowView(ViewTarget::All),
+        &[KeySequence {
+            codes: &[KeyCode::Char('v'), KeyCode::Char('o')],
+            label: "v o",
+        }],
+        Action::ShowView(TaskView::Open),
     ),
     CommandSpec::implemented(
         "view-inbox",
         "show inbox view",
         "Views",
         &[KeySequence {
-            codes: &[KeyCode::Char('g'), KeyCode::Char('i')],
-            label: "g i",
+            codes: &[KeyCode::Char('v'), KeyCode::Char('i')],
+            label: "v i",
         }],
-        Action::ShowView(ViewTarget::Inbox),
+        Action::ShowView(TaskView::Inbox),
     ),
     CommandSpec::implemented(
         "view-backlog",
         "show backlog view",
         "Views",
         &[KeySequence {
-            codes: &[KeyCode::Char('g'), KeyCode::Char('b')],
-            label: "g b",
+            codes: &[KeyCode::Char('v'), KeyCode::Char('b')],
+            label: "v b",
         }],
-        Action::ShowView(ViewTarget::Backlog),
+        Action::ShowView(TaskView::Backlog),
     ),
     CommandSpec::implemented(
         "view-todo",
         "show todo view",
         "Views",
         &[KeySequence {
-            codes: &[KeyCode::Char('g'), KeyCode::Char('t')],
-            label: "g t",
+            codes: &[KeyCode::Char('v'), KeyCode::Char('t')],
+            label: "v t",
         }],
-        Action::ShowView(ViewTarget::Todo),
+        Action::ShowView(TaskView::Todo),
     ),
     CommandSpec::implemented(
         "view-active",
         "show active view",
         "Views",
         &[KeySequence {
-            codes: &[KeyCode::Char('g'), KeyCode::Char('v')],
-            label: "g v",
+            codes: &[KeyCode::Char('v'), KeyCode::Char('a')],
+            label: "v a",
         }],
-        Action::ShowView(ViewTarget::Active),
+        Action::ShowView(TaskView::Active),
     ),
     CommandSpec::implemented(
         "view-done",
         "show done view",
         "Views",
         &[KeySequence {
-            codes: &[KeyCode::Char('g'), KeyCode::Char('d')],
-            label: "g d",
+            codes: &[KeyCode::Char('v'), KeyCode::Char('d')],
+            label: "v d",
         }],
-        Action::ShowView(ViewTarget::Done),
-    ),
-    CommandSpec::implemented(
-        "view-project",
-        "show project view",
-        "Views",
-        &[KeySequence {
-            codes: &[KeyCode::Char('g'), KeyCode::Char('p')],
-            label: "g p",
-        }],
-        Action::ShowView(ViewTarget::Project),
+        Action::ShowView(TaskView::Done),
     ),
     CommandSpec::implemented(
         "view-conflicts",
         "show conflicts view",
         "Views",
         &[KeySequence {
-            codes: &[KeyCode::Char('g'), KeyCode::Char('c')],
-            label: "g c",
+            codes: &[KeyCode::Char('v'), KeyCode::Char('c')],
+            label: "v c",
         }],
-        Action::ShowView(ViewTarget::Conflicts),
+        Action::ShowView(TaskView::Conflicts),
+    ),
+    CommandSpec::implemented(
+        "scope-all",
+        "show all projects in current workspace",
+        "Scope",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('s')],
+            label: "g s",
+        }],
+        Action::ShowWorkspaceScope,
+    ),
+    CommandSpec::implemented(
+        "scope-project",
+        "scope to a project",
+        "Scope",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('p')],
+            label: "g p",
+        }],
+        Action::BeginScopeProject,
     ),
     CommandSpec::implemented(
         "workspace-switch",
         "switch active workspace",
-        "Views",
+        "Scope",
         &[KeySequence {
             codes: &[KeyCode::Char('g'), KeyCode::Char('w')],
             label: "g w",
@@ -775,16 +789,6 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     ),
     // Filters
     CommandSpec::implemented(
-        "filter-project",
-        "filter by project",
-        "Filters",
-        &[KeySequence {
-            codes: &[KeyCode::Char('f'), KeyCode::Char('p')],
-            label: "f p",
-        }],
-        Action::BeginFilterProject,
-    ),
-    CommandSpec::implemented(
         "filter-label",
         "filter by label",
         "Filters",
@@ -793,26 +797,6 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             label: "f l",
         }],
         Action::BeginFilterLabel,
-    ),
-    CommandSpec::implemented(
-        "filter-status",
-        "filter by status",
-        "Filters",
-        &[KeySequence {
-            codes: &[KeyCode::Char('f'), KeyCode::Char('s')],
-            label: "f s",
-        }],
-        Action::BeginFilterStatus,
-    ),
-    CommandSpec::implemented(
-        "filter-done",
-        "filter by done status",
-        "Filters",
-        &[KeySequence {
-            codes: &[KeyCode::Char('f'), KeyCode::Char('d')],
-            label: "f d",
-        }],
-        Action::FilterStatus("done"),
     ),
     CommandSpec::implemented(
         "filter-priority",
@@ -845,16 +829,6 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ToggleDeletedFilter,
     ),
     // Order
-    CommandSpec::implemented(
-        "order-queue",
-        "sort by queue order",
-        "Order",
-        &[KeySequence {
-            codes: &[KeyCode::Char('o'), KeyCode::Char('q')],
-            label: "o q",
-        }],
-        Action::SetSort(TaskSort::Queue),
-    ),
     CommandSpec::disabled(
         "order-due",
         "sort by due date",
@@ -873,7 +847,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('o'), KeyCode::Char('c')],
             label: "o c",
         }],
-        Action::SetSort(TaskSort::Created),
+        Action::SetOrder(TaskOrder::Created),
     ),
     CommandSpec::implemented(
         "order-updated",
@@ -883,7 +857,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('o'), KeyCode::Char('u')],
             label: "o u",
         }],
-        Action::SetSort(TaskSort::Updated),
+        Action::SetOrder(TaskOrder::Updated),
     ),
     CommandSpec::implemented(
         "order-priority",
@@ -893,7 +867,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('o'), KeyCode::Char('p')],
             label: "o p",
         }],
-        Action::SetSort(TaskSort::Priority),
+        Action::SetOrder(TaskOrder::Priority),
+    ),
+    CommandSpec::implemented(
+        "order-project",
+        "sort by project",
+        "Order",
+        &[KeySequence {
+            codes: &[KeyCode::Char('o'), KeyCode::Char('j')],
+            label: "o j",
+        }],
+        Action::SetOrder(TaskOrder::Project),
     ),
     CommandSpec::implemented(
         "order-title",
@@ -903,7 +887,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('o'), KeyCode::Char('t')],
             label: "o t",
         }],
-        Action::SetSort(TaskSort::Title),
+        Action::SetOrder(TaskOrder::Title),
     ),
     CommandSpec::implemented(
         "order-reverse",
@@ -1214,46 +1198,51 @@ pub(crate) const COMMAND_DOMAINS: &[CommandDomain] = &[
     CommandDomain {
         section: "Views",
         start: 25,
-        end: 35,
+        end: 33,
+    },
+    CommandDomain {
+        section: "Scope",
+        start: 33,
+        end: 36,
     },
     CommandDomain {
         section: "Add/Create",
-        start: 35,
-        end: 37,
+        start: 36,
+        end: 38,
     },
     CommandDomain {
         section: "Metadata",
-        start: 37,
-        end: 42,
+        start: 38,
+        end: 43,
     },
     CommandDomain {
         section: "Edit",
-        start: 42,
-        end: 49,
+        start: 43,
+        end: 50,
     },
     CommandDomain {
         section: "Priority",
-        start: 49,
-        end: 54,
+        start: 50,
+        end: 55,
     },
     CommandDomain {
         section: "Filters",
-        start: 54,
-        end: 61,
+        start: 55,
+        end: 59,
     },
     CommandDomain {
         section: "Order",
-        start: 61,
-        end: 68,
+        start: 59,
+        end: 66,
     },
     CommandDomain {
         section: "Conflict",
-        start: 68,
-        end: 75,
+        start: 66,
+        end: 73,
     },
     CommandDomain {
         section: "Config",
-        start: 75,
-        end: 80,
+        start: 73,
+        end: 78,
     },
 ];

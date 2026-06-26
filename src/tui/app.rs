@@ -9,7 +9,6 @@ use sqlx::SqlitePool;
 
 use crate::config::AppConfig;
 use crate::operations::TaskDraft;
-use crate::query::TaskSort;
 use crate::tui::authoring::{
     ADD_NOTE_TITLE, ADD_TASK_TITLE_PROJECT_TITLE, AddNoteSubmit, AddTaskStep, AddTaskTitleSubmit,
     AuthoringState,
@@ -26,7 +25,7 @@ use crate::tui::overlay::{
 };
 use crate::tui::platform::{copy_to_clipboard, edit_text_externally};
 use crate::tui::shortcut_buffer::ShortcutBuffer;
-use crate::tui::store::{SidebarTarget, TuiStore};
+use crate::tui::store::{TaskOrder, TaskScope, TaskView, TuiStore};
 use crate::tui::toast::{Toast, ToastSeverity};
 
 const ADD_PROJECT_TITLE: &str = "Add project";
@@ -240,9 +239,7 @@ impl App {
     }
 
     pub(super) fn previous_item(&mut self) {
-        if matches!(self.store.active_view, SidebarTarget::Conflicts)
-            || self.store.filters.conflicts_only
-        {
+        if self.store.view_state.view == TaskView::Conflicts {
             self.move_to_conflict(-1);
         } else {
             self.set_info("previous item is available in conflict flows");
@@ -250,9 +247,7 @@ impl App {
     }
 
     pub(super) fn next_item(&mut self) {
-        if matches!(self.store.active_view, SidebarTarget::Conflicts)
-            || self.store.filters.conflicts_only
-        {
+        if self.store.view_state.view == TaskView::Conflicts {
             self.move_to_conflict(1);
         } else {
             self.set_info("next item is available in conflict flows");
@@ -301,7 +296,14 @@ impl App {
     pub(crate) fn begin_search(&mut self) {
         self.pending_shortcut.clear();
         self.overlay = Some(OverlayState::Search {
-            input: LineEdit::new(self.store.filters.search.clone().unwrap_or_default()),
+            input: LineEdit::new(
+                self.store
+                    .view_state
+                    .filter_modifiers
+                    .search
+                    .clone()
+                    .unwrap_or_default(),
+            ),
         });
     }
 
@@ -339,9 +341,9 @@ impl App {
 
     pub(super) async fn begin_add_task(&mut self) -> Result<()> {
         self.pending_shortcut.clear();
-        let active_project = match &self.store.active_view {
-            SidebarTarget::Project(project) => Some(project.clone()),
-            _ => None,
+        let active_project = match &self.store.view_state.scope {
+            TaskScope::Project(project) => Some(project.clone()),
+            TaskScope::Workspace => None,
         };
         let inferred_project = if active_project.is_none() {
             self.store.inferred_add_project().await?
@@ -627,9 +629,9 @@ impl App {
         self.authoring
             .selected_add_task_project()
             .flatten()
-            .or_else(|| match &self.store.active_view {
-                SidebarTarget::Project(project) => Some(project.clone()),
-                _ => None,
+            .or_else(|| match &self.store.view_state.scope {
+                TaskScope::Project(project) => Some(project.clone()),
+                TaskScope::Workspace => None,
             })
     }
 
@@ -715,8 +717,8 @@ impl App {
         }
     }
 
-    pub(super) async fn set_sort(&mut self, sort: TaskSort) -> Result<()> {
-        let selected = self.store.set_sort(sort).await?;
+    pub(super) async fn set_sort(&mut self, sort: TaskOrder) -> Result<()> {
+        let selected = self.store.set_order(sort).await?;
         self.apply_filter_selection(selected);
         self.set_info(format!(
             "order {} {}",
@@ -807,7 +809,9 @@ impl App {
             .and_then(|index| self.store.sidebar_entries.get(index))
             .and_then(|entry| entry.target.as_ref())
             .and_then(|target| match target {
-                SidebarTarget::Project(project) => Some(project.clone()),
+                crate::tui::store::SidebarEntryTarget::Scope(
+                    crate::tui::store::TaskScopeTarget::Project(project),
+                ) => Some(project.clone()),
                 _ => None,
             })
     }

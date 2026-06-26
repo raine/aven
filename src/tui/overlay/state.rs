@@ -104,11 +104,9 @@ pub(crate) enum OverlayRoute {
     EditProject,
     EditPriority,
     EditLabels,
-    FilterProject,
     FilterLabel,
-    FilterStatus,
     FilterPriority,
-    ViewProject,
+    ScopeProject,
     DeleteProjectPicker,
     DeleteProjectConfirm,
     DeleteTaskConfirm,
@@ -145,11 +143,9 @@ pub(crate) enum PickerSubmitRoute {
     EditProject,
     EditPriority,
     EditLabels,
-    FilterProject,
     FilterLabel,
-    FilterStatus,
     FilterPriority,
-    ViewProject,
+    ScopeProject,
     DeleteProjectPicker,
     SwitchWorkspace,
     ConflictField,
@@ -209,11 +205,9 @@ impl OverlayRoute {
             Self::EditProject => Some(PickerSubmitRoute::EditProject),
             Self::EditPriority => Some(PickerSubmitRoute::EditPriority),
             Self::EditLabels => Some(PickerSubmitRoute::EditLabels),
-            Self::FilterProject => Some(PickerSubmitRoute::FilterProject),
             Self::FilterLabel => Some(PickerSubmitRoute::FilterLabel),
-            Self::FilterStatus => Some(PickerSubmitRoute::FilterStatus),
             Self::FilterPriority => Some(PickerSubmitRoute::FilterPriority),
-            Self::ViewProject => Some(PickerSubmitRoute::ViewProject),
+            Self::ScopeProject => Some(PickerSubmitRoute::ScopeProject),
             Self::DeleteProjectPicker => Some(PickerSubmitRoute::DeleteProjectPicker),
             Self::SwitchWorkspace => Some(PickerSubmitRoute::SwitchWorkspace),
             Self::ConflictField => Some(PickerSubmitRoute::ConflictField),
@@ -226,8 +220,7 @@ impl OverlayRoute {
         match self {
             Self::AddTaskTitleProject
             | Self::EditProject
-            | Self::FilterProject
-            | Self::ViewProject
+            | Self::ScopeProject
             | Self::DeleteProjectPicker => PickerMode::Filter,
             _ => PickerMode::Navigate,
         }
@@ -246,7 +239,7 @@ impl OverlayRoute {
 
 #[cfg(test)]
 impl OverlayRoute {
-    pub(crate) const ALL: [Self; 28] = [
+    pub(crate) const ALL: [Self; 26] = [
         Self::MessageOnly,
         Self::AddTaskTitle,
         Self::AddTaskDescription,
@@ -262,11 +255,9 @@ impl OverlayRoute {
         Self::EditProject,
         Self::EditPriority,
         Self::EditLabels,
-        Self::FilterProject,
         Self::FilterLabel,
-        Self::FilterStatus,
         Self::FilterPriority,
-        Self::ViewProject,
+        Self::ScopeProject,
         Self::DeleteProjectPicker,
         Self::DeleteProjectConfirm,
         Self::DeleteTaskConfirm,

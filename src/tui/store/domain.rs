@@ -5,7 +5,7 @@ use crate::operations::{
     create_label_operation, create_project_operation, delete_project_operation,
 };
 use crate::projects::inferred_project_key_for_add_in_workspace;
-use crate::tui::store::{MutationMessage, SidebarTarget};
+use crate::tui::store::{MutationMessage, TaskScope};
 use crate::undo::UndoCommand;
 
 use super::TuiStore;
@@ -39,12 +39,8 @@ impl TuiStore {
         let outcome = delete_project_operation(&mut conn, &self.active_workspace, project).await?;
         drop(conn);
 
-        if self.active_view == SidebarTarget::Project(outcome.project.key.clone()) {
-            self.active_view = SidebarTarget::All;
-            self.apply_active_view_filters();
-        }
-        if self.filters.project.as_deref() == Some(outcome.project.key.as_str()) {
-            self.filters.project = None;
+        if self.scope_project() == Some(outcome.project.key.as_str()) {
+            self.view_state.scope = TaskScope::Workspace;
         }
         let selected = self.refresh(None).await?;
         let mut message = format!("deleted project {}", outcome.project.key);

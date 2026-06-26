@@ -11,29 +11,34 @@ use crate::task_enrichment::load_task_enrichment;
 use crate::workspaces::active_workspace_id;
 
 use super::sorting::push_sort;
-use super::{SortDirection, TaskFilters, TaskListItem, TaskSort};
+use super::{SortDirection, TaskFilters, TaskListItem, TaskQueryMode, TaskSort};
 
 pub(crate) async fn list_task_items(
     conn: &mut SqliteConnection,
     filters: TaskFilters,
+    mode: TaskQueryMode,
     sort: TaskSort,
     direction: SortDirection,
 ) -> Result<Vec<TaskListItem>> {
     let workspace_id = active_workspace_id();
-    list_task_items_in_workspace(conn, &workspace_id, filters, sort, direction).await
+    list_task_items_in_workspace(conn, &workspace_id, filters, mode, sort, direction).await
 }
 
 pub(crate) async fn list_task_items_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &str,
     filters: TaskFilters,
+    mode: TaskQueryMode,
     sort: TaskSort,
     direction: SortDirection,
 ) -> Result<Vec<TaskListItem>> {
     if let Some(status) = filters.status.as_deref() {
         validate_choice("status", status, STATUSES)?;
     }
-    let hide_done = filters.hide_done && filters.status.is_none();
+    for status in &filters.statuses {
+        validate_choice("status", status, STATUSES)?;
+    }
+    let hide_done = filters.hide_done && filters.status.is_none() && filters.statuses.is_empty();
     if let Some(priority) = filters.priority.as_deref() {
         validate_choice("priority", priority, PRIORITIES)?;
     }
@@ -77,6 +82,15 @@ pub(crate) async fn list_task_items_in_workspace(
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("t.status = ");
         query.push_bind(status);
+    }
+    if !filters.statuses.is_empty() {
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push("t.status IN (");
+        let mut separated = query.separated(", ");
+        for status in filters.statuses {
+            separated.push_bind(status);
+        }
+        separated.push_unseparated(")");
     }
     if let Some(priority) = filters.priority {
         push_filter_prefix(&mut query, &mut filters_added);
@@ -140,11 +154,8 @@ pub(crate) async fn list_task_items_in_workspace(
             queue,
         });
     }
-    if sort == TaskSort::Queue {
+    if mode == TaskQueryMode::RankedQueue {
         items.sort_by(|a, b| queue_order((&a.task, a.queue), (&b.task, b.queue)));
-        if direction == SortDirection::Desc {
-            items.reverse();
-        }
     }
     Ok(items)
 }

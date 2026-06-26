@@ -1,14 +1,29 @@
 use anyhow::Result;
 
-use crate::query::TaskFilters;
-
-use super::{SidebarTarget, TuiStore};
+use super::{
+    SidebarEntryTarget, TaskFilterModifiers, TaskOrder, TaskScope, TaskScopeTarget, TaskView,
+    TuiStore,
+};
 
 impl TuiStore {
     pub(crate) fn sidebar_selection(&self) -> Option<usize> {
+        if let Some(index) = self.sidebar_entries.iter().position(|entry| {
+            matches!(
+                (&entry.target, &self.view_state.scope),
+                (
+                    Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(project))),
+                    TaskScope::Project(scope),
+                ) if project == scope
+            )
+        }) {
+            return Some(index);
+        }
         self.sidebar_entries
             .iter()
-            .position(|entry| entry.target.as_ref() == Some(&self.active_view))
+            .position(|entry| match &entry.target {
+                Some(SidebarEntryTarget::View(view)) => *view == self.view_state.view,
+                _ => false,
+            })
             .or(Some(1))
     }
 
@@ -19,90 +34,72 @@ impl TuiStore {
         else {
             return Ok(());
         };
-        self.show_view(target).await?;
+        match target {
+            SidebarEntryTarget::View(view) => {
+                self.show_view(view).await?;
+            }
+            SidebarEntryTarget::Scope(scope) => {
+                self.show_scope(scope).await?;
+            }
+        }
         Ok(())
     }
 
-    pub(crate) async fn show_view(&mut self, target: SidebarTarget) -> Result<Option<usize>> {
-        self.active_view = target;
-        self.apply_active_view_filters();
+    pub(crate) async fn show_view(&mut self, view: TaskView) -> Result<Option<usize>> {
+        self.view_state.view = view;
+        self.refresh(None).await
+    }
+
+    pub(crate) async fn show_scope(&mut self, target: TaskScopeTarget) -> Result<Option<usize>> {
+        self.view_state.scope = match target {
+            TaskScopeTarget::Workspace => TaskScope::Workspace,
+            TaskScopeTarget::Project(project) => TaskScope::Project(project),
+        };
         self.refresh(None).await
     }
 
     pub(crate) async fn clear_filters(&mut self) -> Result<Option<usize>> {
-        self.active_view = SidebarTarget::All;
-        self.filters = TaskFilters {
-            hide_done: true,
-            ..TaskFilters::default()
-        };
+        self.view_state.filter_modifiers = TaskFilterModifiers::default();
         self.refresh(None).await
-    }
-
-    async fn apply_attribute_filter(
-        &mut self,
-        setter: impl FnOnce(&mut TaskFilters),
-    ) -> Result<Option<usize>> {
-        self.active_view = SidebarTarget::All;
-        self.filters.include_deleted = false;
-        self.filters.conflicts_only = false;
-        setter(&mut self.filters);
-        self.refresh(None).await
-    }
-
-    pub(crate) async fn filter_project(&mut self, project: String) -> Result<Option<usize>> {
-        self.apply_attribute_filter(|filters| filters.project = Some(project))
-            .await
     }
 
     pub(crate) async fn filter_label(&mut self, label: String) -> Result<Option<usize>> {
-        self.apply_attribute_filter(|filters| filters.label = Some(label))
-            .await
-    }
-
-    pub(crate) async fn filter_status(&mut self, status: String) -> Result<Option<usize>> {
-        self.apply_attribute_filter(|filters| filters.status = Some(status))
-            .await
-    }
-
-    pub(crate) async fn filter_priority(&mut self, priority: String) -> Result<Option<usize>> {
-        self.apply_attribute_filter(|filters| filters.priority = Some(priority))
-            .await
-    }
-
-    pub(crate) async fn toggle_deleted_filter(&mut self) -> Result<Option<usize>> {
-        self.filters.include_deleted = !self.filters.include_deleted;
-        self.filters.conflicts_only = false;
+        self.view_state.filter_modifiers.label = Some(label);
         self.refresh(None).await
     }
 
-    pub(super) fn apply_active_view_filters(&mut self) {
-        let search = self.filters.search.clone();
-        self.filters = TaskFilters {
-            search,
-            ..TaskFilters::default()
-        };
-        match &self.active_view {
-            SidebarTarget::All => self.filters.hide_done = true,
-            SidebarTarget::Inbox => self.filters.status = Some("inbox".to_string()),
-            SidebarTarget::Active => self.filters.status = Some("active".to_string()),
-            SidebarTarget::Backlog => self.filters.status = Some("backlog".to_string()),
-            SidebarTarget::Todo => self.filters.status = Some("todo".to_string()),
-            SidebarTarget::Done => self.filters.status = Some("done".to_string()),
-            SidebarTarget::Conflicts => self.filters.conflicts_only = true,
-            SidebarTarget::Project(project) => {
-                self.filters.project = Some(project.clone());
-                self.filters.hide_done = true;
-            }
-        }
+    pub(crate) async fn filter_priority(&mut self, priority: String) -> Result<Option<usize>> {
+        self.view_state.filter_modifiers.priority = Some(priority);
+        self.refresh(None).await
+    }
+
+    pub(crate) async fn toggle_deleted_filter(&mut self) -> Result<Option<usize>> {
+        self.view_state.filter_modifiers.include_deleted =
+            !self.view_state.filter_modifiers.include_deleted;
+        self.refresh(None).await
     }
 
     pub(crate) async fn accept_search(&mut self, input: &str) -> Result<Option<usize>> {
-        self.filters.search = if input.trim().is_empty() {
+        self.view_state.filter_modifiers.search = if input.trim().is_empty() {
             None
         } else {
             Some(input.trim().to_string())
         };
         self.refresh(None).await
+    }
+
+    pub(crate) fn set_view_order(&mut self, order: TaskOrder) {
+        if self.view_state.view == TaskView::Queue {
+            self.view_state.view = TaskView::Open;
+        }
+        self.view_state.order = order;
+    }
+
+    pub(crate) fn reverse_view_order(&mut self) {
+        if self.view_state.view == TaskView::Queue {
+            self.view_state.view = TaskView::Open;
+        }
+        self.view_state.direction = self.view_state.direction.toggled();
     }
 
     pub(super) fn restored_task_selection(&self, selected_id: Option<&str>) -> Option<usize> {

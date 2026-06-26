@@ -137,7 +137,7 @@ pub(crate) fn next_selectable_sidebar(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::store::SidebarTarget;
+    use crate::tui::store::{SidebarEntryTarget, TaskView};
 
     fn section(label: &str) -> SidebarEntry {
         SidebarEntry {
@@ -152,7 +152,7 @@ mod tests {
         SidebarEntry {
             label: label.to_string(),
             count: 0,
-            target: Some(SidebarTarget::All),
+            target: Some(SidebarEntryTarget::View(TaskView::Queue)),
             section: false,
         }
     }

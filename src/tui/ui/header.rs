@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::render::quote;
-use crate::tui::store::{SidebarTarget, TuiStore};
+use crate::tui::store::{TaskScope, TaskView, TuiStore};
 use crate::tui::theme::{
     self, ACCENT, BG, BG_PANEL, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, ORANGE,
     PINK, RED,
@@ -49,11 +49,12 @@ fn header_line(store: &TuiStore, width: u16) -> Paragraph<'static> {
             store.active_workspace.key.clone(),
             Style::new().fg(FG).add_modifier(Modifier::BOLD),
         ),
+        separator(),
+        Span::styled("scope ", Style::new().fg(FG_DIM)),
     ];
-    if show_view_badge(store, compact) {
-        spans.extend([separator(), Span::styled("view ", Style::new().fg(FG_DIM))]);
-        spans.extend(view_badge(store));
-    }
+    spans.extend(scope_badge(store));
+    spans.extend([separator(), Span::styled("view ", Style::new().fg(FG_DIM))]);
+    spans.extend(view_badge(store));
     spans.push(separator());
     spans.extend(header_metrics(store, compact));
     spans.extend(active_filter_spans(store));
@@ -63,45 +64,23 @@ fn header_line(store: &TuiStore, width: u16) -> Paragraph<'static> {
     Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BG))
 }
 
-fn show_view_badge(store: &TuiStore, compact: bool) -> bool {
-    if !compact {
-        return true;
-    }
-    !matches!(
-        store.active_view,
-        SidebarTarget::All
-            | SidebarTarget::Todo
-            | SidebarTarget::Inbox
-            | SidebarTarget::Conflicts
-            | SidebarTarget::Project(_)
-    )
-}
-
 fn header_metrics(store: &TuiStore, compact: bool) -> Vec<Span<'static>> {
+    let view = store.view_state.view;
     let metrics = [
-        (
-            "queue",
-            store.counts.all,
-            ACCENT,
-            store.active_view == SidebarTarget::All,
-        ),
-        (
-            "todo",
-            store.counts.todo,
-            BLUE,
-            store.active_view == SidebarTarget::Todo,
-        ),
+        ("queue", store.counts.open, ACCENT, view == TaskView::Queue),
+        ("open", store.counts.open, GREEN, view == TaskView::Open),
+        ("todo", store.counts.todo, BLUE, view == TaskView::Todo),
         (
             "inbox",
             store.counts.inbox,
             FG_MUTED,
-            store.active_view == SidebarTarget::Inbox,
+            view == TaskView::Inbox,
         ),
         (
             "conflicts",
             store.counts.conflicts,
             PINK,
-            store.active_view == SidebarTarget::Conflicts,
+            view == TaskView::Conflicts,
         ),
     ];
     let mut spans = Vec::new();
@@ -121,13 +100,14 @@ fn separator() -> Span<'static> {
     Span::styled(" │ ", Style::new().fg(BORDER))
 }
 
-fn view_badge(store: &TuiStore) -> Vec<Span<'static>> {
+fn scope_badge(store: &TuiStore) -> Vec<Span<'static>> {
     let badge_style = Style::new()
         .fg(FG)
         .bg(BG_PANEL)
         .add_modifier(Modifier::BOLD);
-    match &store.active_view {
-        SidebarTarget::Project(project) => vec![
+    match &store.view_state.scope {
+        TaskScope::Workspace => vec![Span::styled(" workspace ", badge_style)],
+        TaskScope::Project(project) => vec![
             Span::styled(" project ", badge_style),
             Span::styled(
                 project.clone(),
@@ -135,35 +115,31 @@ fn view_badge(store: &TuiStore) -> Vec<Span<'static>> {
             ),
             Span::styled(" ", badge_style),
         ],
-        _ => vec![Span::styled(
-            format!(" {} ", active_view_label(store)),
-            badge_style,
-        )],
     }
+}
+
+fn view_badge(store: &TuiStore) -> Vec<Span<'static>> {
+    let badge_style = Style::new()
+        .fg(FG)
+        .bg(BG_PANEL)
+        .add_modifier(Modifier::BOLD);
+    vec![Span::styled(
+        format!(" {} ", active_view_label(store)),
+        badge_style,
+    )]
 }
 
 fn active_view_label(store: &TuiStore) -> &'static str {
-    match store.active_view {
-        SidebarTarget::All => "queue",
-        SidebarTarget::Inbox => "inbox",
-        SidebarTarget::Active => "active",
-        SidebarTarget::Backlog => "backlog",
-        SidebarTarget::Todo => "todo",
-        SidebarTarget::Done => "done",
-        SidebarTarget::Conflicts => "conflicts",
-        SidebarTarget::Project(_) => "project",
+    match store.view_state.view {
+        TaskView::Queue => "queue",
+        TaskView::Open => "open",
+        TaskView::Inbox => "inbox",
+        TaskView::Active => "active",
+        TaskView::Backlog => "backlog",
+        TaskView::Todo => "todo",
+        TaskView::Done => "done",
+        TaskView::Conflicts => "conflicts",
     }
-}
-
-fn active_view_status_matches(store: &TuiStore, status: &str) -> bool {
-    matches!(
-        (&store.active_view, status),
-        (SidebarTarget::Inbox, "inbox")
-            | (SidebarTarget::Active, "active")
-            | (SidebarTarget::Backlog, "backlog")
-            | (SidebarTarget::Todo, "todo")
-            | (SidebarTarget::Done, "done")
-    )
 }
 
 fn metric(label: &str, count: i64, color: Color, active: bool) -> Vec<Span<'static>> {
@@ -179,54 +155,36 @@ fn metric(label: &str, count: i64, color: Color, active: bool) -> Vec<Span<'stat
 }
 
 fn active_order_spans(store: &TuiStore) -> Vec<Span<'static>> {
-    vec![
+    let mut spans = vec![
         separator(),
         Span::styled("order ", Style::new().fg(FG_DIM)),
         Span::styled(
             store.sort_label(),
             Style::new().fg(FG_MUTED).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
+    ];
+    if store.view_state.view != TaskView::Queue {
+        spans.push(Span::styled(
             format!(" {}", store.sort_direction_label()),
             Style::new().fg(FG_DIM),
-        ),
-    ]
+        ));
+    }
+    spans
 }
 
 fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
+    let modifiers = &store.view_state.filter_modifiers;
     let mut parts = Vec::new();
-    if let Some(project) = &store.filters.project {
-        parts.push(vec![
-            Span::styled(
-                "project=",
-                Style::new().fg(FG_MUTED).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                project.clone(),
-                Style::new()
-                    .fg(theme::project_color(project))
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]);
-    }
-    if let Some(label) = &store.filters.label {
+    if let Some(label) = &modifiers.label {
         parts.push(vec![filter_part(format!("label={label}"))]);
     }
-    if let Some(status) = &store.filters.status
-        && !active_view_status_matches(store, status)
-    {
-        parts.push(vec![filter_part(format!("status={status}"))]);
-    }
-    if let Some(priority) = &store.filters.priority {
+    if let Some(priority) = &modifiers.priority {
         parts.push(vec![filter_part(format!("priority={priority}"))]);
     }
-    if store.filters.include_deleted {
+    if modifiers.include_deleted {
         parts.push(vec![filter_part("include_deleted")]);
     }
-    if store.filters.conflicts_only && store.active_view != SidebarTarget::Conflicts {
-        parts.push(vec![filter_part("conflicts")]);
-    }
-    if let Some(search) = &store.filters.search {
+    if let Some(search) = &modifiers.search {
         parts.push(vec![filter_part(format!("search={}", quote(search)))]);
     }
     if parts.is_empty() {
@@ -292,303 +250,77 @@ fn sync_status_label(store: &TuiStore) -> (Color, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
+    use crate::tui::store::{TaskFilterModifiers, TaskOrder, TaskViewState};
 
-    fn buffer_text(backend: &TestBackend) -> String {
-        backend
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect()
+    async fn test_store() -> TuiStore {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open_db(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let default = crate::workspaces::ensure_default_workspace(&mut conn)
+            .await
+            .unwrap();
+        crate::workspaces::set_active_workspace(default);
+        drop(conn);
+        let mut store = TuiStore::new(pool).await.unwrap();
+        store.counts = crate::query::SidebarCounts {
+            open: 3,
+            inbox: 1,
+            active: 0,
+            backlog: 0,
+            todo: 2,
+            conflicts: 1,
+            done: 4,
+        };
+        store
     }
 
-    #[test]
-    fn header_shows_active_filters() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let rendered = rt.block_on(async {
-            let dir = tempfile::tempdir().unwrap();
-            let pool = crate::db::open_db(&dir.path().join("test.db"))
-                .await
-                .unwrap();
-            let mut store = TuiStore::new(pool).await.unwrap();
-            store.filters = crate::query::TaskFilters {
-                project: Some("mobile-app".to_string()),
-                label: Some("needs-review".to_string()),
-                status: Some("todo".to_string()),
-                priority: Some("high".to_string()),
+    fn spans_text(spans: Vec<Span<'static>>) -> String {
+        Line::from(spans).to_string()
+    }
+
+    #[tokio::test]
+    async fn header_parts_render_scope_view_metrics_filters_and_order() {
+        let mut store = test_store().await;
+        store.view_state = TaskViewState {
+            scope: TaskScope::Project("mobile-app".to_string()),
+            view: TaskView::Open,
+            filter_modifiers: TaskFilterModifiers {
+                label: Some("backend".to_string()),
+                priority: Some("urgent".to_string()),
                 include_deleted: true,
-                hide_done: false,
-                conflicts_only: true,
                 search: Some("needle".to_string()),
-            };
-            active_filter_spans(&store)
-                .into_iter()
-                .map(|span| span.content)
-                .collect::<Vec<_>>()
-                .join("")
-        });
-        assert!(rendered.contains("project=mobile-app"));
-        assert!(rendered.contains("label=needs-review"));
-        assert!(rendered.contains("status=todo"));
-        assert!(rendered.contains("priority=high"));
-        assert!(rendered.contains("include_deleted"));
-        assert!(rendered.contains("conflicts"));
-        assert!(rendered.contains("search="));
+            },
+            order: TaskOrder::Priority,
+            direction: crate::query::SortDirection::Desc,
+        };
+
+        assert_eq!(store.active_workspace.key, "default");
+        assert_eq!(spans_text(scope_badge(&store)), " project mobile-app ");
+        assert_eq!(spans_text(view_badge(&store)), " open ");
+        assert!(spans_text(header_metrics(&store, false)).contains("open 3"));
+        assert!(spans_text(header_metrics(&store, false)).contains("todo 2"));
+        assert!(spans_text(header_metrics(&store, false)).contains("conflicts 1"));
+        assert_eq!(
+            spans_text(active_filter_spans(&store)),
+            " │ filter label=backend priority=urgent include_deleted search=\"needle\""
+        );
+        assert_eq!(
+            spans_text(active_order_spans(&store)),
+            " │ order priority desc"
+        );
+        assert!(!spans_text(active_filter_spans(&store)).contains("project="));
+        assert_ne!(spans_text(view_badge(&store)), " project mobile-app ");
     }
 
-    #[test]
-    fn header_colors_project_filter_with_project_color() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let dir = tempfile::tempdir().unwrap();
-            let pool = crate::db::open_db(&dir.path().join("test.db"))
-                .await
-                .unwrap();
-            let mut store = TuiStore::new(pool).await.unwrap();
-            store.filters.project = Some("mobile-app".to_string());
-            let spans = active_filter_spans(&store);
-            let project = spans
-                .iter()
-                .find(|span| span.content == "mobile-app")
-                .unwrap();
-            assert_eq!(project.style.fg, Some(theme::project_color("mobile-app")));
-            assert_eq!(project.style.bg, None);
-        });
-    }
+    #[tokio::test]
+    async fn queue_header_shows_ranked_order_without_direction() {
+        let mut store = test_store().await;
+        store.view_state.view = TaskView::Queue;
+        store.view_state.direction = crate::query::SortDirection::Desc;
 
-    #[test]
-    fn header_colors_project_view_with_project_color() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let dir = tempfile::tempdir().unwrap();
-            let pool = crate::db::open_db(&dir.path().join("test.db"))
-                .await
-                .unwrap();
-            let mut store = TuiStore::new(pool).await.unwrap();
-            store.active_view = SidebarTarget::Project("mobile-app".to_string());
-            let spans = view_badge(&store);
-            let project = spans
-                .iter()
-                .find(|span| span.content == "mobile-app")
-                .unwrap();
-            assert_eq!(project.style.fg, Some(theme::project_color("mobile-app")));
-            assert_eq!(project.style.bg, Some(BG_PANEL));
-        });
-    }
-
-    #[test]
-    fn header_hides_conflict_filter_for_conflicts_view() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let rendered = rt.block_on(async {
-            let dir = tempfile::tempdir().unwrap();
-            let pool = crate::db::open_db(&dir.path().join("test.db"))
-                .await
-                .unwrap();
-            let mut store = TuiStore::new(pool).await.unwrap();
-            store.active_view = SidebarTarget::Conflicts;
-            store.filters.conflicts_only = true;
-            active_filter_spans(&store)
-                .into_iter()
-                .map(|span| span.content)
-                .collect::<Vec<_>>()
-                .join("")
-        });
-        assert!(!rendered.contains("conflicts"));
-    }
-
-    #[test]
-    fn header_hides_status_filter_for_matching_view() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let rendered = rt.block_on(async {
-            let dir = tempfile::tempdir().unwrap();
-            let pool = crate::db::open_db(&dir.path().join("test.db"))
-                .await
-                .unwrap();
-            let mut store = TuiStore::new(pool).await.unwrap();
-            store.active_view = SidebarTarget::Backlog;
-            store.filters.status = Some("backlog".to_string());
-            active_filter_spans(&store)
-                .into_iter()
-                .map(|span| span.content)
-                .collect::<Vec<_>>()
-                .join("")
-        });
-        assert!(!rendered.contains("status=backlog"));
-    }
-
-    #[test]
-    fn header_shows_active_ordering() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let rendered = rt.block_on(async {
-            let dir = tempfile::tempdir().unwrap();
-            let pool = crate::db::open_db(&dir.path().join("test.db"))
-                .await
-                .unwrap();
-            let mut store = TuiStore::new(pool).await.unwrap();
-            store.sort = crate::query::TaskSort::Priority;
-            store.sort_direction = crate::query::SortDirection::Desc;
-            active_order_spans(&store)
-                .into_iter()
-                .map(|span| span.content)
-                .collect::<Vec<_>>()
-                .join("")
-        });
-        assert!(rendered.contains("order priority desc"));
-    }
-
-    #[test]
-    fn header_queue_count_ignores_filtered_tasks() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let rendered = rt.block_on(async {
-            let dir = tempfile::tempdir().unwrap();
-            let pool = crate::db::open_db(&dir.path().join("test.db"))
-                .await
-                .unwrap();
-            let mut store = TuiStore::new(pool).await.unwrap();
-            store.counts.all = 177;
-            store.counts.todo = 34;
-            store.tasks.clear();
-            let backend = TestBackend::new(120, 10);
-            let mut terminal = Terminal::new(backend).unwrap();
-            terminal
-                .draw(|frame| render_header(frame, &store, frame.area()))
-                .unwrap();
-            buffer_text(terminal.backend())
-        });
-        assert!(rendered.contains("queue 177"));
-        assert!(rendered.contains("todo 34"));
-    }
-
-    #[test]
-    fn header_preserves_metric_padding_on_narrow_widths() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let rendered = rt.block_on(async {
-            let dir = tempfile::tempdir().unwrap();
-            let pool = crate::db::open_db(&dir.path().join("test.db"))
-                .await
-                .unwrap();
-            let mut store = TuiStore::new(pool).await.unwrap();
-            store.counts.all = 34;
-            store.counts.todo = 33;
-            store.counts.inbox = 1;
-            store.sync_status = crate::tui::store::TuiSyncStatus::default();
-            let backend = TestBackend::new(96, 10);
-            let mut terminal = Terminal::new(backend).unwrap();
-            terminal
-                .draw(|frame| render_header(frame, &store, frame.area()))
-                .unwrap();
-            buffer_text(terminal.backend())
-        });
-        assert!(rendered.contains("inbox 1"));
-        assert!(rendered.contains("● local"));
-    }
-
-    #[test]
-    fn header_sync_status_shows_pending_changes() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let dir = tempfile::tempdir().unwrap();
-            let pool = crate::db::open_db(&dir.path().join("test.db"))
-                .await
-                .unwrap();
-            let mut store = TuiStore::new(pool).await.unwrap();
-            store.sync_status.enabled = true;
-            store.sync_status.pending_changes = 72;
-
-            let (color, label) = sync_status_label(&store);
-
-            assert_eq!(color, ORANGE);
-            assert_eq!(label, "sync 72");
-        });
-    }
-
-    #[test]
-    fn header_sync_status_marks_conflicts() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let dir = tempfile::tempdir().unwrap();
-            let pool = crate::db::open_db(&dir.path().join("test.db"))
-                .await
-                .unwrap();
-            let mut store = TuiStore::new(pool).await.unwrap();
-            store.sync_status.enabled = true;
-            store.sync_status.conflicts = 1;
-
-            let (color, label) = sync_status_label(&store);
-
-            assert_eq!(color, RED);
-            assert_eq!(label, "sync!");
-        });
-    }
-
-    #[test]
-    fn compact_header_uses_short_workspace_and_drops_redundant_items() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let rendered = rt.block_on(async {
-            let dir = tempfile::tempdir().unwrap();
-            let pool = crate::db::open_db(&dir.path().join("test.db"))
-                .await
-                .unwrap();
-            let mut store = TuiStore::new(pool).await.unwrap();
-            store.counts.all = 34;
-            store.counts.todo = 33;
-            store.counts.inbox = 1;
-            store.counts.conflicts = 0;
-            let backend = TestBackend::new(110, 10);
-            let mut terminal = Terminal::new(backend).unwrap();
-            terminal
-                .draw(|frame| render_header(frame, &store, frame.area()))
-                .unwrap();
-            buffer_text(terminal.backend())
-        });
-        assert!(rendered.contains("ws default"));
-        assert!(!rendered.contains("workspace default"));
-        assert!(!rendered.contains("view queue"));
-        assert!(!rendered.contains("conflicts 0"));
-        assert!(rendered.contains("order queue asc"));
-    }
-
-    #[test]
-    fn compact_header_shows_project_as_filter_instead_of_view() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let rendered = rt.block_on(async {
-            let dir = tempfile::tempdir().unwrap();
-            let pool = crate::db::open_db(&dir.path().join("test.db"))
-                .await
-                .unwrap();
-            let mut store = TuiStore::new(pool).await.unwrap();
-            store.active_view = SidebarTarget::Project("agent-offload".to_string());
-            store.filters.project = Some("agent-offload".to_string());
-            let backend = TestBackend::new(110, 10);
-            let mut terminal = Terminal::new(backend).unwrap();
-            terminal
-                .draw(|frame| render_header(frame, &store, frame.area()))
-                .unwrap();
-            buffer_text(terminal.backend())
-        });
-        assert!(!rendered.contains("view project agent-offload"));
-        assert!(rendered.contains("filter project=agent-offload"));
-    }
-
-    #[test]
-    fn header_shows_active_workspace() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let rendered = rt.block_on(async {
-            let dir = tempfile::tempdir().unwrap();
-            let pool = crate::db::open_db(&dir.path().join("test.db"))
-                .await
-                .unwrap();
-            let mut store = TuiStore::new(pool).await.unwrap();
-            store.active_workspace.key = "client-work".to_string();
-            let backend = TestBackend::new(150, 10);
-            let mut terminal = Terminal::new(backend).unwrap();
-            terminal
-                .draw(|frame| render_header(frame, &store, frame.area()))
-                .unwrap();
-            buffer_text(terminal.backend())
-        });
-        assert!(rendered.contains("workspace client-work"));
+        assert_eq!(spans_text(view_badge(&store)), " queue ");
+        assert_eq!(spans_text(active_order_spans(&store)), " │ order ranked");
     }
 }

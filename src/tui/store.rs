@@ -22,8 +22,9 @@ use sqlx::SqlitePool;
 
 pub(crate) use pickers::deleted_picker_items;
 pub(crate) use types::{
-    ConflictTarget, MutationMessage, SidebarEntry, SidebarTarget, SyncStatusCheck,
-    TuiDatabaseStats, TuiSyncStatus,
+    ConflictTarget, MutationMessage, SidebarEntry, SidebarEntryTarget, SyncStatusCheck,
+    TaskFilterModifiers, TaskListRenderMode, TaskOrder, TaskScope, TaskScopeTarget, TaskView,
+    TaskViewState, TuiDatabaseStats, TuiSyncStatus,
 };
 #[cfg(test)]
 pub(crate) use types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts};
@@ -33,8 +34,8 @@ use crate::projects::{
     inferred_existing_project_key_in_workspace, resolve_existing_project_in_workspace,
 };
 use crate::query::{
-    ProjectListItem, SidebarCounts, SortDirection, TaskFilters, TaskListItem, TaskSort,
-    list_project_items_in_workspace, list_task_items_in_workspace, sidebar_counts_in_workspace,
+    ProjectListItem, SidebarCounts, TaskListItem, list_project_items_in_workspace,
+    list_task_items_in_workspace, sidebar_counts_for_scope_in_workspace,
 };
 use crate::workspaces::{Workspace, active_workspace, list_workspaces, set_active_workspace};
 
@@ -47,13 +48,16 @@ pub(crate) struct TuiStore {
     pub(crate) active_workspace: Workspace,
     pub(crate) counts: SidebarCounts,
     pub(crate) sidebar_entries: Vec<SidebarEntry>,
-    pub(crate) active_view: SidebarTarget,
-    pub(crate) filters: TaskFilters,
-    pub(crate) sort: TaskSort,
-    pub(crate) sort_direction: SortDirection,
+    pub(crate) view_state: TaskViewState,
     pub(crate) sync_status: TuiSyncStatus,
     pub(crate) db_stats: TuiDatabaseStats,
     pub(crate) last_refresh: Instant,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ScopeRefreshResult {
+    pub(crate) selected: Option<usize>,
+    pub(crate) fallback_scope: Option<String>,
 }
 
 impl TuiStore {
@@ -83,9 +87,10 @@ impl TuiStore {
         pool: SqlitePool,
         initial_project: Option<String>,
     ) -> Result<Self> {
-        let active_view = initial_project
-            .map(SidebarTarget::Project)
-            .unwrap_or(SidebarTarget::All);
+        let mut view_state = TaskViewState::default();
+        if let Some(project) = initial_project {
+            view_state.scope = TaskScope::Project(project);
+        }
         let mut store = Self {
             pool,
             tasks: Vec::new(),
@@ -95,15 +100,11 @@ impl TuiStore {
             active_workspace: active_workspace(),
             counts: SidebarCounts::default(),
             sidebar_entries: Vec::new(),
-            active_view,
-            filters: TaskFilters::default(),
-            sort: TaskSort::Queue,
-            sort_direction: SortDirection::Asc,
+            view_state,
             sync_status: TuiSyncStatus::default(),
             db_stats: TuiDatabaseStats::default(),
             last_refresh: Instant::now(),
         };
-        store.apply_active_view_filters();
         {
             let mut conn = store.pool.acquire().await?;
             crate::undo::clear_pending_tui_undo_entries(&mut conn).await?;
@@ -121,23 +122,61 @@ impl TuiStore {
     }
 
     pub(crate) async fn refresh(&mut self, selected_id: Option<&str>) -> Result<Option<usize>> {
+        Ok(self
+            .refresh_with_scope_fallback(selected_id)
+            .await?
+            .selected)
+    }
+
+    pub(crate) async fn refresh_with_scope_fallback(
+        &mut self,
+        selected_id: Option<&str>,
+    ) -> Result<ScopeRefreshResult> {
         let mut conn = self.pool.acquire().await?;
-        let workspace_id = self.active_workspace.id.as_str();
+        let workspace_id = self.active_workspace.id.clone();
         self.workspaces = list_workspaces(&mut conn).await?;
-        self.projects = list_project_items_in_workspace(&mut conn, workspace_id).await?;
-        self.labels = list_labels_in_workspace(&mut conn, workspace_id, None).await?;
-        self.counts = sidebar_counts_in_workspace(&mut conn, workspace_id).await?;
+        self.projects = list_project_items_in_workspace(&mut conn, workspace_id.as_str()).await?;
+        self.labels = list_labels_in_workspace(&mut conn, workspace_id.as_str(), None).await?;
+        let fallback_scope = self.ensure_valid_scope();
+        let project_scope = self.scope_project();
+        self.counts =
+            sidebar_counts_for_scope_in_workspace(&mut conn, workspace_id.as_str(), project_scope)
+                .await?;
+        let filters = self.view_state.filters();
         self.tasks = list_task_items_in_workspace(
             &mut conn,
-            workspace_id,
-            self.filters.clone(),
-            self.sort,
-            self.sort_direction,
+            workspace_id.as_str(),
+            filters,
+            self.view_state.query_mode(),
+            self.view_state.sort(),
+            self.view_state.direction,
         )
         .await?;
         self.sync_status = self.load_sync_status(&mut conn).await?;
         self.rebuild_sidebar();
         self.last_refresh = Instant::now();
-        Ok(self.restored_task_selection(selected_id))
+        Ok(ScopeRefreshResult {
+            selected: self.restored_task_selection(selected_id),
+            fallback_scope,
+        })
+    }
+
+    pub(crate) fn scope_project(&self) -> Option<&str> {
+        match &self.view_state.scope {
+            TaskScope::Workspace => None,
+            TaskScope::Project(project) => Some(project.as_str()),
+        }
+    }
+
+    fn ensure_valid_scope(&mut self) -> Option<String> {
+        let TaskScope::Project(project) = &self.view_state.scope else {
+            return None;
+        };
+        if self.projects.iter().any(|item| item.key == *project) {
+            return None;
+        }
+        let project = project.clone();
+        self.view_state.scope = TaskScope::Workspace;
+        Some(project)
     }
 }

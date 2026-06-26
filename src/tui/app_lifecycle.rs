@@ -112,10 +112,15 @@ impl App {
             .store
             .selected_task(self.widgets.table.selected())
             .map(|item| item.task.id.clone());
-        self.widgets
-            .table
-            .select(self.store.refresh(selected_id.as_deref()).await?);
+        let result = self
+            .store
+            .refresh_with_scope_fallback(selected_id.as_deref())
+            .await?;
+        self.widgets.table.select(result.selected);
         self.widgets.sidebar.select(self.store.sidebar_selection());
+        if let Some(project) = result.fallback_scope {
+            self.set_warning(format!("project scope {project} is no longer available"));
+        }
         Ok(())
     }
 

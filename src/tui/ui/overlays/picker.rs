@@ -131,7 +131,7 @@ fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'
 
 pub(in crate::tui::ui) fn project_picker_submit_label(route: OverlayRoute) -> Option<&'static str> {
     match route {
-        OverlayRoute::ViewProject => Some("open"),
+        OverlayRoute::ScopeProject => Some("scope"),
         OverlayRoute::EditProject | OverlayRoute::AddTaskTitleProject => Some("submit"),
         OverlayRoute::DeleteProjectPicker => Some("delete"),
         _ => None,

@@ -872,8 +872,8 @@ mod picker_overlays {
     #[test]
     fn project_picker_uses_structured_columns() {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-            route: OverlayRoute::ViewProject,
-            title: "Go: project".to_string(),
+            route: OverlayRoute::ScopeProject,
+            title: "Scope: project".to_string(),
             filter: "claude".to_string(),
             filter_cursor: 6,
             items: vec![PickerItem {
@@ -890,7 +890,7 @@ mod picker_overlays {
         assert!(rendered.contains("PROJECT"));
         assert!(rendered.contains("CC"));
         assert!(rendered.contains("claude-code"));
-        assert!(rendered.contains("Enter open"));
+        assert!(rendered.contains("Enter scope"));
     }
 
     #[test]
@@ -1190,9 +1190,9 @@ mod route_specific_rendering {
     fn project_picker_routes_control_submit_hints_with_changed_titles() {
         for (route, title, hint) in [
             (
-                OverlayRoute::ViewProject,
-                "Changed view title",
-                "Enter open",
+                OverlayRoute::ScopeProject,
+                "Changed scope title",
+                "Enter scope",
             ),
             (
                 OverlayRoute::EditProject,

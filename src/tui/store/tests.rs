@@ -2,6 +2,7 @@ use super::*;
 
 use crate::choices::PRIORITIES;
 use crate::operations::TaskDraft;
+use crate::query::SortDirection;
 
 async fn test_store() -> TuiStore {
     let dir = tempfile::tempdir().unwrap();
@@ -144,7 +145,10 @@ mod domain_mutations_and_pickers {
                 .any(|project| project.key == "mobile-app")
         );
         assert!(!store.sidebar_entries.iter().any(|entry| {
-            entry.target == Some(SidebarTarget::Project("mobile-app".to_string()))
+            entry.target
+                == Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(
+                    "mobile-app".to_string(),
+                )))
         }));
     }
 
@@ -313,7 +317,7 @@ mod task_creation_and_updates {
     #[tokio::test]
     async fn create_task_reports_hidden_by_filters() {
         let mut store = test_store().await;
-        store.filters.status = Some("todo".to_string());
+        store.show_view(TaskView::Todo).await.unwrap();
         let (message, selected) = store
             .create_task(
                 TaskDraft {
@@ -356,7 +360,7 @@ mod task_creation_and_updates {
             .update_status(Some(first_selected), "todo")
             .await
             .unwrap();
-        store.filters.status = Some("todo".to_string());
+        store.show_view(TaskView::Todo).await.unwrap();
         let current_index = store.refresh(Some(&task_id)).await.unwrap();
 
         let (_, selected) = store
@@ -413,7 +417,7 @@ mod task_creation_and_updates {
         let selected = selected.unwrap();
         let task_id = store.tasks[selected].task.id.clone();
 
-        store.show_view(SidebarTarget::Todo).await.unwrap();
+        store.show_view(TaskView::Todo).await.unwrap();
         let selected = store
             .tasks
             .iter()
@@ -831,27 +835,65 @@ mod views_filters_and_sort {
     use super::*;
 
     #[tokio::test]
-    async fn clear_filters_returns_to_all_view() {
+    async fn sidebar_selection_prefers_project_scope_when_scoped() {
         let mut store = test_store().await;
-        store.filters.status = Some("todo".to_string());
-        store.filters.search = Some("needle".to_string());
-        store.active_view = SidebarTarget::Todo;
+        store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        store
+            .show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
+            .await
+            .unwrap();
 
-        store.clear_filters().await.unwrap();
+        let selected = store.sidebar_selection().unwrap();
 
-        assert_eq!(store.active_view, SidebarTarget::All);
-        assert!(store.filters.status.is_none());
-        assert!(store.filters.search.is_none());
+        assert_eq!(
+            store.sidebar_entries[selected].target,
+            Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(
+                "mobile-app".to_string()
+            )))
+        );
     }
 
     #[tokio::test]
-    async fn show_conflicts_view_sets_conflicts_filter() {
+    async fn clear_filters_preserves_view_scope_and_order() {
+        let mut store = test_store().await;
+        store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        store
+            .show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
+            .await
+            .unwrap();
+        store.show_view(TaskView::Todo).await.unwrap();
+        store.view_state.order = TaskOrder::Priority;
+        store.view_state.direction = SortDirection::Desc;
+        store.view_state.filter_modifiers.label = Some("backend".to_string());
+        store.view_state.filter_modifiers.search = Some("needle".to_string());
+
+        store.clear_filters().await.unwrap();
+
+        assert_eq!(
+            store.view_state.scope,
+            TaskScope::Project("mobile-app".to_string())
+        );
+        assert_eq!(store.view_state.view, TaskView::Todo);
+        assert_eq!(store.view_state.order, TaskOrder::Priority);
+        assert_eq!(store.view_state.direction, SortDirection::Desc);
+        assert!(store.view_state.filter_modifiers.label.is_none());
+        assert!(store.view_state.filter_modifiers.search.is_none());
+    }
+
+    #[tokio::test]
+    async fn show_conflicts_view_sets_conflicts_view() {
         let mut store = test_store().await;
 
-        store.show_view(SidebarTarget::Conflicts).await.unwrap();
+        store.show_view(TaskView::Conflicts).await.unwrap();
 
-        assert_eq!(store.active_view, SidebarTarget::Conflicts);
-        assert!(store.filters.conflicts_only);
+        assert_eq!(store.view_state.view, TaskView::Conflicts);
+        assert!(store.view_state.filters().conflicts_only);
     }
 
     #[tokio::test]
@@ -873,20 +915,17 @@ mod views_filters_and_sort {
             .unwrap();
         store.update_status(selected, "done").await.unwrap();
 
-        store.show_view(SidebarTarget::All).await.unwrap();
+        store.show_view(TaskView::Queue).await.unwrap();
 
         assert!(store.tasks.iter().all(|item| item.task.status != "done"));
         assert_eq!(store.counts.done, 1);
-        assert!(
-            store
-                .sidebar_entries
-                .iter()
-                .any(|entry| entry.target == Some(SidebarTarget::Done) && entry.count == 1)
-        );
+        assert!(store.sidebar_entries.iter().any(|entry| {
+            entry.target == Some(SidebarEntryTarget::View(TaskView::Done)) && entry.count == 1
+        }));
     }
 
     #[tokio::test]
-    async fn project_view_hides_done_and_canceled_tasks() {
+    async fn project_scope_hides_done_and_canceled_tasks_in_open_view() {
         let mut store = test_store().await;
         store
             .create_project("Mobile App".to_string())
@@ -916,12 +955,14 @@ mod views_filters_and_sort {
         }
 
         store
-            .show_view(SidebarTarget::Project("mobile-app".to_string()))
+            .show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
             .await
             .unwrap();
+        store.show_view(TaskView::Open).await.unwrap();
 
-        assert_eq!(store.filters.project.as_deref(), Some("mobile-app"));
-        assert!(store.filters.hide_done);
+        let filters = store.view_state.filters();
+        assert_eq!(filters.project.as_deref(), Some("mobile-app"));
+        assert!(filters.hide_done);
         assert_eq!(
             store
                 .tasks
@@ -933,7 +974,7 @@ mod views_filters_and_sort {
     }
 
     #[tokio::test]
-    async fn status_filter_preserves_project_scope() {
+    async fn done_view_preserves_project_scope() {
         let mut store = test_store().await;
         store
             .create_project("Mobile App".to_string())
@@ -959,14 +1000,16 @@ mod views_filters_and_sort {
         }
 
         store
-            .show_view(SidebarTarget::Project("mobile-app".to_string()))
+            .show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
             .await
             .unwrap();
-        store.filter_status("done".to_string()).await.unwrap();
+        store.show_view(TaskView::Done).await.unwrap();
 
-        assert_eq!(store.active_view, SidebarTarget::All);
-        assert_eq!(store.filters.project.as_deref(), Some("mobile-app"));
-        assert_eq!(store.filters.status.as_deref(), Some("done"));
+        assert_eq!(
+            store.view_state.scope,
+            TaskScope::Project("mobile-app".to_string())
+        );
+        assert_eq!(store.view_state.view, TaskView::Done);
         assert_eq!(store.tasks.len(), 1);
         assert_eq!(store.tasks[0].task.title, "Mobile done");
     }
@@ -991,39 +1034,29 @@ mod views_filters_and_sort {
         let selected = selected.unwrap();
         store.update_status(Some(selected), "done").await.unwrap();
 
-        store.show_view(SidebarTarget::Done).await.unwrap();
+        store.show_view(TaskView::Done).await.unwrap();
 
-        assert_eq!(store.filters.status.as_deref(), Some("done"));
+        assert_eq!(
+            store.view_state.filters().statuses,
+            vec!["done", "canceled"]
+        );
         assert_eq!(store.tasks.len(), 1);
         assert_eq!(store.tasks[0].task.title, "Finished");
     }
 
     #[tokio::test]
-    async fn show_todo_view_clears_stale_view_flags_and_preserves_search() {
+    async fn show_todo_view_preserves_search_modifier() {
         let mut store = test_store().await;
-        store.filters.include_deleted = true;
-        store.filters.conflicts_only = true;
-        store.filters.search = Some("needle".to_string());
+        store.view_state.filter_modifiers.search = Some("needle".to_string());
 
-        store.show_view(SidebarTarget::Todo).await.unwrap();
+        store.show_view(TaskView::Todo).await.unwrap();
 
-        assert_eq!(store.filters.status.as_deref(), Some("todo"));
-        assert_eq!(store.filters.search.as_deref(), Some("needle"));
-        assert!(!store.filters.include_deleted);
-        assert!(!store.filters.conflicts_only);
-    }
-
-    #[tokio::test]
-    async fn filter_actions_reset_active_view() {
-        let mut store = test_store().await;
-        store.active_view = SidebarTarget::Conflicts;
-        store.filters.conflicts_only = true;
-
-        store.filter_status("todo".to_string()).await.unwrap();
-
-        assert_eq!(store.active_view, SidebarTarget::All);
-        assert_eq!(store.filters.status.as_deref(), Some("todo"));
-        assert!(!store.filters.conflicts_only);
+        assert_eq!(store.view_state.view, TaskView::Todo);
+        assert_eq!(
+            store.view_state.filter_modifiers.search.as_deref(),
+            Some("needle")
+        );
+        assert_eq!(store.view_state.filters().status.as_deref(), Some("todo"));
     }
 
     #[tokio::test]
@@ -1031,15 +1064,14 @@ mod views_filters_and_sort {
         let mut store = test_store().await;
 
         store.toggle_deleted_filter().await.unwrap();
-        assert_eq!(store.active_view, SidebarTarget::All);
-        assert!(store.filters.include_deleted);
+        assert!(store.view_state.filter_modifiers.include_deleted);
 
         store.toggle_deleted_filter().await.unwrap();
-        assert!(!store.filters.include_deleted);
+        assert!(!store.view_state.filter_modifiers.include_deleted);
     }
 
     #[tokio::test]
-    async fn toggle_deleted_filter_preserves_project_view() {
+    async fn toggle_deleted_filter_preserves_project_scope() {
         let mut store = test_store().await;
         store
             .create_project("Mobile App".to_string())
@@ -1066,7 +1098,7 @@ mod views_filters_and_sort {
             .unwrap();
         store.update_deleted(Some(selected), true).await.unwrap();
         store
-            .show_view(SidebarTarget::Project("mobile-app".to_string()))
+            .show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
             .await
             .unwrap();
         assert!(store.tasks.is_empty());
@@ -1074,25 +1106,26 @@ mod views_filters_and_sort {
         store.toggle_deleted_filter().await.unwrap();
 
         assert_eq!(
-            store.active_view,
-            SidebarTarget::Project("mobile-app".to_string())
+            store.view_state.scope,
+            TaskScope::Project("mobile-app".to_string())
         );
-        assert_eq!(store.filters.project.as_deref(), Some("mobile-app"));
-        assert!(store.filters.include_deleted);
+        assert!(store.view_state.filter_modifiers.include_deleted);
         assert_eq!(store.tasks.len(), 1);
         assert!(store.tasks[0].task.deleted);
     }
 
     #[tokio::test]
-    async fn set_sort_and_reverse_sort_update_order_state() {
+    async fn ordering_from_queue_switches_to_open() {
         let mut store = test_store().await;
 
-        store.set_sort(TaskSort::Priority).await.unwrap();
-        assert_eq!(store.sort, TaskSort::Priority);
-        assert_eq!(store.sort_direction, SortDirection::Asc);
+        store.set_order(TaskOrder::Priority).await.unwrap();
+        assert_eq!(store.view_state.view, TaskView::Open);
+        assert_eq!(store.view_state.order, TaskOrder::Priority);
+        assert_eq!(store.view_state.direction, SortDirection::Asc);
 
         store.reverse_sort().await.unwrap();
-        assert_eq!(store.sort_direction, SortDirection::Desc);
+        assert_eq!(store.view_state.view, TaskView::Open);
+        assert_eq!(store.view_state.direction, SortDirection::Desc);
     }
 }
 
@@ -1263,10 +1296,10 @@ mod undo {
             .unwrap()
             .unwrap();
         assert_eq!(delete.message, format!("deleted {display_ref}"));
-        assert!(!store.filters.include_deleted);
+        assert!(!store.view_state.filter_modifiers.include_deleted);
         store.refresh(Some(&task_id)).await.unwrap();
         assert!(store.tasks.iter().all(|item| item.task.id != task_id));
-        store.filters.include_deleted = true;
+        store.view_state.filter_modifiers.include_deleted = true;
         store.refresh(Some(&task_id)).await.unwrap();
         let index = store
             .tasks
@@ -1395,7 +1428,7 @@ mod undo {
         let mut store = test_store().await;
         let (task_id, selected) = create_selected_task(&mut store, "Gone").await;
         store.update_deleted(Some(selected), true).await.unwrap();
-        store.filters.include_deleted = true;
+        store.view_state.filter_modifiers.include_deleted = true;
         store.refresh(Some(&task_id)).await.unwrap();
         let index = store
             .tasks
@@ -1411,7 +1444,7 @@ mod undo {
         assert_eq!(restore.message, format!("restored {display_ref}"));
 
         store.undo_last(None).await.unwrap();
-        store.filters.include_deleted = true;
+        store.view_state.filter_modifiers.include_deleted = true;
         store.refresh(Some(&task_id)).await.unwrap();
         let index = store
             .tasks
@@ -1749,8 +1782,8 @@ mod workspace_scoping {
 
         let reopened = TuiStore::new(store.pool.clone()).await.unwrap();
 
-        assert_eq!(reopened.active_view, SidebarTarget::All);
-        assert!(reopened.filters.project.is_none());
+        assert_eq!(reopened.view_state.view, TaskView::Queue);
+        assert_eq!(reopened.view_state.scope, TaskScope::Workspace);
         assert_eq!(reopened.tasks.len(), 1);
     }
 
@@ -1798,10 +1831,10 @@ mod workspace_scoping {
                 .unwrap();
 
         assert_eq!(
-            reopened.active_view,
-            SidebarTarget::Project("mobile-app".to_string())
+            reopened.view_state.scope,
+            TaskScope::Project("mobile-app".to_string())
         );
-        assert_eq!(reopened.filters.project.as_deref(), Some("mobile-app"));
+        assert_eq!(reopened.view_state.view, TaskView::Queue);
         assert_eq!(reopened.tasks.len(), 1);
         assert_eq!(reopened.tasks[0].task.title, "mobile task");
     }
@@ -1922,16 +1955,24 @@ mod workspace_scoping {
             .unwrap();
         drop(conn);
 
-        store.active_view = SidebarTarget::Todo;
-        store.filters.status = Some("todo".to_string());
+        store.view_state.scope = TaskScope::Project("missing".to_string());
+        store.show_view(TaskView::Todo).await.unwrap();
+        store.view_state.filter_modifiers.label = Some("default-label".to_string());
+        store.view_state.filter_modifiers.priority = Some("urgent".to_string());
+        store.view_state.filter_modifiers.search = Some("default".to_string());
+        store.view_state.filter_modifiers.include_deleted = true;
 
         let (message, selected) = store.switch_workspace(other.key.clone()).await.unwrap();
 
         assert_eq!(message, "switched workspace to client-work (Client Work)");
         assert!(selected.is_none());
         assert_eq!(store.active_workspace.key, "client-work");
-        assert_eq!(store.active_view, SidebarTarget::All);
-        assert!(store.filters.status.is_none());
+        assert_eq!(store.view_state.scope, TaskScope::Workspace);
+        assert_eq!(store.view_state.view, TaskView::Todo);
+        assert_eq!(
+            store.view_state.filter_modifiers,
+            TaskFilterModifiers::default()
+        );
         assert!(store.tasks.is_empty());
         assert!(
             store
@@ -2039,7 +2080,7 @@ mod workspace_scoping {
         assert_eq!(store.tasks[0].task.title, "Client workspace task");
         assert!(store.projects.iter().any(|project| project.key == "client"));
         assert_eq!(store.labels, vec!["client-label".to_string()]);
-        assert_eq!(store.counts.all, 1);
+        assert_eq!(store.counts.open, 1);
         assert_eq!(store.counts.todo, 1);
 
         reset_default_workspace(&pool).await;
