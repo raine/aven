@@ -982,8 +982,6 @@ mod filters_and_workspaces {
     #[tokio::test]
     async fn header_click_opens_order_menu_and_selects_order() {
         let mut app = test_app().await;
-        let selected = app.store.show_view(TaskView::Open).await.unwrap();
-        app.apply_filter_selection(selected);
 
         app.dispatch_mouse(header_click(127), (140, 24).into())
             .await
@@ -1006,6 +1004,7 @@ mod filters_and_workspaces {
         .await
         .unwrap();
 
+        assert_eq!(app.store.view_state.view, TaskView::Open);
         assert_eq!(app.store.view_state.order, TaskOrder::Project);
         assert!(app.overlay.is_none());
         assert_eq!(toast_message(&app), Some("order project asc"));

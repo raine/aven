@@ -13,7 +13,6 @@ use crate::tui::navigation::{detail_task_delta, handle_detail_overlay_key};
 use crate::tui::overlay::{CommandState, OverlayOutcome, OverlayRoute, OverlayState};
 use crate::tui::platform::is_editor_prefix_key;
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
-use crate::tui::store::TaskView;
 use crate::tui::ui::{database_stats_scroll_cap, detail_help_scroll_cap, help_scroll_cap};
 
 impl App {
@@ -78,13 +77,8 @@ impl App {
         match crate::tui::ui::header_target_at(&self.store, header, mouse.column, mouse.row) {
             Some(crate::tui::ui::HeaderTarget::Scope(scope)) => self.show_scope(scope).await?,
             Some(crate::tui::ui::HeaderTarget::View(view)) => self.show_view(view).await?,
-            Some(crate::tui::ui::HeaderTarget::Order)
-                if self.store.view_state.view != TaskView::Queue =>
-            {
-                self.show_order_menu(mouse.column, mouse.row)
-            }
             Some(crate::tui::ui::HeaderTarget::Order) => {
-                self.set_info("queue uses ranked order");
+                self.show_order_menu(mouse.column, mouse.row)
             }
             None => {}
         }
