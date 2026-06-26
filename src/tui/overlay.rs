@@ -720,6 +720,7 @@ mod tests {
             OverlayRoute::AddTaskTitleProject,
             OverlayRoute::EditProject,
             OverlayRoute::ScopeProject,
+            OverlayRoute::RenameProjectPicker,
             OverlayRoute::DeleteProjectPicker,
         ] {
             let state = PickerState::new(

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde_json::json;
-use sqlx::SqliteConnection;
+use sqlx::{Row, SqliteConnection};
 use tracing::info;
 
 use crate::config;
@@ -13,7 +13,8 @@ use crate::db::{begin_immediate, insert_change};
 use crate::ids::now;
 use crate::labels::normalize_label;
 use crate::projects::{
-    create_project_in_workspace, project_has_config_mapping, resolve_existing_project_in_workspace,
+    create_project_in_workspace, normalize_key, project_has_config_mapping,
+    resolve_existing_project_in_workspace,
 };
 use crate::types::Project;
 use crate::workspaces::Workspace;
@@ -38,6 +39,13 @@ pub(crate) struct ProjectPathOutcome {
 
 pub(crate) struct ProjectDeleteOutcome {
     pub(crate) project: Project,
+    pub(crate) config_mapping: bool,
+}
+
+pub(crate) struct ProjectRenameOutcome {
+    pub(crate) previous: Project,
+    pub(crate) project: Project,
+    pub(crate) changed: bool,
     pub(crate) config_mapping: bool,
 }
 
@@ -177,6 +185,184 @@ pub(crate) async fn delete_project_operation(
         project,
         config_mapping,
     })
+}
+
+pub(crate) async fn rename_project_operation(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    project: &str,
+    new_name: &str,
+    prefix: Option<&str>,
+) -> Result<ProjectRenameOutcome> {
+    let previous = resolve_existing_project_in_workspace(conn, &workspace.id, project).await?;
+    let new_name = new_name.trim();
+    let key = normalize_key(new_name);
+    if key.is_empty() {
+        bail!(
+            "error invalid-project input={}",
+            crate::render::quote(new_name)
+        );
+    }
+    if let Some(existing) = resolve_project_key(conn, &workspace.id, &key).await?
+        && existing.id != previous.id
+    {
+        bail!("error project-exists project={key}");
+    }
+    let prefix = match prefix {
+        Some(prefix) => {
+            let prefix = normalize_prefix(prefix)?;
+            if project_prefix_exists(conn, &workspace.id, &prefix, Some(&previous.id)).await? {
+                bail!("error project-prefix-exists prefix={prefix}");
+            }
+            prefix
+        }
+        None => {
+            unique_project_prefix_excluding(conn, &workspace.id, &key, Some(&previous.id)).await?
+        }
+    };
+    let changed = previous.key != key || previous.name != new_name || previous.prefix != prefix;
+    let config_mapping = if !changed {
+        project_has_config_mapping(&workspace.id, &workspace.key, &previous.key).unwrap_or(false)
+    } else {
+        false
+    };
+    if !changed {
+        return Ok(ProjectRenameOutcome {
+            project: previous.clone(),
+            previous,
+            changed: false,
+            config_mapping,
+        });
+    }
+    let ts = now();
+    let mut tx = begin_immediate(conn).await?;
+    let updated = sqlx::query(
+        "UPDATE projects SET key = ?, name = ?, prefix = ?, updated_at = ?
+         WHERE workspace_id = ? AND id = ? AND deleted = 0",
+    )
+    .bind(&key)
+    .bind(new_name)
+    .bind(&prefix)
+    .bind(&ts)
+    .bind(&workspace.id)
+    .bind(&previous.id)
+    .execute(&mut *tx)
+    .await?;
+    if updated.rows_affected() != 1 {
+        bail!("error project-rename-race project={}", previous.key);
+    }
+    insert_change(
+        &mut tx,
+        "project",
+        &previous.id,
+        None,
+        "set_project_metadata",
+        json!({
+            "workspace_id": &workspace.id,
+            "workspace_key": &workspace.key,
+            "key": &key,
+            "name": new_name,
+            "prefix": &prefix,
+            "updated_at": &ts,
+        }),
+        None,
+    )
+    .await?;
+    let config_mapping = rename_config_project_mapping(workspace, &previous.key, &key)?;
+    tx.commit().await?;
+    let project = Project {
+        id: previous.id.clone(),
+        workspace_id: previous.workspace_id.clone(),
+        key,
+        name: new_name.to_string(),
+        prefix,
+    };
+    info!(project_id = %project.id, project_key = %project.key, "project renamed");
+    Ok(ProjectRenameOutcome {
+        previous,
+        project,
+        changed: true,
+        config_mapping,
+    })
+}
+
+fn rename_config_project_mapping(
+    workspace: &Workspace,
+    old_project: &str,
+    new_project: &str,
+) -> Result<bool> {
+    let config_path = config::config_file_path()?;
+    config_edit::rename_project_path(&config_path, &workspace.id, old_project, new_project)
+}
+
+async fn resolve_project_key(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    key: &str,
+) -> Result<Option<Project>> {
+    let row = sqlx::query(
+        "SELECT id, workspace_id, key, name, prefix
+         FROM projects
+         WHERE workspace_id = ? AND key = ?",
+    )
+    .bind(workspace_id)
+    .bind(key)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(row.map(|row| Project {
+        id: row.get("id"),
+        workspace_id: row.get("workspace_id"),
+        key: row.get("key"),
+        name: row.get("name"),
+        prefix: row.get("prefix"),
+    }))
+}
+
+async fn unique_project_prefix_excluding(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    key: &str,
+    exclude_project_id: Option<&str>,
+) -> Result<String> {
+    let base = crate::projects::prefix_base(key);
+    let mut candidate = base.clone();
+    let mut n = 2;
+    while project_prefix_exists(conn, workspace_id, &candidate, exclude_project_id).await? {
+        candidate = format!("{}{}", base.chars().take(2).collect::<String>(), n);
+        n += 1;
+    }
+    Ok(candidate)
+}
+
+async fn project_prefix_exists(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    prefix: &str,
+    exclude_project_id: Option<&str>,
+) -> Result<bool> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM projects
+         WHERE workspace_id = ? AND prefix = ? AND (? IS NULL OR id != ?)",
+    )
+    .bind(workspace_id)
+    .bind(prefix)
+    .bind(exclude_project_id)
+    .bind(exclude_project_id)
+    .fetch_one(&mut *conn)
+    .await?
+        > 0)
+}
+
+fn normalize_prefix(prefix: &str) -> Result<String> {
+    let prefix = prefix.trim().to_ascii_uppercase();
+    if (2..=8).contains(&prefix.len()) && prefix.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+        Ok(prefix)
+    } else {
+        bail!(
+            "error invalid-project-prefix prefix={}",
+            crate::render::quote(&prefix)
+        )
+    }
 }
 
 fn canonicalize_project_path(path: &Path) -> Result<PathBuf> {

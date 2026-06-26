@@ -393,6 +393,82 @@ fn project_ids_survive_key_drift_across_sync() {
 }
 
 #[test]
+fn project_rename_syncs_by_project_id() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("client-a.sqlite");
+    let b = env.db("client-b.sqlite");
+
+    let task_ref = extract_ref(&ok(
+        env.aven(&a, ["add", "rename synced", "--project", "agent-offload"])
+    ));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    ok(env.aven(
+        &a,
+        [
+            "project",
+            "rename",
+            "agent-offload",
+            "sideagent",
+            "--prefix",
+            "SIDE",
+        ],
+    ));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    let shown = ok(env.aven(&b, ["show", &task_ref]));
+    contains_all(&shown, &["SIDE-", "rename synced"]);
+    let projects = ok(env.aven(&b, ["projects"]));
+    contains_all(&projects, &["sideagent prefix=SIDE"]);
+    contains_none(&projects, &["agent-offload"]);
+}
+
+#[test]
+fn remote_project_rename_updates_managed_path_mapping() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("client-a.sqlite");
+    let b = env.db("client-b.sqlite");
+    let project_dir = env.path("client-b-project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    ok(env.aven(&a, ["add", "rename synced", "--project", "agent-offload"]));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    ok(env.aven(
+        &b,
+        [
+            "project",
+            "path",
+            "add",
+            "agent-offload",
+            project_dir.to_str().unwrap(),
+        ],
+    ));
+
+    ok(env.aven(
+        &a,
+        [
+            "project",
+            "rename",
+            "agent-offload",
+            "sideagent",
+            "--prefix",
+            "SIDE",
+        ],
+    ));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    let config = std::fs::read_to_string(env.config_file()).unwrap();
+    contains_all(&config, &["project: sideagent"]);
+    contains_none(&config, &["project: agent-offload"]);
+}
+
+#[test]
 fn same_key_remote_project_writes_alias() {
     use std::io::{BufRead as _, BufReader, Write as _};
     use std::net::TcpListener;

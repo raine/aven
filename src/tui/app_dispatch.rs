@@ -377,6 +377,7 @@ impl App {
             Action::Delete => self.begin_delete_task(),
             Action::Restore => self.update_deleted(false).await?,
             Action::BeginStatusPicker => self.begin_status_picker(),
+            Action::BeginRenameProject => self.begin_rename_project(),
             Action::BeginDeleteProject => self.begin_delete_project(),
             Action::BeginAddProject => self.begin_add_project(),
             Action::BeginAddLabel => self.begin_add_label(),

@@ -128,6 +128,122 @@ fn updates_task_and_preserves_suffix_on_project_move() {
 }
 
 #[test]
+fn renames_project_and_display_prefix() {
+    let env = TestEnv::new();
+    let db = env.db("rename-project.sqlite");
+    let created = ok(env.aven(
+        &db,
+        ["add", "move project metadata", "--project", "agent-offload"],
+    ));
+    let task_ref = extract_ref(&created);
+    contains_all(&created, &["project=agent-offload", "AO-"]);
+
+    let renamed = ok(env.aven(
+        &db,
+        [
+            "project",
+            "rename",
+            "agent-offload",
+            "sideagent",
+            "--prefix",
+            "SIDE",
+        ],
+    ));
+    contains_all(
+        &renamed,
+        &[
+            "renamed-project sideagent",
+            "changed=yes",
+            "old=agent-offload",
+            "old_prefix=AO",
+            "prefix=SIDE",
+            r#"name="sideagent""#,
+        ],
+    );
+
+    let shown = ok(env.aven(&db, ["show", &task_ref]));
+    contains_all(&shown, &["SIDE-"]);
+    contains_none(&shown, &["agent-offload"]);
+
+    let filtered = ok(env.aven(&db, ["list", "--project", "sideagent"]));
+    contains_all(&filtered, &[&suffix(&task_ref), "move project metadata"]);
+
+    let projects = ok(env.aven(&db, ["projects"]));
+    contains_all(&projects, &["sideagent prefix=SIDE"]);
+    contains_none(&projects, &["agent-offload"]);
+}
+
+#[test]
+fn project_rename_updates_managed_path_mapping() {
+    let env = TestEnv::new();
+    let db = env.db("rename-project-path.sqlite");
+    let project_dir = env.path("mapped-project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    ok(env.aven(&db, ["project", "create", "agent-offload"]));
+    ok(env.aven(
+        &db,
+        [
+            "project",
+            "path",
+            "add",
+            "agent-offload",
+            project_dir.to_str().unwrap(),
+        ],
+    ));
+    let renamed = ok(env.aven(
+        &db,
+        [
+            "project",
+            "rename",
+            "agent-offload",
+            "sideagent",
+            "--prefix",
+            "SIDE",
+        ],
+    ));
+
+    contains_all(&renamed, &["updated-config-project-mapping sideagent"]);
+    let config = std::fs::read_to_string(env.config_file()).unwrap();
+    contains_all(&config, &["project: sideagent"]);
+    contains_none(&config, &["project: agent-offload"]);
+}
+
+#[test]
+fn project_rename_noop_does_not_claim_config_update() {
+    let env = TestEnv::new();
+    let db = env.db("rename-project-noop.sqlite");
+    let project_dir = env.path("mapped-project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    ok(env.aven(&db, ["project", "create", "agent-offload"]));
+    ok(env.aven(
+        &db,
+        [
+            "project",
+            "path",
+            "add",
+            "agent-offload",
+            project_dir.to_str().unwrap(),
+        ],
+    ));
+    let renamed = ok(env.aven(
+        &db,
+        [
+            "project",
+            "rename",
+            "agent-offload",
+            "agent-offload",
+            "--prefix",
+            "AO",
+        ],
+    ));
+
+    contains_all(&renamed, &["changed=none"]);
+    contains_none(&renamed, &["updated-config-project-mapping"]);
+}
+
+#[test]
 fn delete_restore_and_filters_work() {
     let env = TestEnv::new();
     let db = env.db("filters.sqlite");

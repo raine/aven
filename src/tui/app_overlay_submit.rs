@@ -83,6 +83,9 @@ impl App {
                 let message = self.store.create_label(value).await?;
                 self.set_success(message);
             }
+            Some(TextSubmitRoute::RenameProjectName) => {
+                self.submit_rename_project(value).await?;
+            }
             Some(TextSubmitRoute::EditTitle) => {
                 self.submit_edit_title(value).await?;
             }
@@ -193,6 +196,9 @@ impl App {
             }
             Some(PickerSubmitRoute::ScopeProject) => {
                 self.submit_scope_project(values).await?;
+            }
+            Some(PickerSubmitRoute::RenameProjectPicker) => {
+                self.submit_rename_project_picker(values);
             }
             Some(PickerSubmitRoute::DeleteProjectPicker) => {
                 self.submit_delete_project_picker(values);

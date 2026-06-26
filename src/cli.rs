@@ -289,6 +289,12 @@ pub(crate) enum ProjectSubcommand {
         #[arg(long)]
         path: Option<PathBuf>,
     },
+    Rename {
+        project: String,
+        new_name: String,
+        #[arg(long)]
+        prefix: Option<String>,
+    },
     Path {
         #[command(subcommand)]
         command: ProjectPathSubcommand,

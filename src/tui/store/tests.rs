@@ -153,6 +153,94 @@ mod domain_mutations_and_pickers {
     }
 
     #[tokio::test]
+    async fn rename_project_updates_view_filters_and_tasks() {
+        let mut store = test_store().await;
+        store
+            .create_project("Agent Offload".to_string())
+            .await
+            .unwrap();
+        store
+            .create_task(
+                TaskDraft {
+                    title: "Rename keeps task".to_string(),
+                    description: String::new(),
+                    project: Some("agent-offload".to_string()),
+                    status: "inbox".to_string(),
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        store
+            .show_scope(TaskScopeTarget::Project("agent-offload".to_string()))
+            .await
+            .unwrap();
+
+        let outcome = store
+            .rename_project("agent-offload", "sideagent".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.message, "renamed project sideagent prefix=SDG");
+        assert_eq!(
+            store.view_state.scope,
+            TaskScope::Project("sideagent".to_string())
+        );
+        assert!(store.projects.iter().any(|project| {
+            project.key == "sideagent" && project.name == "sideagent" && project.prefix == "SDG"
+        }));
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.project_key, "sideagent");
+    }
+
+    #[tokio::test]
+    async fn undo_project_rename_restores_view_filters_and_tasks() {
+        let mut store = test_store().await;
+        store
+            .create_project("Agent Offload".to_string())
+            .await
+            .unwrap();
+        store
+            .create_task(
+                TaskDraft {
+                    title: "Undo rename keeps task".to_string(),
+                    description: String::new(),
+                    project: Some("agent-offload".to_string()),
+                    status: "inbox".to_string(),
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        store
+            .show_scope(TaskScopeTarget::Project("agent-offload".to_string()))
+            .await
+            .unwrap();
+        store
+            .rename_project("agent-offload", "sideagent".to_string())
+            .await
+            .unwrap();
+
+        store.undo_last(None).await.unwrap();
+
+        assert_eq!(
+            store.view_state.scope,
+            TaskScope::Project("agent-offload".to_string())
+        );
+        assert!(store.projects.iter().any(|project| {
+            project.key == "agent-offload"
+                && project.name == "Agent Offload"
+                && project.prefix == "AO"
+        }));
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.project_key, "agent-offload");
+    }
+
+    #[tokio::test]
     async fn delete_project_blocks_when_deleted_tasks_reference_project() {
         let mut store = test_store().await;
         store

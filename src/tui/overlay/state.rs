@@ -107,6 +107,8 @@ pub(crate) enum OverlayRoute {
     FilterLabel,
     FilterPriority,
     ScopeProject,
+    RenameProjectPicker,
+    RenameProjectName,
     DeleteProjectPicker,
     DeleteProjectConfirm,
     DeleteTaskConfirm,
@@ -122,6 +124,7 @@ pub(crate) enum TextSubmitRoute {
     AddTaskTitleToast,
     AddProject,
     AddLabel,
+    RenameProjectName,
     EditTitle,
     ConflictManual,
 }
@@ -146,6 +149,7 @@ pub(crate) enum PickerSubmitRoute {
     FilterLabel,
     FilterPriority,
     ScopeProject,
+    RenameProjectPicker,
     DeleteProjectPicker,
     SwitchWorkspace,
     ConflictField,
@@ -180,6 +184,7 @@ impl OverlayRoute {
             Self::AddTaskTitle => Some(TextSubmitRoute::AddTaskTitleToast),
             Self::AddProject => Some(TextSubmitRoute::AddProject),
             Self::AddLabel => Some(TextSubmitRoute::AddLabel),
+            Self::RenameProjectName => Some(TextSubmitRoute::RenameProjectName),
             Self::EditTitle => Some(TextSubmitRoute::EditTitle),
             Self::ConflictManual => Some(TextSubmitRoute::ConflictManual),
             _ => None,
@@ -208,6 +213,7 @@ impl OverlayRoute {
             Self::FilterLabel => Some(PickerSubmitRoute::FilterLabel),
             Self::FilterPriority => Some(PickerSubmitRoute::FilterPriority),
             Self::ScopeProject => Some(PickerSubmitRoute::ScopeProject),
+            Self::RenameProjectPicker => Some(PickerSubmitRoute::RenameProjectPicker),
             Self::DeleteProjectPicker => Some(PickerSubmitRoute::DeleteProjectPicker),
             Self::SwitchWorkspace => Some(PickerSubmitRoute::SwitchWorkspace),
             Self::ConflictField => Some(PickerSubmitRoute::ConflictField),
@@ -221,6 +227,7 @@ impl OverlayRoute {
             Self::AddTaskTitleProject
             | Self::EditProject
             | Self::ScopeProject
+            | Self::RenameProjectPicker
             | Self::DeleteProjectPicker => PickerMode::Filter,
             _ => PickerMode::Navigate,
         }
@@ -239,7 +246,7 @@ impl OverlayRoute {
 
 #[cfg(test)]
 impl OverlayRoute {
-    pub(crate) const ALL: [Self; 26] = [
+    pub(crate) const ALL: [Self; 28] = [
         Self::MessageOnly,
         Self::AddTaskTitle,
         Self::AddTaskDescription,
@@ -258,6 +265,8 @@ impl OverlayRoute {
         Self::FilterLabel,
         Self::FilterPriority,
         Self::ScopeProject,
+        Self::RenameProjectPicker,
+        Self::RenameProjectName,
         Self::DeleteProjectPicker,
         Self::DeleteProjectConfirm,
         Self::DeleteTaskConfirm,

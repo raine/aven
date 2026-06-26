@@ -32,7 +32,8 @@ use crate::operations::{
     add_task_dependency, conflict_variant_value, create_label_operation, create_project_operation,
     create_task, create_task_in_workspace, init_config, list_conflicts,
     list_project_paths_operation, remove_project_path_operation, remove_task_dependency,
-    resolve_conflict, set_task_deleted, show_config, task_conflicts, update_task,
+    rename_project_operation, resolve_conflict, set_task_deleted, show_config, task_conflicts,
+    update_task,
 };
 use crate::projects::{
     find_project_in_workspace, inferred_project_key_for_add_in_workspace, list_projects,
@@ -825,6 +826,28 @@ pub(crate) async fn cmd_project(conn: &mut SqliteConnection, args: ProjectComman
                 project.prefix,
                 quote(&project.name)
             );
+        }
+        ProjectSubcommand::Rename {
+            project,
+            new_name,
+            prefix,
+        } => {
+            let workspace = crate::workspaces::active_workspace();
+            let outcome =
+                rename_project_operation(conn, &workspace, &project, &new_name, prefix.as_deref())
+                    .await?;
+            println!(
+                "renamed-project {} changed={} old={} old_prefix={} prefix={} name={}",
+                outcome.project.key,
+                if outcome.changed { "yes" } else { "none" },
+                outcome.previous.key,
+                outcome.previous.prefix,
+                outcome.project.prefix,
+                quote(&outcome.project.name)
+            );
+            if outcome.changed && outcome.config_mapping {
+                println!("updated-config-project-mapping {}", outcome.project.key);
+            }
         }
         ProjectSubcommand::Path { command } => match command {
             ProjectPathSubcommand::Add { project, path } => {

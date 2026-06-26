@@ -3,6 +3,7 @@ use anyhow::Result;
 use crate::labels::list_labels_in_workspace;
 use crate::operations::{
     create_label_operation, create_project_operation, delete_project_operation,
+    rename_project_operation,
 };
 use crate::projects::inferred_project_key_for_add_in_workspace;
 use crate::tui::store::{MutationMessage, TaskScope};
@@ -46,6 +47,48 @@ impl TuiStore {
         let mut message = format!("deleted project {}", outcome.project.key);
         if outcome.config_mapping {
             message.push_str("; config path mappings were left unchanged");
+        }
+        Ok(MutationMessage::new(message, selected))
+    }
+
+    pub(crate) async fn rename_project(
+        &mut self,
+        project: &str,
+        new_name: String,
+    ) -> Result<MutationMessage> {
+        self.activate_workspace();
+        let mut conn = self.pool.acquire().await?;
+        let outcome =
+            rename_project_operation(&mut conn, &self.active_workspace, project, &new_name, None)
+                .await?;
+        drop(conn);
+        if outcome.changed {
+            self.record_undo_commands(
+                &format!("project {}", outcome.project.key),
+                vec![UndoCommand::SetProjectMetadata {
+                    project_id: outcome.project.id.clone(),
+                    before_key: outcome.previous.key.clone(),
+                    before_name: outcome.previous.name.clone(),
+                    before_prefix: outcome.previous.prefix.clone(),
+                    after_key: outcome.project.key.clone(),
+                    after_name: outcome.project.name.clone(),
+                    after_prefix: outcome.project.prefix.clone(),
+                }],
+            )
+            .await?;
+        }
+        if self.scope_project() == Some(outcome.previous.key.as_str()) {
+            self.view_state.scope = TaskScope::Project(outcome.project.key.clone());
+        }
+        let selected = self.refresh(None).await?;
+        let mut message = format!(
+            "renamed project {} prefix={}",
+            outcome.project.key, outcome.project.prefix
+        );
+        if !outcome.changed {
+            message = format!("renamed project {} changed=none", outcome.project.key);
+        } else if outcome.config_mapping {
+            message.push_str("; updated config path mappings");
         }
         Ok(MutationMessage::new(message, selected))
     }

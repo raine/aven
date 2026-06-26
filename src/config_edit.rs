@@ -67,6 +67,27 @@ pub(crate) fn remove_project_path(
     write_edited_config(path, append_managed_entries(&text, &entries)?)
 }
 
+pub(crate) fn rename_project_path(
+    path: &Path,
+    workspace_id: &str,
+    old_project: &str,
+    new_project: &str,
+) -> Result<bool> {
+    let text = read_config_text(path)?;
+    let (text, mut entries) = remove_managed_entries(&text);
+    let mut changed = false;
+    for entry in &mut entries {
+        if entry.workspace_id == workspace_id && entry.project == old_project {
+            entry.project = new_project.to_string();
+            changed = true;
+        }
+    }
+    if changed {
+        write_edited_config(path, append_managed_entries(&text, &entries)?)?;
+    }
+    Ok(changed)
+}
+
 fn read_config_text(path: &Path) -> Result<String> {
     if path.exists() {
         return fs::read_to_string(path)
@@ -149,6 +170,9 @@ fn append_managed_entries(text: &str, entries: &[ManagedProjectOverride]) -> Res
         if let Some(overrides_line) =
             find_child_key(&lines, project_line + 1, project_end, 2, "overrides")
         {
+            if lines[overrides_line].trim() != "overrides:" {
+                lines[overrides_line] = format!("{}overrides:", " ".repeat(2));
+            }
             let overrides_end = find_section_end(&lines, overrides_line, 2);
             insert_lines(&mut lines, overrides_end, block);
         } else {

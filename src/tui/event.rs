@@ -51,6 +51,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::Delete
             | Action::Restore
             | Action::BeginStatusPicker
+            | Action::BeginRenameProject
             | Action::BeginDeleteProject
             | Action::BeginAddTask
             | Action::BeginAddNote
@@ -202,6 +203,7 @@ mod tests {
             vec![
                 "refresh",
                 "restore",
+                "rename-project",
                 "remove-project-path",
                 "move-right",
                 "copy-ref",
@@ -540,6 +542,10 @@ mod tests {
             ShortcutLookup::Found(Action::BeginAddLabel)
         ));
         assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('A'), KeyCode::Char('e')]),
+            ShortcutLookup::Found(Action::BeginRenameProject)
+        ));
+        assert!(matches!(
             resolve_shortcut(&[KeyCode::Char('A'), KeyCode::Char('d')]),
             ShortcutLookup::Found(Action::BeginDeleteProject)
         ));
@@ -597,6 +603,7 @@ mod tests {
             "order-reverse",
             "conflict-list",
             "add-project",
+            "rename-project",
             "delete-project",
             "config-show",
             "config-status",

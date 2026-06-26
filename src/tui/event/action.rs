@@ -47,6 +47,7 @@ pub(crate) enum Action {
     Delete,
     Restore,
     BeginStatusPicker,
+    BeginRenameProject,
     BeginDeleteProject,
     BeginAddTask,
     BeginAddNote,

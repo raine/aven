@@ -2727,6 +2727,26 @@ mod delete_and_restore {
     }
 
     #[tokio::test]
+    async fn rename_project_opens_project_picker_from_task_focus() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
+        app.execute(Action::BeginRenameProject).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Picker(PickerState {
+                route: OverlayRoute::RenameProjectPicker,
+                ..
+            }))
+        ));
+        assert!(app.message.is_none());
+    }
+
+    #[tokio::test]
     async fn delete_project_opens_project_picker_from_task_focus() {
         let mut app = test_app().await;
         app.store
@@ -2773,6 +2793,41 @@ mod delete_and_restore {
             panic!("expected project picker");
         };
         assert_eq!(state.items[state.selected].value, "mobile-app");
+    }
+
+    #[tokio::test]
+    async fn rename_project_submission_updates_selected_project() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Agent Offload".to_string())
+            .await
+            .unwrap();
+
+        app.execute(Action::BeginRenameProject).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::TextInput(TextInputState {
+                route: OverlayRoute::RenameProjectName,
+                ..
+            }))
+        ));
+        app.submit_rename_project("sideagent".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            toast_message(&app),
+            Some("renamed project sideagent prefix=SDG")
+        );
+        assert!(
+            app.store
+                .projects
+                .iter()
+                .any(|project| project.key == "sideagent")
+        );
+        assert!(app.pending_rename_project.is_none());
     }
 
     #[tokio::test]

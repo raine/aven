@@ -3,6 +3,8 @@ use std::collections::BTreeSet;
 use anyhow::{Result, bail, ensure};
 use sqlx::{Row, SqliteConnection};
 
+use crate::config;
+use crate::config_edit;
 use crate::db::{
     begin_immediate, conflict_exists, field_version, insert_change, set_field_version,
 };
@@ -57,6 +59,15 @@ pub(crate) enum UndoCommand {
         expected_name: String,
         expected_prefix: String,
     },
+    SetProjectMetadata {
+        project_id: String,
+        before_key: String,
+        before_name: String,
+        before_prefix: String,
+        after_key: String,
+        after_name: String,
+        after_prefix: String,
+    },
     DeleteCreatedLabel {
         label: String,
         create_change_id: String,
@@ -86,6 +97,12 @@ pub(crate) struct UndoOutcome {
     pub(crate) summary: String,
     pub(crate) task_id: Option<String>,
     pub(crate) include_deleted: Option<bool>,
+    pub(crate) project_rename: Option<ProjectRenameUndoOutcome>,
+}
+
+pub(crate) struct ProjectRenameUndoOutcome {
+    pub(crate) before_key: String,
+    pub(crate) after_key: String,
 }
 
 pub(crate) async fn task_field_value(
@@ -224,12 +241,29 @@ fn undo_payload_has_effect(payload: &UndoPayload) -> bool {
     payload.commands.iter().any(|command| match command {
         UndoCommand::SetTaskField { before, after, .. } => before != after,
         UndoCommand::SetTaskLabels { before, after, .. } => !label_sets_equal(before, after),
+        UndoCommand::SetProjectMetadata {
+            before_key,
+            before_name,
+            before_prefix,
+            after_key,
+            after_name,
+            after_prefix,
+            ..
+        } => before_key != after_key || before_name != after_name || before_prefix != after_prefix,
         UndoCommand::DeleteCreatedTask { .. }
         | UndoCommand::DeleteCreatedNote { .. }
         | UndoCommand::DeleteCreatedProject { .. }
         | UndoCommand::DeleteCreatedLabel { .. }
         | UndoCommand::RestoreConflictResolution { .. } => true,
     })
+}
+
+fn empty_command_outcome() -> CommandOutcome {
+    CommandOutcome {
+        task_id: None,
+        include_deleted: None,
+        project_rename: None,
+    }
 }
 
 async fn prune_consumed_undo_entries(
@@ -304,6 +338,7 @@ pub(crate) async fn apply_latest_tui_undo(
                 summary,
                 task_id: outcome.task_id,
                 include_deleted: outcome.include_deleted,
+                project_rename: outcome.project_rename,
             }))
         }
         Err(error) => {
@@ -316,6 +351,7 @@ pub(crate) async fn apply_latest_tui_undo(
 struct CommandOutcome {
     task_id: Option<String>,
     include_deleted: Option<bool>,
+    project_rename: Option<ProjectRenameUndoOutcome>,
 }
 
 async fn apply_undo_commands(
@@ -325,6 +361,7 @@ async fn apply_undo_commands(
 ) -> Result<CommandOutcome> {
     let mut task_id = None;
     let mut include_deleted = None;
+    let mut project_rename = None;
     for command in commands {
         let outcome = apply_undo_command(conn, workspace_id, command).await?;
         if outcome.task_id.is_some() {
@@ -333,10 +370,14 @@ async fn apply_undo_commands(
         if outcome.include_deleted.is_some() {
             include_deleted = outcome.include_deleted;
         }
+        if outcome.project_rename.is_some() {
+            project_rename = outcome.project_rename;
+        }
     }
     Ok(CommandOutcome {
         task_id,
         include_deleted,
+        project_rename,
     })
 }
 
@@ -370,6 +411,7 @@ async fn apply_undo_command(
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),
                 include_deleted,
+                project_rename: None,
             })
         }
         UndoCommand::SetTaskLabels {
@@ -393,6 +435,7 @@ async fn apply_undo_command(
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
+                project_rename: None,
             })
         }
         UndoCommand::DeleteCreatedTask {
@@ -412,6 +455,7 @@ async fn apply_undo_command(
                     return Ok(CommandOutcome {
                         task_id: Some(task_id.clone()),
                         include_deleted: None,
+                        project_rename: None,
                     });
                 }
             }
@@ -419,6 +463,7 @@ async fn apply_undo_command(
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
+                project_rename: None,
             })
         }
         UndoCommand::DeleteCreatedNote {
@@ -430,6 +475,7 @@ async fn apply_undo_command(
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
+                project_rename: None,
             })
         }
         UndoCommand::DeleteCreatedProject {
@@ -447,9 +493,40 @@ async fn apply_undo_command(
                 expected_prefix,
             )
             .await?;
+            Ok(empty_command_outcome())
+        }
+        UndoCommand::SetProjectMetadata {
+            project_id,
+            before_key,
+            before_name,
+            before_prefix,
+            after_key,
+            after_name,
+            after_prefix,
+        } => {
+            set_project_metadata_for_undo(
+                conn,
+                workspace_id,
+                project_id,
+                ProjectMetadataUndoSnapshot {
+                    key: before_key,
+                    name: before_name,
+                    prefix: before_prefix,
+                },
+                ProjectMetadataUndoSnapshot {
+                    key: after_key,
+                    name: after_name,
+                    prefix: after_prefix,
+                },
+            )
+            .await?;
             Ok(CommandOutcome {
                 task_id: None,
                 include_deleted: None,
+                project_rename: Some(ProjectRenameUndoOutcome {
+                    before_key: before_key.clone(),
+                    after_key: after_key.clone(),
+                }),
             })
         }
         UndoCommand::DeleteCreatedLabel {
@@ -457,10 +534,7 @@ async fn apply_undo_command(
             create_change_id,
         } => {
             delete_created_label(conn, workspace_id, label, create_change_id).await?;
-            Ok(CommandOutcome {
-                task_id: None,
-                include_deleted: None,
-            })
+            Ok(empty_command_outcome())
         }
         UndoCommand::RestoreConflictResolution {
             task_id,
@@ -488,6 +562,7 @@ async fn apply_undo_command(
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
+                project_rename: None,
             })
         }
     }
@@ -759,6 +834,97 @@ async fn delete_created_project(
         .bind(create_change_id)
         .execute(&mut *conn)
         .await?;
+    Ok(())
+}
+
+struct ProjectMetadataUndoSnapshot<'a> {
+    key: &'a str,
+    name: &'a str,
+    prefix: &'a str,
+}
+
+async fn set_project_metadata_for_undo(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    project_id: &str,
+    before: ProjectMetadataUndoSnapshot<'_>,
+    after: ProjectMetadataUndoSnapshot<'_>,
+) -> Result<()> {
+    let row = sqlx::query(
+        "SELECT key, name, prefix
+         FROM projects
+         WHERE workspace_id = ? AND id = ? AND deleted = 0",
+    )
+    .bind(workspace_id)
+    .bind(project_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some(row) = row else {
+        bail!("error undo-state-changed project_id={project_id}");
+    };
+    let key: String = row.get("key");
+    let name: String = row.get("name");
+    let prefix: String = row.get("prefix");
+    if key != after.key || name != after.name || prefix != after.prefix {
+        bail!("error undo-state-changed project_id={project_id}");
+    }
+    let key_refs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM projects
+         WHERE workspace_id = ? AND key = ? AND id != ? AND deleted = 0",
+    )
+    .bind(workspace_id)
+    .bind(before.key)
+    .bind(project_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    if key_refs > 0 {
+        bail!("error undo-state-changed project_id={project_id}");
+    }
+    let prefix_refs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM projects
+         WHERE workspace_id = ? AND prefix = ? AND id != ? AND deleted = 0",
+    )
+    .bind(workspace_id)
+    .bind(before.prefix)
+    .bind(project_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    if prefix_refs > 0 {
+        bail!("error undo-state-changed project_id={project_id}");
+    }
+    let ts = now();
+    sqlx::query(
+        "UPDATE projects SET key = ?, name = ?, prefix = ?, updated_at = ?
+         WHERE workspace_id = ? AND id = ?",
+    )
+    .bind(before.key)
+    .bind(before.name)
+    .bind(before.prefix)
+    .bind(&ts)
+    .bind(workspace_id)
+    .bind(project_id)
+    .execute(&mut *conn)
+    .await?;
+    let workspace_key = workspace_key_for_id(conn, workspace_id).await?;
+    let config_path = config::config_file_path()?;
+    config_edit::rename_project_path(&config_path, workspace_id, after.key, before.key)?;
+    insert_change(
+        conn,
+        "project",
+        project_id,
+        None,
+        "set_project_metadata",
+        serde_json::json!({
+            "workspace_id": workspace_id,
+            "workspace_key": workspace_key,
+            "key": before.key,
+            "name": before.name,
+            "prefix": before.prefix,
+            "updated_at": ts,
+        }),
+        None,
+    )
+    .await?;
     Ok(())
 }
 

@@ -612,6 +612,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::BeginAddLabel,
     ),
     CommandSpec::implemented(
+        "rename-project",
+        "rename a project and display prefix",
+        "Metadata",
+        &[KeySequence {
+            codes: &[KeyCode::Char('A'), KeyCode::Char('e')],
+            label: "A e",
+        }],
+        Action::BeginRenameProject,
+    ),
+    CommandSpec::implemented(
         "delete-project",
         "delete a project",
         "Metadata",
@@ -1213,36 +1223,36 @@ pub(crate) const COMMAND_DOMAINS: &[CommandDomain] = &[
     CommandDomain {
         section: "Metadata",
         start: 38,
-        end: 43,
+        end: 44,
     },
     CommandDomain {
         section: "Edit",
-        start: 43,
-        end: 50,
+        start: 44,
+        end: 51,
     },
     CommandDomain {
         section: "Priority",
-        start: 50,
-        end: 55,
+        start: 51,
+        end: 56,
     },
     CommandDomain {
         section: "Filters",
-        start: 55,
-        end: 59,
+        start: 56,
+        end: 60,
     },
     CommandDomain {
         section: "Order",
-        start: 59,
-        end: 66,
+        start: 60,
+        end: 67,
     },
     CommandDomain {
         section: "Conflict",
-        start: 66,
-        end: 73,
+        start: 67,
+        end: 74,
     },
     CommandDomain {
         section: "Config",
-        start: 73,
-        end: 78,
+        start: 74,
+        end: 79,
     },
 ];

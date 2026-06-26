@@ -29,6 +29,7 @@ use crate::tui::store::{TaskOrder, TaskScope, TaskView, TuiStore};
 use crate::tui::toast::{Toast, ToastSeverity};
 
 const ADD_PROJECT_TITLE: &str = "Add project";
+const RENAME_PROJECT_TITLE: &str = "Rename project";
 const DELETE_PROJECT_TITLE: &str = "Delete project";
 const DELETE_TASK_TITLE: &str = "Delete task";
 const ADD_LABEL_TITLE: &str = "Add label";
@@ -97,6 +98,7 @@ pub(crate) struct App {
     pub(super) detail_context: bool,
     pub(super) authoring: AuthoringState,
     pub(super) conflict_flow: ConflictFlowState,
+    pending_rename_project: Option<String>,
     pending_delete_project: Option<String>,
     pub(super) needs_terminal_clear: bool,
     pub(super) add_task_only: bool,
@@ -138,6 +140,7 @@ impl App {
             detail_context: false,
             authoring: AuthoringState::default(),
             conflict_flow: ConflictFlowState::default(),
+            pending_rename_project: None,
             pending_delete_project: None,
             needs_terminal_clear: false,
             add_task_only: false,
@@ -683,6 +686,7 @@ impl App {
         let return_to_detail = self.authoring.cancel() || self.detail_context;
         self.overlay = None;
         self.conflict_flow.clear();
+        self.pending_rename_project = None;
         self.pending_delete_project = None;
         self.detail_context = false;
         self.restore_detail_overlay(return_to_detail);
@@ -708,6 +712,7 @@ impl App {
         self.pending_shortcut.clear();
         self.authoring.clear();
         self.conflict_flow.clear();
+        self.pending_rename_project = None;
         self.pending_delete_project = None;
         let had_overlay = self.overlay.take().is_some();
         self.detail_context = false;
@@ -782,6 +787,24 @@ impl App {
             DELETE_TASK_TITLE,
             format!("Delete {} {}?", task.display_ref, task.task.title),
         ));
+    }
+
+    pub(super) fn begin_rename_project(&mut self) {
+        self.pending_shortcut.clear();
+        let selected = if self.focus == Focus::Sidebar {
+            self.selected_sidebar_project()
+        } else {
+            None
+        };
+        let items = self
+            .store
+            .existing_project_picker_items(selected.as_deref().unwrap_or_default());
+        self.open_picker_overlay(
+            OverlayRoute::RenameProjectPicker,
+            RENAME_PROJECT_TITLE,
+            items,
+            false,
+        );
     }
 
     pub(super) fn begin_delete_project(&mut self) {
@@ -912,6 +935,43 @@ impl App {
                 self.overlay = Some(OverlayState::MultilineInput(state));
             }
         }
+    }
+
+    pub(super) fn submit_rename_project_picker(&mut self, values: Vec<String>) {
+        let Some(project) = self.require_picker_value(values, "no matching project") else {
+            self.begin_rename_project();
+            return;
+        };
+        self.pending_rename_project = Some(project.clone());
+        self.overlay = Some(OverlayState::text_input(
+            OverlayRoute::RenameProjectName,
+            RENAME_PROJECT_TITLE,
+            "new project name:",
+            project,
+        ));
+    }
+
+    pub(super) async fn submit_rename_project(&mut self, value: String) -> Result<()> {
+        let Some(project) = self.pending_rename_project.clone() else {
+            self.set_warning("project rename is not active");
+            return Ok(());
+        };
+        match self.store.rename_project(&project, value.clone()).await {
+            Ok(result) => {
+                self.pending_rename_project = None;
+                self.apply_mutation_result(result);
+            }
+            Err(error) => {
+                self.set_error(format!("{error:#}"));
+                self.overlay = Some(OverlayState::text_input(
+                    OverlayRoute::RenameProjectName,
+                    RENAME_PROJECT_TITLE,
+                    "new project name:",
+                    value,
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn submit_delete_project_picker(&mut self, values: Vec<String>) {

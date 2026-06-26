@@ -289,6 +289,15 @@ fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
             required_string_payload("prefix", &change.payload)?;
             required_string_payload("created_at", &change.payload)?;
         }
+        "set_project_metadata" => {
+            ensure_entity_type(change, "project")?;
+            ensure_sync_id("entity_id", &change.entity_id)?;
+            optional_workspace_payload(&change.payload)?;
+            required_string_payload("key", &change.payload)?;
+            required_string_payload("name", &change.payload)?;
+            required_string_payload("prefix", &change.payload)?;
+            required_string_payload("updated_at", &change.payload)?;
+        }
         "create_label" => {
             ensure_entity_type(change, "label")?;
             optional_workspace_payload(&change.payload)?;

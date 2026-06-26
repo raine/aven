@@ -40,6 +40,7 @@ aven dep remove APP-7KQ9 APP-7KQ0
 aven dep list APP-7KQ9
 aven update APP-7KQ9 --status active
 aven update APP-7KQ9 --title "clearer title" --priority medium
+aven project rename old-project "New Project Name" --prefix NPN
 aven note APP-7KQ9 "durable handoff context"
 aven delete APP-7KQ9
 aven restore APP-7KQ9
@@ -51,6 +52,9 @@ aven restore APP-7KQ9
   it.
 - Let commands infer the project from the current directory, even if project
   does not exist yet. Pass `--project` only if project is specified by user.
+- Use `project rename <old> <new> [--prefix <prefix>]` when a project itself
+  has a wrong name or prefix. Use task updates only when moving tasks between
+  distinct projects.
 - Use `list --all` with normal filters to find deleted tasks.
 - Use `bulk-update --dry-run` before broad mutations.
 - Use `list --ready` when selecting new work to avoid blocked or completed tasks.

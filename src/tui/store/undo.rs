@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::tui::store::MutationMessage;
+use crate::tui::store::{MutationMessage, TaskScope};
 use crate::undo::{UndoCommand, UndoPayload};
 
 use super::TuiStore;
@@ -55,6 +55,11 @@ impl TuiStore {
 
         if let Some(include_deleted) = outcome.include_deleted {
             self.view_state.filter_modifiers.include_deleted = include_deleted;
+        }
+        if let Some(project_rename) = &outcome.project_rename
+            && self.scope_project() == Some(project_rename.after_key.as_str())
+        {
+            self.view_state.scope = TaskScope::Project(project_rename.before_key.clone());
         }
 
         let selected = if selected.is_some() {
