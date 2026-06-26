@@ -157,6 +157,32 @@ mod text_input {
         assert!(!rendered.contains("title:"));
         assert!(rendered.contains("Enter submit"));
     }
+
+    #[test]
+    fn add_project_route_uses_placeholder_style() {
+        let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
+            route: OverlayRoute::AddProject,
+            title: "Add project".to_string(),
+            prompt: "project name:".to_string(),
+            input: String::new(),
+            cursor: 0,
+        }));
+        assert!(rendered.contains("Add project"));
+        assert!(rendered.contains(ADD_PROJECT_NAME_PLACEHOLDER));
+        assert!(!rendered.contains("project name:"));
+        assert!(rendered.contains("Enter submit"));
+    }
+
+    #[test]
+    fn add_project_empty_input_shows_placeholder() {
+        let line = add_project_name_input_line("", 0, 20);
+        assert_eq!(line.spans[0].content.as_ref(), "E");
+        assert_eq!(line.spans[0].style.fg, Some(BG_ALT));
+        assert_eq!(line.spans[0].style.bg, Some(FG));
+        assert_eq!(line.spans[1].content.as_ref(), "nter project name here...");
+        assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
+        assert_eq!(line.to_string(), ADD_PROJECT_NAME_PLACEHOLDER);
+    }
 }
 
 mod add_task_overlay {

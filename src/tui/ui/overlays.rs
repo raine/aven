@@ -45,4 +45,7 @@ pub(super) use multiline::{
 pub(super) use sync_status::sync_status_lines_for_test;
 
 #[cfg(test)]
+pub(super) use text_input::{ADD_PROJECT_NAME_PLACEHOLDER, add_project_name_input_line};
+
+#[cfg(test)]
 mod tests;
