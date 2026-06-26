@@ -10,14 +10,57 @@ const STYLES: Styles = Styles::styled()
     .literal(AnsiColor::Cyan.on_default().effects(Effects::BOLD))
     .placeholder(AnsiColor::Cyan.on_default());
 
+const TOP_LEVEL_HELP: &str = concat!(
+    "Local-first task manager\n\n",
+    "\x1b[1;32mUsage:\x1b[0m aven [\x1b[1;36mOPTIONS\x1b[0m] <\x1b[36mCOMMAND\x1b[0m>\n\n",
+    "\x1b[1;32mTask commands:\x1b[0m\n",
+    "  \x1b[1;36madd\x1b[0m          Create a task\n",
+    "  \x1b[1;36mdep\x1b[0m          Manage task dependencies\n",
+    "  \x1b[1;36mshow\x1b[0m         Show task details\n",
+    "  \x1b[1;36mlist\x1b[0m         List tasks\n",
+    "  \x1b[1;36mbulk-update\x1b[0m  Update multiple tasks at once\n",
+    "  \x1b[1;36mprime\x1b[0m        Generate agent-facing workspace context\n",
+    "  \x1b[1;36mupdate\x1b[0m       Update task fields\n",
+    "  \x1b[1;36mnote\x1b[0m         Append a note to a task\n",
+    "  \x1b[1;36mdelete\x1b[0m       Delete a task\n",
+    "  \x1b[1;36mrestore\x1b[0m      Restore a deleted task\n",
+    "  \x1b[1;36mtext\x1b[0m         Safely edit long text fields\n\n",
+    "\x1b[1;32mProject and label commands:\x1b[0m\n",
+    "  \x1b[1;36mprojects\x1b[0m     List or search projects\n",
+    "  \x1b[1;36mlabels\x1b[0m       List or search labels\n",
+    "  \x1b[1;36mlabel\x1b[0m        Manage labels\n",
+    "  \x1b[1;36mproject\x1b[0m      Manage projects\n",
+    "  \x1b[1;36mworkspace\x1b[0m    Manage workspaces\n\n",
+    "\x1b[1;32mConflict commands:\x1b[0m\n",
+    "  \x1b[1;36mconflict\x1b[0m     Inspect and resolve sync conflicts\n\n",
+    "\x1b[1;32mSetup and diagnostics:\x1b[0m\n",
+    "  \x1b[1;36mconfig\x1b[0m       Manage local configuration\n",
+    "  \x1b[1;36mskill\x1b[0m        Print a Claude Code skill primer\n",
+    "  \x1b[1;36mdoctor\x1b[0m       Diagnose configuration and workspace state\n\n",
+    "\x1b[1;32mSync and service commands:\x1b[0m\n",
+    "  \x1b[1;36mdaemon\x1b[0m       Run or manage the background daemon\n",
+    "  \x1b[1;36mserver\x1b[0m       Run the sync server\n",
+    "  \x1b[1;36msync\x1b[0m         Sync with a remote server\n\n",
+    "\x1b[1;32mInteractive commands:\x1b[0m\n",
+    "  \x1b[1;36mtmux\x1b[0m         Open tmux popups\n",
+    "  \x1b[1;36mtui\x1b[0m          Open the terminal UI\n\n",
+    "\x1b[1;32mHelp:\x1b[0m\n",
+    "  \x1b[1;36mhelp\x1b[0m         Print this message or the help of the given subcommand(s)\n\n",
+    "\x1b[1;32mOptions:\x1b[0m\n",
+    "      \x1b[1;36m--db\x1b[0m <\x1b[36mDB\x1b[0m>                Use a specific SQLite database path\n",
+    "      \x1b[1;36m--workspace\x1b[0m <\x1b[36mWORKSPACE\x1b[0m>  Use a specific workspace by name or key\n",
+    "  \x1b[1;36m-h\x1b[0m, \x1b[1;36m--help\x1b[0m                   Print help\n",
+);
+
 #[derive(Parser)]
 #[command(name = "aven")]
 #[command(about = "Local-first task manager")]
 #[command(styles = STYLES)]
+#[command(override_help = TOP_LEVEL_HELP)]
 pub struct Cli {
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help = "Use a specific SQLite database path")]
     pub(crate) db: Option<PathBuf>,
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help = "Use a specific workspace by name or key")]
     pub(crate) workspace: Option<String>,
     #[command(subcommand)]
     pub(crate) command: Commands,
@@ -25,33 +68,58 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Commands {
+    /// Create a task
     Add(AddArgs),
+    /// Manage task dependencies
     Dep(DepCommand),
+    /// Show task details
     Show(ShowArgs),
+    /// List tasks
     List(ListArgs),
+    /// Update multiple tasks at once
     BulkUpdate(BulkUpdateArgs),
+    /// Generate agent-facing workspace context
     Prime(PrimeArgs),
+    /// Update task fields
     Update(UpdateArgs),
+    /// Append a note to a task
     Note(NoteArgs),
-    Projects(SearchArgs),
-    Labels(SearchArgs),
-    Label(LabelCommand),
-    Project(ProjectCommand),
+    /// Delete a task
     Delete(RefArgs),
+    /// Restore a deleted task
     Restore(RefArgs),
-    Conflict(ConflictCommand),
-    Config(ConfigCommand),
-    Daemon(DaemonArgs),
-    Server(ServerArgs),
-    Sync(SyncArgs),
-    Workspace(WorkspaceCommand),
+    /// Safely edit long text fields
     Text(TextCommand),
+    /// List or search projects
+    Projects(SearchArgs),
+    /// List or search labels
+    Labels(SearchArgs),
+    /// Manage labels
+    Label(LabelCommand),
+    /// Manage projects
+    Project(ProjectCommand),
+    /// Manage workspaces
+    Workspace(WorkspaceCommand),
+    /// Inspect and resolve sync conflicts
+    Conflict(ConflictCommand),
+    /// Manage local configuration
+    Config(ConfigCommand),
+    /// Print a Claude Code skill primer
     Skill,
+    /// Diagnose configuration and workspace state
     Doctor,
+    /// Run or manage the background daemon
+    Daemon(DaemonArgs),
+    /// Run the sync server
+    Server(ServerArgs),
+    /// Sync with a remote server
+    Sync(SyncArgs),
+    /// Open tmux popups
     Tmux(TmuxCommand),
+    /// Open the terminal UI
+    Tui(TuiArgs),
     #[command(hide = true)]
     Internal(InternalCommand),
-    Tui(TuiArgs),
 }
 
 #[derive(Args)]
