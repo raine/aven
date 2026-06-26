@@ -84,6 +84,25 @@ impl App {
             .filter(|last| last.at.elapsed() <= TASK_ROW_DOUBLE_CLICK)
             .cloned();
 
+        let header = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: terminal_size.width,
+            height: 2,
+        };
+        if terminal_size.width >= 70
+            && terminal_size.height >= 18
+            && self.detail_underlay()
+            && matches!(
+                crate::tui::ui::header_target_at(&self.store, header, mouse.column, mouse.row),
+                Some(crate::tui::ui::HeaderTarget::Home)
+            )
+        {
+            self.last_task_click = None;
+            self.cancel_overlay();
+            return Ok(());
+        }
+
         if matches!(self.overlay, Some(OverlayState::HeaderMenu(_))) {
             let Some(OverlayState::HeaderMenu(state)) = self.overlay.take() else {
                 return Ok(());
@@ -115,17 +134,12 @@ impl App {
         if self.overlay.is_some() || terminal_size.width < 70 || terminal_size.height < 18 {
             return Ok(());
         }
-        let header = ratatui::layout::Rect {
-            x: 0,
-            y: 0,
-            width: terminal_size.width,
-            height: 2,
-        };
         if let Some(target) =
             crate::tui::ui::header_target_at(&self.store, header, mouse.column, mouse.row)
         {
             self.last_task_click = None;
             return match target {
+                crate::tui::ui::HeaderTarget::Home => Ok(()),
                 crate::tui::ui::HeaderTarget::Workspace { column } => {
                     self.show_workspace_menu(column, mouse.row).await?;
                     Ok(())

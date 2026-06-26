@@ -1353,6 +1353,49 @@ mod filters_and_workspaces {
     }
 
     #[tokio::test]
+    async fn header_home_click_closes_detail_overlay() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+
+        app.dispatch_mouse(header_click(2), (140, 24).into())
+            .await
+            .unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(!app.detail_context);
+        assert_eq!(app.widgets.table.selected(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn header_home_click_closes_detail_underlay() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail target")).await;
+        app.detail_context = true;
+        app.overlay = Some(OverlayState::Picker(PickerState {
+            route: OverlayRoute::MessageOnly,
+            title: "Pick".to_string(),
+            filter: LineEdit::blank(),
+            items: vec![PickerItem {
+                label: "One".to_string(),
+                value: "one".to_string(),
+                selected: false,
+            }],
+            selected: 0,
+            multi: false,
+            mode: PickerMode::Navigate,
+        }));
+
+        app.dispatch_mouse(header_click(2), (140, 24).into())
+            .await
+            .unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(!app.detail_context);
+        assert_eq!(app.widgets.table.selected(), Some(0));
+    }
+
+    #[tokio::test]
     async fn mouse_wheel_moves_task_selection_down_and_up() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("first")).await;

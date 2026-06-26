@@ -14,6 +14,7 @@ use crate::tui::theme::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HeaderTarget {
+    Home,
     Workspace { column: u16 },
     Scope { column: u16 },
     View { column: u16 },
@@ -137,7 +138,12 @@ fn header_hitboxes(store: &TuiStore, width: u16) -> Vec<HeaderHitbox> {
     let compact = width < 120;
     let mut hitboxes = Vec::new();
     let mut x = 0;
-    push_text(&mut x, " aven");
+    push_target(
+        &mut hitboxes,
+        &mut x,
+        " aven".width() as u16,
+        HeaderTarget::Home,
+    );
     push_text(&mut x, separator_text());
     let workspace_start = x;
     push_text(&mut x, if compact { "ws " } else { "workspace " });
@@ -531,6 +537,10 @@ mod tests {
         store.view_state.scope = TaskScope::Project("mobile-app".to_string());
         let area = Rect::new(0, 0, 140, 2);
 
+        assert_eq!(
+            header_target_at(&store, area, 2, 0),
+            Some(HeaderTarget::Home)
+        );
         assert_eq!(
             header_target_at(&store, area, 10, 0),
             Some(HeaderTarget::Workspace { column: 8 })
