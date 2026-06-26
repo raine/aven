@@ -17,8 +17,8 @@ pub(crate) use sidebar::{
 pub(crate) use tasks::{list_task_items, list_task_items_in_workspace};
 #[allow(unused_imports)]
 pub(crate) use types::{
-    ProjectListItem, SidebarCounts, SortDirection, TaskFilters, TaskListItem, TaskNote,
-    TaskQueryMode, TaskSort,
+    ProjectListItem, SidebarCounts, SortDirection, TaskDependencyLink, TaskFilters, TaskListItem,
+    TaskNote, TaskQueryMode, TaskSort,
 };
 
 #[cfg(test)]
@@ -426,6 +426,14 @@ mod tests {
         insert_test_label(&mut conn, "0000000000000301", "alpha").await;
         insert_test_conflict(&mut conn, "0000000000000301", false).await;
         insert_test_conflict(&mut conn, "0000000000000302", true).await;
+        sqlx::query(
+            "INSERT INTO task_dependencies(workspace_id, task_id, depends_on_task_id, created_at)
+             VALUES (?, '0000000000000302', '0000000000000301', '003')",
+        )
+        .bind(crate::workspaces::active_workspace_id())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
 
         let items = list_task_items(
             &mut conn,
@@ -442,6 +450,10 @@ mod tests {
             vec!["alpha".to_string(), "zeta".to_string()]
         );
         assert!(items[0].has_conflict);
+        assert_eq!(items[0].blocks[0].display_ref, "APP-0000000000000302");
+        assert_eq!(items[0].blocks[0].title, "resolved");
+        assert_eq!(items[1].depends_on[0].display_ref, "APP-0000000000000301");
+        assert_eq!(items[1].depends_on[0].title, "labeled");
         assert!(!items[1].has_conflict);
         assert!(items[2].labels.is_empty());
     }

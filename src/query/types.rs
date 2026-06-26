@@ -55,6 +55,8 @@ pub(crate) struct TaskListItem {
     pub(crate) has_conflict: bool,
     pub(crate) unresolved_blocker_count: i64,
     pub(crate) dependent_count: i64,
+    pub(crate) depends_on: Vec<TaskDependencyLink>,
+    pub(crate) blocks: Vec<TaskDependencyLink>,
     pub(crate) queue: QueueMeta,
 }
 
@@ -62,6 +64,15 @@ pub(crate) struct TaskListItem {
 pub(crate) struct TaskNote {
     pub(crate) body: String,
     pub(crate) created_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TaskDependencyLink {
+    pub(crate) display_ref: String,
+    pub(crate) title: String,
+    pub(crate) status: String,
+    pub(crate) priority: String,
+    pub(crate) unresolved: bool,
 }
 
 #[derive(Debug, Clone)]

@@ -204,7 +204,57 @@ fn detail_content_lines(
             lines.extend(quoted_block_lines(&note.body, width, Style::new().fg(FG)));
         }
     }
+    lines.extend(detail_dependency_lines(item));
     lines
+}
+
+fn detail_dependency_lines(item: &TaskListItem) -> Vec<Line<'static>> {
+    if item.depends_on.is_empty() && item.blocks.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = vec![Line::from("")];
+    if !item.depends_on.is_empty() {
+        lines.push(dependency_heading("BLOCKED BY", &item.depends_on));
+        lines.extend(item.depends_on.iter().map(dependency_item_line));
+    }
+    if !item.blocks.is_empty() {
+        if !lines.last().is_some_and(|line| line.to_string().is_empty()) {
+            lines.push(Line::from(""));
+        }
+        lines.push(dependency_heading("BLOCKS", &item.blocks));
+        lines.extend(item.blocks.iter().map(dependency_item_line));
+    }
+    lines
+}
+
+fn dependency_heading(
+    label: &'static str,
+    links: &[crate::query::TaskDependencyLink],
+) -> Line<'static> {
+    let open = links.iter().filter(|link| link.unresolved).count();
+    Line::from(vec![
+        Span::styled(label, Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!(" open={open} total={}", links.len()),
+            Style::new().fg(FG_DIM),
+        ),
+    ])
+}
+
+fn dependency_item_line(link: &crate::query::TaskDependencyLink) -> Line<'static> {
+    Line::from(vec![
+        Span::styled("  ", Style::new().fg(FG_DIM)),
+        Span::styled(link.display_ref.clone(), Style::new().fg(ACCENT)),
+        Span::styled("  ", Style::new().fg(FG_DIM)),
+        Span::styled(link.title.clone(), Style::new().fg(FG)),
+        Span::styled("  ", Style::new().fg(FG_DIM)),
+        status_span(&link.status),
+        Span::styled("  ", Style::new().fg(FG_DIM)),
+        Span::styled(
+            priority_short(&link.priority),
+            theme::priority_style(&link.priority).add_modifier(Modifier::BOLD),
+        ),
+    ])
 }
 
 fn detail_header_options(
@@ -428,6 +478,21 @@ mod tests {
     }
 
     #[test]
+    fn detail_content_includes_dependencies() {
+        let item = detail_test_item();
+        let rendered = detail_content_lines(&item, 60, None)
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("BLOCKED BY open=1 total=1"));
+        assert!(rendered.contains("APP-7KQ1  Ship auth service"));
+        assert!(rendered.contains("BLOCKS open=1 total=1"));
+        assert!(rendered.contains("APP-7KQ2  Write rollout notes"));
+    }
+
+    #[test]
     fn detail_content_renders_markdown_description_and_notes() {
         let mut item = detail_test_item();
         item.task.description = "## Context\n- **One** item".to_string();
@@ -604,6 +669,20 @@ mod tests {
             has_conflict: true,
             unresolved_blocker_count: 0,
             dependent_count: 0,
+            depends_on: vec![crate::query::TaskDependencyLink {
+                display_ref: "APP-7KQ1".to_string(),
+                title: "Ship auth service".to_string(),
+                status: "todo".to_string(),
+                priority: "high".to_string(),
+                unresolved: true,
+            }],
+            blocks: vec![crate::query::TaskDependencyLink {
+                display_ref: "APP-7KQ2".to_string(),
+                title: "Write rollout notes".to_string(),
+                status: "inbox".to_string(),
+                priority: "none".to_string(),
+                unresolved: true,
+            }],
             queue: Default::default(),
         }
     }

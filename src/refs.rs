@@ -156,8 +156,12 @@ pub(crate) async fn display_refs_for_tasks(
     Ok(tasks
         .iter()
         .map(|task| {
-            let suffix = display_suffix_for_id(&task.id, &by_workspace[&task.workspace_id]);
-            (task.id.clone(), format!("{}-{suffix}", task.project_prefix))
+            let display_ref = display_ref_for_id(
+                &task.project_prefix,
+                &task.id,
+                &by_workspace[&task.workspace_id],
+            );
+            (task.id.clone(), display_ref)
         })
         .collect())
 }
@@ -183,6 +187,10 @@ async fn task_ids(conn: &mut SqliteConnection, workspace_id: &str) -> Result<Vec
             .fetch_all(&mut *conn)
             .await?,
     )
+}
+
+pub(crate) fn display_ref_for_id(project_prefix: &str, id: &str, ids: &[String]) -> String {
+    format!("{}-{}", project_prefix, display_suffix_for_id(id, ids))
 }
 
 fn display_suffix_for_id(id: &str, ids: &[String]) -> String {

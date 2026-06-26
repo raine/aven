@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::query::TaskNote;
+use crate::query::{TaskDependencyLink, TaskNote};
+use crate::refs::display_ref_for_id;
 use anyhow::Result;
 use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 
@@ -12,6 +13,8 @@ pub(crate) struct TaskEnrichment {
     pub(crate) conflicted_task_ids: HashSet<String>,
     pub(crate) unresolved_blocker_counts_by_task: HashMap<String, i64>,
     pub(crate) dependent_counts_by_task: HashMap<String, i64>,
+    pub(crate) depends_on_by_task: HashMap<String, Vec<TaskDependencyLink>>,
+    pub(crate) blocks_by_task: HashMap<String, Vec<TaskDependencyLink>>,
 }
 
 pub(crate) async fn load_task_enrichment(
@@ -30,6 +33,8 @@ pub(crate) async fn load_task_enrichment(
         )
         .await?,
         dependent_counts_by_task: dependent_counts_for_tasks(conn, workspace_id, task_ids).await?,
+        depends_on_by_task: dependency_links_for_tasks(conn, workspace_id, task_ids, false).await?,
+        blocks_by_task: dependency_links_for_tasks(conn, workspace_id, task_ids, true).await?,
     })
 }
 
@@ -229,6 +234,108 @@ async fn dependent_counts_for_tasks(
         }
     }
     Ok(counts)
+}
+
+async fn dependency_links_for_tasks(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_ids: &[String],
+    blocks_only: bool,
+) -> Result<HashMap<String, Vec<TaskDependencyLink>>> {
+    let mut links = HashMap::new();
+    if task_ids.is_empty() {
+        return Ok(links);
+    }
+    let workspace_task_ids = workspace_task_ids(conn, workspace_id).await?;
+    for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let mut query = if blocks_only {
+            QueryBuilder::<Sqlite>::new(
+                "SELECT d.depends_on_task_id AS source_task_id,
+                        t.id, t.title, t.status, t.priority, p.prefix AS project_prefix,
+                        d.created_at AS dependency_created_at,
+                        CASE
+                            WHEN blocker.deleted = 0
+                             AND blocker.status NOT IN ('done', 'canceled')
+                             AND t.deleted = 0
+                             AND t.status NOT IN ('done', 'canceled')
+                            THEN 1 ELSE 0
+                        END AS unresolved
+                 FROM task_dependencies d
+                 JOIN tasks blocker
+                  ON blocker.workspace_id = d.workspace_id AND blocker.id = d.depends_on_task_id
+                 JOIN tasks t
+                  ON t.workspace_id = d.workspace_id AND t.id = d.task_id
+                 JOIN projects p
+                  ON p.workspace_id = t.workspace_id AND p.id = t.project_id
+                 WHERE d.workspace_id =",
+            )
+        } else {
+            QueryBuilder::<Sqlite>::new(
+                "SELECT d.task_id AS source_task_id,
+                        t.id, t.title, t.status, t.priority, p.prefix AS project_prefix,
+                        d.created_at AS dependency_created_at,
+                        CASE
+                            WHEN t.deleted = 0
+                             AND t.status NOT IN ('done', 'canceled')
+                            THEN 1 ELSE 0
+                        END AS unresolved
+                 FROM task_dependencies d
+                 JOIN tasks t
+                  ON t.workspace_id = d.workspace_id AND t.id = d.depends_on_task_id
+                 JOIN projects p
+                  ON p.workspace_id = t.workspace_id AND p.id = t.project_id
+                 WHERE d.workspace_id =",
+            )
+        };
+        query.push_bind(workspace_id);
+        let source_column = if blocks_only {
+            "d.depends_on_task_id"
+        } else {
+            "d.task_id"
+        };
+        query.push(" AND ");
+        query.push(source_column);
+        query.push(" IN (");
+        {
+            let mut separated = query.separated(", ");
+            for task_id in chunk {
+                separated.push_bind(task_id);
+            }
+        }
+        query.push(") ORDER BY unresolved DESC, t.status, t.title, d.created_at, t.id");
+
+        for row in query.build().fetch_all(&mut *conn).await? {
+            let source_task_id: String = row.get("source_task_id");
+            let task_id: String = row.get("id");
+            let project_prefix: String = row.get("project_prefix");
+            links
+                .entry(source_task_id)
+                .or_insert_with(Vec::new)
+                .push(TaskDependencyLink {
+                    display_ref: display_ref_for_id(&project_prefix, &task_id, &workspace_task_ids),
+                    title: row.get("title"),
+                    status: row.get("status"),
+                    priority: row.get("priority"),
+                    unresolved: row.get::<i64, _>("unresolved") != 0,
+                });
+        }
+    }
+    Ok(links)
+}
+
+async fn workspace_task_ids(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+) -> Result<Vec<String>> {
+    Ok(
+        sqlx::query_scalar::<_, String>("SELECT id FROM tasks WHERE workspace_id = ? ORDER BY id")
+            .bind(workspace_id)
+            .fetch_all(&mut *conn)
+            .await?,
+    )
 }
 
 #[cfg(test)]

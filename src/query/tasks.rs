@@ -178,6 +178,14 @@ pub(crate) async fn list_task_items_in_workspace(
             .dependent_counts_by_task
             .get(&task.id)
             .unwrap_or(&0);
+        let depends_on = enrichment
+            .depends_on_by_task
+            .remove(&task.id)
+            .unwrap_or_default();
+        let blocks = enrichment
+            .blocks_by_task
+            .remove(&task.id)
+            .unwrap_or_default();
         let queue = queue_meta(
             &task,
             has_conflict,
@@ -192,6 +200,8 @@ pub(crate) async fn list_task_items_in_workspace(
             has_conflict,
             unresolved_blocker_count,
             dependent_count,
+            depends_on,
+            blocks,
             queue,
         });
     }

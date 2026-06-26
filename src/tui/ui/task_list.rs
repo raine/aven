@@ -658,13 +658,32 @@ fn blank_task_row_cells() -> Vec<Line<'static>> {
 }
 
 fn metadata_cell(item: &TaskListItem) -> Line<'static> {
-    if item.notes.is_empty() {
-        return Line::from("");
+    let mut spans = Vec::new();
+    if item.unresolved_blocker_count > 0 {
+        spans.push(Span::styled(
+            format!("←{}", item.unresolved_blocker_count),
+            Style::new().fg(FG_MUTED).remove_modifier(Modifier::BOLD),
+        ));
     }
-    Line::from(Span::styled(
-        "✎",
-        Style::new().fg(FG_MUTED).remove_modifier(Modifier::BOLD),
-    ))
+    if item.dependent_count > 0 {
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(
+            format!("→{}", item.dependent_count),
+            Style::new().fg(FG_MUTED).remove_modifier(Modifier::BOLD),
+        ));
+    }
+    if !item.notes.is_empty() {
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(
+            "✎",
+            Style::new().fg(FG_MUTED).remove_modifier(Modifier::BOLD),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn inline_title_edit_cell(editor: &TextInputView, max_width: usize) -> Line<'static> {
@@ -738,12 +757,45 @@ fn task_heading_line(item: &TaskListItem) -> Line<'_> {
     ])
 }
 
+fn dependency_preview_lines(item: &TaskListItem) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    if !item.depends_on.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("blocked by ", Style::new().fg(FG_DIM)),
+            dependency_links_summary(&item.depends_on),
+        ]));
+    }
+    if !item.blocks.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("blocks ", Style::new().fg(FG_DIM)),
+            dependency_links_summary(&item.blocks),
+        ]));
+    }
+    lines
+}
+
+fn dependency_links_summary(links: &[crate::query::TaskDependencyLink]) -> Span<'static> {
+    let summary = links
+        .iter()
+        .take(3)
+        .map(|link| format!("{} {}", link.display_ref, link.title))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = links.len().saturating_sub(3);
+    let summary = if more > 0 {
+        format!("{summary}, +{more}")
+    } else {
+        summary
+    };
+    Span::styled(summary, Style::new().fg(FG_MUTED))
+}
+
 fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usize>, area: Rect) {
     let Some(item) = store.selected_task(selected) else {
         return;
     };
     let labels = labels_display(&item.labels, ", ");
-    let text = Text::from(vec![
+    let mut lines = vec![
         task_heading_line(item),
         Line::from(vec![
             Span::styled("project ", Style::new().fg(FG_DIM)),
@@ -765,9 +817,13 @@ fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usi
             Span::styled("labels ", Style::new().fg(FG_DIM)),
             Span::styled(labels, Style::new().fg(FG_MUTED)),
         ]),
+    ];
+    lines.extend(dependency_preview_lines(item));
+    lines.extend([
         Line::from(""),
         Line::from(description_or_placeholder(&item.task.description)),
     ]);
+    let text = Text::from(lines);
     frame.render_widget(
         Paragraph::new(text)
             .block(
@@ -815,6 +871,8 @@ mod tests {
             has_conflict: false,
             unresolved_blocker_count: 0,
             dependent_count: 0,
+            depends_on: Vec::new(),
+            blocks: Vec::new(),
             queue: Default::default(),
         }
     }
@@ -1358,6 +1416,15 @@ mod tests {
     }
 
     #[test]
+    fn metadata_cell_shows_dependency_counts() {
+        let mut item = task_item("blocked");
+        item.unresolved_blocker_count = 2;
+        item.dependent_count = 1;
+
+        assert_eq!(metadata_cell(&item).to_string(), "←2 →1");
+    }
+
+    #[test]
     fn metadata_cell_ignores_description_without_notes() {
         let mut item = task_item("plain");
         item.task.description = "details".to_string();
@@ -1373,6 +1440,8 @@ mod tests {
             body: "one".to_string(),
             created_at: "001".to_string(),
         }];
+        item.unresolved_blocker_count = 1;
+        item.dependent_count = 1;
 
         let cells = build_task_row_cells(
             &item,
@@ -1383,7 +1452,7 @@ mod tests {
         );
 
         assert_eq!(cells.len(), 7);
-        assert_eq!(cells[2].to_string(), "✎");
+        assert_eq!(cells[2].to_string(), "←1 →1 ✎");
         assert_eq!(cells[3].to_string(), "app ");
     }
 
