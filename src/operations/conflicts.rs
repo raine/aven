@@ -5,11 +5,9 @@ use tracing::info;
 
 use crate::db::{begin_immediate, insert_change, set_field_version};
 use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
-use crate::projects::{
-    resolve_existing_project_in_workspace, resolve_project_for_add_in_workspace,
-};
+use crate::projects::{resolve_existing_project_in_workspace, resolve_project_for_stored_value};
 use crate::refs::get_task;
-use crate::types::{Project, Task};
+use crate::types::Task;
 
 pub(crate) struct ConflictListItem {
     pub(crate) task_id: String,
@@ -128,31 +126,6 @@ pub(crate) async fn conflict_variant_value(
     bail!("error unknown-variant token={token}")
 }
 
-async fn project_for_stored_value(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-    value: &str,
-) -> Result<Project> {
-    if let Some(row) = sqlx::query(
-        "SELECT id, workspace_id, key, name, prefix
-         FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 0",
-    )
-    .bind(workspace_id)
-    .bind(value)
-    .fetch_optional(&mut *conn)
-    .await?
-    {
-        return Ok(Project {
-            id: row.get("id"),
-            workspace_id: row.get("workspace_id"),
-            key: row.get("key"),
-            name: row.get("name"),
-            prefix: row.get("prefix"),
-        });
-    }
-    resolve_project_for_add_in_workspace(conn, workspace_id, Some(value)).await
-}
-
 pub(crate) async fn resolve_conflict(
     conn: &mut SqliteConnection,
     task_id: &str,
@@ -173,7 +146,7 @@ pub(crate) async fn resolve_conflict(
         bail!("error conflict-not-found task_id={task_id} field={field}");
     }
     let payload = if field == crate::task_fields::TaskField::Project.as_str() {
-        let project = project_for_stored_value(&mut tx, &workspace.id, value).await?;
+        let project = resolve_project_for_stored_value(&mut tx, &workspace.id, value).await?;
         apply_project_id_in_workspace(&mut tx, &workspace.id, task_id, &project.id).await?;
         json!({
             "workspace_id": &workspace.id,

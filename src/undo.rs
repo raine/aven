@@ -12,9 +12,8 @@ use crate::operations::{
     ProjectMetadata, insert_project_metadata_change, rename_config_project_mapping,
     set_project_metadata, update_task_labels_in_workspace,
 };
-use crate::projects::{project_has_config_mapping, resolve_project_for_add_in_workspace};
+use crate::projects::{project_has_config_mapping, resolve_project_for_stored_value};
 use crate::task_fields::TaskField;
-use crate::types::Project;
 use crate::workspaces::workspace_key_for_id;
 
 tokio::task_local! {
@@ -585,31 +584,6 @@ async fn project_id_exists(
         > 0)
 }
 
-async fn project_for_stored_value(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-    value: &str,
-) -> Result<Project> {
-    if let Some(row) = sqlx::query(
-        "SELECT id, workspace_id, key, name, prefix
-         FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 0",
-    )
-    .bind(workspace_id)
-    .bind(value)
-    .fetch_optional(&mut *conn)
-    .await?
-    {
-        return Ok(Project {
-            id: row.get("id"),
-            workspace_id: row.get("workspace_id"),
-            key: row.get("key"),
-            name: row.get("name"),
-            prefix: row.get("prefix"),
-        });
-    }
-    resolve_project_for_add_in_workspace(conn, workspace_id, Some(value)).await
-}
-
 async fn set_task_field_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &str,
@@ -627,7 +601,7 @@ async fn set_task_field_in_workspace(
     let base = field_version(conn, task_id, field).await?;
     let workspace_key = workspace_key_for_id(conn, workspace_id).await?;
     let payload = if field == TaskField::Project.as_str() {
-        let project = project_for_stored_value(conn, workspace_id, value).await?;
+        let project = resolve_project_for_stored_value(conn, workspace_id, value).await?;
         apply_project_id_in_workspace(conn, workspace_id, task_id, &project.id).await?;
         serde_json::json!({
             "workspace_id": workspace_id,

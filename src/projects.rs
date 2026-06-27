@@ -731,6 +731,30 @@ pub(crate) async fn list_projects_in_workspace(
         .collect())
 }
 
+/// Resolve a stored project value to a `Project`.
+///
+/// First tries to find an active project by its exact ID in the workspace.
+/// Falls back to add-style resolution (key/name match, config override,
+/// path mapping, or create).
+pub(crate) async fn resolve_project_for_stored_value(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    value: &str,
+) -> Result<Project> {
+    if let Some(row) = sqlx::query(
+        "SELECT id, workspace_id, key, name, prefix
+         FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 0",
+    )
+    .bind(workspace_id)
+    .bind(value)
+    .fetch_optional(&mut *conn)
+    .await?
+    {
+        return Ok(project_from_row(row));
+    }
+    resolve_project_for_add_in_workspace(conn, workspace_id, Some(value)).await
+}
+
 fn project_from_row(row: sqlx::sqlite::SqliteRow) -> Project {
     Project {
         id: row.get("id"),
