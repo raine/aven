@@ -92,6 +92,28 @@ impl TuiStore {
         self.refresh(None).await
     }
 
+    pub(crate) async fn search_preview(
+        &self,
+        input: &str,
+        limit: usize,
+    ) -> Result<Vec<query::TaskSearchResult>> {
+        let text = input.trim();
+        if text.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.pool.acquire().await?;
+        query::search_task_items_in_workspace(
+            &mut conn,
+            self.active_workspace.id.as_str(),
+            TaskSearchQuery {
+                text: text.to_string(),
+                include_deleted: true,
+                limit,
+            },
+        )
+        .await
+    }
+
     pub(crate) async fn accept_search(&mut self, input: &str) -> Result<Option<usize>> {
         let text = input.trim();
         if text.is_empty() {

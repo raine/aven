@@ -11,7 +11,7 @@ use crate::config::AppConfig;
 use crate::operations::TaskDraft;
 use crate::tui::authoring::AuthoringState;
 use crate::tui::conflict_flow::ConflictFlowState;
-use crate::tui::overlay::{LineEdit, OverlayState};
+use crate::tui::overlay::{OverlayState, SearchState};
 use crate::tui::shortcut_buffer::ShortcutBuffer;
 use crate::tui::store::{TaskOrder, TuiStore};
 use crate::tui::toast::{Toast, ToastSeverity};
@@ -196,9 +196,7 @@ impl App {
 
     pub(crate) fn begin_search(&mut self) {
         self.pending_shortcut.clear();
-        self.overlay = Some(OverlayState::Search {
-            input: LineEdit::blank(),
-        });
+        self.overlay = Some(OverlayState::Search(SearchState::blank()));
     }
 
     pub(super) async fn accept_search_input(&mut self, input: String) -> Result<()> {

@@ -14,7 +14,9 @@ use crate::tui::navigation::{
     detail_scroll_with_delta, detail_task_delta, handle_detail_overlay_key, next_index,
     scroll_with_delta,
 };
-use crate::tui::overlay::{CommandState, OverlayOutcome, OverlayRoute, OverlayState};
+use crate::tui::overlay::{
+    CommandState, OverlayOutcome, OverlayRoute, OverlayState, SearchResultItem,
+};
 use crate::tui::platform::is_editor_prefix_key;
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
 use crate::tui::ui::{
@@ -23,13 +25,16 @@ use crate::tui::ui::{
 };
 
 impl App {
-    pub(super) fn dispatch_paste(&mut self, text: &str) {
+    pub(super) async fn dispatch_paste(&mut self, text: &str) -> Result<()> {
         let Some(overlay) = self.overlay.take() else {
-            return;
+            return Ok(());
         };
-        self.overlay = Some(crate::tui::overlay::handle_generic_overlay_paste(
-            text, overlay,
-        ));
+        let mut overlay = crate::tui::overlay::handle_generic_overlay_paste(text, overlay);
+        if let OverlayState::Search(state) = &mut overlay {
+            self.refresh_search_results(state).await?;
+        }
+        self.overlay = Some(overlay);
+        Ok(())
     }
 
     pub(crate) async fn dispatch_key(&mut self, key: KeyEvent, terminal_size: Size) -> Result<()> {
@@ -400,12 +405,31 @@ impl App {
         };
 
         match overlay {
-            OverlayState::Search { mut input } => match key.code {
+            OverlayState::Search(mut state) => match key.code {
                 KeyCode::Esc => {}
-                KeyCode::Enter => self.accept_search_input(input.text).await?,
+                KeyCode::Enter => {
+                    if let Some(result) = state.selected_result() {
+                        self.accept_search_input(state.input.text.clone()).await?;
+                        self.select_task_by_id(&result.task_id);
+                    } else {
+                        self.accept_search_input(state.input.text).await?;
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('j') if !state.results.is_empty() => {
+                    state.selected = (state.selected + 1) % state.results.len();
+                    self.overlay = Some(OverlayState::Search(state));
+                }
+                KeyCode::Up | KeyCode::Char('k') if !state.results.is_empty() => {
+                    state.selected = state
+                        .selected
+                        .checked_sub(1)
+                        .unwrap_or(state.results.len().saturating_sub(1));
+                    self.overlay = Some(OverlayState::Search(state));
+                }
                 _ => {
-                    input.handle_key(key);
-                    self.overlay = Some(OverlayState::Search { input });
+                    state.input.handle_key(key);
+                    self.refresh_search_results(&mut state).await?;
+                    self.overlay = Some(OverlayState::Search(state));
                 }
             },
             OverlayState::Command { mut state } => match key.code {
@@ -772,6 +796,49 @@ impl App {
             | Action::None => {}
         }
         Ok(())
+    }
+
+    async fn refresh_search_results(
+        &mut self,
+        state: &mut crate::tui::overlay::SearchState,
+    ) -> Result<()> {
+        let text = state.input.text.trim();
+        if text.is_empty() {
+            state.results.clear();
+            state.selected = 0;
+            return Ok(());
+        }
+        let results = self.store.search_preview(text, 8).await?;
+        state.results = results
+            .into_iter()
+            .map(|result| SearchResultItem {
+                task_id: result.item.task.id,
+                display_ref: result.item.display_ref,
+                title: result.item.task.title,
+                description: result.item.task.description,
+                project_key: result.item.task.project_key,
+                status: result.item.task.status,
+                priority: result.item.task.priority,
+                labels: result.item.labels,
+                matched_field: result.matched_field,
+                snippet: result.snippet,
+                score: result.score,
+                deleted: result.item.task.deleted,
+            })
+            .collect();
+        state.normalize_selection();
+        Ok(())
+    }
+
+    fn select_task_by_id(&mut self, task_id: &str) {
+        if let Some(index) = self
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+        {
+            self.widgets.table.select(Some(index));
+        }
     }
 
     fn accept_command_input(&mut self, input: &str) -> Option<Action> {

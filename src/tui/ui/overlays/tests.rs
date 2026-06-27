@@ -3,7 +3,7 @@ use crate::tui::authoring::AddTaskStep;
 use crate::tui::config_overlay::{CONFIG_STATUS_TITLE, DATABASE_STATS_TITLE};
 use crate::tui::overlay::{
     AddTaskView, ConfirmView, MultilineInputView, OverlayRoute, OverlayView, PickerItem,
-    PickerMode, PickerView, TagComboboxView, TextInputView, TextPanelView,
+    PickerMode, PickerView, SearchResultItem, TagComboboxView, TextInputView, TextPanelView,
 };
 use crate::tui::store::{
     DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts, SyncStatusCheck, TuiDatabaseStats,
@@ -27,7 +27,12 @@ fn buffer_text(backend: &TestBackend) -> String {
 
 fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
     match overlay {
-        OverlayView::Search { input, cursor } => render_search(frame, input, *cursor),
+        OverlayView::Search {
+            input,
+            cursor,
+            results,
+            selected,
+        } => render_search(frame, input, *cursor, results, *selected),
         OverlayView::AddTask(state) => render_add_task(frame, state),
         OverlayView::TextInput(state) => render_text_input(frame, state),
         OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
@@ -166,9 +171,26 @@ mod text_panel_and_search {
         let rendered = render_overlay_view(OverlayView::Search {
             input: "query".to_string(),
             cursor: 5,
+            results: vec![SearchResultItem {
+                task_id: "task-1".to_string(),
+                display_ref: "AVN-1".to_string(),
+                title: "Query result".to_string(),
+                description: "Preview body".to_string(),
+                project_key: "aven".to_string(),
+                status: "todo".to_string(),
+                priority: "high".to_string(),
+                labels: vec!["ux".to_string()],
+                matched_field: crate::query::SearchMatchedField::Title,
+                snippet: None,
+                score: 100,
+                deleted: false,
+            }],
+            selected: 0,
         });
         assert!(rendered.contains("Search"));
         assert!(rendered.contains("/query"));
+        assert!(rendered.contains("Query result"));
+        assert!(rendered.contains("Preview body"));
     }
 
     #[test]
@@ -1107,6 +1129,8 @@ mod route_specific_rendering {
             OverlayView::Search {
                 input: "query".to_string(),
                 cursor: 5,
+                results: Vec::new(),
+                selected: 0,
             },
             OverlayView::AddTask(AddTaskView {
                 title: "ship dialogs".to_string(),

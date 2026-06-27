@@ -12,7 +12,7 @@ use crate::tui::config_overlay::{CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PA
 use crate::tui::event::Action;
 use crate::tui::overlay::{
     CommandState, ConfirmState, LineEdit, MultilineInputState, OverlayRoute, OverlayState,
-    OverlayView, PickerItem, PickerMode, PickerState, TextInputState, TextPanelState,
+    OverlayView, PickerItem, PickerMode, PickerState, SearchState, TextInputState, TextPanelState,
 };
 use crate::tui::store::{SidebarEntryTarget, TaskOrder, TaskScope, TaskScopeTarget, TaskView};
 use crate::tui::toast::ToastSeverity;
@@ -522,7 +522,7 @@ mod keyboard_dispatch {
         assert_pending_empty(&app);
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::Search { input }) if input.as_str() == "t"
+            Some(OverlayState::Search(state)) if state.input.as_str() == "t"
         ));
     }
 
@@ -646,9 +646,11 @@ mod keyboard_dispatch {
             OverlayState::Help { scroll: 0 },
             OverlayState::Detail { scroll: 0 },
             OverlayState::DetailHelp { scroll: 0 },
-            OverlayState::Search {
+            OverlayState::Search(SearchState {
                 input: LineEdit::new("q".to_string()),
-            },
+                results: Vec::new(),
+                selected: 0,
+            }),
             OverlayState::Command {
                 state: CommandState::new(LineEdit::new("ref".to_string())),
             },
@@ -829,11 +831,66 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
+    async fn search_overlay_shows_live_results_and_navigation() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("needle first")).await;
+        create_and_select_task(&mut app, test_task_draft("needle second")).await;
+
+        app.begin_search();
+        type_chars(&mut app, "needle").await;
+
+        let Some(OverlayState::Search(state)) = &app.overlay else {
+            panic!("expected search overlay");
+        };
+        assert_eq!(state.results.len(), 2);
+        assert_eq!(state.selected, 0);
+        assert!(
+            state
+                .results
+                .iter()
+                .any(|result| result.title == "needle first")
+        );
+        assert!(
+            state
+                .results
+                .iter()
+                .any(|result| result.title == "needle second")
+        );
+
+        app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Search(state)) if state.selected == 1
+        ));
+    }
+
+    #[tokio::test]
+    async fn search_overlay_refreshes_results_after_paste() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("pasted needle")).await;
+
+        app.begin_search();
+        app.dispatch_paste("needle").await.unwrap();
+
+        let Some(OverlayState::Search(state)) = &app.overlay else {
+            panic!("expected search overlay");
+        };
+        assert_eq!(state.input.as_str(), "needle");
+        assert!(
+            state
+                .results
+                .iter()
+                .any(|result| result.title == "pasted needle")
+        );
+    }
+
+    #[tokio::test]
     async fn search_replaces_existing_overlay() {
         let mut app = test_app().await;
         app.overlay = Some(OverlayState::Help { scroll: 0 });
         app.begin_search();
-        assert!(matches!(app.overlay, Some(OverlayState::Search { .. })));
+        assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
     }
 
     #[tokio::test]
@@ -1429,7 +1486,7 @@ mod filters_and_workspaces {
             .unwrap();
 
         assert_eq!(app.store.view_state.view, TaskView::Queue);
-        assert!(matches!(app.overlay, Some(OverlayState::Search { .. })));
+        assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
     }
 
     #[tokio::test]
@@ -1525,7 +1582,7 @@ mod filters_and_workspaces {
             .unwrap();
 
         assert_eq!(app.widgets.table.selected(), selected);
-        assert!(matches!(app.overlay, Some(OverlayState::Search { .. })));
+        assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
     }
 
     #[tokio::test]

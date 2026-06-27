@@ -95,7 +95,11 @@ impl App {
                             terminal.clear()?;
                         }
                     }
-                    Event::Paste(text) => self.dispatch_paste(&text),
+                    Event::Paste(text) => {
+                        if let Err(error) = self.dispatch_paste(&text).await {
+                            self.set_error(format!("{error:#}"));
+                        }
+                    }
                     Event::Mouse(mouse) => {
                         let result = self.dispatch_mouse(mouse, terminal.size()?).await;
                         if let Err(error) = result {

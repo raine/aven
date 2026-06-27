@@ -22,9 +22,11 @@ use crate::tui::store::TaskOrder;
 
 pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) -> OverlayState {
     match overlay {
-        OverlayState::Search { mut input } => {
-            input.insert_paste(text);
-            OverlayState::Search { input }
+        OverlayState::Search(mut state) => {
+            state.input.insert_paste(text);
+            state.results.clear();
+            state.selected = 0;
+            OverlayState::Search(state)
         }
         OverlayState::Command { mut state } => {
             state.input.insert_paste(text);

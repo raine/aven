@@ -30,7 +30,7 @@
 1. `src/tui/mod.rs` initializes Ratatui and constructs `App`.
 2. Input resolves through the command catalog in `src/tui/event/` unless a capturing overlay handles it first.
 3. `App` holds TUI flow state. Focused `src/tui/app_*.rs` modules coordinate feature flows, then call `TuiStore` facade methods in `src/tui/store.rs`.
-4. `TaskViewState` is the source of truth for TUI task lists. It carries scope, view, filter modifiers, flat order, and direction, then derives query filters, query mode, and render mode. Spotlight search stores matched task IDs in the search view instead of combining free-text search with the current scoped view.
+4. `TaskViewState` is the source of truth for TUI task lists. It carries scope, view, filter modifiers, flat order, and direction, then derives query filters, query mode, and render mode. Spotlight search renders live overlay results from the task search read model and stores matched task IDs in the submitted search view.
 5. Store modules call the same operations, mutation, and query helpers as the CLI.
 6. Natural-language add flow coordination lives in `src/tui/app_authoring.rs`; background worker command construction, environment propagation, process setup, and log path selection live in `src/tui/natural_add_runtime.rs`.
 7. `src/tui/ui.rs` and `src/tui/ui/` render state. Rendering code should not touch the database.

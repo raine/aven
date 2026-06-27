@@ -5,7 +5,7 @@ use super::layout::TAG_COMBOBOX_VIEWPORT_ROWS;
 use super::picker::visible_picker_indices;
 use super::state::{
     HeaderMenuItem, HeaderMenuKind, HeaderMenuState, OrderMenuState, OverlayRoute, OverlayState,
-    OverlayState::*, PickerItem, PickerMode,
+    OverlayState::*, PickerItem, PickerMode, SearchResultItem,
 };
 use super::tag_combobox::{tag_combobox_completion, tag_combobox_matches};
 
@@ -23,6 +23,8 @@ pub(crate) enum OverlayView {
     Search {
         input: String,
         cursor: usize,
+        results: Vec<SearchResultItem>,
+        selected: usize,
     },
     Command {
         input: String,
@@ -166,9 +168,11 @@ impl From<&OverlayState> for OverlayView {
             Help { scroll } => Self::Help { scroll: *scroll },
             Detail { scroll } => Self::Detail { scroll: *scroll },
             DetailHelp { scroll } => Self::DetailHelp { scroll: *scroll },
-            Search { input } => Self::Search {
-                input: input.text.clone(),
-                cursor: input.cursor,
+            Search(state) => Self::Search {
+                input: state.input.text.clone(),
+                cursor: state.input.cursor,
+                results: state.results.clone(),
+                selected: state.selected,
             },
             Command { state } => Self::Command {
                 input: state.input.text.clone(),

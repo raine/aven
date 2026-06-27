@@ -504,7 +504,12 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
     match overlay {
         OverlayView::Help { scroll } => render_help(frame, *scroll),
         OverlayView::DetailHelp { scroll } => render_detail_help(frame, *scroll),
-        OverlayView::Search { input, cursor } => render_search(frame, input, *cursor),
+        OverlayView::Search {
+            input,
+            cursor,
+            results,
+            selected,
+        } => render_search(frame, input, *cursor, results, *selected),
         OverlayView::Command {
             input,
             cursor,

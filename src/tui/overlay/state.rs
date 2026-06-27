@@ -1,3 +1,4 @@
+use crate::query::SearchMatchedField;
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::text_input::LineEdit;
 use crate::tui::store::{TaskOrder, TaskView, TuiDatabaseStats, TuiSyncStatus};
@@ -16,9 +17,7 @@ pub(crate) enum OverlayState {
     DetailHelp {
         scroll: u16,
     },
-    Search {
-        input: LineEdit,
-    },
+    Search(SearchState),
     Command {
         state: CommandState,
     },
@@ -36,6 +35,51 @@ pub(crate) enum OverlayState {
         stats: Box<TuiDatabaseStats>,
         scroll: u16,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SearchResultItem {
+    pub(crate) task_id: String,
+    pub(crate) display_ref: String,
+    pub(crate) title: String,
+    pub(crate) description: String,
+    pub(crate) project_key: String,
+    pub(crate) status: String,
+    pub(crate) priority: String,
+    pub(crate) labels: Vec<String>,
+    pub(crate) matched_field: SearchMatchedField,
+    pub(crate) snippet: Option<String>,
+    pub(crate) score: i64,
+    pub(crate) deleted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SearchState {
+    pub(crate) input: LineEdit,
+    pub(crate) results: Vec<SearchResultItem>,
+    pub(crate) selected: usize,
+}
+
+impl SearchState {
+    pub(crate) fn blank() -> Self {
+        Self {
+            input: LineEdit::blank(),
+            results: Vec::new(),
+            selected: 0,
+        }
+    }
+
+    pub(crate) fn selected_result(&self) -> Option<&SearchResultItem> {
+        self.results.get(self.selected)
+    }
+
+    pub(crate) fn normalize_selection(&mut self) {
+        if self.results.is_empty() {
+            self.selected = 0;
+        } else {
+            self.selected = self.selected.min(self.results.len() - 1);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
