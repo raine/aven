@@ -197,14 +197,7 @@ impl App {
     pub(crate) fn begin_search(&mut self) {
         self.pending_shortcut.clear();
         self.overlay = Some(OverlayState::Search {
-            input: LineEdit::new(
-                self.store
-                    .view_state
-                    .filter_modifiers
-                    .search
-                    .clone()
-                    .unwrap_or_default(),
-            ),
+            input: LineEdit::blank(),
         });
     }
 

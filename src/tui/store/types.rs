@@ -42,6 +42,7 @@ pub(crate) enum TaskView {
     Todo,
     Done,
     Conflicts,
+    Search,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -51,6 +52,7 @@ pub(crate) struct TaskFilterModifiers {
     pub(crate) include_deleted: bool,
     pub(crate) deleted_only: bool,
     pub(crate) search: Option<String>,
+    pub(crate) task_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +99,7 @@ impl TaskViewState {
             include_deleted: self.filter_modifiers.include_deleted,
             deleted_only: self.filter_modifiers.deleted_only,
             search: self.filter_modifiers.search.clone(),
+            task_ids: self.filter_modifiers.task_ids.clone(),
             ..TaskFilters::default()
         };
         if let TaskScope::Project(project) = &self.scope {
@@ -110,6 +113,9 @@ impl TaskViewState {
             TaskView::Todo => filters.status = Some("todo".to_string()),
             TaskView::Done => filters.statuses = vec!["done".to_string(), "canceled".to_string()],
             TaskView::Conflicts => filters.conflicts_only = true,
+            TaskView::Search => {
+                filters.include_deleted = true;
+            }
         }
         filters
     }

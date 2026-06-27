@@ -188,7 +188,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     ),
     CommandSpec::implemented(
         "search",
-        "search title and description",
+        "search all tasks",
         "General",
         &[KeySequence {
             codes: &[KeyCode::Char('/')],
@@ -527,6 +527,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             label: "v c",
         }],
         Action::ShowView(TaskView::Conflicts),
+    ),
+    CommandSpec::implemented(
+        "view-search",
+        "show search results",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('v'), KeyCode::Char('s')],
+            label: "v s",
+        }],
+        Action::ShowView(TaskView::Search),
     ),
     CommandSpec::implemented(
         "scope-all",

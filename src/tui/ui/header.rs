@@ -5,7 +5,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
-use crate::render::quote;
 use crate::tui::store::{TaskScope, TaskView, TuiStore};
 use crate::tui::theme::{
     self, ACCENT, BG, BG_PANEL, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, ORANGE,
@@ -346,6 +345,7 @@ fn active_view_label(store: &TuiStore) -> &'static str {
         TaskView::Todo => "todo",
         TaskView::Done => "done",
         TaskView::Conflicts => "conflicts",
+        TaskView::Search => "search",
     }
 }
 
@@ -370,7 +370,7 @@ fn active_order_spans(store: &TuiStore) -> Vec<Span<'static>> {
             Style::new().fg(FG_MUTED).add_modifier(Modifier::BOLD),
         ),
     ];
-    if store.view_state.view != TaskView::Queue {
+    if !matches!(store.view_state.view, TaskView::Queue | TaskView::Search) {
         spans.push(Span::styled(
             format!(" {}", store.sort_direction_label()),
             Style::new().fg(FG_DIM),
@@ -393,8 +393,11 @@ fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
     } else if modifiers.include_deleted {
         parts.push(vec![filter_part("include_deleted")]);
     }
-    if let Some(search) = &modifiers.search {
-        parts.push(vec![filter_part(format!("search={}", quote(search)))]);
+    if !modifiers.task_ids.is_empty() {
+        parts.push(vec![filter_part(format!(
+            "matches={}",
+            modifiers.task_ids.len()
+        ))]);
     }
     if parts.is_empty() {
         Vec::new()
@@ -501,6 +504,7 @@ mod tests {
                 include_deleted: true,
                 deleted_only: false,
                 search: Some("needle".to_string()),
+                task_ids: vec!["task-1".to_string(), "task-2".to_string()],
             },
             order: TaskOrder::Priority,
             direction: crate::query::SortDirection::Desc,
@@ -514,7 +518,7 @@ mod tests {
         assert!(spans_text(header_metrics(&store, false)).contains("conflicts 1"));
         assert_eq!(
             spans_text(active_filter_spans(&store)),
-            " │ filter label=backend priority=urgent include_deleted search=\"needle\""
+            " │ filter label=backend priority=urgent include_deleted matches=2"
         );
 
         store.view_state.filter_modifiers.deleted_only = true;

@@ -30,7 +30,8 @@ use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::cli::{
     AddArgs, BulkUpdateArgs, ContextArgs, DepCommand, DepSubcommand, InternalNaturalAddArgs,
     LabelCommand, LabelSubcommand, ListArgs, NoteArgs, NoteDeleteArgs, PrimeArgs, RefArgs,
-    SearchArgs, ShowArgs, TextCommand, TextSubcommand, TmuxAddTaskPopupArgs, UpdateArgs,
+    SearchArgs, ShowArgs, TaskSearchArgs, TextCommand, TextSubcommand, TmuxAddTaskPopupArgs,
+    UpdateArgs,
 };
 use crate::config::{self as app_config, AppConfig};
 use crate::db::{conflict_exists, get_meta};
@@ -47,8 +48,8 @@ use crate::projects::{
     resolve_existing_project_in_workspace,
 };
 use crate::query::{
-    self, SortDirection, TaskDependencyItem, TaskFilters, TaskQueryMode, TaskSort,
-    task_dependency_summary,
+    self, SortDirection, TaskDependencyItem, TaskFilters, TaskQueryMode, TaskSearchQuery,
+    TaskSearchResult, TaskSort, task_dependency_summary,
 };
 use crate::refs::{display_ref, display_suffix, resolve_task_ref};
 use crate::render::{changed_text, print_multiline_block, print_text_diff, quote};
@@ -563,6 +564,88 @@ pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Res
     Ok(())
 }
 
+#[derive(Serialize)]
+struct SearchJsonItem {
+    r#ref: String,
+    id: String,
+    title: String,
+    project: String,
+    status: String,
+    priority: String,
+    labels: Vec<String>,
+    deleted: bool,
+    score: i64,
+    matched_field: query::SearchMatchedField,
+    snippet: Option<String>,
+}
+
+pub(crate) async fn cmd_search(conn: &mut SqliteConnection, args: TaskSearchArgs) -> Result<()> {
+    let text = args.query.join(" ");
+    if text.trim().is_empty() {
+        bail!("error search-query-required hint=\"pass one or more search terms\"");
+    }
+    let results = query::search_task_items(
+        conn,
+        TaskSearchQuery {
+            text,
+            include_deleted: args.all,
+            limit: args.limit,
+        },
+    )
+    .await?;
+    if args.json {
+        let items = results.iter().map(search_json_item).collect::<Vec<_>>();
+        serde_json::to_writer_pretty(std::io::stdout(), &items)?;
+        println!();
+    } else {
+        for result in results {
+            print_search_result(&result);
+        }
+    }
+    Ok(())
+}
+
+fn print_search_result(result: &TaskSearchResult) {
+    let item = &result.item;
+    let labels = item.labels.join(",");
+    let deleted = if item.task.deleted {
+        " deleted=yes"
+    } else {
+        ""
+    };
+    println!(
+        "{} status={} priority={} project={} labels={} match={} score={}{} title={}",
+        item.display_ref,
+        item.task.status,
+        item.task.priority,
+        item.task.project_key,
+        labels,
+        result.matched_field.as_str(),
+        result.score,
+        deleted,
+        quote(&item.task.title)
+    );
+    if let Some(snippet) = &result.snippet {
+        println!("  snippet={}", quote(snippet));
+    }
+}
+
+fn search_json_item(result: &TaskSearchResult) -> SearchJsonItem {
+    SearchJsonItem {
+        r#ref: result.item.display_ref.clone(),
+        id: result.item.task.id.clone(),
+        title: result.item.task.title.clone(),
+        project: result.item.task.project_key.clone(),
+        status: result.item.task.status.clone(),
+        priority: result.item.task.priority.clone(),
+        labels: result.item.labels.clone(),
+        deleted: result.item.task.deleted,
+        score: result.score,
+        matched_field: result.matched_field,
+        snippet: result.snippet.clone(),
+    }
+}
+
 pub(crate) async fn cmd_dep(conn: &mut SqliteConnection, args: DepCommand) -> Result<()> {
     match args.command {
         DepSubcommand::Add(args) => {
@@ -764,6 +847,7 @@ fn bulk_update_filters(args: &BulkUpdateArgs) -> TaskFilters {
         ready_only: false,
         blocked_only: false,
         search: None,
+        task_ids: Vec::new(),
     }
 }
 
@@ -1119,6 +1203,7 @@ fn list_task_filters(args: ListArgs) -> TaskFilters {
         ready_only: args.ready,
         blocked_only: args.blocked,
         search: None,
+        task_ids: Vec::new(),
     }
 }
 
@@ -1136,6 +1221,7 @@ fn prime_task_filters(project: String) -> TaskFilters {
         ready_only: false,
         blocked_only: false,
         search: None,
+        task_ids: Vec::new(),
     }
 }
 

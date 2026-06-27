@@ -27,6 +27,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
         commands: &[
             "add",
             "list",
+            "search",
             "context",
             "show",
             "update",
@@ -210,6 +211,8 @@ pub(crate) enum Commands {
     Show(ShowArgs),
     /// List tasks
     List(ListArgs),
+    /// Search all tasks in the active workspace
+    Search(TaskSearchArgs),
     /// Apply field updates across many tasks
     BulkUpdate(BulkUpdateArgs),
     /// Emit workspace context for AI agents
@@ -370,6 +373,17 @@ pub(crate) struct ListArgs {
     pub(crate) ready: bool,
     #[arg(long)]
     pub(crate) blocked: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct TaskSearchArgs {
+    pub(crate) query: Vec<String>,
+    #[arg(long, default_value_t = 50)]
+    pub(crate) limit: usize,
+    #[arg(long, help = "Include deleted tasks")]
+    pub(crate) all: bool,
+    #[arg(long, help = "Print machine-readable JSON")]
+    pub(crate) json: bool,
 }
 
 #[derive(Args)]

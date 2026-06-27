@@ -7,6 +7,9 @@ impl TuiStore {
         if self.view_state.view == TaskView::Queue {
             return "ranked";
         }
+        if self.view_state.view == TaskView::Search {
+            return "relevance";
+        }
         match self.view_state.order {
             TaskOrder::Created => "created",
             TaskOrder::Updated => "updated",

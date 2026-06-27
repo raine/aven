@@ -112,6 +112,15 @@ pub(crate) async fn list_task_items_in_workspace(
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("EXISTS (SELECT 1 FROM conflicts c WHERE c.workspace_id = t.workspace_id AND c.task_id = t.id AND c.resolved = 0)");
     }
+    if !filters.task_ids.is_empty() {
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push("t.id IN (");
+        let mut separated = query.separated(", ");
+        for task_id in &filters.task_ids {
+            separated.push_bind(task_id);
+        }
+        separated.push_unseparated(")");
+    }
     if filters.ready_only || filters.blocked_only {
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("t.deleted = 0");
@@ -210,6 +219,15 @@ pub(crate) async fn list_task_items_in_workspace(
     }
     if mode == TaskQueryMode::RankedQueue {
         items.sort_by(|a, b| queue_order((&a.task, a.queue), (&b.task, b.queue)));
+    }
+    if !filters.task_ids.is_empty() {
+        let order = filters.task_ids;
+        items.sort_by_key(|item| {
+            order
+                .iter()
+                .position(|task_id| task_id == &item.task.id)
+                .unwrap_or(order.len())
+        });
     }
     Ok(items)
 }

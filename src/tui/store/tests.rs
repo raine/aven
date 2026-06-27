@@ -843,7 +843,7 @@ mod views_filters_and_sort {
         store.view_state.order = TaskOrder::Priority;
         store.view_state.direction = SortDirection::Desc;
         store.view_state.filter_modifiers.label = Some("backend".to_string());
-        store.view_state.filter_modifiers.search = Some("needle".to_string());
+        store.view_state.filter_modifiers.task_ids = vec!["task-1".to_string()];
 
         store.clear_filters().await.unwrap();
 
@@ -855,7 +855,7 @@ mod views_filters_and_sort {
         assert_eq!(store.view_state.order, TaskOrder::Priority);
         assert_eq!(store.view_state.direction, SortDirection::Desc);
         assert!(store.view_state.filter_modifiers.label.is_none());
-        assert!(store.view_state.filter_modifiers.search.is_none());
+        assert!(store.view_state.filter_modifiers.task_ids.is_empty());
     }
 
     #[tokio::test]
@@ -985,18 +985,22 @@ mod views_filters_and_sort {
     }
 
     #[tokio::test]
-    async fn show_todo_view_preserves_search_modifier() {
+    async fn search_view_finds_done_tasks_from_queue() {
         let mut store = test_store().await;
-        store.view_state.filter_modifiers.search = Some("needle".to_string());
+        let (_, selected) = store
+            .create_task(task_draft("Finished spotlight needle"), None)
+            .await
+            .unwrap();
+        store.update_status(selected, "done").await.unwrap();
+        store.show_view(TaskView::Queue).await.unwrap();
+        assert!(store.tasks.is_empty());
 
-        store.show_view(TaskView::Todo).await.unwrap();
+        store.accept_search("spotlight needle").await.unwrap();
 
-        assert_eq!(store.view_state.view, TaskView::Todo);
-        assert_eq!(
-            store.view_state.filter_modifiers.search.as_deref(),
-            Some("needle")
-        );
-        assert_eq!(store.view_state.filters().status.as_deref(), Some("todo"));
+        assert_eq!(store.view_state.scope, TaskScope::Workspace);
+        assert_eq!(store.view_state.view, TaskView::Search);
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.title, "Finished spotlight needle");
     }
 
     #[tokio::test]
@@ -1833,7 +1837,7 @@ mod workspace_scoping {
         store.show_view(TaskView::Todo).await.unwrap();
         store.view_state.filter_modifiers.label = Some("default-label".to_string());
         store.view_state.filter_modifiers.priority = Some("urgent".to_string());
-        store.view_state.filter_modifiers.search = Some("default".to_string());
+        store.view_state.filter_modifiers.task_ids = vec!["task-1".to_string()];
         store.view_state.filter_modifiers.include_deleted = true;
 
         let (message, selected) = store.switch_workspace(other.key.clone()).await.unwrap();

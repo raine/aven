@@ -45,6 +45,7 @@ pub(crate) struct TaskFilters {
     pub(crate) ready_only: bool,
     pub(crate) blocked_only: bool,
     pub(crate) search: Option<String>,
+    pub(crate) task_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

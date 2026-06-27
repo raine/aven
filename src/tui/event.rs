@@ -739,6 +739,10 @@ mod tests {
             ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskView::Conflicts))
         );
         assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('s')]),
+            ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskView::Search))
+        );
+        assert_eq!(
             resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('p')]),
             ShortcutLookup::Found(Action::BeginScopeProject)
         );

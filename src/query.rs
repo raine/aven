@@ -1,5 +1,6 @@
 mod dependencies;
 mod projects;
+mod search;
 mod sidebar;
 mod sorting;
 mod tasks;
@@ -9,6 +10,11 @@ mod types;
 pub(crate) use dependencies::{TaskDependencyItem, TaskDependencySummary, task_dependency_summary};
 #[allow(unused_imports)]
 pub(crate) use projects::{list_project_items, list_project_items_in_workspace};
+#[allow(unused_imports)]
+pub(crate) use search::{
+    SearchMatchedField, TaskSearchQuery, TaskSearchResult, search_task_items,
+    search_task_items_in_workspace,
+};
 #[allow(unused_imports)]
 pub(crate) use sidebar::{
     sidebar_counts, sidebar_counts_for_scope_in_workspace, sidebar_counts_in_workspace,
@@ -100,6 +106,13 @@ mod tests {
 
     fn listed_titles(items: &[TaskListItem]) -> Vec<&str> {
         items.iter().map(|item| item.task.title.as_str()).collect()
+    }
+
+    fn listed_titles_from_search(items: &[TaskSearchResult]) -> Vec<&str> {
+        items
+            .iter()
+            .map(|item| item.item.task.title.as_str())
+            .collect()
     }
 
     struct ActiveWorkspaceGuard {
@@ -592,6 +605,149 @@ mod tests {
         .unwrap();
 
         assert_eq!(listed_titles(&items), ["Title match needle", "Body only"]);
+    }
+
+    #[tokio::test]
+    async fn task_search_finds_done_labels_and_notes() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+        insert_test_task(
+            &mut conn,
+            "7KQ9A1X4MV2P8D6R",
+            "Done release cleanup",
+            "done",
+            "high",
+            "001",
+        )
+        .await;
+        insert_test_task(
+            &mut conn,
+            "8KQ9A1X4MV2P8D6R",
+            "Plain inbox",
+            "inbox",
+            "none",
+            "002",
+        )
+        .await;
+        insert_test_label(&mut conn, "8KQ9A1X4MV2P8D6R", "security").await;
+        sqlx::query(
+            "INSERT INTO notes(id, task_id, body, created_at, change_id)
+             VALUES ('note-search', '7KQ9A1X4MV2P8D6R', 'contains pager rotation context', '003', 'change-search')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let done = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "release cleanup".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed_titles_from_search(&done), ["Done release cleanup"]);
+        assert_eq!(done[0].matched_field, SearchMatchedField::Title);
+
+        let label = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "security".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed_titles_from_search(&label), ["Plain inbox"]);
+        assert_eq!(label[0].matched_field, SearchMatchedField::Label);
+
+        let note = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "pager rotation".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed_titles_from_search(&note), ["Done release cleanup"]);
+        assert_eq!(note[0].matched_field, SearchMatchedField::Note);
+        assert!(
+            note[0]
+                .snippet
+                .as_deref()
+                .is_some_and(|value| value.contains("pager rotation"))
+        );
+    }
+
+    #[tokio::test]
+    async fn task_search_ranks_refs_and_controls_deleted_results() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+        insert_test_task(
+            &mut conn,
+            "7KQ9A1X4MV2P8D6R",
+            "Needle in title",
+            "todo",
+            "none",
+            "001",
+        )
+        .await;
+        insert_test_task(
+            &mut conn,
+            "9KQ9A1X4MV2P8D6R",
+            "Deleted needle",
+            "todo",
+            "none",
+            "002",
+        )
+        .await;
+        sqlx::query("UPDATE tasks SET deleted = 1 WHERE id = '9KQ9A1X4MV2P8D6R'")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let by_ref = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "7KQ9".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(by_ref[0].item.task.id, "7KQ9A1X4MV2P8D6R");
+        assert_eq!(by_ref[0].matched_field, SearchMatchedField::Ref);
+
+        let without_deleted = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "deleted needle".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(without_deleted.is_empty());
+
+        let with_deleted = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "deleted needle".to_string(),
+                include_deleted: true,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed_titles_from_search(&with_deleted), ["Deleted needle"]);
+        assert!(with_deleted[0].item.task.deleted);
     }
 
     #[tokio::test]

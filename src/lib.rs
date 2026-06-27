@@ -43,8 +43,8 @@ use cli::{
 use commands::{
     cmd_add, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
     cmd_delete_restore, cmd_dep, cmd_doctor, cmd_export, cmd_import, cmd_internal_natural_add,
-    cmd_label, cmd_list, cmd_note, cmd_note_delete, cmd_prime, cmd_project, cmd_show, cmd_skill,
-    cmd_text, cmd_tmux_add_task_popup, cmd_update, cmd_workspace,
+    cmd_label, cmd_list, cmd_note, cmd_note_delete, cmd_prime, cmd_project, cmd_search, cmd_show,
+    cmd_skill, cmd_text, cmd_tmux_add_task_popup, cmd_update, cmd_workspace,
 };
 use db::open_db;
 use sync::{run_server, sync_client};
@@ -140,6 +140,7 @@ pub async fn run_cli() -> Result<()> {
                 Commands::Context(args) => cmd_context(&mut conn, args).await,
                 Commands::Show(args) => cmd_show(&mut conn, args).await,
                 Commands::List(args) => cmd_list(&mut conn, args).await,
+                Commands::Search(args) => cmd_search(&mut conn, args).await,
                 Commands::Backup(args) => cmd_backup(&mut conn, &db_path, args).await,
                 Commands::Dep(args) => cmd_dep(&mut conn, args).await,
                 Commands::BulkUpdate(args) => cmd_bulk_update(&mut conn, args).await,
@@ -213,6 +214,7 @@ fn command_metadata(command: &Commands) -> CommandMetadata {
             | Commands::Context(_)
             | Commands::Show(_)
             | Commands::List(_)
+            | Commands::Search(_)
             | Commands::Dep(_)
             | Commands::BulkUpdate(_)
             | Commands::Prime(_)

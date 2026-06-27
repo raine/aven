@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::query::SortDirection;
+use crate::query::{self, SortDirection, TaskSearchQuery};
 
 use super::{
     SidebarEntryTarget, TaskFilterModifiers, TaskOrder, TaskScope, TaskScopeTarget, TaskView,
@@ -49,10 +49,14 @@ impl TuiStore {
 
     pub(crate) async fn show_view(&mut self, view: TaskView) -> Result<Option<usize>> {
         self.view_state.view = view;
+        if view != TaskView::Search {
+            self.view_state.filter_modifiers.task_ids.clear();
+        }
         self.refresh(None).await
     }
 
     pub(crate) async fn show_scope(&mut self, target: TaskScopeTarget) -> Result<Option<usize>> {
+        self.view_state.filter_modifiers.task_ids.clear();
         self.view_state.scope = match target {
             TaskScopeTarget::Workspace => TaskScope::Workspace,
             TaskScopeTarget::Project(project) => TaskScope::Project(project),
@@ -89,10 +93,32 @@ impl TuiStore {
     }
 
     pub(crate) async fn accept_search(&mut self, input: &str) -> Result<Option<usize>> {
-        self.view_state.filter_modifiers.search = if input.trim().is_empty() {
-            None
-        } else {
-            Some(input.trim().to_string())
+        let text = input.trim();
+        if text.is_empty() {
+            self.view_state.filter_modifiers.task_ids.clear();
+            self.view_state.view = TaskView::Queue;
+            return self.refresh(None).await;
+        }
+        let mut conn = self.pool.acquire().await?;
+        let results = query::search_task_items_in_workspace(
+            &mut conn,
+            self.active_workspace.id.as_str(),
+            TaskSearchQuery {
+                text: text.to_string(),
+                include_deleted: true,
+                limit: 100,
+            },
+        )
+        .await?;
+        drop(conn);
+        self.view_state.scope = TaskScope::Workspace;
+        self.view_state.view = TaskView::Search;
+        self.view_state.filter_modifiers = TaskFilterModifiers {
+            task_ids: results
+                .iter()
+                .map(|result| result.item.task.id.clone())
+                .collect(),
+            ..TaskFilterModifiers::default()
         };
         self.refresh(None).await
     }

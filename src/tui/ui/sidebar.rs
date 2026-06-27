@@ -256,6 +256,7 @@ fn sidebar_icon(entry: &SidebarEntry) -> &'static str {
         Some(SidebarEntryTarget::View(TaskView::Backlog)) => "◌",
         Some(SidebarEntryTarget::View(TaskView::Done)) => "✓",
         Some(SidebarEntryTarget::View(TaskView::Conflicts)) => "!",
+        Some(SidebarEntryTarget::View(TaskView::Search)) => "⌕",
         Some(SidebarEntryTarget::View(TaskView::Open)) => "○",
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => "◆",
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(_))) => "●",
@@ -272,6 +273,7 @@ fn sidebar_label(entry: &SidebarEntry) -> String {
         Some(SidebarEntryTarget::View(TaskView::Todo)) => "All todo".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Done)) => "Done".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Conflicts)) => "Conflicts".to_string(),
+        Some(SidebarEntryTarget::View(TaskView::Search)) => "Search".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Open)) => "Open".to_string(),
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => "Workspace".to_string(),
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(_))) => entry

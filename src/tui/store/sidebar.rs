@@ -17,6 +17,11 @@ impl TuiStore {
             view_entry("Todo", self.counts.todo, TaskView::Todo),
             view_entry("Done", self.counts.done, TaskView::Done),
             view_entry("Conflicts", self.counts.conflicts, TaskView::Conflicts),
+            view_entry(
+                "Search",
+                self.view_state.filter_modifiers.task_ids.len() as i64,
+                TaskView::Search,
+            ),
             SidebarEntry {
                 label: String::new(),
                 count: 0,
