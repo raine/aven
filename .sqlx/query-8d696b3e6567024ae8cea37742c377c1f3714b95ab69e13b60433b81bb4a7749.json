@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field,\n                     op_type, payload, base_version, created_at, server_seq)\n                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "8d696b3e6567024ae8cea37742c377c1f3714b95ab69e13b60433b81bb4a7749"
+}

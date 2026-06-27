@@ -1584,6 +1584,53 @@ fn sync_server_returns_bounded_pull_pages() {
 }
 
 #[test]
+fn sync_server_pure_pull_succeeds_while_write_transaction_is_held() {
+    use std::io::Write;
+
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let server_db = env.path("server.sqlite");
+    exec_sql(
+        &server_db,
+        "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field, op_type, payload, base_version, created_at, server_seq)
+         VALUES ('AAAAAAAAAAAAAAAA', 'client-a', 1, 'task', 'BBBBBBBBBBBBBBBB', NULL, 'create_task',
+                 '{\"workspace_id\":\"0000000000000000\",\"workspace_key\":\"default\",\"title\":\"locked pull\",\"project_id\":\"0000000000000001\",\"project_key\":\"app\",\"project_name\":\"app\",\"project_prefix\":\"APP\"}',
+                 NULL, '2026-01-01T00:00:01Z', 1)"
+    );
+
+    let mut locker = std::process::Command::new("sqlite3")
+        .arg(&server_db)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("start sqlite lock process");
+    locker
+        .stdin
+        .as_mut()
+        .expect("sqlite stdin")
+        .write_all(b"BEGIN IMMEDIATE;\n")
+        .expect("begin immediate transaction");
+
+    let (status, body) = post_sync_json(
+        &server.url,
+        &json!({
+            "protocol_version": 4,
+            "client_id": "client-a",
+            "after": 0,
+            "pull_limit": MAX_PULL_BATCH,
+            "changes": [],
+        })
+        .to_string(),
+    );
+    assert_eq!(status, 200);
+    let body: Value = serde_json::from_str(&body).expect("sync response json");
+    assert_eq!(body["changes"].as_array().expect("changes array").len(), 1);
+
+    locker.kill().expect("stop sqlite lock process");
+    locker.wait().expect("wait for lock process");
+}
+
+#[test]
 fn push_acks_update_local_changes_without_pull_echo() {
     let env = TestEnv::new();
     let db = env.db("push-acks.sqlite");
@@ -1734,6 +1781,34 @@ fn sync_client_rejects_short_has_more_page_before_state_change() {
     assert_eq!(meta_value(&db, "sync_cursor"), cursor_before);
     assert_eq!(
         scalar_i64(&db, "SELECT count(*) FROM tasks WHERE title = 'short page'",),
+        0
+    );
+    server.join().expect("fake sync server exits");
+}
+
+#[test]
+fn sync_client_rejects_malformed_pull_payload_before_state_change() {
+    let env = TestEnv::new();
+    let db = env.db("malformed-pull-payload.sqlite");
+    ok(env.aven(&db, ["list"]));
+    let cursor_before = meta_value(&db, "sync_cursor");
+    let changes_before = scalar_i64(&db, "SELECT count(*) FROM changes");
+    let mut change = remote_task_change(SYNC_TASK_A_CHANGE_ID, SYNC_TASK_A_ID, "bad payload", 1);
+    change["payload"]["priority"] = json!("soon");
+    let (url, server) = start_fake_sync_server(sync_response(1, [change]));
+
+    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    contains_all(&error, &["error invalid-sync-change", "invalid-priority"]);
+    assert_eq!(meta_value(&db, "sync_cursor"), cursor_before);
+    assert_eq!(
+        scalar_i64(&db, "SELECT count(*) FROM changes"),
+        changes_before
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM tasks WHERE title = 'bad payload'"
+        ),
         0
     );
     server.join().expect("fake sync server exits");

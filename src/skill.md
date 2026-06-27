@@ -81,7 +81,7 @@ aven doctor --integrity
 ```sh
 aven sync
 aven sync --server http://127.0.0.1:3000
-aven daemon run
+aven daemon
 ```
 
 - `aven sync` drains bounded push and pull pages until local unsynced changes and
@@ -109,7 +109,11 @@ aven daemon run
 Focused validation commands:
 
 ```sh
-cargo test --test cli_sync sync_server_returns_bounded_pull_pages sync_client_drains_paged_remote_changes sync_client_drains_paged_local_changes current_protocol_version_sync_succeeds wrong_response_protocol_version_is_rejected
+cargo test --test cli_sync sync_server_returns_bounded_pull_pages
+cargo test --test cli_sync sync_client_drains_paged_remote_changes
+cargo test --test cli_sync sync_client_drains_paged_local_changes
+cargo test --test cli_sync current_protocol_version_sync_succeeds
+cargo test --test cli_sync wrong_response_protocol_version_is_rejected
 cargo test --test cli_daemon_sync daemon_syncs_large_backlog_across_budgeted_rounds
 cargo test --test cli_logging daemon_sync_logging_redacts_task_content
 ```

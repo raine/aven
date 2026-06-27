@@ -1,27 +1,24 @@
 use std::fmt;
 use std::net::IpAddr;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
-use serde_json::Value;
 use sqlx::{SqliteConnection, SqlitePool};
 use tokio::net::TcpListener;
 use tracing::{error, info, warn};
 
 use super::wire::{
     ChangeRow, ChangeWire, PushAck, SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse,
-    validate_sync_request_envelope,
+    validate_pushed_change, validate_sync_request_envelope,
 };
 use crate::cli::ServerArgs;
 use crate::config;
 use crate::db::{begin_immediate, open_db};
-use crate::ids::BASE32;
 use crate::signals::shutdown_signal;
-use crate::task_fields::TaskField;
 
 #[derive(Clone)]
 struct ServerState {
@@ -179,7 +176,7 @@ async fn handle_sync(
 ) -> std::result::Result<SyncResponse, (StatusCode, String)> {
     let envelope = validate_sync_request_envelope(&request).map_err(invalid_sync_change)?;
     for change in &request.changes {
-        validate_incoming_change(change).map_err(invalid_sync_change)?;
+        validate_pushed_change(change).map_err(invalid_sync_change)?;
     }
 
     let client_id = request.client_id.clone();
@@ -189,55 +186,60 @@ async fn handle_sync(
     info!(client_id = %client_id, after, change_count, pull_limit, "sync request received");
 
     let mut conn = state.pool.acquire().await.map_err(internal_error)?;
-    let mut tx = begin_immediate(&mut conn).await.map_err(internal_error)?;
-    let mut next_server_seq = next_available_server_seq(&mut tx)
-        .await
-        .map_err(internal_error)?;
-    let mut accepted_count = 0_i64;
-    let mut push_acks = Vec::with_capacity(request.changes.len());
-    for change in request.changes {
-        let existing_server_seq = sqlx::query_scalar!(
-            r#"SELECT server_seq AS "server_seq?: i64" FROM changes WHERE change_id = ?"#,
-            change.change_id
-        )
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(internal_error)?
-        .flatten();
-        let server_seq = if let Some(server_seq) = existing_server_seq {
-            server_seq
-        } else {
-            let server_seq = next_server_seq;
-            next_server_seq += 1;
-            let payload = change.payload.to_string();
-            sqlx::query!(
-                "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field,
-                 op_type, payload, base_version, created_at, server_seq)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                change.change_id,
-                change.client_id,
-                change.local_seq,
-                change.entity_type,
-                change.entity_id,
-                change.field,
-                change.op_type,
-                payload,
-                change.base_version,
-                change.created_at,
-                server_seq,
-            )
-            .execute(&mut *tx)
+    let (accepted_count, push_acks) = if request.changes.is_empty() {
+        (0_i64, Vec::new())
+    } else {
+        let mut tx = begin_immediate(&mut conn).await.map_err(internal_error)?;
+        let mut next_server_seq = next_available_server_seq(&mut tx)
             .await
             .map_err(internal_error)?;
-            accepted_count += 1;
-            server_seq
-        };
-        push_acks.push(PushAck {
-            change_id: change.change_id,
-            server_seq,
-        });
-    }
-    tx.commit().await.map_err(internal_error)?;
+        let mut accepted_count = 0_i64;
+        let mut push_acks = Vec::with_capacity(request.changes.len());
+        for change in request.changes {
+            let existing_server_seq = sqlx::query_scalar!(
+                r#"SELECT server_seq AS "server_seq?: i64" FROM changes WHERE change_id = ?"#,
+                change.change_id
+            )
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(internal_error)?
+            .flatten();
+            let server_seq = if let Some(server_seq) = existing_server_seq {
+                server_seq
+            } else {
+                let server_seq = next_server_seq;
+                next_server_seq += 1;
+                let payload = change.payload.to_string();
+                sqlx::query!(
+                    "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field,
+                     op_type, payload, base_version, created_at, server_seq)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    change.change_id,
+                    change.client_id,
+                    change.local_seq,
+                    change.entity_type,
+                    change.entity_id,
+                    change.field,
+                    change.op_type,
+                    payload,
+                    change.base_version,
+                    change.created_at,
+                    server_seq,
+                )
+                .execute(&mut *tx)
+                .await
+                .map_err(internal_error)?;
+                accepted_count += 1;
+                server_seq
+            };
+            push_acks.push(PushAck {
+                change_id: change.change_id,
+                server_seq,
+            });
+        }
+        tx.commit().await.map_err(internal_error)?;
+        (accepted_count, push_acks)
+    };
     let (changes, has_more) = load_server_changes_after(&mut conn, after, pull_limit)
         .await
         .map_err(internal_error)?;
@@ -270,217 +272,6 @@ async fn next_available_server_seq(conn: &mut SqliteConnection) -> Result<i64> {
     )
     .fetch_one(&mut *conn)
     .await?)
-}
-
-fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
-    ensure_non_empty("change_id", &change.change_id)?;
-    ensure_non_empty("client_id", &change.client_id)?;
-    ensure_non_empty("entity_id", &change.entity_id)?;
-    ensure_non_empty("op_type", &change.op_type)?;
-    ensure_non_empty("entity_type", &change.entity_type)?;
-    ensure_sync_id("change_id", &change.change_id)?;
-    if change.server_seq.is_some() {
-        bail!("error invalid-sync-change server_seq client-supplied");
-    }
-    if !change.payload.is_object() {
-        bail!("error invalid-sync-change payload expected-object");
-    }
-
-    match change.op_type.as_str() {
-        "create_workspace" => {
-            ensure_entity_type(change, "workspace")?;
-            ensure_sync_id("entity_id", &change.entity_id)?;
-            required_string_payload("key", &change.payload)?;
-            required_string_payload("name", &change.payload)?;
-            required_string_payload("created_at", &change.payload)?;
-        }
-        "set_workspace_field" => {
-            ensure_entity_type(change, "workspace")?;
-            ensure_sync_id("entity_id", &change.entity_id)?;
-            let field = change
-                .field
-                .as_deref()
-                .filter(|field| !field.trim().is_empty())
-                .context("error invalid-sync-change field missing")?;
-            if !matches!(field, "name" | "key") {
-                bail!("error invalid-sync-change field={field}");
-            }
-            required_string_payload("value", &change.payload)?;
-        }
-        "create_project" => {
-            ensure_entity_type(change, "project")?;
-            ensure_sync_id("entity_id", &change.entity_id)?;
-            optional_workspace_payload(&change.payload)?;
-            required_string_payload("key", &change.payload)?;
-            required_string_payload("name", &change.payload)?;
-            required_string_payload("prefix", &change.payload)?;
-            required_string_payload("created_at", &change.payload)?;
-        }
-        "set_project_metadata" => {
-            ensure_entity_type(change, "project")?;
-            ensure_sync_id("entity_id", &change.entity_id)?;
-            optional_workspace_payload(&change.payload)?;
-            required_string_payload("key", &change.payload)?;
-            required_string_payload("name", &change.payload)?;
-            required_string_payload("prefix", &change.payload)?;
-            required_string_payload("updated_at", &change.payload)?;
-        }
-        "create_label" => {
-            ensure_entity_type(change, "label")?;
-            optional_workspace_payload(&change.payload)?;
-            required_string_payload("name", &change.payload)?;
-            required_string_payload("created_at", &change.payload)?;
-        }
-        "create_task" => {
-            ensure_entity_type(change, "task")?;
-            ensure_sync_id("entity_id", &change.entity_id)?;
-            optional_workspace_payload(&change.payload)?;
-            required_string_payload("title", &change.payload)?;
-            let project_id = required_string_payload("project_id", &change.payload)?;
-            ensure_sync_id("project_id", &project_id)?;
-            required_string_payload("project_key", &change.payload)?;
-            optional_string_payload("description", &change.payload)?;
-            required_string_payload("project_name", &change.payload)?;
-            required_string_payload("project_prefix", &change.payload)?;
-            if let Some(status) = optional_string_payload("status", &change.payload)? {
-                validate_sync_task_field_value(TaskField::Status, &status)?;
-            }
-            if let Some(priority) = optional_string_payload("priority", &change.payload)? {
-                validate_sync_task_field_value(TaskField::Priority, &priority)?;
-            }
-            optional_string_array_payload("labels", &change.payload)?;
-            optional_string_payload("created_at", &change.payload)?;
-        }
-        "set_field" | "resolve_field" => {
-            ensure_entity_type(change, "task")?;
-            ensure_sync_id("entity_id", &change.entity_id)?;
-            optional_workspace_payload(&change.payload)?;
-            let field = change
-                .field
-                .as_deref()
-                .filter(|field| !field.trim().is_empty())
-                .context("error invalid-sync-change field missing")?;
-            let task_field = TaskField::parse_for_sync(field)?;
-            let value = required_string_payload("value", &change.payload)?;
-            validate_sync_task_field_value(task_field, &value)?;
-            if task_field == TaskField::Project {
-                let project_id = required_string_payload("project_id", &change.payload)?;
-                ensure_sync_id("project_id", &project_id)?;
-                if value != project_id {
-                    bail!("error invalid-sync-change project-value-mismatch");
-                }
-                required_string_payload("project_key", &change.payload)?;
-                required_string_payload("project_name", &change.payload)?;
-                required_string_payload("project_prefix", &change.payload)?;
-            }
-        }
-        "label_add" | "label_remove" => {
-            ensure_entity_type(change, "task")?;
-            ensure_sync_id("entity_id", &change.entity_id)?;
-            optional_workspace_payload(&change.payload)?;
-            required_string_payload("label", &change.payload)?;
-        }
-        "note_add" => {
-            ensure_entity_type(change, "task")?;
-            ensure_sync_id("entity_id", &change.entity_id)?;
-            optional_workspace_payload(&change.payload)?;
-            let note_id = required_string_payload("note_id", &change.payload)?;
-            ensure_sync_id("note_id", &note_id)?;
-            required_string_payload("body", &change.payload)?;
-            required_string_payload("created_at", &change.payload)?;
-        }
-        "dependency_add" | "dependency_remove" => {
-            ensure_entity_type(change, "task")?;
-            ensure_sync_id("entity_id", &change.entity_id)?;
-            required_workspace_payload(&change.payload)?;
-            let depends_on_task_id =
-                required_string_payload("depends_on_task_id", &change.payload)?;
-            ensure_sync_id("depends_on_task_id", &depends_on_task_id)?;
-            if change.entity_id == depends_on_task_id {
-                bail!("error invalid-sync-change dependency-self");
-            }
-        }
-        _ => bail!("error invalid-sync-change op_type={}", change.op_type),
-    }
-    Ok(())
-}
-
-fn validate_sync_task_field_value(field: TaskField, value: &str) -> Result<()> {
-    field
-        .validate_value(value)
-        .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))
-}
-
-fn ensure_entity_type(change: &ChangeWire, expected: &str) -> Result<()> {
-    if change.entity_type == expected {
-        Ok(())
-    } else {
-        bail!(
-            "error invalid-sync-change op_type={} entity_type={} expected={}",
-            change.op_type,
-            change.entity_type,
-            expected
-        )
-    }
-}
-
-fn ensure_non_empty(name: &str, value: &str) -> Result<()> {
-    if value.trim().is_empty() {
-        bail!("error invalid-sync-change {name} empty");
-    }
-    Ok(())
-}
-
-fn ensure_sync_id(name: &str, value: &str) -> Result<()> {
-    if value.len() == 16 && value.bytes().all(|byte| BASE32.contains(&byte)) {
-        Ok(())
-    } else {
-        bail!("error invalid-sync-change {name} invalid-id");
-    }
-}
-
-fn required_string_payload(key: &str, payload: &Value) -> Result<String> {
-    payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .with_context(|| format!("error invalid-sync-change payload.{key} missing"))
-}
-
-fn required_workspace_payload(payload: &Value) -> Result<()> {
-    required_string_payload("workspace_id", payload)
-        .and_then(|id| ensure_sync_id("workspace_id", &id))?;
-    required_string_payload("workspace_key", payload)?;
-    Ok(())
-}
-
-fn optional_workspace_payload(payload: &Value) -> Result<()> {
-    if payload.get("workspace_id").is_none() && payload.get("workspace_key").is_none() {
-        return Ok(());
-    }
-    required_workspace_payload(payload)
-}
-
-fn optional_string_payload(key: &str, payload: &Value) -> Result<Option<String>> {
-    match payload.get(key) {
-        Some(Value::String(value)) => Ok(Some(value.clone())),
-        Some(Value::Null) | None => Ok(None),
-        Some(_) => bail!("error invalid-sync-change payload.{key} invalid"),
-    }
-}
-
-fn optional_string_array_payload(key: &str, payload: &Value) -> Result<()> {
-    match payload.get(key) {
-        Some(Value::Array(values))
-            if values
-                .iter()
-                .all(|value| value.as_str().is_some_and(|value| !value.trim().is_empty())) =>
-        {
-            Ok(())
-        }
-        Some(Value::Null) | None => Ok(()),
-        Some(_) => bail!("error invalid-sync-change payload.{key} invalid"),
-    }
 }
 
 async fn load_server_changes_after(
