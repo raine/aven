@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, write_config_text};
 
 const MANAGED_MARKER: &str = "# aven-managed project path mapping";
 
@@ -99,21 +99,7 @@ fn read_config_text(path: &Path) -> Result<String> {
 fn write_edited_config(path: &Path, text: String) -> Result<()> {
     serde_yaml::from_str::<AppConfig>(&text)
         .with_context(|| format!("edited config did not parse for {}", path.display()))?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("could not create {}", parent.display()))?;
-    }
-    let tmp_path = path.with_extension("yaml.tmp");
-    fs::write(&tmp_path, text)
-        .with_context(|| format!("could not write {}", tmp_path.display()))?;
-    fs::rename(&tmp_path, path).with_context(|| {
-        format!(
-            "could not replace {} with {}",
-            path.display(),
-            tmp_path.display()
-        )
-    })?;
-    Ok(())
+    write_config_text(path, text)
 }
 
 fn remove_managed_entries(text: &str) -> (String, Vec<ManagedProjectOverride>) {

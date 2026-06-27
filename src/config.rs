@@ -262,11 +262,15 @@ pub fn resolve_sync_server(flag: Option<&str>, config: &AppConfig) -> Result<Str
 }
 
 pub fn write_config(path: &Path, config: &AppConfig) -> Result<()> {
+    let text = serde_yaml::to_string(config)?;
+    write_config_text(path, text)
+}
+
+pub(crate) fn write_config_text(path: &Path, text: String) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;
     }
-    let text = serde_yaml::to_string(config)?;
     let tmp_path = path.with_extension("yaml.tmp");
     fs::write(&tmp_path, text)
         .with_context(|| format!("could not write {}", tmp_path.display()))?;
