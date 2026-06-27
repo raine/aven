@@ -8,7 +8,7 @@ use ratatui::widgets::{
 };
 
 use super::input::clipped_input_line;
-use super::task_display::{description_or_placeholder, labels_display};
+use super::task_display::{description_preview_text, labels_display};
 use super::truncate::truncate_chars;
 use crate::query::TaskListItem;
 use crate::queue::{now_seconds, unix_seconds};
@@ -821,7 +821,7 @@ fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usi
     lines.extend(dependency_preview_lines(item));
     lines.extend([
         Line::from(""),
-        Line::from(description_or_placeholder(&item.task.description)),
+        Line::from(description_preview_text(&item.task.description)),
     ]);
     let text = Text::from(lines);
     frame.render_widget(
