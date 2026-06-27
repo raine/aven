@@ -9,7 +9,6 @@ use std::collections::HashSet;
 use anyhow::{Result, bail};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use similar::TextDiff;
 use sqlx::{Row, SqliteConnection};
 
 use doctor::{DoctorRenderer, DoctorReport, sync_server_url_is_valid, workspace_counts};
@@ -48,7 +47,7 @@ use crate::query::{
     task_dependency_summary,
 };
 use crate::refs::{display_ref, display_suffix, resolve_task_ref};
-use crate::render::{print_multiline_block, quote};
+use crate::render::{changed_text, print_multiline_block, print_text_diff, quote};
 use crate::task_fields::TaskField;
 use crate::task_render::{
     labels_for_task_in_workspace, print_task, print_task_dependency_summary, print_task_line_item,
@@ -64,7 +63,7 @@ pub(crate) async fn cmd_add(
     config: &AppConfig,
     args: AddArgs,
 ) -> Result<()> {
-    validate_choice("priority", &args.priority, PRIORITIES)?;
+    validate_priority(&args.priority)?;
     let description = read_optional_text(
         args.description,
         args.description_file.as_deref(),
@@ -536,19 +535,7 @@ pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Res
             "error list-dependency-filter-all-conflict hint=\"dependency filters only include open tasks\""
         );
     }
-    let filters = TaskFilters {
-        project: args.project,
-        status: args.status,
-        statuses: Vec::new(),
-        priority: args.priority,
-        label: args.label,
-        include_deleted: args.all,
-        hide_done: false,
-        conflicts_only: false,
-        ready_only: args.ready,
-        blocked_only: args.blocked,
-        search: None,
-    };
+    let filters = list_task_filters(args);
     for item in query::list_task_items(
         conn,
         filters,
@@ -572,7 +559,7 @@ pub(crate) async fn cmd_dep(conn: &mut SqliteConnection, args: DepCommand) -> Re
             println!(
                 "dependency-added {} changed={} depends_on={}",
                 display_ref(conn, &outcome.task).await?,
-                if outcome.changed { "yes" } else { "none" },
+                changed_text(outcome.changed),
                 display_ref(conn, &outcome.depends_on).await?,
             );
         }
@@ -583,7 +570,7 @@ pub(crate) async fn cmd_dep(conn: &mut SqliteConnection, args: DepCommand) -> Re
             println!(
                 "dependency-removed {} changed={} depends_on={}",
                 display_ref(conn, &outcome.task).await?,
-                if outcome.changed { "yes" } else { "none" },
+                changed_text(outcome.changed),
                 display_ref(conn, &outcome.depends_on).await?,
             );
         }
@@ -606,34 +593,11 @@ pub(crate) async fn cmd_bulk_update(
     validate_bulk_update_args(&args)?;
 
     let workspace_id = crate::workspaces::active_workspace_id();
-    let add_labels =
-        dedup_labels(resolve_labels_in_workspace(conn, &workspace_id, &args.label).await?);
-    let remove_labels =
-        dedup_labels(resolve_labels_in_workspace(conn, &workspace_id, &args.remove_label).await?);
-    ensure_disjoint_labels(&add_labels, &remove_labels)?;
-    let set_project_key = if let Some(project) = args.set_project.as_deref() {
-        Some(
-            resolve_existing_project_in_workspace(conn, &workspace_id, project)
-                .await?
-                .key,
-        )
-    } else {
-        None
-    };
+    let labels = resolve_bulk_label_mutations(conn, &workspace_id, &args).await?;
+    ensure_disjoint_labels(&labels.add, &labels.remove)?;
+    let set_project_key = resolve_bulk_project_mutation(conn, &workspace_id, &args).await?;
 
-    let filters = TaskFilters {
-        project: args.project.clone(),
-        status: args.status.clone(),
-        statuses: Vec::new(),
-        priority: args.priority.clone(),
-        label: args.filter_label.clone(),
-        include_deleted: args.include_deleted,
-        hide_done: false,
-        conflicts_only: false,
-        ready_only: false,
-        blocked_only: false,
-        search: None,
-    };
+    let filters = bulk_update_filters(&args);
     let items = query::list_task_items(
         conn,
         filters,
@@ -643,59 +607,34 @@ pub(crate) async fn cmd_bulk_update(
     )
     .await?;
     let matched = items.len();
-    let mut planned = Vec::with_capacity(matched);
-    for item in items {
-        let update = bulk_update_for_item(
-            &item,
-            &args,
-            &add_labels,
-            &remove_labels,
-            set_project_key.as_deref(),
-        );
-        let will_change = bulk_update_has_changes(&update);
-        preflight_bulk_update_item(conn, &workspace_id, &item, &update).await?;
-        planned.push((item, update, will_change));
-    }
+    let planned = plan_bulk_updates(
+        conn,
+        &workspace_id,
+        items,
+        &args,
+        &labels,
+        set_project_key.as_deref(),
+    )
+    .await?;
 
-    let would_change = planned
-        .iter()
-        .filter(|(_, _, will_change)| *will_change)
-        .count();
+    let would_change = planned.iter().filter(|item| item.will_change).count();
     let mut changed = 0;
     let mut unchanged = 0;
-    for (item, update, will_change) in planned {
+    for planned in planned {
+        let item = planned.item;
+        let update = planned.update;
         if args.dry_run {
-            println!(
-                "would-update {} changed={} status={} priority={} labels={} title={}",
-                item.display_ref,
-                if will_change { "yes" } else { "none" },
-                item.task.status,
-                item.task.priority,
-                item.labels.join(","),
-                quote(&item.task.title)
-            );
+            print_dry_run_bulk_update(&item, planned.will_change);
             continue;
         }
-        if !will_change {
+        if !planned.will_change {
             unchanged += 1;
-            println!(
-                "bulk-updated {} changed=none status={} priority={} title={}",
-                item.display_ref,
-                item.task.status,
-                item.task.priority,
-                quote(&item.task.title)
-            );
+            print_unchanged_bulk_update(&item);
             continue;
         }
         let outcome = update_task(conn, &item.task.id, update).await?;
         changed += 1;
-        println!(
-            "bulk-updated {} changed=yes status={} priority={} title={}",
-            display_ref(conn, &outcome.task).await?,
-            outcome.task.status,
-            outcome.task.priority,
-            quote(&outcome.task.title)
-        );
+        print_changed_bulk_update(conn, &outcome.task).await?;
     }
     if args.dry_run {
         unchanged = matched - would_change;
@@ -731,19 +670,144 @@ fn ensure_bulk_update_has_mutation(args: &BulkUpdateArgs) -> Result<()> {
     bail!("error bulk-update-requires-mutation hint=\"add a mutation flag\"");
 }
 
+fn validate_status(status: &str) -> Result<()> {
+    validate_choice("status", status, STATUSES)
+}
+
+fn validate_priority(priority: &str) -> Result<()> {
+    validate_choice("priority", priority, PRIORITIES)
+}
+
+fn validate_optional_status(status: Option<&str>) -> Result<()> {
+    if let Some(status) = status {
+        validate_status(status)?;
+    }
+    Ok(())
+}
+
+fn validate_optional_priority(priority: Option<&str>) -> Result<()> {
+    if let Some(priority) = priority {
+        validate_priority(priority)?;
+    }
+    Ok(())
+}
+
 fn validate_bulk_update_args(args: &BulkUpdateArgs) -> Result<()> {
-    if let Some(status) = args.status.as_deref() {
-        validate_choice("status", status, STATUSES)?;
+    validate_optional_status(args.status.as_deref())?;
+    validate_optional_priority(args.priority.as_deref())?;
+    validate_optional_status(args.set_status.as_deref())?;
+    validate_optional_priority(args.set_priority.as_deref())?;
+    Ok(())
+}
+
+struct BulkLabelMutations {
+    add: Vec<String>,
+    remove: Vec<String>,
+}
+
+struct PlannedBulkUpdate {
+    item: query::TaskListItem,
+    update: TaskUpdate,
+    will_change: bool,
+}
+
+async fn resolve_bulk_label_mutations(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    args: &BulkUpdateArgs,
+) -> Result<BulkLabelMutations> {
+    let add = dedup_labels(resolve_labels_in_workspace(conn, workspace_id, &args.label).await?);
+    let remove =
+        dedup_labels(resolve_labels_in_workspace(conn, workspace_id, &args.remove_label).await?);
+    Ok(BulkLabelMutations { add, remove })
+}
+
+async fn resolve_bulk_project_mutation(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    args: &BulkUpdateArgs,
+) -> Result<Option<String>> {
+    if let Some(project) = args.set_project.as_deref() {
+        return Ok(Some(
+            resolve_existing_project_in_workspace(conn, workspace_id, project)
+                .await?
+                .key,
+        ));
     }
-    if let Some(priority) = args.priority.as_deref() {
-        validate_choice("priority", priority, PRIORITIES)?;
+    Ok(None)
+}
+
+fn bulk_update_filters(args: &BulkUpdateArgs) -> TaskFilters {
+    TaskFilters {
+        project: args.project.clone(),
+        status: args.status.clone(),
+        statuses: Vec::new(),
+        priority: args.priority.clone(),
+        label: args.filter_label.clone(),
+        include_deleted: args.include_deleted,
+        hide_done: false,
+        conflicts_only: false,
+        ready_only: false,
+        blocked_only: false,
+        search: None,
     }
-    if let Some(status) = args.set_status.as_deref() {
-        validate_choice("status", status, STATUSES)?;
+}
+
+async fn plan_bulk_updates(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    items: Vec<query::TaskListItem>,
+    args: &BulkUpdateArgs,
+    labels: &BulkLabelMutations,
+    set_project_key: Option<&str>,
+) -> Result<Vec<PlannedBulkUpdate>> {
+    let mut planned = Vec::with_capacity(items.len());
+    for item in items {
+        let update =
+            bulk_update_for_item(&item, args, &labels.add, &labels.remove, set_project_key);
+        let will_change = bulk_update_has_changes(&update);
+        preflight_bulk_update_item(conn, workspace_id, &item, &update).await?;
+        planned.push(PlannedBulkUpdate {
+            item,
+            update,
+            will_change,
+        });
     }
-    if let Some(priority) = args.set_priority.as_deref() {
-        validate_choice("priority", priority, PRIORITIES)?;
-    }
+    Ok(planned)
+}
+
+fn print_dry_run_bulk_update(item: &query::TaskListItem, will_change: bool) {
+    println!(
+        "would-update {} changed={} status={} priority={} labels={} title={}",
+        item.display_ref,
+        changed_text(will_change),
+        item.task.status,
+        item.task.priority,
+        item.labels.join(","),
+        quote(&item.task.title)
+    );
+}
+
+fn print_unchanged_bulk_update(item: &query::TaskListItem) {
+    println!(
+        "bulk-updated {} changed={} status={} priority={} title={}",
+        item.display_ref,
+        changed_text(false),
+        item.task.status,
+        item.task.priority,
+        quote(&item.task.title)
+    );
+}
+
+async fn print_changed_bulk_update(conn: &mut SqliteConnection, task: &Task) -> Result<()> {
+    println!(
+        "bulk-updated {} changed={} status={} priority={} title={}",
+        display_ref(conn, task).await?,
+        changed_text(true),
+        task.status,
+        task.priority,
+        quote(&task.title)
+    );
     Ok(())
 }
 
@@ -921,19 +985,7 @@ pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> R
     }
 
     println!("project={project}");
-    let filters = TaskFilters {
-        project: Some(project),
-        status: None,
-        statuses: Vec::new(),
-        priority: None,
-        label: None,
-        include_deleted: false,
-        hide_done: true,
-        conflicts_only: false,
-        ready_only: false,
-        blocked_only: false,
-        search: None,
-    };
+    let filters = prime_task_filters(project);
     let items = query::list_task_items(
         conn,
         filters,
@@ -952,6 +1004,38 @@ pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> R
     Ok(())
 }
 
+fn list_task_filters(args: ListArgs) -> TaskFilters {
+    TaskFilters {
+        project: args.project,
+        status: args.status,
+        statuses: Vec::new(),
+        priority: args.priority,
+        label: args.label,
+        include_deleted: args.all,
+        hide_done: false,
+        conflicts_only: false,
+        ready_only: args.ready,
+        blocked_only: args.blocked,
+        search: None,
+    }
+}
+
+fn prime_task_filters(project: String) -> TaskFilters {
+    TaskFilters {
+        project: Some(project),
+        status: None,
+        statuses: Vec::new(),
+        priority: None,
+        label: None,
+        include_deleted: false,
+        hide_done: true,
+        conflicts_only: false,
+        ready_only: false,
+        blocked_only: false,
+        search: None,
+    }
+}
+
 pub(crate) async fn cmd_update(conn: &mut SqliteConnection, args: UpdateArgs) -> Result<()> {
     let task = resolve_task_ref(conn, &args.task_ref).await?;
     let description = read_optional_text(
@@ -960,12 +1044,8 @@ pub(crate) async fn cmd_update(conn: &mut SqliteConnection, args: UpdateArgs) ->
         args.description_stdin,
         "description",
     )?;
-    if let Some(status) = args.status.as_deref() {
-        validate_choice("status", status, STATUSES)?;
-    }
-    if let Some(priority) = args.priority.as_deref() {
-        validate_choice("priority", priority, PRIORITIES)?;
-    }
+    validate_optional_status(args.status.as_deref())?;
+    validate_optional_priority(args.priority.as_deref())?;
     let outcome = update_task(
         conn,
         &task.id,
@@ -984,7 +1064,7 @@ pub(crate) async fn cmd_update(conn: &mut SqliteConnection, args: UpdateArgs) ->
     println!(
         "updated {} changed={} status={} priority={} title={}",
         display_ref(conn, &task).await?,
-        if outcome.changed { "yes" } else { "none" },
+        changed_text(outcome.changed),
         task.status,
         task.priority,
         quote(&task.title)
@@ -1017,20 +1097,6 @@ fn sha256_hex(value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(value.as_bytes());
     format!("{:x}", hasher.finalize())
-}
-
-fn print_text_diff(from_label: &str, old: &str, to_label: &str, new: &str) {
-    let diff = TextDiff::from_lines(old, new);
-    let unified = diff
-        .unified_diff()
-        .context_radius(3)
-        .header(from_label, to_label)
-        .to_string();
-    if unified.is_empty() {
-        println!(" no changes");
-    } else {
-        print!("{unified}");
-    }
 }
 
 pub(crate) async fn cmd_text(conn: &mut SqliteConnection, args: TextCommand) -> Result<()> {
@@ -1150,7 +1216,7 @@ pub(crate) async fn cmd_project(conn: &mut SqliteConnection, args: ProjectComman
             println!(
                 "renamed-project {} changed={} old={} old_prefix={} prefix={} name={}",
                 outcome.project.key,
-                if outcome.changed { "yes" } else { "none" },
+                changed_text(outcome.changed),
                 outcome.previous.key,
                 outcome.previous.prefix,
                 outcome.project.prefix,
@@ -1265,72 +1331,27 @@ pub(crate) async fn cmd_skill() -> Result<()> {
 pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictCommand) -> Result<()> {
     match args.command {
         ConflictSubcommand::List { project, field } => {
-            let project_key = if let Some(project) = project {
-                Some(
-                    resolve_existing_project_in_workspace(
-                        conn,
-                        crate::workspaces::active_workspace_id().as_str(),
-                        &project,
-                    )
-                    .await?
-                    .key,
-                )
-            } else {
-                None
-            };
+            let project_key = resolve_conflict_project_filter(
+                conn,
+                crate::workspaces::active_workspace_id().as_str(),
+                project,
+            )
+            .await?;
             let items = list_conflicts(conn, project_key.as_deref(), field.as_deref()).await?;
             for item in items {
-                let display = format!(
-                    "{}-{}",
-                    item.project_prefix,
-                    display_suffix(conn, &item.task_id).await?
-                );
-                println!(
-                    "{} conflict field={} variants={},{} title={}",
-                    display,
-                    item.field,
-                    item.variant_a,
-                    item.variant_b,
-                    quote(&item.title)
-                );
+                print_conflict_list_item(conn, item).await?;
             }
         }
         ConflictSubcommand::Show { task_ref, field } => {
             let task = resolve_task_ref(conn, &task_ref).await?;
             let details = task_conflicts(conn, &task.id, field.as_deref()).await?;
             for detail in details {
-                println!(
-                    "conflict {} field={}",
-                    display_ref(conn, &task).await?,
-                    detail.field
-                );
-                let local_value = conflict_display_value(
-                    conn,
-                    &task.workspace_id,
-                    &detail.field,
-                    &detail.local_value,
-                )
-                .await?;
-                let remote_value = conflict_display_value(
-                    conn,
-                    &task.workspace_id,
-                    &detail.field,
-                    &detail.remote_value,
-                )
-                .await?;
-                println!("variant {}", detail.variant_a);
-                print_multiline_block("value", &local_value);
-                println!("variant {}", detail.variant_b);
-                print_multiline_block("value", &remote_value);
+                print_conflict_detail(conn, &task, detail).await?;
             }
         }
         ConflictSubcommand::Diff { task_ref, field } => {
             let task = resolve_task_ref(conn, &task_ref).await?;
-            let detail = single_conflict(
-                task_conflicts(conn, &task.id, Some(&field)).await?,
-                &task.id,
-                &field,
-            )?;
+            let detail = load_single_conflict_detail(conn, &task, &field).await?;
             print_text_diff("local", &detail.local_value, "remote", &detail.remote_value);
         }
         ConflictSubcommand::Export {
@@ -1340,25 +1361,9 @@ pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictComm
         } => {
             let task = resolve_task_ref(conn, &task_ref).await?;
             fs::create_dir_all(&dir)?;
-            let detail = single_conflict(
-                task_conflicts(conn, &task.id, Some(&field)).await?,
-                &task.id,
-                &field,
-            )?;
-            let path_a = dir.join(format!("{}-{}.md", detail.field, detail.variant_a));
-            fs::write(&path_a, &detail.local_value)?;
-            println!(
-                "exported variant={} path={}",
-                detail.variant_a,
-                quote(&path_a.display().to_string())
-            );
-            let path_b = dir.join(format!("{}-{}.md", detail.field, detail.variant_b));
-            fs::write(&path_b, &detail.remote_value)?;
-            println!(
-                "exported variant={} path={}",
-                detail.variant_b,
-                quote(&path_b.display().to_string())
-            );
+            let detail = load_single_conflict_detail(conn, &task, &field).await?;
+            export_conflict_variant(&dir, &detail.field, &detail.variant_a, &detail.local_value)?;
+            export_conflict_variant(&dir, &detail.field, &detail.variant_b, &detail.remote_value)?;
         }
         ConflictSubcommand::Resolve {
             task_ref,
@@ -1382,6 +1387,91 @@ pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictComm
             );
         }
     }
+    Ok(())
+}
+
+async fn resolve_conflict_project_filter(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    project: Option<String>,
+) -> Result<Option<String>> {
+    if let Some(project) = project {
+        return Ok(Some(
+            resolve_existing_project_in_workspace(conn, workspace_id, &project)
+                .await?
+                .key,
+        ));
+    }
+    Ok(None)
+}
+
+async fn print_conflict_list_item(
+    conn: &mut SqliteConnection,
+    item: crate::operations::ConflictListItem,
+) -> Result<()> {
+    let display = format!(
+        "{}-{}",
+        item.project_prefix,
+        display_suffix(conn, &item.task_id).await?
+    );
+    println!(
+        "{} conflict field={} variants={},{} title={}",
+        display,
+        item.field,
+        item.variant_a,
+        item.variant_b,
+        quote(&item.title)
+    );
+    Ok(())
+}
+
+async fn print_conflict_detail(
+    conn: &mut SqliteConnection,
+    task: &Task,
+    detail: ConflictDetail,
+) -> Result<()> {
+    println!(
+        "conflict {} field={}",
+        display_ref(conn, task).await?,
+        detail.field
+    );
+    let local_value =
+        conflict_display_value(conn, &task.workspace_id, &detail.field, &detail.local_value)
+            .await?;
+    let remote_value = conflict_display_value(
+        conn,
+        &task.workspace_id,
+        &detail.field,
+        &detail.remote_value,
+    )
+    .await?;
+    println!("variant {}", detail.variant_a);
+    print_multiline_block("value", &local_value);
+    println!("variant {}", detail.variant_b);
+    print_multiline_block("value", &remote_value);
+    Ok(())
+}
+
+async fn load_single_conflict_detail(
+    conn: &mut SqliteConnection,
+    task: &Task,
+    field: &str,
+) -> Result<ConflictDetail> {
+    single_conflict(
+        task_conflicts(conn, &task.id, Some(field)).await?,
+        &task.id,
+        field,
+    )
+}
+
+fn export_conflict_variant(dir: &Path, field: &str, variant: &str, value: &str) -> Result<()> {
+    let path = dir.join(format!("{field}-{variant}.md"));
+    fs::write(&path, value)?;
+    println!(
+        "exported variant={} path={}",
+        variant,
+        quote(&path.display().to_string())
+    );
     Ok(())
 }
 
