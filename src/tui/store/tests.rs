@@ -51,6 +51,22 @@ async fn create_selected_task(store: &mut TuiStore, title: &str) -> (String, usi
     (task_id, selected)
 }
 
+async fn seed_title_conflict(pool: &SqlitePool, task_id: &str) {
+    let mut conn = pool.acquire().await.unwrap();
+    sqlx::query(
+        "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
+         local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
+         VALUES (?, 'title', NULL, 'local title', 'remote title', NULL, ?, 'a', 'b', ?, 0)",
+    )
+    .bind(task_id)
+    .bind(crate::ids::new_id())
+    .bind(crate::ids::now())
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    drop(conn);
+}
+
 fn task_draft(title: &str) -> TaskDraft {
     TaskDraft {
         title: title.to_string(),
@@ -726,19 +742,7 @@ mod conflicts {
         let task_id = store.tasks[selected].task.id.clone();
         let display_ref = store.tasks[selected].display_ref.clone();
 
-        let mut conn = pool.acquire().await.unwrap();
-        sqlx::query(
-            "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
-             local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
-             VALUES (?, 'title', NULL, 'local title', 'remote title', NULL, ?, 'a', 'b', ?, 0)",
-        )
-        .bind(&task_id)
-        .bind(crate::ids::new_id())
-        .bind(crate::ids::now())
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-        drop(conn);
+        seed_title_conflict(&pool, &task_id).await;
         store.refresh(Some(&task_id)).await.unwrap();
 
         let outcome = store
@@ -1559,19 +1563,7 @@ mod undo {
         let (task_id, selected) = create_selected_task(&mut store, "Before").await;
         let display_ref = store.tasks[selected].display_ref.clone();
 
-        let mut conn = pool.acquire().await.unwrap();
-        sqlx::query(
-            "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
-             local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
-             VALUES (?, 'title', NULL, 'local title', 'remote title', NULL, ?, 'a', 'b', ?, 0)",
-        )
-        .bind(&task_id)
-        .bind(crate::ids::new_id())
-        .bind(crate::ids::now())
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-        drop(conn);
+        seed_title_conflict(&pool, &task_id).await;
         store.refresh(Some(&task_id)).await.unwrap();
 
         store
