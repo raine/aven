@@ -508,7 +508,7 @@ mod tests {
         assert_eq!(
             resolve_shortcut_for(
                 CommandContext::Detail,
-                &[KeyCode::Char('t'), KeyCode::Char('l')]
+                &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('l')]
             ),
             ShortcutLookup::Found(Action::BeginEditLabels)
         );
@@ -551,10 +551,6 @@ mod tests {
         assert!(matches!(
             resolve_shortcut(&[KeyCode::Char('p'), KeyCode::Char('n')]),
             ShortcutLookup::Found(Action::BeginAddProject)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('p'), KeyCode::Char('s')]),
-            ShortcutLookup::Found(Action::BeginScopeProject)
         ));
         assert!(matches!(
             resolve_shortcut(&[KeyCode::Char('p'), KeyCode::Char('r')]),
@@ -652,7 +648,7 @@ mod tests {
             ShortcutLookup::Found(Action::BeginEditDescription)
         ));
         assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('p'), KeyCode::Char('t')]),
+            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('p')]),
             ShortcutLookup::Found(Action::BeginEditProject)
         ));
         assert!(matches!(
@@ -660,7 +656,7 @@ mod tests {
             ShortcutLookup::Found(Action::BeginEditPriority)
         ));
         assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('L'), KeyCode::Char('t')]),
+            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('l')]),
             ShortcutLookup::Found(Action::BeginEditLabels)
         ));
         assert!(matches!(
@@ -724,7 +720,7 @@ mod tests {
     #[test]
     fn resolves_filter_shortcuts() {
         assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('L'), KeyCode::Char('f')]),
+            resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('l')]),
             ShortcutLookup::Found(Action::BeginFilterLabel)
         );
         assert_eq!(
@@ -752,15 +748,15 @@ mod tests {
             ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskView::Conflicts))
         );
         assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('p'), KeyCode::Char('s')]),
+            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('p')]),
             ShortcutLookup::Found(Action::BeginScopeProject)
         );
         assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('w'), KeyCode::Char('a')]),
+            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('a')]),
             ShortcutLookup::Found(Action::ShowWorkspaceScope)
         );
         assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('w'), KeyCode::Char('s')]),
+            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('w')]),
             ShortcutLookup::Found(Action::BeginSwitchWorkspace)
         );
     }
