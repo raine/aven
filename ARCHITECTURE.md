@@ -79,6 +79,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Derive TUI task list filters, query mode, and render mode from `TaskViewState`; do not keep parallel project, status, view, or queue-sort state.
 - Treat project selection in the TUI as scope. Project scope must not be modeled as a filter modifier or view.
 - TUI overlays carry `OverlayRoute` so behavior survives title text changes.
+- TUI shortcuts use domain prefixes in the command catalog. Domain sections are task, project, label, workspace, view, filter, order, conflict, and config.
 - Overlay dialogs should use shared helpers in `src/tui/ui/dialog.rs` for title edges, frame clearing, background, border, and footer hint styling.
 - Record a TUI undo entry for completed TUI mutations unless the action is undo itself; pending TUI undo entries are valid only within the current `TuiStore` lifecycle and are cleared on store startup.
 - Do not log auth tokens, raw sync payloads, task descriptions, note bodies, user-authored labels or project names, or secret config values.

@@ -124,21 +124,17 @@ pub(crate) const NORMAL_HELP_SECTIONS: &[&str] = &[
     "General",
     "Navigation",
     "Tasks",
-    "Status",
-    "Priority",
+    "Projects",
+    "Labels",
+    "Workspaces",
     "Views",
-    "Scope",
-    "Add/Create",
-    "Metadata",
-    "Edit",
     "Filters",
     "Order",
-    "Conflict",
+    "Conflicts",
     "Config",
 ];
 
-pub(crate) const DETAIL_HELP_SECTIONS: &[&str] =
-    &["General", "Task detail", "Edit", "Status", "Priority"];
+pub(crate) const DETAIL_HELP_SECTIONS: &[&str] = &["General", "Task detail", "Tasks"];
 
 pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
@@ -348,19 +344,25 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "confirm deleting selected task",
         "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('m'), KeyCode::Char('D')],
-            label: "m D",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('D')],
+            label: "t D",
         }],
         Action::Delete,
     ),
     CommandSpec::implemented(
         "status-picker",
-        "open status picker",
+        "open task status picker",
         "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('s')],
-            label: "s",
-        }],
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('s')],
+                label: "t s",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('s')],
+                label: "s",
+            },
+        ],
         Action::BeginStatusPicker,
     ),
     CommandSpec::implemented(
@@ -368,28 +370,28 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "restore selected task",
         "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('m'), KeyCode::Char('r')],
-            label: "m r",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('R')],
+            label: "t R",
         }],
         Action::Restore,
     ),
     CommandSpec::implemented(
         "status-inbox",
         "set status to inbox",
-        "Status",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('m'), KeyCode::Char('i')],
-            label: "m i",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('i')],
+            label: "t i",
         }],
         Action::SetStatus("inbox"),
     ),
     CommandSpec::implemented(
         "status-backlog",
         "set status to backlog",
-        "Status",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('m'), KeyCode::Char('b')],
-            label: "m b",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('b')],
+            label: "t b",
         }],
         Action::SetStatus("backlog"),
     ),
@@ -397,35 +399,35 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "status-todo",
         &["todo"],
         "set status to todo",
-        "Status",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('m'), KeyCode::Char('t')],
-            label: "m t",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('t')],
+            label: "t t",
         }],
         Action::SetStatus("todo"),
     ),
     CommandSpec::implemented(
         "status-active",
         "set status to active",
-        "Status",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('m'), KeyCode::Char('a')],
-            label: "m a",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('a')],
+            label: "t a",
         }],
         Action::SetStatus("active"),
     ),
     CommandSpec::implemented(
         "status-done",
         "set status to done",
-        "Status",
+        "Tasks",
         &[
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('d')],
+                label: "t d",
+            },
             KeySequence {
                 codes: &[KeyCode::Char('d')],
                 label: "d",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('m'), KeyCode::Char('d')],
-                label: "m d",
             },
         ],
         Action::SetStatus("done"),
@@ -433,15 +435,15 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "status-canceled",
         "set status to canceled",
-        "Status",
+        "Tasks",
         &[
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('x')],
+                label: "t x",
+            },
             KeySequence {
                 codes: &[KeyCode::Char('x')],
                 label: "x",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('m'), KeyCode::Char('x')],
-                label: "m x",
             },
         ],
         Action::SetStatus("canceled"),
@@ -530,30 +532,30 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "scope-all",
         "show all projects in current workspace",
-        "Scope",
+        "Workspaces",
         &[KeySequence {
-            codes: &[KeyCode::Char('g'), KeyCode::Char('s')],
-            label: "g s",
+            codes: &[KeyCode::Char('w'), KeyCode::Char('a')],
+            label: "w a",
         }],
         Action::ShowWorkspaceScope,
     ),
     CommandSpec::implemented(
         "scope-project",
         "scope to a project",
-        "Scope",
+        "Projects",
         &[KeySequence {
-            codes: &[KeyCode::Char('g'), KeyCode::Char('p')],
-            label: "g p",
+            codes: &[KeyCode::Char('p'), KeyCode::Char('s')],
+            label: "p s",
         }],
         Action::BeginScopeProject,
     ),
     CommandSpec::implemented(
         "workspace-switch",
         "switch active workspace",
-        "Scope",
+        "Workspaces",
         &[KeySequence {
-            codes: &[KeyCode::Char('g'), KeyCode::Char('w')],
-            label: "g w",
+            codes: &[KeyCode::Char('w'), KeyCode::Char('s')],
+            label: "w s",
         }],
         Action::BeginSwitchWorkspace,
     ),
@@ -561,15 +563,15 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "add-task",
         "add a new task",
-        "Add/Create",
+        "Tasks",
         &[
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('n')],
+                label: "t n",
+            },
             KeySequence {
                 codes: &[KeyCode::Char('a')],
                 label: "a",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('A'), KeyCode::Char('t')],
-                label: "A t",
             },
         ],
         Action::BeginAddTask,
@@ -577,15 +579,15 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "add-note",
         "add a note to selected task",
-        "Add/Create",
+        "Tasks",
         &[
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('N')],
+                label: "t N",
+            },
             KeySequence {
                 codes: &[KeyCode::Char('n')],
                 label: "n",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('A'), KeyCode::Char('n')],
-                label: "A n",
             },
         ],
         Action::BeginAddNote,
@@ -594,60 +596,60 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "add-project",
         "create a new project",
-        "Metadata",
+        "Projects",
         &[KeySequence {
-            codes: &[KeyCode::Char('A'), KeyCode::Char('p')],
-            label: "A p",
+            codes: &[KeyCode::Char('p'), KeyCode::Char('n')],
+            label: "p n",
         }],
         Action::BeginAddProject,
     ),
     CommandSpec::implemented(
         "add-label",
         "create a new label",
-        "Metadata",
+        "Labels",
         &[KeySequence {
-            codes: &[KeyCode::Char('A'), KeyCode::Char('l')],
-            label: "A l",
+            codes: &[KeyCode::Char('L'), KeyCode::Char('n')],
+            label: "L n",
         }],
         Action::BeginAddLabel,
     ),
     CommandSpec::implemented(
         "rename-project",
         "rename a project and display prefix",
-        "Metadata",
+        "Projects",
         &[KeySequence {
-            codes: &[KeyCode::Char('A'), KeyCode::Char('e')],
-            label: "A e",
+            codes: &[KeyCode::Char('p'), KeyCode::Char('r')],
+            label: "p r",
         }],
         Action::BeginRenameProject,
     ),
     CommandSpec::implemented(
         "delete-project",
         "delete a project",
-        "Metadata",
+        "Projects",
         &[KeySequence {
-            codes: &[KeyCode::Char('A'), KeyCode::Char('d')],
-            label: "A d",
+            codes: &[KeyCode::Char('p'), KeyCode::Char('D')],
+            label: "p D",
         }],
         Action::BeginDeleteProject,
     ),
     CommandSpec::planned(
         "add-project-path",
         "add a path to a project",
-        "Metadata",
+        "Projects",
         &[KeySequence {
-            codes: &[KeyCode::Char('A'), KeyCode::Char('P')],
-            label: "A P",
+            codes: &[KeyCode::Char('p'), KeyCode::Char('a')],
+            label: "p a",
         }],
         PROJECT_PATH_FLOW_REASON,
     ),
     CommandSpec::planned(
         "remove-project-path",
         "remove a path from a project",
-        "Metadata",
+        "Projects",
         &[KeySequence {
-            codes: &[KeyCode::Char('A'), KeyCode::Char('R')],
-            label: "A R",
+            codes: &[KeyCode::Char('p'), KeyCode::Char('x')],
+            label: "p x",
         }],
         PROJECT_PATH_FLOW_REASON,
     ),
@@ -655,94 +657,70 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "edit-title",
         "edit selected task title",
-        "Edit",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('E'), KeyCode::Char('t')],
-                label: "E t",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('e'), KeyCode::Char('t')],
-                label: "e t",
-            },
-        ],
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('t')],
+            label: "t e t",
+        }],
         Action::BeginEditTitle,
     ),
     CommandSpec::implemented(
         "edit-description",
         "edit selected task description",
-        "Edit",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('E'), KeyCode::Char('d')],
-                label: "E d",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('e'), KeyCode::Char('d')],
-                label: "e d",
-            },
-        ],
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('d')],
+            label: "t e d",
+        }],
         Action::BeginEditDescription,
     ),
     CommandSpec::implemented(
         "edit-project",
         "edit selected task project",
-        "Edit",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('E'), KeyCode::Char('p')],
-                label: "E p",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('e'), KeyCode::Char('p')],
-                label: "e p",
-            },
-        ],
+        "Projects",
+        &[KeySequence {
+            codes: &[KeyCode::Char('p'), KeyCode::Char('t')],
+            label: "p t",
+        }],
         Action::BeginEditProject,
     ),
     CommandSpec::implemented(
         "edit-priority",
         "edit selected task priority",
-        "Edit",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('p')],
-                label: "p",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('e'), KeyCode::Char('r')],
-                label: "e r",
-            },
-        ],
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('p')],
+            label: "t p",
+        }],
         Action::BeginEditPriority,
     ),
     CommandSpec::implemented(
         "edit-labels",
         "edit selected task labels",
-        "Edit",
+        "Labels",
         &[KeySequence {
-            codes: &[KeyCode::Char('e'), KeyCode::Char('l')],
-            label: "e l",
+            codes: &[KeyCode::Char('L'), KeyCode::Char('t')],
+            label: "L t",
         }],
         Action::BeginEditLabels,
     ),
     CommandSpec::implemented(
         "copy-ref",
         "copy selected task display ref",
-        "Edit",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('y')],
-            label: "y",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('y')],
+            label: "t y",
         }],
         Action::CopyShortRef,
     ),
     CommandSpec::implemented(
         "copy-id",
         "copy selected task id",
-        "Edit",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('Y')],
-            label: "Y",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('Y')],
+            label: "t Y",
         }],
         Action::CopyDurableRef,
     ),
@@ -750,50 +728,50 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "priority-none",
         "set priority to none",
-        "Priority",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('m'), KeyCode::Char('0')],
-            label: "m 0",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('0')],
+            label: "t 0",
         }],
         Action::SetPriority("none"),
     ),
     CommandSpec::implemented(
         "priority-low",
         "set priority to low",
-        "Priority",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('m'), KeyCode::Char('l')],
-            label: "m l",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('l')],
+            label: "t l",
         }],
         Action::SetPriority("low"),
     ),
     CommandSpec::implemented(
         "priority-medium",
         "set priority to medium",
-        "Priority",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('m'), KeyCode::Char('m')],
-            label: "m m",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('m')],
+            label: "t m",
         }],
         Action::SetPriority("medium"),
     ),
     CommandSpec::implemented(
         "priority-high",
         "set priority to high",
-        "Priority",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('m'), KeyCode::Char('h')],
-            label: "m h",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('h')],
+            label: "t h",
         }],
         Action::SetPriority("high"),
     ),
     CommandSpec::implemented(
         "priority-urgent",
         "set priority to urgent",
-        "Priority",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('m'), KeyCode::Char('u')],
-            label: "m u",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('u')],
+            label: "t u",
         }],
         Action::SetPriority("urgent"),
     ),
@@ -801,10 +779,10 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "filter-label",
         "filter by label",
-        "Filters",
+        "Labels",
         &[KeySequence {
-            codes: &[KeyCode::Char('f'), KeyCode::Char('l')],
-            label: "f l",
+            codes: &[KeyCode::Char('L'), KeyCode::Char('f')],
+            label: "L f",
         }],
         Action::BeginFilterLabel,
     ),
@@ -813,8 +791,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "filter by priority",
         "Filters",
         &[KeySequence {
-            codes: &[KeyCode::Char('f'), KeyCode::Char('r')],
-            label: "f r",
+            codes: &[KeyCode::Char('f'), KeyCode::Char('p')],
+            label: "f p",
         }],
         Action::BeginFilterPriority,
     ),
@@ -913,7 +891,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "conflict-list",
         "list or filter conflicts",
-        "Conflict",
+        "Conflicts",
         &[KeySequence {
             codes: &[KeyCode::Char('c'), KeyCode::Char('l')],
             label: "c l",
@@ -923,7 +901,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "conflict-show",
         "show conflict details",
-        "Conflict",
+        "Conflicts",
         &[KeySequence {
             codes: &[KeyCode::Char('c'), KeyCode::Char('s')],
             label: "c s",
@@ -933,7 +911,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "conflict-next",
         "jump to next conflict",
-        "Conflict",
+        "Conflicts",
         &[KeySequence {
             codes: &[KeyCode::Char('c'), KeyCode::Char('n')],
             label: "c n",
@@ -943,7 +921,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "conflict-prev",
         "jump to previous conflict",
-        "Conflict",
+        "Conflicts",
         &[KeySequence {
             codes: &[KeyCode::Char('c'), KeyCode::Char('p')],
             label: "c p",
@@ -953,7 +931,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "conflict-use-local",
         "resolve with local value",
-        "Conflict",
+        "Conflicts",
         &[KeySequence {
             codes: &[KeyCode::Char('c'), KeyCode::Char('a')],
             label: "c a",
@@ -963,7 +941,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "conflict-use-remote",
         "resolve with remote value",
-        "Conflict",
+        "Conflicts",
         &[KeySequence {
             codes: &[KeyCode::Char('c'), KeyCode::Char('r')],
             label: "c r",
@@ -973,7 +951,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "conflict-manual-merge",
         "resolve with manual value",
-        "Conflict",
+        "Conflicts",
         &[KeySequence {
             codes: &[KeyCode::Char('c'), KeyCode::Char('m')],
             label: "c m",
@@ -1037,122 +1015,110 @@ pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
         "detail-edit-title",
         "edit selected task title",
-        "Edit",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('e'), KeyCode::Char('t')],
-            label: "e t",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('t')],
+            label: "t e t",
         }],
         Action::BeginEditTitle,
     ),
     CommandSpec::implemented(
         "detail-edit-description",
         "edit selected task description",
-        "Edit",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('e'), KeyCode::Char('d')],
-            label: "e d",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('d')],
+            label: "t e d",
         }],
         Action::BeginEditDescription,
     ),
     CommandSpec::implemented(
         "detail-edit-project",
         "edit selected task project",
-        "Edit",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('e'), KeyCode::Char('p')],
-            label: "e p",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('p')],
+            label: "t p",
         }],
         Action::BeginEditProject,
     ),
     CommandSpec::implemented(
         "detail-edit-labels",
         "edit selected task labels",
-        "Edit",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('l')],
-                label: "l",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('e'), KeyCode::Char('l')],
-                label: "e l",
-            },
-        ],
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('l')],
+            label: "t l",
+        }],
         Action::BeginEditLabels,
     ),
     CommandSpec::implemented(
         "detail-add-note",
         "add a note to selected task",
-        "Task detail",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('n')],
-            label: "n",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('N')],
+            label: "t N",
         }],
         Action::BeginAddNote,
     ),
     CommandSpec::implemented(
         "detail-status-picker",
-        "open status picker",
-        "Status",
+        "open task status picker",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('s')],
-            label: "s",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('s')],
+            label: "t s",
         }],
         Action::BeginStatusPicker,
     ),
     CommandSpec::implemented(
         "detail-status-done",
         "set status to done",
-        "Status",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('d')],
-            label: "d",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('d')],
+            label: "t d",
         }],
         Action::SetStatus("done"),
     ),
     CommandSpec::implemented(
         "detail-edit-priority",
         "edit selected task priority",
-        "Priority",
-        &[
-            KeySequence {
-                codes: &[KeyCode::Char('p')],
-                label: "p",
-            },
-            KeySequence {
-                codes: &[KeyCode::Char('e'), KeyCode::Char('r')],
-                label: "e r",
-            },
-        ],
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('P')],
+            label: "t P",
+        }],
         Action::BeginEditPriority,
     ),
     CommandSpec::implemented(
         "detail-delete",
         "confirm deleting selected task",
-        "Task detail",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('D')],
-            label: "D",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('D')],
+            label: "t D",
         }],
         Action::Delete,
     ),
     CommandSpec::implemented(
         "detail-copy-ref",
         "copy selected task display ref",
-        "Task detail",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('y')],
-            label: "y",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('y')],
+            label: "t y",
         }],
         Action::CopyShortRef,
     ),
     CommandSpec::implemented(
         "detail-copy-id",
         "copy selected task id",
-        "Task detail",
+        "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('Y')],
-            label: "Y",
+            codes: &[KeyCode::Char('t'), KeyCode::Char('Y')],
+            label: "t Y",
         }],
         Action::CopyDurableRef,
     ),
@@ -1172,87 +1138,37 @@ pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CommandDomain {
     pub(crate) section: &'static str,
-    pub(crate) start: usize,
-    pub(crate) end: usize,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl CommandDomain {
-    pub(crate) fn commands(self) -> &'static [CommandSpec] {
-        &COMMANDS[self.start..self.end]
+    pub(crate) fn commands(self) -> Vec<&'static CommandSpec> {
+        COMMANDS
+            .iter()
+            .filter(|command| command.section == self.section)
+            .collect()
     }
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const COMMAND_DOMAINS: &[CommandDomain] = &[
-    CommandDomain {
-        section: "General",
-        start: 0,
-        end: 6,
-    },
+    CommandDomain { section: "General" },
     CommandDomain {
         section: "Navigation",
-        start: 6,
-        end: 16,
     },
+    CommandDomain { section: "Tasks" },
     CommandDomain {
-        section: "Tasks",
-        start: 16,
-        end: 19,
+        section: "Projects",
     },
+    CommandDomain { section: "Labels" },
     CommandDomain {
-        section: "Status",
-        start: 19,
-        end: 25,
+        section: "Workspaces",
     },
+    CommandDomain { section: "Views" },
+    CommandDomain { section: "Filters" },
+    CommandDomain { section: "Order" },
     CommandDomain {
-        section: "Views",
-        start: 25,
-        end: 33,
+        section: "Conflicts",
     },
-    CommandDomain {
-        section: "Scope",
-        start: 33,
-        end: 36,
-    },
-    CommandDomain {
-        section: "Add/Create",
-        start: 36,
-        end: 38,
-    },
-    CommandDomain {
-        section: "Metadata",
-        start: 38,
-        end: 44,
-    },
-    CommandDomain {
-        section: "Edit",
-        start: 44,
-        end: 51,
-    },
-    CommandDomain {
-        section: "Priority",
-        start: 51,
-        end: 56,
-    },
-    CommandDomain {
-        section: "Filters",
-        start: 56,
-        end: 60,
-    },
-    CommandDomain {
-        section: "Order",
-        start: 60,
-        end: 67,
-    },
-    CommandDomain {
-        section: "Conflict",
-        start: 67,
-        end: 74,
-    },
-    CommandDomain {
-        section: "Config",
-        start: 74,
-        end: 79,
-    },
+    CommandDomain { section: "Config" },
 ];

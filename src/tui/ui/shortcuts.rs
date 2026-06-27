@@ -566,7 +566,7 @@ mod tests {
 
     #[test]
     fn prefix_hint_lines_use_shared_catalog() {
-        let lines = prefix_hint_lines(CommandContext::Normal, &["m".to_string()]);
+        let lines = prefix_hint_lines(CommandContext::Normal, &["t".to_string()]);
         let rendered = lines
             .iter()
             .map(|line| line.to_string())
@@ -580,19 +580,19 @@ mod tests {
 
     #[test]
     fn detail_prefix_hint_lines_use_detail_catalog() {
-        let lines = prefix_hint_lines(CommandContext::Detail, &["e".to_string()]);
+        let lines = prefix_hint_lines(CommandContext::Detail, &["t".to_string()]);
         let rendered = lines
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
         assert!(rendered.contains(":detail-edit-title"));
-        assert!(rendered.contains(" t "));
+        assert!(rendered.contains(" e "));
     }
 
     #[test]
     fn detail_prefix_hint_lines_align_command_descriptions() {
-        let lines = prefix_hint_lines(CommandContext::Detail, &["e".to_string()]);
+        let lines = prefix_hint_lines(CommandContext::Detail, &["t".to_string()]);
         let rendered = lines
             .iter()
             .map(|line| line.to_string())
@@ -618,7 +618,7 @@ mod tests {
             .unwrap();
         let line = command_line(command);
         let rendered = line.to_string();
-        assert!(rendered.contains("m a"));
+        assert!(rendered.contains("t a"));
     }
 
     #[test]
@@ -633,7 +633,7 @@ mod tests {
 
     #[test]
     fn prefix_hint_lines_mark_planned_actions() {
-        let rendered = prefix_hint_lines(CommandContext::Normal, &["A".to_string()])
+        let rendered = prefix_hint_lines(CommandContext::Normal, &["p".to_string()])
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -881,7 +881,7 @@ mod tests {
             .map(|sections| help_column_lines(sections).len())
             .collect::<Vec<_>>();
 
-        let tail_right = ["Order", "Conflict", "Config"]
+        let tail_right = ["Order", "Conflicts", "Config"]
             .into_iter()
             .filter(|section| columns[1].contains(section))
             .count();

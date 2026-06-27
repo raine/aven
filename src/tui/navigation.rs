@@ -120,10 +120,9 @@ pub(crate) enum DetailShortcut {
 
 pub(crate) fn detail_shortcut(sequence: &[KeyCode]) -> DetailShortcut {
     match resolve_shortcut_for(CommandContext::Detail, sequence) {
-        ShortcutLookup::Found(action) | ShortcutLookup::Ambiguous(action) => {
-            DetailShortcut::Action(action)
-        }
-        ShortcutLookup::Prefix => DetailShortcut::Prefix,
+        ShortcutLookup::Found(action) => DetailShortcut::Action(action),
+        ShortcutLookup::Ambiguous(action) if sequence.len() > 1 => DetailShortcut::Action(action),
+        ShortcutLookup::Ambiguous(_) | ShortcutLookup::Prefix => DetailShortcut::Prefix,
         ShortcutLookup::Missing => DetailShortcut::Missing(shortcut_label(sequence)),
     }
 }

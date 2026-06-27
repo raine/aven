@@ -75,21 +75,23 @@ TUI:
 The TUI uses the same database selection rules as the CLI: --db, AVEN_DB,
 then config. It opens a keyboard-first task browser with all tasks by
 default, project-specific sidebar views, queue sorting, task detail, search,
-manual refresh, and triage shortcuts for status, priority, delete, and
-restore.
+manual refresh, and domain shortcuts for tasks, projects, labels, workspaces,
+views, filters, ordering, conflicts, and config.
 
 Direct shortcuts cover navigation and app controls: j/k or arrows move,
-Enter opens selection detail, / searches, : opens the command panel, ? or h
-opens help, r refreshes, Tab switches focus, and q quits.
+Enter opens selection detail, / searches, : opens the command panel, ? opens
+help, r refreshes, Tab switches focus, and q quits. Fast aliases include a for
+add task, n for add note, s for status picker, d for done, and x for canceled.
 
-Power-user shortcuts use mnemonic prefix families. Press a prefix to see
-transient hints, then press the next key:
+Domain shortcuts use mnemonic prefix families. Press a prefix to see hints,
+then press the next key:
 
-  g  go to views such as all, inbox, backlog, todo, active, project, conflicts
-  a  add tasks, notes, projects, and labels
-  e  edit the selected task title, description, project, priority, or labels
-  m  mark status, set exact priority, delete with m D, or restore with m r
-  f  filter by project, label, status, priority, deleted tasks, or clear filters
+  t  task fields and task lifecycle actions
+  p  project scope, project administration, and task project assignment
+  L  label creation, label filtering, and task label assignment
+  w  workspace scope and workspace switching
+  v  views such as queue, open, inbox, backlog, todo, active, done, conflicts
+  f  filters such as priority, deleted tasks, or clear filters
   o  order by supported sort fields or reverse direction
   c  inspect and resolve conflicts
   C  show config, status, paths, or initialize config with confirmation

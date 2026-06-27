@@ -461,8 +461,8 @@ mod keyboard_dispatch {
     #[tokio::test]
     async fn prefix_key_enters_prefix_mode() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
-        assert_pending(&app, &["m"]);
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        assert_pending(&app, &["t"]);
     }
 
     #[tokio::test]
@@ -486,6 +486,9 @@ mod keyboard_dispatch {
         assert!(app.overlay.is_none());
         assert_pending_empty(&app);
 
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
         app.dispatch_key(key(KeyCode::Char('p')), (80, 24).into())
             .await
             .unwrap();
@@ -500,12 +503,12 @@ mod keyboard_dispatch {
     async fn prefix_is_inactive_while_overlay_captures_input() {
         let mut app = test_app().await;
         app.begin_search();
-        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
 
         assert_pending_empty(&app);
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::Search { input }) if input.as_str() == "m"
+            Some(OverlayState::Search { input }) if input.as_str() == "t"
         ));
     }
 
@@ -513,10 +516,10 @@ mod keyboard_dispatch {
     async fn esc_cancels_prefix_before_overlay() {
         let mut app = test_app().await;
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
-        app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
             .await
             .unwrap();
-        assert_pending(&app, &["e"]);
+        assert_pending(&app, &["t"]);
         app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
             .await
             .unwrap();
@@ -535,19 +538,19 @@ mod keyboard_dispatch {
     #[tokio::test]
     async fn invalid_continuation_shows_message() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('z')).await.unwrap();
         assert_pending_empty(&app);
         assert_eq!(
             toast_message(&app).as_deref(),
-            Some("invalid shortcut: m z")
+            Some("invalid shortcut: t z")
         );
     }
 
     #[tokio::test]
     async fn valid_continuation_executes_and_clears() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         assert_pending_empty(&app);
     }
@@ -994,8 +997,8 @@ mod filters_and_workspaces {
             .await
             .unwrap();
 
-        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
 
         assert!(matches!(
             &app.overlay,
@@ -1066,8 +1069,8 @@ mod filters_and_workspaces {
         )
         .await;
 
+        app.handle_normal_key(KeyCode::Char('L')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Char('/')))
             .await
             .unwrap();
@@ -1079,7 +1082,7 @@ mod filters_and_workspaces {
         );
         assert_eq!(toast_message(&app).as_deref(), Some("label filter applied"));
         app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Char('/')))
             .await
             .unwrap();
@@ -1108,8 +1111,8 @@ mod filters_and_workspaces {
             .unwrap();
         drop(conn);
 
-        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('w')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
 
         assert!(matches!(
             &app.overlay,
@@ -1857,8 +1860,8 @@ mod authoring {
     #[tokio::test]
     async fn add_task_shortcut_opens_title_prompt() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
 
         assert!(matches!(
             &app.overlay,
@@ -2078,8 +2081,8 @@ mod authoring {
             .await
             .unwrap();
 
-        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
         app.handle_overlay_key(ctrl_p()).await.unwrap();
 
@@ -2560,8 +2563,8 @@ mod authoring {
     #[tokio::test]
     async fn add_task_flow_cancels_at_title_step() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
         assert!(app.overlay.is_none());
     }
@@ -2569,8 +2572,8 @@ mod authoring {
     #[tokio::test]
     async fn add_task_blank_title_is_rejected() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         assert_eq!(
             toast_message(&app).as_deref(),
@@ -2587,8 +2590,8 @@ mod authoring {
     async fn add_note_requires_selected_task() {
         let mut app = test_app().await;
         app.widgets.table.select(None);
-        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('N')).await.unwrap();
 
         assert!(app.overlay.is_none());
         assert_eq!(
@@ -2616,8 +2619,8 @@ mod authoring {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Note target")).await;
 
-        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('N')).await.unwrap();
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::MultilineInput(state)) if state.title == ADD_NOTE_TITLE
@@ -2920,7 +2923,10 @@ mod detail_mode {
         create_and_select_task(&mut app, test_task_draft("Note target")).await;
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
-        app.dispatch_key(key(KeyCode::Char('n')), (80, 24).into())
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('N')), (80, 24).into())
             .await
             .unwrap();
         assert!(matches!(
@@ -2946,7 +2952,10 @@ mod detail_mode {
         create_and_select_task(&mut app, test_task_draft("Detail target")).await;
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
-        app.dispatch_key(key(KeyCode::Char('p')), (80, 24).into())
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('P')), (80, 24).into())
             .await
             .unwrap();
 
@@ -2963,6 +2972,9 @@ mod detail_mode {
         create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
+        app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
+            .await
+            .unwrap();
         app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
             .await
             .unwrap();
@@ -3001,6 +3013,9 @@ mod detail_mode {
         create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
+        app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
+            .await
+            .unwrap();
         app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
             .await
             .unwrap();
@@ -3023,6 +3038,9 @@ mod detail_mode {
             create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
+        app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
+            .await
+            .unwrap();
         app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
             .await
             .unwrap();
@@ -3065,17 +3083,17 @@ mod detail_mode {
         .await;
 
         for (code, expected_route) in [
-            (KeyCode::Char('t'), OverlayRoute::EditTitle),
-            (KeyCode::Char('d'), OverlayRoute::EditDescription),
-            (KeyCode::Char('p'), OverlayRoute::EditProject),
+            (KeyCode::Char('s'), OverlayRoute::EditStatus),
+            (KeyCode::Char('P'), OverlayRoute::EditPriority),
             (KeyCode::Char('l'), OverlayRoute::EditLabels),
-            (KeyCode::Char('r'), OverlayRoute::EditPriority),
+            (KeyCode::Char('N'), OverlayRoute::AddNote),
+            (KeyCode::Char('D'), OverlayRoute::DeleteTaskConfirm),
         ] {
             app.overlay = Some(OverlayState::Detail { scroll: 4 });
-            app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
+            app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
                 .await
                 .unwrap();
-            assert_pending(&app, &["e"]);
+            assert_pending(&app, &["t"]);
             assert!(matches!(
                 app.overlay,
                 Some(OverlayState::Detail { scroll: 4 })
@@ -3089,6 +3107,7 @@ mod detail_mode {
                 }
                 (Some(OverlayState::Picker(state)), route) => assert_eq!(state.route, route),
                 (Some(OverlayState::TagCombobox(state)), route) => assert_eq!(state.route, route),
+                (Some(OverlayState::Confirm(state)), route) => assert_eq!(state.route, route),
                 (overlay, route) => panic!("expected {route:?}, got {overlay:?}"),
             }
             assert_pending_empty(&app);
@@ -3103,6 +3122,9 @@ mod detail_mode {
         create_and_select_task(&mut app, test_task_draft("Detail target")).await;
         app.overlay = Some(OverlayState::Detail { scroll: 3 });
 
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
         app.dispatch_key(key(KeyCode::Char('l')), (80, 24).into())
             .await
             .unwrap();
@@ -3121,7 +3143,7 @@ mod detail_mode {
         create_and_select_task(&mut app, test_task_draft("Detail target")).await;
         app.overlay = Some(OverlayState::Detail { scroll: 5 });
 
-        app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
             .await
             .unwrap();
         app.dispatch_key(key(KeyCode::Char('z')), (80, 24).into())
@@ -3135,7 +3157,7 @@ mod detail_mode {
         ));
         assert_eq!(
             toast_message(&app).as_deref(),
-            Some("invalid shortcut: e z")
+            Some("invalid shortcut: t z")
         );
     }
 
@@ -3145,7 +3167,7 @@ mod detail_mode {
         create_and_select_task(&mut app, test_task_draft("Detail target")).await;
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
-        app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
+        app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
             .await
             .unwrap();
 
@@ -3163,7 +3185,7 @@ mod detail_mode {
             .map(|cell| cell.symbol())
             .collect::<String>();
 
-        assert!(rendered.contains("e …"));
+        assert!(rendered.contains("t …"));
         assert!(rendered.contains(":detail-edit-title"));
     }
 
@@ -3217,6 +3239,9 @@ mod detail_mode {
         let display_ref = app.store.tasks[selected].display_ref.clone();
         app.overlay = Some(OverlayState::Detail { scroll: 7 });
 
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
         app.dispatch_key(key(KeyCode::Char('d')), (80, 24).into())
             .await
             .unwrap();
@@ -3242,6 +3267,9 @@ mod detail_mode {
         let selected_task_id = app.store.tasks[selected].task.id.clone();
         app.overlay = Some(OverlayState::Detail { scroll: 4 });
 
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
         app.dispatch_key(key(KeyCode::Char('s')), (80, 24).into())
             .await
             .unwrap();
@@ -3419,7 +3447,10 @@ mod detail_mode {
         create_and_select_task(&mut app, test_task_draft("Note target")).await;
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
-        app.dispatch_key(key(KeyCode::Char('n')), (80, 24).into())
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('N')), (80, 24).into())
             .await
             .unwrap();
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
@@ -3437,7 +3468,10 @@ mod detail_mode {
         create_and_select_task(&mut app, test_task_draft("Note target")).await;
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
-        app.dispatch_key(key(KeyCode::Char('n')), (80, 24).into())
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('N')), (80, 24).into())
             .await
             .unwrap();
         app.handle_overlay_key(ctrl_s()).await.unwrap();
@@ -3461,8 +3495,8 @@ mod task_editing {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Note target")).await;
 
-        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('N')).await.unwrap();
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
         assert!(app.overlay.is_none());
@@ -3478,10 +3512,10 @@ mod task_editing {
         app.widgets.table.select(None);
 
         for sequence in [
-            [KeyCode::Char('m'), KeyCode::Char('i')],
-            [KeyCode::Char('m'), KeyCode::Char('h')],
-            [KeyCode::Char('m'), KeyCode::Char('D')],
-            [KeyCode::Char('m'), KeyCode::Char('r')],
+            [KeyCode::Char('t'), KeyCode::Char('i')],
+            [KeyCode::Char('t'), KeyCode::Char('h')],
+            [KeyCode::Char('t'), KeyCode::Char('D')],
+            [KeyCode::Char('t'), KeyCode::Char('R')],
         ] {
             app.notification = None;
             app.handle_normal_key(sequence[0]).await.unwrap();
@@ -3496,8 +3530,8 @@ mod task_editing {
     #[tokio::test]
     async fn add_project_shortcut_opens_prompt_and_creates_project() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::TextInput(state)) if state.prompt == "project name:"
@@ -3532,8 +3566,8 @@ mod task_editing {
     #[tokio::test]
     async fn add_label_shortcut_opens_prompt_and_creates_label() {
         let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('A')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('L')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::TextInput(state)) if state.prompt == "label name:"
@@ -3565,6 +3599,7 @@ mod task_editing {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Old title")).await;
 
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         assert!(matches!(
@@ -3595,6 +3630,7 @@ mod task_editing {
         )
         .await;
 
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
         assert!(matches!(
@@ -3625,8 +3661,8 @@ mod task_editing {
             .unwrap();
         create_and_select_task(&mut app, test_task_draft("Project target")).await;
 
-        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::Picker(state))
@@ -3652,8 +3688,8 @@ mod task_editing {
         )
         .await;
 
-        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::Picker(state))
@@ -3684,8 +3720,8 @@ mod task_editing {
         )
         .await;
 
-        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('L')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::TagCombobox(state))
@@ -3785,7 +3821,7 @@ mod task_editing {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Priority shortcut")).await;
 
-        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
 
         let selected = app.widgets.table.selected().unwrap();
@@ -3793,23 +3829,11 @@ mod task_editing {
     }
 
     #[tokio::test]
-    async fn priority_alias_opens_picker() {
-        let mut app = test_app().await;
-        create_and_select_task(&mut app, test_task_draft("Priority alias")).await;
-
-        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
-
-        assert!(matches!(
-            &app.overlay,
-            Some(OverlayState::Picker(state)) if state.title == EDIT_PRIORITY_TITLE
-        ));
-    }
-
-    #[tokio::test]
     async fn edit_shortcuts_require_selected_task() {
         let mut app = test_app().await;
         app.widgets.table.select(None);
 
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
 
@@ -3846,6 +3870,7 @@ mod task_editing {
         .unwrap();
         drop(conn);
 
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
         type_chars(&mut app, " updated").await;
@@ -3943,7 +3968,7 @@ mod delete_and_restore {
         let selected = create_and_select_task(&mut app, test_task_draft("Delete target")).await;
         let display_ref = app.store.tasks[selected].display_ref.clone();
 
-        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
 
         assert!(matches!(
@@ -3964,7 +3989,7 @@ mod delete_and_restore {
         let mut app = test_app().await;
         let selected = create_and_select_task(&mut app, test_task_draft("Keep target")).await;
 
-        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
 
@@ -3979,7 +4004,7 @@ mod delete_and_restore {
         let selected = create_and_select_task(&mut app, test_task_draft("Delete target")).await;
         let display_ref = app.store.tasks[selected].display_ref.clone();
 
-        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Char('y')))
             .await
@@ -4001,6 +4026,9 @@ mod delete_and_restore {
             create_and_select_task(&mut app, test_task_draft("Detail delete target")).await;
         app.overlay = Some(OverlayState::Detail { scroll: 7 });
 
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
         app.dispatch_key(key(KeyCode::Char('D')), (80, 24).into())
             .await
             .unwrap();

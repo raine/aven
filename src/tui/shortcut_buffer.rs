@@ -43,9 +43,18 @@ impl ShortcutBuffer {
     }
 
     pub(crate) fn resolve_normal(&mut self, code: KeyCode) -> NormalShortcutResolution {
+        let had_pending = !self.codes.is_empty();
         let sequence = self.with_code(code);
         match resolve_shortcut(&sequence) {
-            ShortcutLookup::Found(action) | ShortcutLookup::Ambiguous(action) => {
+            ShortcutLookup::Found(action) => {
+                self.clear();
+                NormalShortcutResolution::Action(action)
+            }
+            ShortcutLookup::Ambiguous(_) if !had_pending => {
+                self.codes = sequence;
+                NormalShortcutResolution::Prefix
+            }
+            ShortcutLookup::Ambiguous(action) => {
                 self.clear();
                 NormalShortcutResolution::Action(action)
             }
@@ -171,22 +180,22 @@ mod tests {
     fn normal_prefix_is_stored_and_rendered() {
         let mut buffer = ShortcutBuffer::default();
         assert_eq!(
-            buffer.resolve_normal(KeyCode::Char('m')),
+            buffer.resolve_normal(KeyCode::Char('t')),
             NormalShortcutResolution::Prefix
         );
-        assert_eq!(buffer.labels(), vec!["m".to_string()]);
+        assert_eq!(buffer.labels(), vec!["t".to_string()]);
     }
 
     #[test]
     fn normal_missing_clears_and_reports_full_label() {
         let mut buffer = ShortcutBuffer::default();
         assert_eq!(
-            buffer.resolve_normal(KeyCode::Char('m')),
+            buffer.resolve_normal(KeyCode::Char('t')),
             NormalShortcutResolution::Prefix
         );
         assert_eq!(
             buffer.resolve_normal(KeyCode::Char('z')),
-            NormalShortcutResolution::Missing("m z".to_string())
+            NormalShortcutResolution::Missing("t z".to_string())
         );
         assert!(buffer.is_empty());
     }
@@ -204,12 +213,12 @@ mod tests {
     fn detail_missing_after_prefix_clears_and_warns() {
         let mut buffer = ShortcutBuffer::default();
         assert_eq!(
-            buffer.resolve_detail(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE)),
+            buffer.resolve_detail(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE)),
             DetailShortcutResolution::Prefix
         );
         assert_eq!(
             buffer.resolve_detail(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE)),
-            DetailShortcutResolution::MissingAfterPrefix("e z".to_string())
+            DetailShortcutResolution::MissingAfterPrefix("t z".to_string())
         );
         assert!(buffer.is_empty());
     }
