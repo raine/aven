@@ -338,24 +338,27 @@ fn tag_combobox_mouse_target(
     TagComboboxMouseTarget::Interior
 }
 
-fn move_tag_combobox_highlight(state: &mut TagComboboxState, delta: isize) {
-    let matches = tag_combobox_matches(state);
-    if matches.is_empty() {
-        return;
+pub(crate) fn wrap_index_by_value(
+    indices: &[usize],
+    current_value: usize,
+    delta: isize,
+) -> Option<usize> {
+    if indices.is_empty() {
+        return None;
     }
-    let current = matches
+    let current = indices
         .iter()
-        .position(|index| *index == state.highlighted)
-        .unwrap_or(0);
-    let next = current as isize + delta;
-    let next = if next < 0 {
-        matches.len() - 1
-    } else if next >= matches.len() as isize {
-        0
-    } else {
-        next as usize
-    };
-    state.highlighted = matches[next];
+        .position(|index| *index == current_value)
+        .unwrap_or(0) as isize;
+    let next = (current + delta).rem_euclid(indices.len() as isize) as usize;
+    indices.get(next).copied()
+}
+
+fn move_tag_combobox_highlight(state: &mut TagComboboxState, delta: isize) {
+    if let Some(next) = wrap_index_by_value(&tag_combobox_matches(state), state.highlighted, delta)
+    {
+        state.highlighted = next;
+    }
 }
 
 fn handle_picker_mouse(

@@ -175,22 +175,10 @@ fn toggle_picker_item(state: &mut PickerState) {
 }
 
 fn move_picker_selection(state: &mut PickerState, delta: isize) {
-    let visible = visible_picker_indices(state);
-    if visible.is_empty() {
-        return;
+    if let Some(next) =
+        super::wrap_index_by_value(&visible_picker_indices(state), state.selected, delta)
+    {
+        state.selected = next;
+        normalize_picker_scroll(state, crate::tui::overlay::GENERIC_PICKER_VIEWPORT_ROWS);
     }
-    let current = visible
-        .iter()
-        .position(|index| *index == state.selected)
-        .unwrap_or(0);
-    let next = current as isize + delta;
-    let next = if next < 0 {
-        visible.len() - 1
-    } else if next >= visible.len() as isize {
-        0
-    } else {
-        next as usize
-    };
-    state.selected = visible[next];
-    normalize_picker_scroll(state, crate::tui::overlay::GENERIC_PICKER_VIEWPORT_ROWS);
 }

@@ -9,6 +9,7 @@ mod view;
 
 pub(crate) use handlers::{
     handle_generic_overlay_key, handle_generic_overlay_mouse, handle_generic_overlay_paste,
+    wrap_index_by_value,
 };
 pub(crate) use layout::{
     GENERIC_PICKER_VIEWPORT_ROWS, GENERIC_PICKER_WIDTH, PROJECT_PICKER_VIEWPORT_ROWS,

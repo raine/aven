@@ -151,23 +151,11 @@ fn add_label(state: &mut TagComboboxState, label: String) {
 }
 
 fn move_highlight(state: &mut TagComboboxState, delta: isize) {
-    let matches = tag_combobox_matches(state);
-    if matches.is_empty() {
-        return;
+    if let Some(next) =
+        super::wrap_index_by_value(&tag_combobox_matches(state), state.highlighted, delta)
+    {
+        state.highlighted = next;
     }
-    let current = matches
-        .iter()
-        .position(|index| *index == state.highlighted)
-        .unwrap_or(0);
-    let next = current as isize + delta;
-    let next = if next < 0 {
-        matches.len() - 1
-    } else if next >= matches.len() as isize {
-        0
-    } else {
-        next as usize
-    };
-    state.highlighted = matches[next];
 }
 
 fn ranked_matches(options: &[String], input: &str) -> Vec<usize> {
