@@ -145,8 +145,8 @@ async fn sync_once(
         "daemon sync completed"
     );
     println!(
-        "daemon-synced pushed={} pulled={} cursor={}",
-        summary.pushed, summary.pulled, summary.cursor
+        "daemon-synced pushed={} pulled={} cursor={} complete={} pages={}",
+        summary.pushed, summary.pulled, summary.cursor, summary.complete, summary.pages
     );
     Ok(summary)
 }

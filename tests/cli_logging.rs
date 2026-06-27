@@ -135,7 +135,7 @@ sync:
 }
 
 #[test]
-fn daemon_file_logging_records_sync_without_user_content() {
+fn daemon_sync_logging_redacts_task_content() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let db = env.db("client.sqlite");
@@ -171,6 +171,9 @@ fn daemon_file_logging_records_sync_without_user_content() {
             "daemon sync completed",
             "pushed",
             "cursor",
+            "pulled",
+            "complete",
+            "pages",
         ],
     );
     contains_none(

@@ -1,12 +1,90 @@
 mod common;
 
 use std::net::UdpSocket;
+use std::path::Path;
+use std::process::Command;
 use std::time::Duration;
+
+use serde_json::json;
 
 use common::{
     TestEnv, TestProcess, TestServer, contains_all, contains_none, eventually, extract_ref, fail,
-    ok,
+    ok, scalar_i64,
 };
+
+const MAX_PUSH_BATCH: usize = 256;
+const DAEMON_SYNC_PAGE_BUDGET: usize = 8;
+const DEFAULT_WORKSPACE_ID: &str = "0000000000000000";
+const APP_PROJECT_ID: &str = "APP0000000000000";
+
+fn exec_sql(db: &Path, sql: &str) {
+    let output = Command::new("sqlite3")
+        .arg(db)
+        .arg(sql)
+        .output()
+        .expect("run sqlite");
+    assert!(
+        output.status.success(),
+        "sqlite failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+fn seed_budgeted_local_backlog(db: &Path, count: usize) {
+    exec_sql(
+        db,
+        &format!(
+            "INSERT OR IGNORE INTO projects(id, workspace_id, key, name, prefix, created_at, updated_at)
+             VALUES ('{APP_PROJECT_ID}', '{DEFAULT_WORKSPACE_ID}', 'app', 'app', 'APP',
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+    );
+
+    for start in (1..=count).step_by(128) {
+        let end = (start + 127).min(count);
+        let task_values = (start..=end)
+            .map(|seq| {
+                format!(
+                    "('{DEFAULT_WORKSPACE_ID}', 'TSK{seq:013}', 'budgeted daemon task {seq}', '', '{APP_PROJECT_ID}', 'inbox', 'none', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let change_values = (start..=end)
+            .map(|seq| {
+                let payload = json!({
+                    "workspace_id": DEFAULT_WORKSPACE_ID,
+                    "workspace_key": "default",
+                    "title": format!("budgeted daemon task {seq}"),
+                    "description": "",
+                    "project_id": APP_PROJECT_ID,
+                    "project_key": "app",
+                    "project_name": "app",
+                    "project_prefix": "APP",
+                    "status": "inbox",
+                    "priority": "none",
+                    "created_at": "2026-01-01T00:00:00Z"
+                })
+                .to_string()
+                .replace('\'', "''");
+                format!(
+                    "('CHG{seq:013}', 'client-a', {seq}, 'task', 'TSK{seq:013}', NULL, 'create_task', '{payload}', NULL, '2026-01-01T00:00:00Z', NULL)"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        exec_sql(
+            db,
+            &format!(
+                "BEGIN;
+                 INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at) VALUES {task_values};
+                 INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field, op_type, payload, base_version, created_at, server_seq) VALUES {change_values};
+                 COMMIT;"
+            ),
+        );
+    }
+}
 
 #[test]
 fn daemon_reports_startup_configuration_errors() {
@@ -239,5 +317,54 @@ sync:
     contains_all(
         &ok(env.aven(&client_b, ["show", &task_ref])),
         &[&task_ref, "daemon auth task"],
+    );
+}
+
+#[test]
+fn daemon_syncs_large_backlog_across_budgeted_rounds() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let client_a = env.db("client-a.sqlite");
+    let client_b = env.db("client-b.sqlite");
+    let wake_addr = env.free_loopback_addr();
+    env.write_daemon_config(&client_a, &server, &wake_addr, 3600);
+
+    ok(env.aven_config(["list", "--all"]));
+    let task_count = MAX_PUSH_BATCH * DAEMON_SYNC_PAGE_BUDGET + 1;
+    seed_budgeted_local_backlog(&client_a, task_count);
+
+    let daemon = TestProcess::start_daemon(&env);
+    let first_pushed = MAX_PUSH_BATCH * DAEMON_SYNC_PAGE_BUDGET;
+    let incomplete = format!(
+        "daemon-synced pushed={first_pushed} pulled=0 cursor={first_pushed} complete=false pages={DAEMON_SYNC_PAGE_BUDGET}"
+    );
+    let complete =
+        format!("daemon-synced pushed=1 pulled=0 cursor={task_count} complete=true pages=1");
+
+    daemon.wait_for_log(&incomplete, Duration::from_secs(10));
+    daemon.wait_for_log(&complete, Duration::from_secs(10));
+    let output = daemon.output();
+    assert!(
+        output
+            .find(&incomplete)
+            .expect("incomplete daemon sync marker")
+            < output.find(&complete).expect("complete daemon sync marker"),
+        "daemon output should report incomplete work before completion\n{output}"
+    );
+    assert_eq!(
+        scalar_i64(
+            &client_a,
+            "SELECT count(*) FROM changes WHERE server_seq IS NULL"
+        ),
+        0
+    );
+
+    ok(env.aven(&client_b, ["sync", "--server", &server.url]));
+    assert_eq!(
+        scalar_i64(
+            &client_b,
+            "SELECT count(*) FROM tasks WHERE title LIKE 'budgeted daemon task %'",
+        ),
+        task_count as i64
     );
 }
