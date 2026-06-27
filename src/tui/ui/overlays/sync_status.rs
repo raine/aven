@@ -1,12 +1,12 @@
 use ratatui::Frame;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span, Text};
+use ratatui::style::Style;
+use ratatui::text::{Line, Text};
 use ratatui::widgets::Paragraph;
 
 use super::super::dialog::{Dialog, dialog_hint_line};
 use crate::tui::config_overlay::CONFIG_STATUS_TITLE;
 use crate::tui::store::{SyncStatusCheck, TuiSyncStatus};
-use crate::tui::theme::{ACCENT, BG_ALT, FG, FG_DIM, FG_MUTED, GREEN, ORANGE, RED};
+use crate::tui::theme::{BG_ALT, FG, FG_MUTED, GREEN, RED};
 
 pub(in crate::tui::ui) fn render_sync_status(frame: &mut Frame, status: &TuiSyncStatus) {
     let width = frame.area().width.saturating_sub(8).clamp(64, 88);
@@ -147,20 +147,18 @@ fn sync_status_lines(status: &TuiSyncStatus) -> Vec<Line<'static>> {
     lines
 }
 
+const LABEL_WIDTH: usize = 18;
+
 fn section_line(label: &str) -> Line<'static> {
-    Line::from(Span::styled(
-        label.to_ascii_uppercase(),
-        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-    ))
+    super::shared::section_line(label)
 }
 
 fn count_row(label: &str, value: i64) -> Line<'static> {
-    let style = if value > 0 {
-        Style::new().fg(ORANGE)
-    } else {
-        Style::new().fg(GREEN)
-    };
-    value_row(label, value.to_string(), style)
+    super::shared::count_row(LABEL_WIDTH, label, value)
+}
+
+fn value_row(label: &str, value: impl Into<String>, value_style: Style) -> Line<'static> {
+    super::shared::value_row(LABEL_WIDTH, label, value, value_style)
 }
 
 fn check_row(label: &str, check: Option<&SyncStatusCheck>, fallback: &str) -> Line<'static> {
@@ -172,13 +170,6 @@ fn check_row(label: &str, check: Option<&SyncStatusCheck>, fallback: &str) -> Li
 
 fn status_row(label: &str, value: String, value_style: Style) -> Line<'static> {
     value_row(label, value, value_style)
-}
-
-fn value_row(label: &str, value: impl Into<String>, value_style: Style) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(format!("{label:<18}"), Style::new().fg(FG_DIM)),
-        Span::styled(value.into(), value_style),
-    ])
 }
 
 fn check_style(check: &SyncStatusCheck) -> Style {

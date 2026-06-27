@@ -1,13 +1,13 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 use super::super::dialog::{Dialog, dialog_hint_line};
 use crate::tui::config_overlay::DATABASE_STATS_TITLE;
 use crate::tui::store::TuiDatabaseStats;
-use crate::tui::theme::{ACCENT, BG_ALT, FG, FG_DIM, FG_MUTED, GREEN, ORANGE};
+use crate::tui::theme::{BG_ALT, FG, FG_DIM, FG_MUTED};
 
 pub(in crate::tui::ui) fn render_database_stats(
     frame: &mut Frame,
@@ -286,27 +286,18 @@ fn line_width(line: Option<&Line<'static>>) -> usize {
     .unwrap_or(0)
 }
 
+const LABEL_WIDTH: usize = 14;
+
 fn section_line(label: &str) -> Line<'static> {
-    Line::from(Span::styled(
-        label.to_ascii_uppercase(),
-        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-    ))
+    super::shared::section_line(label)
 }
 
 fn count_row(label: &str, value: i64) -> Line<'static> {
-    let style = if value > 0 {
-        Style::new().fg(ORANGE)
-    } else {
-        Style::new().fg(GREEN)
-    };
-    value_row(label, value.to_string(), style)
+    super::shared::count_row(LABEL_WIDTH, label, value)
 }
 
 fn value_row(label: &str, value: impl Into<String>, value_style: Style) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(format!("{label:<14}"), Style::new().fg(FG_DIM)),
-        Span::styled(value.into(), value_style),
-    ])
+    super::shared::value_row(LABEL_WIDTH, label, value, value_style)
 }
 
 fn render_scrollbar(frame: &mut Frame, area: Rect, content_height: usize, scroll: u16) {
