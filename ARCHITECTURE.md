@@ -39,9 +39,11 @@
 
 1. Local mutations append operation-log rows in `changes`.
 2. Unsynced rows have `server_seq IS NULL`.
-3. The client posts pending changes and a cursor to `/sync`.
-4. The server validates operation names, entity types, protocol version, and payload shapes before assigning server sequence numbers.
-5. Remote apply updates local tables transactionally, records conflicts for scalar field version mismatches, then advances `sync_cursor`.
+3. The client posts a bounded pending-change page, a pull cursor, and a pull limit to `/sync`.
+4. The server validates operation names, entity types, protocol version, batch bounds, and payload shapes before assigning server sequence numbers.
+5. The server returns push acknowledgements, a bounded pull page, and `has_more`.
+6. Remote apply updates local tables transactionally, records conflicts for scalar field version mismatches, applies push acknowledgements, then advances `sync_cursor`.
+7. The CLI sync path drains pages until complete. The daemon sync path processes a bounded page budget and promptly schedules another sync when `has_more` or local backlog remains.
 
 ## Data ownership
 

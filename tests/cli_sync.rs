@@ -17,6 +17,8 @@ const SYNC_TASK_A_CHANGE_ID: &str = "DDDDDDDDDDDDDDDD";
 const SYNC_TASK_B_CHANGE_ID: &str = "EEEEEEEEEEEEEEEE";
 const SYNC_OPPOSITE_DEP_CHANGE_ID: &str = "FFFFFFFFFFFFFFFF";
 const SYNC_CLIENT_ID: &str = "GGGGGGGGGGGGGGGG";
+const MAX_PUSH_BATCH: usize = 256;
+const MAX_PULL_BATCH: usize = 512;
 
 fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
     let output = ok(env.aven(db, ["sync", "--server", &server.url]));
@@ -121,7 +123,7 @@ async fn post_sync(server: &TestServer, change: Value) -> reqwest::Response {
     reqwest::Client::new()
         .post(format!("{}/sync", server.url))
         .json(&json!({
-            "protocol_version": 3,
+            "protocol_version": 4,
             "client_id": "client-a",
             "after": 0,
             "changes": [change],
@@ -135,7 +137,7 @@ async fn assert_server_log_empty(server: &TestServer) {
     let response = reqwest::Client::new()
         .post(format!("{}/sync", server.url))
         .json(&json!({
-            "protocol_version": 3,
+            "protocol_version": 4,
             "client_id": "audit-client",
             "after": 0,
             "changes": [],
@@ -147,6 +149,23 @@ async fn assert_server_log_empty(server: &TestServer) {
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let body: Value = response.json().await.expect("sync response json");
     assert_eq!(body["changes"].as_array().expect("changes array").len(), 0);
+}
+
+fn pending_push_acks(db: &std::path::Path, first_server_seq: i64) -> Vec<Value> {
+    query_sql_scalar(
+        db,
+        "SELECT group_concat(change_id, ',') FROM changes WHERE server_seq IS NULL ORDER BY local_seq",
+    )
+    .split(',')
+    .filter(|change_id| !change_id.is_empty())
+    .enumerate()
+    .map(|(index, change_id)| {
+        json!({
+            "change_id": change_id,
+            "server_seq": first_server_seq + index as i64,
+        })
+    })
+    .collect()
 }
 
 fn assert_task_field_versions(db: &std::path::Path) {
@@ -167,6 +186,27 @@ async fn rejected_sync(server: &TestServer, change: Value, expected: &str) {
     let body = response.text().await.expect("error body");
     contains_all(&body, &["error invalid-sync-change", expected]);
     assert_server_log_empty(server).await;
+}
+
+fn valid_create_project_change(change_id: &str, local_seq: i64) -> serde_json::Value {
+    serde_json::json!({
+        "change_id": change_id,
+        "client_id": "client-a",
+        "local_seq": local_seq,
+        "entity_type": "project",
+        "entity_id": format!("AAAAAAAAAAAA{:04}", local_seq),
+        "field": null,
+        "op_type": "create_project",
+        "payload": {
+            "key": format!("project-{local_seq}"),
+            "name": format!("Project {local_seq}"),
+            "prefix": format!("P{local_seq}"),
+            "created_at": "2026-01-01T00:00:00Z"
+        },
+        "base_version": null,
+        "created_at": "2026-01-01T00:00:00Z",
+        "server_seq": null
+    })
 }
 
 fn project_change_json(change_id: &str, key: &str) -> serde_json::Value {
@@ -270,10 +310,22 @@ fn start_fake_sync_server(response: Value) -> (String, std::thread::JoinHandle<(
 }
 
 fn sync_response(cursor: i64, changes: impl IntoIterator<Item = Value>) -> Value {
+    let changes = changes
+        .into_iter()
+        .enumerate()
+        .map(|(index, mut change)| {
+            if change["server_seq"].is_null() {
+                change["server_seq"] = json!(index as i64 + 1);
+            }
+            change
+        })
+        .collect::<Vec<_>>();
     json!({
-        "protocol_version": 3,
+        "protocol_version": 4,
         "cursor": cursor,
-        "changes": changes.into_iter().collect::<Vec<_>>(),
+        "has_more": false,
+        "push_acks": [],
+        "changes": changes,
     })
 }
 
@@ -481,6 +533,7 @@ fn same_key_remote_project_writes_alias() {
     let env = TestEnv::new();
     let db = env.db("project-collision.sqlite");
     ok(env.aven(&db, ["add", "local seed", "--project", "app"]));
+    exec_sql(&db, "UPDATE changes SET server_seq = local_seq + 90");
     let (url, server) = start_fake_sync_server(sync_response(
         1,
         [wire_change(
@@ -531,6 +584,7 @@ fn prefix_only_remote_project_collision_gets_unique_prefix() {
     let env = TestEnv::new();
     let db = env.db("prefix-collision.sqlite");
     ok(env.aven(&db, ["project", "create", "App"]));
+    exec_sql(&db, "UPDATE changes SET server_seq = local_seq + 90");
     let (url, server) = start_fake_sync_server(sync_response(
         1,
         [wire_change(
@@ -577,6 +631,7 @@ fn stale_project_id_alias_is_ignored_for_remote_task_create() {
     let env = TestEnv::new();
     let db = env.db("stale-alias.sqlite");
     ok(env.aven(&db, ["add", "local seed", "--project", "app"]));
+    exec_sql(&db, "UPDATE changes SET server_seq = local_seq + 90");
     exec_sql(
         &db,
         "INSERT INTO project_id_aliases(workspace_id, remote_project_id, local_project_id)
@@ -1250,8 +1305,10 @@ fn out_of_order_dependency_sync_does_not_advance_cursor() {
     let env = TestEnv::new();
     let db = env.db("dependency-out-of-order.sqlite");
     let (url, server) = start_fake_sync_server(json!({
-        "protocol_version": 3,
+        "protocol_version": 4,
         "cursor": 3,
+        "has_more": false,
+        "push_acks": [],
         "changes": [
             remote_dependency_change(SYNC_DEP_CHANGE_ID, SYNC_TASK_B_ID, SYNC_TASK_A_ID, 1),
             remote_task_change(SYNC_TASK_A_CHANGE_ID, SYNC_TASK_A_ID, "remote parent", 2),
@@ -1271,8 +1328,10 @@ fn sync_cycle_edges_converge_deterministically() {
     let env = TestEnv::new();
     let db = env.db("dependency-cycle-convergence.sqlite");
     let (url, server) = start_fake_sync_server(json!({
-        "protocol_version": 3,
+        "protocol_version": 4,
         "cursor": 4,
+        "has_more": false,
+        "push_acks": [],
         "changes": [
             remote_task_change(SYNC_TASK_A_CHANGE_ID, SYNC_TASK_A_ID, "cycle task a", 1),
             remote_task_change(SYNC_TASK_B_CHANGE_ID, SYNC_TASK_B_ID, "cycle task b", 2),
@@ -1305,6 +1364,261 @@ fn task_create_seeds_versioned_field_versions_locally_and_remotely() {
     sync(&env, &a, &server);
     sync(&env, &b, &server);
     assert_task_field_versions(&b);
+}
+
+#[tokio::test]
+async fn sync_server_rejects_oversized_push_batch() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let changes = (0..=MAX_PUSH_BATCH)
+        .map(|i| valid_create_project_change(&format!("{:016X}", i + 1), i as i64 + 1))
+        .collect::<Vec<_>>();
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/sync", server.url))
+        .json(&json!({
+            "protocol_version": 4,
+            "client_id": "client-a",
+            "after": 0,
+            "pull_limit": MAX_PULL_BATCH,
+            "changes": changes,
+        }))
+        .send()
+        .await
+        .expect("post oversized sync");
+
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body = response.text().await.expect("error body");
+    contains_all(
+        &body,
+        &["error sync-push-too-large", "limit=256", "got=257"],
+    );
+}
+
+#[tokio::test]
+async fn sync_server_rejects_out_of_range_pull_limit() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+
+    for limit in [0, MAX_PULL_BATCH + 1] {
+        let response = reqwest::Client::new()
+            .post(format!("{}/sync", server.url))
+            .json(&json!({
+                "protocol_version": 4,
+                "client_id": "client-a",
+                "after": 0,
+                "pull_limit": limit,
+                "changes": [],
+            }))
+            .send()
+            .await
+            .expect("post sync with invalid pull limit");
+
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body = response.text().await.expect("error body");
+        contains_all(
+            &body,
+            &[
+                "error sync-pull-limit-out-of-range",
+                "min=1",
+                "max=512",
+                &format!("got={limit}"),
+            ],
+        );
+    }
+}
+
+#[test]
+fn sync_server_paginates_pull_boundary() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let server_db = env.path("server.sqlite");
+    let values = (1..=(MAX_PULL_BATCH + 1))
+        .map(|seq| {
+            let payload = json!({
+                "key": format!("project-{seq}"),
+                "name": format!("Project {seq}"),
+                "prefix": format!("P{seq}"),
+                "created_at": "2026-01-01T00:00:00Z"
+            })
+            .to_string()
+            .replace('\'', "''");
+            format!(
+                "('CHG{seq:013}', 'client-a', {seq}, 'project', 'PRJ{seq:013}', NULL, 'create_project', '{payload}', NULL, '2026-01-01T00:00:00Z', {seq})"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    exec_sql(
+        &server_db,
+        &format!(
+            "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field, op_type, payload, base_version, created_at, server_seq) VALUES {values}"
+        ),
+    );
+
+    let (status, body) = post_sync_json(
+        &server.url,
+        &json!({
+            "protocol_version": 4,
+            "client_id": "audit-client",
+            "after": 0,
+            "pull_limit": MAX_PULL_BATCH,
+            "changes": [],
+        })
+        .to_string(),
+    );
+    assert_eq!(status, 200);
+    let body: Value = serde_json::from_str(&body).expect("sync response json");
+    assert_eq!(
+        body["changes"].as_array().expect("changes array").len(),
+        MAX_PULL_BATCH
+    );
+    assert_eq!(body["cursor"], json!(MAX_PULL_BATCH));
+    assert_eq!(body["has_more"], json!(true));
+
+    let (status, body) = post_sync_json(
+        &server.url,
+        &json!({
+            "protocol_version": 4,
+            "client_id": "audit-client",
+            "after": MAX_PULL_BATCH,
+            "pull_limit": MAX_PULL_BATCH,
+            "changes": [],
+        })
+        .to_string(),
+    );
+    assert_eq!(status, 200);
+    let body: Value = serde_json::from_str(&body).expect("sync response json");
+    assert_eq!(body["changes"].as_array().expect("changes array").len(), 1);
+    assert_eq!(body["cursor"], json!(MAX_PULL_BATCH + 1));
+    assert_eq!(body["has_more"], json!(false));
+}
+
+#[test]
+fn push_acks_update_local_changes_without_pull_echo() {
+    let env = TestEnv::new();
+    let db = env.db("push-acks.sqlite");
+    ok(env.aven(&db, ["add", "acked local", "--project", "app"]));
+    let push_acks = pending_push_acks(&db, 99);
+    let (url, server) = start_fake_sync_server(json!({
+        "protocol_version": 4,
+        "cursor": 0,
+        "has_more": false,
+        "push_acks": push_acks,
+        "changes": []
+    }));
+
+    ok(env.aven(&db, ["sync", "--server", &url]));
+    assert_eq!(
+        query_sql_scalar(&db, "SELECT count(*) FROM changes WHERE server_seq IS NULL"),
+        "0"
+    );
+    server.join().expect("fake sync server exits");
+}
+
+#[test]
+fn sync_client_rejects_duplicate_push_ack() {
+    let env = TestEnv::new();
+    let db = env.db("duplicate-ack.sqlite");
+    ok(env.aven(&db, ["add", "duplicate ack", "--project", "app"]));
+    let change_id = query_sql_scalar(
+        &db,
+        "SELECT change_id FROM changes WHERE server_seq IS NULL ORDER BY local_seq LIMIT 1",
+    );
+    let mut push_acks = pending_push_acks(&db, 99);
+    push_acks[0] = json!({ "change_id": change_id, "server_seq": 99 });
+    push_acks[1] = json!({ "change_id": change_id, "server_seq": 100 });
+    let (url, server) = start_fake_sync_server(json!({
+        "protocol_version": 4,
+        "cursor": 0,
+        "has_more": false,
+        "push_acks": push_acks,
+        "changes": []
+    }));
+
+    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    contains_all(
+        &error,
+        &["error invalid-sync-response", "duplicate-push-ack"],
+    );
+    assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("0"));
+    server.join().expect("fake sync server exits");
+}
+
+#[test]
+fn sync_client_rejects_non_increasing_server_seq() {
+    let env = TestEnv::new();
+    let db = env.db("bad-server-seq.sqlite");
+    let change = remote_task_change(SYNC_TASK_A_CHANGE_ID, SYNC_TASK_A_ID, "bad seq", 1);
+    let (url, server) = start_fake_sync_server(json!({
+        "protocol_version": 4,
+        "cursor": 1,
+        "has_more": false,
+        "push_acks": [],
+        "changes": [change, remote_task_change(SYNC_TASK_B_CHANGE_ID, SYNC_TASK_B_ID, "bad seq b", 1)]
+    }));
+
+    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    contains_all(&error, &["error invalid-sync-response", "server-seq-order"]);
+    assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("0"));
+    server.join().expect("fake sync server exits");
+}
+
+#[test]
+fn pull_pagination_drains_large_server_backlog() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("client-a.sqlite");
+    let b = env.db("client-b.sqlite");
+
+    for i in 0..(MAX_PULL_BATCH + 5) {
+        ok(env.aven(
+            &a,
+            ["add", &format!("paged remote {i}"), "--project", "app"],
+        ));
+    }
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT count(*) FROM tasks WHERE title LIKE 'paged remote %'"
+        ),
+        (MAX_PULL_BATCH + 5) as i64
+    );
+    let server_cursor = query_sql_scalar(
+        &env.path("server.sqlite"),
+        "SELECT max(server_seq) FROM changes",
+    );
+    assert_eq!(
+        meta_value(&b, "sync_cursor").as_deref(),
+        Some(server_cursor.as_str())
+    );
+}
+
+#[test]
+fn push_pagination_drains_large_pending_backlog() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("client-a.sqlite");
+
+    for i in 0..(MAX_PUSH_BATCH + 5) {
+        ok(env.aven(&a, ["add", &format!("paged local {i}"), "--project", "app"]));
+    }
+    sync(&env, &a, &server);
+
+    assert_eq!(
+        scalar_i64(&a, "SELECT count(*) FROM changes WHERE server_seq IS NULL"),
+        0
+    );
+    assert_eq!(
+        scalar_i64(
+            &env.path("server.sqlite"),
+            "SELECT count(*) FROM changes WHERE server_seq IS NOT NULL",
+        ),
+        scalar_i64(&a, "SELECT count(*) FROM changes")
+    );
 }
 
 #[test]
@@ -1340,7 +1654,7 @@ fn missing_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=0 server=3",
+        "error sync-protocol-unsupported client=0 server=4",
     );
 }
 
@@ -1349,7 +1663,7 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let body = serde_json::json!({
-        "protocol_version": 0,
+        "protocol_version": 3,
         "client_id": "old-client",
         "after": 0,
         "changes": [project_change_json("old-version-change", "old-version")]
@@ -1360,7 +1674,7 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=0 server=3",
+        "error sync-protocol-unsupported client=3 server=4",
     );
 }
 
@@ -1369,7 +1683,7 @@ fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let body = serde_json::json!({
-        "protocol_version": 4,
+        "protocol_version": 5,
         "client_id": "new-client",
         "after": 0,
         "changes": [project_change_json("new-version-change", "new-version")]
@@ -1380,7 +1694,7 @@ fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=4 server=3",
+        "error sync-protocol-unsupported client=5 server=4",
     );
 }
 
@@ -1394,13 +1708,15 @@ fn wrong_response_protocol_version_is_rejected() {
     let (url, server) = start_fake_sync_server(json!({
         "protocol_version": 0,
         "cursor": 7,
+        "has_more": false,
+        "push_acks": [],
         "changes": [project_change_json("remote-change", "rogue")]
     }));
 
     let error = fail(env.aven(&db, ["sync", "--server", &url]));
     contains_all(
         &error,
-        &["error sync-protocol-unsupported client=3 server=0"],
+        &["error sync-protocol-unsupported client=4 server=0"],
     );
     assert_eq!(
         scalar_i64(&db, "SELECT count(*) FROM changes"),

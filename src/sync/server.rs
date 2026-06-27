@@ -13,8 +13,8 @@ use tokio::net::TcpListener;
 use tracing::{error, info, warn};
 
 use super::wire::{
-    ChangeRow, ChangeWire, SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse,
-    validate_sync_request_protocol_version,
+    ChangeRow, ChangeWire, MAX_PULL_BATCH, MAX_PUSH_BATCH, PushAck, SYNC_PROTOCOL_VERSION,
+    SyncRequest, SyncResponse, validate_sync_request_protocol_version,
 };
 use crate::cli::ServerArgs;
 use crate::config;
@@ -179,30 +179,53 @@ async fn handle_sync(
 ) -> std::result::Result<SyncResponse, (StatusCode, String)> {
     validate_sync_request_protocol_version(request.protocol_version)
         .map_err(invalid_sync_change)?;
+    let pull_limit = request_pull_limit(request.pull_limit)?;
+    if request.after < 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("error sync-after-out-of-range min=0 got={}", request.after),
+        ));
+    }
+    if request.changes.len() > MAX_PUSH_BATCH {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "error sync-push-too-large limit={MAX_PUSH_BATCH} got={}",
+                request.changes.len()
+            ),
+        ));
+    }
+    for change in &request.changes {
+        validate_incoming_change(change).map_err(invalid_sync_change)?;
+    }
+
     let client_id = request.client_id.clone();
     let after = request.after;
     let change_count = request.changes.len();
-    info!(client_id = %client_id, after, change_count, "sync request received");
+    info!(client_id = %client_id, after, change_count, pull_limit, "sync request received");
 
     let mut conn = state.pool.acquire().await.map_err(internal_error)?;
     let mut tx = begin_immediate(&mut conn).await.map_err(internal_error)?;
     let mut accepted_count = 0_i64;
+    let mut push_acks = Vec::with_capacity(request.changes.len());
     for change in request.changes {
-        validate_incoming_change(&change).map_err(invalid_sync_change)?;
-        let exists = sqlx::query_scalar!(
-            r#"SELECT count(*) AS "count!: i64" FROM changes WHERE change_id = ?"#,
+        let existing_server_seq = sqlx::query_scalar!(
+            r#"SELECT server_seq AS "server_seq?: i64" FROM changes WHERE change_id = ?"#,
             change.change_id
         )
-        .fetch_one(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(internal_error)?
-            > 0;
-        if !exists {
+        .flatten();
+        let server_seq = if let Some(server_seq) = existing_server_seq {
+            server_seq
+        } else {
+            let server_seq = next_server_seq(&mut tx).await.map_err(internal_error)?;
             let payload = change.payload.to_string();
             sqlx::query!(
                 "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field,
                  op_type, payload, base_version, created_at, server_seq)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(server_seq), 0) + 1 FROM changes))",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 change.change_id,
                 change.client_id,
                 change.local_seq,
@@ -213,21 +236,26 @@ async fn handle_sync(
                 payload,
                 change.base_version,
                 change.created_at,
+                server_seq,
             )
             .execute(&mut *tx)
             .await
             .map_err(internal_error)?;
             accepted_count += 1;
-        }
+            server_seq
+        };
+        push_acks.push(PushAck {
+            change_id: change.change_id,
+            server_seq,
+        });
     }
     tx.commit().await.map_err(internal_error)?;
-    let changes = load_server_changes_after(&mut conn, after)
+    let (changes, has_more) = load_server_changes_after(&mut conn, after, pull_limit)
         .await
         .map_err(internal_error)?;
     let cursor = changes
-        .iter()
-        .filter_map(|change| change.server_seq)
-        .max()
+        .last()
+        .and_then(|change| change.server_seq)
         .unwrap_or(after);
     info!(
         client_id = %client_id,
@@ -236,13 +264,35 @@ async fn handle_sync(
         accepted = accepted_count,
         returned = changes.len(),
         cursor,
+        has_more,
         "sync request completed"
     );
     Ok(SyncResponse {
         protocol_version: SYNC_PROTOCOL_VERSION,
         cursor,
+        has_more,
+        push_acks,
         changes,
     })
+}
+
+fn request_pull_limit(requested: Option<u32>) -> std::result::Result<u32, (StatusCode, String)> {
+    match requested {
+        None => Ok(MAX_PULL_BATCH),
+        Some(limit @ 1..=MAX_PULL_BATCH) => Ok(limit),
+        Some(limit) => Err((
+            StatusCode::BAD_REQUEST,
+            format!("error sync-pull-limit-out-of-range min=1 max={MAX_PULL_BATCH} got={limit}"),
+        )),
+    }
+}
+
+async fn next_server_seq(conn: &mut SqliteConnection) -> Result<i64> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT COALESCE(MAX(server_seq), 0) + 1 AS "seq!: i64" FROM changes"#
+    )
+    .fetch_one(&mut *conn)
+    .await?)
 }
 
 fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
@@ -459,7 +509,9 @@ fn optional_string_array_payload(key: &str, payload: &Value) -> Result<()> {
 async fn load_server_changes_after(
     conn: &mut SqliteConnection,
     after: i64,
-) -> Result<Vec<ChangeWire>> {
+    pull_limit: u32,
+) -> Result<(Vec<ChangeWire>, bool)> {
+    let fetch_limit = i64::from(pull_limit) + 1;
     let rows = sqlx::query_as!(
         ChangeRow,
         r#"SELECT change_id AS "change_id!: String", client_id AS "client_id!: String",
@@ -467,12 +519,19 @@ async fn load_server_changes_after(
          entity_id AS "entity_id!: String", field, op_type AS "op_type!: String",
          payload AS "payload!: String", base_version, created_at AS "created_at!: String",
          server_seq
-         FROM changes WHERE server_seq > ? ORDER BY COALESCE(server_seq, local_seq), created_at"#,
+         FROM changes WHERE server_seq > ? ORDER BY server_seq LIMIT ?"#,
         after,
+        fetch_limit,
     )
     .fetch_all(&mut *conn)
     .await?;
-    Ok(rows.into_iter().map(ChangeRow::into_wire).collect())
+    let has_more = rows.len() > pull_limit as usize;
+    let changes = rows
+        .into_iter()
+        .take(pull_limit as usize)
+        .map(ChangeRow::into_wire)
+        .collect();
+    Ok((changes, has_more))
 }
 
 #[cfg(test)]

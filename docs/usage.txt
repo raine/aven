@@ -134,7 +134,8 @@ Sync a client:
 
 The second form uses sync.server_url from config, or AVEN_SYNC_SERVER if set.
 The server stores an idempotent operation log. Clients push unsynced local
-changes and pull changes after their local server cursor.
+changes and pull changes after their local server cursor in bounded protocol
+batches.
 
 Run automatic sync for the configured local database:
 
@@ -155,8 +156,8 @@ Known limitations:
   * Sync over plain HTTP is intended for loopback, a trusted VPN or private
     network, or TLS termination you provide externally. Direct public internet
     exposure requires --unsafe-public-bind and is otherwise unsupported.
-  * v1 sync is an HTTP/JSON operation log, not a CRDT.
-  * v1 supports one configured sync server per local database. Use a fresh
+  * Sync is an HTTP/JSON operation log, not a CRDT.
+  * Sync supports one configured sync server per local database. Use a fresh
     database for a different sync server.
   * Path mappings are local to one device.
   * There is no web UI, Mac app, GitHub polling, due date, relation, custom

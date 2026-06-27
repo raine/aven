@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT change_id AS \"change_id!: String\", client_id AS \"client_id!: String\",\n         local_seq AS \"local_seq!: i64\", entity_type AS \"entity_type!: String\",\n         entity_id AS \"entity_id!: String\", field, op_type AS \"op_type!: String\",\n         payload AS \"payload!: String\", base_version, created_at AS \"created_at!: String\",\n         server_seq\n         FROM changes WHERE server_seq IS NULL ORDER BY COALESCE(server_seq, local_seq), created_at",
+  "query": "SELECT change_id AS \"change_id!: String\", client_id AS \"client_id!: String\",\n         local_seq AS \"local_seq!: i64\", entity_type AS \"entity_type!: String\",\n         entity_id AS \"entity_id!: String\", field, op_type AS \"op_type!: String\",\n         payload AS \"payload!: String\", base_version, created_at AS \"created_at!: String\",\n         server_seq\n         FROM changes WHERE server_seq IS NULL ORDER BY local_seq, created_at LIMIT ?",
   "describe": {
     "columns": [
       {
@@ -126,7 +126,7 @@
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
       true,
@@ -142,5 +142,5 @@
       true
     ]
   },
-  "hash": "6ff036dc28211f92ae755745f73177f6a9698a42357ad95f600b25a942c26bb3"
+  "hash": "348c632d64c5caaf3ed5ce9724d6b66a48f7d1dca65c1fd7fb874ca9d614bfd6"
 }

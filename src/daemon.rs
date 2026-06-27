@@ -11,7 +11,8 @@ use tracing::{debug, info, warn};
 use crate::config::AppConfig;
 use crate::db::open_db;
 use crate::signals::shutdown_signal;
-use crate::sync::run_sync_once;
+use crate::sync::run_sync_with_page_budget;
+use crate::sync::wire::{DAEMON_INCOMPLETE_RESCHEDULE_MS, DAEMON_SYNC_PAGE_BUDGET};
 
 mod service;
 
@@ -95,9 +96,13 @@ async fn run_loop(
                 )
                 .await
                 {
-                    Ok(Ok(())) => {
+                    Ok(Ok(summary)) => {
                         backoff_seconds = 1;
-                        next_sync = Instant::now() + Duration::from_secs(interval_seconds);
+                        next_sync = if summary.complete {
+                            Instant::now() + Duration::from_secs(interval_seconds)
+                        } else {
+                            Instant::now() + Duration::from_millis(DAEMON_INCOMPLETE_RESCHEDULE_MS)
+                        };
                     }
                     Ok(Err(err)) => {
                         warn!(error = %err, backoff_seconds, "daemon sync failed");
@@ -122,20 +127,28 @@ fn drain_wakes(socket: &UdpSocket, wake_buf: &mut [u8]) {
     while socket.try_recv_from(wake_buf).is_ok() {}
 }
 
-async fn sync_once(pool: &SqlitePool, server: &str, auth_token: Option<&str>) -> Result<()> {
+async fn sync_once(
+    pool: &SqlitePool,
+    server: &str,
+    auth_token: Option<&str>,
+) -> Result<crate::sync::SyncSummary> {
     let mut conn = pool.acquire().await?;
-    let summary = run_sync_once(&mut conn, server, auth_token).await?;
+    let summary =
+        run_sync_with_page_budget(&mut conn, server, auth_token, Some(DAEMON_SYNC_PAGE_BUDGET))
+            .await?;
     info!(
         pushed = summary.pushed,
         pulled = summary.pulled,
         cursor = summary.cursor,
+        complete = summary.complete,
+        pages = summary.pages,
         "daemon sync completed"
     );
     println!(
         "daemon-synced pushed={} pulled={} cursor={}",
         summary.pushed, summary.pulled, summary.cursor
     );
-    Ok(())
+    Ok(summary)
 }
 
 pub fn wake(addr: SocketAddr) {

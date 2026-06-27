@@ -1,21 +1,21 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT count(*) AS \"count!: i64\" FROM conflicts WHERE task_id = ? AND resolved = 0 LIMIT 1",
+  "query": "SELECT COALESCE(MAX(server_seq), 0) + 1 AS \"seq!: i64\" FROM changes",
   "describe": {
     "columns": [
       {
-        "name": "count!: i64",
+        "name": "seq!: i64",
         "ordinal": 0,
         "type_info": "Integer",
         "origin": "Expression"
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 0
     },
     "nullable": [
       false
     ]
   },
-  "hash": "0fa3e100b66f8a2a6aa3edaa4d0fe797c240ebcf446f247526f8e598addcf548"
+  "hash": "3a6969c0061f1a5b321ad9a4829215f55285b76460eb0ff7403be37370beac50"
 }

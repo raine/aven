@@ -2,7 +2,11 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 3;
+pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 4;
+pub(crate) const MAX_PUSH_BATCH: usize = 256;
+pub(crate) const MAX_PULL_BATCH: u32 = 512;
+pub(crate) const DAEMON_SYNC_PAGE_BUDGET: usize = 8;
+pub(crate) const DAEMON_INCOMPLETE_RESCHEDULE_MS: u64 = 100;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ChangeWire {
@@ -17,6 +21,12 @@ pub(crate) struct ChangeWire {
     pub(crate) base_version: Option<String>,
     pub(crate) created_at: String,
     pub(crate) server_seq: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct PushAck {
+    pub(crate) change_id: String,
+    pub(crate) server_seq: i64,
 }
 
 #[derive(Debug)]
@@ -58,6 +68,8 @@ pub(super) struct SyncRequest {
     pub(super) protocol_version: Option<u32>,
     pub(super) client_id: String,
     pub(super) after: i64,
+    #[serde(default)]
+    pub(super) pull_limit: Option<u32>,
     pub(super) changes: Vec<ChangeWire>,
 }
 
@@ -65,6 +77,9 @@ pub(super) struct SyncRequest {
 pub(super) struct SyncResponse {
     pub(super) protocol_version: u32,
     pub(super) cursor: i64,
+    pub(super) has_more: bool,
+    #[serde(default)]
+    pub(super) push_acks: Vec<PushAck>,
     pub(super) changes: Vec<ChangeWire>,
 }
 

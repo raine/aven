@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE changes SET server_seq = ? WHERE change_id = ? AND server_seq IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "302a6e2056e16624699a8a4f589d7f4397be370690b43a12b9e6b5182439a155"
+}
