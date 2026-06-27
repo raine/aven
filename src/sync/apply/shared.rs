@@ -32,6 +32,37 @@ pub(super) async fn workspace_id_payload(
     Ok(workspace.id)
 }
 
+pub(super) async fn task_field_workspace_id_payload(
+    conn: &mut SqliteConnection,
+    change: &ChangeWire,
+) -> Result<String> {
+    let workspace_id = workspace_id_payload(conn, change).await?;
+    if change
+        .payload
+        .get("workspace_id")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        return Ok(workspace_id);
+    }
+    let task_workspace_id =
+        sqlx::query_scalar::<_, String>("SELECT workspace_id FROM tasks WHERE id = ?")
+            .bind(&change.entity_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    if let Some(task_workspace_id) = task_workspace_id
+        && task_workspace_id != workspace_id
+    {
+        bail!(
+            "error invalid-task-workspace task_id={} workspace_id={} task_workspace_id={}",
+            change.entity_id,
+            workspace_id,
+            task_workspace_id
+        );
+    }
+    Ok(workspace_id)
+}
+
 async fn ensure_workspace_exists(conn: &mut SqliteConnection, workspace_id: &str) -> Result<()> {
     if sqlx::query_scalar::<_, i64>("SELECT count(*) FROM workspaces WHERE id = ?")
         .bind(workspace_id)

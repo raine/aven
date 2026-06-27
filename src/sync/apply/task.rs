@@ -10,7 +10,7 @@ use crate::task_fields::TaskField;
 use super::conflict;
 use super::label::create_or_update_task_label;
 use super::project::ensure_project_for_payload;
-use super::shared::{str_payload, workspace_id_payload};
+use super::shared::{str_payload, task_field_workspace_id_payload, workspace_id_payload};
 
 pub(super) async fn create_task(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     let workspace_id = workspace_id_payload(conn, change).await?;
@@ -77,7 +77,7 @@ pub(crate) async fn set_field(
     let task_field = TaskField::parse_or_unknown(field)?;
     let field = task_field.as_str();
     let mut value = str_payload(&change.payload, "value")?;
-    let workspace_id = workspace_id_payload(conn, change).await?;
+    let workspace_id = task_field_workspace_id_payload(conn, change).await?;
     if task_field.is_project() {
         let project_id = str_payload(&change.payload, "project_id")?;
         ensure!(

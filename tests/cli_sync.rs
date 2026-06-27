@@ -618,6 +618,58 @@ fn stale_project_id_alias_is_ignored_for_remote_task_create() {
 }
 
 #[test]
+fn remote_task_field_workspace_mismatch_preserves_task_and_conflicts() {
+    let env = TestEnv::new();
+    for (op_type, db_name) in [
+        ("set_field", "field-workspace-set.sqlite"),
+        ("resolve_field", "field-workspace-resolve.sqlite"),
+    ] {
+        let db = env.db(db_name);
+        ok(env.aven(&db, ["add", "workspace scoped", "--project", "app"]));
+        exec_sql(
+            &db,
+            "INSERT INTO workspaces(id, key, name, created_at, updated_at)
+             VALUES ('1111111111111111', 'other', 'other', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        );
+        let task_id =
+            query_sql_scalar(&db, "SELECT id FROM tasks WHERE title = 'workspace scoped'");
+        let (url, server) = start_fake_sync_server(sync_response(
+            1,
+            [json!({
+                "change_id": "CCCCCCCCCCCCCCCC",
+                "client_id": SYNC_CLIENT_ID,
+                "local_seq": 1,
+                "entity_type": "task",
+                "entity_id": task_id,
+                "field": "title",
+                "op_type": op_type,
+                "payload": {
+                    "workspace_id": "1111111111111111",
+                    "workspace_key": "other",
+                    "value": "wrong workspace"
+                },
+                "base_version": null,
+                "created_at": "2026-01-01T00:00:01Z",
+                "server_seq": 1,
+            })],
+        ));
+
+        let error = fail(env.aven(&db, ["sync", "--server", &url]));
+        contains_all(&error, &["error invalid-task-workspace"]);
+        assert_eq!(
+            query_sql_scalar(
+                &db,
+                "SELECT title FROM tasks WHERE title = 'workspace scoped'"
+            ),
+            "workspace scoped"
+        );
+        assert_eq!(scalar_i64(&db, "SELECT count(*) FROM conflicts"), 0);
+        assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("0"));
+        server.join().expect("fake sync server exits");
+    }
+}
+
+#[test]
 fn independent_field_edits_converge() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
