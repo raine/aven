@@ -7,6 +7,50 @@ use crate::sync::wire::ChangeWire;
 
 use super::shared::str_payload;
 
+pub(super) async fn delete_project(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
+    let workspace_id = super::shared::workspace_id_payload(conn, change).await?;
+    let project_id = resolve_project_for_delete(conn, &workspace_id, change).await?;
+    let Some(project_id) = project_id else {
+        return Ok(());
+    };
+    sqlx::query("DELETE FROM project_paths WHERE workspace_id = ? AND project_id = ?")
+        .bind(&workspace_id)
+        .bind(&project_id)
+        .execute(&mut *conn)
+        .await?;
+    let deleted_at = str_payload(&change.payload, "deleted_at")?;
+    sqlx::query(
+        "UPDATE projects SET deleted = 1, updated_at = ? WHERE workspace_id = ? AND id = ?",
+    )
+    .bind(&deleted_at)
+    .bind(&workspace_id)
+    .bind(&project_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn resolve_project_for_delete(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    change: &ChangeWire,
+) -> Result<Option<String>> {
+    if let Some(local_id) = project_id_alias(conn, workspace_id, &change.entity_id).await? {
+        return Ok(Some(local_id));
+    }
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM projects WHERE workspace_id = ? AND id = ?",
+    )
+    .bind(workspace_id)
+    .bind(&change.entity_id)
+    .fetch_one(&mut *conn)
+    .await?
+        > 0;
+    if exists {
+        return Ok(Some(change.entity_id.to_string()));
+    }
+    Ok(None)
+}
 pub(super) async fn create_project(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     let workspace_id = super::shared::workspace_id_payload(conn, change).await?;
     let key = str_payload(&change.payload, "key")?;

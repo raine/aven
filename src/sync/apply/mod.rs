@@ -37,8 +37,11 @@ pub(super) async fn apply_remote_change(
         "label_add" => label::add_label(conn, change).await?,
         "label_remove" => label::remove_label(conn, change).await?,
         "note_add" => note::add_note(conn, change).await?,
+        "note_delete" => note::delete_note(conn, change).await?,
         "dependency_add" => dependency::add_dependency(conn, change).await?,
         "dependency_remove" => dependency::remove_dependency(conn, change).await?,
+        "project_delete" => project::delete_project(conn, change).await?,
+        "label_delete" => label::delete_label(conn, change).await?,
         _ => {}
     }
     Ok(())

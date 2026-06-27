@@ -31,6 +31,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
             "show",
             "update",
             "note",
+            "note-delete",
             "dep",
             "text",
             "bulk-update",
@@ -217,6 +218,8 @@ pub(crate) enum Commands {
     Update(UpdateArgs),
     /// Append a note to a task
     Note(NoteArgs),
+    /// Delete a note from a task
+    NoteDelete(NoteDeleteArgs),
     /// Delete a task
     Delete(RefArgs),
     /// Restore a deleted task
@@ -465,6 +468,12 @@ pub(crate) struct NoteArgs {
 }
 
 #[derive(Args)]
+pub(crate) struct NoteDeleteArgs {
+    pub(crate) task_ref: String,
+    pub(crate) note_id: String,
+}
+
+#[derive(Args)]
 pub(crate) struct SearchArgs {
     #[arg(long)]
     pub(crate) search: Option<String>,
@@ -486,6 +495,10 @@ pub(crate) enum LabelSubcommand {
     Create {
         name: String,
     },
+    /// Delete a label
+    Delete {
+        name: String,
+    },
     /// List or search labels
     List(SearchArgs),
 }
@@ -503,6 +516,8 @@ pub(crate) enum ProjectSubcommand {
         #[arg(long)]
         path: Option<PathBuf>,
     },
+    /// Delete a project
+    Delete { project: String },
     /// List or search projects
     List(SearchArgs),
     Rename {

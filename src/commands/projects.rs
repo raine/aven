@@ -3,8 +3,8 @@ use sqlx::SqliteConnection;
 
 use crate::cli::{ProjectCommand, ProjectPathSubcommand, ProjectSubcommand, SearchArgs};
 use crate::operations::{
-    add_project_path_operation, create_project_operation, list_project_paths_operation,
-    remove_project_path_operation, rename_project_operation,
+    add_project_path_operation, create_project_operation, delete_project_operation,
+    list_project_paths_operation, remove_project_path_operation, rename_project_operation,
 };
 use crate::projects::list_projects;
 use crate::render::{changed_text, quote};
@@ -19,6 +19,16 @@ pub(crate) async fn cmd_project(conn: &mut SqliteConnection, args: ProjectComman
                 project.key,
                 project.prefix,
                 quote(&project.name)
+            );
+        }
+        ProjectSubcommand::Delete { project } => {
+            let workspace = crate::workspaces::active_workspace();
+            let outcome = delete_project_operation(conn, &workspace, &project).await?;
+            println!(
+                "deleted-project {} prefix={} name={}",
+                outcome.project.key,
+                outcome.project.prefix,
+                quote(&outcome.project.name)
             );
         }
         ProjectSubcommand::List(args) => cmd_projects(conn, args).await?,

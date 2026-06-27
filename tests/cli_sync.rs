@@ -123,7 +123,7 @@ async fn post_sync(server: &TestServer, change: Value) -> reqwest::Response {
     reqwest::Client::new()
         .post(format!("{}/sync", server.url))
         .json(&json!({
-            "protocol_version": 4,
+            "protocol_version": 5,
             "client_id": "client-a",
             "after": 0,
             "changes": [change],
@@ -137,7 +137,7 @@ async fn assert_server_log_empty(server: &TestServer) {
     let response = reqwest::Client::new()
         .post(format!("{}/sync", server.url))
         .json(&json!({
-            "protocol_version": 4,
+            "protocol_version": 5,
             "client_id": "audit-client",
             "after": 0,
             "changes": [],
@@ -332,7 +332,7 @@ fn sync_response(cursor: i64, changes: impl IntoIterator<Item = Value>) -> Value
         })
         .collect::<Vec<_>>();
     json!({
-        "protocol_version": 4,
+        "protocol_version": 5,
         "cursor": cursor,
         "has_more": false,
         "push_acks": [],
@@ -697,6 +697,7 @@ fn remote_task_field_workspace_mismatch_preserves_task_and_conflicts() {
             "INSERT INTO workspaces(id, key, name, created_at, updated_at)
              VALUES ('1111111111111111', 'other', 'other', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
         );
+        exec_sql(&db, "UPDATE changes SET server_seq = local_seq + 90");
         let task_id =
             query_sql_scalar(&db, "SELECT id FROM tasks WHERE title = 'workspace scoped'");
         let (url, server) = start_fake_sync_server(sync_response(
@@ -1308,7 +1309,7 @@ async fn sync_server_allocates_ordered_sequences_for_large_push_batch() {
     let response = reqwest::Client::new()
         .post(format!("{}/sync", server.url))
         .json(&json!({
-            "protocol_version": 4,
+            "protocol_version": 5,
             "client_id": "client-a",
             "after": 0,
             "pull_limit": MAX_PULL_BATCH,
@@ -1371,7 +1372,7 @@ fn out_of_order_dependency_sync_does_not_advance_cursor() {
     let env = TestEnv::new();
     let db = env.db("dependency-out-of-order.sqlite");
     let (url, server) = start_fake_sync_server(json!({
-        "protocol_version": 4,
+        "protocol_version": 5,
         "cursor": 3,
         "has_more": false,
         "push_acks": [],
@@ -1394,7 +1395,7 @@ fn sync_cycle_edges_converge_deterministically() {
     let env = TestEnv::new();
     let db = env.db("dependency-cycle-convergence.sqlite");
     let (url, server) = start_fake_sync_server(json!({
-        "protocol_version": 4,
+        "protocol_version": 5,
         "cursor": 4,
         "has_more": false,
         "push_acks": [],
@@ -1443,7 +1444,7 @@ async fn sync_server_rejects_oversized_push_batch() {
     let response = reqwest::Client::new()
         .post(format!("{}/sync", server.url))
         .json(&json!({
-            "protocol_version": 4,
+            "protocol_version": 5,
             "client_id": "client-a",
             "after": 0,
             "pull_limit": MAX_PULL_BATCH,
@@ -1470,7 +1471,7 @@ async fn sync_server_rejects_out_of_range_pull_limit() {
         let response = reqwest::Client::new()
             .post(format!("{}/sync", server.url))
             .json(&json!({
-                "protocol_version": 4,
+                "protocol_version": 5,
                 "client_id": "client-a",
                 "after": 0,
                 "pull_limit": limit,
@@ -1501,7 +1502,7 @@ fn sync_server_rejects_negative_after_before_changes_are_stored() {
     let (status, text) = post_sync_json(
         &server.url,
         &json!({
-            "protocol_version": 4,
+            "protocol_version": 5,
             "client_id": "client-a",
             "after": -1,
             "pull_limit": MAX_PULL_BATCH,
@@ -1548,7 +1549,7 @@ fn sync_server_returns_bounded_pull_pages() {
     let (status, body) = post_sync_json(
         &server.url,
         &json!({
-            "protocol_version": 4,
+            "protocol_version": 5,
             "client_id": "audit-client",
             "after": 0,
             "pull_limit": MAX_PULL_BATCH,
@@ -1568,7 +1569,7 @@ fn sync_server_returns_bounded_pull_pages() {
     let (status, body) = post_sync_json(
         &server.url,
         &json!({
-            "protocol_version": 4,
+            "protocol_version": 5,
             "client_id": "audit-client",
             "after": MAX_PULL_BATCH,
             "pull_limit": MAX_PULL_BATCH,
@@ -1614,7 +1615,7 @@ fn sync_server_pure_pull_succeeds_while_write_transaction_is_held() {
     let (status, body) = post_sync_json(
         &server.url,
         &json!({
-            "protocol_version": 4,
+            "protocol_version": 5,
             "client_id": "client-a",
             "after": 0,
             "pull_limit": MAX_PULL_BATCH,
@@ -1637,7 +1638,7 @@ fn push_acks_update_local_changes_without_pull_echo() {
     ok(env.aven(&db, ["add", "acked local", "--project", "app"]));
     let push_acks = pending_push_acks(&db, 99);
     let (url, server) = start_fake_sync_server(json!({
-        "protocol_version": 4,
+        "protocol_version": 5,
         "cursor": 0,
         "has_more": false,
         "push_acks": push_acks,
@@ -1665,7 +1666,7 @@ fn sync_client_rejects_duplicate_push_acks() {
     push_acks[0] = json!({ "change_id": change_id, "server_seq": 99 });
     push_acks[1] = json!({ "change_id": change_id, "server_seq": 100 });
     let (url, server) = start_fake_sync_server(json!({
-        "protocol_version": 4,
+        "protocol_version": 5,
         "cursor": 0,
         "has_more": false,
         "push_acks": push_acks,
@@ -1687,7 +1688,7 @@ fn sync_client_rejects_non_increasing_server_seq() {
     let db = env.db("bad-server-seq.sqlite");
     let change = remote_task_change(SYNC_TASK_A_CHANGE_ID, SYNC_TASK_A_ID, "bad seq", 1);
     let (url, server) = start_fake_sync_server(json!({
-        "protocol_version": 4,
+        "protocol_version": 5,
         "cursor": 1,
         "has_more": false,
         "push_acks": [],
@@ -1718,7 +1719,7 @@ fn sync_client_rejects_oversized_pull_response_before_state_change() {
         })
         .collect::<Vec<_>>();
     let (url, server) = start_fake_sync_server(json!({
-        "protocol_version": 4,
+        "protocol_version": 5,
         "cursor": (MAX_PULL_BATCH as i64) + 1,
         "has_more": false,
         "push_acks": [],
@@ -1742,7 +1743,7 @@ fn sync_client_rejects_cursor_mismatch_before_state_change() {
     ok(env.aven(&db, ["list"]));
     let cursor_before = meta_value(&db, "sync_cursor");
     let (url, server) = start_fake_sync_server(json!({
-        "protocol_version": 4,
+        "protocol_version": 5,
         "cursor": 2,
         "has_more": false,
         "push_acks": [],
@@ -1766,7 +1767,7 @@ fn sync_client_rejects_short_has_more_page_before_state_change() {
     ok(env.aven(&db, ["list"]));
     let cursor_before = meta_value(&db, "sync_cursor");
     let (url, server) = start_fake_sync_server(json!({
-        "protocol_version": 4,
+        "protocol_version": 5,
         "cursor": 1,
         "has_more": true,
         "push_acks": [],
@@ -1843,14 +1844,14 @@ fn sync_client_preserves_valid_page_cursor_after_later_page_validation_failure()
     );
     let (url, server) = start_fake_sync_server_sequence(vec![
         json!({
-            "protocol_version": 4,
+            "protocol_version": 5,
             "cursor": MAX_PULL_BATCH,
             "has_more": true,
             "push_acks": [],
             "changes": first_page,
         }),
         json!({
-            "protocol_version": 4,
+            "protocol_version": 5,
             "cursor": (MAX_PULL_BATCH as i64) + 1,
             "has_more": false,
             "push_acks": [],
@@ -1980,7 +1981,7 @@ fn missing_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=0 server=4",
+        "error sync-protocol-unsupported client=0 server=5",
     );
 }
 
@@ -2000,7 +2001,7 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=3 server=4",
+        "error sync-protocol-unsupported client=3 server=5",
     );
 }
 
@@ -2009,7 +2010,7 @@ fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let body = serde_json::json!({
-        "protocol_version": 5,
+        "protocol_version": 6,
         "client_id": "new-client",
         "after": 0,
         "changes": [project_change_json("new-version-change", "new-version")]
@@ -2020,7 +2021,7 @@ fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=5 server=4",
+        "error sync-protocol-unsupported client=6 server=5",
     );
 }
 
@@ -2042,7 +2043,7 @@ fn wrong_response_protocol_version_is_rejected() {
     let error = fail(env.aven(&db, ["sync", "--server", &url]));
     contains_all(
         &error,
-        &["error sync-protocol-unsupported client=4 server=0"],
+        &["error sync-protocol-unsupported client=5 server=0"],
     );
     assert_eq!(
         scalar_i64(&db, "SELECT count(*) FROM changes"),
@@ -2054,4 +2055,329 @@ fn wrong_response_protocol_version_is_rejected() {
     );
     assert_eq!(meta_value(&db, "sync_cursor"), sync_cursor_before);
     server.join().expect("fake sync server exits");
+}
+
+fn remote_delete_project_change(change_id: &str, project_id: &str, server_seq: i64) -> Value {
+    json!({
+        "change_id": change_id,
+        "client_id": SYNC_CLIENT_ID,
+        "local_seq": server_seq,
+        "entity_type": "project",
+        "entity_id": project_id,
+        "field": null,
+        "op_type": "project_delete",
+        "payload": {
+            "workspace_id": DEFAULT_WORKSPACE_ID,
+            "workspace_key": "default",
+            "deleted_at": format!("2026-01-01T00:00:{server_seq:02}Z")
+        },
+        "base_version": null,
+        "created_at": format!("2026-01-01T00:00:{server_seq:02}Z"),
+        "server_seq": server_seq,
+    })
+}
+
+fn remote_delete_label_change(change_id: &str, label: &str, server_seq: i64) -> Value {
+    json!({
+        "change_id": change_id,
+        "client_id": SYNC_CLIENT_ID,
+        "local_seq": server_seq,
+        "entity_type": "label",
+        "entity_id": label,
+        "field": null,
+        "op_type": "label_delete",
+        "payload": {
+            "workspace_id": DEFAULT_WORKSPACE_ID,
+            "workspace_key": "default",
+            "name": label,
+            "deleted_at": format!("2026-01-01T00:00:{server_seq:02}Z")
+        },
+        "base_version": null,
+        "created_at": format!("2026-01-01T00:00:{server_seq:02}Z"),
+        "server_seq": server_seq,
+    })
+}
+
+fn remote_delete_note_change(
+    change_id: &str,
+    task_id: &str,
+    note_id: &str,
+    server_seq: i64,
+) -> Value {
+    json!({
+        "change_id": change_id,
+        "client_id": SYNC_CLIENT_ID,
+        "local_seq": server_seq,
+        "entity_type": "task",
+        "entity_id": task_id,
+        "field": "notes",
+        "op_type": "note_delete",
+        "payload": {
+            "workspace_id": DEFAULT_WORKSPACE_ID,
+            "workspace_key": "default",
+            "note_id": note_id,
+            "deleted_at": format!("2026-01-01T00:00:{server_seq:02}Z")
+        },
+        "base_version": null,
+        "created_at": format!("2026-01-01T00:00:{server_seq:02}Z"),
+        "server_seq": server_seq,
+    })
+}
+
+#[test]
+fn sync_deletes_converge_idempotently() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("client-a.sqlite");
+    let b = env.db("client-b.sqlite");
+
+    ok(env.aven(&a, ["project", "create", "Delete Me"]));
+    ok(env.aven(&a, ["label", "create", "obsolete"]));
+    let task_ref = extract_ref(&ok(
+        env.aven(&a, ["add", "delete sync seed", "--project", "app"])
+    ));
+    ok(env.aven(&a, ["update", &task_ref, "--label", "obsolete"]));
+    ok(env.aven_stdin(&a, ["note", &task_ref, "--stdin"], "remove this note\n"));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    let project_id = query_sql_scalar(&a, "SELECT id FROM projects WHERE key = 'delete-me'");
+    let _task_id = query_sql_scalar(&a, "SELECT id FROM tasks WHERE title = 'delete sync seed'");
+    let note_id = query_sql_scalar(&a, "SELECT id FROM notes WHERE body = 'remove this note\n'");
+
+    ok(env.aven(&a, ["project", "delete", "delete-me"]));
+    ok(env.aven(&a, ["label", "delete", "obsolete"]));
+    ok(env.aven(&a, ["note-delete", &task_ref, &note_id]));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    // Verify client b reflects deletions
+    assert_eq!(
+        query_sql_scalar(
+            &b,
+            &format!("SELECT count(*) FROM projects WHERE id = '{project_id}' AND deleted = 1"),
+        ),
+        "1"
+    );
+    assert_eq!(
+        query_sql_scalar(&b, "SELECT count(*) FROM labels WHERE name = 'obsolete'"),
+        "0"
+    );
+    assert_eq!(
+        query_sql_scalar(
+            &b,
+            "SELECT count(*) FROM task_labels WHERE label = 'obsolete'"
+        ),
+        "0"
+    );
+    assert_eq!(
+        query_sql_scalar(
+            &b,
+            &format!("SELECT count(*) FROM notes WHERE id = '{note_id}'"),
+        ),
+        "0"
+    );
+
+    // Idempotent remote application via fake server with a fresh database
+    let c = env.db("client-c.sqlite");
+    ok(env.aven(&c, ["add", "seed", "--project", "app"]));
+    let c_task_id = query_sql_scalar(&c, "SELECT id FROM tasks WHERE title = 'seed'");
+    exec_sql(&c, "UPDATE changes SET server_seq = local_seq + 90");
+    exec_sql(
+        &c,
+        &format!(
+            "INSERT OR IGNORE INTO projects(id, workspace_id, key, name, prefix, created_at, updated_at) \
+             VALUES ('{project_id}', '0000000000000000', 'delete-me', 'Delete Me', 'DEL', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+    );
+    exec_sql(
+        &c,
+        "INSERT OR IGNORE INTO labels(workspace_id, name, created_at) \
+         VALUES ('0000000000000000', 'obsolete', '2026-01-01T00:00:00Z')",
+    );
+    exec_sql(
+        &c,
+        &format!(
+            "INSERT OR IGNORE INTO task_labels(workspace_id, task_id, label) \
+             VALUES ('0000000000000000', '{c_task_id}', 'obsolete')"
+        ),
+    );
+    exec_sql(
+        &c,
+        &format!(
+            "INSERT OR IGNORE INTO notes(workspace_id, id, task_id, body, created_at) \
+             VALUES ('0000000000000000', '{note_id}', '{c_task_id}', 'remove this note\n', '2026-01-01T00:00:00Z')"
+        ),
+    );
+    let (url, fake) = start_fake_sync_server(sync_response(
+        6,
+        [
+            remote_delete_project_change("DELPROJECT000001", &project_id, 1),
+            remote_delete_project_change("DELPROJECT000002", &project_id, 2),
+            remote_delete_label_change("DELLABEL0000001", "obsolete", 3),
+            remote_delete_label_change("DELLABEL0000002", "obsolete", 4),
+            remote_delete_note_change("DELNOTE00000001", &c_task_id, &note_id, 5),
+            remote_delete_note_change("DELNOTE00000002", &c_task_id, &note_id, 6),
+        ],
+    ));
+    ok(env.aven(&c, ["sync", "--server", &url]));
+    assert_eq!(
+        query_sql_scalar(
+            &c,
+            &format!(
+                "SELECT count(*) FROM projects WHERE id = '{project_id}' AND deleted = 1 AND updated_at = '2026-01-01T00:00:02Z'"
+            ),
+        ),
+        "1"
+    );
+    assert_eq!(
+        query_sql_scalar(&c, "SELECT count(*) FROM labels WHERE name = 'obsolete'"),
+        "0"
+    );
+    assert_eq!(
+        query_sql_scalar(
+            &c,
+            "SELECT count(*) FROM task_labels WHERE label = 'obsolete'"
+        ),
+        "0"
+    );
+    assert_eq!(
+        query_sql_scalar(
+            &c,
+            &format!("SELECT count(*) FROM notes WHERE id = '{note_id}'"),
+        ),
+        "0"
+    );
+    fake.join().expect("fake sync server exits");
+}
+
+#[tokio::test]
+async fn sync_server_rejects_malformed_delete_project_payloads() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+
+    let valid_id = "0123456789ABCDEF";
+    let bad_delete = wire_change(
+        "project_delete",
+        "project",
+        valid_id,
+        json!({ "deleted_at": "2026-01-01T00:00:00Z" }),
+    );
+    rejected_sync(&server, bad_delete, "workspace_id").await;
+
+    let no_deleted = wire_change(
+        "project_delete",
+        "project",
+        valid_id,
+        json!({
+            "workspace_id": "0000000000000000",
+            "workspace_key": "default",
+        }),
+    );
+    rejected_sync(&server, no_deleted, "deleted_at").await;
+}
+
+#[tokio::test]
+async fn sync_server_rejects_malformed_delete_label_payloads() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+
+    let missing_name = wire_change(
+        "label_delete",
+        "label",
+        "obsolete",
+        json!({
+            "workspace_id": "0000000000000000",
+            "workspace_key": "default",
+            "deleted_at": "2026-01-01T00:00:00Z",
+        }),
+    );
+    rejected_sync(&server, missing_name, "name").await;
+
+    let name_mismatch = wire_change(
+        "label_delete",
+        "label",
+        "obsolete",
+        json!({
+            "workspace_id": "0000000000000000",
+            "workspace_key": "default",
+            "name": "different",
+            "deleted_at": "2026-01-01T00:00:00Z",
+        }),
+    );
+    rejected_sync(&server, name_mismatch, "label-value-mismatch").await;
+
+    let missing_workspace = wire_change(
+        "label_delete",
+        "label",
+        "obsolete",
+        json!({
+            "name": "obsolete",
+            "deleted_at": "2026-01-01T00:00:00Z",
+        }),
+    );
+    rejected_sync(&server, missing_workspace, "workspace_id").await;
+}
+
+#[tokio::test]
+async fn sync_server_rejects_malformed_delete_note_payloads() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+
+    let mut missing_note_id = task_change(
+        "note_delete",
+        json!({
+            "workspace_id": "0000000000000000",
+            "workspace_key": "default",
+            "deleted_at": "2026-01-01T00:00:00Z",
+        }),
+    );
+    missing_note_id
+        .as_object_mut()
+        .expect("change object")
+        .insert("field".to_string(), json!("notes"));
+    rejected_sync(&server, missing_note_id, "note_id").await;
+
+    let mut bad_note_id = task_change(
+        "note_delete",
+        json!({
+            "workspace_id": "0000000000000000",
+            "workspace_key": "default",
+            "note_id": "not-a-valid-id",
+            "deleted_at": "2026-01-01T00:00:00Z",
+        }),
+    );
+    bad_note_id
+        .as_object_mut()
+        .expect("change object")
+        .insert("field".to_string(), json!("notes"));
+    rejected_sync(&server, bad_note_id, "note_id").await;
+
+    let mut missing_workspace = task_change(
+        "note_delete",
+        json!({
+            "note_id": "0123456789ABCDEF",
+            "deleted_at": "2026-01-01T00:00:00Z",
+        }),
+    );
+    missing_workspace
+        .as_object_mut()
+        .expect("change object")
+        .insert("field".to_string(), json!("notes"));
+    rejected_sync(&server, missing_workspace, "workspace_id").await;
+
+    let mut wrong_field = task_change(
+        "note_delete",
+        json!({
+            "workspace_id": "0000000000000000",
+            "workspace_key": "default",
+            "note_id": "0123456789ABCDEF",
+            "deleted_at": "2026-01-01T00:00:00Z",
+        }),
+    );
+    wrong_field
+        .as_object_mut()
+        .expect("change object")
+        .insert("field".to_string(), json!("description"));
+    rejected_sync(&server, wrong_field, "field=notes").await;
 }

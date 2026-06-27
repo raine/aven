@@ -43,6 +43,14 @@ pub(crate) struct TaskUpdateOutcome {
     pub(crate) changed: bool,
 }
 
+pub(crate) struct NoteDeleteOutcome {
+    #[allow(dead_code)]
+    pub(crate) task_id: String,
+    #[allow(dead_code)]
+    pub(crate) note_id: String,
+    pub(crate) changed: bool,
+}
+
 pub(crate) struct NoteOutcome {
     #[allow(dead_code)]
     pub(crate) task_id: String,
@@ -353,5 +361,55 @@ pub(crate) async fn add_note(
     Ok(NoteOutcome {
         task_id: task_id.to_string(),
         note_id,
+    })
+}
+
+pub(crate) async fn delete_note(
+    conn: &mut SqliteConnection,
+    task_id: &str,
+    note_id: &str,
+) -> Result<NoteDeleteOutcome> {
+    let workspace = crate::workspaces::active_workspace();
+    let mut tx = begin_immediate(conn).await?;
+    let deleted_at = now();
+    let deleted =
+        sqlx::query("DELETE FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?")
+            .bind(&workspace.id)
+            .bind(task_id)
+            .bind(note_id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+    if deleted > 0 {
+        sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
+            .bind(&deleted_at)
+            .bind(&workspace.id)
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await?;
+        insert_change(
+            &mut tx,
+            "task",
+            task_id,
+            Some("notes"),
+            "note_delete",
+            json!({
+                "workspace_id": &workspace.id,
+                "workspace_key": &workspace.key,
+                "note_id": note_id,
+                "deleted_at": &deleted_at,
+            }),
+            None,
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    if deleted > 0 {
+        info!(task_id = %task_id, note_id = %note_id, "note deleted");
+    }
+    Ok(NoteDeleteOutcome {
+        task_id: task_id.to_string(),
+        note_id: note_id.to_string(),
+        changed: deleted > 0,
     })
 }

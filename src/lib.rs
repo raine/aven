@@ -43,8 +43,8 @@ use cli::{
 use commands::{
     cmd_add, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
     cmd_delete_restore, cmd_dep, cmd_doctor, cmd_export, cmd_import, cmd_internal_natural_add,
-    cmd_label, cmd_list, cmd_note, cmd_prime, cmd_project, cmd_show, cmd_skill, cmd_text,
-    cmd_tmux_add_task_popup, cmd_update, cmd_workspace,
+    cmd_label, cmd_list, cmd_note, cmd_note_delete, cmd_prime, cmd_project, cmd_show, cmd_skill,
+    cmd_text, cmd_tmux_add_task_popup, cmd_update, cmd_workspace,
 };
 use db::open_db;
 use sync::{run_server, sync_client};
@@ -146,6 +146,7 @@ pub async fn run_cli() -> Result<()> {
                 Commands::Prime(args) => cmd_prime(&mut conn, args).await,
                 Commands::Update(args) => cmd_update(&mut conn, args).await,
                 Commands::Note(args) => cmd_note(&mut conn, args).await,
+                Commands::NoteDelete(args) => cmd_note_delete(&mut conn, args).await,
                 Commands::Export(args) => cmd_export(&mut conn, args).await,
                 Commands::Import(args) => cmd_import(&mut conn, &db_path, args).await,
                 Commands::Label(args) => cmd_label(&mut conn, args).await,
@@ -217,6 +218,7 @@ fn command_metadata(command: &Commands) -> CommandMetadata {
             | Commands::Prime(_)
             | Commands::Update(_)
             | Commands::Note(_)
+            | Commands::NoteDelete(_)
             | Commands::Label(_)
             | Commands::Project(_)
             | Commands::Delete(_)
@@ -232,14 +234,16 @@ fn command_metadata(command: &Commands) -> CommandMetadata {
             Commands::Add(_)
                 | Commands::Update(_)
                 | Commands::Note(_)
+                | Commands::NoteDelete(_)
                 | Commands::Dep(DepCommand {
                     command: DepSubcommand::Add { .. } | DepSubcommand::Remove { .. }
                 })
                 | Commands::Label(LabelCommand {
-                    command: LabelSubcommand::Create { .. },
+                    command: LabelSubcommand::Create { .. } | LabelSubcommand::Delete { .. },
                 })
                 | Commands::Project(ProjectCommand {
                     command: ProjectSubcommand::Create { .. }
+                        | ProjectSubcommand::Delete { .. }
                         | ProjectSubcommand::Rename { .. }
                         | ProjectSubcommand::Path {
                             command: ProjectPathSubcommand::Add { .. }

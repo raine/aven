@@ -20,15 +20,16 @@ pub(crate) use dependencies::{
 };
 #[allow(unused_imports)]
 pub(crate) use projects::{
-    LabelOutcome, ProjectDeleteOutcome, ProjectMetadata, ProjectOutcome, ProjectPathOutcome,
-    ProjectRenameOutcome, add_project_path_operation, create_label_operation,
-    create_label_operation_in_workspace, create_project_operation, delete_project_operation,
-    insert_project_metadata_change, list_project_paths_operation, remove_project_path_operation,
-    rename_config_project_mapping, rename_project_operation, set_project_metadata,
+    LabelDeleteOutcome, LabelOutcome, ProjectDeleteOutcome, ProjectMetadata, ProjectOutcome,
+    ProjectPathOutcome, ProjectRenameOutcome, add_project_path_operation, create_label_operation,
+    create_label_operation_in_workspace, create_project_operation, delete_label_operation,
+    delete_project_operation, insert_project_metadata_change, list_project_paths_operation,
+    remove_project_path_operation, rename_config_project_mapping, rename_project_operation,
+    set_project_metadata,
 };
 #[allow(unused_imports)]
 pub(crate) use tasks::{
-    NoteOutcome, TaskDraft, TaskOutcome, TaskUpdate, TaskUpdateOutcome, add_note, create_task,
-    create_task_in_workspace, set_task_deleted, update_task, update_task_field, update_task_labels,
-    update_task_labels_in_workspace,
+    NoteDeleteOutcome, NoteOutcome, TaskDraft, TaskOutcome, TaskUpdate, TaskUpdateOutcome,
+    add_note, create_task, create_task_in_workspace, delete_note, set_task_deleted, update_task,
+    update_task_field, update_task_labels, update_task_labels_in_workspace,
 };

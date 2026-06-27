@@ -19,6 +19,11 @@ use crate::projects::{
 use crate::types::Project;
 use crate::workspaces::Workspace;
 
+pub(crate) struct LabelDeleteOutcome {
+    pub(crate) name: String,
+    pub(crate) changed: bool,
+}
+
 pub(crate) struct LabelOutcome {
     pub(crate) name: String,
     pub(crate) created: bool,
@@ -130,6 +135,54 @@ pub(crate) async fn create_label_operation_in_workspace(
     })
 }
 
+pub(crate) async fn delete_label_operation(
+    conn: &mut SqliteConnection,
+    name: &str,
+) -> Result<LabelDeleteOutcome> {
+    let workspace = crate::workspaces::active_workspace();
+    let name = normalize_label(name);
+    if name.is_empty() {
+        bail!("error invalid-label");
+    }
+    let mut tx = begin_immediate(conn).await?;
+    let deleted_at = now();
+    let task_labels = sqlx::query("DELETE FROM task_labels WHERE workspace_id = ? AND label = ?")
+        .bind(&workspace.id)
+        .bind(&name)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    let labels = sqlx::query("DELETE FROM labels WHERE workspace_id = ? AND name = ?")
+        .bind(&workspace.id)
+        .bind(&name)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    let changed = task_labels > 0 || labels > 0;
+    if changed {
+        insert_change(
+            &mut tx,
+            "label",
+            &name,
+            None,
+            "label_delete",
+            json!({
+                "workspace_id": &workspace.id,
+                "workspace_key": &workspace.key,
+                "name": &name,
+                "deleted_at": &deleted_at,
+            }),
+            None,
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    if changed {
+        info!(label_name = %name, "label deleted");
+    }
+    Ok(LabelDeleteOutcome { name, changed })
+}
+
 pub(crate) async fn create_project_operation(
     conn: &mut SqliteConnection,
     name: &str,
@@ -160,6 +213,7 @@ pub(crate) async fn delete_project_operation(
     let config_mapping =
         project_has_config_mapping(&workspace.id, &workspace.key, &project.key).unwrap_or(false);
     let mut tx = begin_immediate(conn).await?;
+    let deleted_at = now();
     let task_refs: i64 =
         sqlx::query_scalar("SELECT count(*) FROM tasks WHERE workspace_id = ? AND project_id = ?")
             .bind(&project.workspace_id)
@@ -175,7 +229,7 @@ pub(crate) async fn delete_project_operation(
         sqlx::query(
             "UPDATE projects SET deleted = 1, updated_at = ? WHERE workspace_id = ? AND key = ?",
         )
-        .bind(now())
+        .bind(&deleted_at)
         .bind(&project.workspace_id)
         .bind(&project.key)
         .execute(&mut *tx)
@@ -190,6 +244,20 @@ pub(crate) async fn delete_project_operation(
     if deleted.rows_affected() != 1 {
         bail!("error project-delete-race project={}", project.key);
     }
+    insert_change(
+        &mut tx,
+        "project",
+        &project.id,
+        None,
+        "project_delete",
+        json!({
+            "workspace_id": &workspace.id,
+            "workspace_key": &workspace.key,
+            "deleted_at": &deleted_at,
+        }),
+        None,
+    )
+    .await?;
     tx.commit().await?;
     info!(project_key = %project.key, "project deleted");
     Ok(ProjectDeleteOutcome {

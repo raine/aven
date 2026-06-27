@@ -28,8 +28,8 @@ pub(crate) use self::workspaces::cmd_workspace;
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::cli::{
     AddArgs, BulkUpdateArgs, ContextArgs, DepCommand, DepSubcommand, InternalNaturalAddArgs,
-    LabelCommand, LabelSubcommand, ListArgs, NoteArgs, PrimeArgs, RefArgs, SearchArgs, ShowArgs,
-    TextCommand, TextSubcommand, TmuxAddTaskPopupArgs, UpdateArgs,
+    LabelCommand, LabelSubcommand, ListArgs, NoteArgs, NoteDeleteArgs, PrimeArgs, RefArgs,
+    SearchArgs, ShowArgs, TextCommand, TextSubcommand, TmuxAddTaskPopupArgs, UpdateArgs,
 };
 use crate::config::{self as app_config, AppConfig};
 use crate::db::{conflict_exists, get_meta};
@@ -38,8 +38,8 @@ use crate::labels::list_labels;
 use crate::labels::resolve_labels_in_workspace;
 use crate::operations::{
     ConflictDetail, TaskDraft, TaskUpdate, add_note, add_task_dependency, create_label_operation,
-    create_task, create_task_in_workspace, remove_task_dependency, set_task_deleted,
-    task_conflicts, update_task,
+    create_task, create_task_in_workspace, delete_label_operation, delete_note,
+    remove_task_dependency, set_task_deleted, task_conflicts, update_task,
 };
 use crate::projects::{
     find_project_in_workspace, inferred_project_key_for_add_in_workspace,
@@ -1183,6 +1183,21 @@ pub(crate) async fn cmd_note(conn: &mut SqliteConnection, args: NoteArgs) -> Res
     Ok(())
 }
 
+pub(crate) async fn cmd_note_delete(
+    conn: &mut SqliteConnection,
+    args: NoteDeleteArgs,
+) -> Result<()> {
+    let task = resolve_task_ref(conn, &args.task_ref).await?;
+    let outcome = delete_note(conn, &task.id, &args.note_id).await?;
+    println!(
+        "deleted-note {} note={} changed={}",
+        display_ref(conn, &task).await?,
+        outcome.note_id,
+        changed_text(outcome.changed),
+    );
+    Ok(())
+}
+
 fn ensure_description_field(field: &str) -> Result<TaskField> {
     match TaskField::parse(field) {
         Some(TaskField::Description) => Ok(TaskField::Description),
@@ -1271,6 +1286,14 @@ pub(crate) async fn cmd_label(conn: &mut SqliteConnection, args: LabelCommand) -
         LabelSubcommand::Create { name } => {
             let outcome = create_label_operation(conn, &name).await?;
             println!("created-label {}", outcome.name);
+        }
+        LabelSubcommand::Delete { name } => {
+            let outcome = delete_label_operation(conn, &name).await?;
+            println!(
+                "deleted-label {} changed={}",
+                outcome.name,
+                changed_text(outcome.changed),
+            );
         }
         LabelSubcommand::List(args) => cmd_labels(conn, args).await?,
     }

@@ -27,6 +27,22 @@ pub(super) async fn add_label(conn: &mut SqliteConnection, change: &ChangeWire) 
     Ok(())
 }
 
+pub(super) async fn delete_label(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
+    let workspace_id = workspace_id_payload(conn, change).await?;
+    let name = str_payload(&change.payload, "name")?;
+    sqlx::query("DELETE FROM task_labels WHERE workspace_id = ? AND label = ?")
+        .bind(&workspace_id)
+        .bind(&name)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM labels WHERE workspace_id = ? AND name = ?")
+        .bind(&workspace_id)
+        .bind(&name)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
 pub(super) async fn remove_label(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     let workspace_id = workspace_id_payload(conn, change).await?;
     let label = str_payload(&change.payload, "label")?;

@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::ids::BASE32;
 use crate::task_fields::TaskField;
 
-pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 4;
+pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 5;
 pub(crate) const MAX_PUSH_BATCH: usize = 256;
 pub(crate) const MAX_PULL_BATCH: u32 = 512;
 pub(crate) const DAEMON_SYNC_PAGE_BUDGET: usize = 8;
@@ -333,6 +333,32 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             if change.entity_id == depends_on_task_id {
                 bail!("error invalid-sync-change dependency-self");
             }
+        }
+        "project_delete" => {
+            ensure_entity_type(change, "project")?;
+            ensure_sync_id("entity_id", &change.entity_id)?;
+            required_workspace_payload(&change.payload)?;
+            required_string_payload("deleted_at", &change.payload)?;
+        }
+        "label_delete" => {
+            ensure_entity_type(change, "label")?;
+            required_workspace_payload(&change.payload)?;
+            let name = required_string_payload("name", &change.payload)?;
+            if name != change.entity_id {
+                bail!("error invalid-sync-change label-value-mismatch");
+            }
+            required_string_payload("deleted_at", &change.payload)?;
+        }
+        "note_delete" => {
+            ensure_entity_type(change, "task")?;
+            ensure_sync_id("entity_id", &change.entity_id)?;
+            if change.field.as_deref() != Some("notes") {
+                bail!("error invalid-sync-change field=notes");
+            }
+            required_workspace_payload(&change.payload)?;
+            let note_id = required_string_payload("note_id", &change.payload)?;
+            ensure_sync_id("note_id", &note_id)?;
+            required_string_payload("deleted_at", &change.payload)?;
         }
         _ => bail!("error invalid-sync-change op_type={}", change.op_type),
     }
