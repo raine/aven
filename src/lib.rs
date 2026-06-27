@@ -52,13 +52,8 @@ use workspaces::{resolve_active_workspace, set_active_workspace};
 
 pub async fn run_cli() -> Result<()> {
     let cli = cli::parse();
-    let log_mode = match &cli.command {
-        Commands::Server(_) => logging::LogMode::Server,
-        Commands::Daemon(_) => logging::LogMode::Daemon,
-        Commands::Tui(_) => logging::LogMode::Tui,
-        _ => logging::LogMode::Cli,
-    };
-    logging::init(log_mode)?;
+    let metadata = command_metadata(&cli.command);
+    logging::init(metadata.log_mode)?;
 
     match cli.command {
         Commands::Backup(backup)
@@ -109,7 +104,8 @@ pub async fn run_cli() -> Result<()> {
             let db_path = config::resolve_db_path(cli.db, &config)?;
             let pool = open_db(&db_path).await?;
             let mut conn = pool.acquire().await?;
-            if command_needs_workspace(&command) {
+            let metadata = command_metadata(&command);
+            if metadata.needs_workspace {
                 let cwd = std::env::current_dir()?;
                 let workspace =
                     resolve_active_workspace(&mut conn, workspace.as_deref(), &config, &cwd)
@@ -138,7 +134,7 @@ pub async fn run_cli() -> Result<()> {
                 .await;
             }
             let mut conn = pool.acquire().await?;
-            let should_wake = command_should_wake(&command);
+            let should_wake = metadata.wakes_daemon;
             let result = match command {
                 Commands::Add(args) => cmd_add(&mut conn, &config, args).await,
                 Commands::Context(args) => cmd_context(&mut conn, args).await,
@@ -196,8 +192,21 @@ fn load_config_for_command(_db_flag_set: bool, _command: &Commands) -> Result<co
     config::AppConfig::load()
 }
 
-fn command_needs_workspace(command: &Commands) -> bool {
-    matches!(
+struct CommandMetadata {
+    log_mode: logging::LogMode,
+    needs_workspace: bool,
+    wakes_daemon: bool,
+}
+
+fn command_metadata(command: &Commands) -> CommandMetadata {
+    let log_mode = match command {
+        Commands::Server(_) => logging::LogMode::Server,
+        Commands::Daemon(_) => logging::LogMode::Daemon,
+        Commands::Tui(_) => logging::LogMode::Tui,
+        _ => logging::LogMode::Cli,
+    };
+
+    let needs_workspace = matches!(
         command,
         Commands::Add(_)
             | Commands::Context(_)
@@ -215,11 +224,9 @@ fn command_needs_workspace(command: &Commands) -> bool {
             | Commands::Conflict(_)
             | Commands::Text(_)
             | Commands::Tui(_)
-    )
-}
+    );
 
-fn command_should_wake(command: &Commands) -> bool {
-    matches!(command, Commands::BulkUpdate(args) if !args.dry_run)
+    let wakes_daemon = matches!(command, Commands::BulkUpdate(args) if !args.dry_run)
         || matches!(
             command,
             Commands::Add(_)
@@ -249,7 +256,13 @@ fn command_should_wake(command: &Commands) -> bool {
                     command: TextSubcommand::Set { .. }
                 })
                 | Commands::Import(_)
-        )
+        );
+
+    CommandMetadata {
+        log_mode,
+        needs_workspace,
+        wakes_daemon,
+    }
 }
 
 #[cfg(test)]

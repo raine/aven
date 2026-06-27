@@ -6,7 +6,7 @@
 
 | Layer | Owns | Start here | Rules |
 | --- | --- | --- | --- |
-| CLI entry and dispatch | argument parsing, command routing, config load, database open, daemon wake | `src/main.rs`, `src/lib.rs`, `src/cli.rs`, `src/commands.rs` | Command handlers own orchestration and command-local formatting. Business writes belong in operations or mutation helpers. |
+| CLI entry and dispatch | argument parsing, command routing, config load, database open, daemon wake | `src/main.rs`, `src/lib.rs`, `src/cli.rs`, `src/commands.rs`, `src/commands/` | Command-family modules own command orchestration and command-local formatting. Business writes belong in operations or mutation helpers. |
 | Write model | transactional task, project, label, conflict, config, and workspace changes | `src/operations/`, `src/mutation.rs`, `src/task_fields.rs` | Synced scalar task writes must update tasks, `changes`, and `field_versions` together. |
 | Read model | task lists, project lists, sidebar counts, filters, sorting, refs, and enrichment | `src/query.rs`, `src/query/`, `src/task_enrichment.rs`, `src/refs.rs`, `src/queue.rs` | Batch task-list enrichment. Avoid per-row queries on list paths. |
 | Persistence | SQLite setup, migrations, sync metadata, conflict helpers, SQLx metadata | `src/db.rs`, `migrations/`, `.sqlx/` | Create migrations with `just migration-new <lower_snake_name>`. Refresh SQLx metadata after query or schema changes. |
@@ -22,7 +22,7 @@
 
 1. `src/main.rs` starts Tokio and calls `aven::run_cli()`.
 2. `src/cli.rs` parses `Cli` and `Commands`.
-3. `src/lib.rs` initializes logging, handles commands that do not need the task database, resolves config and database path, opens SQLite, resolves workspace scope when needed, then dispatches to `src/commands.rs`.
+3. `src/lib.rs` initializes logging, handles commands that do not need the task database, resolves config and database path, opens SQLite, resolves workspace scope when needed, then dispatches to `src/commands.rs` and focused command-family modules under `src/commands/`.
 4. Mutating commands call operations or mutation helpers and wake the daemon when sync is enabled.
 
 ### TUI flow
@@ -92,7 +92,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 
 | Change | Start here | Also check | Tests |
 | --- | --- | --- | --- |
-| Add or change a CLI command | `src/cli.rs`, `src/lib.rs`, `src/commands.rs` | `src/operations/` for writes, `src/input.rs` for text input, `src/render.rs` for shared output helpers, `src/task_render.rs` for task output | focused `tests/cli_*.rs` |
+| Add or change a CLI command | `src/cli.rs`, `src/lib.rs`, `src/commands.rs`, `src/commands/` | `src/operations/` for writes, `src/input.rs` for text input, `src/render.rs` for shared output helpers, `src/task_render.rs` for task output | focused `tests/cli_*.rs` |
 | Add a task scalar field | migration, `src/types.rs`, `src/task_fields.rs`, `src/mutation.rs` | `src/operations/tasks.rs`, `src/sync/apply.rs`, `src/sync/wire.rs`, `src/query/`, CLI and TUI renderers | sync, conflict, CLI, and TUI tests |
 | Add task dependency relations | `src/operations/dependencies.rs`, `src/query/dependencies.rs` | `src/commands.rs`, `src/task_render.rs`, `src/sync/apply.rs`, `src/sync/server.rs` | `tests/cli_dependencies.rs`, `tests/cli_sync.rs` |
 | Change task list, filters, sorting, or refs | `src/query/`, `src/query.rs`, `src/refs.rs`, `src/queue.rs` | CLI list rendering, `src/tui/store/types.rs`, `src/tui/store/view.rs`, indexes | `tests/tui_query.rs`, `tests/sqlite_read_path_indexes.rs`, focused CLI tests |
@@ -111,7 +111,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 
 1. Add args and a `Commands` variant in `src/cli.rs`.
 2. Add dispatch, workspace needs, and daemon wake behavior in `src/lib.rs`.
-3. Add command handling and output formatting in `src/commands.rs` or a focused command module.
+3. Add command handling and output formatting in `src/commands.rs` or a focused command module under `src/commands/`.
 4. Put transactional business logic in `src/operations/`.
 5. Add integration tests in `tests/`.
 

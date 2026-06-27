@@ -1,5 +1,9 @@
+mod config;
+mod conflicts;
 mod data_safety;
 mod doctor;
+mod projects;
+mod workspaces;
 
 use std::fs;
 use std::path::Path;
@@ -13,33 +17,32 @@ use sqlx::{Row, SqliteConnection};
 
 use doctor::{DoctorRenderer, DoctorReport, sync_server_url_is_valid, workspace_counts};
 
+pub(crate) use self::config::cmd_config;
+pub(crate) use self::conflicts::cmd_conflict;
 pub(crate) use self::data_safety::{
     cmd_backup, cmd_backup_restore, cmd_export, cmd_import, database_integrity_report,
     ensure_integrity_ok,
 };
+pub(crate) use self::projects::cmd_project;
+pub(crate) use self::workspaces::cmd_workspace;
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::cli::{
-    AddArgs, BulkUpdateArgs, ConfigCommand, ConfigSubcommand, ConflictCommand, ConflictSubcommand,
-    ContextArgs, DepCommand, DepSubcommand, InternalNaturalAddArgs, LabelCommand, LabelSubcommand,
-    ListArgs, NoteArgs, PrimeArgs, ProjectCommand, ProjectPathSubcommand, ProjectSubcommand,
-    RefArgs, SearchArgs, ShowArgs, TextCommand, TextSubcommand, TmuxAddTaskPopupArgs, UpdateArgs,
-    WorkspaceCommand, WorkspaceSubcommand,
+    AddArgs, BulkUpdateArgs, ContextArgs, DepCommand, DepSubcommand, InternalNaturalAddArgs,
+    LabelCommand, LabelSubcommand, ListArgs, NoteArgs, PrimeArgs, RefArgs, SearchArgs, ShowArgs,
+    TextCommand, TextSubcommand, TmuxAddTaskPopupArgs, UpdateArgs,
 };
-use crate::config::{self, AppConfig};
+use crate::config::{self as app_config, AppConfig};
 use crate::db::{conflict_exists, get_meta};
 use crate::input::{read_optional_text, read_required_text};
 use crate::labels::list_labels;
 use crate::labels::resolve_labels_in_workspace;
 use crate::operations::{
-    ConflictDetail, TaskDraft, TaskUpdate, add_note, add_project_path_operation,
-    add_task_dependency, conflict_variant_value, create_label_operation, create_project_operation,
-    create_task, create_task_in_workspace, init_config, list_conflicts,
-    list_project_paths_operation, remove_project_path_operation, remove_task_dependency,
-    rename_project_operation, resolve_conflict, set_task_deleted, show_config, task_conflicts,
-    update_task,
+    ConflictDetail, TaskDraft, TaskUpdate, add_note, add_task_dependency, create_label_operation,
+    create_task, create_task_in_workspace, remove_task_dependency, set_task_deleted,
+    task_conflicts, update_task,
 };
 use crate::projects::{
-    find_project_in_workspace, inferred_project_key_for_add_in_workspace, list_projects,
+    find_project_in_workspace, inferred_project_key_for_add_in_workspace,
     resolve_existing_project_in_workspace,
 };
 use crate::query::{
@@ -54,8 +57,7 @@ use crate::task_render::{
 };
 use crate::types::Task;
 use crate::workspaces::{
-    active_workspace, create_workspace, list_workspaces, rename_workspace,
-    resolve_active_workspace, set_active_workspace, workspace_for_id,
+    active_workspace, resolve_active_workspace, set_active_workspace, workspace_for_id,
 };
 
 pub(crate) async fn cmd_add(
@@ -427,10 +429,20 @@ async fn context_conflicts(
 ) -> Result<Vec<ContextConflict>> {
     let mut conflicts = Vec::with_capacity(details.len());
     for detail in details {
-        let local_value =
-            conflict_display_value(conn, workspace_id, &detail.field, &detail.local_value).await?;
-        let remote_value =
-            conflict_display_value(conn, workspace_id, &detail.field, &detail.remote_value).await?;
+        let local_value = conflicts::conflict_display_value(
+            conn,
+            workspace_id,
+            &detail.field,
+            &detail.local_value,
+        )
+        .await?;
+        let remote_value = conflicts::conflict_display_value(
+            conn,
+            workspace_id,
+            &detail.field,
+            &detail.remote_value,
+        )
+        .await?;
         conflicts.push(ContextConflict {
             field: detail.field,
             variants: vec![
@@ -1159,19 +1171,6 @@ pub(crate) async fn cmd_text(conn: &mut SqliteConnection, args: TextCommand) -> 
     Ok(())
 }
 
-pub(crate) async fn cmd_projects(conn: &mut SqliteConnection, args: SearchArgs) -> Result<()> {
-    let projects = list_projects(conn, args.search.as_deref()).await?;
-    for project in projects {
-        println!(
-            "{} prefix={} name={}",
-            project.key,
-            project.prefix,
-            quote(&project.name)
-        );
-    }
-    Ok(())
-}
-
 pub(crate) async fn cmd_labels(conn: &mut SqliteConnection, args: SearchArgs) -> Result<()> {
     let labels = list_labels(conn, args.search.as_deref()).await?;
     for label in labels {
@@ -1187,71 +1186,6 @@ pub(crate) async fn cmd_label(conn: &mut SqliteConnection, args: LabelCommand) -
             println!("created-label {}", outcome.name);
         }
         LabelSubcommand::List(args) => cmd_labels(conn, args).await?,
-    }
-    Ok(())
-}
-
-pub(crate) async fn cmd_project(conn: &mut SqliteConnection, args: ProjectCommand) -> Result<()> {
-    match args.command {
-        ProjectSubcommand::Create { name, path } => {
-            let outcome = create_project_operation(conn, &name, path.as_deref()).await?;
-            let project = outcome.project;
-            println!(
-                "created-project {} prefix={} name={}",
-                project.key,
-                project.prefix,
-                quote(&project.name)
-            );
-        }
-        ProjectSubcommand::List(args) => cmd_projects(conn, args).await?,
-        ProjectSubcommand::Rename {
-            project,
-            new_name,
-            prefix,
-        } => {
-            let workspace = crate::workspaces::active_workspace();
-            let outcome =
-                rename_project_operation(conn, &workspace, &project, &new_name, prefix.as_deref())
-                    .await?;
-            println!(
-                "renamed-project {} changed={} old={} old_prefix={} prefix={} name={}",
-                outcome.project.key,
-                changed_text(outcome.changed),
-                outcome.previous.key,
-                outcome.previous.prefix,
-                outcome.project.prefix,
-                quote(&outcome.project.name)
-            );
-            if outcome.changed && outcome.config_mapping {
-                println!("updated-config-project-mapping {}", outcome.project.key);
-            }
-        }
-        ProjectSubcommand::Path { command } => match command {
-            ProjectPathSubcommand::Add { project, path } => {
-                let outcome = add_project_path_operation(conn, &project, &path).await?;
-                println!(
-                    "added-project-path {} path={} config={}",
-                    outcome.project.key,
-                    quote(&outcome.path),
-                    quote(&outcome.config_path.display().to_string())
-                );
-            }
-            ProjectPathSubcommand::Remove { project, path } => {
-                let outcome = remove_project_path_operation(conn, &project, &path).await?;
-                println!(
-                    "removed-project-path {} path={} config={}",
-                    outcome.project.key,
-                    quote(&outcome.path),
-                    quote(&outcome.config_path.display().to_string())
-                );
-            }
-            ProjectPathSubcommand::List { project } => {
-                let paths = list_project_paths_operation(conn, project.as_deref()).await?;
-                for item in paths {
-                    println!("{} path={}", item.project.key, quote(&item.path));
-                }
-            }
-        },
     }
     Ok(())
 }
@@ -1272,246 +1206,9 @@ pub(crate) async fn cmd_delete_restore(
     Ok(())
 }
 
-pub(crate) async fn cmd_config(args: ConfigCommand) -> Result<()> {
-    match args.command {
-        ConfigSubcommand::Init => {
-            let outcome = init_config()?;
-            println!(
-                "created-config path={}",
-                quote(&outcome.path.display().to_string())
-            );
-        }
-        ConfigSubcommand::Show => {
-            let outcome = show_config()?;
-            println!("config path={}", quote(&outcome.path.display().to_string()));
-            println!("{}", outcome.text);
-        }
-    }
-    Ok(())
-}
-
-pub(crate) async fn cmd_workspace(
-    conn: &mut SqliteConnection,
-    args: WorkspaceCommand,
-) -> Result<()> {
-    match args.command {
-        WorkspaceSubcommand::List => {
-            for workspace in list_workspaces(conn).await? {
-                println!("{} name={}", workspace.key, quote(&workspace.name));
-            }
-        }
-        WorkspaceSubcommand::Create { name } => {
-            let workspace = create_workspace(conn, &name).await?;
-            println!(
-                "created-workspace {} name={}",
-                workspace.key,
-                quote(&workspace.name)
-            );
-        }
-        WorkspaceSubcommand::Rename {
-            workspace,
-            new_name,
-        } => {
-            let workspace = rename_workspace(conn, &workspace, &new_name).await?;
-            println!(
-                "renamed-workspace {} name={}",
-                workspace.key,
-                quote(&workspace.name)
-            );
-        }
-    }
-    Ok(())
-}
-
 pub(crate) async fn cmd_skill() -> Result<()> {
     print!("{}", include_str!("skill.md"));
     Ok(())
-}
-
-pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictCommand) -> Result<()> {
-    match args.command {
-        ConflictSubcommand::List { project, field } => {
-            let project_key = resolve_conflict_project_filter(
-                conn,
-                crate::workspaces::active_workspace_id().as_str(),
-                project,
-            )
-            .await?;
-            let items = list_conflicts(conn, project_key.as_deref(), field.as_deref()).await?;
-            for item in items {
-                print_conflict_list_item(conn, item).await?;
-            }
-        }
-        ConflictSubcommand::Show { task_ref, field } => {
-            let task = resolve_task_ref(conn, &task_ref).await?;
-            let details = task_conflicts(conn, &task.id, field.as_deref()).await?;
-            for detail in details {
-                print_conflict_detail(conn, &task, detail).await?;
-            }
-        }
-        ConflictSubcommand::Diff { task_ref, field } => {
-            let task = resolve_task_ref(conn, &task_ref).await?;
-            let detail = load_single_conflict_detail(conn, &task, &field).await?;
-            print_text_diff("local", &detail.local_value, "remote", &detail.remote_value);
-        }
-        ConflictSubcommand::Export {
-            task_ref,
-            field,
-            dir,
-        } => {
-            let task = resolve_task_ref(conn, &task_ref).await?;
-            fs::create_dir_all(&dir)?;
-            let detail = load_single_conflict_detail(conn, &task, &field).await?;
-            export_conflict_variant(&dir, &detail.field, &detail.variant_a, &detail.local_value)?;
-            export_conflict_variant(&dir, &detail.field, &detail.variant_b, &detail.remote_value)?;
-        }
-        ConflictSubcommand::Resolve {
-            task_ref,
-            field,
-            use_variant,
-            value,
-            value_file,
-            value_stdin,
-        } => {
-            let task = resolve_task_ref(conn, &task_ref).await?;
-            let value = if let Some(token) = use_variant {
-                conflict_variant_value(conn, &task.id, &field, &token).await?
-            } else {
-                read_required_text(value, value_file.as_deref(), value_stdin, "value")?
-            };
-            let outcome = resolve_conflict(conn, &task.id, &field, &value).await?;
-            println!(
-                "resolved {} field={}",
-                display_ref(conn, &outcome.task).await?,
-                outcome.field
-            );
-        }
-    }
-    Ok(())
-}
-
-async fn resolve_conflict_project_filter(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-    project: Option<String>,
-) -> Result<Option<String>> {
-    if let Some(project) = project {
-        return Ok(Some(
-            resolve_existing_project_in_workspace(conn, workspace_id, &project)
-                .await?
-                .key,
-        ));
-    }
-    Ok(None)
-}
-
-async fn print_conflict_list_item(
-    conn: &mut SqliteConnection,
-    item: crate::operations::ConflictListItem,
-) -> Result<()> {
-    let display = format!(
-        "{}-{}",
-        item.project_prefix,
-        display_suffix(conn, &item.task_id).await?
-    );
-    println!(
-        "{} conflict field={} variants={},{} title={}",
-        display,
-        item.field,
-        item.variant_a,
-        item.variant_b,
-        quote(&item.title)
-    );
-    Ok(())
-}
-
-async fn print_conflict_detail(
-    conn: &mut SqliteConnection,
-    task: &Task,
-    detail: ConflictDetail,
-) -> Result<()> {
-    println!(
-        "conflict {} field={}",
-        display_ref(conn, task).await?,
-        detail.field
-    );
-    let local_value =
-        conflict_display_value(conn, &task.workspace_id, &detail.field, &detail.local_value)
-            .await?;
-    let remote_value = conflict_display_value(
-        conn,
-        &task.workspace_id,
-        &detail.field,
-        &detail.remote_value,
-    )
-    .await?;
-    println!("variant {}", detail.variant_a);
-    print_multiline_block("value", &local_value);
-    println!("variant {}", detail.variant_b);
-    print_multiline_block("value", &remote_value);
-    Ok(())
-}
-
-async fn load_single_conflict_detail(
-    conn: &mut SqliteConnection,
-    task: &Task,
-    field: &str,
-) -> Result<ConflictDetail> {
-    single_conflict(
-        task_conflicts(conn, &task.id, Some(field)).await?,
-        &task.id,
-        field,
-    )
-}
-
-fn export_conflict_variant(dir: &Path, field: &str, variant: &str, value: &str) -> Result<()> {
-    let path = dir.join(format!("{field}-{variant}.md"));
-    fs::write(&path, value)?;
-    println!(
-        "exported variant={} path={}",
-        variant,
-        quote(&path.display().to_string())
-    );
-    Ok(())
-}
-
-async fn conflict_display_value(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-    field: &str,
-    value: &str,
-) -> Result<String> {
-    if field != TaskField::Project.as_str() {
-        return Ok(value.to_string());
-    }
-    if let Some((key, prefix)) = sqlx::query_as::<_, (String, String)>(
-        "SELECT key, prefix FROM projects WHERE workspace_id = ? AND id = ?",
-    )
-    .bind(workspace_id)
-    .bind(value)
-    .fetch_optional(&mut *conn)
-    .await?
-    {
-        return Ok(format!("{key} prefix={prefix}"));
-    }
-    Ok(value.to_string())
-}
-
-fn single_conflict(
-    details: Vec<ConflictDetail>,
-    task_id: &str,
-    field: &str,
-) -> Result<ConflictDetail> {
-    let mut iter = details.into_iter();
-    let Some(detail) = iter.next() else {
-        bail!("error conflict-not-found task_id={task_id} field={field}");
-    };
-    if iter.next().is_some() {
-        bail!(
-            "error multiple-conflicts task_id={task_id} field={field} hint=\"use export to view all variants\""
-        );
-    }
-    Ok(detail)
 }
 
 pub(crate) async fn cmd_doctor(
@@ -1522,7 +1219,7 @@ pub(crate) async fn cmd_doctor(
     workspace_flag: Option<&str>,
     integrity: bool,
 ) -> Result<()> {
-    let config_file = config::config_file_path();
+    let config_file = app_config::config_file_path();
     let db_source = if db_flag_set {
         "--db"
     } else if std::env::var_os("AVEN_DB").is_some() {
@@ -1550,7 +1247,7 @@ pub(crate) async fn cmd_doctor(
         sqlx::query_scalar("SELECT count(*) FROM conflicts WHERE resolved = 0")
             .fetch_one(&mut *conn)
             .await?;
-    let sync_server = config::resolve_sync_server(None, config);
+    let sync_server = app_config::resolve_sync_server(None, config);
     let wake_addr = config.wake_addr();
 
     let mut report = DoctorReport::new();
