@@ -51,6 +51,57 @@ async fn create_selected_task(store: &mut TuiStore, title: &str) -> (String, usi
     (task_id, selected)
 }
 
+fn task_draft(title: &str) -> TaskDraft {
+    TaskDraft {
+        title: title.to_string(),
+        description: String::new(),
+        project: None,
+        status: "inbox".to_string(),
+        priority: "none".to_string(),
+        labels: Vec::new(),
+    }
+}
+
+async fn set_task_timestamps(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    task_id: &str,
+    queue_activity_at: &str,
+    updated_at: Option<&str>,
+) {
+    let mut conn = pool.acquire().await.unwrap();
+    sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
+        .bind(queue_activity_at)
+        .bind(workspace_id)
+        .bind(task_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    if let Some(updated) = updated_at {
+        sqlx::query("UPDATE tasks SET updated_at = ? WHERE workspace_id = ? AND id = ?")
+            .bind(updated)
+            .bind(workspace_id)
+            .bind(task_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+    }
+}
+
+async fn create_selected_task_with_stale_queue_activity(
+    store: &mut TuiStore,
+    pool: &SqlitePool,
+    title: &str,
+) -> (String, usize) {
+    let (_, selected) = store.create_task(task_draft(title), None).await.unwrap();
+    let selected = selected.unwrap();
+    let task_id = store.tasks[selected].task.id.clone();
+    let workspace_id = store.active_workspace.id.clone();
+    set_task_timestamps(pool, &workspace_id, &task_id, "1970-01-01T00:00:00Z", None).await;
+    store.refresh(Some(&task_id)).await.unwrap();
+    (task_id, selected)
+}
+
 async fn pending_undo_count(pool: &sqlx::SqlitePool, workspace_id: &str) -> i64 {
     let mut conn = pool.acquire().await.unwrap();
     sqlx::query_scalar(
@@ -163,11 +214,8 @@ mod domain_mutations_and_pickers {
             .create_task(
                 TaskDraft {
                     title: "Rename keeps task".to_string(),
-                    description: String::new(),
                     project: Some("agent-offload".to_string()),
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
+                    ..task_draft("")
                 },
                 None,
             )
@@ -206,11 +254,8 @@ mod domain_mutations_and_pickers {
             .create_task(
                 TaskDraft {
                     title: "Undo rename keeps task".to_string(),
-                    description: String::new(),
                     project: Some("agent-offload".to_string()),
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
+                    ..task_draft("")
                 },
                 None,
             )
@@ -251,11 +296,8 @@ mod domain_mutations_and_pickers {
             .create_task(
                 TaskDraft {
                     title: "Keep project".to_string(),
-                    description: String::new(),
                     project: Some("mobile-app".to_string()),
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
+                    ..task_draft("")
                 },
                 None,
             )
@@ -290,11 +332,8 @@ mod domain_mutations_and_pickers {
             .create_task(
                 TaskDraft {
                     title: "Deleted project task".to_string(),
-                    description: String::new(),
                     project: Some("mobile-app".to_string()),
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
+                    ..task_draft("")
                 },
                 None,
             )
@@ -387,10 +426,9 @@ mod task_creation_and_updates {
                 TaskDraft {
                     title: "Write docs".to_string(),
                     description: "details".to_string(),
-                    project: None,
-                    status: "inbox".to_string(),
                     priority: "high".to_string(),
                     labels: vec!["needs-review".to_string()],
+                    ..task_draft("")
                 },
                 None,
             )
@@ -413,17 +451,7 @@ mod task_creation_and_updates {
         let mut store = test_store().await;
         store.show_view(TaskView::Todo).await.unwrap();
         let (message, selected) = store
-            .create_task(
-                TaskDraft {
-                    title: "Inbox task".to_string(),
-                    description: String::new(),
-                    project: None,
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
+            .create_task(task_draft("Inbox task"), None)
             .await
             .unwrap();
 
@@ -435,17 +463,7 @@ mod task_creation_and_updates {
     async fn create_task_preserves_previous_selection_when_hidden() {
         let mut store = test_store().await;
         let (_, first_selected) = store
-            .create_task(
-                TaskDraft {
-                    title: "Todo task".to_string(),
-                    description: String::new(),
-                    project: None,
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
+            .create_task(task_draft("Todo task"), None)
             .await
             .unwrap();
         let first_selected = first_selected.unwrap();
@@ -458,17 +476,7 @@ mod task_creation_and_updates {
         let current_index = store.refresh(Some(&task_id)).await.unwrap();
 
         let (_, selected) = store
-            .create_task(
-                TaskDraft {
-                    title: "Hidden inbox task".to_string(),
-                    description: String::new(),
-                    project: None,
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                current_index,
-            )
+            .create_task(task_draft("Hidden inbox task"), current_index)
             .await
             .unwrap();
 
@@ -484,11 +492,8 @@ mod task_creation_and_updates {
             .create_task(
                 TaskDraft {
                     title: "Next target".to_string(),
-                    description: String::new(),
-                    project: None,
                     status: "todo".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
+                    ..task_draft("")
                 },
                 None,
             )
@@ -498,11 +503,8 @@ mod task_creation_and_updates {
             .create_task(
                 TaskDraft {
                     title: "Done target".to_string(),
-                    description: String::new(),
-                    project: None,
                     status: "todo".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
+                    ..task_draft("")
                 },
                 None,
             )
@@ -534,17 +536,7 @@ mod task_creation_and_updates {
     async fn add_note_to_task_writes_note() {
         let mut store = test_store().await;
         let (_, selected) = store
-            .create_task(
-                TaskDraft {
-                    title: "Note target".to_string(),
-                    description: String::new(),
-                    project: None,
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
+            .create_task(task_draft("Note target"), None)
             .await
             .unwrap();
         let task_id = store.tasks[selected.unwrap()].task.id.clone();
@@ -563,10 +555,7 @@ mod task_creation_and_updates {
                 TaskDraft {
                     title: "Old".to_string(),
                     description: "old body".to_string(),
-                    project: None,
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
+                    ..task_draft("")
                 },
                 None,
             )
@@ -609,37 +598,18 @@ mod task_creation_and_updates {
     #[tokio::test]
     async fn title_edit_keeps_queue_activity_timestamp() {
         let (_dir, pool, mut store) = test_store_with_pool().await;
-        let (_, selected) = store
-            .create_task(
-                TaskDraft {
-                    title: "Old".to_string(),
-                    description: String::new(),
-                    project: None,
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        let selected = selected.unwrap();
-        let task_id = store.tasks[selected].task.id.clone();
-        let workspace_id = store.active_workspace.id.clone();
+        let (task_id, selected) =
+            create_selected_task_with_stale_queue_activity(&mut store, &pool, "Old").await;
         let old_activity = "1970-01-01T00:00:00Z";
         let old_updated = "1970-01-02T00:00:00Z";
-        let mut conn = pool.acquire().await.unwrap();
-        sqlx::query(
-            "UPDATE tasks SET updated_at = ?, queue_activity_at = ? WHERE workspace_id = ? AND id = ?",
+        set_task_timestamps(
+            &pool,
+            &store.active_workspace.id,
+            &task_id,
+            old_activity,
+            Some(old_updated),
         )
-        .bind(old_updated)
-        .bind(old_activity)
-        .bind(&workspace_id)
-        .bind(&task_id)
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-        drop(conn);
+        .await;
         store.refresh(Some(&task_id)).await.unwrap();
 
         store
@@ -656,34 +626,9 @@ mod task_creation_and_updates {
     #[tokio::test]
     async fn priority_edit_refreshes_queue_activity_timestamp() {
         let (_dir, pool, mut store) = test_store_with_pool().await;
-        let (_, selected) = store
-            .create_task(
-                TaskDraft {
-                    title: "Old".to_string(),
-                    description: String::new(),
-                    project: None,
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        let selected = selected.unwrap();
-        let task_id = store.tasks[selected].task.id.clone();
-        let workspace_id = store.active_workspace.id.clone();
+        let (_task_id, selected) =
+            create_selected_task_with_stale_queue_activity(&mut store, &pool, "Old").await;
         let old_activity = "1970-01-01T00:00:00Z";
-        let mut conn = pool.acquire().await.unwrap();
-        sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
-            .bind(old_activity)
-            .bind(&workspace_id)
-            .bind(&task_id)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        drop(conn);
-        store.refresh(Some(&task_id)).await.unwrap();
 
         store
             .set_exact_priority(Some(selected), "high")
@@ -704,11 +649,8 @@ mod task_creation_and_updates {
             .create_task(
                 TaskDraft {
                     title: "Labels".to_string(),
-                    description: String::new(),
-                    project: None,
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
                     labels: vec!["bug".to_string()],
+                    ..task_draft("")
                 },
                 None,
             )
@@ -779,20 +721,7 @@ mod conflicts {
             .await
             .unwrap();
         let mut store = TuiStore::new(pool.clone()).await.unwrap();
-        let (_, selected) = store
-            .create_task(
-                TaskDraft {
-                    title: "Before".to_string(),
-                    description: String::new(),
-                    project: None,
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
+        let (_, selected) = store.create_task(task_draft("Before"), None).await.unwrap();
         let selected = selected.unwrap();
         let task_id = store.tasks[selected].task.id.clone();
         let display_ref = store.tasks[selected].display_ref.clone();
@@ -844,17 +773,7 @@ mod conflicts {
             .unwrap();
         let mut store = TuiStore::new(pool.clone()).await.unwrap();
         let (_, selected) = store
-            .create_task(
-                TaskDraft {
-                    title: "Stable title".to_string(),
-                    description: String::new(),
-                    project: None,
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
+            .create_task(task_draft("Stable title"), None)
             .await
             .unwrap();
         let selected = selected.unwrap();
@@ -887,17 +806,7 @@ mod conflicts {
             .unwrap();
         let mut store = TuiStore::new(pool.clone()).await.unwrap();
         let (_, selected) = store
-            .create_task(
-                TaskDraft {
-                    title: "Conflict".to_string(),
-                    description: String::new(),
-                    project: None,
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
+            .create_task(task_draft("Conflict"), None)
             .await
             .unwrap();
         let selected = selected.unwrap();
@@ -994,17 +903,7 @@ mod views_filters_and_sort {
     async fn queue_view_hides_done_tasks() {
         let mut store = test_store().await;
         let (_, selected) = store
-            .create_task(
-                TaskDraft {
-                    title: "Finished".to_string(),
-                    description: String::new(),
-                    project: None,
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
+            .create_task(task_draft("Finished"), None)
             .await
             .unwrap();
         store.update_status(selected, "done").await.unwrap();
@@ -1034,11 +933,8 @@ mod views_filters_and_sort {
                 .create_task(
                     TaskDraft {
                         title: title.to_string(),
-                        description: String::new(),
                         project: Some("mobile-app".to_string()),
-                        status: "inbox".to_string(),
-                        priority: "none".to_string(),
-                        labels: Vec::new(),
+                        ..task_draft("")
                     },
                     None,
                 )
@@ -1080,11 +976,8 @@ mod views_filters_and_sort {
                 .create_task(
                     TaskDraft {
                         title: title.to_string(),
-                        description: String::new(),
                         project: Some(project.to_string()),
-                        status: "inbox".to_string(),
-                        priority: "none".to_string(),
-                        labels: Vec::new(),
+                        ..task_draft("")
                     },
                     None,
                 )
@@ -1112,17 +1005,7 @@ mod views_filters_and_sort {
     async fn done_view_shows_done_tasks() {
         let mut store = test_store().await;
         let (_, selected) = store
-            .create_task(
-                TaskDraft {
-                    title: "Finished".to_string(),
-                    description: String::new(),
-                    project: None,
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
+            .create_task(task_draft("Finished"), None)
             .await
             .unwrap();
         let selected = selected.unwrap();
@@ -1175,11 +1058,8 @@ mod views_filters_and_sort {
             .create_task(
                 TaskDraft {
                     title: "Deleted project task".to_string(),
-                    description: String::new(),
                     project: Some("mobile-app".to_string()),
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
+                    ..task_draft("")
                 },
                 None,
             )
@@ -1253,11 +1133,9 @@ mod sync_workspace_payloads {
             &other.id,
             TaskDraft {
                 title: "Scoped task".to_string(),
-                description: String::new(),
                 project: Some("Mobile App".to_string()),
-                status: "inbox".to_string(),
-                priority: "none".to_string(),
                 labels: vec!["Needs Review".to_string()],
+                ..task_draft("")
             },
         )
         .await
@@ -1863,11 +1741,8 @@ mod workspace_scoping {
             .create_task(
                 TaskDraft {
                     title: "mobile task".to_string(),
-                    description: String::new(),
                     project: Some("mobile-app".to_string()),
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
+                    ..task_draft("")
                 },
                 None,
             )
@@ -1893,11 +1768,8 @@ mod workspace_scoping {
             .create_task(
                 TaskDraft {
                     title: "mobile task".to_string(),
-                    description: String::new(),
                     project: Some("mobile-app".to_string()),
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
+                    ..task_draft("")
                 },
                 None,
             )
@@ -1907,11 +1779,8 @@ mod workspace_scoping {
             .create_task(
                 TaskDraft {
                     title: "ops task".to_string(),
-                    description: String::new(),
                     project: Some("ops".to_string()),
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
+                    ..task_draft("")
                 },
                 None,
             )
@@ -1982,11 +1851,8 @@ mod workspace_scoping {
             .create_task(
                 TaskDraft {
                     title: "Default task".to_string(),
-                    description: String::new(),
                     project: Some("mobile-app".to_string()),
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
+                    ..task_draft("")
                 },
                 None,
             )
@@ -2027,17 +1893,7 @@ mod workspace_scoping {
         reset_default_workspace(&pool).await;
         let mut store = TuiStore::new(pool.clone()).await.unwrap();
         let (_, selected) = store
-            .create_task(
-                TaskDraft {
-                    title: "Default workspace task".to_string(),
-                    description: String::new(),
-                    project: None,
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
+            .create_task(task_draft("Default workspace task"), None)
             .await
             .unwrap();
         assert!(selected.is_some());
@@ -2118,17 +1974,7 @@ mod workspace_scoping {
         let default = crate::workspaces::active_workspace();
         let mut store = TuiStore::new(pool.clone()).await.unwrap();
         let (_, selected) = store
-            .create_task(
-                TaskDraft {
-                    title: "Default workspace task".to_string(),
-                    description: String::new(),
-                    project: None,
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
+            .create_task(task_draft("Default workspace task"), None)
             .await
             .unwrap();
         assert!(selected.is_some());
