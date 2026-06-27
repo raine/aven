@@ -2,11 +2,9 @@ use anyhow::Result;
 
 use crate::tui::app::App;
 use crate::tui::authoring::AddTaskStep;
-#[cfg(test)]
-use crate::tui::overlay::OverlaySubmitKind;
 use crate::tui::overlay::{
-    ConfirmSubmitRoute, MultilineSubmitRoute, OverlayRoute, OverlaySubmit, PickerSubmitRoute,
-    TextSubmitRoute,
+    ConfirmSubmitRoute, MultilineSubmitRoute, OverlayRoute, OverlaySubmit, OverlaySubmitKind,
+    PickerSubmitRoute, TextSubmitRoute,
 };
 
 #[cfg(test)]
@@ -25,12 +23,8 @@ impl App {
             OverlaySubmit::AddTask { title, description } => {
                 self.handle_add_task_submit(title, description).await?;
             }
-            OverlaySubmit::Picker {
-                route,
-                title,
-                values,
-            } => {
-                self.handle_picker_submit(route, title, values).await?;
+            OverlaySubmit::Picker { route, values } => {
+                self.handle_picker_submit(route, values).await?;
             }
             OverlaySubmit::HeaderMenu { action } => {
                 self.submit_header_menu(action).await?;
@@ -38,22 +32,14 @@ impl App {
             OverlaySubmit::Order { order } => {
                 self.submit_order_menu(order).await?;
             }
-            OverlaySubmit::Text {
-                route,
-                title,
-                value,
-            } => {
-                self.handle_text_submit(route, title, value).await?;
+            OverlaySubmit::Text { route, value } => {
+                self.handle_text_submit(route, value).await?;
             }
-            OverlaySubmit::Multiline {
-                route,
-                title,
-                value,
-            } => {
-                self.handle_multiline_submit(route, title, value).await?;
+            OverlaySubmit::Multiline { route, value } => {
+                self.handle_multiline_submit(route, value).await?;
             }
-            OverlaySubmit::Confirm { route, title } => {
-                self.handle_confirm_submit(route, title).await?;
+            OverlaySubmit::Confirm { route } => {
+                self.handle_confirm_submit(route).await?;
             }
         }
         Ok(())
@@ -65,21 +51,11 @@ impl App {
         self.submit_add_task_from_authoring().await
     }
 
-    async fn handle_text_submit(
-        &mut self,
-        route: OverlayRoute,
-        title: String,
-        value: String,
-    ) -> Result<()> {
+    async fn handle_text_submit(&mut self, route: OverlayRoute, value: String) -> Result<()> {
         match route.text_submit_route() {
-            Some(TextSubmitRoute::AddTaskTitleToast) => self.set_success(
-                OverlaySubmit::Text {
-                    route,
-                    title,
-                    value,
-                }
-                .message(),
-            ),
+            Some(TextSubmitRoute::AddTaskTitleToast) => {
+                self.set_success(route.fallback_message(OverlaySubmitKind::Text))
+            }
             Some(TextSubmitRoute::AddProject) => {
                 let message = self.store.create_project(value).await?;
                 self.restore_selection_after_mutation();
@@ -101,24 +77,12 @@ impl App {
             Some(TextSubmitRoute::ConflictManual) => {
                 self.submit_manual_conflict_value(value).await?;
             }
-            None => self.set_success(
-                OverlaySubmit::Text {
-                    route,
-                    title,
-                    value,
-                }
-                .message(),
-            ),
+            None => self.set_success(route.fallback_message(OverlaySubmitKind::Text)),
         }
         Ok(())
     }
 
-    async fn handle_multiline_submit(
-        &mut self,
-        route: OverlayRoute,
-        title: String,
-        value: String,
-    ) -> Result<()> {
+    async fn handle_multiline_submit(&mut self, route: OverlayRoute, value: String) -> Result<()> {
         match route.multiline_submit_route() {
             Some(MultilineSubmitRoute::AddTaskDescription) => {
                 if self.authoring.capture_add_task_fields(
@@ -144,14 +108,7 @@ impl App {
             Some(MultilineSubmitRoute::ConflictManual) => {
                 self.submit_manual_conflict_value(value).await?;
             }
-            None => self.set_success(
-                OverlaySubmit::Multiline {
-                    route,
-                    title,
-                    value,
-                }
-                .message(),
-            ),
+            None => self.set_success(route.fallback_message(OverlaySubmitKind::Multiline)),
         }
         Ok(())
     }
@@ -159,7 +116,6 @@ impl App {
     async fn handle_picker_submit(
         &mut self,
         route: OverlayRoute,
-        title: String,
         values: Vec<String>,
     ) -> Result<()> {
         match route.picker_submit_route() {
@@ -225,19 +181,12 @@ impl App {
                     self.set_warning("no value selected");
                 }
             }
-            None => self.set_success(
-                OverlaySubmit::Picker {
-                    route,
-                    title,
-                    values,
-                }
-                .message(),
-            ),
+            None => self.set_success(route.fallback_message(OverlaySubmitKind::Picker)),
         }
         Ok(())
     }
 
-    async fn handle_confirm_submit(&mut self, route: OverlayRoute, title: String) -> Result<()> {
+    async fn handle_confirm_submit(&mut self, route: OverlayRoute) -> Result<()> {
         match route.confirm_submit_route() {
             Some(ConfirmSubmitRoute::ConflictConfirm) => {
                 self.submit_confirmed_conflict_resolution().await?;
@@ -254,7 +203,7 @@ impl App {
                 self.detail_context = false;
                 self.restore_detail_overlay(return_to_detail);
             }
-            None => self.set_success(OverlaySubmit::Confirm { route, title }.message()),
+            None => self.set_success(route.fallback_message(OverlaySubmitKind::Confirm)),
         }
         Ok(())
     }

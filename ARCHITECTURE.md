@@ -81,7 +81,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Keep TUI database access in `src/tui/store/`; keep `src/tui/ui/` rendering-only.
 - Derive TUI task list filters, query mode, and render mode from `TaskViewState`; do not keep parallel project, status, view, or queue-sort state.
 - Treat project selection in the TUI as scope. Project scope must not be modeled as a filter modifier or view.
-- TUI overlays carry `OverlayRoute` so behavior survives title text changes.
+- TUI overlays carry `OverlayRoute`; behavior resolves through `OverlayRoute::descriptor` and never depends on title text. Titles are render-only chrome.
 - TUI shortcuts use intent prefixes in the command catalog. Navigation and scope use `g`, named views use `v`, composable filters use `f`, ordering uses `o`, selected-task actions use `t`, project administration uses `p`, label administration uses `L`, conflicts use `c`, and config uses `C`.
 - Overlay dialogs should use shared helpers in `src/tui/ui/dialog.rs` for title edges, frame clearing, background, border, and footer hint styling.
 - Overlay behavior tests live in the overlay module they exercise under `src/tui/overlay/`; the facade in `src/tui/overlay.rs` stays focused on module wiring and exports.
@@ -97,7 +97,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 | Add task dependency relations | `src/operations/dependencies.rs`, `src/query/dependencies.rs` | `src/commands.rs`, `src/task_render.rs`, `src/sync/apply/dependency.rs`, `src/sync/server.rs` | `tests/cli_dependencies.rs`, `tests/cli_sync.rs` |
 | Change task list, filters, sorting, or refs | `src/query/`, `src/query.rs`, `src/refs.rs`, `src/queue.rs` | CLI list rendering, `src/tui/store/types.rs`, `src/tui/store/view.rs`, indexes | `tests/tui_query.rs`, `tests/sqlite_read_path_indexes.rs`, focused CLI tests |
 | Add or change a TUI action | `src/tui/event/catalog.rs`, `src/tui/app_dispatch.rs`, `src/tui/app.rs` | flow helpers, overlays, store module, undo, `src/tui/natural_add_runtime.rs` for natural-add worker setup | `src/tui/app_tests.rs`, `src/tui/store/tests.rs`, overlay module tests |
-| Add or change TUI overlay behavior | `src/tui/overlay.rs`, `src/tui/overlay/` | `OverlayRoute`, input helpers, state builders, view projection, module-local tests | `cargo test tui::overlay` |
+| Add or change TUI overlay behavior | `src/tui/overlay.rs`, `src/tui/overlay/`, `src/tui/app_overlay_submit.rs` | `OverlayRoute::descriptor`, input helpers, state builders, view projection, submit dispatch, module-local tests | `cargo test tui::overlay` |
 | Add or change TUI overlay rendering | `src/tui/ui/overlays.rs`, `src/tui/ui/overlays/` | overlay view models, shared dialog helpers, input helpers, theme | overlay rendering tests in `src/tui/ui/overlays/tests.rs` |
 | Change sync protocol or conflict handling | `src/sync/wire.rs`, `src/sync/apply/`, `src/sync/server.rs`, `src/sync/client.rs` | `src/mutation.rs`, `src/task_fields.rs`, migrations if persisted | `tests/cli_sync*.rs`, `tests/cli_conflicts.rs` |
 | Add or change backup, export, or import commands | `src/cli.rs`, `src/lib.rs`, `src/commands/data_safety.rs`, `src/db.rs` | doctor output and integrity checks in `src/commands.rs` | `tests/cli_data_safety.rs`, `tests/cli_doctor.rs` |
@@ -124,6 +124,15 @@ SQLite stores synced task data and local UI state. Config files store local rout
 5. Update sync wire/apply behavior and conflict resolution.
 6. Update CLI rendering, TUI rendering, filters, or sorting if exposed there.
 7. Run `just sqlx-prepare` after query or migration changes.
+
+### Add a TUI overlay route
+
+1. Add the `OverlayRoute` variant and include it in `OverlayRoute::ALL`.
+2. Add one arm to `OverlayRoute::descriptor` for submit kind, picker mode, and fallback message.
+3. Add the submit route enum variant that matches the input kind.
+4. Add the corresponding `handle_*_submit` branch in `src/tui/app_overlay_submit.rs`.
+5. Branch on `route` in `src/tui/ui/overlays/` when rendering differs by route.
+6. Add focused overlay or app overlay tests for input, submit, and rendering behavior.
 
 ### Add a TUI action
 

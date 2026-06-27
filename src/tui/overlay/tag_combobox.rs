@@ -108,7 +108,6 @@ fn activate_highlighted(state: &mut TagComboboxState) -> OverlayOutcome {
 fn tag_combobox_submit(state: TagComboboxState) -> OverlayOutcome {
     OverlayOutcome::Submitted(OverlaySubmit::Picker {
         route: state.route,
-        title: state.title,
         values: dedupe_labels(state.selected),
     })
 }

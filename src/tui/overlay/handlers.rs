@@ -117,7 +117,6 @@ pub(crate) fn handle_generic_overlay_key(
             KeyCode::Esc => OverlayOutcome::Cancelled,
             KeyCode::Enter => OverlayOutcome::Submitted(OverlaySubmit::Text {
                 route: state.route,
-                title: state.title.clone(),
                 value: state.input.text.clone(),
             }),
             _ => {
@@ -130,7 +129,6 @@ pub(crate) fn handle_generic_overlay_key(
                 let value = state.lines.join("\n");
                 return OverlayOutcome::Submitted(OverlaySubmit::Multiline {
                     route: state.route,
-                    title: state.title.clone(),
                     value,
                 });
             }
@@ -149,10 +147,7 @@ pub(crate) fn handle_generic_overlay_key(
         OverlayState::Confirm(state) => match key.code {
             KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => OverlayOutcome::Cancelled,
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                OverlayOutcome::Submitted(OverlaySubmit::Confirm {
-                    route: state.route,
-                    title: state.title.clone(),
-                })
+                OverlayOutcome::Submitted(OverlaySubmit::Confirm { route: state.route })
             }
             _ => OverlayOutcome::None(OverlayState::Confirm(state)),
         },
@@ -439,10 +434,9 @@ fn handle_confirm_mouse(
         return OverlayOutcome::None(OverlayState::Confirm(state));
     }
     match confirm_mouse_target(&state.prompt, mouse.column, mouse.row, terminal_size) {
-        ConfirmMouseTarget::Yes => OverlayOutcome::Submitted(OverlaySubmit::Confirm {
-            route: state.route,
-            title: state.title,
-        }),
+        ConfirmMouseTarget::Yes => {
+            OverlayOutcome::Submitted(OverlaySubmit::Confirm { route: state.route })
+        }
         ConfirmMouseTarget::No | ConfirmMouseTarget::Cancel | ConfirmMouseTarget::Outside => {
             OverlayOutcome::Cancelled
         }
@@ -836,9 +830,8 @@ mod tests {
             ),
             OverlayOutcome::Submitted(OverlaySubmit::Confirm {
                 route: OverlayRoute::MessageOnly,
-                title,
                 ..
-            }) if title == "Delete"
+            })
         ));
         assert!(matches!(
             handle(key(KeyCode::Char('n')), OverlayState::Confirm(state)),

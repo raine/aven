@@ -165,7 +165,6 @@ pub(super) fn picker_submit_outcome(state: PickerState) -> OverlayOutcome {
     };
     OverlayOutcome::Submitted(OverlaySubmit::Picker {
         route: state.route,
-        title: state.title,
         values,
     })
 }

@@ -1609,7 +1609,7 @@ mod filters_and_workspaces {
             .unwrap();
 
         assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app).as_deref(), Some("confirmed Confirm"));
+        assert_eq!(toast_message(&app).as_deref(), Some("confirmed overlay"));
 
         let mut app = test_app().await;
         app.overlay = Some(OverlayState::Confirm(ConfirmState {
@@ -4408,13 +4408,13 @@ mod overlay_submit_routes {
         let mut app = test_app().await;
         app.overlay = Some(OverlayState::TextInput(TextInputState::new(
             OverlayRoute::MessageOnly,
-            "Title",
+            "Changed title",
             "Enter title",
             "done".to_string(),
         )));
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app).as_deref(), Some("submitted Title"));
+        assert_eq!(toast_message(&app).as_deref(), Some("submitted overlay"));
     }
 
     #[tokio::test]
@@ -4594,13 +4594,51 @@ mod overlay_submit_routes {
         let mut app = test_app().await;
         app.overlay = Some(OverlayState::Confirm(ConfirmState {
             route: OverlayRoute::MessageOnly,
-            title: "Delete".to_string(),
+            title: "Changed title".to_string(),
             prompt: "Continue?".to_string(),
         }));
         app.handle_overlay_key(key(KeyCode::Char('y')))
             .await
             .unwrap();
         assert!(app.overlay.is_none());
-        assert_eq!(toast_message(&app).as_deref(), Some("confirmed Delete"));
+        assert_eq!(toast_message(&app).as_deref(), Some("confirmed overlay"));
+    }
+
+    #[tokio::test]
+    async fn generic_multiline_submit_uses_route_fallback_verb() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::MultilineInput(
+            MultilineInputState::from_value(
+                OverlayRoute::MessageOnly,
+                "Changed title",
+                "Body",
+                "done\nhere".to_string(),
+            ),
+        ));
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+        assert!(app.overlay.is_none());
+        assert_eq!(toast_message(&app).as_deref(), Some("submitted overlay"));
+    }
+
+    #[tokio::test]
+    async fn generic_picker_submit_uses_route_fallback_verb() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::Picker(PickerState {
+            route: OverlayRoute::MessageOnly,
+            title: "Choose".to_string(),
+            filter: LineEdit::blank(),
+            items: vec![crate::tui::overlay::PickerItem {
+                label: "One".to_string(),
+                value: "one".to_string(),
+                selected: false,
+            }],
+            selected: 0,
+            scroll: 0,
+            multi: false,
+            mode: PickerMode::Navigate,
+        }));
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(app.overlay.is_none());
+        assert_eq!(toast_message(&app).as_deref(), Some("selected overlay"));
     }
 }

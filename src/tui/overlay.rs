@@ -21,11 +21,11 @@ pub(crate) use picker::picker_viewport_start;
 pub(crate) use state::{
     AddTaskState, CommandState, ConfirmSubmitRoute, HeaderMenuAction, HeaderMenuItem,
     HeaderMenuKind, HeaderMenuState, MultilineInputState, MultilineSubmitRoute, OrderMenuState,
-    OverlayOutcome, OverlayRoute, OverlayState, OverlaySubmit, PickerItem, PickerMode,
-    PickerSubmitRoute, TextPanelState, TextSubmitRoute,
+    OverlayOutcome, OverlayRoute, OverlayState, OverlaySubmit, OverlaySubmitKind, PickerItem,
+    PickerMode, PickerSubmitRoute, TextPanelState, TextSubmitRoute,
 };
 #[cfg(test)]
-pub(crate) use state::{ConfirmState, OverlaySubmitKind, PickerState, TextInputState};
+pub(crate) use state::{ConfirmState, PickerState, TextInputState};
 pub(crate) use text_input::LineEdit;
 pub(crate) use view::{
     AddTaskView, ConfirmView, HeaderMenuView, MultilineInputView, OrderMenuView, OverlayView,

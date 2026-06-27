@@ -290,7 +290,6 @@ pub(crate) enum ConfirmSubmitRoute {
     DeleteTaskConfirm,
 }
 
-#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OverlaySubmitKind {
     Text,
@@ -299,75 +298,220 @@ pub(crate) enum OverlaySubmitKind {
     Confirm,
 }
 
-#[cfg(test)]
 impl OverlaySubmitKind {
+    #[cfg(test)]
     pub(crate) const ALL: [Self; 4] = [Self::Text, Self::Multiline, Self::Picker, Self::Confirm];
 }
 
-impl OverlayRoute {
-    pub(crate) fn text_submit_route(self) -> Option<TextSubmitRoute> {
-        match self {
-            Self::AddTaskTitle => Some(TextSubmitRoute::AddTaskTitleToast),
-            Self::AddProject => Some(TextSubmitRoute::AddProject),
-            Self::AddLabel => Some(TextSubmitRoute::AddLabel),
-            Self::RenameProjectName => Some(TextSubmitRoute::RenameProjectName),
-            Self::DeleteProjectNameConfirm => Some(TextSubmitRoute::DeleteProjectNameConfirm),
-            Self::EditTitle => Some(TextSubmitRoute::EditTitle),
-            Self::ConflictManual => Some(TextSubmitRoute::ConflictManual),
-            _ => None,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OverlayFallbackMessages {
+    pub(crate) text: &'static str,
+    pub(crate) multiline: &'static str,
+    pub(crate) picker: &'static str,
+    pub(crate) confirm: &'static str,
+}
+
+impl Default for OverlayFallbackMessages {
+    fn default() -> Self {
+        Self {
+            text: "submitted overlay",
+            multiline: "submitted overlay",
+            picker: "selected overlay",
+            confirm: "confirmed overlay",
         }
+    }
+}
+
+impl OverlayFallbackMessages {
+    pub(crate) fn message(self, kind: OverlaySubmitKind) -> &'static str {
+        match kind {
+            OverlaySubmitKind::Text => self.text,
+            OverlaySubmitKind::Multiline => self.multiline,
+            OverlaySubmitKind::Picker => self.picker,
+            OverlaySubmitKind::Confirm => self.confirm,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OverlayRouteDescriptor {
+    pub(crate) text_submit: Option<TextSubmitRoute>,
+    pub(crate) multiline_submit: Option<MultilineSubmitRoute>,
+    pub(crate) picker_submit: Option<PickerSubmitRoute>,
+    pub(crate) confirm_submit: Option<ConfirmSubmitRoute>,
+    pub(crate) initial_picker_mode: PickerMode,
+    pub(crate) fallback: OverlayFallbackMessages,
+}
+
+impl Default for OverlayRouteDescriptor {
+    fn default() -> Self {
+        Self {
+            text_submit: None,
+            multiline_submit: None,
+            picker_submit: None,
+            confirm_submit: None,
+            initial_picker_mode: PickerMode::Navigate,
+            fallback: OverlayFallbackMessages::default(),
+        }
+    }
+}
+
+impl OverlayRoute {
+    pub(crate) fn descriptor(self) -> OverlayRouteDescriptor {
+        match self {
+            Self::MessageOnly => OverlayRouteDescriptor {
+                fallback: OverlayFallbackMessages {
+                    text: "submitted overlay",
+                    multiline: "submitted overlay",
+                    picker: "selected overlay",
+                    confirm: "confirmed overlay",
+                },
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::AddTaskTitle => OverlayRouteDescriptor {
+                text_submit: Some(TextSubmitRoute::AddTaskTitleToast),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::AddTaskDescription => OverlayRouteDescriptor {
+                multiline_submit: Some(MultilineSubmitRoute::AddTaskDescription),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::AddTaskNatural => OverlayRouteDescriptor {
+                multiline_submit: Some(MultilineSubmitRoute::AddTaskNatural),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::AddTaskTitleProject => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::AddTaskTitleProject),
+                initial_picker_mode: PickerMode::Filter,
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::AddTaskTitlePriority => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::AddTaskTitlePriority),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::AddNote => OverlayRouteDescriptor {
+                multiline_submit: Some(MultilineSubmitRoute::AddNote),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::AddProject => OverlayRouteDescriptor {
+                text_submit: Some(TextSubmitRoute::AddProject),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::AddLabel => OverlayRouteDescriptor {
+                text_submit: Some(TextSubmitRoute::AddLabel),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::EditStatus => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::EditStatus),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::EditTitle => OverlayRouteDescriptor {
+                text_submit: Some(TextSubmitRoute::EditTitle),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::EditDescription => OverlayRouteDescriptor {
+                multiline_submit: Some(MultilineSubmitRoute::EditDescription),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::EditProject => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::EditProject),
+                initial_picker_mode: PickerMode::Filter,
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::EditPriority => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::EditPriority),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::EditLabels => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::EditLabels),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::FilterLabel => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::FilterLabel),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::FilterPriority => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::FilterPriority),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::ScopeProject => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::ScopeProject),
+                initial_picker_mode: PickerMode::Filter,
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::RenameProjectPicker => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::RenameProjectPicker),
+                initial_picker_mode: PickerMode::Filter,
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::RenameProjectName => OverlayRouteDescriptor {
+                text_submit: Some(TextSubmitRoute::RenameProjectName),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::DeleteProjectPicker => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::DeleteProjectPicker),
+                initial_picker_mode: PickerMode::Filter,
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::DeleteProjectNameConfirm => OverlayRouteDescriptor {
+                text_submit: Some(TextSubmitRoute::DeleteProjectNameConfirm),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::DeleteProjectConfirm => OverlayRouteDescriptor {
+                confirm_submit: Some(ConfirmSubmitRoute::DeleteProjectConfirm),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::DeleteTaskConfirm => OverlayRouteDescriptor {
+                confirm_submit: Some(ConfirmSubmitRoute::DeleteTaskConfirm),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::SwitchWorkspace => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::SwitchWorkspace),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::ConflictField => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::ConflictField),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::ConflictConfirm => OverlayRouteDescriptor {
+                confirm_submit: Some(ConfirmSubmitRoute::ConflictConfirm),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::ConflictManual => OverlayRouteDescriptor {
+                text_submit: Some(TextSubmitRoute::ConflictManual),
+                multiline_submit: Some(MultilineSubmitRoute::ConflictManual),
+                picker_submit: Some(PickerSubmitRoute::ConflictManual),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::ConfigInit => OverlayRouteDescriptor {
+                confirm_submit: Some(ConfirmSubmitRoute::ConfigInit),
+                ..OverlayRouteDescriptor::default()
+            },
+        }
+    }
+
+    pub(crate) fn text_submit_route(self) -> Option<TextSubmitRoute> {
+        self.descriptor().text_submit
     }
 
     pub(crate) fn multiline_submit_route(self) -> Option<MultilineSubmitRoute> {
-        match self {
-            Self::AddTaskDescription => Some(MultilineSubmitRoute::AddTaskDescription),
-            Self::AddTaskNatural => Some(MultilineSubmitRoute::AddTaskNatural),
-            Self::AddNote => Some(MultilineSubmitRoute::AddNote),
-            Self::EditDescription => Some(MultilineSubmitRoute::EditDescription),
-            Self::ConflictManual => Some(MultilineSubmitRoute::ConflictManual),
-            _ => None,
-        }
+        self.descriptor().multiline_submit
     }
 
     pub(crate) fn picker_submit_route(self) -> Option<PickerSubmitRoute> {
-        match self {
-            Self::AddTaskTitleProject => Some(PickerSubmitRoute::AddTaskTitleProject),
-            Self::AddTaskTitlePriority => Some(PickerSubmitRoute::AddTaskTitlePriority),
-            Self::EditStatus => Some(PickerSubmitRoute::EditStatus),
-            Self::EditProject => Some(PickerSubmitRoute::EditProject),
-            Self::EditPriority => Some(PickerSubmitRoute::EditPriority),
-            Self::EditLabels => Some(PickerSubmitRoute::EditLabels),
-            Self::FilterLabel => Some(PickerSubmitRoute::FilterLabel),
-            Self::FilterPriority => Some(PickerSubmitRoute::FilterPriority),
-            Self::ScopeProject => Some(PickerSubmitRoute::ScopeProject),
-            Self::RenameProjectPicker => Some(PickerSubmitRoute::RenameProjectPicker),
-            Self::DeleteProjectPicker => Some(PickerSubmitRoute::DeleteProjectPicker),
-            Self::SwitchWorkspace => Some(PickerSubmitRoute::SwitchWorkspace),
-            Self::ConflictField => Some(PickerSubmitRoute::ConflictField),
-            Self::ConflictManual => Some(PickerSubmitRoute::ConflictManual),
-            _ => None,
-        }
+        self.descriptor().picker_submit
     }
 
     pub(crate) fn initial_picker_mode(self) -> PickerMode {
-        match self {
-            Self::AddTaskTitleProject
-            | Self::EditProject
-            | Self::ScopeProject
-            | Self::RenameProjectPicker
-            | Self::DeleteProjectPicker => PickerMode::Filter,
-            _ => PickerMode::Navigate,
-        }
+        self.descriptor().initial_picker_mode
     }
 
     pub(crate) fn confirm_submit_route(self) -> Option<ConfirmSubmitRoute> {
-        match self {
-            Self::ConflictConfirm => Some(ConfirmSubmitRoute::ConflictConfirm),
-            Self::ConfigInit => Some(ConfirmSubmitRoute::ConfigInit),
-            Self::DeleteProjectConfirm => Some(ConfirmSubmitRoute::DeleteProjectConfirm),
-            Self::DeleteTaskConfirm => Some(ConfirmSubmitRoute::DeleteTaskConfirm),
-            _ => None,
-        }
+        self.descriptor().confirm_submit
+    }
+
+    pub(crate) fn fallback_message(self, kind: OverlaySubmitKind) -> &'static str {
+        self.descriptor().fallback.message(kind)
     }
 }
 
@@ -406,14 +550,15 @@ impl OverlayRoute {
     ];
 
     pub(crate) fn submit_kinds(self) -> Vec<OverlaySubmitKind> {
+        let descriptor = self.descriptor();
         OverlaySubmitKind::ALL
             .iter()
             .copied()
             .filter(|kind| match kind {
-                OverlaySubmitKind::Text => self.text_submit_route().is_some(),
-                OverlaySubmitKind::Multiline => self.multiline_submit_route().is_some(),
-                OverlaySubmitKind::Picker => self.picker_submit_route().is_some(),
-                OverlaySubmitKind::Confirm => self.confirm_submit_route().is_some(),
+                OverlaySubmitKind::Text => descriptor.text_submit.is_some(),
+                OverlaySubmitKind::Multiline => descriptor.multiline_submit.is_some(),
+                OverlaySubmitKind::Picker => descriptor.picker_submit.is_some(),
+                OverlaySubmitKind::Confirm => descriptor.confirm_submit.is_some(),
             })
             .collect()
     }
@@ -624,17 +769,14 @@ pub(crate) enum OverlaySubmit {
     },
     Text {
         route: OverlayRoute,
-        title: String,
         value: String,
     },
     Multiline {
         route: OverlayRoute,
-        title: String,
         value: String,
     },
     Picker {
         route: OverlayRoute,
-        title: String,
         values: Vec<String>,
     },
     HeaderMenu {
@@ -645,7 +787,6 @@ pub(crate) enum OverlaySubmit {
     },
     Confirm {
         route: OverlayRoute,
-        title: String,
     },
 }
 
@@ -654,20 +795,6 @@ pub(crate) enum OverlayOutcome {
     None(OverlayState),
     Cancelled,
     Submitted(OverlaySubmit),
-}
-
-impl OverlaySubmit {
-    pub(crate) fn message(&self) -> String {
-        match self {
-            Self::AddTask { .. } => "submitted Add task".to_string(),
-            Self::Text { title, .. } => format!("submitted {title}"),
-            Self::Multiline { title, .. } => format!("submitted {title}"),
-            Self::Picker { title, .. } => format!("selected {title}"),
-            Self::HeaderMenu { .. } => "selected header menu".to_string(),
-            Self::Order { order } => format!("selected order {order:?}"),
-            Self::Confirm { title, .. } => format!("confirmed {title}"),
-        }
-    }
 }
 
 impl OverlayState {
@@ -881,5 +1008,45 @@ mod tests {
         assert_eq!(confirm.route, OverlayRoute::DeleteTaskConfirm);
         assert_eq!(confirm.title, "Delete");
         assert_eq!(confirm.prompt, "Sure?");
+    }
+
+    #[test]
+    fn message_only_fallback_preserves_submit_kind_verbs() {
+        assert_eq!(
+            OverlayRoute::MessageOnly.fallback_message(OverlaySubmitKind::Text),
+            "submitted overlay"
+        );
+        assert_eq!(
+            OverlayRoute::MessageOnly.fallback_message(OverlaySubmitKind::Multiline),
+            "submitted overlay"
+        );
+        assert_eq!(
+            OverlayRoute::MessageOnly.fallback_message(OverlaySubmitKind::Picker),
+            "selected overlay"
+        );
+        assert_eq!(
+            OverlayRoute::MessageOnly.fallback_message(OverlaySubmitKind::Confirm),
+            "confirmed overlay"
+        );
+    }
+
+    #[test]
+    fn all_route_kind_fallback_messages_are_non_empty() {
+        for route in OverlayRoute::ALL {
+            for kind in OverlaySubmitKind::ALL {
+                assert!(
+                    !route.fallback_message(kind).is_empty(),
+                    "{route:?} {kind:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn conflict_manual_supports_multiple_submit_kinds() {
+        let descriptor = OverlayRoute::ConflictManual.descriptor();
+        assert!(descriptor.text_submit.is_some());
+        assert!(descriptor.multiline_submit.is_some());
+        assert!(descriptor.picker_submit.is_some());
     }
 }

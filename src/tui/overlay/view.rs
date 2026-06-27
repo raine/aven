@@ -155,6 +155,7 @@ impl From<&OrderMenuState> for OrderMenuView {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConfirmView {
+    pub(crate) route: OverlayRoute,
     pub(crate) title: String,
     pub(crate) prompt: String,
 }
@@ -237,6 +238,7 @@ impl From<&OverlayState> for OverlayView {
             HeaderMenu(state) => Self::HeaderMenu(HeaderMenuView::from(state)),
             OrderMenu(state) => Self::OrderMenu(OrderMenuView::from(state)),
             Confirm(state) => Self::Confirm(ConfirmView {
+                route: state.route,
                 title: state.title.clone(),
                 prompt: state.prompt.clone(),
             }),
@@ -257,7 +259,9 @@ impl From<&OverlayState> for OverlayView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::overlay::{LineEdit, MultilineInputState, OverlayRoute, PickerState};
+    use crate::tui::overlay::{
+        ConfirmState, LineEdit, MultilineInputState, OverlayRoute, PickerState,
+    };
 
     #[test]
     fn overlay_view_projection_carries_routes() {
@@ -290,6 +294,19 @@ mod tests {
             picker,
             OverlayView::Picker(PickerView {
                 route: OverlayRoute::DeleteProjectPicker,
+                ..
+            })
+        ));
+
+        let confirm = OverlayView::from(&OverlayState::Confirm(ConfirmState {
+            route: OverlayRoute::DeleteTaskConfirm,
+            title: "Delete task".to_string(),
+            prompt: "Delete task?".to_string(),
+        }));
+        assert!(matches!(
+            confirm,
+            OverlayView::Confirm(ConfirmView {
+                route: OverlayRoute::DeleteTaskConfirm,
                 ..
             })
         ));

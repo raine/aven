@@ -1163,6 +1163,7 @@ mod route_specific_rendering {
                 visible_start: 0,
             }),
             OverlayView::Confirm(ConfirmView {
+                route: OverlayRoute::MessageOnly,
                 title: "Delete".to_string(),
                 prompt: "Delete task?".to_string(),
             }),
@@ -1306,6 +1307,7 @@ mod confirm_overlays {
     #[test]
     fn overlay_render_includes_confirm_prompt_and_hints() {
         let rendered = render_overlay_view(OverlayView::Confirm(ConfirmView {
+            route: OverlayRoute::MessageOnly,
             title: "Delete".to_string(),
             prompt: "Delete task?".to_string(),
         }));
@@ -1319,6 +1321,7 @@ mod confirm_overlays {
         let prompt =
             "Delete WI-2ZB3 Option to track treadmill sessions as HealthKit workouts ".repeat(2);
         let overlay = OverlayView::Confirm(ConfirmView {
+            route: OverlayRoute::MessageOnly,
             title: "Delete task".to_string(),
             prompt: prompt.clone(),
         });
