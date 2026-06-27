@@ -269,6 +269,14 @@ fn start_fake_sync_server(response: Value) -> (String, std::thread::JoinHandle<(
     (url, server)
 }
 
+fn sync_response(cursor: i64, changes: impl IntoIterator<Item = Value>) -> Value {
+    json!({
+        "protocol_version": 3,
+        "cursor": cursor,
+        "changes": changes.into_iter().collect::<Vec<_>>(),
+    })
+}
+
 fn assert_sync_protocol_rejected(
     env: &TestEnv,
     server: &TestServer,
@@ -470,51 +478,21 @@ fn remote_project_rename_updates_managed_path_mapping() {
 
 #[test]
 fn same_key_remote_project_writes_alias() {
-    use std::io::{BufRead as _, BufReader, Write as _};
-    use std::net::TcpListener;
-    use std::thread;
-
     let env = TestEnv::new();
     let db = env.db("project-collision.sqlite");
     ok(env.aven(&db, ["add", "local seed", "--project", "app"]));
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake sync server");
-    let url = format!("http://{}", listener.local_addr().expect("fake sync addr"));
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept sync request");
-        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
-        let mut line = String::new();
-        loop {
-            line.clear();
-            reader.read_line(&mut line).expect("read request line");
-            if line == "\r\n" || line.is_empty() {
-                break;
-            }
-        }
-        let body = serde_json::json!({
-            "protocol_version": 3,
-            "cursor": 1,
-            "changes": [wire_change(
-                "create_task",
-                "task",
-                "CCCCCCCCCCCCCCCC",
-                json!({
-                    "title": "remote collision",
-                    "project_id": "BBBBBBBBBBBBBBBB",
-                    "project_key": "app",
-                    "project_name": "app",
-                    "project_prefix": "APP",
-                })
-            )]
+    let (url, server) = start_fake_sync_server(sync_response(1, [wire_change(
+        "create_task",
+        "task",
+        "CCCCCCCCCCCCCCCC",
+        json!({
+            "title": "remote collision",
+            "project_id": "BBBBBBBBBBBBBBBB",
+            "project_key": "app",
+            "project_name": "app",
+            "project_prefix": "APP",
         })
-        .to_string();
-        write!(
-            stream,
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
-            body.len(),
-            body
-        )
-        .expect("write fake response");
-    });
+    )]));
 
     ok(env.aven(&db, ["sync", "--server", &url]));
     assert_eq!(
@@ -547,51 +525,21 @@ fn same_key_remote_project_writes_alias() {
 
 #[test]
 fn prefix_only_remote_project_collision_gets_unique_prefix() {
-    use std::io::{BufRead as _, BufReader, Write as _};
-    use std::net::TcpListener;
-    use std::thread;
-
     let env = TestEnv::new();
     let db = env.db("prefix-collision.sqlite");
     ok(env.aven(&db, ["project", "create", "App"]));
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake sync server");
-    let url = format!("http://{}", listener.local_addr().expect("fake sync addr"));
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept sync request");
-        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
-        let mut line = String::new();
-        loop {
-            line.clear();
-            reader.read_line(&mut line).expect("read request line");
-            if line == "\r\n" || line.is_empty() {
-                break;
-            }
-        }
-        let body = serde_json::json!({
-            "protocol_version": 3,
-            "cursor": 1,
-            "changes": [wire_change(
-                "create_task",
-                "task",
-                "CCCCCCCCCCCCCCCC",
-                json!({
-                    "title": "remote prefix collision",
-                    "project_id": "BBBBBBBBBBBBBBBB",
-                    "project_key": "service",
-                    "project_name": "service",
-                    "project_prefix": "APP",
-                })
-            )]
+    let (url, server) = start_fake_sync_server(sync_response(1, [wire_change(
+        "create_task",
+        "task",
+        "CCCCCCCCCCCCCCCC",
+        json!({
+            "title": "remote prefix collision",
+            "project_id": "BBBBBBBBBBBBBBBB",
+            "project_key": "service",
+            "project_name": "service",
+            "project_prefix": "APP",
         })
-        .to_string();
-        write!(
-            stream,
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
-            body.len(),
-            body
-        )
-        .expect("write fake response");
-    });
+    )]));
 
     ok(env.aven(&db, ["sync", "--server", &url]));
     assert_eq!(
@@ -620,10 +568,6 @@ fn prefix_only_remote_project_collision_gets_unique_prefix() {
 
 #[test]
 fn stale_project_id_alias_is_ignored_for_remote_task_create() {
-    use std::io::{BufRead as _, BufReader, Write as _};
-    use std::net::TcpListener;
-    use std::thread;
-
     let env = TestEnv::new();
     let db = env.db("stale-alias.sqlite");
     ok(env.aven(&db, ["add", "local seed", "--project", "app"]));
@@ -632,44 +576,18 @@ fn stale_project_id_alias_is_ignored_for_remote_task_create() {
         "INSERT INTO project_id_aliases(workspace_id, remote_project_id, local_project_id)
          VALUES ('0000000000000000', 'BBBBBBBBBBBBBBBB', 'DDDDDDDDDDDDDDDD')",
     );
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake sync server");
-    let url = format!("http://{}", listener.local_addr().expect("fake sync addr"));
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept sync request");
-        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
-        let mut line = String::new();
-        loop {
-            line.clear();
-            reader.read_line(&mut line).expect("read request line");
-            if line == "\r\n" || line.is_empty() {
-                break;
-            }
-        }
-        let body = serde_json::json!({
-            "protocol_version": 3,
-            "cursor": 1,
-            "changes": [wire_change(
-                "create_task",
-                "task",
-                "CCCCCCCCCCCCCCCC",
-                json!({
-                    "title": "remote with stale alias",
-                    "project_id": "BBBBBBBBBBBBBBBB",
-                    "project_key": "remote",
-                    "project_name": "remote",
-                    "project_prefix": "REM",
-                })
-            )]
+    let (url, server) = start_fake_sync_server(sync_response(1, [wire_change(
+        "create_task",
+        "task",
+        "CCCCCCCCCCCCCCCC",
+        json!({
+            "title": "remote with stale alias",
+            "project_id": "BBBBBBBBBBBBBBBB",
+            "project_key": "remote",
+            "project_name": "remote",
+            "project_prefix": "REM",
         })
-        .to_string();
-        write!(
-            stream,
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
-            body.len(),
-            body
-        )
-        .expect("write fake response");
-    });
+    )]));
 
     ok(env.aven(&db, ["sync", "--server", &url]));
 
@@ -1407,42 +1325,16 @@ fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
 
 #[test]
 fn wrong_response_protocol_version_is_rejected() {
-    use std::io::{BufRead as _, BufReader, Write as _};
-    use std::net::TcpListener;
-    use std::thread;
-
     let env = TestEnv::new();
     let db = env.db("client.sqlite");
     ok(env.aven(&db, ["add", "seed", "--project", "app"]));
     let changes_before = scalar_i64(&db, "SELECT count(*) FROM changes");
     let sync_cursor_before = meta_value(&db, "sync_cursor");
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake sync server");
-    let url = format!("http://{}", listener.local_addr().expect("fake sync addr"));
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept sync request");
-        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
-        let mut line = String::new();
-        loop {
-            line.clear();
-            reader.read_line(&mut line).expect("read request line");
-            if line == "\r\n" || line.is_empty() {
-                break;
-            }
-        }
-        let body = serde_json::json!({
-            "protocol_version": 0,
-            "cursor": 7,
-            "changes": [project_change_json("remote-change", "rogue")]
-        })
-        .to_string();
-        write!(
-            stream,
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
-            body.len(),
-            body
-        )
-        .expect("write fake response");
-    });
+    let (url, server) = start_fake_sync_server(json!({
+        "protocol_version": 0,
+        "cursor": 7,
+        "changes": [project_change_json("remote-change", "rogue")]
+    }));
 
     let error = fail(env.aven(&db, ["sync", "--server", &url]));
     contains_all(
