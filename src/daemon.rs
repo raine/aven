@@ -11,7 +11,7 @@ use tracing::{debug, info, warn};
 use crate::config::AppConfig;
 use crate::db::open_db;
 use crate::signals::shutdown_signal;
-use crate::sync::run_sync_with_page_budget;
+use crate::sync::SyncHttpClient;
 use crate::sync::wire::{DAEMON_INCOMPLETE_RESCHEDULE_MS, DAEMON_SYNC_PAGE_BUDGET};
 
 mod service;
@@ -53,12 +53,15 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         wake_addr
     );
 
+    let client = SyncHttpClient::new().context("build daemon sync HTTP client")?;
+    info!(server = %server, http_client_id = %client.id(), "daemon sync client ready");
     run_loop(
         pool,
         server,
         socket,
         interval_seconds,
         args.config.sync_auth_token().map(str::to_string),
+        client,
     )
     .await
 }
@@ -69,6 +72,7 @@ async fn run_loop(
     socket: UdpSocket,
     interval_seconds: u64,
     auth_token: Option<String>,
+    client: SyncHttpClient,
 ) -> Result<()> {
     let mut wake_buf = [0_u8; 16];
     let mut backoff_seconds = 1_u64;
@@ -92,7 +96,7 @@ async fn run_loop(
             _ = sleep_until(next_sync) => {
                 match timeout(
                     Duration::from_secs(35),
-                    sync_once(&pool, &server, auth_token.as_deref()),
+                    sync_once(&pool, &server, auth_token.as_deref(), &client),
                 )
                 .await
                 {
@@ -131,11 +135,17 @@ async fn sync_once(
     pool: &SqlitePool,
     server: &str,
     auth_token: Option<&str>,
+    client: &SyncHttpClient,
 ) -> Result<crate::sync::SyncSummary> {
     let mut conn = pool.acquire().await?;
-    let summary =
-        run_sync_with_page_budget(&mut conn, server, auth_token, Some(DAEMON_SYNC_PAGE_BUDGET))
-            .await?;
+    let summary = crate::sync::run_sync_with_page_budget_using_client(
+        &mut conn,
+        server,
+        auth_token,
+        Some(DAEMON_SYNC_PAGE_BUDGET),
+        client,
+    )
+    .await?;
     info!(
         pushed = summary.pushed,
         pulled = summary.pulled,
@@ -143,7 +153,9 @@ async fn sync_once(
         complete = summary.complete,
         pages = summary.pages,
         request_bytes = summary.request_bytes,
+        request_wire_bytes = summary.request_wire_bytes,
         response_bytes = summary.response_bytes,
+        response_compression = summary.response_compression,
         apply_ms = summary.apply_ms,
         "daemon sync completed"
     );

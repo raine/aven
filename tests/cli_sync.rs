@@ -2420,3 +2420,128 @@ async fn sync_server_rejects_malformed_delete_note_payloads() {
         .insert("field".to_string(), json!("description"));
     rejected_sync(&server, wrong_field, "field=notes").await;
 }
+
+#[test]
+fn sync_server_accepts_compressed_requests_and_sends_compressed_responses() {
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpStream;
+
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let body = json!({
+        "protocol_version": 5,
+        "client_id": "compressed-client",
+        "after": 0,
+        "pull_limit": MAX_PULL_BATCH,
+        "changes": []
+    })
+    .to_string();
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(body.as_bytes()).expect("write gzip body");
+    let compressed_body = encoder.finish().expect("finish gzip body");
+
+    let host = server
+        .url
+        .strip_prefix("http://")
+        .expect("loopback http url");
+    let mut stream = TcpStream::connect(host).expect("connect sync server");
+    write!(
+        stream,
+        "POST /sync HTTP/1.0\r\n\
+         Content-Type: application/json\r\n\
+         Content-Encoding: gzip\r\n\
+         Accept-Encoding: gzip\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\
+         \r\n",
+        compressed_body.len()
+    )
+    .expect("write sync request head");
+    stream
+        .write_all(&compressed_body)
+        .expect("write sync request body");
+
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).expect("read sync response");
+    let split = raw
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("http response split");
+    let head = String::from_utf8_lossy(&raw[..split]);
+    assert!(head.starts_with("HTTP/1.0 200"), "response head: {head}");
+    assert!(
+        head.to_ascii_lowercase().contains("content-encoding: gzip"),
+        "missing content-encoding: gzip in head:\n{head}"
+    );
+
+    let mut decoder = flate2::read::GzDecoder::new(&raw[(split + 4)..]);
+    let mut response_body = String::new();
+    decoder
+        .read_to_string(&mut response_body)
+        .expect("decode gzip response");
+    let response: Value = serde_json::from_str(&response_body).expect("sync response json");
+    assert_eq!(response["protocol_version"], json!(5));
+    assert_eq!(response["cursor"], json!(0));
+    assert_eq!(
+        response["changes"].as_array().expect("changes array").len(),
+        0
+    );
+}
+
+#[test]
+fn sync_server_rejects_unauthorized_compressed_request_before_body_parse() {
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpStream;
+
+    let server_env = TestEnv::new();
+    server_env.write_config(
+        r#"
+sync:
+  auth_token: "secret"
+"#,
+    );
+    let server = TestServer::start_configured(&server_env, "server.sqlite");
+
+    let body = json!({
+        "protocol_version": 5,
+        "client_id": "attacker",
+        "after": 0,
+        "pull_limit": MAX_PULL_BATCH,
+        "changes": []
+    })
+    .to_string();
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(body.as_bytes()).expect("write gzip body");
+    let compressed_body = encoder.finish().expect("finish gzip body");
+
+    let host = server
+        .url
+        .strip_prefix("http://")
+        .expect("loopback http url");
+    let mut stream = TcpStream::connect(host).expect("connect sync server");
+    write!(
+        stream,
+        "POST /sync HTTP/1.1\r\n\
+         Host: {host}\r\n\
+         Content-Type: application/json\r\n\
+         Content-Encoding: gzip\r\n\
+         Accept-Encoding: gzip\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\
+         \r\n",
+        compressed_body.len()
+    )
+    .expect("write sync request head");
+    stream
+        .write_all(&compressed_body)
+        .expect("write sync request body");
+
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).expect("read sync response");
+    let split = raw
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("http response split");
+    let head = String::from_utf8_lossy(&raw[..split]);
+    assert!(head.starts_with("HTTP/1.1 401"), "response head: {head}");
+}

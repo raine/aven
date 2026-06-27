@@ -3,13 +3,17 @@ use std::net::IpAddr;
 use std::time::Instant;
 
 use anyhow::{Result, bail};
+use axum::body::Body;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, Request, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
 use sqlx::{SqliteConnection, SqlitePool};
 use tokio::net::TcpListener;
+use tower_http::compression::CompressionLayer;
+use tower_http::decompression::RequestDecompressionLayer;
 use tracing::{error, info, warn};
 
 use super::wire::{
@@ -110,6 +114,9 @@ pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> R
     );
     let app = Router::new()
         .route("/sync", post(sync_handler))
+        .layer(RequestDecompressionLayer::new())
+        .layer(middleware::from_fn_with_state(state.clone(), verify_auth))
+        .layer(CompressionLayer::new())
         .with_state(state);
     let listener = TcpListener::bind(args.bind).await?;
     let addr = listener.local_addr()?;
@@ -123,17 +130,28 @@ pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> R
     Ok(())
 }
 
-async fn sync_handler(
+async fn verify_auth(
     State(state): State<ServerState>,
     headers: HeaderMap,
-    Json(request): Json<SyncRequest>,
+    request: Request<Body>,
+    next: Next,
 ) -> Response {
     if let Err(status) = validate_auth(&state, &headers) {
         if status == StatusCode::UNAUTHORIZED {
-            warn!(auth_enabled = true, "sync request unauthorized");
+            warn!(
+                auth_enabled = state.auth_token.is_some(),
+                "sync request unauthorized"
+            );
         }
         return status.into_response();
     }
+    next.run(request).await
+}
+
+async fn sync_handler(
+    State(state): State<ServerState>,
+    Json(request): Json<SyncRequest>,
+) -> Response {
     match handle_sync(state, request).await {
         Ok(response) => Json(response).into_response(),
         Err(err) => {

@@ -155,7 +155,9 @@ sync:
             "cursor=",
             "complete=",
             "request_bytes=",
+            "request_wire_bytes=",
             "response_bytes=",
+            "response_compression=",
             "http_ms=",
             "apply_ms=",
             "has_more=",
@@ -229,14 +231,23 @@ fn daemon_sync_logging_redacts_task_content() {
             "complete=",
             "pages=",
             "request_bytes=",
+            "request_wire_bytes=",
             "response_bytes=",
+            "response_compression=",
             "apply_ms=",
         ],
     );
     assert_log_event_contains(
         &logs,
         "sync client page completed",
-        &["page=", "request_bytes=", "response_bytes=", "apply_ms="],
+        &[
+            "page=",
+            "request_bytes=",
+            "request_wire_bytes=",
+            "response_bytes=",
+            "response_compression=",
+            "apply_ms=",
+        ],
     );
     contains_none(
         &logs,

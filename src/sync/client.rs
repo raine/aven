@@ -1,7 +1,9 @@
 use std::collections::HashSet;
+use std::io::Write;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use flate2::write::GzEncoder;
 use sqlx::{QueryBuilder, Sqlite, SqliteConnection};
 use tracing::info;
 
@@ -15,7 +17,30 @@ use crate::config;
 use crate::db::{begin_immediate, get_meta, set_meta};
 use crate::ids::now;
 
-#[derive(Debug, Clone, Copy)]
+const GZIP_THRESHOLD: usize = 256;
+
+#[derive(Debug, Clone)]
+pub(crate) struct SyncHttpClient {
+    pub(crate) inner: reqwest::Client,
+    id: String,
+}
+
+impl SyncHttpClient {
+    pub(crate) fn new() -> Result<Self> {
+        let inner = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .context("build sync HTTP client")?;
+        let id = format!("sc-{}", crate::ids::new_id());
+        Ok(Self { inner, id })
+    }
+
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct SyncSummary {
     pub(crate) pushed: i64,
     pub(crate) pulled: usize,
@@ -23,8 +48,16 @@ pub(crate) struct SyncSummary {
     pub(crate) complete: bool,
     pub(crate) pages: usize,
     pub(crate) request_bytes: usize,
+    pub(crate) request_wire_bytes: usize,
     pub(crate) response_bytes: usize,
+    pub(crate) response_compression: String,
     pub(crate) apply_ms: u128,
+}
+
+fn gzip_encode(body: &[u8]) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(body).expect("gzip encode request body");
+    encoder.finish().expect("finish gzip compression")
 }
 
 pub(crate) async fn sync_client(
@@ -49,15 +82,16 @@ pub(crate) async fn run_sync_once(
     run_sync_with_page_budget(conn, server, auth_token, None).await
 }
 
-pub(crate) async fn run_sync_with_page_budget(
+pub(crate) async fn run_sync_with_page_budget_using_client(
     conn: &mut SqliteConnection,
     server: &str,
     auth_token: Option<&str>,
     page_budget: Option<usize>,
+    client: &SyncHttpClient,
 ) -> Result<SyncSummary> {
     let attempted_at = now();
     set_meta(conn, "sync_last_attempt_at", &attempted_at).await?;
-    match run_sync_once_inner(conn, server, auth_token, &attempted_at, page_budget).await {
+    match run_sync_once_inner(conn, server, auth_token, &attempted_at, page_budget, client).await {
         Ok(summary) => Ok(summary),
         Err(error) => {
             let error_text = format!("{error:#}");
@@ -67,30 +101,41 @@ pub(crate) async fn run_sync_with_page_budget(
     }
 }
 
+pub(crate) async fn run_sync_with_page_budget(
+    conn: &mut SqliteConnection,
+    server: &str,
+    auth_token: Option<&str>,
+    page_budget: Option<usize>,
+) -> Result<SyncSummary> {
+    let client = SyncHttpClient::new()?;
+    run_sync_with_page_budget_using_client(conn, server, auth_token, page_budget, &client).await
+}
+
 async fn run_sync_once_inner(
     conn: &mut SqliteConnection,
     server: &str,
     auth_token: Option<&str>,
     attempted_at: &str,
     page_budget: Option<usize>,
+    client: &SyncHttpClient,
 ) -> Result<SyncSummary> {
+    #[allow(unused_assignments)]
+    let mut last_response_compression = String::new();
     validate_sync_server(conn, server).await?;
     let client_id = get_meta(conn, "client_id")
         .await?
         .context("missing client id")?;
     let url = format!("{}/sync", server.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
     let mut total_pushed = 0_i64;
     let mut total_pulled = 0_usize;
     let mut cursor = sync_cursor(conn).await?;
     let mut pages = 0_usize;
     let complete;
     let mut total_request_bytes = 0_usize;
+    let mut total_request_wire_bytes = 0_usize;
     let mut total_response_bytes = 0_usize;
     let mut total_apply_ms = 0_u128;
-    info!(server = %server, "sync client starting");
+    info!(server = %server, http_client_id = %client.id(), "sync client starting");
 
     loop {
         let changes = load_unsynced_changes(conn, MAX_PUSH_BATCH).await?;
@@ -109,16 +154,34 @@ async fn run_sync_once_inner(
         };
         let request_body = serde_json::to_vec(&sync_request)?;
         let request_bytes = request_body.len();
+        let (wire_body, request_wire_bytes) = if request_bytes > GZIP_THRESHOLD {
+            let compressed = gzip_encode(&request_body);
+            let wire = compressed.len();
+            (compressed, wire)
+        } else {
+            (request_body, request_bytes)
+        };
         let mut request = client
+            .inner
             .post(&url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(request_body);
+            .body(wire_body);
+        if request_wire_bytes != request_bytes {
+            request = request.header(reqwest::header::CONTENT_ENCODING, "gzip");
+        }
         if let Some(token) = auth_token {
             request = request.bearer_auth(token);
         }
         let http_started = Instant::now();
-        let response_body = request.send().await?.error_for_status()?.bytes().await?;
+        let response = request.send().await?.error_for_status()?;
         let http_ms = http_started.elapsed().as_millis();
+        last_response_compression = response
+            .headers()
+            .get(reqwest::header::CONTENT_ENCODING)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("none")
+            .to_string();
+        let response_body = response.bytes().await?;
         let response_bytes = response_body.len();
         let response: SyncResponse = serde_json::from_slice(&response_body)?;
         validate_sync_response_for_request(cursor, pull_limit, &request_change_ids, &response)?;
@@ -131,6 +194,7 @@ async fn run_sync_once_inner(
         cursor = response.cursor;
         pages += 1;
         total_request_bytes += request_bytes;
+        total_request_wire_bytes += request_wire_bytes;
         total_response_bytes += response_bytes;
         total_apply_ms += apply_ms;
 
@@ -145,7 +209,9 @@ async fn run_sync_once_inner(
             cursor,
             complete = page_complete,
             request_bytes,
+            request_wire_bytes,
             response_bytes,
+            response_compression = last_response_compression,
             http_ms,
             apply_ms,
             has_more = response.has_more,
@@ -166,7 +232,9 @@ async fn run_sync_once_inner(
         complete,
         pages,
         request_bytes = total_request_bytes,
+        request_wire_bytes = total_request_wire_bytes,
         response_bytes = total_response_bytes,
+        response_compression = last_response_compression,
         apply_ms = total_apply_ms,
         "sync client finished"
     );
@@ -177,7 +245,9 @@ async fn run_sync_once_inner(
         complete,
         pages,
         request_bytes: total_request_bytes,
+        request_wire_bytes: total_request_wire_bytes,
         response_bytes: total_response_bytes,
+        response_compression: last_response_compression,
         apply_ms: total_apply_ms,
     })
 }
