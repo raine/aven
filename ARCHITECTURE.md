@@ -6,15 +6,15 @@
 
 | Layer | Owns | Start here | Rules |
 | --- | --- | --- | --- |
-| CLI entry and dispatch | argument parsing, command routing, config load, database open, daemon wake | `src/main.rs`, `src/lib.rs`, `src/cli.rs`, `src/commands.rs` | Command handlers format input and output. Business writes belong in operations or mutation helpers. |
+| CLI entry and dispatch | argument parsing, command routing, config load, database open, daemon wake | `src/main.rs`, `src/lib.rs`, `src/cli.rs`, `src/commands.rs` | Command handlers own orchestration and command-local formatting. Business writes belong in operations or mutation helpers. |
 | Write model | transactional task, project, label, conflict, config, and workspace changes | `src/operations/`, `src/mutation.rs`, `src/task_fields.rs` | Synced scalar task writes must update tasks, `changes`, and `field_versions` together. |
 | Read model | task lists, project lists, sidebar counts, filters, sorting, refs, and enrichment | `src/query.rs`, `src/query/`, `src/task_enrichment.rs`, `src/refs.rs`, `src/queue.rs` | Batch task-list enrichment. Avoid per-row queries on list paths. |
 | Persistence | SQLite setup, migrations, sync metadata, conflict helpers, SQLx metadata | `src/db.rs`, `migrations/`, `.sqlx/` | Create migrations with `just migration-new <lower_snake_name>`. Refresh SQLx metadata after query or schema changes. |
-| Config and routing | config files, path mappings, workspace resolution, project inference | `src/config.rs`, `src/config_edit.rs`, `src/workspaces.rs`, `src/projects.rs` | Workspace-scoped commands must resolve an active workspace before domain lookup. |
+| Config and routing | config files, managed config text edits, path mappings, workspace resolution, project inference | `src/config.rs`, `src/config_edit.rs`, `src/workspaces.rs`, `src/projects.rs` | `src/config.rs` owns durable config text writes. Managed entry text surgery belongs in `src/config_edit.rs`. Workspace-scoped commands must resolve an active workspace before domain lookup. |
 | Sync and daemon | HTTP sync client/server, wire DTOs, remote apply, wake loop | `src/sync.rs`, `src/sync/`, `src/daemon.rs` | Wire shapes, protocol version, server validation, and remote apply semantics must evolve together. |
-| TUI app | event loop, actions, overlays, store, rendering, undo, platform helpers | `src/tui/` | Store modules own DB access. UI modules render view models. Overlay routes drive behavior, not titles. |
-| Shared domain helpers | IDs, choices, labels, input loading, text rendering, logging, fuzzy matching | `src/ids.rs`, `src/choices.rs`, `src/labels.rs`, `src/input.rs`, `src/render.rs`, `src/task_render.rs`, `src/logging.rs`, `src/fuzzy.rs`, `src/types.rs` | Reuse canonical helpers instead of duplicating validation, display, or parsing rules. |
-| Tests and tooling | CLI integration tests, TUI/store tests, SQL index checks, just tasks | `tests/`, `src/tui/*tests.rs`, `justfile` | Add focused tests near the subsystem and rely on commit hooks for the full gate. |
+| TUI app | event loop, actions, overlays, store, rendering, undo, natural add runtime, platform helpers | `src/tui/` | Store modules own DB access. UI modules render view models. Overlay routes drive behavior, not titles. Natural add worker setup belongs in `src/tui/natural_add_runtime.rs`. |
+| Shared domain helpers | IDs, choices, labels, input loading, text rendering, CLI render output, logging, fuzzy matching | `src/ids.rs`, `src/choices.rs`, `src/labels.rs`, `src/input.rs`, `src/render.rs`, `src/task_render.rs`, `src/logging.rs`, `src/fuzzy.rs`, `src/types.rs` | Reuse canonical helpers instead of duplicating validation, display, diff, or parsing rules. |
+| Tests and tooling | CLI integration tests, TUI/store tests, overlay module tests, SQL index checks, just tasks | `tests/`, `src/tui/*tests.rs`, `src/tui/overlay/`, `justfile` | Add focused tests near the subsystem and rely on commit hooks for the full gate. |
 
 ## Runtime flows
 
@@ -32,7 +32,8 @@
 3. `App` methods coordinate flow state, then call `TuiStore` facade methods in `src/tui/store.rs`.
 4. `TaskViewState` is the source of truth for TUI task lists. It carries scope, view, filter modifiers, flat order, and direction, then derives query filters, query mode, and render mode.
 5. Store modules call the same operations, mutation, and query helpers as the CLI.
-6. `src/tui/ui.rs` and `src/tui/ui/` render state. Rendering code should not touch the database.
+6. Natural-language add flow stays in `App`; background worker command construction, environment propagation, process setup, and log path selection live in `src/tui/natural_add_runtime.rs`.
+7. `src/tui/ui.rs` and `src/tui/ui/` render state. Rendering code should not touch the database.
 
 ### Sync flow
 
@@ -75,13 +76,15 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Use `src/query.rs`, `src/query/`, and enrichment helpers for read models.
 - Keep scalar task fields aligned across validation, task rows, `changes`, `field_versions`, sync apply, and conflict resolution.
 - Keep workspace scope explicit on queries and mutations that operate on user data.
-- Keep CLI output formatting in command or render modules, not in persistence helpers.
+- Keep config serialization and durable text writes in `src/config.rs`; keep managed-entry text transforms in `src/config_edit.rs`.
+- Keep CLI output formatting in command or render modules, not in persistence helpers. Use `src/render.rs` for shared quoting, changed flag text, multiline blocks, near-match errors, and text diffs.
 - Keep TUI database access in `src/tui/store/`; keep `src/tui/ui/` rendering-only.
 - Derive TUI task list filters, query mode, and render mode from `TaskViewState`; do not keep parallel project, status, view, or queue-sort state.
 - Treat project selection in the TUI as scope. Project scope must not be modeled as a filter modifier or view.
 - TUI overlays carry `OverlayRoute` so behavior survives title text changes.
 - TUI shortcuts use intent prefixes in the command catalog. Navigation and scope use `g`, named views use `v`, composable filters use `f`, ordering uses `o`, selected-task actions use `t`, project administration uses `p`, label administration uses `L`, conflicts use `c`, and config uses `C`.
 - Overlay dialogs should use shared helpers in `src/tui/ui/dialog.rs` for title edges, frame clearing, background, border, and footer hint styling.
+- Overlay behavior tests live in the overlay module they exercise under `src/tui/overlay/`; the facade in `src/tui/overlay.rs` stays focused on module wiring and exports.
 - Record a TUI undo entry for completed TUI mutations unless the action is undo itself; pending TUI undo entries are valid only within the current `TuiStore` lifecycle and are cleared on store startup.
 - Do not log auth tokens, raw sync payloads, task descriptions, note bodies, user-authored labels or project names, or secret config values.
 
@@ -89,16 +92,17 @@ SQLite stores synced task data and local UI state. Config files store local rout
 
 | Change | Start here | Also check | Tests |
 | --- | --- | --- | --- |
-| Add or change a CLI command | `src/cli.rs`, `src/lib.rs`, `src/commands.rs` | `src/operations/` for writes, `src/input.rs` for text input, `src/task_render.rs` for task output | focused `tests/cli_*.rs` |
+| Add or change a CLI command | `src/cli.rs`, `src/lib.rs`, `src/commands.rs` | `src/operations/` for writes, `src/input.rs` for text input, `src/render.rs` for shared output helpers, `src/task_render.rs` for task output | focused `tests/cli_*.rs` |
 | Add a task scalar field | migration, `src/types.rs`, `src/task_fields.rs`, `src/mutation.rs` | `src/operations/tasks.rs`, `src/sync/apply.rs`, `src/sync/wire.rs`, `src/query/`, CLI and TUI renderers | sync, conflict, CLI, and TUI tests |
 | Add task dependency relations | `src/operations/dependencies.rs`, `src/query/dependencies.rs` | `src/commands.rs`, `src/task_render.rs`, `src/sync/apply.rs`, `src/sync/server.rs` | `tests/cli_dependencies.rs`, `tests/cli_sync.rs` |
 | Change task list, filters, sorting, or refs | `src/query/`, `src/query.rs`, `src/refs.rs`, `src/queue.rs` | CLI list rendering, `src/tui/store/types.rs`, `src/tui/store/view.rs`, indexes | `tests/tui_query.rs`, `tests/sqlite_read_path_indexes.rs`, focused CLI tests |
-| Add or change a TUI action | `src/tui/event/catalog.rs`, `src/tui/app_dispatch.rs`, `src/tui/app.rs` | flow helpers, overlays, store module, undo | `src/tui/app_tests.rs`, `src/tui/store/tests.rs`, overlay tests |
-| Add or change TUI overlay rendering | `src/tui/overlay.rs`, `src/tui/overlay/`, `src/tui/ui/overlays.rs`, `src/tui/ui/overlays/` | `OverlayRoute`, shared dialog helpers, input helpers, theme | overlay rendering tests in `src/tui/ui/overlays/tests.rs` |
+| Add or change a TUI action | `src/tui/event/catalog.rs`, `src/tui/app_dispatch.rs`, `src/tui/app.rs` | flow helpers, overlays, store module, undo, `src/tui/natural_add_runtime.rs` for natural-add worker setup | `src/tui/app_tests.rs`, `src/tui/store/tests.rs`, overlay module tests |
+| Add or change TUI overlay behavior | `src/tui/overlay.rs`, `src/tui/overlay/` | `OverlayRoute`, input helpers, state builders, view projection, module-local tests | `cargo test tui::overlay` |
+| Add or change TUI overlay rendering | `src/tui/ui/overlays.rs`, `src/tui/ui/overlays/` | overlay view models, shared dialog helpers, input helpers, theme | overlay rendering tests in `src/tui/ui/overlays/tests.rs` |
 | Change sync protocol or conflict handling | `src/sync/wire.rs`, `src/sync/apply.rs`, `src/sync/server.rs`, `src/sync/client.rs` | `src/mutation.rs`, `src/task_fields.rs`, migrations if persisted | `tests/cli_sync*.rs`, `tests/cli_conflicts.rs` |
 | Add or change backup, export, or import commands | `src/cli.rs`, `src/lib.rs`, `src/commands/data_safety.rs`, `src/db.rs` | doctor output and integrity checks in `src/commands.rs` | `tests/cli_data_safety.rs`, `tests/cli_doctor.rs` |
-| Change config, workspace, or project path routing | `src/config.rs`, `src/config_edit.rs`, `src/workspaces.rs`, `src/projects.rs` | doctor, project commands, TUI workspace and project pickers | `tests/cli_config_daemon.rs`, `tests/cli_workspaces.rs`, `tests/cli_doctor.rs` |
-| Change natural-language task intake or agent primer | `src/task_intake.rs`, `src/skill.md` | config schema, `aven prime`, add-task flows | `tests/cli_task_intake.rs`, focused add-task tests |
+| Change config, workspace, or project path routing | `src/config.rs`, `src/config_edit.rs`, `src/workspaces.rs`, `src/projects.rs` | config text writes, managed-entry edits, doctor, project commands, TUI workspace and project pickers | `tests/cli_config_daemon.rs`, `tests/cli_workspaces.rs`, `tests/cli_doctor.rs` |
+| Change natural-language task intake or agent primer | `src/task_intake.rs`, `src/skill.md` | config schema, `aven prime`, add-task flows, `src/tui/natural_add_runtime.rs` for TUI background worker setup | `tests/cli_task_intake.rs`, focused add-task tests |
 | Change logging | `src/logging.rs` and call sites | safe field policy in guardrails | `tests/cli_logging.rs` |
 
 ## Common feature checklists
