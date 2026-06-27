@@ -157,6 +157,7 @@ fn search_result_item(title: &str) -> SearchResultItem {
         project_key: "aven".to_string(),
         status: "todo".to_string(),
         priority: "high".to_string(),
+        created_at: "2026-06-20T00:00:00Z".to_string(),
         labels: vec!["ux".to_string()],
         matched_field: crate::query::SearchMatchedField::Title,
         snippet: None,

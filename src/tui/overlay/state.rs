@@ -46,6 +46,7 @@ pub(crate) struct SearchResultItem {
     pub(crate) project_key: String,
     pub(crate) status: String,
     pub(crate) priority: String,
+    pub(crate) created_at: String,
     pub(crate) labels: Vec<String>,
     pub(crate) matched_field: SearchMatchedField,
     pub(crate) snippet: Option<String>,

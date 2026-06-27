@@ -2,17 +2,21 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Paragraph};
 
 use super::super::dialog::Dialog;
-use super::super::input::input_line;
+use super::super::input::{cursor_cell, input_line};
 use super::super::task_display::{description_preview_text, labels_display};
 use super::super::truncate::truncate_chars;
 use crate::query::SearchMatchedField;
+use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::overlay::SearchResultItem;
-use crate::tui::theme::{self, ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, GREEN, SELECTED};
+use crate::tui::theme::{
+    self, ACCENT, BG, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, GREEN, SELECTED,
+};
 
 const RESULT_ROWS: usize = 8;
+const SEARCH_PLACEHOLDER: &str = "Search by ref, title, label, project, note, status, or priority";
 
 pub(in crate::tui::ui) fn render_search(
     frame: &mut Frame,
@@ -23,10 +27,13 @@ pub(in crate::tui::ui) fn render_search(
 ) {
     let width = frame.area().width.saturating_sub(8).clamp(72, 110);
     let result_rows = (results.len().min(RESULT_ROWS) as u16).clamp(3, RESULT_ROWS as u16);
-    let preview_rows = if results.is_empty() { 3 } else { 7 };
-    let height = (result_rows * 2 + preview_rows + 5)
-        .min(frame.area().height.saturating_sub(2))
-        .max(10);
+    let height = if results.is_empty() {
+        4
+    } else {
+        (result_rows * 2 + 12)
+            .min(frame.area().height.saturating_sub(2))
+            .max(14)
+    };
     let area = Dialog::new("Search", width, height)
         .render_block_at(frame, search_dialog_area(frame.area(), width, height));
     let [input_area, body_area, hint_area] = Layout::vertical([
@@ -35,17 +42,21 @@ pub(in crate::tui::ui) fn render_search(
         Constraint::Length(1),
     ])
     .areas(area);
-    frame.render_widget(Paragraph::new(input_line("/", input, cursor)), input_area);
+    frame.render_widget(Paragraph::new(search_input_line(input, cursor)), input_area);
 
     if results.is_empty() {
         render_empty_state(frame, body_area, input);
     } else if body_area.width < 96 {
         render_stacked_results(frame, body_area, results, selected);
     } else {
-        let [list_area, preview_area] =
-            Layout::horizontal([Constraint::Percentage(48), Constraint::Percentage(52)])
-                .areas(body_area);
+        let [list_area, divider_area, preview_area] = Layout::horizontal([
+            Constraint::Percentage(48),
+            Constraint::Length(1),
+            Constraint::Percentage(52),
+        ])
+        .areas(body_area);
         render_result_list(frame, list_area, results, selected);
+        render_divider(frame, divider_area);
         render_preview(frame, preview_area, results.get(selected));
     }
 
@@ -69,20 +80,25 @@ fn search_dialog_area(frame: Rect, width: u16, height: u16) -> Rect {
     }
 }
 
+fn search_input_line(input: &str, cursor: usize) -> Line<'static> {
+    if input.is_empty() {
+        return Line::from(vec![
+            Span::raw("/"),
+            cursor_cell(" "),
+            Span::styled(SEARCH_PLACEHOLDER, Style::new().fg(FG_DIM)),
+        ]);
+    }
+    input_line("/", input, cursor)
+}
+
 fn render_empty_state(frame: &mut Frame, area: Rect, input: &str) {
-    let message = if input.trim().is_empty() {
-        "Search by ref, title, label, project, note, status, or priority"
-    } else {
-        "No matching tasks"
-    };
-    frame.render_widget(
-        Paragraph::new(Text::from(vec![
-            Line::from(""),
-            Line::from(Span::styled(message, Style::new().fg(FG_DIM))),
-        ]))
-        .style(Style::new().bg(BG_ALT)),
-        area,
-    );
+    if !input.trim().is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled("No matching tasks", Style::new().fg(FG_DIM)))
+                .style(Style::new().bg(BG_ALT)),
+            area,
+        );
+    }
 }
 
 fn render_stacked_results(
@@ -91,9 +107,13 @@ fn render_stacked_results(
     results: &[SearchResultItem],
     selected: usize,
 ) {
-    let preview_height = 7.min(area.height.saturating_sub(4));
-    let [list_area, preview_area] =
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(preview_height)]).areas(area);
+    let preview_height = 7.min(area.height.saturating_sub(5));
+    let [list_area, divider_area, preview_area] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(1),
+        Constraint::Length(preview_height),
+    ])
+    .areas(area);
     let list_rows = (list_area.height / 2).max(1) as usize;
     let lines = results
         .iter()
@@ -110,6 +130,7 @@ fn render_stacked_results(
         Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG_ALT)),
         list_area,
     );
+    render_horizontal_divider(frame, divider_area);
     render_preview(frame, preview_area, results.get(selected));
 }
 
@@ -136,10 +157,25 @@ fn render_result_list(
     );
 }
 
+fn render_divider(frame: &mut Frame, area: Rect) {
+    let lines = (0..area.height)
+        .map(|_| Line::from("│"))
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::new().fg(BORDER).bg(BG_ALT)),
+        area,
+    );
+}
+
+fn render_horizontal_divider(frame: &mut Frame, area: Rect) {
+    frame.render_widget(Block::new().style(Style::new().bg(BORDER)), area);
+}
+
 fn render_preview(frame: &mut Frame, area: Rect, result: Option<&SearchResultItem>) {
     let Some(result) = result else {
         return;
     };
+    frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
     let inner = Rect {
         x: area.x.saturating_add(1),
         width: area.width.saturating_sub(1),
@@ -158,10 +194,10 @@ fn render_preview(frame: &mut Frame, area: Rect, result: Option<&SearchResultIte
             ),
         ]),
         Line::from(vec![
-            status_span(&result.status, BG_ALT),
-            Span::styled("  ", Style::new().fg(FG_DIM)),
-            priority_span(&result.priority, BG_ALT),
-            Span::styled("  ", Style::new().fg(FG_DIM)),
+            status_span(&result.status, BG),
+            Span::styled("  ", Style::new().fg(FG_DIM).bg(BG)),
+            priority_span(&result.priority, BG),
+            Span::styled("  ", Style::new().fg(FG_DIM).bg(BG)),
             Span::styled(
                 truncate_chars(&result.project_key, 24),
                 Style::new()
@@ -171,12 +207,15 @@ fn render_preview(frame: &mut Frame, area: Rect, result: Option<&SearchResultIte
             deleted_span(result.deleted),
         ]),
         Line::from(vec![
-            Span::styled("match ", Style::new().fg(FG_DIM)),
+            Span::styled("match ", Style::new().fg(FG_DIM).bg(BG)),
             Span::styled(
                 result.matched_field.as_str(),
-                Style::new().fg(GREEN).add_modifier(Modifier::BOLD),
+                Style::new().fg(GREEN).bg(BG).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(format!("  score {}", result.score), Style::new().fg(FG_DIM)),
+            Span::styled(
+                format!("  age {}", task_age(result)),
+                Style::new().fg(FG_DIM).bg(BG),
+            ),
         ]),
         Line::from(vec![
             Span::styled("labels ", Style::new().fg(FG_DIM)),
@@ -185,7 +224,7 @@ fn render_preview(frame: &mut Frame, area: Rect, result: Option<&SearchResultIte
                     &labels_display(&result.labels, ", "),
                     inner.width.saturating_sub(8) as usize,
                 ),
-                Style::new().fg(FG_MUTED),
+                Style::new().fg(FG_MUTED).bg(BG),
             ),
         ]),
         Line::from(""),
@@ -194,10 +233,12 @@ fn render_preview(frame: &mut Frame, area: Rect, result: Option<&SearchResultIte
         .snippet
         .as_deref()
         .unwrap_or(result.description.as_str());
-    lines.push(Line::from(Span::styled(
-        preview_label(result.matched_field),
-        Style::new().fg(FG_DIM),
-    )));
+    if !preview.trim().is_empty() {
+        lines.push(Line::from(Span::styled(
+            preview_label(result.matched_field),
+            Style::new().fg(FG_DIM).bg(BG),
+        )));
+    }
     lines.extend(
         wrapped_preview_lines(
             &description_preview_text(preview),
@@ -205,10 +246,10 @@ fn render_preview(frame: &mut Frame, area: Rect, result: Option<&SearchResultIte
             inner.height.saturating_sub(lines.len() as u16) as usize,
         )
         .into_iter()
-        .map(|line| Line::from(Span::styled(line, Style::new().fg(FG_MUTED)))),
+        .map(|line| Line::from(Span::styled(line, Style::new().fg(FG_MUTED).bg(BG)))),
     );
     frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG_ALT)),
+        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG)),
         inner,
     );
 }
@@ -237,10 +278,11 @@ fn result_meta_line(result: &SearchResultItem, selected: bool, width: usize) -> 
     let labels = labels_display(&result.labels, ", ");
     let deleted = if result.deleted { " deleted" } else { "" };
     let meta = format!(
-        "  {} · {} · {} · match={}{}",
+        "  {} · {} · {} · age={} · match={}{}",
         result.status,
         result.priority,
         labels,
+        task_age(result),
         result.matched_field.as_str(),
         deleted
     );
@@ -279,6 +321,32 @@ fn deleted_span(deleted: bool) -> Span<'static> {
     } else {
         Span::raw("")
     }
+}
+
+fn task_age(result: &SearchResultItem) -> String {
+    unix_seconds(&result.created_at)
+        .map(|created_at| compact_age(now_seconds().saturating_sub(created_at).max(0)))
+        .unwrap_or_else(|| "?".to_string())
+}
+
+fn compact_age(age_seconds: i64) -> String {
+    let minutes = age_seconds / 60;
+    if minutes < 60 {
+        return format!("{}m", minutes.max(0));
+    }
+    let hours = minutes / 60;
+    if hours < 24 {
+        return format!("{hours}h");
+    }
+    let days = hours / 24;
+    if days < 14 {
+        return format!("{days}d");
+    }
+    let weeks = days / 7;
+    if weeks < 13 {
+        return format!("{weeks}w");
+    }
+    format!("{}mo", days / 30)
 }
 
 fn preview_label(field: SearchMatchedField) -> &'static str {

@@ -866,6 +866,20 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
+    async fn search_overlay_allows_j_and_k_text_input() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("keyboard needle")).await;
+
+        app.begin_search();
+        type_chars(&mut app, "jk").await;
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Search(state)) if state.input.as_str() == "jk"
+        ));
+    }
+
+    #[tokio::test]
     async fn search_overlay_refreshes_results_after_paste() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("pasted needle")).await;

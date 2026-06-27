@@ -415,11 +415,11 @@ impl App {
                         self.accept_search_input(state.input.text).await?;
                     }
                 }
-                KeyCode::Down | KeyCode::Char('j') if !state.results.is_empty() => {
+                KeyCode::Down if !state.results.is_empty() => {
                     state.selected = (state.selected + 1) % state.results.len();
                     self.overlay = Some(OverlayState::Search(state));
                 }
-                KeyCode::Up | KeyCode::Char('k') if !state.results.is_empty() => {
+                KeyCode::Up if !state.results.is_empty() => {
                     state.selected = state
                         .selected
                         .checked_sub(1)
@@ -819,6 +819,7 @@ impl App {
                 project_key: result.item.task.project_key,
                 status: result.item.task.status,
                 priority: result.item.task.priority,
+                created_at: result.item.task.created_at,
                 labels: result.item.labels,
                 matched_field: result.matched_field,
                 snippet: result.snippet,
