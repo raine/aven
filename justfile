@@ -65,7 +65,7 @@ clippy:
 
 # Auto-fix clippy warnings
 clippy-fix:
-    @scripts/quiet-check clippy-fix cargo clippy --fix --allow-dirty --all-targets -- -D warnings -W clippy::all
+    @scripts/quiet-check clippy-fix cargo clippy --fix --allow-dirty --target-dir target/clippy --all-targets -- -D warnings -W clippy::all
 
 # Build the project
 build:
