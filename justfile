@@ -12,7 +12,7 @@ check: check-fast-readonly migration-order clippy test
 
 # Run cheap read-only checks in parallel
 check-fast-readonly:
-    @scripts/run-checks format-check static-analysis
+    @checkle run fast-readonly
 
 # Check migration filenames and branch ordering
 migration-order:
@@ -38,7 +38,7 @@ install-hooks:
 
 # Install local tools used by quality gates
 install-quality-tools:
-    cargo install cargo-deny cargo-machete cargo-nextest sqlx-cli
+    cargo install checkle cargo-deny cargo-machete cargo-nextest sqlx-cli
 
 # Run the full gate and fail if there are uncommitted changes
 check-ci: check-full
@@ -57,11 +57,11 @@ format:
 
 # Check Rust formatting without changing files
 format-check:
-    @scripts/quiet-check format-check cargo fmt --all -- --check
+    @checkle run format-check
 
 # Run clippy and fail on any warnings
 clippy:
-    @scripts/quiet-check clippy scripts/cargo-json-check clippy cargo clippy --message-format=json --all-targets -- -D warnings -D clippy::all
+    @checkle run clippy
 
 # Auto-fix clippy warnings
 clippy-fix:
@@ -77,8 +77,7 @@ check-types:
 
 # Run tests
 test:
-    @scripts/quiet-check test scripts/nextest-check test env SQLX_OFFLINE=true cargo nextest run --all-targets --locked --no-fail-fast --status-level fail
-    @scripts/quiet-check doc-test scripts/cargo-json-check doc-test env SQLX_OFFLINE=true cargo test --doc --message-format=json --locked
+    @checkle run tests
 
 # Generate sqlx offline query metadata
 sqlx-prepare:
@@ -134,24 +133,7 @@ sqlx-check-if-needed:
 
 # Run installed static analysis tools
 static-analysis:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    ran=0
-    if command -v cargo-deny >/dev/null 2>&1; then
-      scripts/quiet-check cargo-deny cargo deny check
-      ran=1
-    else
-      echo "skip cargo-deny: not installed"
-    fi
-    if command -v cargo-machete >/dev/null 2>&1; then
-      scripts/quiet-check cargo-machete cargo machete --with-metadata
-      ran=1
-    else
-      echo "skip cargo-machete: not installed"
-    fi
-    if [[ "$ran" -eq 0 ]]; then
-      echo "no optional static analysis tools ran; install with 'just install-quality-tools'"
-    fi
+    @checkle run static-analysis
 
 # Install release binary globally
 install:

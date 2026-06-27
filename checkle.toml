@@ -1,0 +1,31 @@
+[[check]]
+name = "format-check"
+mode = "rustfmt"
+command = ["cargo", "fmt", "--all", "--", "--check"]
+
+[[check]]
+name = "clippy"
+mode = "cargo"
+command = ["cargo", "clippy", "--message-format=json", "--all-targets", "--", "-D", "warnings", "-D", "clippy::all"]
+
+[[check]]
+name = "test"
+mode = "nextest"
+command = ["env", "SQLX_OFFLINE=true", "cargo", "nextest", "run", "--all-targets", "--locked", "--no-fail-fast", "--status-level", "fail"]
+
+[[check]]
+name = "doc-test"
+mode = "cargo"
+command = ["env", "SQLX_OFFLINE=true", "cargo", "test", "--doc", "--message-format=json", "--locked"]
+
+[[group]]
+name = "all"
+checks = ["format-check", "clippy", "test", "doc-test", "static-analysis"]
+
+[[group]]
+name = "fast-readonly"
+checks = ["format-check", "static-analysis"]
+
+[[group]]
+name = "tests"
+checks = ["test", "doc-test"]
