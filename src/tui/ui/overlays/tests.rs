@@ -148,6 +148,23 @@ fn project_picker_view() -> PickerView {
     }
 }
 
+fn search_result_item(title: &str) -> SearchResultItem {
+    SearchResultItem {
+        task_id: "task-1".to_string(),
+        display_ref: "AVN-1".to_string(),
+        title: title.to_string(),
+        description: "Preview body".to_string(),
+        project_key: "aven".to_string(),
+        status: "todo".to_string(),
+        priority: "high".to_string(),
+        labels: vec!["ux".to_string()],
+        matched_field: crate::query::SearchMatchedField::Title,
+        snippet: None,
+        score: 100,
+        deleted: false,
+    }
+}
+
 mod text_panel_and_search {
     use super::*;
 
@@ -171,26 +188,39 @@ mod text_panel_and_search {
         let rendered = render_overlay_view(OverlayView::Search {
             input: "query".to_string(),
             cursor: 5,
-            results: vec![SearchResultItem {
-                task_id: "task-1".to_string(),
-                display_ref: "AVN-1".to_string(),
-                title: "Query result".to_string(),
-                description: "Preview body".to_string(),
-                project_key: "aven".to_string(),
-                status: "todo".to_string(),
-                priority: "high".to_string(),
-                labels: vec!["ux".to_string()],
-                matched_field: crate::query::SearchMatchedField::Title,
-                snippet: None,
-                score: 100,
-                deleted: false,
-            }],
+            results: vec![search_result_item("Query result")],
             selected: 0,
         });
         assert!(rendered.contains("Search"));
         assert!(rendered.contains("/query"));
         assert!(rendered.contains("Query result"));
         assert!(rendered.contains("Preview body"));
+    }
+
+    #[test]
+    fn search_overlay_vertical_position_ignores_result_count() {
+        let empty = overlay_buffer(OverlayView::Search {
+            input: "query".to_string(),
+            cursor: 5,
+            results: Vec::new(),
+            selected: 0,
+        });
+        let populated = overlay_buffer(OverlayView::Search {
+            input: "query".to_string(),
+            cursor: 5,
+            results: vec![
+                search_result_item("First result"),
+                search_result_item("Second result"),
+            ],
+            selected: 0,
+        });
+        let title_row = |buffer: &ratatui::buffer::Buffer| {
+            (0..buffer.area.height)
+                .find(|row| buffer_row(buffer, *row).contains("Search"))
+                .unwrap()
+        };
+
+        assert_eq!(title_row(&empty), title_row(&populated));
     }
 
     #[test]

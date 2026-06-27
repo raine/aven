@@ -27,7 +27,8 @@ pub(in crate::tui::ui) fn render_search(
     let height = (result_rows * 2 + preview_rows + 5)
         .min(frame.area().height.saturating_sub(2))
         .max(10);
-    let area = Dialog::new("Search", width, height).render_block(frame);
+    let area = Dialog::new("Search", width, height)
+        .render_block_at(frame, search_dialog_area(frame.area(), width, height));
     let [input_area, body_area, hint_area] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Fill(1),
@@ -49,6 +50,23 @@ pub(in crate::tui::ui) fn render_search(
     }
 
     frame.render_widget(Paragraph::new(search_hint_line()), hint_area);
+}
+
+fn search_dialog_area(frame: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(frame.width);
+    let height = height.min(frame.height);
+    let x = frame.x + frame.width.saturating_sub(width) / 2;
+    let top_anchor = frame.height / 4;
+    let y = frame
+        .y
+        .saturating_add(top_anchor)
+        .min(frame.y + frame.height.saturating_sub(height));
+    Rect {
+        x,
+        y,
+        width,
+        height,
+    }
 }
 
 fn render_empty_state(frame: &mut Frame, area: Rect, input: &str) {
