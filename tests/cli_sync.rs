@@ -279,7 +279,7 @@ fn remote_dependency_change(
     })
 }
 
-fn start_fake_sync_server(response: Value) -> (String, std::thread::JoinHandle<()>) {
+fn start_fake_sync_server_sequence(responses: Vec<Value>) -> (String, std::thread::JoinHandle<()>) {
     use std::io::{BufRead as _, BufReader, Write as _};
     use std::net::TcpListener;
     use std::thread;
@@ -287,26 +287,37 @@ fn start_fake_sync_server(response: Value) -> (String, std::thread::JoinHandle<(
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake sync server");
     let url = format!("http://{}", listener.local_addr().expect("fake sync addr"));
     let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept sync request");
-        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
-        let mut line = String::new();
-        loop {
-            line.clear();
-            reader.read_line(&mut line).expect("read request line");
-            if line == "\r\n" || line.is_empty() {
-                break;
+        for response in responses {
+            let (mut stream, _) = listener.accept().expect("accept sync request");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+            let mut line = String::new();
+            loop {
+                line.clear();
+                reader.read_line(&mut line).expect("read request line");
+                if line == "\r\n" || line.is_empty() {
+                    break;
+                }
             }
+            let body = response.to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\n\
+                 content-type: application/json\r\n\
+                 content-length: {}\r\n\
+                 connection: close\r\n\
+                 \r\n\
+                 {}",
+                body.len(),
+                body
+            )
+            .expect("write fake response");
         }
-        let body = response.to_string();
-        write!(
-            stream,
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
-            body.len(),
-            body
-        )
-        .expect("write fake response");
     });
     (url, server)
+}
+
+fn start_fake_sync_server(response: Value) -> (String, std::thread::JoinHandle<()>) {
+    start_fake_sync_server_sequence(vec![response])
 }
 
 fn sync_response(cursor: i64, changes: impl IntoIterator<Item = Value>) -> Value {
@@ -1595,7 +1606,7 @@ fn push_acks_update_local_changes_without_pull_echo() {
 }
 
 #[test]
-fn sync_client_rejects_duplicate_push_ack() {
+fn sync_client_rejects_duplicate_push_acks() {
     let env = TestEnv::new();
     let db = env.db("duplicate-ack.sqlite");
     ok(env.aven(&db, ["add", "duplicate ack", "--project", "app"]));
@@ -1729,7 +1740,69 @@ fn sync_client_rejects_short_has_more_page_before_state_change() {
 }
 
 #[test]
-fn pull_pagination_drains_large_server_backlog() {
+fn sync_client_preserves_valid_page_cursor_after_later_page_validation_failure() {
+    let env = TestEnv::new();
+    let db = env.db("paged-validation-failure.sqlite");
+    let first_page = (1..=MAX_PULL_BATCH)
+        .map(|seq| {
+            remote_task_change(
+                &format!("GOOD{seq:012}"),
+                &format!("TASK{seq:012}"),
+                "valid page",
+                seq as i64,
+            )
+        })
+        .collect::<Vec<_>>();
+    let invalid_seq = (MAX_PULL_BATCH as i64) + 1;
+    let second_a = remote_task_change(
+        "BAD0000000000001",
+        "BADTASK000000001",
+        "bad page",
+        invalid_seq,
+    );
+    let second_b = remote_task_change(
+        "BAD0000000000002",
+        "BADTASK000000002",
+        "bad page",
+        invalid_seq,
+    );
+    let (url, server) = start_fake_sync_server_sequence(vec![
+        json!({
+            "protocol_version": 4,
+            "cursor": MAX_PULL_BATCH,
+            "has_more": true,
+            "push_acks": [],
+            "changes": first_page,
+        }),
+        json!({
+            "protocol_version": 4,
+            "cursor": (MAX_PULL_BATCH as i64) + 1,
+            "has_more": false,
+            "push_acks": [],
+            "changes": [second_a, second_b],
+        }),
+    ]);
+
+    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    contains_all(&error, &["error invalid-sync-response", "server-seq-order"]);
+    assert_eq!(
+        scalar_i64(&db, "SELECT count(*) FROM tasks WHERE title = 'valid page'"),
+        MAX_PULL_BATCH as i64
+    );
+    assert_eq!(
+        scalar_i64(&db, "SELECT count(*) FROM tasks WHERE title = 'bad page'"),
+        0
+    );
+    let expected_cursor = MAX_PULL_BATCH.to_string();
+    assert_eq!(
+        meta_value(&db, "sync_cursor").as_deref(),
+        Some(expected_cursor.as_str())
+    );
+    server.join().expect("fake sync server exits");
+}
+
+#[test]
+fn sync_client_drains_paged_remote_changes() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let a = env.db("client-a.sqlite");
@@ -1741,8 +1814,17 @@ fn pull_pagination_drains_large_server_backlog() {
             ["add", &format!("paged remote {i}"), "--project", "app"],
         ));
     }
-    sync(&env, &a, &server);
-    sync(&env, &b, &server);
+    let output_a = ok(env.aven(&a, ["sync", "--server", &server.url]));
+    contains_all(&output_a, &["pushed=", "pulled=0", "cursor="]);
+    let server_cursor_before_pull = query_sql_scalar(
+        &env.path("server.sqlite"),
+        "SELECT max(server_seq) FROM changes",
+    );
+    let output_b = ok(env.aven(&b, ["sync", "--server", &server.url]));
+    contains_all(
+        &output_b,
+        &["pushed=0", &format!("pulled={server_cursor_before_pull}")],
+    );
 
     assert_eq!(
         scalar_i64(
@@ -1762,7 +1844,7 @@ fn pull_pagination_drains_large_server_backlog() {
 }
 
 #[test]
-fn push_pagination_drains_large_pending_backlog() {
+fn sync_client_drains_paged_local_changes() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let a = env.db("client-a.sqlite");
@@ -1770,7 +1852,12 @@ fn push_pagination_drains_large_pending_backlog() {
     for i in 0..(MAX_PUSH_BATCH + 5) {
         ok(env.aven(&a, ["add", &format!("paged local {i}"), "--project", "app"]));
     }
-    sync(&env, &a, &server);
+    let expected_push = scalar_i64(&a, "SELECT count(*) FROM changes WHERE server_seq IS NULL");
+    let output = ok(env.aven(&a, ["sync", "--server", &server.url]));
+    contains_all(
+        &output,
+        &[&format!("pushed={expected_push}"), "pulled=0", "cursor="],
+    );
 
     assert_eq!(
         scalar_i64(&a, "SELECT count(*) FROM changes WHERE server_seq IS NULL"),
