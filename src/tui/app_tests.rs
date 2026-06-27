@@ -1010,8 +1010,8 @@ mod filters_and_workspaces {
             .await
             .unwrap();
 
+        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
 
         assert!(matches!(
             &app.overlay,
@@ -1082,8 +1082,8 @@ mod filters_and_workspaces {
         )
         .await;
 
-        app.handle_normal_key(KeyCode::Char('L')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Char('/')))
             .await
             .unwrap();
@@ -1124,8 +1124,8 @@ mod filters_and_workspaces {
             .unwrap();
         drop(conn);
 
+        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('w')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
 
         assert!(matches!(
             &app.overlay,
@@ -3059,12 +3059,15 @@ mod detail_mode {
         )
         .await;
 
-        for (code, expected_route) in [
-            (KeyCode::Char('s'), OverlayRoute::EditStatus),
-            (KeyCode::Char('P'), OverlayRoute::EditPriority),
-            (KeyCode::Char('l'), OverlayRoute::EditLabels),
-            (KeyCode::Char('N'), OverlayRoute::AddNote),
-            (KeyCode::Char('D'), OverlayRoute::DeleteTaskConfirm),
+        for (codes, expected_route) in [
+            (&[KeyCode::Char('s')][..], OverlayRoute::EditStatus),
+            (&[KeyCode::Char('P')][..], OverlayRoute::EditPriority),
+            (
+                &[KeyCode::Char('e'), KeyCode::Char('l')][..],
+                OverlayRoute::EditLabels,
+            ),
+            (&[KeyCode::Char('N')][..], OverlayRoute::AddNote),
+            (&[KeyCode::Char('D')][..], OverlayRoute::DeleteTaskConfirm),
         ] {
             app.overlay = Some(OverlayState::Detail { scroll: 4 });
             app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
@@ -3076,7 +3079,9 @@ mod detail_mode {
                 Some(OverlayState::Detail { scroll: 4 })
             ));
 
-            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+            for code in codes {
+                app.dispatch_key(key(*code), (80, 24).into()).await.unwrap();
+            }
             match (&app.overlay, expected_route) {
                 (Some(OverlayState::TextInput(state)), route) => assert_eq!(state.route, route),
                 (Some(OverlayState::MultilineInput(state)), route) => {
@@ -3100,6 +3105,9 @@ mod detail_mode {
         app.overlay = Some(OverlayState::Detail { scroll: 3 });
 
         app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
             .await
             .unwrap();
         app.dispatch_key(key(KeyCode::Char('l')), (80, 24).into())
@@ -3614,8 +3622,9 @@ mod task_editing {
             .unwrap();
         create_and_select_task(&mut app, test_task_draft("Project target")).await;
 
-        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::Picker(state))
@@ -3673,8 +3682,9 @@ mod task_editing {
         )
         .await;
 
-        app.handle_normal_key(KeyCode::Char('L')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::TagCombobox(state))
