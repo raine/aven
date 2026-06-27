@@ -220,6 +220,24 @@ fn detail_metadata_click(target: crate::tui::ui::DetailMetadataTarget) -> MouseE
     left_click(88, row)
 }
 
+fn render_app_buffer(app: &mut App, width: u16, height: u16) -> ratatui::buffer::Buffer {
+    let backend = ratatui::backend::TestBackend::new(width, height);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let view = app.view();
+    terminal
+        .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
+        .unwrap();
+    terminal.backend().buffer().clone()
+}
+
+fn render_app_text(app: &mut App, width: u16, height: u16) -> String {
+    render_app_buffer(app, width, height)
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
+}
+
 #[tokio::test]
 async fn sidebar_click_selects_project_scope_in_wide_layout() {
     let mut app = test_app().await;
@@ -429,14 +447,9 @@ mod theme_background {
     async fn tui_background_uses_terminal_background_for_main_surface() {
         let mut app = test_app().await;
 
-        let backend = ratatui::backend::TestBackend::new(120, 30);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let view = app.view();
-        terminal
-            .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
-            .unwrap();
+        let buf = render_app_buffer(&mut app, 120, 30);
 
-        assert_eq!(terminal.backend().buffer()[(119, 10)].bg, Color::Reset);
+        assert_eq!(buf[(119, 10)].bg, Color::Reset);
     }
 }
 
@@ -1998,19 +2011,7 @@ mod authoring {
         app.add_task_only = true;
         app.begin_add_task().await.unwrap();
 
-        let backend = ratatui::backend::TestBackend::new(50, 12);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let view = app.view();
-        terminal
-            .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
-            .unwrap();
-        let rendered = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
+        let rendered = render_app_text(&mut app, 50, 12);
 
         assert!(rendered.contains("Add task"));
         assert!(rendered.contains("Enter title here"));
@@ -2025,19 +2026,7 @@ mod authoring {
         app.begin_add_task().await.unwrap();
         app.begin_add_task_natural();
 
-        let backend = ratatui::backend::TestBackend::new(50, 12);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let view = app.view();
-        terminal
-            .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
-            .unwrap();
-        let rendered = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
+        let rendered = render_app_text(&mut app, 50, 12);
 
         assert!(rendered.contains("Add task: natural language"));
         assert!(rendered.contains("Describe the task in natural language"));
@@ -2988,19 +2977,7 @@ mod detail_mode {
         ));
         assert!(app.view().detail_underlay);
 
-        let backend = ratatui::backend::TestBackend::new(100, 30);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let view = app.view();
-        terminal
-            .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
-            .unwrap();
-        let rendered = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
+        let rendered = render_app_text(&mut app, 100, 30);
 
         assert!(rendered.contains("Detail title target"));
         assert!(!rendered.contains("Edit title"));
@@ -3171,19 +3148,7 @@ mod detail_mode {
             .await
             .unwrap();
 
-        let backend = ratatui::backend::TestBackend::new(100, 30);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let view = app.view();
-        terminal
-            .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
-            .unwrap();
-        let rendered = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
+        let rendered = render_app_text(&mut app, 100, 30);
 
         assert!(rendered.contains("t …"));
         assert!(rendered.contains(":detail-edit-title"));
@@ -3212,20 +3177,8 @@ mod detail_mode {
         create_and_select_task(&mut app, test_task_draft("Toast target")).await;
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
         app.set_success("set APP-TEST status=done");
-        let backend = ratatui::backend::TestBackend::new(100, 30);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let view = app.view();
 
-        terminal
-            .draw(|frame| crate::tui::ui::render(frame, &app.store, &mut app.widgets, &view))
-            .unwrap();
-        let rendered = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
+        let rendered = render_app_text(&mut app, 100, 30);
 
         assert!(rendered.contains("set APP-TEST status=done"));
     }
