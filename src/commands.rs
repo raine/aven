@@ -811,6 +811,7 @@ pub(crate) async fn cmd_label(conn: &mut SqliteConnection, args: LabelCommand) -
             let outcome = create_label_operation(conn, &name).await?;
             println!("created-label {}", outcome.name);
         }
+        LabelSubcommand::List(args) => cmd_labels(conn, args).await?,
     }
     Ok(())
 }
@@ -827,6 +828,7 @@ pub(crate) async fn cmd_project(conn: &mut SqliteConnection, args: ProjectComman
                 quote(&project.name)
             );
         }
+        ProjectSubcommand::List(args) => cmd_projects(conn, args).await?,
         ProjectSubcommand::Rename {
             project,
             new_name,

@@ -421,7 +421,7 @@ fn project_rename_syncs_by_project_id() {
 
     let shown = ok(env.aven(&b, ["show", &task_ref]));
     contains_all(&shown, &["SIDE-", "rename synced"]);
-    let projects = ok(env.aven(&b, ["projects"]));
+    let projects = ok(env.aven(&b, ["project", "list"]));
     contains_all(&projects, &["sideagent prefix=SIDE"]);
     contains_none(&projects, &["agent-offload"]);
 }

@@ -26,33 +26,36 @@ const HELP_SECTIONS: &[HelpSection] = &[
         heading: "TASKS",
         commands: &[
             "add",
-            "dep",
-            "show",
             "list",
-            "bulk-update",
-            "prime",
+            "show",
             "update",
             "note",
+            "dep",
+            "text",
+            "bulk-update",
             "delete",
             "restore",
-            "text",
         ],
     },
     HelpSection {
-        heading: "PROJECTS & LABELS",
-        commands: &["projects", "project", "labels", "label", "workspace"],
+        heading: "WORKSPACE",
+        commands: &["workspace", "project", "label"],
     },
     HelpSection {
-        heading: "SYNC & SERVICE",
-        commands: &["sync", "daemon", "server", "conflict"],
+        heading: "SYNC",
+        commands: &["sync", "server", "conflict", "daemon"],
     },
     HelpSection {
         heading: "INTERACTIVE",
         commands: &["tui", "tmux"],
     },
     HelpSection {
+        heading: "AGENTS",
+        commands: &["prime", "skill"],
+    },
+    HelpSection {
         heading: "SETUP",
-        commands: &["config", "doctor", "skill"],
+        commands: &["config", "doctor"],
     },
 ];
 
@@ -96,13 +99,7 @@ fn render_section(help: &mut String, command: &clap::Command, section: &HelpSect
     writeln!(help, "{}", paint(section.heading, HEADING_STYLE)).unwrap();
     for name in section.commands {
         let about = command_about(command, name).unwrap_or_default();
-        render_row(
-            help,
-            name,
-            &paint(name, LITERAL_STYLE),
-            &about,
-            13,
-        );
+        render_row(help, name, &paint(name, LITERAL_STYLE), &about, 13);
     }
     writeln!(help).unwrap();
 }
@@ -124,7 +121,11 @@ fn render_options_section(help: &mut String) {
     render_row(
         help,
         "--db <DB>",
-        &format!("{} {}", paint("--db", LITERAL_STYLE), paint("<DB>", PLACEHOLDER_STYLE)),
+        &format!(
+            "{} {}",
+            paint("--db", LITERAL_STYLE),
+            paint("<DB>", PLACEHOLDER_STYLE)
+        ),
         "Use a specific SQLite database path",
         27,
     );
@@ -178,7 +179,6 @@ fn paint(text: &str, style: Style) -> String {
     format!("{}{}{}", style.render(), text, style.render_reset())
 }
 
-
 #[derive(Parser)]
 #[command(name = "aven")]
 #[command(about = "Local-first task manager")]
@@ -196,15 +196,15 @@ pub struct Cli {
 pub(crate) enum Commands {
     /// Create a task
     Add(AddArgs),
-    /// Manage task dependencies
+    /// Inspect and modify task dependencies
     Dep(DepCommand),
     /// Show task details
     Show(ShowArgs),
     /// List tasks
     List(ListArgs),
-    /// Update multiple tasks at once
+    /// Apply field updates across many tasks
     BulkUpdate(BulkUpdateArgs),
-    /// Generate agent-facing workspace context
+    /// Emit workspace context for AI agents
     Prime(PrimeArgs),
     /// Update task fields
     Update(UpdateArgs),
@@ -214,15 +214,11 @@ pub(crate) enum Commands {
     Delete(RefArgs),
     /// Restore a deleted task
     Restore(RefArgs),
-    /// Safely edit long text fields
+    /// Get, diff, and set long text fields safely
     Text(TextCommand),
-    /// List or search projects
-    Projects(SearchArgs),
-    /// List or search labels
-    Labels(SearchArgs),
     /// Manage labels
     Label(LabelCommand),
-    /// Manage projects
+    /// Manage projects and their paths
     Project(ProjectCommand),
     /// Manage workspaces
     Workspace(WorkspaceCommand),
@@ -240,7 +236,7 @@ pub(crate) enum Commands {
     Server(ServerArgs),
     /// Sync with a remote server
     Sync(SyncArgs),
-    /// Open tmux popups
+    /// Spawn tmux task-entry popups
     Tmux(TmuxCommand),
     /// Open the terminal UI
     Tui(TuiArgs),
@@ -467,7 +463,11 @@ pub(crate) struct LabelCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum LabelSubcommand {
-    Create { name: String },
+    Create {
+        name: String,
+    },
+    /// List or search labels
+    List(SearchArgs),
 }
 
 #[derive(Args)]
@@ -483,6 +483,8 @@ pub(crate) enum ProjectSubcommand {
         #[arg(long)]
         path: Option<PathBuf>,
     },
+    /// List or search projects
+    List(SearchArgs),
     Rename {
         project: String,
         new_name: String,

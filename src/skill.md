@@ -40,7 +40,9 @@ aven dep remove APP-7KQ9 APP-7KQ0
 aven dep list APP-7KQ9
 aven update APP-7KQ9 --status active
 aven update APP-7KQ9 --title "clearer title" --priority medium
+aven project list --search app
 aven project rename old-project "New Project Name" --prefix NPN
+aven label list --search bug
 aven note APP-7KQ9 "durable handoff context"
 aven delete APP-7KQ9
 aven restore APP-7KQ9

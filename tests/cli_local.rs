@@ -168,9 +168,25 @@ fn renames_project_and_display_prefix() {
     let filtered = ok(env.aven(&db, ["list", "--project", "sideagent"]));
     contains_all(&filtered, &[&suffix(&task_ref), "move project metadata"]);
 
-    let projects = ok(env.aven(&db, ["projects"]));
+    let projects = ok(env.aven(&db, ["project", "list"]));
     contains_all(&projects, &["sideagent prefix=SIDE"]);
     contains_none(&projects, &["agent-offload"]);
+}
+
+#[test]
+fn singular_list_commands_list_workspace_values() {
+    let env = TestEnv::new();
+    let db = env.db("singular-list.sqlite");
+    ok(env.aven(&db, ["label", "create", "bug"]));
+    ok(env.aven(&db, ["project", "create", "agent-offload"]));
+
+    let projects = ok(env.aven(&db, ["project", "list", "--search", "agent"]));
+    contains_all(&projects, &["agent-offload prefix=AO"]);
+    contains_none(&projects, &["app prefix=APP"]);
+
+    let labels = ok(env.aven(&db, ["label", "list", "--search", "bu"]));
+    contains_all(&labels, &["bug"]);
+    contains_none(&labels, &["sync"]);
 }
 
 #[test]
