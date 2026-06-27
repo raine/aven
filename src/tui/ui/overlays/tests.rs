@@ -193,7 +193,7 @@ mod text_panel_and_search {
             selected: 0,
         });
         assert!(rendered.contains("Search"));
-        assert!(rendered.contains("/query"));
+        assert!(rendered.contains("query"));
         assert!(rendered.contains("Query result"));
         assert!(rendered.contains("Preview body"));
     }

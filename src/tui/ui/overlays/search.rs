@@ -12,7 +12,7 @@ use crate::query::SearchMatchedField;
 use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::overlay::SearchResultItem;
 use crate::tui::theme::{
-    self, ACCENT, BG, BG_ALT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, GREEN, SELECTED,
+    self, ACCENT, BG, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, GREEN, SELECTED,
 };
 
 const RESULT_ROWS: usize = 8;
@@ -28,38 +28,45 @@ pub(in crate::tui::ui) fn render_search(
     let width = frame.area().width.saturating_sub(8).clamp(72, 110);
     let result_rows = (results.len().min(RESULT_ROWS) as u16).clamp(3, RESULT_ROWS as u16);
     let height = if results.is_empty() {
-        4
+        6
     } else {
-        (result_rows * 2 + 12)
+        (result_rows * 2 + 13)
             .min(frame.area().height.saturating_sub(2))
-            .max(14)
+            .max(15)
     };
     let area = Dialog::new("Search", width, height)
         .render_block_at(frame, search_dialog_area(frame.area(), width, height));
-    let [input_area, body_area, hint_area] = Layout::vertical([
+    let [
+        input_area,
+        input_spacer_area,
+        body_area,
+        hint_spacer_area,
+        hint_area,
+    ] = Layout::vertical([
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Fill(1),
+        Constraint::Length(1),
         Constraint::Length(1),
     ])
     .areas(area);
     frame.render_widget(Paragraph::new(search_input_line(input, cursor)), input_area);
+    frame.render_widget(Paragraph::new(""), input_spacer_area);
 
     if results.is_empty() {
         render_empty_state(frame, body_area, input);
     } else if body_area.width < 96 {
         render_stacked_results(frame, body_area, results, selected);
     } else {
-        let [list_area, divider_area, preview_area] = Layout::horizontal([
-            Constraint::Percentage(48),
-            Constraint::Length(1),
-            Constraint::Percentage(52),
-        ])
-        .areas(body_area);
+        let [list_area, preview_area] =
+            Layout::horizontal([Constraint::Percentage(48), Constraint::Percentage(52)])
+                .areas(body_area);
         render_result_list(frame, list_area, results, selected);
-        render_divider(frame, divider_area);
         render_preview(frame, preview_area, results.get(selected));
+        render_center_border(frame, preview_area, body_area);
     }
 
+    frame.render_widget(Paragraph::new(""), hint_spacer_area);
     frame.render_widget(Paragraph::new(search_hint_line()), hint_area);
 }
 
@@ -82,13 +89,14 @@ fn search_dialog_area(frame: Rect, width: u16, height: u16) -> Rect {
 
 fn search_input_line(input: &str, cursor: usize) -> Line<'static> {
     if input.is_empty() {
+        let mut chars = SEARCH_PLACEHOLDER.chars();
+        let first = chars.next().unwrap_or_default().to_string();
         return Line::from(vec![
-            Span::raw("/"),
-            cursor_cell(" "),
-            Span::styled(SEARCH_PLACEHOLDER, Style::new().fg(FG_DIM)),
+            cursor_cell(first),
+            Span::styled(chars.collect::<String>(), Style::new().fg(FG_DIM)),
         ]);
     }
-    input_line("/", input, cursor)
+    input_line("", input, cursor)
 }
 
 fn render_empty_state(frame: &mut Frame, area: Rect, input: &str) {
@@ -157,18 +165,51 @@ fn render_result_list(
     );
 }
 
-fn render_divider(frame: &mut Frame, area: Rect) {
-    let lines = (0..area.height)
-        .map(|_| Line::from("│"))
-        .collect::<Vec<_>>();
-    frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::new().fg(BORDER).bg(BG_ALT)),
-        area,
-    );
+fn render_center_border(frame: &mut Frame, preview_area: Rect, body_area: Rect) {
+    let x = preview_area.x;
+    for y in body_area.y..body_area.y.saturating_add(body_area.height) {
+        frame.render_widget(
+            Paragraph::new(center_border_symbol(y, body_area))
+                .style(Style::new().fg(ACCENT).bg(BG_ALT)),
+            Rect::new(x, y, 1, 1),
+        );
+    }
+}
+
+fn center_border_symbol(y: u16, body_area: Rect) -> &'static str {
+    if y == body_area.y {
+        "┬"
+    } else if y
+        == body_area
+            .y
+            .saturating_add(body_area.height)
+            .saturating_sub(1)
+    {
+        "┴"
+    } else {
+        "│"
+    }
 }
 
 fn render_horizontal_divider(frame: &mut Frame, area: Rect) {
-    frame.render_widget(Block::new().style(Style::new().bg(BORDER)), area);
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let area = Rect {
+        x: area.x.saturating_sub(2),
+        width: area.width.saturating_add(4),
+        ..area
+    };
+    let width = area.width as usize;
+    let line = if width == 1 {
+        "─".to_string()
+    } else {
+        format!("{}{}{}", "├", "─".repeat(width.saturating_sub(2)), "┤")
+    };
+    frame.render_widget(
+        Paragraph::new(line).style(Style::new().fg(ACCENT).bg(BG_ALT)),
+        area,
+    );
 }
 
 fn render_preview(frame: &mut Frame, area: Rect, result: Option<&SearchResultItem>) {
