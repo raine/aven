@@ -6,6 +6,36 @@ use crate::workspaces::active_workspace_id;
 
 use super::SidebarCounts;
 
+const SIDEBAR_TASK_COUNT_COLUMNS: &str = "\
+COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status NOT IN ('done', 'canceled') THEN 1 ELSE 0 END), 0) AS open_count,
+COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'inbox' THEN 1 ELSE 0 END), 0) AS inbox_count,
+COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'active' THEN 1 ELSE 0 END), 0) AS active_count,
+COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'backlog' THEN 1 ELSE 0 END), 0) AS backlog_count,
+COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'todo' THEN 1 ELSE 0 END), 0) AS todo_count,
+COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status IN ('done', 'canceled') THEN 1 ELSE 0 END), 0) AS done_count";
+
+fn sidebar_counts_sql(project_scoped: bool) -> String {
+    let conflict_project = if project_scoped {
+        " AND ct.project_id = ?"
+    } else {
+        ""
+    };
+    let task_project = if project_scoped {
+        " AND t.project_id = ?"
+    } else {
+        ""
+    };
+    format!(
+        "SELECT {SIDEBAR_TASK_COUNT_COLUMNS},
+         (SELECT COUNT(DISTINCT c.task_id)
+          FROM conflicts c
+          JOIN tasks ct ON ct.workspace_id = c.workspace_id AND ct.id = c.task_id
+          WHERE c.workspace_id = ? AND c.resolved = 0 AND ct.deleted = 0{conflict_project}) AS conflicts_count
+         FROM tasks t
+         WHERE t.workspace_id = ?{task_project}"
+    )
+}
+
 #[allow(dead_code)]
 pub(crate) async fn sidebar_counts(conn: &mut SqliteConnection) -> Result<SidebarCounts> {
     let workspace_id = active_workspace_id();
@@ -33,53 +63,17 @@ pub(crate) async fn sidebar_counts_for_scope_in_workspace(
     } else {
         None
     };
-    let row = match project_id {
-        Some(project_id) => {
-            sqlx::query(
-                "SELECT
-                 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status NOT IN ('done', 'canceled') THEN 1 ELSE 0 END), 0) AS open_count,
-                 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'inbox' THEN 1 ELSE 0 END), 0) AS inbox_count,
-                 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'active' THEN 1 ELSE 0 END), 0) AS active_count,
-                 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'backlog' THEN 1 ELSE 0 END), 0) AS backlog_count,
-                 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'todo' THEN 1 ELSE 0 END), 0) AS todo_count,
-                 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status IN ('done', 'canceled') THEN 1 ELSE 0 END), 0) AS done_count,
-                 (SELECT COUNT(DISTINCT c.task_id)
-                  FROM conflicts c
-                  JOIN tasks ct ON ct.workspace_id = c.workspace_id AND ct.id = c.task_id
-                  WHERE c.workspace_id = ? AND c.resolved = 0 AND ct.deleted = 0
-                  AND ct.project_id = ?) AS conflicts_count
-                 FROM tasks t
-                 WHERE t.workspace_id = ? AND t.project_id = ?",
-            )
-            .bind(workspace_id)
-            .bind(&project_id)
-            .bind(workspace_id)
-            .bind(&project_id)
-            .fetch_one(&mut *conn)
-            .await?
-        }
-        None => {
-            sqlx::query(
-                "SELECT
-                 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status NOT IN ('done', 'canceled') THEN 1 ELSE 0 END), 0) AS open_count,
-                 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'inbox' THEN 1 ELSE 0 END), 0) AS inbox_count,
-                 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'active' THEN 1 ELSE 0 END), 0) AS active_count,
-                 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'backlog' THEN 1 ELSE 0 END), 0) AS backlog_count,
-                 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'todo' THEN 1 ELSE 0 END), 0) AS todo_count,
-                 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status IN ('done', 'canceled') THEN 1 ELSE 0 END), 0) AS done_count,
-                 (SELECT COUNT(DISTINCT c.task_id)
-                  FROM conflicts c
-                  JOIN tasks ct ON ct.workspace_id = c.workspace_id AND ct.id = c.task_id
-                  WHERE c.workspace_id = ? AND c.resolved = 0 AND ct.deleted = 0) AS conflicts_count
-                 FROM tasks t
-                 WHERE t.workspace_id = ?",
-            )
-            .bind(workspace_id)
-            .bind(workspace_id)
-            .fetch_one(&mut *conn)
-            .await?
-        }
-    };
+    let project_scoped = project_id.is_some();
+    let sql = sidebar_counts_sql(project_scoped);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str())).bind(workspace_id);
+    if let Some(ref pid) = project_id {
+        q = q.bind(pid);
+    }
+    q = q.bind(workspace_id);
+    if let Some(ref pid) = project_id {
+        q = q.bind(pid);
+    }
+    let row = q.fetch_one(&mut *conn).await?;
     Ok(SidebarCounts {
         open: row.get("open_count"),
         inbox: row.get("inbox_count"),
