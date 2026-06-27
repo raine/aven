@@ -1,3 +1,4 @@
+mod data_safety;
 mod doctor;
 
 use std::fs;
@@ -13,9 +14,10 @@ use sqlx::{Row, SqliteConnection};
 
 use doctor::{DoctorRenderer, DoctorReport, sync_server_url_is_valid, workspace_counts};
 
-use crate::config::{self, AppConfig};
-use crate::db::{conflict_exists, get_meta};
-
+pub(crate) use self::data_safety::{
+    cmd_backup, cmd_backup_restore, cmd_export, cmd_import, database_integrity_report,
+    ensure_integrity_ok,
+};
 use crate::choices::{PRIORITIES, STATUSES, validate_choice};
 use crate::cli::{
     AddArgs, BulkUpdateArgs, ConfigCommand, ConfigSubcommand, ConflictCommand, ConflictSubcommand,
@@ -24,6 +26,8 @@ use crate::cli::{
     RefArgs, SearchArgs, ShowArgs, TextCommand, TextSubcommand, TmuxAddTaskPopupArgs, UpdateArgs,
     WorkspaceCommand, WorkspaceSubcommand,
 };
+use crate::config::{self, AppConfig};
+use crate::db::{conflict_exists, get_meta};
 use crate::input::{read_optional_text, read_required_text};
 use crate::labels::list_labels;
 use crate::labels::resolve_labels_in_workspace;
@@ -1426,6 +1430,7 @@ pub(crate) async fn cmd_doctor(
     db_path: &Path,
     db_flag_set: bool,
     workspace_flag: Option<&str>,
+    integrity: bool,
 ) -> Result<()> {
     let config_file = config::config_file_path();
     let db_source = if db_flag_set {
@@ -1554,6 +1559,22 @@ pub(crate) async fn cmd_doctor(
     match wake_addr {
         Ok(addr) => sync_section.check("daemon wake", true, addr.to_string()),
         Err(error) => sync_section.check("daemon wake", false, format!("{error:#}")),
+    }
+
+    if integrity {
+        let integrity_report = database_integrity_report(conn).await?;
+        let integrity_section = report.section("Integrity");
+        integrity_section.check(
+            "quick check",
+            integrity_report.quick_check_ok,
+            &integrity_report.quick_check_value,
+        );
+        for check in &integrity_report.checks {
+            integrity_section.check(check.label, check.ok, &check.value);
+        }
+        if let Err(error) = ensure_integrity_ok(&integrity_report) {
+            integrity_section.check("result", false, format!("{error:#}"));
+        }
     }
 
     DoctorRenderer::auto().print(&report);

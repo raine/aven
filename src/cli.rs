@@ -58,6 +58,10 @@ const HELP_SECTIONS: &[HelpSection] = &[
         heading: "SETUP",
         commands: &["config", "doctor"],
     },
+    HelpSection {
+        heading: "DATA SAFETY",
+        commands: &["backup", "export", "import"],
+    },
 ];
 
 struct HelpSection {
@@ -229,10 +233,16 @@ pub(crate) enum Commands {
     Conflict(ConflictCommand),
     /// Manage local configuration
     Config(ConfigCommand),
+    /// Back up or restore the SQLite database
+    Backup(BackupCommand),
+    /// Export user data as portable JSON
+    Export(ExportArgs),
+    /// Import portable JSON data
+    Import(ImportArgs),
     /// Print a Claude Code skill primer
     Skill,
     /// Diagnose configuration and workspace state
-    Doctor,
+    Doctor(DoctorArgs),
     /// Run or manage the background daemon
     Daemon(DaemonArgs),
     /// Run the sync server
@@ -518,6 +528,45 @@ pub(crate) enum ProjectPathSubcommand {
 pub(crate) struct WorkspaceCommand {
     #[command(subcommand)]
     pub(crate) command: WorkspaceSubcommand,
+}
+
+#[derive(Args)]
+pub(crate) struct BackupCommand {
+    #[command(subcommand)]
+    pub(crate) command: Option<BackupSubcommand>,
+    #[arg(long)]
+    pub(crate) output: Option<PathBuf>,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum BackupSubcommand {
+    Restore(BackupRestoreArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct BackupRestoreArgs {
+    pub(crate) path: PathBuf,
+    #[arg(long)]
+    pub(crate) yes: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct ExportArgs {
+    #[arg(long)]
+    pub(crate) output: PathBuf,
+}
+
+#[derive(Args)]
+pub(crate) struct ImportArgs {
+    pub(crate) path: PathBuf,
+    #[arg(long)]
+    pub(crate) yes: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct DoctorArgs {
+    #[arg(long)]
+    pub(crate) integrity: bool,
 }
 
 #[derive(Subcommand)]

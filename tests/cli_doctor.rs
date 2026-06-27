@@ -1,7 +1,10 @@
 mod common;
 
-use common::{TestEnv, contains_all, meta_value, ok};
+use std::path::Path;
+
+use common::{TestEnv, contains_all, contains_none, meta_value, ok};
 use sqlx::ConnectOptions;
+use sqlx::sqlite::SqliteConnectOptions;
 
 #[test]
 fn doctor_reports_default_database_health() {
@@ -304,4 +307,56 @@ fn doctor_workspace_flag_affects_active_workspace_and_task_counts() {
             "tasks              2 visible, 2 total",
         ],
     );
+}
+
+#[test]
+fn doctor_with_integrity_reports_passed_checks() {
+    let env = TestEnv::new();
+    let db = env.db("integrity-ok-doctor.sqlite");
+
+    ok(env.aven(&db, ["add", "integrity task", "--project", "app"]));
+    let output = ok(env.aven(&db, ["doctor", "--integrity"]));
+
+    contains_all(
+        &output,
+        &[
+            "Integrity",
+            "quick check",
+            "task projects",
+            "meta local_seq",
+        ],
+    );
+    contains_none(&output, &["!! result"]);
+}
+
+#[test]
+fn doctor_with_integrity_reports_orphaned_task_data() {
+    let env = TestEnv::new();
+    let db = env.db("integrity-fail-doctor.sqlite");
+
+    ok(env.aven(&db, ["add", "orphan check", "--project", "app"]));
+    run_sql(
+        &db,
+        "PRAGMA foreign_keys = OFF; INSERT INTO notes (workspace_id, id, task_id, body, created_at, change_id) SELECT workspace_id, 'orphan-note', 'orphan-task-id', 'orphan', '1970-01-01T00:00:00Z', 'orphan-change' FROM tasks LIMIT 1",
+    );
+
+    let output = ok(env.aven(&db, ["doctor", "--integrity"]));
+    contains_all(&output, &["Integrity", "!! notes", "!! result"]);
+}
+
+fn run_sql(db: &Path, sql: &'static str) {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create runtime");
+    runtime.block_on(async {
+        let mut conn = SqliteConnectOptions::new()
+            .filename(db)
+            .create_if_missing(false)
+            .foreign_keys(true)
+            .connect()
+            .await
+            .expect("open test db");
+        sqlx::query(sql).execute(&mut conn).await.expect("run sql");
+    });
 }

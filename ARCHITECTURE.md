@@ -50,6 +50,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Sync bookkeeping: `changes`, `field_versions`, `conflicts`, `meta`.
 - Local-only config: database path, sync settings, project path mappings, directory overrides.
 - Local-only TUI state: view, filter, selection, overlay, sort state, and `tui_undo_entries`; pending undo entries are cleared when a TUI store starts.
+- Backup and portability workflows: `src/commands/data_safety.rs` for snapshot/restore flows and `src/db.rs` for backup file naming.
 
 `Task` and `Project` in `src/types.rs` are core records. Workspace-scoped tables include `workspace_id` in uniqueness and lookup paths. Many invariants are application-enforced rather than database-enforced, so do not write domain tables directly unless a change is intentionally bypassing sync and validation.
 
@@ -95,6 +96,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 | Add or change a TUI action | `src/tui/event/catalog.rs`, `src/tui/app_dispatch.rs`, `src/tui/app.rs` | flow helpers, overlays, store module, undo | `src/tui/app_tests.rs`, `src/tui/store/tests.rs`, overlay tests |
 | Add or change TUI overlay rendering | `src/tui/overlay.rs`, `src/tui/overlay/`, `src/tui/ui/overlays.rs`, `src/tui/ui/overlays/` | `OverlayRoute`, shared dialog helpers, input helpers, theme | overlay rendering tests in `src/tui/ui/overlays/tests.rs` |
 | Change sync protocol or conflict handling | `src/sync/wire.rs`, `src/sync/apply.rs`, `src/sync/server.rs`, `src/sync/client.rs` | `src/mutation.rs`, `src/task_fields.rs`, migrations if persisted | `tests/cli_sync*.rs`, `tests/cli_conflicts.rs` |
+| Add or change backup, export, or import commands | `src/cli.rs`, `src/lib.rs`, `src/commands/data_safety.rs`, `src/db.rs` | doctor output and integrity checks in `src/commands.rs` | `tests/cli_data_safety.rs`, `tests/cli_doctor.rs` |
 | Change config, workspace, or project path routing | `src/config.rs`, `src/config_edit.rs`, `src/workspaces.rs`, `src/projects.rs` | doctor, project commands, TUI workspace and project pickers | `tests/cli_config_daemon.rs`, `tests/cli_workspaces.rs`, `tests/cli_doctor.rs` |
 | Change natural-language task intake or agent primer | `src/task_intake.rs`, `src/skill.md` | config schema, `aven prime`, add-task flows | `tests/cli_task_intake.rs`, focused add-task tests |
 | Change logging | `src/logging.rs` and call sites | safe field policy in guardrails | `tests/cli_logging.rs` |

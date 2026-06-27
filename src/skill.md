@@ -47,6 +47,11 @@ aven label list --search bug
 aven note APP-7KQ9 "durable handoff context"
 aven delete APP-7KQ9
 aven restore APP-7KQ9
+aven backup --output .backup/data.sqlite
+aven backup restore .backup/data.sqlite --yes
+aven export --output snapshot.json
+aven import snapshot.json --yes
+aven doctor --integrity
 ```
 
 - Use `show --full` before decisions that depend on description, labels, notes,

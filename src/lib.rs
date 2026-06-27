@@ -36,14 +36,15 @@ mod test_support;
 pub use cli::Cli;
 
 use cli::{
-    Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand, DepCommand, DepSubcommand,
-    InternalSubcommand, LabelCommand, LabelSubcommand, ProjectCommand, ProjectPathSubcommand,
-    ProjectSubcommand, TextCommand, TextSubcommand, TmuxSubcommand,
+    BackupSubcommand, Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand, DepCommand,
+    DepSubcommand, InternalSubcommand, LabelCommand, LabelSubcommand, ProjectCommand,
+    ProjectPathSubcommand, ProjectSubcommand, TextCommand, TextSubcommand, TmuxSubcommand,
 };
 use commands::{
-    cmd_add, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context, cmd_delete_restore, cmd_dep,
-    cmd_doctor, cmd_internal_natural_add, cmd_label, cmd_list, cmd_note, cmd_prime, cmd_project,
-    cmd_show, cmd_skill, cmd_text, cmd_tmux_add_task_popup, cmd_update, cmd_workspace,
+    cmd_add, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context, cmd_delete_restore,
+    cmd_dep, cmd_doctor, cmd_export, cmd_import, cmd_internal_natural_add, cmd_label, cmd_list,
+    cmd_note, cmd_prime, cmd_project, cmd_show, cmd_skill, cmd_text, cmd_tmux_add_task_popup,
+    cmd_update, cmd_workspace,
 };
 use db::open_db;
 use sync::{run_server, sync_client};
@@ -60,6 +61,16 @@ pub async fn run_cli() -> Result<()> {
     logging::init(log_mode)?;
 
     match cli.command {
+        Commands::Backup(backup)
+            if matches!(backup.command, Some(BackupSubcommand::Restore(_))) =>
+        {
+            let config = config::AppConfig::load()?;
+            let db_path = config::resolve_db_path(cli.db, &config)?;
+            let Some(BackupSubcommand::Restore(args)) = backup.command else {
+                unreachable!()
+            };
+            commands::cmd_backup_restore(&db_path, args).await
+        }
         Commands::Server(args) => {
             let config = config::AppConfig::load()?;
             run_server(args, config).await
@@ -133,11 +144,14 @@ pub async fn run_cli() -> Result<()> {
                 Commands::Context(args) => cmd_context(&mut conn, args).await,
                 Commands::Show(args) => cmd_show(&mut conn, args).await,
                 Commands::List(args) => cmd_list(&mut conn, args).await,
+                Commands::Backup(args) => cmd_backup(&mut conn, &db_path, args).await,
                 Commands::Dep(args) => cmd_dep(&mut conn, args).await,
                 Commands::BulkUpdate(args) => cmd_bulk_update(&mut conn, args).await,
                 Commands::Prime(args) => cmd_prime(&mut conn, args).await,
                 Commands::Update(args) => cmd_update(&mut conn, args).await,
                 Commands::Note(args) => cmd_note(&mut conn, args).await,
+                Commands::Export(args) => cmd_export(&mut conn, args).await,
+                Commands::Import(args) => cmd_import(&mut conn, &db_path, args).await,
                 Commands::Label(args) => cmd_label(&mut conn, args).await,
                 Commands::Project(args) => cmd_project(&mut conn, args).await,
                 Commands::Delete(args) => cmd_delete_restore(&mut conn, args, true).await,
@@ -146,13 +160,14 @@ pub async fn run_cli() -> Result<()> {
                 Commands::Sync(args) => sync_client(&mut conn, args, &config).await,
                 Commands::Workspace(args) => cmd_workspace(&mut conn, args).await,
                 Commands::Text(args) => cmd_text(&mut conn, args).await,
-                Commands::Doctor => {
+                Commands::Doctor(args) => {
                     cmd_doctor(
                         &mut conn,
                         &config,
                         &db_path,
                         db_flag_set,
                         workspace.as_deref(),
+                        args.integrity,
                     )
                     .await
                 }
@@ -233,6 +248,7 @@ fn command_should_wake(command: &Commands) -> bool {
                 | Commands::Text(TextCommand {
                     command: TextSubcommand::Set { .. }
                 })
+                | Commands::Import(_)
         )
 }
 

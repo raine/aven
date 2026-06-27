@@ -82,6 +82,10 @@ async fn has_pending_migrations(pool: &SqlitePool) -> Result<bool> {
 }
 
 fn migration_backup_path(path: &Path) -> Result<PathBuf> {
+    default_backup_path(path, "before-migrate")
+}
+
+pub(crate) fn default_backup_path(path: &Path, reason: &str) -> Result<PathBuf> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let backup_dir = parent.join("backups");
     fs::create_dir_all(&backup_dir)
@@ -90,10 +94,68 @@ fn migration_backup_path(path: &Path) -> Result<PathBuf> {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("db.sqlite");
-    Ok(backup_dir.join(format!(
-        "{stem}.before-migrate-{}.sqlite",
-        backup_timestamp()?
-    )))
+    Ok(backup_dir.join(format!("{stem}.{reason}-{}.sqlite", backup_timestamp()?)))
+}
+
+pub(crate) fn backup_database(source: &Path, backup: &Path) -> Result<()> {
+    if let Some(parent) = backup.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("could not create {}", parent.display()))?;
+    }
+    run_sqlite_backup(source, backup)
+}
+
+pub(crate) fn wal_path(path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}-wal", path.display()))
+}
+
+pub(crate) fn shm_path(path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}-shm", path.display()))
+}
+
+pub(crate) async fn restore_database_file(target: &Path, source: &Path) -> Result<PathBuf> {
+    validate_sqlite_source(source).await?;
+    let safety = default_backup_path(target, "before-restore")?;
+    backup_database(target, &safety)?;
+    let staging = target.with_extension("restore-staging");
+    if staging.exists() {
+        fs::remove_file(&staging)
+            .with_context(|| format!("could not remove {}", staging.display()))?;
+    }
+    fs::copy(source, &staging).with_context(|| {
+        format!(
+            "could not copy {} -> {}",
+            source.display(),
+            staging.display()
+        )
+    })?;
+    for sidecar in [wal_path(target), shm_path(target)] {
+        if sidecar.exists() {
+            fs::remove_file(&sidecar)
+                .with_context(|| format!("could not remove {}", sidecar.display()))?;
+        }
+    }
+    fs::rename(&staging, target)
+        .with_context(|| format!("could not replace {}", target.display()))?;
+    Ok(safety)
+}
+
+async fn validate_sqlite_source(source: &Path) -> Result<()> {
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(source)
+            .read_only(true)
+            .foreign_keys(true),
+    )
+    .await
+    .with_context(|| format!("could not open source {}", source.display()))?;
+    let quick_check: String = sqlx::query_scalar("PRAGMA quick_check")
+        .fetch_one(&mut conn)
+        .await?;
+    if quick_check != "ok" {
+        bail!("error backup-source-corrupt quick_check={quick_check}");
+    }
+    Ok(())
 }
 
 fn backup_timestamp() -> Result<u64> {
@@ -109,11 +171,11 @@ fn run_sqlite_backup(source: &Path, backup: &Path) -> Result<()> {
         .arg(source)
         .arg(backup_sql)
         .output()
-        .context("could not run sqlite3 for migration backup")?;
+        .context("could not run sqlite3 for backup")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!(
-            "sqlite3 migration backup failed status={} stderr={}",
+            "sqlite3 backup failed status={} stderr={}",
             output.status,
             stderr.trim()
         );
@@ -159,6 +221,13 @@ async fn initialize_meta(pool: &SqlitePool) -> Result<()> {
     insert_meta_if_missing(&mut conn, "sync_cursor", "0").await?;
     insert_meta_if_missing(&mut conn, "local_seq", "0").await?;
     Ok(())
+}
+
+pub(crate) async fn current_schema_version(conn: &mut SqliteConnection) -> Result<i64> {
+    let version: Option<i64> = sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations")
+        .fetch_one(conn)
+        .await?;
+    Ok(version.unwrap_or(0))
 }
 
 pub(crate) async fn get_meta(conn: &mut SqliteConnection, key: &str) -> Result<Option<String>> {
