@@ -27,6 +27,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
         commands: &[
             "add",
             "list",
+            "context",
             "show",
             "update",
             "note",
@@ -198,6 +199,8 @@ pub(crate) enum Commands {
     Add(AddArgs),
     /// Inspect and modify task dependencies
     Dep(DepCommand),
+    /// Show a task context snapshot
+    Context(ContextArgs),
     /// Show task details
     Show(ShowArgs),
     /// List tasks
@@ -327,6 +330,13 @@ pub(crate) struct ShowArgs {
     pub(crate) task_ref: String,
     #[arg(long)]
     pub(crate) full: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct ContextArgs {
+    pub(crate) task_ref: String,
+    #[arg(long, help = "Print machine-readable JSON")]
+    pub(crate) json: bool,
 }
 
 #[derive(Args)]

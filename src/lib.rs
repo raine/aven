@@ -41,9 +41,9 @@ use cli::{
     ProjectSubcommand, TextCommand, TextSubcommand, TmuxSubcommand,
 };
 use commands::{
-    cmd_add, cmd_bulk_update, cmd_config, cmd_conflict, cmd_delete_restore, cmd_dep, cmd_doctor,
-    cmd_internal_natural_add, cmd_label, cmd_list, cmd_note, cmd_prime, cmd_project, cmd_show,
-    cmd_skill, cmd_text, cmd_tmux_add_task_popup, cmd_update, cmd_workspace,
+    cmd_add, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context, cmd_delete_restore, cmd_dep,
+    cmd_doctor, cmd_internal_natural_add, cmd_label, cmd_list, cmd_note, cmd_prime, cmd_project,
+    cmd_show, cmd_skill, cmd_text, cmd_tmux_add_task_popup, cmd_update, cmd_workspace,
 };
 use db::open_db;
 use sync::{run_server, sync_client};
@@ -130,6 +130,7 @@ pub async fn run_cli() -> Result<()> {
             let should_wake = command_should_wake(&command);
             let result = match command {
                 Commands::Add(args) => cmd_add(&mut conn, &config, args).await,
+                Commands::Context(args) => cmd_context(&mut conn, args).await,
                 Commands::Show(args) => cmd_show(&mut conn, args).await,
                 Commands::List(args) => cmd_list(&mut conn, args).await,
                 Commands::Dep(args) => cmd_dep(&mut conn, args).await,
@@ -184,6 +185,7 @@ fn command_needs_workspace(command: &Commands) -> bool {
     matches!(
         command,
         Commands::Add(_)
+            | Commands::Context(_)
             | Commands::Show(_)
             | Commands::List(_)
             | Commands::Dep(_)

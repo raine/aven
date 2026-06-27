@@ -33,6 +33,7 @@ aven list --status todo
 aven list --all
 aven list --ready
 aven list --blocked
+aven context APP-7KQ9
 aven show APP-7KQ9 --full
 aven add "fix conflict display" --priority high --label bug
 aven dep add APP-7KQ9 APP-7KQ0
@@ -50,6 +51,12 @@ aven restore APP-7KQ9
 
 - Use `show --full` before decisions that depend on description, labels, notes,
   deletion state, or conflicts.
+- Use `context <ref>` when one task snapshot is needed before acting. It gathers
+  task fields, description, labels, notes, dependencies, blockers, conflicts,
+  deletion state, refs, and project metadata.
+- Human-readable CLI output is the default agent-facing format. Use
+  `context <ref> --json` only when a machine-readable snapshot is needed for a
+  script, MCP server, bot, web UI, or other structured integration.
 - After `aven add`, capture and report the printed ref so future agents can use
   it.
 - Let commands infer the project from the current directory, even if project
