@@ -39,11 +39,14 @@
 
 1. Local mutations append operation-log rows in `changes`.
 2. Unsynced rows have `server_seq IS NULL`.
-3. The client posts a bounded pending-change page, a pull cursor, and a pull limit to `/sync`.
-4. The server validates operation names, entity types, protocol version, batch bounds, and payload shapes before assigning server sequence numbers.
-5. The server returns push acknowledgements, a bounded pull page, and `has_more`.
-6. Remote apply updates local tables transactionally, records conflicts for scalar field version mismatches, applies push acknowledgements, then advances `sync_cursor`.
-7. The CLI sync path drains pages until complete. The daemon sync path processes a bounded page budget and promptly schedules another sync when `has_more` or local backlog remains.
+3. `src/sync/client.rs` posts at most `MAX_PUSH_BATCH` unsynced rows, the current `sync_cursor` as `after`, and `MAX_PULL_BATCH` as `pull_limit` to `/sync`.
+4. `src/sync/wire.rs` owns the protocol version, request limits, cursor validation, response validation, and daemon sync budget constants.
+5. `src/sync/server.rs` validates operation names, entity types, protocol version, batch bounds, pull limits, cursors, and payload shapes before assigning server sequence numbers.
+6. The server assigns strictly increasing `server_seq` values to accepted changes, reuses existing values for duplicate pushed change IDs, returns one bounded pull page, and sets `has_more` when rows remain after the page.
+7. Remote apply updates local tables transactionally, records conflicts for scalar field version mismatches, applies push acknowledgements, then advances `sync_cursor` to the response cursor.
+8. `src/sync/client.rs` validates each response before applying it. Response changes must fit the requested pull limit, have strictly increasing `server_seq` values after the cursor, match the response cursor, and include one push acknowledgement for each pushed change.
+9. The CLI sync path drains bounded push and pull pages until local unsynced backlog and remote `has_more` are both empty.
+10. `src/daemon.rs` calls `run_sync_with_page_budget` with `DAEMON_SYNC_PAGE_BUDGET`; incomplete daemon rounds report counts, cursor, completion, and page count, then schedule prompt follow-up sync work.
 
 ## Data ownership
 
@@ -89,6 +92,10 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Overlay behavior tests live in the overlay module they exercise under `src/tui/overlay/`; the facade in `src/tui/overlay.rs` stays focused on module wiring and exports.
 - Record a TUI undo entry for completed TUI mutations unless the action is undo itself; pending TUI undo entries are valid only within the current `TuiStore` lifecycle and are cleared on store startup.
 - Do not log auth tokens, raw sync payloads, task descriptions, note bodies, user-authored labels or project names, or secret config values.
+- Keep sync protocol changes aligned across `src/sync/wire.rs`, `src/sync/client.rs`, `src/sync/server.rs`, `src/sync/apply.rs`, and `src/daemon.rs`. Request and response validation must match the client page loop and server page construction.
+- Keep bounded sync limits explicit: `MAX_PUSH_BATCH` bounds client push pages, `MAX_PULL_BATCH` bounds server pull pages, and `DAEMON_SYNC_PAGE_BUDGET` bounds daemon work per wake.
+- Keep cursor semantics based on `server_seq`. Pull pages are ordered by increasing `server_seq`; response cursors equal the last returned `server_seq` or the request cursor for an empty page; local `sync_cursor` advances only after a validated page applies successfully.
+- Keep daemon sync privacy-safe and budget-aware. Daemon logs and stdout include counts, cursor, completion, and page count without user content, and incomplete rounds schedule prompt follow-up sync work.
 
 ## Change routing
 
@@ -101,7 +108,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 | Add or change a TUI action | `src/tui/event/catalog.rs`, `src/tui/app_dispatch.rs`, focused `src/tui/app_*.rs` modules | flow helpers, overlays, store module, undo, `src/tui/natural_add_runtime.rs` for natural-add worker setup | `src/tui/app_tests.rs`, `src/tui/store/tests.rs`, overlay module tests |
 | Add or change TUI overlay behavior | `src/tui/overlay.rs`, `src/tui/overlay/`, `src/tui/app_overlay_submit.rs` | `OverlayRoute::descriptor`, input helpers, state builders, view projection, submit dispatch, module-local tests | `cargo test tui::overlay` |
 | Add or change TUI overlay rendering | `src/tui/ui/overlays.rs`, `src/tui/ui/overlays/` | overlay view models, shared dialog helpers, input helpers, theme | overlay rendering tests in `src/tui/ui/overlays/tests.rs` |
-| Change sync protocol or conflict handling | `src/sync/wire.rs`, `src/sync/apply/`, `src/sync/server.rs`, `src/sync/client.rs` | `src/mutation.rs`, `src/task_fields.rs`, migrations if persisted | `tests/cli_sync*.rs`, `tests/cli_conflicts.rs` |
+| Change sync protocol or conflict handling | `src/sync/wire.rs`, `src/sync/apply/`, `src/sync/server.rs`, `src/sync/client.rs` | `src/mutation.rs`, `src/task_fields.rs`, `src/daemon.rs`, migrations if persisted | `tests/cli_sync*.rs`, `tests/cli_conflicts.rs`; focused bounded-sync checks include `cargo test --test cli_sync sync_server_returns_bounded_pull_pages`, `cargo test --test cli_sync sync_client_drains_paged_remote_changes`, `cargo test --test cli_sync sync_client_drains_paged_local_changes`, `cargo test --test cli_sync current_protocol_version_sync_succeeds`, and `cargo test --test cli_sync wrong_response_protocol_version_is_rejected` |
 | Add or change backup, export, or import commands | `src/cli.rs`, `src/lib.rs`, `src/commands/data_safety.rs`, `src/db.rs` | doctor output and integrity checks in `src/commands.rs` | `tests/cli_data_safety.rs`, `tests/cli_doctor.rs` |
 | Change config, workspace, or project path routing | `src/config.rs`, `src/config_edit.rs`, `src/workspaces.rs`, `src/projects.rs` | config text writes, managed-entry edits, doctor, project commands, TUI workspace and project pickers | `tests/cli_config_daemon.rs`, `tests/cli_workspaces.rs`, `tests/cli_doctor.rs` |
 | Change natural-language task intake or agent primer | `src/task_intake.rs`, `src/skill.md` | config schema, `aven prime`, add-task flows, `src/tui/natural_add_runtime.rs` for TUI background worker setup | `tests/cli_task_intake.rs`, focused add-task tests |
@@ -135,6 +142,15 @@ SQLite stores synced task data and local UI state. Config files store local rout
 4. Add the corresponding `handle_*_submit` branch in `src/tui/app_overlay_submit.rs`.
 5. Branch on `route` in `src/tui/ui/overlays/` when rendering differs by route.
 6. Add focused overlay or app overlay tests for input, submit, and rendering behavior.
+
+### Change bounded sync behavior
+
+1. Update the wire contract and shared constants in `src/sync/wire.rs`.
+2. Keep the client loop in `src/sync/client.rs` aligned with push batch limits, pull limits, response validation, and cursor advancement.
+3. Keep the server handler in `src/sync/server.rs` aligned with request validation, sequence allocation, duplicate push acknowledgements, and bounded pull pages.
+4. Keep remote apply in `src/sync/apply/` transaction-safe and cursor-safe.
+5. Keep daemon work in `src/daemon.rs` bounded by `DAEMON_SYNC_PAGE_BUDGET`, with incomplete rounds scheduling follow-up sync.
+6. Use focused validation commands: `cargo test --test cli_sync sync_server_returns_bounded_pull_pages`, `cargo test --test cli_sync sync_client_drains_paged_remote_changes`, `cargo test --test cli_sync sync_client_drains_paged_local_changes`, `cargo test --test cli_sync current_protocol_version_sync_succeeds`, `cargo test --test cli_sync wrong_response_protocol_version_is_rejected`, and `cargo test --test cli_daemon_sync daemon_syncs_large_backlog_across_budgeted_rounds`.
 
 ### Add a TUI action
 

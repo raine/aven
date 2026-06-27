@@ -76,6 +76,44 @@ aven doctor --integrity
   status. The `depends_on` and `blocks` sections show blockers and dependents.
 - Use `dep add <blocked> <blocker>` when one task depends on another.
 
+## Sync behavior
+
+```sh
+aven sync
+aven sync --server http://127.0.0.1:3000
+aven daemon run
+```
+
+- `aven sync` drains bounded push and pull pages until local unsynced changes and
+  remote pages are complete.
+- Sync pins a database to its server URL. Use a fresh database for a different
+  sync server.
+- Sync output reports `synced pushed=<n> pulled=<n> cursor=<server_seq>`. The
+  cursor is based on `server_seq` and advances after validated pages apply.
+- The sync client pushes at most 256 local changes per page and requests at most
+  512 remote changes per pull page.
+- The sync server validates protocol version, request cursor, push batch size,
+  pull limit, operation names, entity types, and payload shapes before accepting
+  changes.
+- Push acknowledgements match pushed change IDs. Duplicate pushed change IDs keep
+  their existing `server_seq` values.
+- Pull pages are ordered by increasing `server_seq`; `has_more` means another
+  bounded pull page is available.
+- The daemon sync path processes a fixed page budget per wake. Incomplete daemon
+  rounds print `daemon-synced pushed=<n> pulled=<n> cursor=<server_seq>
+  complete=false pages=<n>` and schedule follow-up sync work.
+- Sync logs and daemon sync output carry counts, cursor, completion, and page
+  count. They do not include task titles, descriptions, note bodies, labels,
+  project names, auth tokens, or raw payloads.
+
+Focused validation commands:
+
+```sh
+cargo test --test cli_sync sync_server_returns_bounded_pull_pages sync_client_drains_paged_remote_changes sync_client_drains_paged_local_changes current_protocol_version_sync_succeeds wrong_response_protocol_version_is_rejected
+cargo test --test cli_daemon_sync daemon_syncs_large_backlog_across_budgeted_rounds
+cargo test --test cli_logging daemon_sync_logging_redacts_task_content
+```
+
 ## Long input and secrets
 
 - Use `--description-file`, `--description-stdin`, `note --file`, or
