@@ -6,7 +6,8 @@ use crate::tui::app_edit::{
     EDIT_STATUS_TITLE, EDIT_TITLE_TITLE,
 };
 use crate::tui::app_filters::{SCOPE_PROJECT_TITLE, SWITCH_WORKSPACE_TITLE};
-use crate::tui::authoring::AddTaskStep;
+use crate::tui::app_projects::{DELETE_PROJECT_TITLE, DELETE_TASK_TITLE};
+use crate::tui::authoring::{ADD_NOTE_TITLE, AddTaskStep};
 use crate::tui::config_overlay::{CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PATHS_TITLE};
 use crate::tui::event::Action;
 use crate::tui::overlay::{

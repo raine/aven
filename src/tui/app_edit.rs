@@ -2,7 +2,8 @@ use anyhow::Result;
 
 use crate::labels::normalize_label;
 use crate::tui::app::App;
-use crate::tui::overlay::{OverlayRoute, OverlayState};
+use crate::tui::overlay::{MultilineInputState, OverlayRoute, OverlayState};
+use crate::tui::platform::edit_text_externally;
 
 pub(crate) const EDIT_STATUS_TITLE: &str = "Edit task: status";
 pub(crate) const EDIT_TITLE_TITLE: &str = "Edit title";
@@ -309,4 +310,26 @@ impl App {
         self.apply_edit_mutation(result, |app| app.begin_edit_labels());
         Ok(())
     }
+}
+
+impl App {
+    pub(super) fn open_description_external_editor(&mut self, state: MultilineInputState) {
+        self.needs_terminal_clear = true;
+        match edit_text_externally(state.lines.join("\n"), "description.md") {
+            Ok(value) => self.overlay = Some(description_overlay_from_value(value)),
+            Err(error) => {
+                self.set_error(format!("editor failed: {error:#}"));
+                self.overlay = Some(OverlayState::MultilineInput(state));
+            }
+        }
+    }
+}
+
+fn description_overlay_from_value(value: String) -> OverlayState {
+    OverlayState::multiline_input(
+        OverlayRoute::EditDescription,
+        EDIT_DESCRIPTION_TITLE,
+        "",
+        value,
+    )
 }

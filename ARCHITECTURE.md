@@ -29,10 +29,10 @@
 
 1. `src/tui/mod.rs` initializes Ratatui and constructs `App`.
 2. Input resolves through the command catalog in `src/tui/event/` unless a capturing overlay handles it first.
-3. `App` methods coordinate flow state, then call `TuiStore` facade methods in `src/tui/store.rs`.
+3. `App` holds TUI flow state. Focused `src/tui/app_*.rs` modules coordinate feature flows, then call `TuiStore` facade methods in `src/tui/store.rs`.
 4. `TaskViewState` is the source of truth for TUI task lists. It carries scope, view, filter modifiers, flat order, and direction, then derives query filters, query mode, and render mode.
 5. Store modules call the same operations, mutation, and query helpers as the CLI.
-6. Natural-language add flow stays in `App`; background worker command construction, environment propagation, process setup, and log path selection live in `src/tui/natural_add_runtime.rs`.
+6. Natural-language add flow coordination lives in `src/tui/app_authoring.rs`; background worker command construction, environment propagation, process setup, and log path selection live in `src/tui/natural_add_runtime.rs`.
 7. `src/tui/ui.rs` and `src/tui/ui/` render state. Rendering code should not touch the database.
 
 ### Sync flow
@@ -96,7 +96,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 | Add a task scalar field | migration, `src/types.rs`, `src/task_fields.rs`, `src/mutation.rs` | `src/operations/tasks.rs`, `src/sync/apply/task.rs`, `src/sync/apply/conflict.rs`, `src/sync/wire.rs`, `src/query/`, CLI and TUI renderers | sync, conflict, CLI, and TUI tests |
 | Add task dependency relations | `src/operations/dependencies.rs`, `src/query/dependencies.rs` | `src/commands.rs`, `src/task_render.rs`, `src/sync/apply/dependency.rs`, `src/sync/server.rs` | `tests/cli_dependencies.rs`, `tests/cli_sync.rs` |
 | Change task list, filters, sorting, or refs | `src/query/`, `src/query.rs`, `src/refs.rs`, `src/queue.rs` | CLI list rendering, `src/tui/store/types.rs`, `src/tui/store/view.rs`, indexes | `tests/tui_query.rs`, `tests/sqlite_read_path_indexes.rs`, focused CLI tests |
-| Add or change a TUI action | `src/tui/event/catalog.rs`, `src/tui/app_dispatch.rs`, `src/tui/app.rs` | flow helpers, overlays, store module, undo, `src/tui/natural_add_runtime.rs` for natural-add worker setup | `src/tui/app_tests.rs`, `src/tui/store/tests.rs`, overlay module tests |
+| Add or change a TUI action | `src/tui/event/catalog.rs`, `src/tui/app_dispatch.rs`, focused `src/tui/app_*.rs` modules | flow helpers, overlays, store module, undo, `src/tui/natural_add_runtime.rs` for natural-add worker setup | `src/tui/app_tests.rs`, `src/tui/store/tests.rs`, overlay module tests |
 | Add or change TUI overlay behavior | `src/tui/overlay.rs`, `src/tui/overlay/`, `src/tui/app_overlay_submit.rs` | `OverlayRoute::descriptor`, input helpers, state builders, view projection, submit dispatch, module-local tests | `cargo test tui::overlay` |
 | Add or change TUI overlay rendering | `src/tui/ui/overlays.rs`, `src/tui/ui/overlays/` | overlay view models, shared dialog helpers, input helpers, theme | overlay rendering tests in `src/tui/ui/overlays/tests.rs` |
 | Change sync protocol or conflict handling | `src/sync/wire.rs`, `src/sync/apply/`, `src/sync/server.rs`, `src/sync/client.rs` | `src/mutation.rs`, `src/task_fields.rs`, migrations if persisted | `tests/cli_sync*.rs`, `tests/cli_conflicts.rs` |

@@ -2,12 +2,16 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 
 mod app;
+mod app_authoring;
+mod app_config;
 mod app_conflicts;
 mod app_dispatch;
 mod app_edit;
 mod app_filters;
 mod app_lifecycle;
+mod app_navigation;
 mod app_overlay_submit;
+mod app_projects;
 mod authoring;
 mod config_overlay;
 mod conflict_flow;
