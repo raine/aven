@@ -30,6 +30,19 @@ fn prime_prints_skill_primer_and_inferred_project_open_issues() {
             "bug",
         ],
     ));
+    let active = ok(aven_in_clean_git(
+        &env,
+        &db,
+        &repo,
+        ["add", "Fix active convention", "--label", "bug"],
+    ));
+    let active_ref = active.split_whitespace().nth(1).unwrap();
+    ok(aven_in_clean_git(
+        &env,
+        &db,
+        &repo,
+        ["update", active_ref, "--status", "active"],
+    ));
     let done = ok(aven_in_clean_git(
         &env,
         &db,
@@ -66,9 +79,15 @@ fn prime_prints_skill_primer_and_inferred_project_open_issues() {
             "aven update <ref> --status active",
             "aven note <ref> ...",
             "aven update <ref> --status done",
+            "## Local Conventions",
+            "Project: prime-app",
+            "Open issue sample: 2",
+            "Task titles: mixed lower-case and capitalized starts.",
+            "Common statuses: active=1, inbox=1.",
+            "Common labels: bug=2.",
             "## Open Issues",
-            "project=prime-app",
             "status=inbox priority=high labels=bug title=\"fix active issue\"",
+            "status=active priority=none labels=bug title=\"Fix active convention\"",
         ],
     );
     contains_none(&output, &["finished issue", "canceled issue"]);
@@ -82,7 +101,7 @@ fn prime_accepts_explicit_project() {
     ok(env.aven(&db, ["add", "other issue", "--project", "other"]));
 
     let output = ok(env.aven(&db, ["prime", "--project", "app"]));
-    contains_all(&output, &["# Aven CLI Primer", "project=app", "app issue"]);
+    contains_all(&output, &["# Aven CLI Primer", "Project: app", "app issue"]);
     contains_none(&output, &["other issue"]);
 }
 
@@ -98,7 +117,6 @@ fn prime_handles_no_current_project() {
         &output,
         &[
             "# Aven CLI Primer",
-            "## Open Issues",
             "No current project could be inferred. Run with --project <project>.",
         ],
     );
@@ -120,7 +138,15 @@ fn prime_handles_no_open_issues() {
     let output = ok(aven_in_clean_git(&env, &db, &repo, ["prime"]));
     contains_all(
         &output,
-        &["# Aven CLI Primer", "project=empty-app", "No open issues."],
+        &[
+            "# Aven CLI Primer",
+            "## Local Conventions",
+            "Project: empty-app",
+            "Open issue sample: 0",
+            "No open issues are available for convention summaries.",
+            "## Open Issues",
+            "No open issues.",
+        ],
     );
 }
 

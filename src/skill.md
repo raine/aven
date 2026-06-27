@@ -56,6 +56,8 @@ aven doctor --integrity
 
 - Use `show --full` before decisions that depend on description, labels, notes,
   deletion state, or conflicts.
+- `aven prime` includes local convention summaries for the inferred or requested
+  project, such as sampled title style, statuses, and labels.
 - Use `context <ref>` when one task snapshot is needed before acting. It gathers
   task fields, description, labels, notes, dependencies, blockers, conflicts,
   deletion state, refs, and project metadata.

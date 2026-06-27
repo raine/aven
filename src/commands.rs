@@ -8,7 +8,7 @@ mod workspaces;
 use std::fs;
 use std::path::Path;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use anyhow::{Result, bail};
 use serde::Serialize;
@@ -970,8 +970,6 @@ pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> R
     );
     println!("- Use `canceled` only when the user says the issue is no longer needed.");
     println!();
-    println!("## Open Issues");
-    println!();
 
     let workspace_id = crate::workspaces::active_workspace_id();
     let project = if let Some(project) = args.project {
@@ -996,8 +994,7 @@ pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> R
         return Ok(());
     }
 
-    println!("project={project}");
-    let filters = prime_task_filters(project);
+    let filters = prime_task_filters(project.clone());
     let items = query::list_task_items(
         conn,
         filters,
@@ -1006,6 +1003,9 @@ pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> R
         SortDirection::Desc,
     )
     .await?;
+    print_prime_conventions(&project, &items);
+    println!("## Open Issues");
+    println!();
     if items.is_empty() {
         println!("No open issues.");
         return Ok(());
@@ -1014,6 +1014,93 @@ pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> R
         print_task_line_item(&item).await?;
     }
     Ok(())
+}
+
+fn print_prime_conventions(project: &str, items: &[query::TaskListItem]) {
+    println!("## Local Conventions");
+    println!();
+    println!("Project: {project}");
+    println!("Open issue sample: {}", items.len());
+    if items.is_empty() {
+        println!("No open issues are available for convention summaries.");
+    } else {
+        print_prime_title_conventions(items);
+        print_prime_status_conventions(items);
+        print_prime_label_conventions(items);
+    }
+    println!();
+}
+
+fn print_prime_title_conventions(items: &[query::TaskListItem]) {
+    let lowercase = items
+        .iter()
+        .filter(|item| starts_with_lowercase(&item.task.title))
+        .count();
+    let uppercase = items
+        .iter()
+        .filter(|item| starts_with_uppercase(&item.task.title))
+        .count();
+    let style = if lowercase > uppercase {
+        "mostly lower-case starts"
+    } else if uppercase > lowercase {
+        "mostly capitalized starts"
+    } else if lowercase > 0 {
+        "mixed lower-case and capitalized starts"
+    } else {
+        "no alphabetic title starts in sample"
+    };
+    println!("Task titles: {style}.");
+}
+
+fn starts_with_lowercase(value: &str) -> bool {
+    value
+        .chars()
+        .find(|ch| ch.is_alphabetic())
+        .is_some_and(char::is_lowercase)
+}
+
+fn starts_with_uppercase(value: &str) -> bool {
+    value
+        .chars()
+        .find(|ch| ch.is_alphabetic())
+        .is_some_and(char::is_uppercase)
+}
+
+fn print_prime_status_conventions(items: &[query::TaskListItem]) {
+    let counts = count_values(items.iter().map(|item| item.task.status.as_str()));
+    println!("Common statuses: {}.", format_counts(&counts, 4));
+}
+
+fn print_prime_label_conventions(items: &[query::TaskListItem]) {
+    let counts = count_values(
+        items
+            .iter()
+            .flat_map(|item| item.labels.iter().map(String::as_str)),
+    );
+    if counts.is_empty() {
+        println!("Common labels: none in open issue sample.");
+    } else {
+        println!("Common labels: {}.", format_counts(&counts, 6));
+    }
+}
+
+fn count_values<'a>(values: impl Iterator<Item = &'a str>) -> Vec<(String, usize)> {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for value in values {
+        *counts.entry(value.to_string()).or_default() += 1;
+    }
+    let mut counts = counts.into_iter().collect::<Vec<_>>();
+    counts.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    counts
+}
+
+fn format_counts(counts: &[(String, usize)], limit: usize) -> String {
+    counts
+        .iter()
+        .take(limit)
+        .map(|(value, count)| format!("{value}={count}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn list_task_filters(args: ListArgs) -> TaskFilters {
