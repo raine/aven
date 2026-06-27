@@ -87,6 +87,62 @@ fn styled_key_contents(line: Line<'static>) -> Vec<String> {
         .collect()
 }
 
+// -- Fixture helpers --
+
+fn picker_item(label: &str, value: &str) -> PickerItem {
+    PickerItem {
+        label: label.to_string(),
+        value: value.to_string(),
+        selected: false,
+    }
+}
+
+fn add_task_view() -> AddTaskView {
+    AddTaskView {
+        title: String::new(),
+        title_cursor: 0,
+        description: vec![String::new()],
+        description_row: 0,
+        description_column: 0,
+        focus: AddTaskStep::Title,
+        project: "aven".to_string(),
+        status: "inbox".to_string(),
+        priority: "none".to_string(),
+        status_prefix_active: false,
+        priority_prefix_active: false,
+    }
+}
+
+fn picker_view() -> PickerView {
+    PickerView {
+        route: OverlayRoute::MessageOnly,
+        title: String::new(),
+        filter: String::new(),
+        filter_cursor: 0,
+        items: vec![],
+        selected: 0,
+        scroll: 0,
+        multi: false,
+        mode: PickerMode::Navigate,
+        visible_indices: vec![],
+    }
+}
+
+fn project_picker_view() -> PickerView {
+    PickerView {
+        route: OverlayRoute::ScopeProject,
+        title: "Scope: project".to_string(),
+        filter: String::new(),
+        filter_cursor: 0,
+        items: vec![picker_item("CC claude-code", "claude-code")],
+        selected: 0,
+        scroll: 0,
+        multi: false,
+        mode: PickerMode::Navigate,
+        visible_indices: vec![0],
+    }
+}
+
 mod text_panel_and_search {
     use super::*;
 
@@ -240,15 +296,8 @@ mod add_task_overlay {
         let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
             title: "ship dialogs".to_string(),
             title_cursor: 12,
-            description: vec![String::new()],
-            description_row: 0,
-            description_column: 0,
-            focus: AddTaskStep::Title,
-            project: "aven".to_string(),
-            status: "inbox".to_string(),
             priority: "high".to_string(),
-            status_prefix_active: false,
-            priority_prefix_active: false,
+            ..add_task_view()
         }));
         assert!(rendered.contains("Add task"));
         assert!(rendered.contains("project: aven"));
@@ -266,17 +315,8 @@ mod add_task_overlay {
     #[test]
     fn add_task_overlay_pins_footer_to_bottom() {
         let buffer = overlay_buffer(OverlayView::AddTask(AddTaskView {
-            title: String::new(),
-            title_cursor: 0,
-            description: vec![String::new()],
-            description_row: 0,
-            description_column: 0,
             focus: AddTaskStep::Description,
-            project: "aven".to_string(),
-            status: "inbox".to_string(),
-            priority: "none".to_string(),
-            status_prefix_active: false,
-            priority_prefix_active: false,
+            ..add_task_view()
         }));
         let hint_row = (0..buffer.area.height)
             .find(|row| buffer_row(&buffer, *row).contains("^S create"))
@@ -290,36 +330,15 @@ mod add_task_overlay {
 
     #[test]
     fn add_task_overlay_does_not_truncate_title_hints() {
-        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
-            title: String::new(),
-            title_cursor: 0,
-            description: vec![String::new()],
-            description_row: 0,
-            description_column: 0,
-            focus: AddTaskStep::Title,
-            project: "aven".to_string(),
-            status: "inbox".to_string(),
-            priority: "none".to_string(),
-            status_prefix_active: false,
-            priority_prefix_active: false,
-        }));
+        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView { ..add_task_view() }));
         assert!(rendered.contains("Esc cancel"));
     }
 
     #[test]
     fn add_task_overlay_does_not_truncate_description_hints() {
         let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
-            title: String::new(),
-            title_cursor: 0,
-            description: vec![String::new()],
-            description_row: 0,
-            description_column: 0,
             focus: AddTaskStep::Description,
-            project: "aven".to_string(),
-            status: "inbox".to_string(),
-            priority: "none".to_string(),
-            status_prefix_active: false,
-            priority_prefix_active: false,
+            ..add_task_view()
         }));
         assert!(rendered.contains("Esc cancel"));
     }
@@ -327,17 +346,8 @@ mod add_task_overlay {
     #[test]
     fn add_task_overlay_replaces_footer_when_status_prefix_is_active() {
         let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
-            title: String::new(),
-            title_cursor: 0,
-            description: vec![String::new()],
-            description_row: 0,
-            description_column: 0,
-            focus: AddTaskStep::Title,
-            project: "aven".to_string(),
-            status: "inbox".to_string(),
-            priority: "none".to_string(),
             status_prefix_active: true,
-            priority_prefix_active: false,
+            ..add_task_view()
         }));
         assert!(rendered.contains("i inbox"));
         assert!(rendered.contains("a active"));
@@ -349,17 +359,8 @@ mod add_task_overlay {
     #[test]
     fn add_task_overlay_replaces_footer_when_priority_prefix_is_active() {
         let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
-            title: String::new(),
-            title_cursor: 0,
-            description: vec![String::new()],
-            description_row: 0,
-            description_column: 0,
-            focus: AddTaskStep::Title,
-            project: "aven".to_string(),
-            status: "inbox".to_string(),
-            priority: "none".to_string(),
-            status_prefix_active: false,
             priority_prefix_active: true,
+            ..add_task_view()
         }));
         assert!(rendered.contains("n none"));
         assert!(rendered.contains("h high"));
@@ -371,17 +372,10 @@ mod add_task_overlay {
     #[test]
     fn add_task_overlay_omits_title_placeholder_cursor_when_description_focused() {
         let buffer = overlay_buffer(OverlayView::AddTask(AddTaskView {
-            title: String::new(),
-            title_cursor: 0,
             description: vec!["details".to_string()],
-            description_row: 0,
             description_column: 7,
             focus: AddTaskStep::Description,
-            project: "aven".to_string(),
-            status: "inbox".to_string(),
-            priority: "none".to_string(),
-            status_prefix_active: false,
-            priority_prefix_active: false,
+            ..add_task_view()
         }));
         let title_row = (0..buffer.area.height)
             .find(|row| buffer_row(&buffer, *row).contains(ADD_TASK_TITLE_PLACEHOLDER))
@@ -397,17 +391,10 @@ mod add_task_overlay {
     fn add_task_description_wraps_and_marks_hidden_rows() {
         let lines = add_task_description_lines(
             &AddTaskView {
-                title: String::new(),
-                title_cursor: 0,
                 description: vec!["abcdefghijklmnopqrstuvwxyz".to_string()],
-                description_row: 0,
                 description_column: 25,
                 focus: AddTaskStep::Description,
-                project: "aven".to_string(),
-                status: "inbox".to_string(),
-                priority: "none".to_string(),
-                status_prefix_active: false,
-                priority_prefix_active: false,
+                ..add_task_view()
             },
             2,
             12,
@@ -424,17 +411,9 @@ mod add_task_overlay {
     fn add_task_description_unfocused_preview_starts_at_top() {
         let lines = add_task_description_lines(
             &AddTaskView {
-                title: String::new(),
-                title_cursor: 0,
                 description: vec!["abcdefghijklmnopqrstuvwxyz".to_string()],
-                description_row: 0,
                 description_column: 25,
-                focus: AddTaskStep::Title,
-                project: "aven".to_string(),
-                status: "inbox".to_string(),
-                priority: "none".to_string(),
-                status_prefix_active: false,
-                priority_prefix_active: false,
+                ..add_task_view()
             },
             2,
             12,
@@ -863,20 +842,13 @@ mod picker_overlays {
     #[test]
     fn overlay_render_includes_picker_filter_and_hints() {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-            route: OverlayRoute::MessageOnly,
             title: "Project".to_string(),
             filter: "app".to_string(),
             filter_cursor: 3,
-            items: vec![PickerItem {
-                label: "APP app".to_string(),
-                value: "app".to_string(),
-                selected: false,
-            }],
-            selected: 0,
-            scroll: 0,
+            items: vec![picker_item("APP app", "app")],
             multi: true,
-            mode: PickerMode::Navigate,
             visible_indices: vec![0],
+            ..picker_view()
         }));
         assert!(rendered.contains("Project"));
         assert!(rendered.contains("/app"));
@@ -889,20 +861,13 @@ mod picker_overlays {
     #[test]
     fn picker_filter_mode_hints_show_text_entry() {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-            route: OverlayRoute::MessageOnly,
             title: "Project".to_string(),
             filter: "app".to_string(),
             filter_cursor: 3,
-            items: vec![PickerItem {
-                label: "APP app".to_string(),
-                value: "app".to_string(),
-                selected: false,
-            }],
-            selected: 0,
-            scroll: 0,
-            multi: false,
+            items: vec![picker_item("APP app", "app")],
             mode: PickerMode::Filter,
             visible_indices: vec![0],
+            ..picker_view()
         }));
         assert!(rendered.contains("type filter"));
         assert!(rendered.contains("Esc normal"));
@@ -917,18 +882,9 @@ mod picker_overlays {
             let rendered = render_overlay_view(OverlayView::Picker(PickerView {
                 route,
                 title: title.to_string(),
-                filter: String::new(),
-                filter_cursor: 0,
-                items: vec![PickerItem {
-                    label: "urgent".to_string(),
-                    value: "urgent".to_string(),
-                    selected: false,
-                }],
-                selected: 0,
-                scroll: 0,
-                multi: false,
-                mode: PickerMode::Navigate,
+                items: vec![picker_item("urgent", "urgent")],
                 visible_indices: vec![0],
+                ..picker_view()
             }));
             assert!(rendered.contains(priority_icon("urgent")));
             assert!(rendered.contains("urgent"));
@@ -947,16 +903,12 @@ mod picker_overlays {
             })
             .collect::<Vec<_>>();
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-            route: OverlayRoute::MessageOnly,
             title: "Project".to_string(),
-            filter: String::new(),
-            filter_cursor: 0,
             items,
             selected: 10,
             scroll: 3,
-            multi: false,
-            mode: PickerMode::Navigate,
             visible_indices: (0..12).collect(),
+            ..picker_view()
         }));
         assert!(rendered.contains("▸ Item 10"));
         assert!(rendered.contains("Item 3"));
@@ -966,20 +918,9 @@ mod picker_overlays {
     #[test]
     fn project_picker_uses_structured_columns() {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-            route: OverlayRoute::ScopeProject,
-            title: "Scope: project".to_string(),
             filter: "claude".to_string(),
             filter_cursor: 6,
-            items: vec![PickerItem {
-                label: "CC claude-code".to_string(),
-                value: "claude-code".to_string(),
-                selected: false,
-            }],
-            selected: 0,
-            scroll: 0,
-            multi: false,
-            mode: PickerMode::Navigate,
-            visible_indices: vec![0],
+            ..project_picker_view()
         }));
         assert!(rendered.contains("PREFIX"));
         assert!(rendered.contains("PROJECT"));
@@ -1020,16 +961,7 @@ mod picker_overlays {
                 title: title.to_string(),
                 filter: "claude".to_string(),
                 filter_cursor: 6,
-                items: vec![PickerItem {
-                    label: "CC claude-code".to_string(),
-                    value: "claude-code".to_string(),
-                    selected: false,
-                }],
-                selected: 0,
-                scroll: 0,
-                multi: false,
-                mode: PickerMode::Navigate,
-                visible_indices: vec![0],
+                ..project_picker_view()
             }));
             assert!(rendered.contains("PREFIX"));
             assert!(rendered.contains("PROJECT"));
@@ -1191,15 +1123,8 @@ mod route_specific_rendering {
             OverlayView::AddTask(AddTaskView {
                 title: "ship dialogs".to_string(),
                 title_cursor: 12,
-                description: vec![String::new()],
-                description_row: 0,
-                description_column: 0,
-                focus: AddTaskStep::Title,
-                project: "aven".to_string(),
-                status: "inbox".to_string(),
                 priority: "high".to_string(),
-                status_prefix_active: false,
-                priority_prefix_active: false,
+                ..add_task_view()
             }),
             OverlayView::TextInput(TextInputView {
                 route: OverlayRoute::MessageOnly,
@@ -1217,20 +1142,13 @@ mod route_specific_rendering {
                 column: 4,
             }),
             OverlayView::Picker(PickerView {
-                route: OverlayRoute::MessageOnly,
                 title: "Project".to_string(),
                 filter: "app".to_string(),
                 filter_cursor: 3,
-                items: vec![PickerItem {
-                    label: "APP app".to_string(),
-                    value: "app".to_string(),
-                    selected: false,
-                }],
-                selected: 0,
-                scroll: 0,
+                items: vec![picker_item("APP app", "app")],
                 multi: true,
-                mode: PickerMode::Navigate,
                 visible_indices: vec![0],
+                ..picker_view()
             }),
             OverlayView::TagCombobox(TagComboboxView {
                 route: OverlayRoute::EditLabels,
@@ -1344,18 +1262,8 @@ mod route_specific_rendering {
             let rendered = render_overlay_view(OverlayView::Picker(PickerView {
                 route,
                 title: title.to_string(),
-                filter: String::new(),
-                filter_cursor: 0,
-                items: vec![PickerItem {
-                    label: "AVN aven".to_string(),
-                    value: "aven".to_string(),
-                    selected: false,
-                }],
-                selected: 0,
-                scroll: 0,
-                multi: false,
-                mode: PickerMode::Navigate,
-                visible_indices: vec![0],
+                items: vec![picker_item("AVN aven", "aven")],
+                ..project_picker_view()
             }));
             assert!(rendered.contains(title), "{route:?}");
             assert!(rendered.contains("PREFIX"), "{route:?}");
@@ -1368,18 +1276,9 @@ mod route_specific_rendering {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
             route: OverlayRoute::EditPriority,
             title: "Changed priority title".to_string(),
-            filter: String::new(),
-            filter_cursor: 0,
-            items: vec![PickerItem {
-                label: "urgent".to_string(),
-                value: "urgent".to_string(),
-                selected: false,
-            }],
-            selected: 0,
-            scroll: 0,
-            multi: false,
-            mode: PickerMode::Navigate,
+            items: vec![picker_item("urgent", "urgent")],
             visible_indices: vec![0],
+            ..picker_view()
         }));
         assert!(rendered.contains("Changed priority title"));
         assert!(rendered.contains(priority_icon("urgent")));
@@ -1390,18 +1289,9 @@ mod route_specific_rendering {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
             route: OverlayRoute::AddTaskTitlePriority,
             title: "Changed add task priority".to_string(),
-            filter: String::new(),
-            filter_cursor: 0,
-            items: vec![PickerItem {
-                label: "urgent".to_string(),
-                value: "urgent".to_string(),
-                selected: false,
-            }],
-            selected: 0,
-            scroll: 0,
-            multi: false,
-            mode: PickerMode::Navigate,
+            items: vec![picker_item("urgent", "urgent")],
             visible_indices: vec![0],
+            ..picker_view()
         }));
         assert!(rendered.contains("Changed add task priority"));
         assert!(rendered.contains(priority_icon("urgent")));
