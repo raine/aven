@@ -142,6 +142,9 @@ async fn sync_once(
         cursor = summary.cursor,
         complete = summary.complete,
         pages = summary.pages,
+        request_bytes = summary.request_bytes,
+        response_bytes = summary.response_bytes,
+        apply_ms = summary.apply_ms,
         "daemon sync completed"
     );
     println!(

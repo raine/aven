@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use sqlx::SqliteConnection;
@@ -21,6 +21,9 @@ pub(crate) struct SyncSummary {
     pub(crate) cursor: i64,
     pub(crate) complete: bool,
     pub(crate) pages: usize,
+    pub(crate) request_bytes: usize,
+    pub(crate) response_bytes: usize,
+    pub(crate) apply_ms: u128,
 }
 
 pub(crate) async fn sync_client(
@@ -83,6 +86,9 @@ async fn run_sync_once_inner(
     let mut cursor = sync_cursor(conn).await?;
     let mut pages = 0_usize;
     let complete;
+    let mut total_request_bytes = 0_usize;
+    let mut total_response_bytes = 0_usize;
+    let mut total_apply_ms = 0_u128;
     info!(server = %server, "sync client starting");
 
     loop {
@@ -93,33 +99,58 @@ async fn run_sync_once_inner(
             .collect::<Vec<_>>();
         let pull_limit = MAX_PULL_BATCH;
         let pending = changes.len();
-        let mut request = client.post(&url).json(&SyncRequest {
+        let sync_request = SyncRequest {
             protocol_version: Some(SYNC_PROTOCOL_VERSION),
             client_id: client_id.clone(),
             after: cursor,
             pull_limit: Some(pull_limit),
             changes,
-        });
+        };
+        let request_body = serde_json::to_vec(&sync_request)?;
+        let request_bytes = request_body.len();
+        let mut request = client
+            .post(&url)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(request_body);
         if let Some(token) = auth_token {
             request = request.bearer_auth(token);
         }
-        let response = request
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<SyncResponse>()
-            .await?;
+        let http_started = Instant::now();
+        let response_body = request.send().await?.error_for_status()?.bytes().await?;
+        let http_ms = http_started.elapsed().as_millis();
+        let response_bytes = response_body.len();
+        let response: SyncResponse = serde_json::from_slice(&response_body)?;
         validate_sync_response_for_request(cursor, pull_limit, &request_change_ids, &response)?;
+        let apply_started = Instant::now();
         let applied =
             apply_sync_response(conn, &response, attempted_at, total_pushed, total_pulled).await?;
+        let apply_ms = apply_started.elapsed().as_millis();
         total_pushed += pending as i64;
         total_pulled += applied;
         cursor = response.cursor;
         pages += 1;
+        total_request_bytes += request_bytes;
+        total_response_bytes += response_bytes;
+        total_apply_ms += apply_ms;
 
         let local_more = pending == MAX_PUSH_BATCH;
         let page_complete = !local_more && !response.has_more;
         let budget_exhausted = page_budget.is_some_and(|budget| pages >= budget);
+        info!(
+            server = %server,
+            page = pages,
+            pushed = pending,
+            pulled = applied,
+            cursor,
+            complete = page_complete,
+            request_bytes,
+            response_bytes,
+            http_ms,
+            apply_ms,
+            has_more = response.has_more,
+            local_more,
+            "sync client page completed"
+        );
         if page_complete || budget_exhausted {
             complete = page_complete;
             break;
@@ -133,6 +164,9 @@ async fn run_sync_once_inner(
         cursor,
         complete,
         pages,
+        request_bytes = total_request_bytes,
+        response_bytes = total_response_bytes,
+        apply_ms = total_apply_ms,
         "sync client finished"
     );
     Ok(SyncSummary {
@@ -141,6 +175,9 @@ async fn run_sync_once_inner(
         cursor,
         complete,
         pages,
+        request_bytes: total_request_bytes,
+        response_bytes: total_response_bytes,
+        apply_ms: total_apply_ms,
     })
 }
 

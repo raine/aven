@@ -1,5 +1,6 @@
 use std::fmt;
 use std::net::IpAddr;
+use std::time::Instant;
 
 use anyhow::{Result, bail};
 use axum::extract::State;
@@ -186,6 +187,7 @@ async fn handle_sync(
     info!(client_id = %client_id, after, change_count, pull_limit, "sync request received");
 
     let mut conn = state.pool.acquire().await.map_err(internal_error)?;
+    let assign_started = Instant::now();
     let (accepted_count, push_acks) = if request.changes.is_empty() {
         (0_i64, Vec::new())
     } else {
@@ -240,9 +242,12 @@ async fn handle_sync(
         tx.commit().await.map_err(internal_error)?;
         (accepted_count, push_acks)
     };
+    let assign_ms = assign_started.elapsed().as_millis();
+    let pull_query_started = Instant::now();
     let (changes, has_more) = load_server_changes_after(&mut conn, after, pull_limit)
         .await
         .map_err(internal_error)?;
+    let pull_query_ms = pull_query_started.elapsed().as_millis();
     let cursor = changes
         .last()
         .and_then(|change| change.server_seq)
@@ -255,6 +260,8 @@ async fn handle_sync(
         returned = changes.len(),
         cursor,
         has_more,
+        assign_ms,
+        pull_query_ms,
         "sync request completed"
     );
     Ok(SyncResponse {

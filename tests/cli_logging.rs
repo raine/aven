@@ -2,7 +2,15 @@ mod common;
 
 use std::time::Duration;
 
-use common::{TestEnv, TestProcess, TestServer, contains_all, contains_none, ok};
+use common::{TestEnv, TestProcess, TestServer, contains_all, contains_none, extract_ref, ok};
+
+fn assert_log_event_contains(logs: &str, marker: &str, fields: &[&str]) {
+    let line = logs
+        .lines()
+        .find(|line| line.contains(marker))
+        .unwrap_or_else(|| panic!("missing log event {marker:?}\n{logs}"));
+    contains_all(line, fields);
+}
 
 #[test]
 fn logging_writes_to_default_state_file_without_affecting_output() {
@@ -124,6 +132,36 @@ sync:
         std::fs::read_to_string(client_log).expect("read client logs"),
     );
     contains_all(&logs, &["auth_enabled=true", "sync request", "sync client"]);
+    assert_log_event_contains(
+        &logs,
+        "sync request completed",
+        &[
+            "incoming=",
+            "accepted=",
+            "returned=",
+            "cursor=",
+            "has_more=",
+            "assign_ms=",
+            "pull_query_ms=",
+        ],
+    );
+    assert_log_event_contains(
+        &logs,
+        "sync client page completed",
+        &[
+            "page=",
+            "pushed=",
+            "pulled=",
+            "cursor=",
+            "complete=",
+            "request_bytes=",
+            "response_bytes=",
+            "http_ms=",
+            "apply_ms=",
+            "has_more=",
+            "local_more=",
+        ],
+    );
     contains_none(
         &logs,
         &[
@@ -153,14 +191,19 @@ fn daemon_sync_logging_redacts_task_content() {
     daemon.wait_for_log("daemon-synced", Duration::from_secs(5));
 
     let mark = daemon.log_mark();
-    ok(env.aven_config([
+    ok(env.aven_config(["project", "create", "secret daemon project"]));
+    ok(env.aven_config(["label", "create", "secret-daemon-label"]));
+    let task_ref = extract_ref(&ok(env.aven_config([
         "add",
         "daemon log secret title",
         "--description",
         "daemon log secret body",
         "--project",
-        "app",
-    ]));
+        "secret daemon project",
+        "--label",
+        "secret-daemon-label",
+    ])));
+    ok(env.aven_config_stdin(["note", &task_ref, "--stdin"], "secret daemon note body\n"));
     daemon.wait_for_log_after(mark, "daemon-synced", Duration::from_secs(5));
 
     let logs = std::fs::read_to_string(log).expect("read daemon logs");
@@ -176,11 +219,33 @@ fn daemon_sync_logging_redacts_task_content() {
             "pages",
         ],
     );
+    assert_log_event_contains(
+        &logs,
+        "daemon sync completed",
+        &[
+            "pushed=",
+            "pulled=",
+            "cursor=",
+            "complete=",
+            "pages=",
+            "request_bytes=",
+            "response_bytes=",
+            "apply_ms=",
+        ],
+    );
+    assert_log_event_contains(
+        &logs,
+        "sync client page completed",
+        &["page=", "request_bytes=", "response_bytes=", "apply_ms="],
+    );
     contains_none(
         &logs,
         &[
             "daemon log secret title",
             "daemon log secret body",
+            "secret daemon project",
+            "secret-daemon-label",
+            "secret daemon note body",
             "super-secret-token",
         ],
     );
