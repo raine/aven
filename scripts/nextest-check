@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -lt 2 ]]; then
+  echo "usage: nextest-check <label> <command> [args...]" >&2
+  exit 2
+fi
+
+label="$1"
+shift
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cargo_summary_filter="$script_dir/lib/cargo-diagnostic-summary.jq"
+nextest_summary_filter="$script_dir/lib/nextest-failure-summary.jq"
+safe_label="${label//[^[:alnum:]_.-]/_}"
+log_dir="target/check-logs"
+log_file="$log_dir/$safe_label.log"
+
+mkdir -p "$log_dir"
+
+set +e
+"$@" >"$log_file" 2>&1
+status=$?
+set -e
+
+if [[ "$status" -eq 0 ]]; then
+  exit 0
+fi
+
+printf 'full log: %s\n\n' "$log_file" >&2
+
+if command -v jq >/dev/null 2>&1; then
+  summary_file="$(mktemp -t aven-nextest-summary.XXXXXX)"
+  jq -Rrf "$cargo_summary_filter" "$log_file" >"$summary_file"
+  jq -Rrf "$nextest_summary_filter" "$log_file" >>"$summary_file"
+
+  if [[ -s "$summary_file" ]]; then
+    cat "$summary_file" >&2
+    rm -f "$summary_file"
+    exit "$status"
+  fi
+  rm -f "$summary_file"
+fi
+
+printf 'nextest did not emit parseable JSON failures; showing compact text summary:\n\n' >&2
+awk '
+  /^[[:space:]]*(TRY [0-9]+ )?(FAIL|LEAK-FAIL|TIMEOUT|SLOW)[[:space:]]/ { print; next }
+  /^--- (STDOUT|STDERR) ---$/ { in_output = 1; output_count = 0; print; next }
+  /^------------$/ { in_output = 0; print; next }
+  in_output && output_count < 12 { print "  " $0; output_count++; next }
+  /^error:/ || /^warning:/ || /^[[:space:]]+-->/ { print; next }
+  /^Summary / { print; next }
+' "$log_file" | tail -n 120 >&2
+exit "$status"

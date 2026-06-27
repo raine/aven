@@ -46,7 +46,32 @@ run_check() {
   esac
 }
 
-output_dir="$(mktemp -d -t aven-run-checks.XXXXXX)"
+summarize_failure() {
+  local check="$1"
+  local output_file="$2"
+
+  printf 'full log: %s\n\n' "$output_file" >&2
+  case "$check" in
+    format-check)
+      awk '
+        /^(Diff in|Error writing files|error:)/ { remaining = 20; print; next }
+        remaining > 0 { print; remaining--; next }
+      ' "$output_file" | tail -n 80 >&2
+      ;;
+    cargo-deny)
+      grep -E '^(error\[|warning\[|advisories|bans|licenses|sources|    ├|    └|    │)' "$output_file" | tail -n 80 >&2 || tail -n 80 "$output_file" >&2
+      ;;
+    cargo-machete)
+      grep -E '^(Error:|warning:|The following dependencies seem to be unused|[[:space:]]+[^[:space:]].*)' "$output_file" | tail -n 80 >&2 || tail -n 80 "$output_file" >&2
+      ;;
+    *)
+      tail -n 80 "$output_file" >&2
+      ;;
+  esac
+}
+
+log_dir="target/check-logs"
+mkdir -p "$log_dir"
 cleanup() {
   local status=$?
   for pid in "${pids[@]:-}"; do
@@ -57,7 +82,6 @@ cleanup() {
   if [[ "${cursor_hidden:-0}" -eq 1 ]]; then
     printf '%s[?25h' "$esc" >&2
   fi
-  rm -rf "$output_dir"
   exit "$status"
 }
 trap cleanup EXIT INT TERM
@@ -72,11 +96,14 @@ for i in "${!checks[@]}"; do
   codes[i]=0
   elapsed[i]=""
   started[i]="$(date +%s)"
+  output_file="$log_dir/${checks[$i]}.log"
+  code_file="$log_dir/${checks[$i]}.code"
+  rm -f "$output_file" "$code_file"
   (
     set +e
-    run_check "${checks[$i]}" >"$output_dir/$i.out" 2>&1
+    run_check "${checks[$i]}" >"$output_file" 2>&1
     code=$?
-    printf '%s' "$code" >"$output_dir/$i.code"
+    printf '%s' "$code" >"$code_file"
   ) &
   pids[i]=$!
 done
@@ -113,7 +140,7 @@ render() {
     local detail
     if [[ "${states[$i]}" == run ]]; then
       glyph="${frames[$frame]}"
-      detail="$(latest_line "$output_dir/$i.out")"
+      detail="$(latest_line "$log_dir/${checks[$i]}.log")"
     elif [[ "${codes[$i]}" -eq 0 ]]; then
       glyph="✓"
       detail="(${elapsed[$i]})"
@@ -155,8 +182,8 @@ while true; do
         running=1
       else
         wait "${pids[$i]}" || true
-        if [[ -f "$output_dir/$i.code" ]]; then
-          codes[i]="$(<"$output_dir/$i.code")"
+        if [[ -f "$log_dir/${checks[$i]}.code" ]]; then
+          codes[i]="$(<"$log_dir/${checks[$i]}.code")"
         else
           codes[i]=1
         fi
@@ -194,7 +221,7 @@ for i in "${!checks[@]}"; do
   if [[ "${codes[$i]}" -ne 0 ]]; then
     failed=$((failed + 1))
     printf '\n%s\n' "$(bold_red "✖ ${checks[$i]}")" >&2
-    cat "$output_dir/$i.out" >&2
+    summarize_failure "${checks[$i]}" "$log_dir/${checks[$i]}.log"
   fi
 done
 
