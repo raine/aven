@@ -1,70 +1,198 @@
+use std::fmt::Write as _;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use clap::builder::styling::{Color, Effects, RgbColor, Styles};
-use clap::{Args, Parser, Subcommand};
+use clap::builder::styling::{Color, Effects, RgbColor, Style, Styles};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 const ACCENT: Color = Color::Rgb(RgbColor(166, 139, 255));
-const BLUE: Color = Color::Rgb(RgbColor(70, 128, 203));
-const FG_MUTED: Color = Color::Rgb(RgbColor(191, 188, 180));
+const FG_DIM: Color = Color::Rgb(RgbColor(147, 145, 138));
 const RED: Color = Color::Rgb(RgbColor(239, 82, 86));
 const GREEN: Color = Color::Rgb(RgbColor(137, 199, 82));
+const ORANGE: Color = Color::Rgb(RgbColor(244, 166, 54));
+
+const HEADING_STYLE: Style = ACCENT.on_default().effects(Effects::BOLD);
+const LITERAL_STYLE: Style = ACCENT.on_default().effects(Effects::BOLD);
+const PLACEHOLDER_STYLE: Style = FG_DIM.on_default();
+const DESCRIPTION_STYLE: Style = FG_DIM.on_default();
 
 const STYLES: Styles = Styles::styled()
-    .header(ACCENT.on_default().effects(Effects::BOLD))
-    .usage(ACCENT.on_default().effects(Effects::BOLD))
-    .literal(BLUE.on_default().effects(Effects::BOLD))
-    .placeholder(FG_MUTED.on_default())
+    .header(HEADING_STYLE)
+    .usage(HEADING_STYLE)
+    .literal(LITERAL_STYLE)
+    .placeholder(PLACEHOLDER_STYLE)
+    .context(DESCRIPTION_STYLE)
+    .context_value(ORANGE.on_default())
     .valid(GREEN.on_default())
-    .invalid(RED.on_default());
+    .invalid(RED.on_default().effects(Effects::BOLD))
+    .error(RED.on_default().effects(Effects::BOLD));
 
-const TOP_LEVEL_HELP: &str = concat!(
-    "Local-first task manager\n\n",
-    "\x1b[1;38;2;166;139;255mUsage:\x1b[0m aven [\x1b[1;38;2;70;128;203mOPTIONS\x1b[0m] <\x1b[38;2;191;188;180mCOMMAND\x1b[0m>\n\n",
-    "\x1b[1;38;2;166;139;255mTask commands:\x1b[0m\n",
-    "  \x1b[1;38;2;70;128;203madd\x1b[0m          Create a task\n",
-    "  \x1b[1;38;2;70;128;203mdep\x1b[0m          Manage task dependencies\n",
-    "  \x1b[1;38;2;70;128;203mshow\x1b[0m         Show task details\n",
-    "  \x1b[1;38;2;70;128;203mlist\x1b[0m         List tasks\n",
-    "  \x1b[1;38;2;70;128;203mbulk-update\x1b[0m  Update multiple tasks at once\n",
-    "  \x1b[1;38;2;70;128;203mprime\x1b[0m        Generate agent-facing workspace context\n",
-    "  \x1b[1;38;2;70;128;203mupdate\x1b[0m       Update task fields\n",
-    "  \x1b[1;38;2;70;128;203mnote\x1b[0m         Append a note to a task\n",
-    "  \x1b[1;38;2;70;128;203mdelete\x1b[0m       Delete a task\n",
-    "  \x1b[1;38;2;70;128;203mrestore\x1b[0m      Restore a deleted task\n",
-    "  \x1b[1;38;2;70;128;203mtext\x1b[0m         Safely edit long text fields\n\n",
-    "\x1b[1;38;2;166;139;255mProject and label commands:\x1b[0m\n",
-    "  \x1b[1;38;2;70;128;203mprojects\x1b[0m     List or search projects\n",
-    "  \x1b[1;38;2;70;128;203mlabels\x1b[0m       List or search labels\n",
-    "  \x1b[1;38;2;70;128;203mlabel\x1b[0m        Manage labels\n",
-    "  \x1b[1;38;2;70;128;203mproject\x1b[0m      Manage projects\n",
-    "  \x1b[1;38;2;70;128;203mworkspace\x1b[0m    Manage workspaces\n\n",
-    "\x1b[1;38;2;166;139;255mConflict commands:\x1b[0m\n",
-    "  \x1b[1;38;2;70;128;203mconflict\x1b[0m     Inspect and resolve sync conflicts\n\n",
-    "\x1b[1;38;2;166;139;255mSetup and diagnostics:\x1b[0m\n",
-    "  \x1b[1;38;2;70;128;203mconfig\x1b[0m       Manage local configuration\n",
-    "  \x1b[1;38;2;70;128;203mskill\x1b[0m        Print a Claude Code skill primer\n",
-    "  \x1b[1;38;2;70;128;203mdoctor\x1b[0m       Diagnose configuration and workspace state\n\n",
-    "\x1b[1;38;2;166;139;255mSync and service commands:\x1b[0m\n",
-    "  \x1b[1;38;2;70;128;203mdaemon\x1b[0m       Run or manage the background daemon\n",
-    "  \x1b[1;38;2;70;128;203mserver\x1b[0m       Run the sync server\n",
-    "  \x1b[1;38;2;70;128;203msync\x1b[0m         Sync with a remote server\n\n",
-    "\x1b[1;38;2;166;139;255mInteractive commands:\x1b[0m\n",
-    "  \x1b[1;38;2;70;128;203mtmux\x1b[0m         Open tmux popups\n",
-    "  \x1b[1;38;2;70;128;203mtui\x1b[0m          Open the terminal UI\n\n",
-    "\x1b[1;38;2;166;139;255mHelp:\x1b[0m\n",
-    "  \x1b[1;38;2;70;128;203mhelp\x1b[0m         Print this message or the help of the given subcommand(s)\n\n",
-    "\x1b[1;38;2;166;139;255mOptions:\x1b[0m\n",
-    "      \x1b[1;38;2;70;128;203m--db\x1b[0m <\x1b[38;2;191;188;180mDB\x1b[0m>                Use a specific SQLite database path\n",
-    "      \x1b[1;38;2;70;128;203m--workspace\x1b[0m <\x1b[38;2;191;188;180mWORKSPACE\x1b[0m>  Use a specific workspace by name or key\n",
-    "  \x1b[1;38;2;70;128;203m-h\x1b[0m, \x1b[1;38;2;70;128;203m--help\x1b[0m                   Print help\n",
-);
+const HELP_SECTIONS: &[HelpSection] = &[
+    HelpSection {
+        heading: "Tasks",
+        commands: &[
+            "add",
+            "list",
+            "show",
+            "update",
+            "note",
+            "dep",
+            "text",
+            "delete",
+            "restore",
+            "bulk-update",
+            "prime",
+        ],
+    },
+    HelpSection {
+        heading: "Projects & labels",
+        commands: &["projects", "project", "labels", "label", "workspace"],
+    },
+    HelpSection {
+        heading: "Sync & service",
+        commands: &["sync", "daemon", "server", "conflict"],
+    },
+    HelpSection {
+        heading: "Interactive",
+        commands: &["tui", "tmux"],
+    },
+    HelpSection {
+        heading: "Setup",
+        commands: &["config", "doctor", "skill"],
+    },
+];
+
+struct HelpSection {
+    heading: &'static str,
+    commands: &'static [&'static str],
+}
+
+pub(crate) fn parse() -> Cli {
+    let mut command = Cli::command();
+    let help = render_top_level_help(&command);
+    command = command.override_help(help);
+    let matches = command.get_matches();
+    Cli::from_arg_matches(&matches).expect("clap validates matches")
+}
+
+fn render_top_level_help(command: &clap::Command) -> String {
+    let mut help = String::new();
+    writeln!(&mut help, "Local-first task manager").unwrap();
+    writeln!(&mut help).unwrap();
+    writeln!(
+        &mut help,
+        "{} aven [{}] <{}>",
+        paint("Usage:", HEADING_STYLE),
+        paint("OPTIONS", LITERAL_STYLE),
+        paint("COMMAND", PLACEHOLDER_STYLE)
+    )
+    .unwrap();
+    writeln!(&mut help).unwrap();
+
+    for section in HELP_SECTIONS {
+        render_section(&mut help, command, section);
+    }
+
+    render_help_section(&mut help);
+    render_options_section(&mut help);
+    help
+}
+
+fn render_section(help: &mut String, command: &clap::Command, section: &HelpSection) {
+    writeln!(help, "{}", paint(section.heading, HEADING_STYLE)).unwrap();
+    for name in section.commands {
+        let about = command_about(command, name).unwrap_or_default();
+        render_row(
+            help,
+            name,
+            &paint(name, LITERAL_STYLE),
+            &about,
+            13,
+        );
+    }
+    writeln!(help).unwrap();
+}
+
+fn render_help_section(help: &mut String) {
+    writeln!(help, "{}", paint("Help", HEADING_STYLE)).unwrap();
+    render_row(
+        help,
+        "help",
+        &paint("help", LITERAL_STYLE),
+        "Print this message or the help of the given subcommand(s)",
+        13,
+    );
+    writeln!(help).unwrap();
+}
+
+fn render_options_section(help: &mut String) {
+    writeln!(help, "{}", paint("Options", HEADING_STYLE)).unwrap();
+    render_row(
+        help,
+        "--db <DB>",
+        &format!(
+            "{} <{}>",
+            paint("--db", LITERAL_STYLE),
+            paint("DB", PLACEHOLDER_STYLE)
+        ),
+        "Use a specific SQLite database path",
+        27,
+    );
+    render_row(
+        help,
+        "--workspace <WORKSPACE>",
+        &format!(
+            "{} <{}>",
+            paint("--workspace", LITERAL_STYLE),
+            paint("WORKSPACE", PLACEHOLDER_STYLE)
+        ),
+        "Use a specific workspace by name or key",
+        27,
+    );
+    render_row(
+        help,
+        "-h, --help",
+        &format!(
+            "{}, {}",
+            paint("-h", LITERAL_STYLE),
+            paint("--help", LITERAL_STYLE)
+        ),
+        "Print help",
+        27,
+    );
+}
+
+fn command_about(command: &clap::Command, name: &str) -> Option<String> {
+    command
+        .get_subcommands()
+        .find(|subcommand| subcommand.get_name() == name)
+        .and_then(|subcommand| subcommand.get_about())
+        .map(|about| about.to_string())
+}
+
+fn render_row(
+    help: &mut String,
+    plain_name: &str,
+    styled_name: &str,
+    description: &str,
+    width: usize,
+) {
+    write!(help, "  {styled_name}").unwrap();
+    for _ in plain_name.len()..width {
+        help.push(' ');
+    }
+    writeln!(help, "{}", paint(description, DESCRIPTION_STYLE)).unwrap();
+}
+
+fn paint(text: &str, style: Style) -> String {
+    format!("{}{}{}", style.render(), text, style.render_reset())
+}
+
 
 #[derive(Parser)]
 #[command(name = "aven")]
 #[command(about = "Local-first task manager")]
 #[command(styles = STYLES)]
-#[command(override_help = TOP_LEVEL_HELP)]
 pub struct Cli {
     #[arg(long, global = true, help = "Use a specific SQLite database path")]
     pub(crate) db: Option<PathBuf>,

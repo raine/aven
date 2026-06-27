@@ -1,5 +1,4 @@
 use anyhow::Result;
-use clap::Parser;
 
 mod choices;
 mod cli;
@@ -51,7 +50,7 @@ use sync::{run_server, sync_client};
 use workspaces::{resolve_active_workspace, set_active_workspace};
 
 pub async fn run_cli() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = cli::parse();
     let log_mode = match &cli.command {
         Commands::Server(_) => logging::LogMode::Server,
         Commands::Daemon(_) => logging::LogMode::Daemon,
