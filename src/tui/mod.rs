@@ -13,6 +13,7 @@ mod config_overlay;
 mod conflict_flow;
 mod event;
 mod markdown;
+mod natural_add_runtime;
 mod navigation;
 mod overlay;
 mod platform;
