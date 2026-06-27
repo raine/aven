@@ -1279,6 +1279,61 @@ async fn sync_server_rejects_client_supplied_server_sequence() {
     rejected_sync(&server, change, "server_seq").await;
 }
 
+#[tokio::test]
+async fn sync_server_allocates_ordered_sequences_for_large_push_batch() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let unique_count = MAX_PUSH_BATCH - 1;
+    let mut changes = (0..unique_count)
+        .map(|i| valid_create_project_change(&format!("{:016X}", i + 1), i as i64 + 1))
+        .collect::<Vec<_>>();
+    let duplicate = changes[7].clone();
+    changes.push(duplicate);
+    let change_ids = changes
+        .iter()
+        .map(|change| change["change_id"].as_str().expect("change_id").to_string())
+        .collect::<Vec<_>>();
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/sync", server.url))
+        .json(&json!({
+            "protocol_version": 4,
+            "client_id": "client-a",
+            "after": 0,
+            "pull_limit": MAX_PULL_BATCH,
+            "changes": changes,
+        }))
+        .send()
+        .await
+        .expect("post sync");
+
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let body: Value = response.json().await.expect("sync response json");
+    let push_acks = body["push_acks"].as_array().expect("push ack array");
+    assert_eq!(push_acks.len(), change_ids.len());
+    for (index, ack) in push_acks.iter().enumerate() {
+        assert_eq!(ack["change_id"], json!(change_ids[index]));
+    }
+    for (index, ack) in push_acks.iter().take(unique_count).enumerate() {
+        assert_eq!(ack["server_seq"], json!(index as i64 + 1));
+    }
+    assert_eq!(
+        push_acks.last().expect("duplicate ack")["server_seq"],
+        json!(8)
+    );
+    assert_eq!(
+        query_sql_scalar(&env.path("server.sqlite"), "SELECT count(*) FROM changes"),
+        unique_count.to_string()
+    );
+    assert_eq!(
+        query_sql_scalar(
+            &env.path("server.sqlite"),
+            "SELECT max(server_seq) FROM changes"
+        ),
+        unique_count.to_string()
+    );
+}
+
 #[test]
 fn valid_offline_batch_with_related_operations_still_syncs() {
     let env = TestEnv::new();
@@ -1452,7 +1507,7 @@ fn sync_server_rejects_negative_after_before_changes_are_stored() {
 }
 
 #[test]
-fn sync_server_paginates_pull_boundary() {
+fn sync_server_returns_bounded_pull_pages() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let server_db = env.path("server.sqlite");

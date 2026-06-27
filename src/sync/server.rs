@@ -190,6 +190,9 @@ async fn handle_sync(
 
     let mut conn = state.pool.acquire().await.map_err(internal_error)?;
     let mut tx = begin_immediate(&mut conn).await.map_err(internal_error)?;
+    let mut next_server_seq = next_available_server_seq(&mut tx)
+        .await
+        .map_err(internal_error)?;
     let mut accepted_count = 0_i64;
     let mut push_acks = Vec::with_capacity(request.changes.len());
     for change in request.changes {
@@ -204,7 +207,8 @@ async fn handle_sync(
         let server_seq = if let Some(server_seq) = existing_server_seq {
             server_seq
         } else {
-            let server_seq = next_server_seq(&mut tx).await.map_err(internal_error)?;
+            let server_seq = next_server_seq;
+            next_server_seq += 1;
             let payload = change.payload.to_string();
             sqlx::query!(
                 "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field,
@@ -260,7 +264,7 @@ async fn handle_sync(
     })
 }
 
-async fn next_server_seq(conn: &mut SqliteConnection) -> Result<i64> {
+async fn next_available_server_seq(conn: &mut SqliteConnection) -> Result<i64> {
     Ok(sqlx::query_scalar!(
         r#"SELECT COALESCE(MAX(server_seq), 0) + 1 AS "seq!: i64" FROM changes"#
     )
