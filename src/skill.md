@@ -74,6 +74,7 @@ aven doctor --integrity
 - Use `list --ready` when selecting new work to avoid blocked or completed tasks.
 - Inspect dependency context with `show <ref> --full` before changing task order or
   status. The `depends_on` and `blocks` sections show blockers and dependents.
+- Use `dep add <blocked> <blocker>` when one task depends on another.
 
 ## Long input and secrets
 
