@@ -2,13 +2,13 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::Paragraph;
 
 use super::super::dialog::{Dialog, dialog_hint_line};
-use super::super::scroll::{clamp_scroll_start, scrollbar_thumb_position};
+use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use crate::tui::config_overlay::DATABASE_STATS_TITLE;
 use crate::tui::store::TuiDatabaseStats;
-use crate::tui::theme::{BG_ALT, FG, FG_DIM, FG_MUTED};
+use crate::tui::theme::{BG_ALT, FG, FG_MUTED};
 
 pub(in crate::tui::ui) fn render_database_stats(
     frame: &mut Frame,
@@ -56,7 +56,7 @@ pub(in crate::tui::ui) fn render_database_stats(
         .style(Style::new().fg(FG).bg(BG_ALT)),
         hint_area,
     );
-    render_scrollbar(frame, stats_area, lines.len(), scroll);
+    render_vertical_scrollbar(frame, stats_area, lines.len(), scroll);
 }
 
 fn database_stats_lines(stats: &TuiDatabaseStats) -> Vec<Line<'static>> {
@@ -299,26 +299,6 @@ fn count_row(label: &str, value: i64) -> Line<'static> {
 
 fn value_row(label: &str, value: impl Into<String>, value_style: Style) -> Line<'static> {
     super::shared::value_row(LABEL_WIDTH, label, value, value_style)
-}
-
-fn render_scrollbar(frame: &mut Frame, area: Rect, content_height: usize, scroll: u16) {
-    let visible_rows = area.height as usize;
-    if content_height > visible_rows {
-        let start = clamp_scroll_start(scroll, content_height, visible_rows);
-        frame.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .style(Style::new().fg(FG_DIM).bg(BG_ALT))
-                .thumb_style(Style::new().fg(FG_MUTED)),
-            area,
-            &mut ScrollbarState::new(content_height)
-                .position(scrollbar_thumb_position(
-                    start,
-                    content_height,
-                    visible_rows.max(1),
-                ))
-                .viewport_content_length(visible_rows),
-        );
-    }
 }
 
 fn scroll_title(scroll: u16, content_height: usize, visible_rows: usize) -> Option<String> {

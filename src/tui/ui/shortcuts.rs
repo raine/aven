@@ -2,12 +2,12 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::Paragraph;
 
 use super::ViewState;
 use super::dialog::Dialog;
 use super::input::input_line;
-use super::scroll::{clamp_scroll_start, scrollbar_thumb_position};
+use super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use crate::tui::event::{
     CommandContext, CommandLifecycle, CommandSpec, matching_commands, prefix_hint_commands,
 };
@@ -73,7 +73,7 @@ pub(super) fn render_help(frame: &mut Frame, scroll: u16) {
     for (column, sections) in [left, right].into_iter().zip(columns.iter()) {
         render_help_column(frame, column, sections, scroll);
     }
-    render_help_scrollbar(frame, content, content_height, scroll);
+    render_vertical_scrollbar(frame, content, content_height, scroll);
 }
 
 fn help_columns() -> [Vec<&'static str>; 2] {
@@ -170,27 +170,7 @@ fn render_scrollable_help_lines(
         Paragraph::new(Text::from(visible)).style(Style::new().fg(FG).bg(BG_ALT)),
         area,
     );
-    render_help_scrollbar(frame, area, content_height, scroll);
-}
-
-fn render_help_scrollbar(frame: &mut Frame, area: Rect, content_height: usize, scroll: u16) {
-    let visible_rows = area.height as usize;
-    if content_height > visible_rows {
-        let start = clamp_scroll_start(scroll, content_height, visible_rows);
-        frame.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .style(Style::new().fg(FG_DIM).bg(BG_ALT))
-                .thumb_style(Style::new().fg(FG_MUTED)),
-            area,
-            &mut ScrollbarState::new(content_height)
-                .position(scrollbar_thumb_position(
-                    start,
-                    content_height,
-                    visible_rows.max(1),
-                ))
-                .viewport_content_length(visible_rows),
-        );
-    }
+    render_vertical_scrollbar(frame, area, content_height, scroll);
 }
 
 pub(super) fn render_detail_help(frame: &mut Frame, scroll: u16) {
