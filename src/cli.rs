@@ -9,9 +9,10 @@ const ACCENT: Color = Color::Rgb(RgbColor(166, 139, 255));
 const FG_DIM: Color = Color::Rgb(RgbColor(147, 145, 138));
 const RED: Color = Color::Rgb(RgbColor(239, 82, 86));
 const GREEN: Color = Color::Rgb(RgbColor(137, 199, 82));
+const PINK: Color = Color::Rgb(RgbColor(225, 91, 139));
 const ORANGE: Color = Color::Rgb(RgbColor(244, 166, 54));
 
-const HEADING_STYLE: Style = ACCENT.on_default().effects(Effects::BOLD);
+const HEADING_STYLE: Style = PINK.on_default().effects(Effects::BOLD);
 const LITERAL_STYLE: Style = ACCENT.on_default().effects(Effects::BOLD);
 const PLACEHOLDER_STYLE: Style = FG_DIM.on_default();
 const DESCRIPTION_STYLE: Style = FG_DIM.on_default();
@@ -29,35 +30,35 @@ const STYLES: Styles = Styles::styled()
 
 const HELP_SECTIONS: &[HelpSection] = &[
     HelpSection {
-        heading: "Tasks",
+        heading: "TASKS",
         commands: &[
             "add",
-            "list",
-            "show",
-            "update",
-            "note",
             "dep",
-            "text",
-            "delete",
-            "restore",
+            "show",
+            "list",
             "bulk-update",
             "prime",
+            "update",
+            "note",
+            "delete",
+            "restore",
+            "text",
         ],
     },
     HelpSection {
-        heading: "Projects & labels",
+        heading: "PROJECTS & LABELS",
         commands: &["projects", "project", "labels", "label", "workspace"],
     },
     HelpSection {
-        heading: "Sync & service",
+        heading: "SYNC & SERVICE",
         commands: &["sync", "daemon", "server", "conflict"],
     },
     HelpSection {
-        heading: "Interactive",
+        heading: "INTERACTIVE",
         commands: &["tui", "tmux"],
     },
     HelpSection {
-        heading: "Setup",
+        heading: "SETUP",
         commands: &["config", "doctor", "skill"],
     },
 ];
@@ -82,7 +83,7 @@ fn render_top_level_help(command: &clap::Command) -> String {
     writeln!(
         &mut help,
         "{} aven [{}] <{}>",
-        paint("Usage:", HEADING_STYLE),
+        paint("USAGE:", HEADING_STYLE),
         paint("OPTIONS", LITERAL_STYLE),
         paint("COMMAND", PLACEHOLDER_STYLE)
     )
@@ -114,7 +115,7 @@ fn render_section(help: &mut String, command: &clap::Command, section: &HelpSect
 }
 
 fn render_help_section(help: &mut String) {
-    writeln!(help, "{}", paint("Help", HEADING_STYLE)).unwrap();
+    writeln!(help, "{}", paint("HELP", HEADING_STYLE)).unwrap();
     render_row(
         help,
         "help",
@@ -126,7 +127,7 @@ fn render_help_section(help: &mut String) {
 }
 
 fn render_options_section(help: &mut String) {
-    writeln!(help, "{}", paint("Options", HEADING_STYLE)).unwrap();
+    writeln!(help, "{}", paint("OPTIONS", HEADING_STYLE)).unwrap();
     render_row(
         help,
         "--db <DB>",
