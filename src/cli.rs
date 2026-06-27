@@ -2,20 +2,13 @@ use std::fmt::Write as _;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use clap::builder::styling::{Color, Effects, RgbColor, Style, Styles};
+use clap::builder::styling::{AnsiColor, Effects, Style, Styles};
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
-const ACCENT: Color = Color::Rgb(RgbColor(166, 139, 255));
-const FG_DIM: Color = Color::Rgb(RgbColor(147, 145, 138));
-const RED: Color = Color::Rgb(RgbColor(239, 82, 86));
-const GREEN: Color = Color::Rgb(RgbColor(137, 199, 82));
-const PINK: Color = Color::Rgb(RgbColor(225, 91, 139));
-const ORANGE: Color = Color::Rgb(RgbColor(244, 166, 54));
-
-const HEADING_STYLE: Style = PINK.on_default().effects(Effects::BOLD);
-const LITERAL_STYLE: Style = ACCENT.on_default().effects(Effects::BOLD);
-const PLACEHOLDER_STYLE: Style = FG_DIM.on_default();
-const DESCRIPTION_STYLE: Style = FG_DIM.on_default();
+const HEADING_STYLE: Style = AnsiColor::Blue.on_default().effects(Effects::BOLD);
+const LITERAL_STYLE: Style = AnsiColor::Magenta.on_default();
+const PLACEHOLDER_STYLE: Style = Style::new();
+const DESCRIPTION_STYLE: Style = Style::new();
 
 const STYLES: Styles = Styles::styled()
     .header(HEADING_STYLE)
@@ -23,10 +16,10 @@ const STYLES: Styles = Styles::styled()
     .literal(LITERAL_STYLE)
     .placeholder(PLACEHOLDER_STYLE)
     .context(DESCRIPTION_STYLE)
-    .context_value(ORANGE.on_default())
-    .valid(GREEN.on_default())
-    .invalid(RED.on_default().effects(Effects::BOLD))
-    .error(RED.on_default().effects(Effects::BOLD));
+    .context_value(AnsiColor::Yellow.on_default())
+    .valid(AnsiColor::Green.on_default())
+    .invalid(AnsiColor::Red.on_default().effects(Effects::BOLD))
+    .error(AnsiColor::Red.on_default().effects(Effects::BOLD));
 
 const HELP_SECTIONS: &[HelpSection] = &[
     HelpSection {
@@ -82,10 +75,10 @@ fn render_top_level_help(command: &clap::Command) -> String {
     writeln!(&mut help).unwrap();
     writeln!(
         &mut help,
-        "{} aven [{}] <{}>",
+        "{} aven {} {}",
         paint("USAGE:", HEADING_STYLE),
-        paint("OPTIONS", LITERAL_STYLE),
-        paint("COMMAND", PLACEHOLDER_STYLE)
+        paint("[OPTIONS]", LITERAL_STYLE),
+        paint("<COMMAND>", PLACEHOLDER_STYLE)
     )
     .unwrap();
     writeln!(&mut help).unwrap();
@@ -131,11 +124,7 @@ fn render_options_section(help: &mut String) {
     render_row(
         help,
         "--db <DB>",
-        &format!(
-            "{} <{}>",
-            paint("--db", LITERAL_STYLE),
-            paint("DB", PLACEHOLDER_STYLE)
-        ),
+        &format!("{} {}", paint("--db", LITERAL_STYLE), paint("<DB>", PLACEHOLDER_STYLE)),
         "Use a specific SQLite database path",
         27,
     );
@@ -143,9 +132,9 @@ fn render_options_section(help: &mut String) {
         help,
         "--workspace <WORKSPACE>",
         &format!(
-            "{} <{}>",
+            "{} {}",
             paint("--workspace", LITERAL_STYLE),
-            paint("WORKSPACE", PLACEHOLDER_STYLE)
+            paint("<WORKSPACE>", PLACEHOLDER_STYLE)
         ),
         "Use a specific workspace by name or key",
         27,
