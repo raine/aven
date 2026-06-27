@@ -303,7 +303,8 @@ fn score_document(document: SearchDocument, query: &str) -> Option<ScoredDocumen
 
 fn score_lane(text: &str, query: &str) -> Option<(i64, std::ops::Range<usize>)> {
     let normalized_text = text.to_ascii_lowercase();
-    let normalized_query = query.to_ascii_lowercase();
+    let raw_query = query.trim();
+    let normalized_query = raw_query.to_ascii_lowercase();
     let query = normalized_query.trim();
     if query.is_empty() || normalized_text.is_empty() {
         return None;
@@ -327,10 +328,10 @@ fn score_lane(text: &str, query: &str) -> Option<(i64, std::ops::Range<usize>)> 
             index..index + query.len(),
         ));
     }
-    if query.len() < 3 {
+    if query.len() < 3 || looks_like_ref_query(raw_query) {
         return None;
     }
-    subsequence_span(&normalized_text, query).map(|span| {
+    subsequence_span(&normalized_text, query).and_then(|span| {
         let gap = span.end.saturating_sub(span.start + query.len()) as i64;
         let boundary_bonus =
             if span.start == 0 || is_boundary(normalized_text.as_bytes()[span.start - 1]) {
@@ -338,7 +339,8 @@ fn score_lane(text: &str, query: &str) -> Option<(i64, std::ops::Range<usize>)> 
             } else {
                 0
             };
-        (500 + boundary_bonus - gap * 8 - span.start as i64, span)
+        let score = 500 + boundary_bonus - gap * 8 - span.start as i64;
+        (score > 0).then_some((score, span))
     })
 }
 
@@ -360,6 +362,17 @@ fn subsequence_span(text: &str, query: &str) -> Option<std::ops::Range<usize>> {
         }
     }
     None
+}
+
+fn looks_like_ref_query(input: &str) -> bool {
+    let trimmed = input.trim().trim_start_matches('/');
+    let Some((prefix, suffix)) = trimmed.split_once('-') else {
+        return false;
+    };
+    !prefix.is_empty()
+        && prefix.chars().all(|ch| ch.is_ascii_alphabetic())
+        && suffix.len() >= 3
+        && suffix.chars().all(|ch| ch.is_ascii_alphanumeric())
 }
 
 fn normalize_ref_query(input: &str) -> String {

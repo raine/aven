@@ -724,6 +724,20 @@ mod tests {
         assert_eq!(by_ref[0].item.task.id, "7KQ9A1X4MV2P8D6R");
         assert_eq!(by_ref[0].matched_field, SearchMatchedField::Ref);
 
+        let qualified_ref = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "/APP-7KQ9".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(qualified_ref.len(), 1);
+        assert_eq!(qualified_ref[0].item.task.id, "7KQ9A1X4MV2P8D6R");
+        assert_eq!(qualified_ref[0].matched_field, SearchMatchedField::Ref);
+
         let without_deleted = search_task_items(
             &mut conn,
             TaskSearchQuery {
