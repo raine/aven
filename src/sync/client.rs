@@ -1,7 +1,8 @@
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use sqlx::SqliteConnection;
+use sqlx::{QueryBuilder, Sqlite, SqliteConnection};
 use tracing::info;
 
 use super::apply::apply_remote_change;
@@ -197,11 +198,10 @@ async fn apply_sync_response(
 ) -> Result<usize> {
     let mut applied = 0;
     let mut tx = begin_immediate(conn).await?;
-    for ack in &response.push_acks {
-        update_change_server_seq_if_missing(&mut tx, &ack.change_id, ack.server_seq).await?;
-    }
+    update_change_server_seqs_if_missing(&mut tx, &response.push_acks).await?;
+    let existing_change_ids = load_existing_change_ids(&mut tx, &response.changes).await?;
     for change in &response.changes {
-        if change_exists(&mut tx, &change.change_id).await? {
+        if existing_change_ids.contains(change.change_id.as_str()) {
             update_change_server_seq(&mut tx, &change.change_id, change.server_seq).await?;
             continue;
         }
@@ -209,6 +209,7 @@ async fn apply_sync_response(
         insert_wire_change(&mut tx, change).await?;
         applied += 1;
     }
+    // Cursor metadata is committed after page apply work so apply failures roll back cursor advancement.
     let pushed = previous_pushed + response.push_acks.len() as i64;
     let pulled = previous_pulled + applied;
     set_meta(&mut tx, "sync_cursor", &response.cursor.to_string()).await?;
@@ -257,14 +258,27 @@ async fn load_unsynced_changes(
     Ok(rows.into_iter().map(ChangeRow::into_wire).collect())
 }
 
-async fn change_exists(conn: &mut SqliteConnection, change_id: &str) -> Result<bool> {
-    Ok(sqlx::query_scalar!(
-        r#"SELECT count(*) AS "count!: i64" FROM changes WHERE change_id = ?"#,
-        change_id
-    )
-    .fetch_one(&mut *conn)
-    .await?
-        > 0)
+async fn load_existing_change_ids(
+    conn: &mut SqliteConnection,
+    changes: &[ChangeWire],
+) -> Result<HashSet<String>> {
+    if changes.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let mut query_builder =
+        QueryBuilder::<Sqlite>::new("SELECT change_id FROM changes WHERE change_id IN (");
+    let mut separated = query_builder.separated(", ");
+    for change in changes {
+        separated.push_bind(&change.change_id);
+    }
+    separated.push_unseparated(")");
+
+    let rows = query_builder
+        .build_query_scalar::<String>()
+        .fetch_all(&mut *conn)
+        .await?;
+    Ok(rows.into_iter().collect())
 }
 
 async fn update_change_server_seq(
@@ -284,18 +298,29 @@ async fn update_change_server_seq(
     Ok(())
 }
 
-async fn update_change_server_seq_if_missing(
+async fn update_change_server_seqs_if_missing(
     conn: &mut SqliteConnection,
-    change_id: &str,
-    server_seq: i64,
+    push_acks: &[super::wire::PushAck],
 ) -> Result<()> {
-    sqlx::query!(
-        "UPDATE changes SET server_seq = ? WHERE change_id = ? AND server_seq IS NULL",
-        server_seq,
-        change_id,
-    )
-    .execute(&mut *conn)
-    .await?;
+    if push_acks.is_empty() {
+        return Ok(());
+    }
+
+    let mut query_builder = QueryBuilder::<Sqlite>::new("WITH updates(change_id, server_seq) AS (");
+    query_builder.push_values(push_acks, |mut row, ack| {
+        row.push_bind(&ack.change_id).push_bind(ack.server_seq);
+    });
+    query_builder.push(
+        ") UPDATE changes
+         SET server_seq = (
+             SELECT updates.server_seq
+             FROM updates
+             WHERE updates.change_id = changes.change_id
+         )
+         WHERE server_seq IS NULL
+           AND change_id IN (SELECT change_id FROM updates)",
+    );
+    query_builder.build().execute(&mut *conn).await?;
     Ok(())
 }
 

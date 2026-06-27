@@ -1654,6 +1654,45 @@ fn push_acks_update_local_changes_without_pull_echo() {
 }
 
 #[test]
+fn sync_client_skips_already_stored_pulled_change_in_applied_count() {
+    let env = TestEnv::new();
+    let db = env.db("already-stored-pull.sqlite");
+    ok(env.aven(&db, ["add", "already stored", "--project", "app"]));
+    exec_sql(&db, "UPDATE changes SET server_seq = local_seq");
+
+    let change_json = query_sql_scalar(
+        &db,
+        "SELECT json_object(
+            'change_id', change_id, 'client_id', client_id, 'local_seq', local_seq,
+            'entity_type', entity_type, 'entity_id', entity_id, 'field', field,
+            'op_type', op_type, 'payload', json(payload), 'base_version', base_version,
+            'created_at', created_at, 'server_seq', server_seq
+         ) FROM changes ORDER BY server_seq LIMIT 1",
+    );
+    let change: Value = serde_json::from_str(&change_json).expect("change json");
+    let cursor = change["server_seq"].as_i64().expect("server seq");
+    let (url, server) = start_fake_sync_server(json!({
+        "protocol_version": 5,
+        "cursor": cursor,
+        "has_more": false,
+        "push_acks": [],
+        "changes": [change],
+    }));
+
+    let output = ok(env.aven(&db, ["sync", "--server", &url]));
+    contains_all(
+        &output,
+        &["pushed=0", "pulled=0", &format!("cursor={cursor}")],
+    );
+    let expected_cursor = cursor.to_string();
+    assert_eq!(
+        meta_value(&db, "sync_cursor").as_deref(),
+        Some(expected_cursor.as_str())
+    );
+    server.join().expect("fake sync server exits");
+}
+
+#[test]
 fn sync_client_rejects_duplicate_push_acks() {
     let env = TestEnv::new();
     let db = env.db("duplicate-ack.sqlite");
