@@ -7,6 +7,7 @@ use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarStat
 use super::ViewState;
 use super::dialog::Dialog;
 use super::input::input_line;
+use super::scroll::{clamp_scroll_start, scrollbar_thumb_position};
 use crate::tui::event::{
     CommandContext, CommandLifecycle, CommandSpec, matching_commands, prefix_hint_commands,
 };
@@ -139,7 +140,7 @@ fn help_section_len(section: &str) -> usize {
 
 fn render_help_column(frame: &mut Frame, area: Rect, sections: &[&'static str], scroll: u16) {
     let lines = help_column_lines(sections);
-    let start = help_scroll_start(scroll, lines.len(), area.height as usize);
+    let start = clamp_scroll_start(scroll, lines.len(), area.height as usize);
     let visible = lines
         .into_iter()
         .skip(start)
@@ -159,7 +160,7 @@ fn render_scrollable_help_lines(
 ) {
     let content_height = lines.len();
     let visible_rows = area.height as usize;
-    let start = help_scroll_start(scroll, content_height, visible_rows);
+    let start = clamp_scroll_start(scroll, content_height, visible_rows);
     let visible = lines
         .into_iter()
         .skip(start)
@@ -175,14 +176,14 @@ fn render_scrollable_help_lines(
 fn render_help_scrollbar(frame: &mut Frame, area: Rect, content_height: usize, scroll: u16) {
     let visible_rows = area.height as usize;
     if content_height > visible_rows {
-        let start = help_scroll_start(scroll, content_height, visible_rows);
+        let start = clamp_scroll_start(scroll, content_height, visible_rows);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .style(Style::new().fg(FG_DIM).bg(BG_ALT))
                 .thumb_style(Style::new().fg(FG_MUTED)),
             area,
             &mut ScrollbarState::new(content_height)
-                .position(help_scrollbar_position(
+                .position(scrollbar_thumb_position(
                     start,
                     content_height,
                     visible_rows.max(1),
@@ -300,19 +301,6 @@ pub(crate) fn help_scroll_cap(frame_height: u16) -> u16 {
 pub(crate) fn detail_help_scroll_cap(frame_height: u16) -> u16 {
     let visible_rows = frame_height.min(18).saturating_sub(2) as usize;
     detail_help_lines().len().saturating_sub(visible_rows) as u16
-}
-
-fn help_scroll_start(scroll: u16, content_height: usize, visible: usize) -> usize {
-    let max_start = content_height.saturating_sub(visible);
-    (scroll as usize).min(max_start)
-}
-
-fn help_scrollbar_position(start: usize, content_height: usize, visible: usize) -> usize {
-    let max_start = content_height.saturating_sub(visible);
-    start
-        .saturating_mul(content_height.saturating_sub(1))
-        .checked_div(max_start)
-        .unwrap_or(0)
 }
 
 fn command_name_style(command: &CommandSpec) -> Style {
@@ -772,19 +760,6 @@ mod tests {
     #[test]
     fn detail_help_scroll_cap_uses_detail_rows() {
         assert!(detail_help_scroll_cap(10) > 0);
-    }
-
-    #[test]
-    fn help_scrollbar_position_reaches_end_at_last_visible_row() {
-        assert_eq!(help_scrollbar_position(0, 20, 5), 0);
-        assert_eq!(help_scrollbar_position(15, 20, 5), 19);
-        assert_eq!(help_scrollbar_position(0, 3, 5), 0);
-    }
-
-    #[test]
-    fn help_scroll_start_stops_at_last_available_row() {
-        assert_eq!(help_scroll_start(50, 20, 5), 15);
-        assert_eq!(help_scroll_start(50, 3, 5), 0);
     }
 
     #[test]

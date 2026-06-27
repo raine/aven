@@ -6,6 +6,7 @@ mod header;
 pub(crate) use self::header::{HeaderTarget, header_target_at};
 mod input;
 mod overlays;
+mod scroll;
 mod shortcuts;
 mod sidebar;
 mod task_display;

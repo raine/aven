@@ -7,6 +7,7 @@ use ratatui::widgets::{
 };
 
 use super::input::clipped_input_line;
+use super::scroll::{clamp_scroll_start, scrollbar_thumb_position};
 use super::task_display::{description_or_placeholder, labels_display};
 use crate::query::TaskListItem;
 use crate::tui::app::WidgetState;
@@ -98,7 +99,9 @@ pub(crate) fn detail_scroll_cap(
 ) -> u16 {
     let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
     let model = build_detail_content_model(item, layout.content_area, 0, None);
-    detail_scroll_max_start(model.content_height, layout.content_area.height as usize) as u16
+    model
+        .content_height
+        .saturating_sub(layout.content_area.height as usize) as u16
 }
 
 fn detail_content_margin() -> Margin {
@@ -117,10 +120,10 @@ fn build_detail_content_model(
     let lines = detail_content_lines(item, area.width as usize, inline_title_editor);
     let content_height = lines.len().max(1);
     let visible = area.height as usize;
-    let start = detail_scroll_start(scroll, content_height, visible.max(1));
+    let start = clamp_scroll_start(scroll, content_height, visible.max(1));
     let lines = lines.into_iter().skip(start).collect();
     let scrollbar_position = if content_height > visible {
-        detail_scrollbar_position(start, content_height, visible.max(1))
+        scrollbar_thumb_position(start, content_height, visible.max(1))
     } else {
         0
     };
@@ -152,23 +155,6 @@ fn render_detail_content_from_model(
                 .viewport_content_length(visible),
         );
     }
-}
-
-fn detail_scroll_start(scroll: u16, content_height: usize, visible: usize) -> usize {
-    let max_start = detail_scroll_max_start(content_height, visible);
-    (scroll as usize).min(max_start)
-}
-
-fn detail_scrollbar_position(start: usize, content_height: usize, visible: usize) -> usize {
-    let max_start = detail_scroll_max_start(content_height, visible);
-    start
-        .saturating_mul(content_height.saturating_sub(1))
-        .checked_div(max_start)
-        .unwrap_or(0)
-}
-
-fn detail_scroll_max_start(content_height: usize, visible: usize) -> usize {
-    content_height.saturating_sub(visible)
 }
 
 fn detail_content_lines(
@@ -580,21 +566,6 @@ mod tests {
         assert!(rendered.contains("PRIORITY\n▲ urgent"));
         assert!(rendered.contains("LABELS\nbug, mobile"));
         assert!(rendered.contains("CONFLICTS\nyes"));
-    }
-
-    #[test]
-    fn detail_scroll_start_is_capped_by_visible_rows() {
-        assert_eq!(detail_scroll_start(0, 20, 5), 0);
-        assert_eq!(detail_scroll_start(8, 20, 5), 8);
-        assert_eq!(detail_scroll_start(30, 20, 5), 15);
-        assert_eq!(detail_scroll_start(4, 3, 5), 0);
-    }
-
-    #[test]
-    fn detail_scrollbar_position_reaches_end_at_last_visible_row() {
-        assert_eq!(detail_scrollbar_position(0, 20, 5), 0);
-        assert_eq!(detail_scrollbar_position(15, 20, 5), 19);
-        assert_eq!(detail_scrollbar_position(0, 3, 5), 0);
     }
 
     #[test]

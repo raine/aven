@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 use super::super::dialog::{Dialog, dialog_hint_line};
+use super::super::scroll::{clamp_scroll_start, scrollbar_thumb_position};
 use crate::tui::config_overlay::DATABASE_STATS_TITLE;
 use crate::tui::store::TuiDatabaseStats;
 use crate::tui::theme::{BG_ALT, FG, FG_DIM, FG_MUTED};
@@ -19,7 +20,7 @@ pub(in crate::tui::ui) fn render_database_stats(
     let height = frame.area().height.saturating_sub(1).clamp(12, 30);
     let content_rows = height.saturating_sub(2);
     let visible_rows = content_rows.saturating_sub(2) as usize;
-    let start = scroll_start(scroll, lines.len(), visible_rows);
+    let start = clamp_scroll_start(scroll, lines.len(), visible_rows);
     let visible = lines
         .iter()
         .skip(start)
@@ -303,14 +304,14 @@ fn value_row(label: &str, value: impl Into<String>, value_style: Style) -> Line<
 fn render_scrollbar(frame: &mut Frame, area: Rect, content_height: usize, scroll: u16) {
     let visible_rows = area.height as usize;
     if content_height > visible_rows {
-        let start = scroll_start(scroll, content_height, visible_rows);
+        let start = clamp_scroll_start(scroll, content_height, visible_rows);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .style(Style::new().fg(FG_DIM).bg(BG_ALT))
                 .thumb_style(Style::new().fg(FG_MUTED)),
             area,
             &mut ScrollbarState::new(content_height)
-                .position(scrollbar_position(
+                .position(scrollbar_thumb_position(
                     start,
                     content_height,
                     visible_rows.max(1),
@@ -320,19 +321,6 @@ fn render_scrollbar(frame: &mut Frame, area: Rect, content_height: usize, scroll
     }
 }
 
-fn scroll_start(scroll: u16, content_height: usize, visible_rows: usize) -> usize {
-    let max_scroll = content_height.saturating_sub(visible_rows);
-    (scroll as usize).min(max_scroll)
-}
-
-fn scrollbar_position(start: usize, content_height: usize, visible_rows: usize) -> usize {
-    let max_start = content_height.saturating_sub(visible_rows);
-    start
-        .saturating_mul(content_height.saturating_sub(1))
-        .checked_div(max_start)
-        .unwrap_or(0)
-}
-
 fn scroll_title(scroll: u16, content_height: usize, visible_rows: usize) -> Option<String> {
     if content_height <= visible_rows {
         return None;
@@ -340,7 +328,7 @@ fn scroll_title(scroll: u16, content_height: usize, visible_rows: usize) -> Opti
     let total = content_height
         .saturating_sub(visible_rows)
         .saturating_add(1);
-    let current = scroll_start(scroll, content_height, visible_rows)
+    let current = clamp_scroll_start(scroll, content_height, visible_rows)
         .saturating_add(1)
         .min(total);
     Some(format!(" {current}/{total} "))
