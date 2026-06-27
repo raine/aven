@@ -195,7 +195,7 @@ mod text_panel_and_search {
         assert!(rendered.contains("Search"));
         assert!(rendered.contains("query"));
         assert!(rendered.contains("Query result"));
-        assert!(rendered.contains("Preview body"));
+        assert!(rendered.contains("age="));
     }
 
     #[test]

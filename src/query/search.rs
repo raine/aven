@@ -328,51 +328,7 @@ fn score_lane(text: &str, query: &str) -> Option<(i64, std::ops::Range<usize>)> 
             index..index + query.len(),
         ));
     }
-    if query.len() < 3 || looks_like_ref_query(raw_query) {
-        return None;
-    }
-    subsequence_span(&normalized_text, query).and_then(|span| {
-        let gap = span.end.saturating_sub(span.start + query.len()) as i64;
-        let boundary_bonus =
-            if span.start == 0 || is_boundary(normalized_text.as_bytes()[span.start - 1]) {
-                120
-            } else {
-                0
-            };
-        let score = 500 + boundary_bonus - gap * 8 - span.start as i64;
-        (score > 0).then_some((score, span))
-    })
-}
-
-fn subsequence_span(text: &str, query: &str) -> Option<std::ops::Range<usize>> {
-    let mut query_chars = query.chars();
-    let mut next = query_chars.next()?;
-    let mut start = None;
-    for (index, ch) in text.char_indices() {
-        if ch == next {
-            if start.is_none() {
-                start = Some(index);
-            }
-            let end = index + ch.len_utf8();
-            if let Some(ch) = query_chars.next() {
-                next = ch;
-            } else {
-                return Some(start.unwrap_or(index)..end);
-            }
-        }
-    }
     None
-}
-
-fn looks_like_ref_query(input: &str) -> bool {
-    let trimmed = input.trim().trim_start_matches('/');
-    let Some((prefix, suffix)) = trimmed.split_once('-') else {
-        return false;
-    };
-    !prefix.is_empty()
-        && prefix.chars().all(|ch| ch.is_ascii_alphabetic())
-        && suffix.len() >= 3
-        && suffix.chars().all(|ch| ch.is_ascii_alphanumeric())
 }
 
 fn normalize_ref_query(input: &str) -> String {

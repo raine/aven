@@ -685,6 +685,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn task_search_requires_contiguous_text_matches() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+        insert_test_task(
+            &mut conn,
+            "7KQ9A1X4MV2P8D6R",
+            "Fix dashboard timers resetting spuriously for idle agents",
+            "done",
+            "medium",
+            "001",
+        )
+        .await;
+        insert_test_task(
+            &mut conn,
+            "8KQ9A1X4MV2P8D6R",
+            "Automate multi-shell testing for shell-sensitive test cases",
+            "done",
+            "medium",
+            "002",
+        )
+        .await;
+
+        let items = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "testing".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            listed_titles_from_search(&items),
+            ["Automate multi-shell testing for shell-sensitive test cases"]
+        );
+        assert_eq!(items[0].matched_field, SearchMatchedField::Title);
+    }
+
+    #[tokio::test]
     async fn task_search_ranks_refs_and_controls_deleted_results() {
         let (_temp, mut conn) = test_conn().await;
         seed_default_project(&mut conn).await;
