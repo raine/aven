@@ -481,18 +481,21 @@ fn same_key_remote_project_writes_alias() {
     let env = TestEnv::new();
     let db = env.db("project-collision.sqlite");
     ok(env.aven(&db, ["add", "local seed", "--project", "app"]));
-    let (url, server) = start_fake_sync_server(sync_response(1, [wire_change(
-        "create_task",
-        "task",
-        "CCCCCCCCCCCCCCCC",
-        json!({
-            "title": "remote collision",
-            "project_id": "BBBBBBBBBBBBBBBB",
-            "project_key": "app",
-            "project_name": "app",
-            "project_prefix": "APP",
-        })
-    )]));
+    let (url, server) = start_fake_sync_server(sync_response(
+        1,
+        [wire_change(
+            "create_task",
+            "task",
+            "CCCCCCCCCCCCCCCC",
+            json!({
+                "title": "remote collision",
+                "project_id": "BBBBBBBBBBBBBBBB",
+                "project_key": "app",
+                "project_name": "app",
+                "project_prefix": "APP",
+            }),
+        )],
+    ));
 
     ok(env.aven(&db, ["sync", "--server", &url]));
     assert_eq!(
@@ -528,18 +531,21 @@ fn prefix_only_remote_project_collision_gets_unique_prefix() {
     let env = TestEnv::new();
     let db = env.db("prefix-collision.sqlite");
     ok(env.aven(&db, ["project", "create", "App"]));
-    let (url, server) = start_fake_sync_server(sync_response(1, [wire_change(
-        "create_task",
-        "task",
-        "CCCCCCCCCCCCCCCC",
-        json!({
-            "title": "remote prefix collision",
-            "project_id": "BBBBBBBBBBBBBBBB",
-            "project_key": "service",
-            "project_name": "service",
-            "project_prefix": "APP",
-        })
-    )]));
+    let (url, server) = start_fake_sync_server(sync_response(
+        1,
+        [wire_change(
+            "create_task",
+            "task",
+            "CCCCCCCCCCCCCCCC",
+            json!({
+                "title": "remote prefix collision",
+                "project_id": "BBBBBBBBBBBBBBBB",
+                "project_key": "service",
+                "project_name": "service",
+                "project_prefix": "APP",
+            }),
+        )],
+    ));
 
     ok(env.aven(&db, ["sync", "--server", &url]));
     assert_eq!(
@@ -576,18 +582,21 @@ fn stale_project_id_alias_is_ignored_for_remote_task_create() {
         "INSERT INTO project_id_aliases(workspace_id, remote_project_id, local_project_id)
          VALUES ('0000000000000000', 'BBBBBBBBBBBBBBBB', 'DDDDDDDDDDDDDDDD')",
     );
-    let (url, server) = start_fake_sync_server(sync_response(1, [wire_change(
-        "create_task",
-        "task",
-        "CCCCCCCCCCCCCCCC",
-        json!({
-            "title": "remote with stale alias",
-            "project_id": "BBBBBBBBBBBBBBBB",
-            "project_key": "remote",
-            "project_name": "remote",
-            "project_prefix": "REM",
-        })
-    )]));
+    let (url, server) = start_fake_sync_server(sync_response(
+        1,
+        [wire_change(
+            "create_task",
+            "task",
+            "CCCCCCCCCCCCCCCC",
+            json!({
+                "title": "remote with stale alias",
+                "project_id": "BBBBBBBBBBBBBBBB",
+                "project_key": "remote",
+                "project_name": "remote",
+                "project_prefix": "REM",
+            }),
+        )],
+    ));
 
     ok(env.aven(&db, ["sync", "--server", &url]));
 

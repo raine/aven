@@ -46,7 +46,9 @@ use crate::query::{
 use crate::refs::{display_ref, display_suffix, resolve_task_ref};
 use crate::render::{print_multiline_block, quote};
 use crate::task_fields::TaskField;
-use crate::task_render::{labels_for_task_in_workspace, print_task, print_task_line_item};
+use crate::task_render::{
+    labels_for_task_in_workspace, print_task, print_task_dependency_summary, print_task_line_item,
+};
 use crate::types::Task;
 use crate::workspaces::{
     active_workspace, create_workspace, list_workspaces, rename_workspace,
@@ -585,33 +587,7 @@ pub(crate) async fn cmd_dep(conn: &mut SqliteConnection, args: DepCommand) -> Re
             let task = resolve_task_ref(conn, &args.task_ref).await?;
             let summary =
                 query::task_dependency_summary(conn, &task.workspace_id, &task.id).await?;
-            let depends_on_open = summary
-                .depends_on
-                .iter()
-                .filter(|item| item.unresolved)
-                .count();
-            let blocks_open = summary.blocks.iter().filter(|item| item.unresolved).count();
-            println!(
-                "depends_on open={depends_on_open} total={}",
-                summary.depends_on.len()
-            );
-            for item in summary.depends_on {
-                println!(
-                    "- {} status={} title={}",
-                    item.display_ref,
-                    item.task.status,
-                    quote(&item.task.title)
-                );
-            }
-            println!("blocks open={blocks_open} total={}", summary.blocks.len());
-            for item in summary.blocks {
-                println!(
-                    "- {} status={} title={}",
-                    item.display_ref,
-                    item.task.status,
-                    quote(&item.task.title)
-                );
-            }
+            print_task_dependency_summary(&summary);
         }
     }
     Ok(())

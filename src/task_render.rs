@@ -2,7 +2,7 @@ use anyhow::Result;
 use sqlx::{Row, SqliteConnection};
 
 use crate::db::task_has_conflict;
-use crate::query::{TaskListItem, task_dependency_summary};
+use crate::query::{TaskDependencySummary, TaskListItem, task_dependency_summary};
 use crate::refs::display_ref;
 use crate::render::{print_multiline_block, quote};
 use crate::types::Task;
@@ -127,35 +127,27 @@ pub(crate) async fn print_task(conn: &mut SqliteConnection, task: &Task, full: b
     Ok(())
 }
 
+pub(crate) fn print_task_dependency_summary(summary: &TaskDependencySummary) {
+    print_dependency_section("depends_on", &summary.depends_on);
+    print_dependency_section("blocks", &summary.blocks);
+}
+
+fn print_dependency_section(label: &str, items: &[crate::query::TaskDependencyItem]) {
+    let open = items.iter().filter(|item| item.unresolved).count();
+    println!("{label} open={open} total={}", items.len());
+    for item in items {
+        println!(
+            "- {} status={} title={}",
+            item.display_ref,
+            item.task.status,
+            quote(&item.task.title)
+        );
+    }
+}
+
 async fn print_task_dependencies(conn: &mut SqliteConnection, task: &Task) -> Result<()> {
     let summary = task_dependency_summary(conn, &task.workspace_id, &task.id).await?;
-    let depends_on_open = summary
-        .depends_on
-        .iter()
-        .filter(|item| item.unresolved)
-        .count();
-    let blocks_open = summary.blocks.iter().filter(|item| item.unresolved).count();
-    println!(
-        "depends_on open={depends_on_open} total={}",
-        summary.depends_on.len()
-    );
-    for item in summary.depends_on {
-        println!(
-            "- {} status={} title={}",
-            item.display_ref,
-            item.task.status,
-            quote(&item.task.title)
-        );
-    }
-    println!("blocks open={blocks_open} total={}", summary.blocks.len());
-    for item in summary.blocks {
-        println!(
-            "- {} status={} title={}",
-            item.display_ref,
-            item.task.status,
-            quote(&item.task.title)
-        );
-    }
+    print_task_dependency_summary(&summary);
     Ok(())
 }
 
