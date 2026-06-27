@@ -338,7 +338,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             ensure_entity_type(change, "project")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
             required_workspace_payload(&change.payload)?;
-            required_string_payload("deleted_at", &change.payload)?;
+            required_timestamp_payload("deleted_at", &change.payload)?;
         }
         "label_delete" => {
             ensure_entity_type(change, "label")?;
@@ -347,7 +347,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             if name != change.entity_id {
                 bail!("error invalid-sync-change label-value-mismatch");
             }
-            required_string_payload("deleted_at", &change.payload)?;
+            required_timestamp_payload("deleted_at", &change.payload)?;
         }
         "note_delete" => {
             ensure_entity_type(change, "task")?;
@@ -358,7 +358,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             required_workspace_payload(&change.payload)?;
             let note_id = required_string_payload("note_id", &change.payload)?;
             ensure_sync_id("note_id", &note_id)?;
-            required_string_payload("deleted_at", &change.payload)?;
+            required_timestamp_payload("deleted_at", &change.payload)?;
         }
         _ => bail!("error invalid-sync-change op_type={}", change.op_type),
     }
@@ -531,6 +531,26 @@ fn required_string_payload(key: &str, payload: &Value) -> Result<String> {
         .and_then(Value::as_str)
         .map(str::to_string)
         .with_context(|| format!("error invalid-sync-change payload.{key} missing"))
+}
+
+fn required_timestamp_payload(key: &str, payload: &Value) -> Result<String> {
+    let value = required_string_payload(key, payload)?;
+    if value.len() == 20
+        && value.as_bytes()[4] == b'-'
+        && value.as_bytes()[7] == b'-'
+        && value.as_bytes()[10] == b'T'
+        && value.as_bytes()[13] == b':'
+        && value.as_bytes()[16] == b':'
+        && value.as_bytes()[19] == b'Z'
+        && value
+            .bytes()
+            .enumerate()
+            .all(|(idx, byte)| matches!(idx, 4 | 7 | 10 | 13 | 16 | 19) || byte.is_ascii_digit())
+    {
+        Ok(value)
+    } else {
+        bail!("error invalid-sync-change payload.{key} invalid-timestamp");
+    }
 }
 
 fn required_workspace_payload(payload: &Value) -> Result<()> {

@@ -13,11 +13,6 @@ pub(super) async fn delete_project(conn: &mut SqliteConnection, change: &ChangeW
     let Some(project_id) = project_id else {
         return Ok(());
     };
-    sqlx::query("DELETE FROM project_paths WHERE workspace_id = ? AND project_id = ?")
-        .bind(&workspace_id)
-        .bind(&project_id)
-        .execute(&mut *conn)
-        .await?;
     let deleted_at = str_payload(&change.payload, "deleted_at")?;
     sqlx::query(
         "UPDATE projects SET deleted = 1, updated_at = ? WHERE workspace_id = ? AND id = ?",

@@ -1693,6 +1693,59 @@ fn sync_client_skips_already_stored_pulled_change_in_applied_count() {
 }
 
 #[test]
+fn sync_client_preserves_existing_pulled_change_server_seq() {
+    let env = TestEnv::new();
+    let db = env.db("server-seq-preserve.sqlite");
+    ok(env.aven(&db, ["add", "preserve seq", "--project", "app"]));
+    exec_sql(&db, "UPDATE changes SET server_seq = local_seq");
+
+    let change_id = query_sql_scalar(
+        &db,
+        "SELECT change_id FROM changes WHERE server_seq IS NOT NULL ORDER BY server_seq LIMIT 1",
+    );
+    let original_seq = query_sql_scalar(
+        &db,
+        &format!("SELECT server_seq FROM changes WHERE change_id = '{change_id}'"),
+    );
+
+    // Pull a change with the same change_id but different server_seq
+    let same_id_change = json!({
+        "change_id": change_id,
+        "client_id": "remote-client",
+        "local_seq": 1,
+        "entity_type": "project",
+        "entity_id": "AAAAAAAAAAAAAAAA",
+        "field": null,
+        "op_type": "project_delete",
+        "payload": {
+            "workspace_id": DEFAULT_WORKSPACE_ID,
+            "workspace_key": "default",
+            "deleted_at": "2026-01-01T00:00:01Z"
+        },
+        "base_version": null,
+        "created_at": "2026-01-01T00:00:01Z",
+        "server_seq": 999,
+    });
+    let (url, server) = start_fake_sync_server(json!({
+        "protocol_version": 5,
+        "cursor": 999,
+        "has_more": false,
+        "push_acks": [],
+        "changes": [same_id_change],
+    }));
+
+    ok(env.aven(&db, ["sync", "--server", &url]));
+    assert_eq!(
+        query_sql_scalar(
+            &db,
+            &format!("SELECT server_seq FROM changes WHERE change_id = '{change_id}'"),
+        ),
+        original_seq
+    );
+    server.join().expect("fake sync server exits");
+}
+
+#[test]
 fn sync_client_rejects_duplicate_push_acks() {
     let env = TestEnv::new();
     let db = env.db("duplicate-ack.sqlite");
@@ -2244,8 +2297,15 @@ fn sync_deletes_converge_idempotently() {
     exec_sql(
         &c,
         &format!(
-            "INSERT OR IGNORE INTO notes(workspace_id, id, task_id, body, created_at) \
-             VALUES ('0000000000000000', '{note_id}', '{c_task_id}', 'remove this note\n', '2026-01-01T00:00:00Z')"
+            "INSERT OR IGNORE INTO notes(workspace_id, id, task_id, body, created_at, change_id) \
+             VALUES ('0000000000000000', '{note_id}', '{c_task_id}', 'remove this note\n', '2026-01-01T00:00:00Z', 'PLACEHOLDER_CHANGE_ID')"
+        ),
+    );
+    exec_sql(
+        &c,
+        &format!(
+            "INSERT OR IGNORE INTO project_paths(workspace_id, project_id, path) \
+             VALUES ('0000000000000000', '{project_id}', '/tmp/local-only-path')"
         ),
     );
     let (url, fake) = start_fake_sync_server(sync_response(
@@ -2287,6 +2347,20 @@ fn sync_deletes_converge_idempotently() {
         ),
         "0"
     );
+    assert_eq!(
+        query_sql_scalar(
+            &c,
+            &format!("SELECT queue_activity_at FROM tasks WHERE id = '{c_task_id}'"),
+        ),
+        "2026-01-01T00:00:05Z"
+    );
+    assert_eq!(
+        query_sql_scalar(
+            &c,
+            &format!("SELECT count(*) FROM project_paths WHERE project_id = '{project_id}'"),
+        ),
+        "1"
+    );
     fake.join().expect("fake sync server exits");
 }
 
@@ -2314,6 +2388,18 @@ async fn sync_server_rejects_malformed_delete_project_payloads() {
         }),
     );
     rejected_sync(&server, no_deleted, "deleted_at").await;
+
+    let bad_deleted_at = wire_change(
+        "project_delete",
+        "project",
+        valid_id,
+        json!({
+            "workspace_id": "0000000000000000",
+            "workspace_key": "default",
+            "deleted_at": "not-a-timestamp",
+        }),
+    );
+    rejected_sync(&server, bad_deleted_at, "deleted_at").await;
 }
 
 #[tokio::test]
@@ -2356,6 +2442,19 @@ async fn sync_server_rejects_malformed_delete_label_payloads() {
         }),
     );
     rejected_sync(&server, missing_workspace, "workspace_id").await;
+
+    let bad_deleted_at = wire_change(
+        "label_delete",
+        "label",
+        "obsolete",
+        json!({
+            "workspace_id": "0000000000000000",
+            "workspace_key": "default",
+            "name": "obsolete",
+            "deleted_at": "not-a-timestamp",
+        }),
+    );
+    rejected_sync(&server, bad_deleted_at, "deleted_at").await;
 }
 
 #[tokio::test]
@@ -2419,6 +2518,21 @@ async fn sync_server_rejects_malformed_delete_note_payloads() {
         .expect("change object")
         .insert("field".to_string(), json!("description"));
     rejected_sync(&server, wrong_field, "field=notes").await;
+
+    let mut bad_deleted_at = task_change(
+        "note_delete",
+        json!({
+            "workspace_id": "0000000000000000",
+            "workspace_key": "default",
+            "note_id": "0123456789ABCDEF",
+            "deleted_at": "not-a-timestamp",
+        }),
+    );
+    bad_deleted_at
+        .as_object_mut()
+        .expect("change object")
+        .insert("field".to_string(), json!("notes"));
+    rejected_sync(&server, bad_deleted_at, "deleted_at").await;
 }
 
 #[test]
@@ -2502,17 +2616,7 @@ sync:
     );
     let server = TestServer::start_configured(&server_env, "server.sqlite");
 
-    let body = json!({
-        "protocol_version": 5,
-        "client_id": "attacker",
-        "after": 0,
-        "pull_limit": MAX_PULL_BATCH,
-        "changes": []
-    })
-    .to_string();
-    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-    encoder.write_all(body.as_bytes()).expect("write gzip body");
-    let compressed_body = encoder.finish().expect("finish gzip body");
+    let compressed_body = b"not gzip data";
 
     let host = server
         .url
@@ -2521,8 +2625,7 @@ sync:
     let mut stream = TcpStream::connect(host).expect("connect sync server");
     write!(
         stream,
-        "POST /sync HTTP/1.1\r\n\
-         Host: {host}\r\n\
+        "POST /sync HTTP/1.0\r\n\
          Content-Type: application/json\r\n\
          Content-Encoding: gzip\r\n\
          Accept-Encoding: gzip\r\n\
@@ -2533,8 +2636,8 @@ sync:
     )
     .expect("write sync request head");
     stream
-        .write_all(&compressed_body)
-        .expect("write sync request body");
+        .write_all(compressed_body)
+        .expect("write malformed gzip request body");
 
     let mut raw = Vec::new();
     stream.read_to_end(&mut raw).expect("read sync response");
@@ -2543,5 +2646,5 @@ sync:
         .position(|window| window == b"\r\n\r\n")
         .expect("http response split");
     let head = String::from_utf8_lossy(&raw[..split]);
-    assert!(head.starts_with("HTTP/1.1 401"), "response head: {head}");
+    assert!(head.starts_with("HTTP/1.0 401"), "response head: {head}");
 }

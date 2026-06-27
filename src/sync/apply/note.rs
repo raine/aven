@@ -8,12 +8,23 @@ use super::shared::{str_payload, task_field_workspace_id_payload, workspace_id_p
 pub(super) async fn delete_note(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     let workspace_id = task_field_workspace_id_payload(conn, change).await?;
     let note_id = str_payload(&change.payload, "note_id")?;
-    sqlx::query("DELETE FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?")
-        .bind(&workspace_id)
-        .bind(&change.entity_id)
-        .bind(&note_id)
-        .execute(&mut *conn)
-        .await?;
+    let deleted_at = str_payload(&change.payload, "deleted_at")?;
+    let deleted =
+        sqlx::query("DELETE FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?")
+            .bind(&workspace_id)
+            .bind(&change.entity_id)
+            .bind(&note_id)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+    if deleted > 0 {
+        sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
+            .bind(&deleted_at)
+            .bind(&workspace_id)
+            .bind(&change.entity_id)
+            .execute(&mut *conn)
+            .await?;
+    }
     Ok(())
 }
 

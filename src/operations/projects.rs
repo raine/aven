@@ -178,7 +178,7 @@ pub(crate) async fn delete_label_operation(
     }
     tx.commit().await?;
     if changed {
-        info!(label_name = %name, "label deleted");
+        info!("label deleted");
     }
     Ok(LabelDeleteOutcome { name, changed })
 }
@@ -259,7 +259,7 @@ pub(crate) async fn delete_project_operation(
     )
     .await?;
     tx.commit().await?;
-    info!(project_key = %project.key, "project deleted");
+    info!("project deleted");
     Ok(ProjectDeleteOutcome {
         project,
         config_mapping,

@@ -154,7 +154,7 @@ async fn sync_once(
         pages = summary.pages,
         request_bytes = summary.request_bytes,
         request_wire_bytes = summary.request_wire_bytes,
-        response_bytes = summary.response_bytes,
+        response_decoded_bytes = summary.response_decoded_bytes,
         response_compression = summary.response_compression,
         apply_ms = summary.apply_ms,
         "daemon sync completed"

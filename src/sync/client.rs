@@ -22,6 +22,7 @@ const GZIP_THRESHOLD: usize = 256;
 #[derive(Debug, Clone)]
 pub(crate) struct SyncHttpClient {
     pub(crate) inner: reqwest::Client,
+    // The id identifies this process-local HTTP client instance in sync logs.
     id: String,
 }
 
@@ -49,15 +50,17 @@ pub(crate) struct SyncSummary {
     pub(crate) pages: usize,
     pub(crate) request_bytes: usize,
     pub(crate) request_wire_bytes: usize,
-    pub(crate) response_bytes: usize,
+    pub(crate) response_decoded_bytes: usize,
     pub(crate) response_compression: String,
     pub(crate) apply_ms: u128,
 }
 
-fn gzip_encode(body: &[u8]) -> Vec<u8> {
+fn gzip_encode(body: &[u8]) -> Result<Vec<u8>> {
     let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::default());
-    encoder.write_all(body).expect("gzip encode request body");
-    encoder.finish().expect("finish gzip compression")
+    encoder
+        .write_all(body)
+        .context("gzip encode sync request body")?;
+    encoder.finish().context("finish sync request compression")
 }
 
 pub(crate) async fn sync_client(
@@ -119,8 +122,7 @@ async fn run_sync_once_inner(
     page_budget: Option<usize>,
     client: &SyncHttpClient,
 ) -> Result<SyncSummary> {
-    #[allow(unused_assignments)]
-    let mut last_response_compression = String::new();
+    let mut last_response_compression: Option<String>;
     validate_sync_server(conn, server).await?;
     let client_id = get_meta(conn, "client_id")
         .await?
@@ -133,7 +135,7 @@ async fn run_sync_once_inner(
     let complete;
     let mut total_request_bytes = 0_usize;
     let mut total_request_wire_bytes = 0_usize;
-    let mut total_response_bytes = 0_usize;
+    let mut total_response_decoded_bytes = 0_usize;
     let mut total_apply_ms = 0_u128;
     info!(server = %server, http_client_id = %client.id(), "sync client starting");
 
@@ -155,7 +157,7 @@ async fn run_sync_once_inner(
         let request_body = serde_json::to_vec(&sync_request)?;
         let request_bytes = request_body.len();
         let (wire_body, request_wire_bytes) = if request_bytes > GZIP_THRESHOLD {
-            let compressed = gzip_encode(&request_body);
+            let compressed = gzip_encode(&request_body)?;
             let wire = compressed.len();
             (compressed, wire)
         } else {
@@ -175,12 +177,14 @@ async fn run_sync_once_inner(
         let http_started = Instant::now();
         let response = request.send().await?.error_for_status()?;
         let http_ms = http_started.elapsed().as_millis();
-        last_response_compression = response
-            .headers()
-            .get(reqwest::header::CONTENT_ENCODING)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("none")
-            .to_string();
+        last_response_compression = Some(
+            response
+                .headers()
+                .get(reqwest::header::CONTENT_ENCODING)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("none")
+                .to_string(),
+        );
         let response_body = response.bytes().await?;
         let response_bytes = response_body.len();
         let response: SyncResponse = serde_json::from_slice(&response_body)?;
@@ -195,7 +199,7 @@ async fn run_sync_once_inner(
         pages += 1;
         total_request_bytes += request_bytes;
         total_request_wire_bytes += request_wire_bytes;
-        total_response_bytes += response_bytes;
+        total_response_decoded_bytes += response_bytes;
         total_apply_ms += apply_ms;
 
         let local_more = pending == MAX_PUSH_BATCH;
@@ -210,8 +214,8 @@ async fn run_sync_once_inner(
             complete = page_complete,
             request_bytes,
             request_wire_bytes,
-            response_bytes,
-            response_compression = last_response_compression,
+            response_decoded_bytes = response_bytes,
+            response_compression = last_response_compression.as_deref().unwrap_or("none"),
             http_ms,
             apply_ms,
             has_more = response.has_more,
@@ -233,8 +237,8 @@ async fn run_sync_once_inner(
         pages,
         request_bytes = total_request_bytes,
         request_wire_bytes = total_request_wire_bytes,
-        response_bytes = total_response_bytes,
-        response_compression = last_response_compression,
+        response_decoded_bytes = total_response_decoded_bytes,
+        response_compression = last_response_compression.as_deref().unwrap_or("none"),
         apply_ms = total_apply_ms,
         "sync client finished"
     );
@@ -246,8 +250,8 @@ async fn run_sync_once_inner(
         pages,
         request_bytes: total_request_bytes,
         request_wire_bytes: total_request_wire_bytes,
-        response_bytes: total_response_bytes,
-        response_compression: last_response_compression,
+        response_decoded_bytes: total_response_decoded_bytes,
+        response_compression: last_response_compression.unwrap_or_else(|| "none".to_string()),
         apply_ms: total_apply_ms,
     })
 }
@@ -358,7 +362,7 @@ async fn update_change_server_seq(
 ) -> Result<()> {
     if let Some(server_seq) = server_seq {
         sqlx::query!(
-            "UPDATE changes SET server_seq = ? WHERE change_id = ?",
+            "UPDATE changes SET server_seq = ? WHERE change_id = ? AND server_seq IS NULL",
             server_seq,
             change_id,
         )

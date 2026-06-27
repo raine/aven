@@ -156,7 +156,7 @@ sync:
             "complete=",
             "request_bytes=",
             "request_wire_bytes=",
-            "response_bytes=",
+            "response_decoded_bytes=",
             "response_compression=",
             "http_ms=",
             "apply_ms=",
@@ -208,6 +208,11 @@ fn daemon_sync_logging_redacts_task_content() {
     ok(env.aven_config_stdin(["note", &task_ref, "--stdin"], "secret daemon note body\n"));
     daemon.wait_for_log_after(mark, "daemon-synced", Duration::from_secs(5));
 
+    let after_delete = daemon.log_mark();
+    ok(env.aven_config(["project", "delete", "secret daemon project"]));
+    ok(env.aven_config(["label", "delete", "secret-daemon-label"]));
+    daemon.wait_for_log_after(after_delete, "daemon-synced", Duration::from_secs(5));
+
     let logs = std::fs::read_to_string(log).expect("read daemon logs");
     contains_all(
         &logs,
@@ -232,7 +237,7 @@ fn daemon_sync_logging_redacts_task_content() {
             "pages=",
             "request_bytes=",
             "request_wire_bytes=",
-            "response_bytes=",
+            "response_decoded_bytes=",
             "response_compression=",
             "apply_ms=",
         ],
@@ -244,7 +249,7 @@ fn daemon_sync_logging_redacts_task_content() {
             "page=",
             "request_bytes=",
             "request_wire_bytes=",
-            "response_bytes=",
+            "response_decoded_bytes=",
             "response_compression=",
             "apply_ms=",
         ],
@@ -260,4 +265,33 @@ fn daemon_sync_logging_redacts_task_content() {
             "super-secret-token",
         ],
     );
+}
+
+#[test]
+fn delete_operation_logging_redacts_user_authored_names() {
+    let env = TestEnv::new();
+    let log = env.path("delete.log");
+    ok(env.aven_config(["project", "create", "secret delete project"]));
+    ok(env.aven_config(["label", "create", "secret-delete-label"]));
+
+    let run_delete = |args: &[&str]| {
+        let mut cmd = common::command();
+        cmd.env("XDG_STATE_HOME", env.state_dir())
+            .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
+            .env_remove("AVEN_DB")
+            .env_remove("AVEN_SYNC_SERVER")
+            .env("AVEN_LOG", "aven=debug")
+            .env("AVEN_LOG_FILE", &log);
+        for arg in args {
+            cmd.arg(arg);
+        }
+        ok(cmd.output().expect("run delete command"))
+    };
+
+    run_delete(&["project", "delete", "secret-delete-project"]);
+    run_delete(&["label", "delete", "secret-delete-label"]);
+
+    let logs = std::fs::read_to_string(log).expect("read delete logs");
+    contains_all(&logs, &["label deleted", "project deleted"]);
+    contains_none(&logs, &["secret delete project", "secret-delete-label"]);
 }

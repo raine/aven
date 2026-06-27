@@ -47,6 +47,9 @@ aven label list --search bug
 aven note APP-7KQ9 "durable handoff context"
 aven delete APP-7KQ9
 aven restore APP-7KQ9
+aven project delete old-project
+aven label delete obsolete
+aven note-delete APP-7KQ9 0123456789ABCDEF
 aven backup --output .backup/data.sqlite
 aven backup restore .backup/data.sqlite --yes
 aven export --output snapshot.json
@@ -107,6 +110,9 @@ aven daemon
 - Sync logs and daemon sync output carry counts, cursor, completion, and page
   count. They do not include task titles, descriptions, note bodies, labels,
   project names, auth tokens, or raw payloads.
+- Use `project delete`, `label delete`, and `note-delete` for synced project,
+  label, and note deletion. Their sync logs use counts and IDs rather than
+  user-authored names or note bodies.
 
 Focused validation commands:
 
