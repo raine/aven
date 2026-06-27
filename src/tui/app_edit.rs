@@ -294,12 +294,12 @@ impl App {
     pub(super) async fn submit_edit_labels(&mut self, labels: Vec<String>) -> Result<()> {
         for label in &labels {
             let label = normalize_label(label);
-            if !self.store.labels.contains(&label) {
-                if let Err(error) = self.store.create_label(label).await {
-                    self.set_error(format!("{error:#}"));
-                    self.begin_edit_labels();
-                    return Ok(());
-                }
+            if !self.store.labels.contains(&label)
+                && let Err(error) = self.store.create_label(label).await
+            {
+                self.set_error(format!("{error:#}"));
+                self.begin_edit_labels();
+                return Ok(());
             }
         }
         let result = self

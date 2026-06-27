@@ -166,23 +166,27 @@ pub(crate) async fn delete_project_operation(
             .bind(&project.id)
             .fetch_one(&mut *tx)
             .await?;
-    if task_refs > 0 {
-        bail!(
-            "error project-has-tasks project={} tasks={}",
-            project.key,
-            task_refs
-        );
-    }
     sqlx::query("DELETE FROM project_paths WHERE workspace_id = ? AND project_id = ?")
         .bind(&project.workspace_id)
         .bind(&project.id)
         .execute(&mut *tx)
         .await?;
-    let deleted = sqlx::query("DELETE FROM projects WHERE workspace_id = ? AND key = ?")
+    let deleted = if task_refs > 0 {
+        sqlx::query(
+            "UPDATE projects SET deleted = 1, updated_at = ? WHERE workspace_id = ? AND key = ?",
+        )
+        .bind(now())
         .bind(&project.workspace_id)
         .bind(&project.key)
         .execute(&mut *tx)
-        .await?;
+        .await?
+    } else {
+        sqlx::query("DELETE FROM projects WHERE workspace_id = ? AND key = ?")
+            .bind(&project.workspace_id)
+            .bind(&project.key)
+            .execute(&mut *tx)
+            .await?
+    };
     if deleted.rows_affected() != 1 {
         bail!("error project-delete-race project={}", project.key);
     }

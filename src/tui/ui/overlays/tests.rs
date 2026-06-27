@@ -160,6 +160,25 @@ mod text_input {
     }
 
     #[test]
+    fn delete_project_name_confirmation_separates_prompt_and_input() {
+        let buffer = overlay_buffer(OverlayView::TextInput(TextInputView {
+            route: OverlayRoute::DeleteProjectNameConfirm,
+            title: "Delete project".to_string(),
+            prompt: "Type blocked-test to delete project:".to_string(),
+            input: "blocked-test".to_string(),
+            cursor: 12,
+        }));
+        let prompt_row = (0..buffer.area.height)
+            .find(|row| buffer_row(&buffer, *row).contains("Type blocked-test"))
+            .unwrap();
+        let input_row = (prompt_row + 1..buffer.area.height)
+            .find(|row| buffer_row(&buffer, *row).contains("blocked-test"))
+            .unwrap();
+
+        assert_eq!(input_row, prompt_row + 2);
+    }
+
+    #[test]
     fn placeholder_text_input_routes_use_placeholder_style() {
         for (route, title, prompt, placeholder) in [
             (

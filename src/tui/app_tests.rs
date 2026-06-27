@@ -173,18 +173,31 @@ fn picker_row_click(app: &App, visible_row: u16, size: ratatui::layout::Size) ->
     let Some(overlay) = app.overlay.as_ref() else {
         panic!("expected overlay");
     };
-    let OverlayView::Picker(view) = OverlayView::from(overlay) else {
-        panic!("expected picker overlay");
-    };
-    let layout = crate::tui::overlay::picker_layout(&view, size);
-    left_click(
-        layout.inner.x.saturating_add(2),
-        layout
-            .inner
-            .y
-            .saturating_add(layout.list_start)
-            .saturating_add(visible_row),
-    )
+    match OverlayView::from(overlay) {
+        OverlayView::Picker(view) => {
+            let layout = crate::tui::overlay::picker_layout(&view, size);
+            left_click(
+                layout.inner.x.saturating_add(2),
+                layout
+                    .inner
+                    .y
+                    .saturating_add(layout.list_start)
+                    .saturating_add(visible_row),
+            )
+        }
+        OverlayView::TagCombobox(view) => {
+            let layout = crate::tui::overlay::tag_combobox_layout(&view, size);
+            left_click(
+                layout.inner.x.saturating_add(2),
+                layout
+                    .inner
+                    .y
+                    .saturating_add(layout.list_start)
+                    .saturating_add(visible_row),
+            )
+        }
+        _ => panic!("expected picker overlay"),
+    }
 }
 
 #[track_caller]
@@ -1543,7 +1556,14 @@ mod filters_and_workspaces {
         let mut app = test_app().await;
         let size = (100, 24).into();
         app.store.create_label("bug".to_string()).await.unwrap();
-        create_and_select_task(&mut app, test_task_draft("Labeled target")).await;
+        create_and_select_task(
+            &mut app,
+            TaskDraft {
+                labels: vec!["bug".to_string()],
+                ..test_task_draft("Labeled target")
+            },
+        )
+        .await;
         app.begin_edit_labels();
 
         app.dispatch_mouse(picker_row_click(&app, 0, size), size)
@@ -1552,8 +1572,9 @@ mod filters_and_workspaces {
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::Picker(state))
-                if state.items.iter().any(|item| item.value == "bug" && item.selected)
+            Some(OverlayState::TagCombobox(state))
+                if state.options.iter().any(|item| item == "bug")
+                    && state.selected.iter().any(|item| item == "bug")
         ));
     }
 
@@ -3067,6 +3088,7 @@ mod detail_mode {
                     assert_eq!(state.route, route)
                 }
                 (Some(OverlayState::Picker(state)), route) => assert_eq!(state.route, route),
+                (Some(OverlayState::TagCombobox(state)), route) => assert_eq!(state.route, route),
                 (overlay, route) => panic!("expected {route:?}, got {overlay:?}"),
             }
             assert_pending_empty(&app);
@@ -3087,7 +3109,7 @@ mod detail_mode {
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::Picker(state)) if state.route == OverlayRoute::EditLabels
+            Some(OverlayState::TagCombobox(state)) if state.route == OverlayRoute::EditLabels
         ));
         assert_pending_empty(&app);
         assert!(app.view().detail_underlay);
@@ -3666,31 +3688,16 @@ mod task_editing {
         app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::Picker(state))
+            Some(OverlayState::TagCombobox(state))
                 if state.title == EDIT_LABELS_TITLE
-                    && state.items.iter().any(|item| item.value == "bug" && item.selected)
+                    && state.options.iter().any(|item| item == "bug")
+                    && state.selected.iter().any(|item| item == "bug")
         ));
 
-        app.handle_overlay_key(key(KeyCode::Char('/')))
-            .await
-            .unwrap();
         type_chars(&mut app, "bug").await;
-        app.handle_overlay_key(key(KeyCode::Char(' ')))
-            .await
-            .unwrap();
-        app.handle_overlay_key(key(KeyCode::Backspace))
-            .await
-            .unwrap();
-        app.handle_overlay_key(key(KeyCode::Backspace))
-            .await
-            .unwrap();
-        app.handle_overlay_key(key(KeyCode::Backspace))
-            .await
-            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         type_chars(&mut app, "docs").await;
-        app.handle_overlay_key(key(KeyCode::Char(' ')))
-            .await
-            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
         let selected = app.widgets.table.selected().unwrap();
@@ -4134,6 +4141,16 @@ mod delete_and_restore {
 
         assert!(matches!(
             app.overlay,
+            Some(OverlayState::TextInput(TextInputState {
+                route: OverlayRoute::DeleteProjectNameConfirm,
+                ..
+            }))
+        ));
+        app.submit_delete_project_name("mobile-app".to_string())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
             Some(OverlayState::Confirm(ConfirmState {
                 route: OverlayRoute::DeleteProjectConfirm,
                 ..
@@ -4180,6 +4197,13 @@ mod delete_and_restore {
         app.execute(Action::BeginDeleteProject).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         assert_eq!(app.pending_delete_project.as_deref(), Some("mobile-app"));
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::TextInput(TextInputState {
+                route: OverlayRoute::DeleteProjectNameConfirm,
+                ..
+            }))
+        ));
         app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
 
         assert!(app.pending_delete_project.is_none());
@@ -4476,7 +4500,7 @@ mod overlay_submit_routes {
     }
 
     #[tokio::test]
-    async fn delete_project_picker_and_confirm_use_distinct_routes() {
+    async fn delete_project_picker_and_name_confirm_use_distinct_routes() {
         let mut app = test_app().await;
         app.store
             .create_project("Mobile App".to_string())
@@ -4494,6 +4518,64 @@ mod overlay_submit_routes {
         ));
 
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::TextInput(TextInputState {
+                route: OverlayRoute::DeleteProjectNameConfirm,
+                ref title,
+                ..
+            })) if title == DELETE_PROJECT_TITLE
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_project_name_mismatch_keeps_confirmation_open() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
+        app.execute(Action::BeginDeleteProject).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        app.submit_delete_project_name("mobile".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("project name does not match")
+        );
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::TextInput(TextInputState {
+                route: OverlayRoute::DeleteProjectNameConfirm,
+                ref title,
+                ..
+            })) if title == DELETE_PROJECT_TITLE
+        ));
+        assert!(
+            app.store
+                .projects
+                .iter()
+                .any(|project| project.key == "mobile-app")
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_project_name_match_opens_final_confirmation() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+
+        app.execute(Action::BeginDeleteProject).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        app.submit_delete_project_name("mobile-app".to_string())
+            .await
+            .unwrap();
+
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Confirm(ConfirmState {

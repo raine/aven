@@ -234,6 +234,7 @@ pub(crate) enum OverlayRoute {
     RenameProjectPicker,
     RenameProjectName,
     DeleteProjectPicker,
+    DeleteProjectNameConfirm,
     DeleteProjectConfirm,
     DeleteTaskConfirm,
     SwitchWorkspace,
@@ -249,6 +250,7 @@ pub(crate) enum TextSubmitRoute {
     AddProject,
     AddLabel,
     RenameProjectName,
+    DeleteProjectNameConfirm,
     EditTitle,
     ConflictManual,
 }
@@ -309,6 +311,7 @@ impl OverlayRoute {
             Self::AddProject => Some(TextSubmitRoute::AddProject),
             Self::AddLabel => Some(TextSubmitRoute::AddLabel),
             Self::RenameProjectName => Some(TextSubmitRoute::RenameProjectName),
+            Self::DeleteProjectNameConfirm => Some(TextSubmitRoute::DeleteProjectNameConfirm),
             Self::EditTitle => Some(TextSubmitRoute::EditTitle),
             Self::ConflictManual => Some(TextSubmitRoute::ConflictManual),
             _ => None,
@@ -370,7 +373,7 @@ impl OverlayRoute {
 
 #[cfg(test)]
 impl OverlayRoute {
-    pub(crate) const ALL: [Self; 28] = [
+    pub(crate) const ALL: [Self; 29] = [
         Self::MessageOnly,
         Self::AddTaskTitle,
         Self::AddTaskDescription,
@@ -392,6 +395,7 @@ impl OverlayRoute {
         Self::RenameProjectPicker,
         Self::RenameProjectName,
         Self::DeleteProjectPicker,
+        Self::DeleteProjectNameConfirm,
         Self::DeleteProjectConfirm,
         Self::DeleteTaskConfirm,
         Self::SwitchWorkspace,

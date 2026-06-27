@@ -60,9 +60,9 @@ pub(crate) fn handle_tag_combobox_key(
             OverlayOutcome::None(OverlayState::TagCombobox(state))
         }
         KeyCode::Tab => {
-            if tag_combobox_matches(&state).is_empty() && tag_combobox_has_create_option(&state) {
-                activate_highlighted(&mut state)
-            } else if !state.input.as_str().is_empty() {
+            let has_create_option =
+                tag_combobox_matches(&state).is_empty() && tag_combobox_has_create_option(&state);
+            if has_create_option || !state.input.as_str().is_empty() {
                 activate_highlighted(&mut state)
             } else {
                 toggle_highlighted_label(&mut state, false);
@@ -179,7 +179,7 @@ fn ranked_matches(options: &[String], input: &str) -> Vec<usize> {
     let mut ranked = Vec::new();
     for rank in 0..4 {
         for (index, label) in options.iter().enumerate() {
-            if ranked.iter().any(|existing| *existing == index) {
+            if ranked.contains(&index) {
                 continue;
             }
             let dashless_label = label.replace('-', "");

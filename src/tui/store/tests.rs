@@ -241,7 +241,46 @@ mod domain_mutations_and_pickers {
     }
 
     #[tokio::test]
-    async fn delete_project_blocks_when_deleted_tasks_reference_project() {
+    async fn delete_project_hides_project_with_tasks() {
+        let mut store = test_store().await;
+        store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        store
+            .create_task(
+                TaskDraft {
+                    title: "Keep project".to_string(),
+                    description: String::new(),
+                    project: Some("mobile-app".to_string()),
+                    status: "inbox".to_string(),
+                    priority: "none".to_string(),
+                    labels: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        let outcome = store.delete_project("mobile-app").await.unwrap();
+
+        assert_eq!(outcome.message, "deleted project mobile-app");
+        assert!(
+            !store
+                .projects
+                .iter()
+                .any(|project| project.key == "mobile-app")
+        );
+        assert!(!store.sidebar_entries.iter().any(|entry| {
+            entry.target
+                == Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(
+                    "mobile-app".to_string(),
+                )))
+        }));
+    }
+
+    #[tokio::test]
+    async fn delete_project_hides_project_with_deleted_tasks() {
         let mut store = test_store().await;
         store
             .create_project("Mobile App".to_string())
@@ -268,44 +307,11 @@ mod domain_mutations_and_pickers {
             .unwrap();
         store.update_deleted(Some(selected), true).await.unwrap();
 
-        let error = store.delete_project("mobile-app").await.unwrap_err();
+        let outcome = store.delete_project("mobile-app").await.unwrap();
 
-        assert!(error.to_string().contains("project-has-tasks"));
+        assert_eq!(outcome.message, "deleted project mobile-app");
         assert!(
-            store
-                .projects
-                .iter()
-                .any(|project| project.key == "mobile-app")
-        );
-    }
-
-    #[tokio::test]
-    async fn delete_project_blocks_when_visible_tasks_reference_project() {
-        let mut store = test_store().await;
-        store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
-        store
-            .create_task(
-                TaskDraft {
-                    title: "Keep project".to_string(),
-                    description: String::new(),
-                    project: Some("mobile-app".to_string()),
-                    status: "inbox".to_string(),
-                    priority: "none".to_string(),
-                    labels: Vec::new(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
-
-        let error = store.delete_project("mobile-app").await.unwrap_err();
-
-        assert!(error.to_string().contains("project-has-tasks"));
-        assert!(
-            store
+            !store
                 .projects
                 .iter()
                 .any(|project| project.key == "mobile-app")

@@ -92,6 +92,9 @@ impl App {
             Some(TextSubmitRoute::RenameProjectName) => {
                 self.submit_rename_project(value).await?;
             }
+            Some(TextSubmitRoute::DeleteProjectNameConfirm) => {
+                self.submit_delete_project_name(value).await?;
+            }
             Some(TextSubmitRoute::EditTitle) => {
                 self.submit_edit_title(value).await?;
             }

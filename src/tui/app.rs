@@ -1042,11 +1042,35 @@ impl App {
             return;
         };
         self.pending_delete_project = Some(project.clone());
+        self.overlay = Some(OverlayState::text_input(
+            OverlayRoute::DeleteProjectNameConfirm,
+            DELETE_PROJECT_TITLE,
+            format!("Type {project} to delete project:"),
+            String::new(),
+        ));
+    }
+
+    pub(super) async fn submit_delete_project_name(&mut self, value: String) -> Result<()> {
+        let Some(project) = self.pending_delete_project.clone() else {
+            self.set_warning("project delete confirmation is not active");
+            return Ok(());
+        };
+        if value.trim() != project {
+            self.set_warning("project name does not match");
+            self.overlay = Some(OverlayState::text_input(
+                OverlayRoute::DeleteProjectNameConfirm,
+                DELETE_PROJECT_TITLE,
+                format!("Type {project} to delete project:"),
+                value,
+            ));
+            return Ok(());
+        }
         self.overlay = Some(OverlayState::confirm(
             OverlayRoute::DeleteProjectConfirm,
             DELETE_PROJECT_TITLE,
             format!("Delete project {project}?"),
         ));
+        Ok(())
     }
 
     pub(super) async fn submit_delete_project(&mut self) -> Result<()> {
