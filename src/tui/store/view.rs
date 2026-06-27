@@ -1,5 +1,7 @@
 use anyhow::Result;
 
+use crate::query::SortDirection;
+
 use super::{
     SidebarEntryTarget, TaskFilterModifiers, TaskOrder, TaskScope, TaskScopeTarget, TaskView,
     TuiStore,
@@ -93,6 +95,9 @@ impl TuiStore {
             self.view_state.view = TaskView::Open;
         }
         self.view_state.order = order;
+        if order == TaskOrder::Created {
+            self.view_state.direction = SortDirection::Desc;
+        }
     }
 
     pub(crate) fn reverse_view_order(&mut self) {

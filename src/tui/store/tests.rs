@@ -1105,6 +1105,23 @@ mod views_filters_and_sort {
         assert_eq!(store.view_state.view, TaskView::Open);
         assert_eq!(store.view_state.direction, SortDirection::Desc);
     }
+
+    #[tokio::test]
+    async fn created_order_defaults_to_descending_and_can_toggle() {
+        let mut store = test_store().await;
+        store.set_order(TaskOrder::Priority).await.unwrap();
+        store.reverse_sort().await.unwrap();
+        store.reverse_sort().await.unwrap();
+        assert_eq!(store.view_state.direction, SortDirection::Asc);
+
+        store.set_order(TaskOrder::Created).await.unwrap();
+        assert_eq!(store.view_state.view, TaskView::Open);
+        assert_eq!(store.view_state.order, TaskOrder::Created);
+        assert_eq!(store.view_state.direction, SortDirection::Desc);
+
+        store.reverse_sort().await.unwrap();
+        assert_eq!(store.view_state.direction, SortDirection::Asc);
+    }
 }
 
 mod sync_workspace_payloads {

@@ -579,6 +579,16 @@ mod keyboard_dispatch {
     }
 
     #[tokio::test]
+    async fn created_order_shortcut_defaults_to_descending() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
+        assert_eq!(app.store.view_state.order, TaskOrder::Created);
+        assert_eq!(app.store.sort_direction_label(), "desc");
+        assert_eq!(toast_message(&app).as_deref(), Some("order created desc"));
+    }
+
+    #[tokio::test]
     async fn order_reverse_shortcut_toggles_direction() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
