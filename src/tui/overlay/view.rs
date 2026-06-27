@@ -253,3 +253,45 @@ impl From<&OverlayState> for OverlayView {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::overlay::{LineEdit, MultilineInputState, OverlayRoute, PickerState};
+
+    #[test]
+    fn overlay_view_projection_carries_routes() {
+        let multiline = OverlayView::from(&OverlayState::MultilineInput(
+            MultilineInputState::blank(OverlayRoute::AddNote, "Changed note title", "note body:"),
+        ));
+        assert!(matches!(
+            multiline,
+            OverlayView::MultilineInput(MultilineInputView {
+                route: OverlayRoute::AddNote,
+                ..
+            })
+        ));
+
+        let picker = OverlayView::from(&OverlayState::Picker(PickerState {
+            route: OverlayRoute::DeleteProjectPicker,
+            title: "Changed delete title".to_string(),
+            filter: LineEdit::blank(),
+            items: vec![PickerItem {
+                label: "AVN aven".to_string(),
+                value: "aven".to_string(),
+                selected: false,
+            }],
+            selected: 0,
+            scroll: 0,
+            multi: false,
+            mode: PickerMode::Navigate,
+        }));
+        assert!(matches!(
+            picker,
+            OverlayView::Picker(PickerView {
+                route: OverlayRoute::DeleteProjectPicker,
+                ..
+            })
+        ));
+    }
+}

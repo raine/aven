@@ -106,3 +106,69 @@ impl LineEdit {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    fn line_edit(input: &str, cursor: usize) -> LineEdit {
+        LineEdit {
+            text: input.to_string(),
+            cursor,
+        }
+    }
+
+    #[test]
+    fn text_input_edits_at_cursor() {
+        let mut state = line_edit("ab", 1);
+        state.handle_key(key(KeyCode::Char('x')));
+        assert_eq!(state.text, "axb");
+        assert_eq!(state.cursor, 2);
+        state.handle_key(key(KeyCode::Backspace));
+        assert_eq!(state.text, "ab");
+        assert_eq!(state.cursor, 1);
+    }
+
+    #[test]
+    fn text_input_supports_emacs_navigation() {
+        let mut state = line_edit("abc", 1);
+        state.handle_key(ctrl(KeyCode::Char('a')));
+        assert_eq!(state.cursor, 0);
+        state.handle_key(ctrl(KeyCode::Char('e')));
+        assert_eq!(state.cursor, 3);
+        state.handle_key(ctrl(KeyCode::Char('b')));
+        assert_eq!(state.cursor, 2);
+        state.handle_key(ctrl(KeyCode::Char('f')));
+        assert_eq!(state.cursor, 3);
+    }
+
+    #[test]
+    fn text_input_supports_emacs_deletion() {
+        let mut state = line_edit("one two three", 7);
+        state.handle_key(ctrl(KeyCode::Char('w')));
+        assert_eq!(state.text, "one three");
+        assert_eq!(state.cursor, 3);
+        state.handle_key(ctrl(KeyCode::Char('k')));
+        assert_eq!(state.text, "one");
+        assert_eq!(state.cursor, 3);
+        state.handle_key(ctrl(KeyCode::Char('u')));
+        assert_eq!(state.text, "");
+        assert_eq!(state.cursor, 0);
+    }
+
+    #[test]
+    fn text_input_ignores_control_chars_that_are_not_editing_keys() {
+        let mut state = line_edit("ab", 1);
+        state.handle_key(ctrl(KeyCode::Char('x')));
+        assert_eq!(state.text, "ab");
+        assert_eq!(state.cursor, 1);
+    }
+}

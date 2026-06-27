@@ -592,3 +592,321 @@ fn previous_order(order: TaskOrder) -> TaskOrder {
         TaskOrder::Title => TaskOrder::Project,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::overlay::{
+        LineEdit, MultilineInputState, OverlayRoute, PickerItem, TextInputState,
+    };
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    fn add_task_state(focus: AddTaskStep) -> crate::tui::overlay::AddTaskState {
+        crate::tui::overlay::AddTaskState {
+            title: LineEdit::blank(),
+            description: MultilineInputState::blank(
+                OverlayRoute::AddTaskDescription,
+                "Add task: description",
+                "",
+            ),
+            focus,
+            project: "aven".to_string(),
+            status: "inbox".to_string(),
+            priority: "none".to_string(),
+        }
+    }
+
+    fn handle(key: KeyEvent, overlay: OverlayState) -> OverlayOutcome {
+        handle_generic_overlay_key(key, overlay, 100)
+    }
+
+    #[test]
+    fn add_task_description_paste_preserves_newlines() {
+        let outcome = handle_generic_overlay_paste(
+            "one\ntwo",
+            OverlayState::AddTask(add_task_state(AddTaskStep::Description)),
+        );
+        let OverlayState::AddTask(state) = outcome else {
+            panic!("expected add task state");
+        };
+        assert_eq!(
+            state.description.lines,
+            vec!["one".to_string(), "two".to_string()]
+        );
+        assert_eq!(state.description.row, 1);
+        assert_eq!(state.description.column, 3);
+    }
+
+    #[test]
+    fn add_task_title_paste_flattens_newlines() {
+        let outcome = handle_generic_overlay_paste(
+            "one\ntwo",
+            OverlayState::AddTask(add_task_state(AddTaskStep::Title)),
+        );
+        let OverlayState::AddTask(state) = outcome else {
+            panic!("expected add task state");
+        };
+        assert_eq!(state.title.text, "one two");
+        assert_eq!(state.title.cursor, 7);
+    }
+
+    #[test]
+    fn multiline_ctrl_s_submits() {
+        let state = MultilineInputState {
+            route: OverlayRoute::MessageOnly,
+            title: "Notes".to_string(),
+            prompt: "Body".to_string(),
+            lines: vec!["line".to_string()],
+            row: 0,
+            column: 4,
+        };
+        let outcome = handle(
+            ctrl(KeyCode::Char('s')),
+            OverlayState::MultilineInput(state),
+        );
+        assert!(matches!(
+            outcome,
+            OverlayOutcome::Submitted(OverlaySubmit::Multiline { .. })
+        ));
+    }
+
+    #[test]
+    fn text_panel_closes_on_enter_and_esc() {
+        let state = TextPanelState {
+            title: "Conflicts".to_string(),
+            lines: vec!["field=title".to_string()],
+            scroll: 0,
+        };
+        assert!(matches!(
+            handle(key(KeyCode::Enter), OverlayState::TextPanel(state.clone())),
+            OverlayOutcome::Cancelled
+        ));
+        assert!(matches!(
+            handle(key(KeyCode::Esc), OverlayState::TextPanel(state)),
+            OverlayOutcome::Cancelled
+        ));
+    }
+
+    #[test]
+    fn text_panel_scrolls_with_navigation_keys() {
+        let state = TextPanelState {
+            title: "Conflicts".to_string(),
+            lines: (0..20)
+                .map(|index| format!("line {index}"))
+                .collect::<Vec<_>>(),
+            scroll: 0,
+        };
+        let OverlayOutcome::None(OverlayState::TextPanel(state)) =
+            handle(key(KeyCode::Down), OverlayState::TextPanel(state))
+        else {
+            panic!("expected scrolled text panel");
+        };
+        assert_eq!(state.scroll, 1);
+        let OverlayOutcome::None(OverlayState::TextPanel(state)) =
+            handle(key(KeyCode::Up), OverlayState::TextPanel(state))
+        else {
+            panic!("expected scrolled text panel");
+        };
+        assert_eq!(state.scroll, 0);
+    }
+
+    #[test]
+    fn text_panel_navigation_scroll_is_capped() {
+        let mut state = TextPanelState {
+            title: "Conflicts".to_string(),
+            lines: (0..20)
+                .map(|index| format!("line {index}"))
+                .collect::<Vec<_>>(),
+            scroll: 0,
+        };
+        let expected = crate::tui::ui::text_panel_scroll_cap(&state.lines);
+        for _ in 0..30 {
+            let OverlayOutcome::None(OverlayState::TextPanel(next)) =
+                handle(key(KeyCode::Down), OverlayState::TextPanel(state))
+            else {
+                panic!("expected scrolled text panel");
+            };
+            state = next;
+        }
+        assert_eq!(state.scroll, expected);
+
+        let OverlayOutcome::None(OverlayState::TextPanel(next)) =
+            handle(key(KeyCode::Up), OverlayState::TextPanel(state))
+        else {
+            panic!("expected scrolled text panel");
+        };
+        assert_eq!(next.scroll, expected.saturating_sub(1));
+    }
+
+    #[test]
+    fn detail_scrolls_with_line_navigation_keys() {
+        let OverlayOutcome::None(OverlayState::Detail { scroll }) =
+            handle(key(KeyCode::Char('j')), OverlayState::Detail { scroll: 0 })
+        else {
+            panic!("expected scrolled detail");
+        };
+        assert_eq!(scroll, 1);
+        let OverlayOutcome::None(OverlayState::Detail { scroll }) =
+            handle(key(KeyCode::Char('k')), OverlayState::Detail { scroll })
+        else {
+            panic!("expected scrolled detail");
+        };
+        assert_eq!(scroll, 0);
+    }
+
+    #[test]
+    fn esc_cancels_all_generic_overlay_variants() {
+        let overlays = vec![
+            OverlayState::TextInput(TextInputState::new(
+                OverlayRoute::MessageOnly,
+                "Title",
+                "Prompt",
+                "value".to_string(),
+            )),
+            OverlayState::MultilineInput(MultilineInputState {
+                route: OverlayRoute::MessageOnly,
+                title: "Body".to_string(),
+                prompt: "Prompt".to_string(),
+                lines: vec!["value".to_string()],
+                row: 0,
+                column: 5,
+            }),
+            OverlayState::Picker(PickerState {
+                route: OverlayRoute::MessageOnly,
+                title: "Pick".to_string(),
+                filter: LineEdit::blank(),
+                items: vec![PickerItem {
+                    label: "One".to_string(),
+                    value: "one".to_string(),
+                    selected: false,
+                }],
+                selected: 0,
+                scroll: 0,
+                multi: false,
+                mode: PickerMode::Navigate,
+            }),
+            OverlayState::Confirm(ConfirmState {
+                route: OverlayRoute::MessageOnly,
+                title: "Confirm".to_string(),
+                prompt: "Continue?".to_string(),
+            }),
+            OverlayState::TextPanel(TextPanelState {
+                title: "Panel".to_string(),
+                lines: vec!["line".to_string()],
+                scroll: 0,
+            }),
+        ];
+
+        for overlay in overlays {
+            assert!(matches!(
+                handle(key(KeyCode::Esc), overlay),
+                OverlayOutcome::Cancelled
+            ));
+        }
+    }
+
+    #[test]
+    fn help_scroll_stops_at_cap() {
+        let OverlayOutcome::None(OverlayState::Help { scroll }) =
+            handle_generic_overlay_key(key(KeyCode::Down), OverlayState::Help { scroll: 2 }, 2)
+        else {
+            panic!("expected help overlay state");
+        };
+        assert_eq!(scroll, 2);
+    }
+
+    #[test]
+    fn confirm_yes_and_no() {
+        let state = ConfirmState {
+            route: OverlayRoute::MessageOnly,
+            title: "Delete".to_string(),
+            prompt: "Sure?".to_string(),
+        };
+        assert!(matches!(
+            handle(
+                key(KeyCode::Char('y')),
+                OverlayState::Confirm(state.clone())
+            ),
+            OverlayOutcome::Submitted(OverlaySubmit::Confirm {
+                route: OverlayRoute::MessageOnly,
+                title,
+                ..
+            }) if title == "Delete"
+        ));
+        assert!(matches!(
+            handle(key(KeyCode::Char('n')), OverlayState::Confirm(state)),
+            OverlayOutcome::Cancelled
+        ));
+    }
+
+    #[test]
+    fn generic_submit_variants_propagate_route() {
+        let text = handle(
+            key(KeyCode::Enter),
+            OverlayState::TextInput(TextInputState::new(
+                OverlayRoute::AddProject,
+                "Add project",
+                "name:",
+                "app".to_string(),
+            )),
+        );
+        assert!(matches!(
+            text,
+            OverlayOutcome::Submitted(OverlaySubmit::Text {
+                route: OverlayRoute::AddProject,
+                ..
+            })
+        ));
+
+        let multiline = handle(
+            ctrl(KeyCode::Char('s')),
+            OverlayState::MultilineInput(MultilineInputState {
+                route: OverlayRoute::AddNote,
+                title: "Add note".to_string(),
+                prompt: "body:".to_string(),
+                lines: vec!["note".to_string()],
+                row: 0,
+                column: 4,
+            }),
+        );
+        assert!(matches!(
+            multiline,
+            OverlayOutcome::Submitted(OverlaySubmit::Multiline {
+                route: OverlayRoute::AddNote,
+                ..
+            })
+        ));
+
+        let picker = handle(
+            key(KeyCode::Enter),
+            OverlayState::Picker(PickerState {
+                route: OverlayRoute::EditStatus,
+                title: "Edit task: status".to_string(),
+                filter: LineEdit::blank(),
+                items: vec![PickerItem {
+                    label: "Todo".to_string(),
+                    value: "todo".to_string(),
+                    selected: false,
+                }],
+                selected: 0,
+                scroll: 0,
+                multi: false,
+                mode: PickerMode::Navigate,
+            }),
+        );
+        assert!(matches!(
+            picker,
+            OverlayOutcome::Submitted(OverlaySubmit::Picker {
+                route: OverlayRoute::EditStatus,
+                ..
+            })
+        ));
+    }
+}

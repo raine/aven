@@ -193,3 +193,59 @@ fn dedupe_labels(labels: Vec<String>) -> Vec<String> {
         deduped
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::overlay::{LineEdit, OverlayRoute};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    fn tag_combobox_state() -> TagComboboxState {
+        TagComboboxState {
+            route: OverlayRoute::EditLabels,
+            title: "Labels".to_string(),
+            input: LineEdit::blank(),
+            options: vec!["bug".to_string(), "feature".to_string()],
+            selected: Vec::new(),
+            highlighted: 0,
+        }
+    }
+
+    #[test]
+    fn tag_combobox_filters_completes_toggles_and_submits() {
+        let state = tag_combobox_state();
+        let OverlayOutcome::None(OverlayState::TagCombobox(state)) =
+            handle_tag_combobox_key(state, key(KeyCode::Char('b')))
+        else {
+            panic!("expected label combobox state");
+        };
+        assert_eq!(state.input.as_str(), "b");
+        assert_eq!(tag_combobox_matches(&state), vec![0]);
+        assert_eq!(tag_combobox_completion(&state), Some("ug".to_string()));
+
+        let OverlayOutcome::None(OverlayState::TagCombobox(state)) =
+            handle_tag_combobox_key(state, key(KeyCode::Tab))
+        else {
+            panic!("expected label combobox state");
+        };
+        assert_eq!(state.selected, vec!["bug".to_string()]);
+        assert_eq!(state.input.as_str(), "");
+
+        let outcome = handle_tag_combobox_key(state, ctrl(KeyCode::Char('s')));
+        assert!(matches!(
+            outcome,
+            OverlayOutcome::Submitted(OverlaySubmit::Picker {
+                route: OverlayRoute::EditLabels,
+                values,
+                ..
+            }) if values == vec!["bug".to_string()]
+        ));
+    }
+}

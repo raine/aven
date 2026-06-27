@@ -188,3 +188,257 @@ fn move_picker_selection(state: &mut PickerState, delta: isize) {
         normalize_picker_scroll(state, crate::tui::overlay::GENERIC_PICKER_VIEWPORT_ROWS);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::overlay::OverlayRoute;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    fn picker_navigation_state() -> PickerState {
+        PickerState {
+            route: OverlayRoute::MessageOnly,
+            title: "Pick".to_string(),
+            filter: crate::tui::overlay::LineEdit::blank(),
+            items: vec![
+                PickerItem {
+                    label: "Alpha".to_string(),
+                    value: "a".to_string(),
+                    selected: false,
+                },
+                PickerItem {
+                    label: "Beta".to_string(),
+                    value: "b".to_string(),
+                    selected: false,
+                },
+            ],
+            selected: 0,
+            scroll: 0,
+            multi: false,
+            mode: PickerMode::Navigate,
+        }
+    }
+
+    fn picker_state_with_items(count: usize) -> PickerState {
+        PickerState {
+            route: OverlayRoute::EditLabels,
+            title: "Pick".to_string(),
+            filter: crate::tui::overlay::LineEdit::blank(),
+            items: (0..count)
+                .map(|index| PickerItem {
+                    label: format!("Label {index}"),
+                    value: format!("label-{index}"),
+                    selected: false,
+                })
+                .collect(),
+            selected: 0,
+            scroll: 0,
+            multi: true,
+            mode: PickerMode::Navigate,
+        }
+    }
+
+    #[test]
+    fn picker_filter_and_selection_normalize() {
+        let mut state = PickerState {
+            route: OverlayRoute::MessageOnly,
+            title: "Pick".to_string(),
+            filter: crate::tui::overlay::LineEdit::new("alp".to_string()),
+            items: vec![
+                PickerItem {
+                    label: "Alpha".to_string(),
+                    value: "a".to_string(),
+                    selected: false,
+                },
+                PickerItem {
+                    label: "Beta".to_string(),
+                    value: "b".to_string(),
+                    selected: false,
+                },
+            ],
+            selected: 1,
+            scroll: 0,
+            multi: false,
+            mode: PickerMode::Navigate,
+        };
+        normalize_picker_selection(&mut state);
+        assert_eq!(state.selected, 0);
+        assert_eq!(visible_picker_indices(&state), vec![0]);
+    }
+
+    #[test]
+    fn picker_filter_ignores_dashes_in_labels() {
+        let state = PickerState {
+            route: OverlayRoute::MessageOnly,
+            title: "Go: project".to_string(),
+            filter: crate::tui::overlay::LineEdit::new("gitsur".to_string()),
+            items: vec![PickerItem {
+                label: "GS git-surgeon".to_string(),
+                value: "git-surgeon".to_string(),
+                selected: false,
+            }],
+            selected: 0,
+            scroll: 0,
+            multi: false,
+            mode: PickerMode::Navigate,
+        };
+
+        assert_eq!(visible_picker_indices(&state), vec![0]);
+    }
+
+    #[test]
+    fn picker_filter_preserves_dash_matching() {
+        let state = PickerState {
+            route: OverlayRoute::MessageOnly,
+            title: "Pick".to_string(),
+            filter: crate::tui::overlay::LineEdit::new("git-sur".to_string()),
+            items: vec![PickerItem {
+                label: "GS git-surgeon".to_string(),
+                value: "git-surgeon".to_string(),
+                selected: false,
+            }],
+            selected: 0,
+            scroll: 0,
+            multi: false,
+            mode: PickerMode::Navigate,
+        };
+
+        assert_eq!(visible_picker_indices(&state), vec![0]);
+    }
+
+    #[test]
+    fn picker_moves_with_j_and_k_in_navigation_mode() {
+        let state = picker_navigation_state();
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_picker_key(state, key(KeyCode::Char('j')))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.selected, 1);
+        assert_eq!(state.filter.as_str(), "");
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_picker_key(state, key(KeyCode::Char('k')))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.filter.as_str(), "");
+    }
+
+    #[test]
+    fn picker_types_j_and_k_in_filter_mode() {
+        let mut state = picker_navigation_state();
+        state.mode = PickerMode::Filter;
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_picker_key(state, key(KeyCode::Char('j')))
+        else {
+            panic!("expected picker state");
+        };
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_picker_key(state, key(KeyCode::Char('k')))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.filter.as_str(), "jk");
+    }
+
+    #[test]
+    fn picker_slash_enters_filter_mode_and_esc_returns_to_navigation() {
+        let state = picker_navigation_state();
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_picker_key(state, key(KeyCode::Char('/')))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.mode, PickerMode::Filter);
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_picker_key(state, key(KeyCode::Esc))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.mode, PickerMode::Navigate);
+    }
+
+    #[test]
+    fn picker_moves_with_arrow_keys() {
+        let state = picker_navigation_state();
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_picker_key(state, key(KeyCode::Down))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.selected, 1);
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_picker_key(state, key(KeyCode::Up))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.selected, 0);
+    }
+
+    #[test]
+    fn picker_moves_with_ctrl_n_and_ctrl_p() {
+        let state = picker_navigation_state();
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_picker_key(state, ctrl(KeyCode::Char('n')))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.selected, 1);
+        let OverlayOutcome::None(OverlayState::Picker(state)) =
+            handle_picker_key(state, ctrl(KeyCode::Char('p')))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(state.selected, 0);
+    }
+
+    #[test]
+    fn picker_scroll_stays_at_bottom_until_selection_reaches_top_edge() {
+        let mut state = picker_state_with_items(10);
+        state.selected = 9;
+        state.scroll = 2;
+
+        for expected_selected in (2..9).rev() {
+            let OverlayOutcome::None(OverlayState::Picker(next)) =
+                handle_picker_key(state, key(KeyCode::Up))
+            else {
+                panic!("expected picker state");
+            };
+            assert_eq!(next.selected, expected_selected);
+            assert_eq!(next.scroll, 2);
+            state = next;
+        }
+
+        let OverlayOutcome::None(OverlayState::Picker(next)) =
+            handle_picker_key(state, key(KeyCode::Up))
+        else {
+            panic!("expected picker state");
+        };
+        assert_eq!(next.selected, 1);
+        assert_eq!(next.scroll, 1);
+    }
+
+    #[test]
+    fn picker_scroll_moves_down_after_bottom_edge() {
+        let state = picker_state_with_items(10);
+        let mut next = state;
+        for expected_selected in 1..=8 {
+            let OverlayOutcome::None(OverlayState::Picker(state)) =
+                handle_picker_key(next, key(KeyCode::Down))
+            else {
+                panic!("expected picker state");
+            };
+            next = state;
+            assert_eq!(next.selected, expected_selected);
+        }
+        assert_eq!(next.scroll, 1);
+    }
+}

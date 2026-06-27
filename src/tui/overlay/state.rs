@@ -770,3 +770,116 @@ impl OverlayState {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn picker_builder_uses_first_selected_item() {
+        let state = PickerState::new(
+            OverlayRoute::EditLabels,
+            "Labels",
+            vec![
+                PickerItem {
+                    label: "One".to_string(),
+                    value: "one".to_string(),
+                    selected: false,
+                },
+                PickerItem {
+                    label: "Two".to_string(),
+                    value: "two".to_string(),
+                    selected: true,
+                },
+            ],
+            true,
+        );
+
+        assert_eq!(state.selected, 1);
+        assert_eq!(state.filter, LineEdit::blank());
+        assert_eq!(state.mode, PickerMode::Navigate);
+        assert!(state.multi);
+    }
+
+    #[test]
+    fn project_pickers_open_in_filter_mode() {
+        for route in [
+            OverlayRoute::AddTaskTitleProject,
+            OverlayRoute::EditProject,
+            OverlayRoute::ScopeProject,
+            OverlayRoute::RenameProjectPicker,
+            OverlayRoute::DeleteProjectPicker,
+        ] {
+            let state = PickerState::new(
+                route,
+                "Project",
+                vec![PickerItem {
+                    label: "One".to_string(),
+                    value: "one".to_string(),
+                    selected: false,
+                }],
+                false,
+            );
+            assert_eq!(state.mode, PickerMode::Filter);
+        }
+    }
+
+    #[test]
+    fn picker_builder_defaults_to_first_item() {
+        let state = PickerState::new(
+            OverlayRoute::EditStatus,
+            "Status",
+            vec![PickerItem {
+                label: "One".to_string(),
+                value: "one".to_string(),
+                selected: false,
+            }],
+            false,
+        );
+
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.filter, LineEdit::blank());
+        assert_eq!(state.mode, PickerMode::Navigate);
+        assert!(!state.multi);
+    }
+
+    #[test]
+    fn overlay_builders_preserve_text_multiline_and_confirm_metadata() {
+        let OverlayState::TextInput(text) = OverlayState::text_input(
+            OverlayRoute::EditTitle,
+            "Edit title",
+            "title:",
+            "old".to_string(),
+        ) else {
+            panic!("expected text input");
+        };
+        assert_eq!(text.route, OverlayRoute::EditTitle);
+        assert_eq!(text.title, "Edit title");
+        assert_eq!(text.prompt, "title:");
+        assert_eq!(text.input.as_str(), "old");
+
+        let OverlayState::MultilineInput(multiline) = OverlayState::multiline_input(
+            OverlayRoute::EditDescription,
+            "Edit description",
+            "body:",
+            "a\nb".to_string(),
+        ) else {
+            panic!("expected multiline input");
+        };
+        assert_eq!(multiline.route, OverlayRoute::EditDescription);
+        assert_eq!(multiline.title, "Edit description");
+        assert_eq!(multiline.prompt, "body:");
+        assert_eq!(multiline.lines, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(multiline.row, 1);
+        assert_eq!(multiline.column, 1);
+
+        let OverlayState::Confirm(confirm) =
+            OverlayState::confirm(OverlayRoute::DeleteTaskConfirm, "Delete", "Sure?")
+        else {
+            panic!("expected confirm");
+        };
+        assert_eq!(confirm.route, OverlayRoute::DeleteTaskConfirm);
+        assert_eq!(confirm.title, "Delete");
+        assert_eq!(confirm.prompt, "Sure?");
+    }
+}
