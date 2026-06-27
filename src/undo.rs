@@ -5,6 +5,7 @@ use sqlx::{Row, SqliteConnection};
 
 use crate::db::{
     begin_immediate, conflict_exists, field_version, insert_change, set_field_version,
+    task_from_row,
 };
 use crate::ids::{new_id, now};
 use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
@@ -111,11 +112,18 @@ pub(crate) async fn task_field_value(
     task_id: &str,
     field: &str,
 ) -> Result<String> {
-    let task_field = TaskField::parse(field)
-        .ok_or_else(|| anyhow::anyhow!("error unknown-field field={field}"))?;
+    let task_field = TaskField::parse_or_unknown(field)?;
+    task_field_value_for_field(conn, workspace_id, task_id, task_field).await
+}
 
+async fn task_field_value_for_field(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+    task_field: TaskField,
+) -> Result<String> {
     let row = sqlx::query(
-        "SELECT t.title, t.description, t.project_id, p.key AS project_key, t.status, t.priority, t.deleted
+        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id, p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at, t.queue_activity_at, t.deleted
          FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
          WHERE t.workspace_id = ? AND t.id = ?",
     )
@@ -124,21 +132,8 @@ pub(crate) async fn task_field_value(
     .fetch_optional(&mut *conn)
     .await?
     .ok_or_else(|| anyhow::anyhow!("error task-not-found task_id={task_id}"))?;
-
-    Ok(match task_field {
-        TaskField::Title => row.get("title"),
-        TaskField::Description => row.get("description"),
-        TaskField::Project => row.get("project_id"),
-        TaskField::Status => row.get("status"),
-        TaskField::Priority => row.get("priority"),
-        TaskField::Deleted => {
-            if row.get::<i64, _>("deleted") != 0 {
-                "1".to_string()
-            } else {
-                "0".to_string()
-            }
-        }
-    })
+    let task = task_from_row(&row)?;
+    Ok(task_field.current_value(&task))
 }
 
 pub(crate) async fn task_labels(
@@ -393,17 +388,22 @@ async fn apply_undo_command(
             before,
             after,
         } => {
-            let current = task_field_value(conn, workspace_id, task_id, field).await?;
+            let task_field = TaskField::parse_or_unknown(field)?;
+            let current =
+                task_field_value_for_field(conn, workspace_id, task_id, task_field).await?;
             if current != *after {
                 bail!("error undo-state-changed task_id={task_id} field={field}");
             }
             if before != after {
-                if field == "project" && !project_id_exists(conn, workspace_id, before).await? {
+                if task_field == TaskField::Project
+                    && !project_id_exists(conn, workspace_id, before).await?
+                {
                     bail!("error undo-state-changed task_id={task_id} field={field}");
                 }
-                set_task_field_in_workspace(conn, workspace_id, task_id, field, before).await?;
+                set_task_field_in_workspace(conn, workspace_id, task_id, task_field, before)
+                    .await?;
             }
-            let include_deleted = if field == "deleted" {
+            let include_deleted = if task_field == TaskField::Deleted {
                 Some(before == "1")
             } else {
                 None
@@ -459,7 +459,8 @@ async fn apply_undo_command(
                     });
                 }
             }
-            set_task_field_in_workspace(conn, workspace_id, task_id, "deleted", "1").await?;
+            set_task_field_in_workspace(conn, workspace_id, task_id, TaskField::Deleted, "1")
+                .await?;
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
@@ -543,11 +544,13 @@ async fn apply_undo_command(
             after,
             conflict_id,
         } => {
-            let current = task_field_value(conn, workspace_id, task_id, field).await?;
+            let task_field = TaskField::parse_or_unknown(field)?;
+            let current =
+                task_field_value_for_field(conn, workspace_id, task_id, task_field).await?;
             if current != *after {
                 bail!("error undo-state-changed task_id={task_id} field={field}");
             }
-            set_task_field_in_workspace(conn, workspace_id, task_id, field, before).await?;
+            set_task_field_in_workspace(conn, workspace_id, task_id, task_field, before).await?;
             let restored = sqlx::query(
                 "UPDATE conflicts SET resolved = 0 WHERE id = ? AND workspace_id = ? AND resolved = 1",
             )
@@ -588,9 +591,10 @@ async fn set_task_field_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &str,
     task_id: &str,
-    field: &str,
+    task_field: TaskField,
     value: &str,
 ) -> Result<()> {
+    let field = task_field.as_str();
     if conflict_exists(conn, workspace_id, task_id, field).await? {
         bail!(
             "error conflicted-field ref={} field={} hint=\"use conflict resolve\"",
@@ -600,25 +604,13 @@ async fn set_task_field_in_workspace(
     }
     let base = field_version(conn, task_id, field).await?;
     let workspace_key = workspace_key_for_id(conn, workspace_id).await?;
-    let payload = if field == TaskField::Project.as_str() {
+    let payload = if task_field.is_project() {
         let project = resolve_project_for_stored_value(conn, workspace_id, value).await?;
         apply_project_id_in_workspace(conn, workspace_id, task_id, &project.id).await?;
-        serde_json::json!({
-            "workspace_id": workspace_id,
-            "workspace_key": workspace_key,
-            "value": &project.id,
-            "project_id": &project.id,
-            "project_key": &project.key,
-            "project_name": &project.name,
-            "project_prefix": &project.prefix,
-        })
+        TaskField::project_payload(workspace_id, &workspace_key, &project)
     } else {
         apply_field_value_in_workspace(conn, workspace_id, task_id, field, value).await?;
-        serde_json::json!({
-            "workspace_id": workspace_id,
-            "workspace_key": workspace_key,
-            "value": value,
-        })
+        task_field.scalar_payload(workspace_id, &workspace_key, value)?
     };
     let change_id = insert_change(
         conn,

@@ -3,24 +3,21 @@ use sqlx::SqliteConnection;
 use tracing::info;
 
 use crate::db::conflict_exists;
-use crate::refs::get_task;
 use crate::sync::wire::ChangeWire;
 use crate::task_fields::TaskField;
-
-use super::shared::workspace_id_payload;
 
 pub(super) async fn create_conflict(
     conn: &mut SqliteConnection,
     change: &ChangeWire,
+    workspace_id: &str,
     field: &str,
     remote_value: &str,
     local_change_id: Option<&str>,
 ) -> Result<()> {
-    let workspace_id = workspace_id_payload(conn, change).await?;
-    if conflict_exists(conn, &workspace_id, &change.entity_id, field).await? {
+    if conflict_exists(conn, workspace_id, &change.entity_id, field).await? {
         return Ok(());
     }
-    let local_value = current_field_value(conn, &change.entity_id, field).await?;
+    let local_value = current_field_value(conn, workspace_id, &change.entity_id, field).await?;
     let variant_a = format!(
         "v{}",
         local_change_id
@@ -35,7 +32,7 @@ pub(super) async fn create_conflict(
          local_change_id, remote_change_id, variant_a, variant_b, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(&workspace_id)
+    .bind(workspace_id)
     .bind(&change.entity_id)
     .bind(field)
     .bind(&change.base_version)
@@ -58,11 +55,23 @@ pub(super) async fn create_conflict(
 
 async fn current_field_value(
     conn: &mut SqliteConnection,
+    workspace_id: &str,
     task_id: &str,
     field: &str,
 ) -> Result<String> {
-    let task = get_task(conn, task_id).await?;
-    let task_field =
-        TaskField::parse(field).ok_or_else(|| anyhow!("error unknown-field field={field}"))?;
+    let task_field = TaskField::parse_or_unknown(field)?;
+    let row = sqlx::query(
+        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id, p.key AS project_key,
+         p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at, t.queue_activity_at,
+         t.deleted
+         FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
+         WHERE t.workspace_id = ? AND t.id = ?",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or_else(|| anyhow!("error task-not-found task_id={task_id}"))?;
+    let task = crate::db::task_from_row(&row)?;
     Ok(task_field.current_value(&task))
 }

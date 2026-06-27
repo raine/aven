@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use sqlx::SqliteConnection;
 
@@ -74,22 +74,34 @@ pub(crate) async fn set_field(
         .field
         .as_deref()
         .context("field change missing field")?;
-    let value = str_payload(&change.payload, "value")?;
+    let task_field = TaskField::parse_or_unknown(field)?;
+    let field = task_field.as_str();
+    let mut value = str_payload(&change.payload, "value")?;
     let workspace_id = workspace_id_payload(conn, change).await?;
-    let value = if field == TaskField::Project.as_str() {
+    if task_field.is_project() {
         let project_id = str_payload(&change.payload, "project_id")?;
-        ensure_project_for_payload(conn, &workspace_id, &project_id, change).await?
-    } else {
-        value
-    };
+        ensure!(
+            value == project_id,
+            "error invalid-sync-change project-value-mismatch"
+        );
+        value = ensure_project_for_payload(conn, &workspace_id, &project_id, change).await?;
+    }
     if !force {
         let current = field_version(conn, &change.entity_id, field).await?;
         if current != change.base_version {
-            conflict::create_conflict(conn, change, field, &value, current.as_deref()).await?;
+            conflict::create_conflict(
+                conn,
+                change,
+                &workspace_id,
+                field,
+                &value,
+                current.as_deref(),
+            )
+            .await?;
             return Ok(());
         }
     }
-    if field == TaskField::Project.as_str() {
+    if task_field.is_project() {
         apply_project_id_in_workspace(conn, &workspace_id, &change.entity_id, &value).await?;
     } else {
         apply_field_value_in_workspace(conn, &workspace_id, &change.entity_id, field, &value)

@@ -333,8 +333,7 @@ fn validate_incoming_change(change: &ChangeWire) -> Result<()> {
                 .as_deref()
                 .filter(|field| !field.trim().is_empty())
                 .context("error invalid-sync-change field missing")?;
-            let task_field = TaskField::parse(field)
-                .ok_or_else(|| anyhow::anyhow!("error invalid-sync-change field={field}"))?;
+            let task_field = TaskField::parse_for_sync(field)?;
             let value = required_string_payload("value", &change.payload)?;
             validate_sync_task_field_value(task_field, &value)?;
             if task_field == TaskField::Project {

@@ -1,5 +1,4 @@
 use anyhow::{Result, bail, ensure};
-use serde_json::json;
 use sqlx::SqliteConnection;
 use tracing::{debug, info};
 
@@ -62,13 +61,14 @@ pub(crate) async fn set_task_field(
     field: &str,
     value: &str,
 ) -> Result<()> {
+    let task_field = TaskField::parse_or_unknown(field)?;
     let workspace = active_workspace();
-    if field == TaskField::Project.as_str() {
+    if task_field.is_project() {
         let project =
             resolve_project_for_add_in_workspace(conn, &workspace.id, Some(value)).await?;
         set_task_project(conn, task_id, &project).await
     } else {
-        set_task_scalar_field(conn, task_id, field, value).await
+        set_task_scalar_field(conn, task_id, task_field, value).await
     }
 }
 
@@ -89,25 +89,18 @@ pub(crate) async fn set_task_project(
     debug!(task_id = %task_id, field = %field, "task field mutation started");
     let base = field_version(conn, task_id, field).await?;
     apply_project_id_in_workspace(conn, &workspace.id, task_id, &project.id).await?;
-    let payload = json!({
-        "workspace_id": &workspace.id,
-        "workspace_key": &workspace.key,
-        "value": &project.id,
-        "project_id": &project.id,
-        "project_key": &project.key,
-        "project_name": &project.name,
-        "project_prefix": &project.prefix,
-    });
+    let payload = TaskField::project_payload(&workspace.id, &workspace.key, project);
     finish_task_field_change(conn, task_id, field, payload, base.as_deref()).await
 }
 
 async fn set_task_scalar_field(
     conn: &mut SqliteConnection,
     task_id: &str,
-    field: &str,
+    task_field: TaskField,
     value: &str,
 ) -> Result<()> {
     let workspace = active_workspace();
+    let field = task_field.as_str();
     if conflict_exists(conn, &workspace.id, task_id, field).await? {
         bail!(
             "error conflicted-field ref={} field={} hint=\"use conflict resolve\"",
@@ -117,12 +110,8 @@ async fn set_task_scalar_field(
     }
     debug!(task_id = %task_id, field = %field, "task field mutation started");
     let base = field_version(conn, task_id, field).await?;
-    apply_field_value_in_workspace(conn, &workspace.id, task_id, field, value).await?;
-    let payload = json!({
-        "workspace_id": &workspace.id,
-        "workspace_key": &workspace.key,
-        "value": value,
-    });
+    apply_scalar_field_value_in_workspace(conn, &workspace.id, task_id, task_field, value).await?;
+    let payload = task_field.scalar_payload(&workspace.id, &workspace.key, value)?;
     finish_task_field_change(conn, task_id, field, payload, base.as_deref()).await
 }
 
@@ -208,8 +197,17 @@ pub(crate) async fn apply_field_value_in_workspace(
     field: &str,
     value: &str,
 ) -> Result<()> {
-    let task_field = TaskField::parse(field)
-        .ok_or_else(|| anyhow::anyhow!("error unknown-field field={field}"))?;
+    let task_field = TaskField::parse_or_unknown(field)?;
+    apply_scalar_field_value_in_workspace(conn, workspace_id, task_id, task_field, value).await
+}
+
+async fn apply_scalar_field_value_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+    task_field: TaskField,
+    value: &str,
+) -> Result<()> {
     task_field.validate_value(value)?;
 
     let ts = now();

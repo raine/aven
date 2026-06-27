@@ -1,5 +1,4 @@
 use anyhow::{Result, bail};
-use serde_json::json;
 use sqlx::{Row, SqliteConnection};
 use tracing::info;
 
@@ -7,6 +6,7 @@ use crate::db::{begin_immediate, insert_change, set_field_version};
 use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
 use crate::projects::{resolve_existing_project_in_workspace, resolve_project_for_stored_value};
 use crate::refs::get_task;
+use crate::task_fields::TaskField;
 use crate::types::Task;
 
 pub(crate) struct ConflictListItem {
@@ -132,6 +132,8 @@ pub(crate) async fn resolve_conflict(
     field: &str,
     value: &str,
 ) -> Result<ConflictOutcome> {
+    let task_field = TaskField::parse_or_unknown(field)?;
+    let field = task_field.as_str();
     let workspace = crate::workspaces::active_workspace();
     let mut tx = begin_immediate(conn).await?;
     let result = sqlx::query(
@@ -145,25 +147,13 @@ pub(crate) async fn resolve_conflict(
     if result.rows_affected() != 1 {
         bail!("error conflict-not-found task_id={task_id} field={field}");
     }
-    let payload = if field == crate::task_fields::TaskField::Project.as_str() {
+    let payload = if task_field.is_project() {
         let project = resolve_project_for_stored_value(&mut tx, &workspace.id, value).await?;
         apply_project_id_in_workspace(&mut tx, &workspace.id, task_id, &project.id).await?;
-        json!({
-            "workspace_id": &workspace.id,
-            "workspace_key": &workspace.key,
-            "value": &project.id,
-            "project_id": &project.id,
-            "project_key": &project.key,
-            "project_name": &project.name,
-            "project_prefix": &project.prefix,
-        })
+        TaskField::project_payload(&workspace.id, &workspace.key, &project)
     } else {
         apply_field_value_in_workspace(&mut tx, &workspace.id, task_id, field, value).await?;
-        json!({
-            "workspace_id": &workspace.id,
-            "workspace_key": &workspace.key,
-            "value": value,
-        })
+        task_field.scalar_payload(&workspace.id, &workspace.key, value)?
     };
     let change_id = insert_change(
         &mut tx,
