@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -8,7 +7,7 @@ use tracing::info;
 use super::apply::apply_remote_change;
 use super::wire::{
     ChangeRow, ChangeWire, MAX_PULL_BATCH, MAX_PUSH_BATCH, SYNC_PROTOCOL_VERSION, SyncRequest,
-    SyncResponse, validate_sync_protocol_version,
+    SyncResponse, validate_sync_response_for_request,
 };
 use crate::cli::SyncArgs;
 use crate::config;
@@ -92,12 +91,13 @@ async fn run_sync_once_inner(
             .iter()
             .map(|change| change.change_id.clone())
             .collect::<Vec<_>>();
+        let pull_limit = MAX_PULL_BATCH;
         let pending = changes.len();
         let mut request = client.post(&url).json(&SyncRequest {
             protocol_version: Some(SYNC_PROTOCOL_VERSION),
             client_id: client_id.clone(),
             after: cursor,
-            pull_limit: Some(MAX_PULL_BATCH),
+            pull_limit: Some(pull_limit),
             changes,
         });
         if let Some(token) = auth_token {
@@ -109,7 +109,7 @@ async fn run_sync_once_inner(
             .error_for_status()?
             .json::<SyncResponse>()
             .await?;
-        validate_sync_response(cursor, &request_change_ids, &response)?;
+        validate_sync_response_for_request(cursor, pull_limit, &request_change_ids, &response)?;
         let applied =
             apply_sync_response(conn, &response, attempted_at, total_pushed, total_pulled).await?;
         total_pushed += pending as i64;
@@ -149,140 +149,6 @@ async fn sync_cursor(conn: &mut SqliteConnection) -> Result<i64> {
         .await?
         .unwrap_or_else(|| "0".to_string())
         .parse::<i64>()?)
-}
-
-fn validate_sync_response(
-    after: i64,
-    request_change_ids: &[String],
-    response: &SyncResponse,
-) -> Result<()> {
-    validate_sync_protocol_version(SYNC_PROTOCOL_VERSION, response.protocol_version)?;
-    if response.changes.len() > MAX_PULL_BATCH as usize {
-        bail!(
-            "error invalid-sync-response pull-too-large limit={} got={}",
-            MAX_PULL_BATCH,
-            response.changes.len()
-        );
-    }
-    if response.cursor < after {
-        bail!(
-            "error invalid-sync-response cursor-regressed after={} cursor={}",
-            after,
-            response.cursor
-        );
-    }
-    validate_push_acks(request_change_ids, response)?;
-    validate_pull_page(after, response)?;
-    validate_push_pull_overlap(response)?;
-    Ok(())
-}
-
-fn validate_push_acks(request_change_ids: &[String], response: &SyncResponse) -> Result<()> {
-    if response.push_acks.len() != request_change_ids.len() {
-        bail!(
-            "error invalid-sync-response push-ack-count expected={} got={}",
-            request_change_ids.len(),
-            response.push_acks.len()
-        );
-    }
-    let expected = request_change_ids
-        .iter()
-        .map(String::as_str)
-        .collect::<HashSet<_>>();
-    let mut seen = HashSet::with_capacity(response.push_acks.len());
-    for ack in &response.push_acks {
-        if !expected.contains(ack.change_id.as_str()) {
-            bail!(
-                "error invalid-sync-response unexpected-push-ack change_id={}",
-                ack.change_id
-            );
-        }
-        if ack.server_seq <= 0 {
-            bail!(
-                "error invalid-sync-response push-ack-server-seq change_id={} server_seq={}",
-                ack.change_id,
-                ack.server_seq
-            );
-        }
-        if !seen.insert(&ack.change_id) {
-            bail!(
-                "error invalid-sync-response duplicate-push-ack change_id={}",
-                ack.change_id
-            );
-        }
-    }
-    Ok(())
-}
-
-fn validate_pull_page(after: i64, response: &SyncResponse) -> Result<()> {
-    let mut previous = after;
-    let mut change_ids = HashSet::with_capacity(response.changes.len());
-    for change in &response.changes {
-        if !change_ids.insert(&change.change_id) {
-            bail!(
-                "error invalid-sync-response duplicate-pull-change change_id={}",
-                change.change_id
-            );
-        }
-        let server_seq = change.server_seq.with_context(|| {
-            format!(
-                "error invalid-sync-response missing-server-seq change_id={}",
-                change.change_id
-            )
-        })?;
-        if server_seq <= previous {
-            bail!(
-                "error invalid-sync-response server-seq-order previous={} server_seq={}",
-                previous,
-                server_seq
-            );
-        }
-        previous = server_seq;
-    }
-    let expected_cursor = response
-        .changes
-        .last()
-        .and_then(|change| change.server_seq)
-        .unwrap_or(after);
-    if response.cursor != expected_cursor {
-        bail!(
-            "error invalid-sync-response cursor-mismatch expected={} got={}",
-            expected_cursor,
-            response.cursor
-        );
-    }
-    if response.has_more && response.changes.len() < MAX_PULL_BATCH as usize {
-        bail!(
-            "error invalid-sync-response has-more-short-page returned={} limit={}",
-            response.changes.len(),
-            MAX_PULL_BATCH
-        );
-    }
-    Ok(())
-}
-
-fn validate_push_pull_overlap(response: &SyncResponse) -> Result<()> {
-    let acked = response
-        .push_acks
-        .iter()
-        .map(|ack| (ack.change_id.as_str(), ack.server_seq))
-        .collect::<std::collections::HashMap<_, _>>();
-    for change in &response.changes {
-        if let Some(acked_server_seq) = acked.get(change.change_id.as_str()) {
-            let Some(pull_server_seq) = change.server_seq else {
-                continue;
-            };
-            if *acked_server_seq != pull_server_seq {
-                bail!(
-                    "error invalid-sync-response push-pull-server-seq-mismatch change_id={} ack={} pull={}",
-                    change.change_id,
-                    acked_server_seq,
-                    pull_server_seq
-                );
-            }
-        }
-    }
-    Ok(())
 }
 
 async fn apply_sync_response(

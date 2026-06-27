@@ -1429,6 +1429,29 @@ async fn sync_server_rejects_out_of_range_pull_limit() {
 }
 
 #[test]
+fn sync_server_rejects_negative_after_before_changes_are_stored() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let (status, text) = post_sync_json(
+        &server.url,
+        &json!({
+            "protocol_version": 4,
+            "client_id": "client-a",
+            "after": -1,
+            "pull_limit": MAX_PULL_BATCH,
+            "changes": [task_change("create_task", json!({"title":"ignored"}))],
+        })
+        .to_string(),
+    );
+    assert_eq!(status, 400);
+    contains_all(&text, &["error sync-after-out-of-range", "min=0", "got=-1"]);
+    assert_eq!(
+        scalar_i64(&env.path("server.sqlite"), "SELECT count(*) FROM changes"),
+        0
+    );
+}
+
+#[test]
 fn sync_server_paginates_pull_boundary() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
@@ -1561,6 +1584,92 @@ fn sync_client_rejects_non_increasing_server_seq() {
     let error = fail(env.aven(&db, ["sync", "--server", &url]));
     contains_all(&error, &["error invalid-sync-response", "server-seq-order"]);
     assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("0"));
+    server.join().expect("fake sync server exits");
+}
+
+#[test]
+fn sync_client_rejects_oversized_pull_response_before_state_change() {
+    let env = TestEnv::new();
+    let db = env.db("oversized-pull.sqlite");
+    ok(env.aven(&db, ["list"]));
+    let cursor_before = meta_value(&db, "sync_cursor");
+    let changes_before = scalar_i64(&db, "SELECT count(*) FROM changes");
+    let changes = (1..=(MAX_PULL_BATCH + 1))
+        .map(|seq| {
+            remote_task_change(
+                &format!("CHG{seq:013}"),
+                &format!("TSK{seq:013}"),
+                "oversized pull",
+                seq as i64,
+            )
+        })
+        .collect::<Vec<_>>();
+    let (url, server) = start_fake_sync_server(json!({
+        "protocol_version": 4,
+        "cursor": (MAX_PULL_BATCH as i64) + 1,
+        "has_more": false,
+        "push_acks": [],
+        "changes": changes,
+    }));
+
+    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    contains_all(&error, &["error invalid-sync-response", "pull-too-large"]);
+    assert_eq!(meta_value(&db, "sync_cursor"), cursor_before);
+    assert_eq!(
+        scalar_i64(&db, "SELECT count(*) FROM changes"),
+        changes_before
+    );
+    server.join().expect("fake sync server exits");
+}
+
+#[test]
+fn sync_client_rejects_cursor_mismatch_before_state_change() {
+    let env = TestEnv::new();
+    let db = env.db("cursor-mismatch.sqlite");
+    ok(env.aven(&db, ["list"]));
+    let cursor_before = meta_value(&db, "sync_cursor");
+    let (url, server) = start_fake_sync_server(json!({
+        "protocol_version": 4,
+        "cursor": 2,
+        "has_more": false,
+        "push_acks": [],
+        "changes": [remote_task_change(SYNC_TASK_A_CHANGE_ID, SYNC_TASK_A_ID, "bad cursor", 1)],
+    }));
+
+    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    contains_all(&error, &["error invalid-sync-response", "cursor-mismatch"]);
+    assert_eq!(meta_value(&db, "sync_cursor"), cursor_before);
+    assert_eq!(
+        scalar_i64(&db, "SELECT count(*) FROM tasks WHERE title = 'bad cursor'",),
+        0
+    );
+    server.join().expect("fake sync server exits");
+}
+
+#[test]
+fn sync_client_rejects_short_has_more_page_before_state_change() {
+    let env = TestEnv::new();
+    let db = env.db("short-has-more.sqlite");
+    ok(env.aven(&db, ["list"]));
+    let cursor_before = meta_value(&db, "sync_cursor");
+    let (url, server) = start_fake_sync_server(json!({
+        "protocol_version": 4,
+        "cursor": 1,
+        "has_more": true,
+        "push_acks": [],
+        "changes": [remote_task_change(SYNC_TASK_A_CHANGE_ID, SYNC_TASK_A_ID, "short page", 1)],
+    }));
+
+    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    contains_all(
+        &error,
+        &["error invalid-sync-response", "has-more-short-page"],
+    );
+    assert_eq!(meta_value(&db, "sync_cursor"), cursor_before);
+    assert_eq!(
+        scalar_i64(&db, "SELECT count(*) FROM tasks WHERE title = 'short page'",),
+        0
+    );
     server.join().expect("fake sync server exits");
 }
 

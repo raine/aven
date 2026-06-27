@@ -13,8 +13,8 @@ use tokio::net::TcpListener;
 use tracing::{error, info, warn};
 
 use super::wire::{
-    ChangeRow, ChangeWire, MAX_PULL_BATCH, MAX_PUSH_BATCH, PushAck, SYNC_PROTOCOL_VERSION,
-    SyncRequest, SyncResponse, validate_sync_request_protocol_version,
+    ChangeRow, ChangeWire, PushAck, SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse,
+    validate_sync_request_envelope,
 };
 use crate::cli::ServerArgs;
 use crate::config;
@@ -177,31 +177,15 @@ async fn handle_sync(
     state: ServerState,
     request: SyncRequest,
 ) -> std::result::Result<SyncResponse, (StatusCode, String)> {
-    validate_sync_request_protocol_version(request.protocol_version)
-        .map_err(invalid_sync_change)?;
-    let pull_limit = request_pull_limit(request.pull_limit)?;
-    if request.after < 0 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            format!("error sync-after-out-of-range min=0 got={}", request.after),
-        ));
-    }
-    if request.changes.len() > MAX_PUSH_BATCH {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            format!(
-                "error sync-push-too-large limit={MAX_PUSH_BATCH} got={}",
-                request.changes.len()
-            ),
-        ));
-    }
+    let envelope = validate_sync_request_envelope(&request).map_err(invalid_sync_change)?;
     for change in &request.changes {
         validate_incoming_change(change).map_err(invalid_sync_change)?;
     }
 
     let client_id = request.client_id.clone();
-    let after = request.after;
-    let change_count = request.changes.len();
+    let after = envelope.after;
+    let pull_limit = envelope.pull_limit;
+    let change_count = envelope.push_count;
     info!(client_id = %client_id, after, change_count, pull_limit, "sync request received");
 
     let mut conn = state.pool.acquire().await.map_err(internal_error)?;
@@ -274,17 +258,6 @@ async fn handle_sync(
         push_acks,
         changes,
     })
-}
-
-fn request_pull_limit(requested: Option<u32>) -> std::result::Result<u32, (StatusCode, String)> {
-    match requested {
-        None => Ok(MAX_PULL_BATCH),
-        Some(limit @ 1..=MAX_PULL_BATCH) => Ok(limit),
-        Some(limit) => Err((
-            StatusCode::BAD_REQUEST,
-            format!("error sync-pull-limit-out-of-range min=1 max={MAX_PULL_BATCH} got={limit}"),
-        )),
-    }
 }
 
 async fn next_server_seq(conn: &mut SqliteConnection) -> Result<i64> {
