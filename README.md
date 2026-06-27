@@ -36,8 +36,8 @@ It came from a few specific needs:
 - **Markdown-native tasks.** Tasks can carry Markdown descriptions and
   append-only notes, so context stays with the task.
 
-- **Fast capture from anywhere.** Natural-language task intake, tmux popup
-  capture, and agent-friendly commands make it easy to add tasks.
+- **Fast capture from anywhere.** Comes with LLM-powered natural-language task
+  intake and tmux popup capture.
 
 Inspired by Taskwarrior. See [Why not Taskwarrior?](#why-not-taskwarrior).
 
@@ -160,17 +160,17 @@ aven tmux add-task-popup --print-binding
 
 ## Why not Taskwarrior?
 
-I built this to replace Taskwarrior for me. Taskwarrior is great but for obvious
-reasons it was not originally designed around coding agents as first-class
-users.
+I built this to replace Taskwarrior for me. Taskwarrior is great but obviously
+it was not originally designed around coding agents as first-class users.
 
 - Task ids need to be stable, short, and visible in normal command output. UUIDs
   are ugly.
 - Taskwarrior's CLI tries to be the human interface, which makes it unergonomic
   for agents to work with. I want the CLI to primarily be an agent interface,
-  and the TUI to be the polished human workflow.
-- Tasks need first-class Markdown descriptions and notes, not references to
-  sidecar files that only exist on one machine.
+  and the TUI to be optimized for humans. Everything should be easier through
+  TUI than CLI for humans.
+- Tasks need first-class Markdown descriptions and notes, not just references to
+  sidecar files that only exist on one machine, which is the Taskwarrior way.
 - Workspaces should be part of the model, so personal and work tasks can be
   isolated without shell aliases or database juggling.
 - There is no adequate TUI, or GUI in general.
