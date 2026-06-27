@@ -76,6 +76,10 @@ pub(crate) fn handle_picker_key(state: PickerState, key: KeyEvent) -> OverlayOut
 }
 
 fn handle_picker_navigation_key(mut state: PickerState, key: KeyEvent) -> OverlayOutcome {
+    if apply_shared_picker_action(&mut state, key) {
+        return continue_picker(state);
+    }
+
     match key.code {
         KeyCode::Esc => OverlayOutcome::Cancelled,
         KeyCode::Enter => picker_submit_outcome(state),
@@ -91,23 +95,15 @@ fn handle_picker_navigation_key(mut state: PickerState, key: KeyEvent) -> Overla
             move_picker_selection(&mut state, -1);
             OverlayOutcome::None(OverlayState::Picker(state))
         }
-        KeyCode::Char('n') if key.modifiers == KeyModifiers::CONTROL => {
-            move_picker_selection(&mut state, 1);
-            OverlayOutcome::None(OverlayState::Picker(state))
-        }
-        KeyCode::Char('p') if key.modifiers == KeyModifiers::CONTROL => {
-            move_picker_selection(&mut state, -1);
-            OverlayOutcome::None(OverlayState::Picker(state))
-        }
-        KeyCode::Char(' ') if state.multi => {
-            toggle_picker_item(&mut state);
-            OverlayOutcome::None(OverlayState::Picker(state))
-        }
         _ => OverlayOutcome::None(OverlayState::Picker(state)),
     }
 }
 
 fn handle_picker_filter_key(mut state: PickerState, key: KeyEvent) -> OverlayOutcome {
+    if apply_shared_picker_action(&mut state, key) {
+        return continue_picker(state);
+    }
+
     match key.code {
         KeyCode::Esc => {
             state.mode = PickerMode::Navigate;
@@ -118,20 +114,8 @@ fn handle_picker_filter_key(mut state: PickerState, key: KeyEvent) -> OverlayOut
             move_picker_selection(&mut state, 1);
             OverlayOutcome::None(OverlayState::Picker(state))
         }
-        KeyCode::Char('n') if key.modifiers == KeyModifiers::CONTROL => {
-            move_picker_selection(&mut state, 1);
-            OverlayOutcome::None(OverlayState::Picker(state))
-        }
         KeyCode::Up => {
             move_picker_selection(&mut state, -1);
-            OverlayOutcome::None(OverlayState::Picker(state))
-        }
-        KeyCode::Char('p') if key.modifiers == KeyModifiers::CONTROL => {
-            move_picker_selection(&mut state, -1);
-            OverlayOutcome::None(OverlayState::Picker(state))
-        }
-        KeyCode::Char(' ') if state.multi => {
-            toggle_picker_item(&mut state);
             OverlayOutcome::None(OverlayState::Picker(state))
         }
         _ => {
@@ -140,6 +124,28 @@ fn handle_picker_filter_key(mut state: PickerState, key: KeyEvent) -> OverlayOut
             OverlayOutcome::None(OverlayState::Picker(state))
         }
     }
+}
+
+fn apply_shared_picker_action(state: &mut PickerState, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Char('n') if key.modifiers == KeyModifiers::CONTROL => {
+            move_picker_selection(state, 1);
+            true
+        }
+        KeyCode::Char('p') if key.modifiers == KeyModifiers::CONTROL => {
+            move_picker_selection(state, -1);
+            true
+        }
+        KeyCode::Char(' ') if state.multi => {
+            toggle_picker_item(state);
+            true
+        }
+        _ => false,
+    }
+}
+
+fn continue_picker(state: PickerState) -> OverlayOutcome {
+    OverlayOutcome::None(OverlayState::Picker(state))
 }
 
 pub(super) fn picker_submit_outcome(state: PickerState) -> OverlayOutcome {
