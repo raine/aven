@@ -2,6 +2,7 @@ files:
   symlink:
     - CLAUDE.local.md
     - .env
+    - history
   copy:
     - .envrc
 
