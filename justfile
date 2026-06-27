@@ -61,7 +61,7 @@ format-check:
 
 # Run clippy and fail on any warnings
 clippy:
-    @scripts/quiet-check clippy cargo clippy --all-targets -- -D warnings -D clippy::all
+    @scripts/quiet-check clippy scripts/cargo-json-check clippy cargo clippy --message-format=json --all-targets -- -D warnings -D clippy::all
 
 # Auto-fix clippy warnings
 clippy-fix:

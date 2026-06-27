@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -lt 2 ]]; then
+  echo "usage: cargo-json-check <label> <command> [args...]" >&2
+  exit 2
+fi
+
+label="$1"
+shift
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+summary_filter="$script_dir/lib/cargo-diagnostic-summary.jq"
+safe_label="${label//[^[:alnum:]_.-]/_}"
+log_dir="target/check-logs"
+log_file="$log_dir/$safe_label.log"
+
+mkdir -p "$log_dir"
+
+set +e
+"$@" >"$log_file" 2>&1
+status=$?
+set -e
+
+if [[ "$status" -eq 0 ]]; then
+  exit 0
+fi
+
+printf 'full log: %s\n\n' "$log_file" >&2
+
+if command -v jq >/dev/null 2>&1; then
+  summary_file="$(mktemp -t aven-cargo-json-summary.XXXXXX)"
+  jq -Rrf "$summary_filter" "$log_file" >"$summary_file"
+
+  if [[ -s "$summary_file" ]]; then
+    cat "$summary_file" >&2
+    rm -f "$summary_file"
+    exit "$status"
+  fi
+  rm -f "$summary_file"
+fi
+
+printf 'cargo did not emit parseable JSON diagnostics; showing recent log output:\n\n' >&2
+grep -E '^(error:|warning:|[[:space:]]+-->|help:)' "$log_file" | tail -n 80 >&2 || tail -n 80 "$log_file" >&2
+exit "$status"
