@@ -160,6 +160,7 @@ impl App {
         self.conflict_flow.clear();
         self.pending_rename_project = None;
         self.pending_delete_project = None;
+        self.clear_live_search_preview();
         let had_overlay = self.overlay.take().is_some();
         self.detail_context = false;
         if !had_overlay && self.focus == Focus::Sidebar {

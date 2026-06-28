@@ -60,6 +60,7 @@ pub(crate) struct SearchState {
     pub(crate) results: Vec<SearchResultItem>,
     pub(crate) selected: usize,
     pub(crate) total_matches: usize,
+    pub(crate) results_query: Option<String>,
 }
 
 impl SearchState {
@@ -69,11 +70,33 @@ impl SearchState {
             results: Vec::new(),
             selected: 0,
             total_matches: 0,
+            results_query: None,
         }
+    }
+
+    pub(crate) fn current_query(&self) -> String {
+        self.input.text.trim().to_string()
+    }
+
+    pub(crate) fn clear_results(&mut self) {
+        self.results.clear();
+        self.selected = 0;
+        self.total_matches = 0;
+        self.results_query = None;
     }
 
     pub(crate) fn selected_result(&self) -> Option<&SearchResultItem> {
         self.results.get(self.selected)
+    }
+
+    pub(crate) fn results_are_current(&self) -> bool {
+        self.results_query.as_deref() == Some(self.input.text.trim())
+    }
+
+    pub(crate) fn selected_current_result(&self) -> Option<&SearchResultItem> {
+        self.results_are_current()
+            .then(|| self.selected_result())
+            .flatten()
     }
 
     pub(crate) fn normalize_selection(&mut self) {

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use tokio::task::JoinHandle;
 
 use crate::query::{self, SortDirection, TaskSearchQuery};
 
@@ -6,6 +7,32 @@ use super::{
     SidebarEntryTarget, TaskFilterModifiers, TaskOrder, TaskScope, TaskScopeTarget, TaskView,
     TuiStore,
 };
+
+async fn search_preview_with_pool(
+    pool: sqlx::SqlitePool,
+    workspace_id: String,
+    input: String,
+    limit: usize,
+) -> Result<query::TaskSearchPreviewResultSet> {
+    let text = input.trim().to_string();
+    if text.is_empty() {
+        return Ok(query::TaskSearchPreviewResultSet {
+            items: Vec::new(),
+            total_matches: 0,
+        });
+    }
+    let mut conn = pool.acquire().await?;
+    query::search_task_preview_set_in_workspace(
+        &mut conn,
+        workspace_id.as_str(),
+        TaskSearchQuery {
+            text,
+            include_deleted: false,
+            limit,
+        },
+    )
+    .await
+}
 
 impl TuiStore {
     pub(crate) fn sidebar_selection(&self) -> Option<usize> {
@@ -92,29 +119,32 @@ impl TuiStore {
         self.refresh(None).await
     }
 
+    #[cfg(test)]
     pub(crate) async fn search_preview(
         &self,
         input: &str,
         limit: usize,
     ) -> Result<query::TaskSearchPreviewResultSet> {
-        let text = input.trim();
-        if text.is_empty() {
-            return Ok(query::TaskSearchPreviewResultSet {
-                items: Vec::new(),
-                total_matches: 0,
-            });
-        }
-        let mut conn = self.pool.acquire().await?;
-        query::search_task_preview_set_in_workspace(
-            &mut conn,
-            self.active_workspace.id.as_str(),
-            TaskSearchQuery {
-                text: text.to_string(),
-                include_deleted: false,
-                limit,
-            },
+        search_preview_with_pool(
+            self.pool.clone(),
+            self.active_workspace.id.clone(),
+            input.to_string(),
+            limit,
         )
         .await
+    }
+
+    pub(crate) fn spawn_search_preview(
+        &self,
+        input: String,
+        limit: usize,
+    ) -> JoinHandle<Result<query::TaskSearchPreviewResultSet>> {
+        tokio::spawn(search_preview_with_pool(
+            self.pool.clone(),
+            self.active_workspace.id.clone(),
+            input,
+            limit,
+        ))
     }
 
     pub(crate) async fn accept_search(&mut self, input: &str) -> Result<Option<usize>> {

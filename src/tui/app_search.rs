@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::tui::app::App;
+use crate::tui::app::{App, PendingSearchPreview, SEARCH_PREVIEW_LIMIT};
 use crate::tui::overlay::{OverlayState, SearchResultItem, SearchState};
 
 fn open_search_results_key(key: KeyEvent) -> bool {
@@ -12,11 +12,13 @@ fn open_search_results_key(key: KeyEvent) -> bool {
 impl App {
     pub(crate) fn begin_search(&mut self) {
         self.pending_shortcut.clear();
+        self.clear_live_search_preview();
         self.overlay = Some(OverlayState::Search(SearchState::blank()));
     }
 
     pub(super) async fn handle_search_paste(&mut self, state: &mut SearchState) -> Result<()> {
-        self.refresh_search_results(state).await
+        self.schedule_search_preview(state);
+        Ok(())
     }
 
     pub(super) async fn handle_search_key(
@@ -25,15 +27,20 @@ impl App {
         key: KeyEvent,
     ) -> Result<()> {
         match key.code {
-            KeyCode::Esc => {}
+            KeyCode::Esc => {
+                self.clear_live_search_preview();
+            }
             KeyCode::Enter if open_search_results_key(key) => {
+                self.clear_live_search_preview();
                 self.accept_search_input(state.input.text).await?;
             }
             KeyCode::Tab => {
+                self.clear_live_search_preview();
                 self.accept_search_input(state.input.text).await?;
             }
             KeyCode::Enter => {
-                if let Some(result) = state.selected_result() {
+                self.clear_live_search_preview();
+                if let Some(result) = state.selected_current_result() {
                     self.accept_search_input(state.input.text.clone()).await?;
                     self.select_task_by_id(&result.task_id);
                     self.overlay = Some(OverlayState::Detail { scroll: 0 });
@@ -69,22 +76,97 @@ impl App {
             }
             _ => {
                 state.input.handle_key(key);
-                self.refresh_search_results(&mut state).await?;
+                self.schedule_search_preview(&mut state);
                 self.overlay = Some(OverlayState::Search(state));
             }
         }
         Ok(())
     }
 
-    async fn refresh_search_results(&mut self, state: &mut SearchState) -> Result<()> {
-        let text = state.input.text.trim();
-        if text.is_empty() {
-            state.results.clear();
-            state.selected = 0;
-            state.total_matches = 0;
-            return Ok(());
+    async fn accept_search_input(&mut self, input: String) -> Result<()> {
+        self.widgets
+            .table
+            .select(self.store.accept_search(&input).await?);
+        Ok(())
+    }
+
+    fn start_search_preview(&mut self, query: String) {
+        let workspace_id = self.store.active_workspace.id.clone();
+        let handle = self
+            .store
+            .spawn_search_preview(query.clone(), SEARCH_PREVIEW_LIMIT);
+        self.live_search.active = Some(PendingSearchPreview {
+            query,
+            workspace_id,
+            handle,
+        });
+    }
+
+    fn schedule_search_preview(&mut self, state: &mut SearchState) {
+        let query = state.current_query();
+        if query.is_empty() {
+            state.clear_results();
+            self.clear_live_search_preview();
+            return;
         }
-        let result_set = self.store.search_preview(text, 8).await?;
+
+        if state.results_query.as_deref() != Some(query.as_str()) {
+            state.clear_results();
+        }
+
+        match self
+            .live_search
+            .active
+            .as_ref()
+            .map(|active| active.query.as_str())
+        {
+            None => self.start_search_preview(query),
+            Some(active) if active == query => self.live_search.pending = None,
+            Some(_) => self.live_search.pending = Some(query),
+        }
+    }
+
+    pub(super) async fn poll_search_preview(&mut self) -> Result<bool> {
+        let Some(active) = self.live_search.active.as_ref() else {
+            return Ok(false);
+        };
+        if !active.handle.is_finished() {
+            return Ok(false);
+        }
+
+        let active = self
+            .live_search
+            .active
+            .take()
+            .expect("active search preview");
+        let result_set = match active.handle.await {
+            Ok(result_set) => result_set?,
+            Err(error) if error.is_cancelled() => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+
+        let mut changed = false;
+        if let Some(OverlayState::Search(state)) = &mut self.overlay
+            && self.store.active_workspace.id == active.workspace_id
+            && state.input.text.trim() == active.query
+        {
+            Self::apply_search_preview_results(state, active.query, result_set);
+            changed = true;
+        }
+
+        if let Some(query) = self.live_search.pending.take() {
+            self.start_search_preview(query);
+        }
+
+        Ok(changed)
+    }
+
+    fn apply_search_preview_results(
+        state: &mut SearchState,
+        query: String,
+        result_set: crate::query::TaskSearchPreviewResultSet,
+    ) {
+        state.results_query = Some(query);
         state.total_matches = result_set.total_matches;
         state.results = result_set
             .items
@@ -106,14 +188,6 @@ impl App {
             })
             .collect();
         state.normalize_selection();
-        Ok(())
-    }
-
-    async fn accept_search_input(&mut self, input: String) -> Result<()> {
-        self.widgets
-            .table
-            .select(self.store.accept_search(&input).await?);
-        Ok(())
     }
 
     fn select_task_by_id(&mut self, task_id: &str) {

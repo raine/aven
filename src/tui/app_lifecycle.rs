@@ -60,6 +60,10 @@ impl App {
                 needs_redraw = true;
             }
 
+            if self.poll_search_preview().await? {
+                needs_redraw = true;
+            }
+
             if self.refresh_is_due() {
                 match self.refresh().await {
                     Ok(()) => needs_redraw = true,
@@ -199,7 +203,10 @@ impl App {
             None => {}
         }
 
-        if self.pending_task_intake.is_some() || self.ready_task_intake.is_some() {
+        if self.pending_task_intake.is_some()
+            || self.ready_task_intake.is_some()
+            || self.search_preview_work_pending()
+        {
             timeout = timeout.min(INPUT_POLL_INTERVAL);
         }
 

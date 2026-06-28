@@ -57,6 +57,20 @@ pub(super) struct ReadyTaskIntake {
     pub(super) create_on_success: bool,
 }
 
+pub(super) const SEARCH_PREVIEW_LIMIT: usize = 8;
+
+pub(super) struct PendingSearchPreview {
+    pub(super) query: String,
+    pub(super) workspace_id: String,
+    pub(super) handle: JoinHandle<Result<crate::query::TaskSearchPreviewResultSet>>,
+}
+
+#[derive(Default)]
+pub(super) struct LiveSearchPreview {
+    pub(super) active: Option<PendingSearchPreview>,
+    pub(super) pending: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Notification {
     Toast {
@@ -132,6 +146,7 @@ pub(crate) struct App {
     pub(super) add_task_config: AppConfig,
     pub(super) pending_task_intake: Option<PendingTaskIntake>,
     pub(super) ready_task_intake: Option<ReadyTaskIntake>,
+    pub(super) live_search: LiveSearchPreview,
     pub(super) next_refresh_at: Instant,
     pub(crate) last_task_click: Option<TaskRowClick>,
 }
@@ -178,6 +193,7 @@ impl App {
             add_task_config: AppConfig::default(),
             pending_task_intake: None,
             ready_task_intake: None,
+            live_search: LiveSearchPreview::default(),
             next_refresh_at,
             last_task_click: None,
         };
@@ -201,6 +217,17 @@ impl App {
         self.overlay = Some(OverlayState::Command {
             state: crate::tui::overlay::CommandState::blank(),
         });
+    }
+
+    pub(super) fn clear_live_search_preview(&mut self) {
+        if let Some(active) = self.live_search.active.take() {
+            active.handle.abort();
+        }
+        self.live_search.pending = None;
+    }
+
+    pub(super) fn search_preview_work_pending(&self) -> bool {
+        self.live_search.active.is_some() || self.live_search.pending.is_some()
     }
 
     pub(super) async fn set_sort(&mut self, sort: TaskOrder) -> Result<()> {
