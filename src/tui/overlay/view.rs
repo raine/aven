@@ -25,6 +25,7 @@ pub(crate) enum OverlayView {
         cursor: usize,
         results: Vec<SearchResultItem>,
         selected: usize,
+        total_matches: usize,
     },
     Command {
         input: String,
@@ -173,6 +174,7 @@ impl From<&OverlayState> for OverlayView {
                 cursor: state.input.cursor,
                 results: state.results.clone(),
                 selected: state.selected,
+                total_matches: state.total_matches,
             },
             Command { state } => Self::Command {
                 input: state.input.text.clone(),

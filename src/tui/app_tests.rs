@@ -650,6 +650,7 @@ mod keyboard_dispatch {
                 input: LineEdit::new("q".to_string()),
                 results: Vec::new(),
                 selected: 0,
+                total_matches: 0,
             }),
             OverlayState::Command {
                 state: CommandState::new(LineEdit::new("ref".to_string())),

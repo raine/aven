@@ -23,6 +23,7 @@ pub(in crate::tui::ui) fn render_search(
     cursor: usize,
     results: &[SearchResultItem],
     selected: usize,
+    total_matches: usize,
 ) {
     let width = frame.area().width.saturating_sub(8).clamp(72, 110);
     let result_rows = results.len().min(RESULT_ROWS) as u16;
@@ -35,6 +36,7 @@ pub(in crate::tui::ui) fn render_search(
         (result_rows * 2 + 6).min(frame.area().height.saturating_sub(2))
     };
     let area = Dialog::new("Search", width, height)
+        .right_title(search_summary_line(input, results.len(), total_matches))
         .render_block_at(frame, search_dialog_area(frame.area(), width, height));
 
     if results.is_empty() && has_empty_input {
@@ -75,6 +77,33 @@ pub(in crate::tui::ui) fn render_search(
 
     frame.render_widget(Paragraph::new(""), hint_spacer_area);
     frame.render_widget(Paragraph::new(search_hint_line()), hint_area);
+}
+
+fn search_summary_line(input: &str, shown: usize, total: usize) -> Line<'static> {
+    if input.trim().is_empty() {
+        return Line::from(Span::styled("", Style::new().fg(FG_DIM)));
+    }
+    let label = if total == 0 {
+        "0 matches".to_string()
+    } else {
+        format!("{} of {}", format_count(shown), format_count(total))
+    };
+    Line::from(vec![
+        Span::styled(" ", Style::new().fg(FG_DIM)),
+        Span::styled(label, Style::new().fg(FG_DIM)),
+    ])
+}
+
+fn format_count(count: usize) -> String {
+    let digits = count.to_string();
+    let mut formatted = String::new();
+    for (index, ch) in digits.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
+            formatted.push(',');
+        }
+        formatted.push(ch);
+    }
+    formatted.chars().rev().collect()
 }
 
 fn search_dialog_area(frame: Rect, width: u16, height: u16) -> Rect {

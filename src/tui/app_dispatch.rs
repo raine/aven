@@ -835,10 +835,13 @@ impl App {
         if text.is_empty() {
             state.results.clear();
             state.selected = 0;
+            state.total_matches = 0;
             return Ok(());
         }
-        let results = self.store.search_preview(text, 8).await?;
-        state.results = results
+        let result_set = self.store.search_preview(text, 8).await?;
+        state.total_matches = result_set.total_matches;
+        state.results = result_set
+            .items
             .into_iter()
             .map(|result| SearchResultItem {
                 task_id: result.item.task.id,

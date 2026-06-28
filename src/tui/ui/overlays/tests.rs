@@ -32,7 +32,8 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
             cursor,
             results,
             selected,
-        } => render_search(frame, input, *cursor, results, *selected),
+            total_matches,
+        } => render_search(frame, input, *cursor, results, *selected, *total_matches),
         OverlayView::AddTask(state) => render_add_task(frame, state),
         OverlayView::TextInput(state) => render_text_input(frame, state),
         OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
@@ -191,10 +192,12 @@ mod text_panel_and_search {
             cursor: 5,
             results: vec![search_result_item("Query result")],
             selected: 0,
+            total_matches: 12,
         });
         assert!(rendered.contains("Search"));
         assert!(rendered.contains("query"));
         assert!(rendered.contains("Query result"));
+        assert!(rendered.contains("1 of 12"));
         assert!(rendered.contains("age="));
     }
 
@@ -205,6 +208,7 @@ mod text_panel_and_search {
             cursor: 7,
             results: Vec::new(),
             selected: 0,
+            total_matches: 0,
         });
 
         assert!(rendered.contains("No matching tasks"));
@@ -217,6 +221,7 @@ mod text_panel_and_search {
             cursor: 5,
             results: vec![search_result_item("Query result")],
             selected: 0,
+            total_matches: 12,
         });
         let prefix_cell = buffer
             .content
@@ -234,6 +239,7 @@ mod text_panel_and_search {
             cursor: 5,
             results: Vec::new(),
             selected: 0,
+            total_matches: 0,
         });
         let populated = overlay_buffer(OverlayView::Search {
             input: "query".to_string(),
@@ -243,6 +249,7 @@ mod text_panel_and_search {
                 search_result_item("Second result"),
             ],
             selected: 0,
+            total_matches: 12,
         });
         let title_row = |buffer: &ratatui::buffer::Buffer| {
             (0..buffer.area.height)
@@ -1191,6 +1198,7 @@ mod route_specific_rendering {
                 cursor: 5,
                 results: Vec::new(),
                 selected: 0,
+                total_matches: 12,
             },
             OverlayView::AddTask(AddTaskView {
                 title: "ship dialogs".to_string(),

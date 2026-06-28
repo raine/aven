@@ -96,13 +96,16 @@ impl TuiStore {
         &self,
         input: &str,
         limit: usize,
-    ) -> Result<Vec<query::TaskSearchResult>> {
+    ) -> Result<query::TaskSearchResultSet> {
         let text = input.trim();
         if text.is_empty() {
-            return Ok(Vec::new());
+            return Ok(query::TaskSearchResultSet {
+                items: Vec::new(),
+                total_matches: 0,
+            });
         }
         let mut conn = self.pool.acquire().await?;
-        query::search_task_items_in_workspace(
+        query::search_task_item_set_in_workspace(
             &mut conn,
             self.active_workspace.id.as_str(),
             TaskSearchQuery {

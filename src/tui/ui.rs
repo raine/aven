@@ -509,7 +509,8 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
             cursor,
             results,
             selected,
-        } => render_search(frame, input, *cursor, results, *selected),
+            total_matches,
+        } => render_search(frame, input, *cursor, results, *selected, *total_matches),
         OverlayView::Command {
             input,
             cursor,

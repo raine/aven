@@ -12,8 +12,8 @@ pub(crate) use dependencies::{TaskDependencyItem, TaskDependencySummary, task_de
 pub(crate) use projects::{list_project_items, list_project_items_in_workspace};
 #[allow(unused_imports)]
 pub(crate) use search::{
-    SearchMatchedField, TaskSearchQuery, TaskSearchResult, search_task_items,
-    search_task_items_in_workspace,
+    SearchMatchedField, TaskSearchQuery, TaskSearchResult, TaskSearchResultSet,
+    search_task_item_set_in_workspace, search_task_items, search_task_items_in_workspace,
 };
 #[allow(unused_imports)]
 pub(crate) use sidebar::{

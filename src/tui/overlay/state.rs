@@ -59,6 +59,7 @@ pub(crate) struct SearchState {
     pub(crate) input: LineEdit,
     pub(crate) results: Vec<SearchResultItem>,
     pub(crate) selected: usize,
+    pub(crate) total_matches: usize,
 }
 
 impl SearchState {
@@ -67,6 +68,7 @@ impl SearchState {
             input: LineEdit::blank(),
             results: Vec::new(),
             selected: 0,
+            total_matches: 0,
         }
     }
 

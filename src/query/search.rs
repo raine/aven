@@ -63,6 +63,12 @@ pub(crate) struct TaskSearchResult {
     pub(crate) snippet: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct TaskSearchResultSet {
+    pub(crate) items: Vec<TaskSearchResult>,
+    pub(crate) total_matches: usize,
+}
+
 struct SearchDocument {
     task: Task,
     display_ref: String,
@@ -83,7 +89,11 @@ pub(crate) async fn search_task_items(
     query: TaskSearchQuery,
 ) -> Result<Vec<TaskSearchResult>> {
     let workspace_id = active_workspace_id();
-    search_task_items_in_workspace(conn, &workspace_id, query).await
+    Ok(
+        search_task_item_set_in_workspace(conn, &workspace_id, query)
+            .await?
+            .items,
+    )
 }
 
 pub(crate) async fn search_task_items_in_workspace(
@@ -91,6 +101,16 @@ pub(crate) async fn search_task_items_in_workspace(
     workspace_id: &str,
     query: TaskSearchQuery,
 ) -> Result<Vec<TaskSearchResult>> {
+    Ok(search_task_item_set_in_workspace(conn, workspace_id, query)
+        .await?
+        .items)
+}
+
+pub(crate) async fn search_task_item_set_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    query: TaskSearchQuery,
+) -> Result<TaskSearchResultSet> {
     let limit = if query.limit == 0 {
         DEFAULT_LIMIT
     } else {
@@ -99,13 +119,17 @@ pub(crate) async fn search_task_items_in_workspace(
     let documents = load_search_documents(conn, workspace_id, query.include_deleted).await?;
     let text = query.text.trim();
     if text.is_empty() {
-        return Ok(Vec::new());
+        return Ok(TaskSearchResultSet {
+            items: Vec::new(),
+            total_matches: 0,
+        });
     }
 
     let mut scored = documents
         .into_iter()
         .filter_map(|document| score_document(document, text))
         .collect::<Vec<_>>();
+    let total_matches = scored.len();
     scored.sort_by(|a, b| {
         b.score
             .cmp(&a.score)
@@ -122,7 +146,7 @@ pub(crate) async fn search_task_items_in_workspace(
     let task_ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
     let mut enrichment = load_task_enrichment(conn, workspace_id, &task_ids).await?;
     let now_seconds = crate::queue::now_seconds();
-    Ok(scored
+    let items = scored
         .into_iter()
         .map(|scored| {
             let task = scored.document.task;
@@ -173,7 +197,11 @@ pub(crate) async fn search_task_items_in_workspace(
                 snippet: scored.snippet,
             }
         })
-        .collect())
+        .collect();
+    Ok(TaskSearchResultSet {
+        items,
+        total_matches,
+    })
 }
 
 async fn load_search_documents(
