@@ -1395,4 +1395,124 @@ mod tests {
             ["Retitled orchard"]
         );
     }
+
+    #[tokio::test]
+    async fn task_search_ref_lane_keeps_glyph_normalization_out_of_text_lanes() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+        insert_test_task(
+            &mut conn,
+            "7KQ9A1X4MV2P8D6R",
+            "looking glass",
+            "todo",
+            "none",
+            "001",
+        )
+        .await;
+
+        let text = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "100king".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(text.is_empty());
+    }
+
+    #[tokio::test]
+    async fn task_search_ref_lane_handles_durable_ids_and_punctuation() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+        insert_test_task(
+            &mut conn,
+            "7KQ9A1X4MV2P8D6R",
+            "Needle in title",
+            "todo",
+            "none",
+            "001",
+        )
+        .await;
+        insert_test_task(
+            &mut conn,
+            "9KQ9A1X4MV2P8D6R",
+            "Deleted needle",
+            "todo",
+            "none",
+            "002",
+        )
+        .await;
+        sqlx::query("UPDATE tasks SET deleted = 1 WHERE id = '9KQ9A1X4MV2P8D6R'")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let durable = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "7KQ9A1X4MV2P8D6R".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(durable[0].item.task.id, "7KQ9A1X4MV2P8D6R");
+        assert_eq!(durable[0].matched_field, SearchMatchedField::Ref);
+
+        let punctuated = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "/APP.7KQ9".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(punctuated[0].item.task.id, "7KQ9A1X4MV2P8D6R");
+        assert_eq!(punctuated[0].matched_field, SearchMatchedField::Ref);
+
+        let wrong_prefix = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "/WRONG-7KQ9".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(wrong_prefix.is_empty());
+
+        let short_deleted = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "9KQ".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(short_deleted.is_empty());
+
+        let query_also_in_title = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "needle".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            query_also_in_title[0].matched_field,
+            SearchMatchedField::Title
+        );
+    }
 }

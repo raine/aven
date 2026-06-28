@@ -8,7 +8,6 @@ pub(crate) struct ParsedTaskSearchQuery {
     pub(crate) tokens: Vec<String>,
     #[allow(dead_code)]
     pub(crate) active_prefix: Option<String>,
-    #[allow(dead_code)]
     pub(crate) ref_query: Option<ParsedRefSearchQuery>,
 }
 
@@ -153,31 +152,31 @@ fn build_fts_match(
 
 fn parse_ref_query(input: &str) -> Option<ParsedRefSearchQuery> {
     let trimmed = input.trim();
-    if trimmed.is_empty() {
+    if trimmed.is_empty() || trimmed.contains(char::is_whitespace) {
         return None;
     }
     let raw = trimmed.strip_prefix('/').unwrap_or(trimmed);
-    if raw.contains(char::is_whitespace) || raw.is_empty() {
+    let groups = raw
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|group| !group.is_empty())
+        .collect::<Vec<_>>();
+    if groups.is_empty() {
         return None;
     }
-    if let Some(dash) = raw.rfind('-') {
-        let prefix_part = &raw[..dash];
-        let suffix_part = &raw[dash + 1..];
-        if !prefix_part.is_empty()
-            && prefix_part.chars().all(|c| c.is_ascii_alphabetic())
-            && suffix_part.len() >= 3
-            && suffix_part.chars().all(|c| c.is_ascii_alphanumeric())
-        {
+    if groups.len() >= 2 && groups[0].chars().all(|c| c.is_ascii_alphabetic()) {
+        let suffix = groups[1..].join("");
+        if suffix.len() >= 3 {
             return Some(ParsedRefSearchQuery {
-                normalized_prefix: Some(normalize_ref_string(prefix_part)),
-                normalized_suffix: normalize_ref_string(suffix_part),
+                normalized_prefix: Some(normalize_ref_string(groups[0])),
+                normalized_suffix: normalize_ref_string(&suffix),
             });
         }
     }
-    if raw.len() >= 3 && raw.chars().all(|c| c.is_ascii_alphanumeric()) {
+    let suffix = groups.join("");
+    if suffix.len() >= 3 {
         return Some(ParsedRefSearchQuery {
             normalized_prefix: None,
-            normalized_suffix: normalize_ref_string(raw),
+            normalized_suffix: normalize_ref_string(&suffix),
         });
     }
     None
@@ -257,6 +256,22 @@ mod tests {
         assert_eq!(qualified.normalized_suffix, "70K1");
 
         assert_eq!(parse_task_search_query("release cleanup").ref_query, None);
+    }
+
+    #[test]
+    fn task_search_parser_identifies_punctuation_insensitive_ref_shapes() {
+        let qualified = parse_task_search_query("/APP.7OKI").ref_query.unwrap();
+        assert_eq!(qualified.normalized_prefix.as_deref(), Some("APP"));
+        assert_eq!(qualified.normalized_suffix, "70K1");
+
+        let suffix = parse_task_search_query("7KQ-9").ref_query.unwrap();
+        assert_eq!(suffix.normalized_prefix, None);
+        assert_eq!(suffix.normalized_suffix, "7KQ9");
+
+        let durable = parse_task_search_query("7KQ9A1X4MV2P8D6R")
+            .ref_query
+            .unwrap();
+        assert_eq!(durable.normalized_suffix, "7KQ9A1X4MV2P8D6R");
     }
 
     #[tokio::test]

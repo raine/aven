@@ -133,10 +133,14 @@ pub(crate) async fn search_task_item_set_in_workspace(
         .into_iter()
         .filter_map(|document| {
             let is_deleted = document.task.deleted;
+            let ref_strong_enough = parsed
+                .ref_query
+                .as_ref()
+                .is_some_and(|rq| ref_query_matches_display_or_full_id(&document, rq));
             let scored = score_document(document, &parsed)?;
             if is_deleted
                 && !query.include_deleted
-                && scored.matched_field != SearchMatchedField::Ref
+                && (scored.matched_field != SearchMatchedField::Ref || !ref_strong_enough)
             {
                 return None;
             }
@@ -218,78 +222,57 @@ pub(crate) async fn search_task_item_set_in_workspace(
     })
 }
 
-async fn load_search_documents(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-    include_deleted: bool,
-) -> Result<Vec<SearchDocument>> {
-    let rows = sqlx::query(
-        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
-         p.key AS project_key, p.name AS project_name, p.prefix AS project_prefix,
-         t.status, t.priority, t.created_at, t.updated_at, t.queue_activity_at, t.deleted
-         FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
-         WHERE t.workspace_id = ? AND (? OR t.deleted = 0)
-         ORDER BY t.updated_at DESC, t.id",
-    )
-    .bind(workspace_id)
-    .bind(include_deleted)
-    .fetch_all(&mut *conn)
-    .await?;
-    let mut tasks = Vec::with_capacity(rows.len());
-    let mut project_names = Vec::with_capacity(rows.len());
-    for row in rows {
-        project_names.push(row.get::<String, _>("project_name"));
-        tasks.push(task_from_row(&row)?);
-    }
-    let display_refs = display_refs_for_tasks(conn, &tasks).await?;
-    let task_ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
-    let mut enrichment = load_task_enrichment(conn, workspace_id, &task_ids).await?;
-    Ok(tasks
-        .into_iter()
-        .zip(project_names)
-        .map(|(task, project_name)| {
-            let display_ref = display_refs
-                .get(&task.id)
-                .cloned()
-                .unwrap_or_else(|| format!("{}-{}", task.project_prefix, task.id));
-            let labels = enrichment
-                .labels_by_task
-                .remove(&task.id)
-                .unwrap_or_default();
-            let notes = enrichment
-                .notes_by_task
-                .remove(&task.id)
-                .unwrap_or_default();
-            let labels_text = labels.join(" ");
-            let notes_text = notes
-                .iter()
-                .map(|note| note.body.as_str())
-                .collect::<Vec<_>>()
-                .join("\n");
-            SearchDocument {
-                labels_text,
-                notes_text,
-                task,
-                display_ref,
-                project_name,
-            }
-        })
-        .collect())
-}
-
 async fn load_candidate_search_documents(
     conn: &mut SqliteConnection,
     workspace_id: &str,
     include_deleted: bool,
     parsed: &parser::ParsedTaskSearchQuery,
 ) -> Result<Vec<SearchDocument>> {
-    if parsed.ref_query.is_some() {
-        return load_search_documents(conn, workspace_id, include_deleted).await;
-    }
-    let Some(fts_match) = parsed.fts_match.as_deref() else {
-        return Ok(Vec::new());
+    let mut documents = if let Some(fts_match) = parsed.fts_match.as_deref() {
+        load_fts_search_documents(conn, workspace_id, include_deleted, fts_match).await?
+    } else {
+        Vec::new()
     };
-    load_fts_search_documents(conn, workspace_id, include_deleted, fts_match).await
+    if let Some(ref_query) = &parsed.ref_query {
+        let ref_documents =
+            load_ref_search_documents(conn, workspace_id, include_deleted, ref_query).await?;
+        merge_search_documents(&mut documents, ref_documents);
+    }
+    Ok(documents)
+}
+
+async fn load_ref_search_documents(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    include_deleted: bool,
+    ref_query: &parser::ParsedRefSearchQuery,
+) -> Result<Vec<SearchDocument>> {
+    let rows = sqlx::query(
+        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
+         p.key AS project_key, p.name AS project_name, p.prefix AS project_prefix,
+         t.status, t.priority, t.created_at, t.updated_at, t.queue_activity_at, t.deleted,
+         '' AS fts_labels, '' AS fts_notes
+         FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
+         WHERE t.workspace_id = ? AND (? OR t.deleted = 0) AND t.id LIKE ? || '%'
+         ORDER BY t.updated_at DESC, t.id",
+    )
+    .bind(workspace_id)
+    .bind(include_deleted)
+    .bind(&ref_query.normalized_suffix)
+    .fetch_all(&mut *conn)
+    .await?;
+    search_documents_from_rows(conn, rows).await
+}
+
+fn merge_search_documents(documents: &mut Vec<SearchDocument>, incoming: Vec<SearchDocument>) {
+    for document in incoming {
+        if !documents
+            .iter()
+            .any(|existing| existing.task.id == document.task.id)
+        {
+            documents.push(document);
+        }
+    }
 }
 
 async fn load_fts_search_documents(
@@ -367,18 +350,16 @@ fn score_document(
     document: SearchDocument,
     query: &parser::ParsedTaskSearchQuery,
 ) -> Option<ScoredDocument> {
-    let ref_text = format!(
-        "{} {} {}-{}",
-        document.display_ref, document.task.id, document.task.project_prefix, document.task.id
-    );
     let project_text = format!(
         "{} {} {}",
         document.task.project_key, document.project_name, document.task.project_prefix
     );
     let labels_text = &document.labels_text;
     let notes_text = &document.notes_text;
-    let lanes = [
-        (SearchMatchedField::Ref, ref_text.as_str(), REF_WEIGHT),
+    let mut best = query.ref_query.as_ref().and_then(|ref_query| {
+        score_ref_lane(&document, ref_query).map(|score| (score, SearchMatchedField::Ref, None))
+    });
+    for (field, text, weight) in [
         (
             SearchMatchedField::Title,
             document.task.title.as_str(),
@@ -410,45 +391,40 @@ fn score_document(
             DESCRIPTION_WEIGHT,
         ),
         (SearchMatchedField::Note, notes_text.as_str(), NOTE_WEIGHT),
-    ];
-    lanes
-        .into_iter()
-        .filter_map(|(field, text, weight)| {
-            score_lane(text, query.trimmed.as_str()).map(|(score, span)| {
-                let snippet = if matches!(
-                    field,
-                    SearchMatchedField::Description | SearchMatchedField::Note
-                ) {
-                    snippet(text, span)
-                } else {
-                    None
-                };
-                (score * weight, field, snippet)
-            })
-        })
-        .max_by_key(|(score, _, _)| *score)
-        .map(|(score, matched_field, snippet)| ScoredDocument {
-            document,
-            score,
-            matched_field,
-            snippet,
-        })
+    ] {
+        if let Some((score, span)) = score_text_lane(text, query.trimmed.as_str()) {
+            let snippet = if matches!(
+                field,
+                SearchMatchedField::Description | SearchMatchedField::Note
+            ) {
+                snippet(text, span)
+            } else {
+                None
+            };
+            let candidate = (score * weight, field, snippet);
+            if best
+                .as_ref()
+                .is_none_or(|(best_score, _, _)| candidate.0 > *best_score)
+            {
+                best = Some(candidate);
+            }
+        }
+    }
+    best.map(|(score, matched_field, snippet)| ScoredDocument {
+        document,
+        score,
+        matched_field,
+        snippet,
+    })
 }
 
-fn score_lane(text: &str, query: &str) -> Option<(i64, std::ops::Range<usize>)> {
+fn score_text_lane(text: &str, query: &str) -> Option<(i64, std::ops::Range<usize>)> {
     let normalized_text = text.to_ascii_lowercase();
     let raw_query = query.trim();
     let normalized_query = raw_query.to_ascii_lowercase();
     let query = normalized_query.trim();
     if query.is_empty() || normalized_text.is_empty() {
         return None;
-    }
-    let normalized_ref_query = normalize_ref_query(query);
-    if normalized_ref_query.len() >= 3 {
-        let normalized_ref_text = normalize_ref_query(&normalized_text);
-        if let Some(index) = normalized_ref_text.find(&normalized_ref_query) {
-            return Some((2_000 - index as i64, 0..text.len().min(query.len())));
-        }
     }
     if let Some(index) = normalized_text.find(query) {
         let boundary_bonus = if index == 0 || is_boundary(normalized_text.as_bytes()[index - 1]) {
@@ -472,6 +448,64 @@ fn score_lane(text: &str, query: &str) -> Option<(i64, std::ops::Range<usize>)> 
         let spread = span.end.saturating_sub(span.start + query.len()) as i64;
         (700 + boundary_bonus - spread * 4 - span.start as i64, span)
     })
+}
+
+fn score_ref_lane(
+    document: &SearchDocument,
+    ref_query: &parser::ParsedRefSearchQuery,
+) -> Option<i64> {
+    if let Some(prefix) = ref_query.normalized_prefix.as_deref()
+        && normalize_ref_query(&document.task.project_prefix) != prefix
+    {
+        return None;
+    }
+    let normalized_id = normalize_ref_query(&document.task.id);
+    if !normalized_id.starts_with(&ref_query.normalized_suffix) {
+        return None;
+    }
+    let display_suffix_len = document
+        .display_ref
+        .rsplit_once('-')
+        .map(|(_, suffix)| normalize_ref_query(suffix).len())
+        .unwrap_or(0);
+    let exact_bonus = if normalized_id == ref_query.normalized_suffix {
+        700
+    } else {
+        0
+    };
+    let display_bonus = if ref_query.normalized_suffix.len() >= display_suffix_len {
+        300
+    } else {
+        0
+    };
+    let prefix_bonus = if ref_query.normalized_prefix.is_some() {
+        200
+    } else {
+        0
+    };
+    Some(
+        (3_000
+            + exact_bonus
+            + display_bonus
+            + prefix_bonus
+            + ref_query.normalized_suffix.len() as i64)
+            * REF_WEIGHT,
+    )
+}
+
+fn ref_query_matches_display_or_full_id(
+    document: &SearchDocument,
+    ref_query: &parser::ParsedRefSearchQuery,
+) -> bool {
+    let normalized_id = normalize_ref_query(&document.task.id);
+    if normalized_id == ref_query.normalized_suffix {
+        return true;
+    }
+    document
+        .display_ref
+        .rsplit_once('-')
+        .map(|(_, suffix)| ref_query.normalized_suffix.len() >= normalize_ref_query(suffix).len())
+        .unwrap_or(false)
 }
 
 fn token_match_span(text: &str, query: &str) -> Option<std::ops::Range<usize>> {
@@ -536,4 +570,17 @@ fn char_boundary_at_or_after(text: &str, mut index: usize) -> usize {
         index += 1;
     }
     index
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn score_text_lane_does_not_normalize_ref_glyphs() {
+        assert_eq!(score_text_lane("looking glass", "100king"), None);
+        assert_eq!(score_text_lane("looking glass", "100k1ng"), None);
+        assert!(score_text_lane("looking glass", "glass").is_some());
+        assert!(score_text_lane("looking glass", "looking").is_some());
+    }
 }
