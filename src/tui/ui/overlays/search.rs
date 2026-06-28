@@ -11,7 +11,7 @@ use super::super::truncate::truncate_chars;
 use crate::query::SearchMatchedField;
 use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::overlay::SearchResultItem;
-use crate::tui::theme::{ACCENT, BG_ALT, FG, FG_DIM, SELECTED};
+use crate::tui::theme::{ACCENT, BG, FG, FG_DIM, SELECTED};
 
 const RESULT_ROWS: usize = 8;
 const SEARCH_PLACEHOLDER: &str = "Search tasks, notes, labels, and projects...";
@@ -111,7 +111,7 @@ fn render_empty_state(frame: &mut Frame, area: Rect, input: &str) {
     if !input.trim().is_empty() {
         frame.render_widget(
             Paragraph::new(Span::styled("No matching tasks", Style::new().fg(FG_DIM)))
-                .style(Style::new().bg(BG_ALT)),
+                .style(Style::new().bg(BG)),
             area,
         );
     }
@@ -136,7 +136,7 @@ fn render_result_list(
         })
         .collect::<Vec<_>>();
     frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG_ALT)),
+        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG)),
         area,
     );
 }
@@ -267,7 +267,7 @@ fn row_style(selected: bool) -> Style {
     if selected {
         SELECTED
     } else {
-        Style::new().fg(FG).bg(BG_ALT)
+        Style::new().fg(FG).bg(BG)
     }
 }
 
