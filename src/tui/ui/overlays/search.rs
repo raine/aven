@@ -32,9 +32,7 @@ pub(in crate::tui::ui) fn render_search(
     } else if results.is_empty() {
         7
     } else {
-        (result_rows * 2 + 6)
-            .min(frame.area().height.saturating_sub(2))
-            .max(10)
+        (result_rows * 2 + 6).min(frame.area().height.saturating_sub(2))
     };
     let area = Dialog::new("Search", width, height)
         .render_block_at(frame, search_dialog_area(frame.area(), width, height));
