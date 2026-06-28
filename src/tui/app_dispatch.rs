@@ -24,6 +24,11 @@ use crate::tui::ui::{
     task_status_at_position, text_panel_scroll_cap,
 };
 
+fn open_search_results_key(key: KeyEvent) -> bool {
+    key.modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)
+}
+
 impl App {
     pub(super) async fn dispatch_paste(&mut self, text: &str) -> Result<()> {
         let Some(overlay) = self.overlay.take() else {
@@ -407,10 +412,14 @@ impl App {
         match overlay {
             OverlayState::Search(mut state) => match key.code {
                 KeyCode::Esc => {}
+                KeyCode::Enter if open_search_results_key(key) => {
+                    self.accept_search_input(state.input.text).await?;
+                }
                 KeyCode::Enter => {
                     if let Some(result) = state.selected_result() {
                         self.accept_search_input(state.input.text.clone()).await?;
                         self.select_task_by_id(&result.task_id);
+                        self.overlay = Some(OverlayState::Detail { scroll: 0 });
                     } else {
                         self.accept_search_input(state.input.text).await?;
                     }

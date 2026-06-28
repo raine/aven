@@ -223,6 +223,11 @@ fn search_hint_line() -> Line<'static> {
         Span::styled("↑/↓", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
         Span::styled(" select", Style::new().fg(FG_DIM)),
         Span::styled("  Enter", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(" open task", Style::new().fg(FG_DIM)),
+        Span::styled(
+            "  Ctrl+Enter",
+            Style::new().fg(FG).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" open results", Style::new().fg(FG_DIM)),
         Span::styled("  Esc", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
         Span::styled(" close", Style::new().fg(FG_DIM)),

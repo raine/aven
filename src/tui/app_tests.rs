@@ -121,6 +121,10 @@ fn ctrl_u() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)
 }
 
+fn ctrl_enter() -> KeyEvent {
+    KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)
+}
+
 fn header_click(column: u16) -> MouseEvent {
     click_at(column, 0)
 }
@@ -897,6 +901,37 @@ mod command_and_config_overlays {
                 .iter()
                 .any(|result| result.title == "pasted needle")
         );
+    }
+
+    #[tokio::test]
+    async fn search_overlay_enter_opens_selected_task_detail() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("detail needle")).await;
+
+        app.begin_search();
+        type_chars(&mut app, "needle").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.title, "detail needle");
+    }
+
+    #[tokio::test]
+    async fn search_overlay_ctrl_enter_opens_results_list() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("list needle")).await;
+
+        app.begin_search();
+        type_chars(&mut app, "needle").await;
+        app.handle_overlay_key(ctrl_enter()).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(app.store.tasks.len(), 1);
+        assert_eq!(app.store.tasks[0].task.title, "list needle");
     }
 
     #[tokio::test]
