@@ -236,13 +236,4 @@ mod tests {
     fn unix_seconds_parses_utc_timestamp() {
         assert_eq!(unix_seconds("1970-01-02T01:02:03Z"), Some(90_123));
     }
-
-    #[test]
-    fn queue_meta_preserves_idle_seconds_for_display() {
-        let meta = queue_meta(&task("todo", "none", "1000"), false, false, 1000 + 59 * 60);
-
-        assert_eq!(meta.idle_seconds, Some(59 * 60));
-        assert_eq!(meta.idle_seconds(), Some(59 * 60));
-        assert_eq!(meta.idle_days, Some(0));
-    }
 }

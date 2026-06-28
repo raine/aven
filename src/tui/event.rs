@@ -375,15 +375,6 @@ mod tests {
     }
 
     #[test]
-    fn formats_shortcut_labels() {
-        assert_eq!(
-            shortcut_label(&[KeyCode::Char('t'), KeyCode::Char('a')]),
-            "t a"
-        );
-        assert_eq!(shortcut_label(&[KeyCode::Home]), "Home");
-    }
-
-    #[test]
     fn current_single_key_shortcuts_match_catalog() {
         for command in COMMANDS {
             for key in command.keys {

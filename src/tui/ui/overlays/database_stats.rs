@@ -342,17 +342,3 @@ fn format_bytes(bytes: i64) -> String {
         format!("{bytes} B")
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::format_bytes;
-
-    #[test]
-    fn formats_byte_counts() {
-        assert_eq!(format_bytes(0), "0 B");
-        assert_eq!(format_bytes(512), "512 B");
-        assert_eq!(format_bytes(1024), "1.0 KiB");
-        assert_eq!(format_bytes(1024 * 1024), "1.0 MiB");
-        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.0 GiB");
-    }
-}

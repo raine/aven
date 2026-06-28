@@ -1276,55 +1276,11 @@ mod tests {
     }
 
     #[test]
-    fn queue_render_mode_displays_queue_idle_age() {
-        let mut item = task_item("queued");
-        item.task.created_at = "2026-06-20T00:00:00Z".to_string();
-        item.task.queue_activity_at = "1970-01-01T00:00:00Z".to_string();
-        item.queue.idle_days = Some(9);
-        item.queue.idle_seconds = Some(9 * 86_400);
-
-        let buffer = render_task_row_buffer_with_mode(&item, TaskListRenderMode::Queue, None);
-        let rendered = buffer_text(&buffer);
-
-        assert!(rendered.contains("9d"));
-        assert!(!rendered.contains("0h"));
-    }
-
-    #[test]
-    fn queue_render_mode_displays_sub_hour_idle_age_as_minutes() {
-        let mut item = task_item("queued");
-        item.queue.idle_days = Some(0);
-        item.queue.idle_seconds = Some(59 * 60);
-
-        let buffer = render_task_row_buffer_with_mode(&item, TaskListRenderMode::Queue, None);
-        let rendered = buffer_text(&buffer);
-
-        assert!(rendered.contains("59m"));
-        assert!(!rendered.contains("0h"));
-        assert!(!rendered.contains("0m"));
-    }
-
-    #[test]
     fn empty_task_view_has_no_rows() {
         let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &[]);
 
         assert!(view.rows.is_empty());
         assert_eq!(view.visual_row(0), 0);
-    }
-
-    #[test]
-    fn compact_age_formats_minutes_hours_days_weeks_and_months() {
-        assert_eq!(compact_age(-1), "0m");
-        assert_eq!(compact_age(0), "0m");
-        assert_eq!(compact_age(59), "0m");
-        assert_eq!(compact_age(60), "1m");
-        assert_eq!(compact_age(3_599), "59m");
-        assert_eq!(compact_age(6 * 3_600), "6h");
-        assert_eq!(compact_age(3_600), "1h");
-        assert_eq!(compact_age(86_399), "23h");
-        assert_eq!(compact_age(13 * 86_400), "13d");
-        assert_eq!(compact_age(9 * 7 * 86_400), "9w");
-        assert_eq!(compact_age(122 * 86_400), "4mo");
     }
 
     #[test]

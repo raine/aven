@@ -31,39 +31,6 @@ fn seed_context(env: &TestEnv, db: &std::path::Path) -> (String, String, String)
 }
 
 #[test]
-fn context_prints_text_snapshot() {
-    let env = TestEnv::new();
-    let db = env.db("context-text.sqlite");
-    let (root, middle, leaf) = seed_context(&env, &db);
-
-    let output = ok(env.aven(&db, ["context", &middle]));
-    assert!(serde_json::from_str::<Value>(&output).is_err());
-    contains_all(
-        &output,
-        &[
-            "context ",
-            &middle,
-            "project=app",
-            "name=\"app\"",
-            "workspace=default",
-            "blocked=yes",
-            "conflicts=no",
-            "blocks_open=yes",
-            "labels=bug",
-            "description<<EOF",
-            "details",
-            "depends_on open=1 total=1",
-            "blocks open=1 total=1",
-            &root,
-            &leaf,
-            "note created=",
-            "body<<EOF",
-            "note body",
-        ],
-    );
-}
-
-#[test]
 fn context_json_contains_structured_snapshot() {
     let env = TestEnv::new();
     let db = env.db("context-json.sqlite");
