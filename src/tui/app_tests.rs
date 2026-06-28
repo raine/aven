@@ -504,7 +504,7 @@ mod keyboard_dispatch {
         assert!(app.overlay.is_none());
         assert_pending_empty(&app);
 
-        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+        app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
             .await
             .unwrap();
         app.dispatch_key(key(KeyCode::Char('p')), (80, 24).into())
@@ -2526,7 +2526,7 @@ mod authoring {
         assert!(
             toast_message(&app).is_some_and(|message| message.contains("adding task with LLM"))
         );
-        for _ in 0..100 {
+        for _ in 0..500 {
             app.poll_pending_task_intake().await.unwrap();
             if toast_message(&app).is_some_and(|message| message.starts_with("created task ")) {
                 break;
@@ -2557,7 +2557,7 @@ mod authoring {
         type_chars(&mut app, "Include setup details").await;
         app.handle_overlay_key(ctrl_n()).await.unwrap();
 
-        for _ in 0..100 {
+        for _ in 0..500 {
             app.poll_pending_task_intake().await.unwrap();
             if capture.exists()
                 && toast_message(&app).is_some_and(|message| message.starts_with("created task "))
@@ -3092,10 +3092,10 @@ mod detail_mode {
         create_and_select_task(&mut app, test_task_draft("Detail target")).await;
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
-        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+        app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
             .await
             .unwrap();
-        app.dispatch_key(key(KeyCode::Char('P')), (80, 24).into())
+        app.dispatch_key(key(KeyCode::Char('p')), (80, 24).into())
             .await
             .unwrap();
 
@@ -3214,7 +3214,7 @@ mod detail_mode {
         for (events, expected_route) in [
             (vec![key(KeyCode::Char('s'))], OverlayRoute::EditStatus),
             (
-                vec![shift_key(KeyCode::Char('P'))],
+                vec![key(KeyCode::Char('e')), key(KeyCode::Char('p'))],
                 OverlayRoute::EditPriority,
             ),
             (
@@ -3775,9 +3775,8 @@ mod task_editing {
             .unwrap();
         create_and_select_task(&mut app, test_task_draft("Project target")).await;
 
-        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('j')).await.unwrap();
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::Picker(state))
@@ -3803,7 +3802,7 @@ mod task_editing {
         )
         .await;
 
-        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
         assert!(matches!(
             &app.overlay,

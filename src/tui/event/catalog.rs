@@ -667,50 +667,80 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "edit-title",
         "edit selected task title",
         "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('t')],
-            label: "t e t",
-        }],
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('t')],
+                label: "e t",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('t')],
+                label: "t e t",
+            },
+        ],
         Action::BeginEditTitle,
     ),
     CommandSpec::implemented(
         "edit-description",
         "edit selected task description",
         "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('d')],
-            label: "t e d",
-        }],
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('d')],
+                label: "e d",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('d')],
+                label: "t e d",
+            },
+        ],
         Action::BeginEditDescription,
     ),
     CommandSpec::implemented(
         "edit-project",
         "edit selected task project",
         "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('p')],
-            label: "t e p",
-        }],
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('j')],
+                label: "e j",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('j')],
+                label: "t e j",
+            },
+        ],
         Action::BeginEditProject,
     ),
     CommandSpec::implemented(
         "edit-priority",
         "edit selected task priority",
         "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('p')],
-            label: "t p",
-        }],
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('p')],
+                label: "e p",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('p')],
+                label: "t e p",
+            },
+        ],
         Action::BeginEditPriority,
     ),
     CommandSpec::implemented(
         "edit-labels",
         "edit selected task labels",
         "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('l')],
-            label: "t e l",
-        }],
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('l')],
+                label: "e l",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('l')],
+                label: "t e l",
+            },
+        ],
         Action::BeginEditLabels,
     ),
     CommandSpec::implemented(
@@ -1059,15 +1089,31 @@ pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
         "Tasks",
         &[
             KeySequence {
-                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('p')],
-                label: "t e p",
+                codes: &[KeyCode::Char('e'), KeyCode::Char('j')],
+                label: "e j",
             },
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('j')],
+                label: "t e j",
+            },
+        ],
+        Action::BeginEditProject,
+    ),
+    CommandSpec::implemented(
+        "detail-edit-priority",
+        "edit selected task priority",
+        "Tasks",
+        &[
             KeySequence {
                 codes: &[KeyCode::Char('e'), KeyCode::Char('p')],
                 label: "e p",
             },
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('p')],
+                label: "t e p",
+            },
         ],
-        Action::BeginEditProject,
+        Action::BeginEditPriority,
     ),
     CommandSpec::implemented(
         "detail-edit-labels",
@@ -1120,16 +1166,6 @@ pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
             label: "t d",
         }],
         Action::SetStatus("done"),
-    ),
-    CommandSpec::implemented(
-        "detail-edit-priority",
-        "edit selected task priority",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('P')],
-            label: "t P",
-        }],
-        Action::BeginEditPriority,
     ),
     CommandSpec::implemented(
         "detail-delete",

@@ -570,8 +570,10 @@ mod tests {
         assert!(rendered.contains(":edit-title"));
         assert!(rendered.contains(" e d "));
         assert!(rendered.contains(":edit-description"));
-        assert!(rendered.contains(" e p "));
+        assert!(rendered.contains(" e j "));
         assert!(rendered.contains(":edit-project"));
+        assert!(rendered.contains(" e p "));
+        assert!(rendered.contains(":edit-priority"));
     }
 
     #[test]
@@ -721,7 +723,7 @@ mod tests {
         assert!(rendered.contains("return to the task list"));
         assert!(rendered.contains("scroll one page"));
         assert!(rendered.contains("select previous or next task"));
-        assert!(rendered.contains("add a note to selected task"));
+        assert!(rendered.contains("edit selected task priority"));
         assert!(!rendered.contains("view updated"));
     }
 

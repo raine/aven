@@ -64,9 +64,9 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
         FooterMode::Detail if width >= 128 => &[
             ("j/k Pg", "scroll"),
             ("[/]", "task"),
-            ("t e", "edit"),
-            ("t s", "status"),
-            ("t P", "priority"),
+            ("e", "edit"),
+            ("s", "status"),
+            ("e p", "priority"),
             ("t N", "note"),
             ("t d", "done"),
             ("t y/Y", "copy"),
@@ -76,8 +76,8 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
         FooterMode::Detail if width >= 72 => &[
             ("j/k Pg", "scroll"),
             ("[/]", "task"),
-            ("t e", "edit"),
-            ("t s/t P", "edit"),
+            ("e", "edit"),
+            ("s/e p", "status/priority"),
             ("t N", "note"),
             ("?", "more"),
             ("Esc", "back"),
@@ -141,8 +141,8 @@ mod tests {
         assert!(rendered.contains("j/k Pg"));
         assert!(rendered.contains("[/]"));
         assert!(rendered.contains("task"));
-        assert!(rendered.contains("t s"));
-        assert!(rendered.contains("t P"));
+        assert!(rendered.contains("s"));
+        assert!(rendered.contains("e p"));
         assert!(rendered.contains("more"));
     }
 

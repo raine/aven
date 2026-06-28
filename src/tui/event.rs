@@ -514,6 +514,20 @@ mod tests {
         assert_eq!(
             resolve_shortcut_for(
                 CommandContext::Detail,
+                &[KeyCode::Char('e'), KeyCode::Char('j')]
+            ),
+            ShortcutLookup::Found(Action::BeginEditProject)
+        );
+        assert_eq!(
+            resolve_shortcut_for(
+                CommandContext::Detail,
+                &[KeyCode::Char('e'), KeyCode::Char('p')]
+            ),
+            ShortcutLookup::Found(Action::BeginEditPriority)
+        );
+        assert_eq!(
+            resolve_shortcut_for(
+                CommandContext::Detail,
                 &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('l')]
             ),
             ShortcutLookup::Found(Action::BeginEditLabels)
@@ -642,6 +656,30 @@ mod tests {
     #[test]
     fn resolves_task_editing_shortcuts() {
         assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('e')]),
+            ShortcutLookup::Prefix
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('t')]),
+            ShortcutLookup::Found(Action::BeginEditTitle)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('d')]),
+            ShortcutLookup::Found(Action::BeginEditDescription)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('j')]),
+            ShortcutLookup::Found(Action::BeginEditProject)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('p')]),
+            ShortcutLookup::Found(Action::BeginEditPriority)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('l')]),
+            ShortcutLookup::Found(Action::BeginEditLabels)
+        ));
+        assert!(matches!(
             resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('e')]),
             ShortcutLookup::Prefix
         ));
@@ -654,11 +692,11 @@ mod tests {
             ShortcutLookup::Found(Action::BeginEditDescription)
         ));
         assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('p')]),
+            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('j')]),
             ShortcutLookup::Found(Action::BeginEditProject)
         ));
         assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('p')]),
+            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('p')]),
             ShortcutLookup::Found(Action::BeginEditPriority)
         ));
         assert!(matches!(
