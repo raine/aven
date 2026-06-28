@@ -328,7 +328,31 @@ fn score_lane(text: &str, query: &str) -> Option<(i64, std::ops::Range<usize>)> 
             index..index + query.len(),
         ));
     }
-    None
+    token_match_span(&normalized_text, query).map(|span| {
+        let boundary_bonus =
+            if span.start == 0 || is_boundary(normalized_text.as_bytes()[span.start - 1]) {
+                120
+            } else {
+                0
+            };
+        let spread = span.end.saturating_sub(span.start + query.len()) as i64;
+        (700 + boundary_bonus - spread * 4 - span.start as i64, span)
+    })
+}
+
+fn token_match_span(text: &str, query: &str) -> Option<std::ops::Range<usize>> {
+    let tokens = query.split_whitespace().collect::<Vec<_>>();
+    if tokens.len() < 2 {
+        return None;
+    }
+    let mut start = usize::MAX;
+    let mut end = 0;
+    for token in tokens {
+        let index = text.find(token)?;
+        start = start.min(index);
+        end = end.max(index + token.len());
+    }
+    Some(start..end)
 }
 
 fn normalize_ref_query(input: &str) -> String {

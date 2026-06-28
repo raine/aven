@@ -629,6 +629,15 @@ mod tests {
             "002",
         )
         .await;
+        insert_test_task(
+            &mut conn,
+            "9KQ9A1X4MV2P8D6R",
+            "Add iOS API auth flow",
+            "todo",
+            "medium",
+            "003",
+        )
+        .await;
         insert_test_label(&mut conn, "8KQ9A1X4MV2P8D6R", "security").await;
         sqlx::query(
             "INSERT INTO notes(id, task_id, body, created_at, change_id)
@@ -663,6 +672,22 @@ mod tests {
         .unwrap();
         assert_eq!(listed_titles_from_search(&label), ["Plain inbox"]);
         assert_eq!(label[0].matched_field, SearchMatchedField::Label);
+
+        let title_tokens = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "ios auth".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            listed_titles_from_search(&title_tokens),
+            ["Add iOS API auth flow"]
+        );
+        assert_eq!(title_tokens[0].matched_field, SearchMatchedField::Title);
 
         let note = search_task_items(
             &mut conn,
