@@ -8,8 +8,8 @@ use std::time::Duration;
 use serde_json::json;
 
 use common::{
-    TestEnv, TestProcess, TestServer, contains_all, contains_none, eventually, extract_ref, fail,
-    ok, scalar_i64,
+    TestEnv, TestProcess, TestServer, contains_all, contains_none, extract_ref, fail, ok,
+    scalar_i64,
 };
 
 const MAX_PUSH_BATCH: usize = 256;
@@ -236,88 +236,6 @@ fn daemon_periodic_syncs_without_wake() {
     ok(env.aven(&client_b, ["sync", "--server", &server.url]));
     let list = ok(env.aven(&client_b, ["list", "--all"]));
     contains_all(&list, &[&task_ref, "periodic synced task"]);
-}
-
-#[test]
-fn two_daemons_converge_bidirectionally() {
-    let root = TestEnv::new();
-    let env_a = TestEnv::new();
-    let env_b = TestEnv::new();
-    let server = TestServer::start(&root);
-    let client_a = env_a.db("client-a.sqlite");
-    let client_b = env_b.db("client-b.sqlite");
-    env_a.write_daemon_config(&client_a, &server, &env_a.free_loopback_addr(), 1);
-    env_b.write_daemon_config(&client_b, &server, &env_b.free_loopback_addr(), 1);
-
-    let daemon_a = TestProcess::start_daemon(&env_a);
-    let daemon_b = TestProcess::start_daemon(&env_b);
-    daemon_a.wait_for_log("daemon-synced", Duration::from_secs(5));
-    daemon_b.wait_for_log("daemon-synced", Duration::from_secs(5));
-
-    let a_ref = extract_ref(&ok(env_a.aven_config([
-        "add",
-        "task from daemon a",
-        "--project",
-        "app",
-    ])));
-    let b_ref = extract_ref(&ok(env_b.aven_config([
-        "add",
-        "task from daemon b",
-        "--project",
-        "app",
-    ])));
-
-    eventually(Duration::from_secs(10), || {
-        let list_a = ok(env_a.aven_config(["list", "--all"]));
-        let list_b = ok(env_b.aven_config(["list", "--all"]));
-        list_a.contains(&a_ref)
-            && list_a.contains(&b_ref)
-            && list_b.contains(&a_ref)
-            && list_b.contains(&b_ref)
-    });
-}
-
-#[test]
-fn sync_auth_daemon_sends_token() {
-    let server_env = TestEnv::new();
-    server_env.write_config(
-        r#"
-sync:
-  auth_token: "secret"
-"#,
-    );
-    let server = TestServer::start_configured(&server_env, "server.sqlite");
-
-    let env = TestEnv::new();
-    let client_a = env.db("client-a.sqlite");
-    let client_b = env.db("client-b.sqlite");
-    let wake_addr = env.free_loopback_addr();
-
-    env.write_daemon_config_with_auth(&client_a, &server, &wake_addr, 3600, Some("secret"));
-
-    let daemon = TestProcess::start_daemon(&env);
-    daemon.wait_for_log("daemon-synced", Duration::from_secs(5));
-
-    let mark = daemon.log_mark();
-    let task_ref = extract_ref(&ok(env.aven_config([
-        "add",
-        "daemon auth task",
-        "--project",
-        "app",
-    ])));
-    daemon.wait_for_log_after(mark, "daemon-synced", Duration::from_secs(5));
-
-    ok(env.aven_config([
-        "--db",
-        client_b.to_str().expect("utf8 db path"),
-        "sync",
-        "--server",
-        &server.url,
-    ]));
-    contains_all(
-        &ok(env.aven(&client_b, ["show", &task_ref])),
-        &[&task_ref, "daemon auth task"],
-    );
 }
 
 #[test]

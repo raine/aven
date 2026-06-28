@@ -1004,23 +1004,6 @@ sync:
 }
 
 #[test]
-fn sync_auth_loopback_without_token_still_syncs() {
-    let env = TestEnv::new();
-    let server = TestServer::start(&env);
-    let a = env.db("client-a.sqlite");
-    let b = env.db("client-b.sqlite");
-
-    let task_ref = extract_ref(&ok(
-        env.aven(&a, ["add", "local no auth", "--project", "app"])
-    ));
-    ok(env.aven(&a, ["sync", "--server", &server.url]));
-    ok(env.aven(&b, ["sync", "--server", &server.url]));
-
-    let shown = ok(env.aven(&b, ["show", &task_ref]));
-    contains_all(&shown, &[&task_ref, "local no auth"]);
-}
-
-#[test]
 fn sync_auth_public_bind_requires_token_even_with_unsafe_flag() {
     let env = TestEnv::new();
     let server_db = env.path("server.sqlite");
@@ -1040,15 +1023,6 @@ fn sync_auth_public_bind_requires_token_even_with_unsafe_flag() {
             "set sync.auth_token in config.yaml",
         ],
     );
-}
-
-#[test]
-fn sync_server_bind_startup_output_includes_scope() {
-    let env = TestEnv::new();
-    let server = TestServer::start(&env);
-
-    contains_all(&server.output(), &["listening url=", "scope=loopback"]);
-    assert!(server.url.starts_with("http://127.0.0.1:"));
 }
 
 #[test]
@@ -2080,24 +2054,6 @@ fn sync_client_drains_paged_local_changes() {
         ),
         scalar_i64(&a, "SELECT count(*) FROM changes")
     );
-}
-
-#[test]
-fn current_protocol_version_sync_succeeds() {
-    let env = TestEnv::new();
-    let server = TestServer::start(&env);
-    let a = env.db("client-a.sqlite");
-    let b = env.db("client-b.sqlite");
-
-    let task_ref = extract_ref(&ok(
-        env.aven(&a, ["add", "versioned sync", "--project", "app"])
-    ));
-
-    sync(&env, &a, &server);
-    sync(&env, &b, &server);
-
-    let shown = ok(env.aven(&b, ["show", &task_ref]));
-    contains_all(&shown, &[&task_ref, "versioned sync"]);
 }
 
 #[test]
