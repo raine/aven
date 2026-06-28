@@ -70,17 +70,18 @@ pub(crate) fn age_style(created_at: &str, now_seconds: i64) -> Style {
 
 pub(crate) fn title_cell(item: &TaskListItem, max_width: usize) -> Line<'static> {
     let marker = if item.has_conflict { "⚡ " } else { "" };
-    let deleted = if item.task.deleted { "deleted " } else { "" };
     let content_width = max_width.saturating_sub(1);
-    let prefix_width = marker.chars().count() + deleted.chars().count();
-    let title_width = content_width.saturating_sub(prefix_width);
+    let title_width = content_width.saturating_sub(marker.chars().count());
+    let title_style = if item.task.deleted {
+        Style::new()
+            .fg(FG_MUTED)
+            .add_modifier(Modifier::CROSSED_OUT)
+    } else {
+        Style::new().fg(FG)
+    };
     let spans = vec![
         Span::styled(marker.to_string(), Style::new().fg(ORANGE)),
-        Span::styled(deleted.to_string(), Style::new().fg(RED)),
-        Span::styled(
-            truncate_title(&item.task.title, title_width),
-            Style::new().fg(FG),
-        ),
+        Span::styled(truncate_title(&item.task.title, title_width), title_style),
     ];
     Line::from(spans)
 }

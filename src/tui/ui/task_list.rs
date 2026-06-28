@@ -16,7 +16,8 @@ use crate::tui::app::{Focus, WidgetState};
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::{TaskListRenderMode, TuiStore};
 use crate::tui::theme::{
-    self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, SELECTED, SELECTED_INACTIVE,
+    self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, RED, SELECTED,
+    SELECTED_INACTIVE,
 };
 use crate::tui::widgets::{
     age_style, priority_icon, priority_short, status_chip, status_span, title_cell,
@@ -659,7 +660,16 @@ fn blank_task_row_cells() -> Vec<Line<'static>> {
 
 fn metadata_cell(item: &TaskListItem) -> Line<'static> {
     let mut spans = Vec::new();
+    if item.task.deleted {
+        spans.push(Span::styled(
+            "×",
+            Style::new().fg(RED).add_modifier(Modifier::BOLD),
+        ));
+    }
     if item.unresolved_blocker_count > 0 {
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+        }
         spans.push(Span::styled(
             format!("←{}", item.unresolved_blocker_count),
             Style::new().fg(FG_MUTED).remove_modifier(Modifier::BOLD),
@@ -744,17 +754,47 @@ fn project_cell(item: &TaskListItem, max_width: usize) -> Line<'static> {
 }
 
 fn task_heading_line(item: &TaskListItem) -> Line<'_> {
+    let title_style = if item.task.deleted {
+        Style::new()
+            .fg(FG_MUTED)
+            .add_modifier(Modifier::BOLD | Modifier::CROSSED_OUT)
+    } else {
+        Style::new().fg(FG).add_modifier(Modifier::BOLD)
+    };
     Line::from(vec![
         Span::styled(
             &item.display_ref,
             Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
         ),
         Span::raw("  "),
-        Span::styled(
-            &item.task.title,
-            Style::new().fg(FG).add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(&item.task.title, title_style),
     ])
+}
+
+fn task_preview_fields_line(item: &TaskListItem) -> Line<'static> {
+    let mut fields = vec![
+        Span::styled("project ", Style::new().fg(FG_DIM)),
+        Span::styled(
+            item.task.project_key.clone(),
+            Style::new()
+                .fg(theme::project_color(&item.task.project_key))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("  status ", Style::new().fg(FG_DIM)),
+        status_span(&item.task.status),
+        Span::styled("  priority ", Style::new().fg(FG_DIM)),
+        Span::styled(
+            priority_short(&item.task.priority),
+            theme::priority_style(&item.task.priority).add_modifier(Modifier::BOLD),
+        ),
+    ];
+    if item.task.deleted {
+        fields.extend([
+            Span::styled("  deleted ", Style::new().fg(FG_DIM)),
+            Span::styled("yes", Style::new().fg(RED).add_modifier(Modifier::BOLD)),
+        ]);
+    }
+    Line::from(fields)
 }
 
 fn dependency_preview_lines(item: &TaskListItem) -> Vec<Line<'static>> {
@@ -797,22 +837,7 @@ fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usi
     let labels = labels_display(&item.labels, ", ");
     let mut lines = vec![
         task_heading_line(item),
-        Line::from(vec![
-            Span::styled("project ", Style::new().fg(FG_DIM)),
-            Span::styled(
-                item.task.project_key.clone(),
-                Style::new()
-                    .fg(theme::project_color(&item.task.project_key))
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("  status ", Style::new().fg(FG_DIM)),
-            status_span(&item.task.status),
-            Span::styled("  priority ", Style::new().fg(FG_DIM)),
-            Span::styled(
-                priority_short(&item.task.priority),
-                theme::priority_style(&item.task.priority).add_modifier(Modifier::BOLD),
-            ),
-        ]),
+        task_preview_fields_line(item),
         Line::from(vec![
             Span::styled("labels ", Style::new().fg(FG_DIM)),
             Span::styled(labels, Style::new().fg(FG_MUTED)),
@@ -1339,6 +1364,32 @@ mod tests {
     }
 
     #[test]
+    fn deleted_row_marks_metadata_column_and_keeps_status() {
+        let mut item = task_item("original title");
+        item.task.deleted = true;
+
+        let buffer = render_task_row_buffer(&item, None);
+        let rendered = buffer_text(&buffer);
+        let cells = build_task_row_cells(
+            &item,
+            0,
+            TaskListRenderMode::Flat,
+            None,
+            &[12, 40, 6, 9, 10, 3, 5],
+        );
+
+        assert!(rendered.contains("original title"));
+        assert!(!rendered.contains("deleted original title"));
+        assert_eq!(cells[2].to_string(), "×");
+        assert_eq!(cells[4].to_string(), "□ todo");
+        assert!(
+            task_preview_fields_line(&item)
+                .to_string()
+                .contains("deleted yes")
+        );
+    }
+
+    #[test]
     fn inline_title_editor_clips_to_cursor_cell() {
         let editor = TextInputView {
             route: OverlayRoute::EditTitle,
@@ -1410,6 +1461,16 @@ mod tests {
         assert_eq!(cells.len(), 7);
         assert_eq!(cells[2].to_string(), "←1 →1 ✎");
         assert_eq!(cells[3].to_string(), "app ");
+
+        item.task.deleted = true;
+        let cells = build_task_row_cells(
+            &item,
+            0,
+            TaskListRenderMode::Flat,
+            None,
+            &[12, 40, 6, 9, 10, 3, 5],
+        );
+        assert_eq!(cells[2].to_string(), "× ←1 →1 ✎");
     }
 
     #[test]
