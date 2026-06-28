@@ -807,7 +807,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     ),
     CommandSpec::implemented(
         "filter-deleted",
-        "filter deleted tasks",
+        "cycle deleted task visibility",
         "Filters",
         &[KeySequence {
             codes: &[KeyCode::Char('f'), KeyCode::Char('x')],

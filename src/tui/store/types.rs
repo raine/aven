@@ -49,6 +49,7 @@ pub(crate) struct TaskFilterModifiers {
     pub(crate) label: Option<String>,
     pub(crate) priority: Option<String>,
     pub(crate) include_deleted: bool,
+    pub(crate) deleted_only: bool,
     pub(crate) search: Option<String>,
 }
 
@@ -94,6 +95,7 @@ impl TaskViewState {
             label: self.filter_modifiers.label.clone(),
             priority: self.filter_modifiers.priority.clone(),
             include_deleted: self.filter_modifiers.include_deleted,
+            deleted_only: self.filter_modifiers.deleted_only,
             search: self.filter_modifiers.search.clone(),
             ..TaskFilters::default()
         };

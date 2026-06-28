@@ -39,6 +39,7 @@ pub(crate) struct TaskFilters {
     pub(crate) priority: Option<String>,
     pub(crate) label: Option<String>,
     pub(crate) include_deleted: bool,
+    pub(crate) deleted_only: bool,
     pub(crate) hide_done: bool,
     pub(crate) conflicts_only: bool,
     pub(crate) ready_only: bool,

@@ -388,7 +388,9 @@ fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
     if let Some(priority) = &modifiers.priority {
         parts.push(vec![filter_part(format!("priority={priority}"))]);
     }
-    if modifiers.include_deleted {
+    if modifiers.deleted_only {
+        parts.push(vec![filter_part("deleted_only")]);
+    } else if modifiers.include_deleted {
         parts.push(vec![filter_part("include_deleted")]);
     }
     if let Some(search) = &modifiers.search {
@@ -497,6 +499,7 @@ mod tests {
                 label: Some("backend".to_string()),
                 priority: Some("urgent".to_string()),
                 include_deleted: true,
+                deleted_only: false,
                 search: Some("needle".to_string()),
             },
             order: TaskOrder::Priority,
@@ -513,6 +516,13 @@ mod tests {
             spans_text(active_filter_spans(&store)),
             " │ filter label=backend priority=urgent include_deleted search=\"needle\""
         );
+
+        store.view_state.filter_modifiers.deleted_only = true;
+        assert_eq!(
+            spans_text(active_filter_spans(&store)),
+            " │ filter label=backend priority=urgent deleted_only search=\"needle\""
+        );
+        store.view_state.filter_modifiers.deleted_only = false;
         assert_eq!(
             spans_text(active_order_spans(&store)),
             " │ order priority desc"

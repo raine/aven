@@ -365,6 +365,8 @@ pub(crate) struct ListArgs {
     #[arg(long)]
     pub(crate) all: bool,
     #[arg(long)]
+    pub(crate) deleted: bool,
+    #[arg(long)]
     pub(crate) ready: bool,
     #[arg(long)]
     pub(crate) blocked: bool,

@@ -543,7 +543,7 @@ pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Res
             "error list-dependency-filter-conflict hint=\"pass at most one of --ready or --blocked\""
         );
     }
-    if (args.ready || args.blocked) && args.all {
+    if (args.ready || args.blocked) && (args.all || args.deleted) {
         bail!(
             "error list-dependency-filter-all-conflict hint=\"dependency filters only include open tasks\""
         );
@@ -758,6 +758,7 @@ fn bulk_update_filters(args: &BulkUpdateArgs) -> TaskFilters {
         priority: args.priority.clone(),
         label: args.filter_label.clone(),
         include_deleted: args.include_deleted,
+        deleted_only: false,
         hide_done: false,
         conflicts_only: false,
         ready_only: false,
@@ -1111,7 +1112,8 @@ fn list_task_filters(args: ListArgs) -> TaskFilters {
         statuses: Vec::new(),
         priority: args.priority,
         label: args.label,
-        include_deleted: args.all,
+        include_deleted: args.all || args.deleted,
+        deleted_only: args.deleted,
         hide_done: false,
         conflicts_only: false,
         ready_only: args.ready,
@@ -1128,6 +1130,7 @@ fn prime_task_filters(project: String) -> TaskFilters {
         priority: None,
         label: None,
         include_deleted: false,
+        deleted_only: false,
         hide_done: true,
         conflicts_only: false,
         ready_only: false,

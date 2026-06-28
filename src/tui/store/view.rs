@@ -76,8 +76,15 @@ impl TuiStore {
     }
 
     pub(crate) async fn toggle_deleted_filter(&mut self) -> Result<Option<usize>> {
-        self.view_state.filter_modifiers.include_deleted =
-            !self.view_state.filter_modifiers.include_deleted;
+        let modifiers = &mut self.view_state.filter_modifiers;
+        if modifiers.deleted_only {
+            modifiers.deleted_only = false;
+            modifiers.include_deleted = false;
+        } else if modifiers.include_deleted {
+            modifiers.deleted_only = true;
+        } else {
+            modifiers.include_deleted = true;
+        }
         self.refresh(None).await
     }
 

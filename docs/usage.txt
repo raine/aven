@@ -60,6 +60,7 @@ Common CLI examples:
   printf '## Context\nMarkdown works here\n' \
     | aven add "write docs" --project app --description-stdin
   aven list --project app
+  aven list --deleted
   aven show APP-7KQ9 --full
   aven update 7KQ --status active --priority high
   printf 'handoff note\n' | aven note 7KQ --stdin
@@ -88,7 +89,7 @@ then press the next key:
 
   g  go to task list scope or switch workspace
   v  views such as queue, open, inbox, backlog, todo, active, done, conflicts
-  f  filters such as label, priority, deleted tasks, or clear filters
+  f  filters such as label, priority, deleted visibility, or clear filters
   o  order by supported sort fields or reverse direction
   t  task fields and task lifecycle actions
   p  project administration

@@ -31,6 +31,7 @@ inspect tasks, update status, and leave durable handoff context.
 aven list --project app
 aven list --status todo
 aven list --all
+aven list --deleted
 aven list --ready
 aven list --blocked
 aven context APP-7KQ9
@@ -74,7 +75,8 @@ aven doctor --integrity
 - Use `project rename <old> <new> [--prefix <prefix>]` when a project itself
   has a wrong name or prefix. Use task updates only when moving tasks between
   distinct projects.
-- Use `list --all` with normal filters to find deleted tasks.
+- Use `list --deleted` with normal filters to list deleted tasks only.
+- Use `list --all` with normal filters to include deleted tasks with live tasks.
 - Use `bulk-update --dry-run` before broad mutations.
 - Use `list --ready` when selecting new work to avoid blocked or completed tasks.
 - Inspect dependency context with `show <ref> --full` before changing task order or

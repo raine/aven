@@ -295,7 +295,10 @@ impl App {
     pub(super) async fn toggle_deleted_filter(&mut self) -> Result<()> {
         let selected = self.store.toggle_deleted_filter().await?;
         self.apply_filter_selection(selected);
-        let message = if self.store.view_state.filter_modifiers.include_deleted {
+        let modifiers = &self.store.view_state.filter_modifiers;
+        let message = if modifiers.deleted_only {
+            "showing deleted tasks only"
+        } else if modifiers.include_deleted {
             "showing deleted tasks"
         } else {
             "hiding deleted tasks"

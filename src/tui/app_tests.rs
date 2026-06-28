@@ -1120,9 +1120,19 @@ mod filters_and_workspaces {
         app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
         assert!(app.store.view_state.filter_modifiers.include_deleted);
+        assert!(!app.store.view_state.filter_modifiers.deleted_only);
         assert_eq!(
             toast_message(&app).as_deref(),
             Some("showing deleted tasks")
+        );
+
+        app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
+        assert!(app.store.view_state.filter_modifiers.include_deleted);
+        assert!(app.store.view_state.filter_modifiers.deleted_only);
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("showing deleted tasks only")
         );
     }
 

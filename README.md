@@ -85,6 +85,7 @@ Core commands:
 ```sh
 aven list --project app
 aven list --status todo
+aven list --deleted
 aven show APP-7KQ9 --full
 aven add "fix conflict display" --project app --priority high --label bug
 aven add --natural "fix conflict display and assign it to app"

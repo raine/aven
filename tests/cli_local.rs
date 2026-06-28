@@ -331,7 +331,11 @@ fn delete_restore_and_filters_work() {
     contains_none(&normal, &[&app_bug, "app bug"]);
 
     let all = ok(env.aven(&db, ["list", "--all"]));
-    contains_all(&all, &[&app_bug, "deleted=yes", "app bug"]);
+    contains_all(&all, &[&app_bug, "deleted=yes", "app bug", "app docs"]);
+
+    let deleted = ok(env.aven(&db, ["list", "--deleted"]));
+    contains_all(&deleted, &[&app_bug, "deleted=yes", "app bug"]);
+    contains_none(&deleted, &["app docs", "ops sync"]);
 
     let all_project = ok(env.aven(&db, ["list", "--project", "app", "--all"]));
     contains_all(&all_project, &[&app_bug, "deleted=yes", "app bug"]);

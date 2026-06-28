@@ -1005,15 +1005,22 @@ mod views_filters_and_sort {
 
         store.toggle_deleted_filter().await.unwrap();
         assert!(store.view_state.filter_modifiers.include_deleted);
+        assert!(!store.view_state.filter_modifiers.deleted_only);
+
+        store.toggle_deleted_filter().await.unwrap();
+        assert!(store.view_state.filter_modifiers.include_deleted);
+        assert!(store.view_state.filter_modifiers.deleted_only);
 
         store.toggle_deleted_filter().await.unwrap();
         assert!(!store.view_state.filter_modifiers.include_deleted);
+        assert!(!store.view_state.filter_modifiers.deleted_only);
     }
 
     #[tokio::test]
-    async fn toggle_deleted_filter_preserves_project_scope() {
+    async fn deleted_filter_cycle_preserves_project_scope() {
         let mut store = test_store().await;
         create_mobile_project(&mut store).await;
+        create_task_in_project(&mut store, "Live project task", "mobile-app").await;
         let selected =
             create_task_in_project(&mut store, "Deleted project task", "mobile-app").await;
         store.update_deleted(Some(selected), true).await.unwrap();
@@ -1021,7 +1028,8 @@ mod views_filters_and_sort {
             .show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
             .await
             .unwrap();
-        assert!(store.tasks.is_empty());
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.title, "Live project task");
 
         store.toggle_deleted_filter().await.unwrap();
 
@@ -1030,6 +1038,13 @@ mod views_filters_and_sort {
             TaskScope::Project("mobile-app".to_string())
         );
         assert!(store.view_state.filter_modifiers.include_deleted);
+        assert!(!store.view_state.filter_modifiers.deleted_only);
+        assert_eq!(store.tasks.len(), 2);
+
+        store.toggle_deleted_filter().await.unwrap();
+
+        assert!(store.view_state.filter_modifiers.include_deleted);
+        assert!(store.view_state.filter_modifiers.deleted_only);
         assert_eq!(store.tasks.len(), 1);
         assert!(store.tasks[0].task.deleted);
     }

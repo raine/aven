@@ -65,7 +65,10 @@ pub(crate) async fn list_task_items_in_workspace(
     push_filter_prefix(&mut query, &mut filters_added);
     query.push("t.workspace_id = ");
     query.push_bind(workspace_id.to_string());
-    if !filters.include_deleted {
+    if filters.deleted_only {
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push("t.deleted = 1");
+    } else if !filters.include_deleted {
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("t.deleted = 0");
     }
