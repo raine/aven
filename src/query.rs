@@ -1147,4 +1147,252 @@ mod tests {
             .expect("search input must parse and search safely");
         }
     }
+
+    #[tokio::test]
+    async fn task_search_finds_rows_backfilled_into_fts_index() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+        insert_test_task(
+            &mut conn,
+            "7KQ9A1X4MV2P8D6R",
+            "Backfilled migration text",
+            "todo",
+            "none",
+            "001",
+        )
+        .await;
+
+        let items = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "backfilled".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            listed_titles_from_search(&items),
+            ["Backfilled migration text"]
+        );
+    }
+
+    #[tokio::test]
+    async fn task_search_uses_fts_candidates_for_common_text() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+        insert_test_task(
+            &mut conn,
+            "7KQ9A1X4MV2P8D6R",
+            "Needle visible in fts",
+            "todo",
+            "none",
+            "001",
+        )
+        .await;
+
+        // Use a multi-word query so it is NOT treated as a ref query by the parser.
+        // Multi-word queries route through the FTS path.
+        let before = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "visible in".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            listed_titles_from_search(&before),
+            ["Needle visible in fts"]
+        );
+
+        // Delete the FTS entry directly. This removes the FTS index entry
+        // while keeping the content table and tasks row intact.
+        sqlx::query(
+            "DELETE FROM task_search_fts WHERE rowid = (SELECT doc_id FROM task_search_documents WHERE task_id = '7KQ9A1X4MV2P8D6R')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        // After FTS entry is deleted, search should return nothing because
+        // the FTS path is used for multi-word text queries.
+        let after = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "visible in".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(after.is_empty());
+    }
+
+    #[tokio::test]
+    async fn task_search_fts_updates_when_search_text_changes() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+        insert_test_task(
+            &mut conn,
+            "7KQ9A1X4MV2P8D6R",
+            "Original title",
+            "todo",
+            "none",
+            "001",
+        )
+        .await;
+
+        sqlx::query(
+            "UPDATE tasks SET title = 'Retitled orchard', description = 'body lagoon' WHERE id = '7KQ9A1X4MV2P8D6R'",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            listed_titles_from_search(
+                &search_task_items(
+                    &mut conn,
+                    TaskSearchQuery {
+                        text: "orchard".to_string(),
+                        include_deleted: false,
+                        limit: 10,
+                    },
+                )
+                .await
+                .unwrap()
+            ),
+            ["Retitled orchard"]
+        );
+        assert_eq!(
+            listed_titles_from_search(
+                &search_task_items(
+                    &mut conn,
+                    TaskSearchQuery {
+                        text: "lagoon".to_string(),
+                        include_deleted: false,
+                        limit: 10,
+                    },
+                )
+                .await
+                .unwrap()
+            ),
+            ["Retitled orchard"]
+        );
+
+        insert_test_label(&mut conn, "7KQ9A1X4MV2P8D6R", "garden").await;
+        assert_eq!(
+            listed_titles_from_search(
+                &search_task_items(
+                    &mut conn,
+                    TaskSearchQuery {
+                        text: "garden".to_string(),
+                        include_deleted: false,
+                        limit: 10,
+                    },
+                )
+                .await
+                .unwrap()
+            ),
+            ["Retitled orchard"]
+        );
+        sqlx::query(
+            "DELETE FROM task_labels WHERE task_id = '7KQ9A1X4MV2P8D6R' AND label = 'garden'",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        assert!(
+            search_task_items(
+                &mut conn,
+                TaskSearchQuery {
+                    text: "garden".to_string(),
+                    include_deleted: false,
+                    limit: 10,
+                },
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+
+        sqlx::query(
+            "INSERT INTO notes(id, task_id, body, created_at, change_id) VALUES ('note-fts', '7KQ9A1X4MV2P8D6R', 'harbor memo', '002', 'change-fts')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            listed_titles_from_search(
+                &search_task_items(
+                    &mut conn,
+                    TaskSearchQuery {
+                        text: "harbor".to_string(),
+                        include_deleted: false,
+                        limit: 10,
+                    },
+                )
+                .await
+                .unwrap()
+            ),
+            ["Retitled orchard"]
+        );
+        sqlx::query("UPDATE notes SET body = 'summit memo' WHERE id = 'note-fts'")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        assert!(
+            search_task_items(
+                &mut conn,
+                TaskSearchQuery {
+                    text: "harbor".to_string(),
+                    include_deleted: false,
+                    limit: 10,
+                },
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+        assert_eq!(
+            listed_titles_from_search(
+                &search_task_items(
+                    &mut conn,
+                    TaskSearchQuery {
+                        text: "summit".to_string(),
+                        include_deleted: false,
+                        limit: 10,
+                    },
+                )
+                .await
+                .unwrap()
+            ),
+            ["Retitled orchard"]
+        );
+
+        sqlx::query("UPDATE projects SET name = 'Beacon Project' WHERE key = 'app'")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(
+            listed_titles_from_search(
+                &search_task_items(
+                    &mut conn,
+                    TaskSearchQuery {
+                        text: "beacon".to_string(),
+                        include_deleted: false,
+                        limit: 10,
+                    },
+                )
+                .await
+                .unwrap()
+            ),
+            ["Retitled orchard"]
+        );
+    }
 }

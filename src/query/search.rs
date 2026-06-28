@@ -75,8 +75,8 @@ struct SearchDocument {
     task: Task,
     display_ref: String,
     project_name: String,
-    labels: Vec<String>,
-    notes: Vec<super::TaskNote>,
+    labels_text: String,
+    notes_text: String,
 }
 
 struct ScoredDocument {
@@ -126,7 +126,8 @@ pub(crate) async fn search_task_item_set_in_workspace(
         });
     }
     let load_deleted = query.include_deleted || parsed.ref_query.is_some();
-    let documents = load_search_documents(conn, workspace_id, load_deleted).await?;
+    let documents =
+        load_candidate_search_documents(conn, workspace_id, load_deleted, &parsed).await?;
 
     let mut scored = documents
         .into_iter()
@@ -251,21 +252,115 @@ async fn load_search_documents(
                 .get(&task.id)
                 .cloned()
                 .unwrap_or_else(|| format!("{}-{}", task.project_prefix, task.id));
+            let labels = enrichment
+                .labels_by_task
+                .remove(&task.id)
+                .unwrap_or_default();
+            let notes = enrichment
+                .notes_by_task
+                .remove(&task.id)
+                .unwrap_or_default();
+            let labels_text = labels.join(" ");
+            let notes_text = notes
+                .iter()
+                .map(|note| note.body.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
             SearchDocument {
-                labels: enrichment
-                    .labels_by_task
-                    .remove(&task.id)
-                    .unwrap_or_default(),
-                notes: enrichment
-                    .notes_by_task
-                    .remove(&task.id)
-                    .unwrap_or_default(),
+                labels_text,
+                notes_text,
                 task,
                 display_ref,
                 project_name,
             }
         })
         .collect())
+}
+
+async fn load_candidate_search_documents(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    include_deleted: bool,
+    parsed: &parser::ParsedTaskSearchQuery,
+) -> Result<Vec<SearchDocument>> {
+    if parsed.ref_query.is_some() {
+        return load_search_documents(conn, workspace_id, include_deleted).await;
+    }
+    let Some(fts_match) = parsed.fts_match.as_deref() else {
+        return Ok(Vec::new());
+    };
+    load_fts_search_documents(conn, workspace_id, include_deleted, fts_match).await
+}
+
+async fn load_fts_search_documents(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    include_deleted: bool,
+    raw_fts_match: &str,
+) -> Result<Vec<SearchDocument>> {
+    let fts_match = workspace_scoped_fts_match(workspace_id, raw_fts_match);
+    let rows = sqlx::query(
+        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
+         p.key AS project_key, p.name AS project_name, p.prefix AS project_prefix,
+         t.status, t.priority, t.created_at, t.updated_at, t.queue_activity_at, t.deleted,
+         d.labels AS fts_labels, d.notes AS fts_notes
+         FROM task_search_fts f
+         JOIN task_search_documents d ON d.doc_id = f.rowid
+         JOIN tasks t ON t.workspace_id = d.workspace_id AND t.id = d.task_id
+         JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
+         WHERE task_search_fts MATCH ? AND d.workspace_id = ? AND (? OR t.deleted = 0)
+         ORDER BY t.updated_at DESC, t.id",
+    )
+    .bind(&fts_match)
+    .bind(workspace_id)
+    .bind(include_deleted)
+    .fetch_all(&mut *conn)
+    .await?;
+    search_documents_from_rows(conn, rows).await
+}
+
+async fn search_documents_from_rows(
+    conn: &mut SqliteConnection,
+    rows: Vec<sqlx::sqlite::SqliteRow>,
+) -> Result<Vec<SearchDocument>> {
+    let mut tasks = Vec::with_capacity(rows.len());
+    let mut project_names = Vec::with_capacity(rows.len());
+    let mut labels_texts = Vec::with_capacity(rows.len());
+    let mut notes_texts = Vec::with_capacity(rows.len());
+    for row in rows {
+        project_names.push(row.get::<String, _>("project_name"));
+        labels_texts.push(row.get::<String, _>("fts_labels"));
+        notes_texts.push(row.get::<String, _>("fts_notes"));
+        tasks.push(task_from_row(&row)?);
+    }
+    let display_refs = display_refs_for_tasks(conn, &tasks).await?;
+    Ok(tasks
+        .into_iter()
+        .zip(project_names)
+        .zip(labels_texts)
+        .zip(notes_texts)
+        .map(|(((task, project_name), labels_text), notes_text)| {
+            let display_ref = display_refs
+                .get(&task.id)
+                .cloned()
+                .unwrap_or_else(|| format!("{}-{}", task.project_prefix, task.id));
+            SearchDocument {
+                labels_text,
+                notes_text,
+                task,
+                display_ref,
+                project_name,
+            }
+        })
+        .collect())
+}
+
+fn fts_phrase(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
+fn workspace_scoped_fts_match(workspace_id: &str, fts_match: &str) -> String {
+    format!("workspace_token:{} {}", fts_phrase(workspace_id), fts_match)
 }
 
 fn score_document(
@@ -280,13 +375,8 @@ fn score_document(
         "{} {} {}",
         document.task.project_key, document.project_name, document.task.project_prefix
     );
-    let labels_text = document.labels.join(" ");
-    let notes_text = document
-        .notes
-        .iter()
-        .map(|note| note.body.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let labels_text = &document.labels_text;
+    let notes_text = &document.notes_text;
     let lanes = [
         (SearchMatchedField::Ref, ref_text.as_str(), REF_WEIGHT),
         (
