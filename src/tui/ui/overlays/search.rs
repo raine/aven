@@ -11,7 +11,7 @@ use super::super::truncate::truncate_chars;
 use crate::query::SearchMatchedField;
 use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::overlay::SearchResultItem;
-use crate::tui::theme::{self, ACCENT, BG, FG, FG_DIM, SELECTED};
+use crate::tui::theme::{self, ACCENT, BG, FG, FG_DIM, FG_MUTED, SELECTED};
 use crate::tui::widgets::{priority_icon, status_span};
 
 const RESULT_ROWS: usize = 8;
@@ -152,23 +152,36 @@ fn result_line(
     let title_width = width.saturating_sub(ref_width + 4).max(8);
     let title = truncate_chars(&result.title, title_width);
     let used_width = 2 + ref_width + 1 + title.chars().count();
-    let mut spans = vec![
-        Span::styled(format!("{marker} "), style),
-        Span::styled(
-            format!(
-                "{:<ref_width$}",
-                truncate_chars(&result.display_ref, ref_width)
-            ),
-            style.fg(ACCENT).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" ", style),
-    ];
+    let mut spans = vec![Span::styled(format!("{marker} "), style)];
+    spans.extend(result_ref_spans(result, ref_width, style));
+    spans.push(Span::styled(" ", style));
     spans.extend(title_spans(&title, input, result.matched_field, style));
     spans.push(Span::styled(
         " ".repeat(width.saturating_sub(used_width)),
         style,
     ));
     Line::from(spans)
+}
+
+fn result_ref_spans(result: &SearchResultItem, width: usize, style: Style) -> Vec<Span<'static>> {
+    let display_ref = truncate_chars(&result.display_ref, width);
+    let bg = style.bg.unwrap_or(BG);
+    if let Some((project, suffix)) = display_ref.split_once('-') {
+        let used_width = project.chars().count() + 1 + suffix.chars().count();
+        return vec![
+            Span::styled(
+                project.to_string(),
+                Style::new()
+                    .fg(theme::project_color(&result.project_key))
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("-", Style::new().fg(FG_DIM).bg(bg)),
+            Span::styled(suffix.to_string(), style.fg(FG_MUTED)),
+            Span::styled(" ".repeat(width.saturating_sub(used_width)), style),
+        ];
+    }
+    vec![Span::styled(format!("{display_ref:<width$}"), style)]
 }
 
 fn title_spans(

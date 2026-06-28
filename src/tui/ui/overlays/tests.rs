@@ -211,6 +211,23 @@ mod text_panel_and_search {
     }
 
     #[test]
+    fn search_overlay_colors_project_prefix() {
+        let buffer = overlay_buffer(OverlayView::Search {
+            input: "query".to_string(),
+            cursor: 5,
+            results: vec![search_result_item("Query result")],
+            selected: 0,
+        });
+        let prefix_cell = buffer
+            .content
+            .iter()
+            .find(|cell| cell.symbol() == "A" && cell.fg == theme::project_color("aven"))
+            .unwrap();
+
+        assert_eq!(prefix_cell.fg, theme::project_color("aven"));
+    }
+
+    #[test]
     fn search_overlay_vertical_position_ignores_result_count() {
         let empty = overlay_buffer(OverlayView::Search {
             input: "query".to_string(),
