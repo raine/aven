@@ -3110,7 +3110,7 @@ mod detail_mode {
     async fn edit_title_from_detail_renders_inline_cursor() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
-        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.overlay = Some(OverlayState::Detail { scroll: 5 });
 
         app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
             .await
@@ -3127,6 +3127,7 @@ mod detail_mode {
             Some(OverlayState::TextInput(state)) if state.route == OverlayRoute::EditTitle
         ));
         assert!(app.view().detail_underlay);
+        assert_eq!(app.view().detail_underlay_scroll, 0);
 
         let rendered = render_app_text(&mut app, 100, 30);
 

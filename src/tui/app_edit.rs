@@ -143,6 +143,7 @@ impl App {
     }
 
     fn open_edit_title_overlay(&mut self, input: String) {
+        self.detail_context_scroll = 0;
         self.overlay = Some(OverlayState::text_input(
             OverlayRoute::EditTitle,
             EDIT_TITLE_TITLE,
