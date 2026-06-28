@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serde::Serialize;
-use sqlx::{Row, SqliteConnection};
+use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
+use std::collections::HashMap;
 
 use crate::db::task_from_row;
 use crate::refs::display_refs_for_tasks;
@@ -11,6 +12,8 @@ use crate::workspaces::active_workspace_id;
 use super::TaskListItem;
 
 mod parser;
+
+const SQLITE_BIND_CHUNK_SIZE: usize = 900;
 
 const DEFAULT_LIMIT: usize = 50;
 const REF_WEIGHT: i64 = 1_000;
@@ -73,7 +76,33 @@ pub(crate) struct TaskSearchResult {
 #[derive(Debug, Clone)]
 pub(crate) struct TaskSearchResultSet {
     pub(crate) items: Vec<TaskSearchResult>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TaskSearchPreviewResult {
+    pub(crate) task_id: String,
+    pub(crate) display_ref: String,
+    pub(crate) title: String,
+    pub(crate) project_key: String,
+    pub(crate) status: String,
+    pub(crate) priority: String,
+    pub(crate) created_at: String,
+    pub(crate) labels: Vec<String>,
+    pub(crate) deleted: bool,
+    pub(crate) score: i64,
+    pub(crate) matched_field: SearchMatchedField,
+    pub(crate) snippet: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TaskSearchPreviewResultSet {
+    pub(crate) items: Vec<TaskSearchPreviewResult>,
     pub(crate) total_matches: usize,
+}
+
+struct ScoredSearchResults {
+    items: Vec<ScoredDocument>,
+    total_matches: usize,
 }
 
 struct SearchDocument {
@@ -124,58 +153,16 @@ pub(crate) async fn search_task_item_set_in_workspace(
     workspace_id: &str,
     query: TaskSearchQuery,
 ) -> Result<TaskSearchResultSet> {
-    let limit = if query.limit == 0 {
-        DEFAULT_LIMIT
-    } else {
-        query.limit
-    };
-    let parsed = parser::parse_task_search_query(&query.text);
-    if parsed.trimmed.is_empty() {
-        return Ok(TaskSearchResultSet {
-            items: Vec::new(),
-            total_matches: 0,
-        });
-    }
-    let load_deleted = query.include_deleted || parsed.ref_query.is_some();
-    let documents =
-        load_candidate_search_documents(conn, workspace_id, load_deleted, &parsed).await?;
-
-    let now_seconds = crate::queue::now_seconds();
-    let mut scored = documents
-        .into_iter()
-        .filter_map(|document| {
-            let is_deleted = document.task.deleted;
-            let ref_strong_enough = parsed
-                .ref_query
-                .as_ref()
-                .is_some_and(|rq| ref_query_matches_display_or_full_id(&document, rq));
-            let scored = score_document(document, &parsed, now_seconds)?;
-            if is_deleted
-                && !query.include_deleted
-                && (scored.matched_field != SearchMatchedField::Ref || !ref_strong_enough)
-            {
-                return None;
-            }
-            Some(scored)
-        })
-        .collect::<Vec<_>>();
-    let total_matches = scored.len();
-    scored.sort_by(|a, b| {
-        b.score
-            .cmp(&a.score)
-            .then_with(|| b.document.task.updated_at.cmp(&a.document.task.updated_at))
-            .then_with(|| a.document.task.title.cmp(&b.document.task.title))
-            .then_with(|| a.document.task.id.cmp(&b.document.task.id))
-    });
-    scored.truncate(limit);
-
-    let tasks = scored
+    let scored = scored_search_documents(conn, workspace_id, &query).await?;
+    let task_ids = scored
+        .items
         .iter()
-        .map(|scored| scored.document.task.clone())
+        .map(|scored| scored.document.task.id.clone())
         .collect::<Vec<_>>();
-    let task_ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
     let mut enrichment = load_task_enrichment(conn, workspace_id, &task_ids).await?;
+    let now_seconds = crate::queue::now_seconds();
     let items = scored
+        .items
         .into_iter()
         .map(|scored| {
             let task = scored.document.task;
@@ -227,10 +214,139 @@ pub(crate) async fn search_task_item_set_in_workspace(
             }
         })
         .collect();
-    Ok(TaskSearchResultSet {
-        items,
+    Ok(TaskSearchResultSet { items })
+}
+
+async fn scored_search_documents(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    query: &TaskSearchQuery,
+) -> Result<ScoredSearchResults> {
+    let limit = if query.limit == 0 {
+        DEFAULT_LIMIT
+    } else {
+        query.limit
+    };
+    let parsed = parser::parse_task_search_query(&query.text);
+    if parsed.trimmed.is_empty() {
+        return Ok(ScoredSearchResults {
+            items: Vec::new(),
+            total_matches: 0,
+        });
+    }
+    let load_deleted = query.include_deleted || parsed.ref_query.is_some();
+    let documents =
+        load_candidate_search_documents(conn, workspace_id, load_deleted, &parsed).await?;
+
+    let now_seconds = crate::queue::now_seconds();
+    let mut scored = documents
+        .into_iter()
+        .filter_map(|document| {
+            let is_deleted = document.task.deleted;
+            let ref_strong_enough = parsed
+                .ref_query
+                .as_ref()
+                .is_some_and(|rq| ref_query_matches_display_or_full_id(&document, rq));
+            let scored = score_document(document, &parsed, now_seconds)?;
+            if is_deleted
+                && !query.include_deleted
+                && (scored.matched_field != SearchMatchedField::Ref || !ref_strong_enough)
+            {
+                return None;
+            }
+            Some(scored)
+        })
+        .collect::<Vec<_>>();
+    let total_matches = scored.len();
+    scored.sort_by(|a, b| {
+        b.score
+            .cmp(&a.score)
+            .then_with(|| b.document.task.updated_at.cmp(&a.document.task.updated_at))
+            .then_with(|| a.document.task.title.cmp(&b.document.task.title))
+            .then_with(|| a.document.task.id.cmp(&b.document.task.id))
+    });
+    scored.truncate(limit);
+    Ok(ScoredSearchResults {
+        items: scored,
         total_matches,
     })
+}
+
+pub(crate) async fn search_task_preview_set_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    query: TaskSearchQuery,
+) -> Result<TaskSearchPreviewResultSet> {
+    let scored = scored_search_documents(conn, workspace_id, &query).await?;
+    let task_ids = scored
+        .items
+        .iter()
+        .map(|scored| scored.document.task.id.clone())
+        .collect::<Vec<_>>();
+    let mut labels_by_task = labels_for_search_preview(conn, workspace_id, &task_ids).await?;
+    let items = scored
+        .items
+        .into_iter()
+        .map(|scored| {
+            let task = scored.document.task;
+            TaskSearchPreviewResult {
+                task_id: task.id.clone(),
+                display_ref: scored.document.display_ref,
+                title: task.title,
+                project_key: task.project_key,
+                status: task.status,
+                priority: task.priority,
+                created_at: task.created_at,
+                labels: labels_by_task.remove(&task.id).unwrap_or_default(),
+                deleted: task.deleted,
+                score: scored.score,
+                matched_field: scored.matched_field,
+                snippet: scored.snippet,
+            }
+        })
+        .collect();
+    Ok(TaskSearchPreviewResultSet {
+        items,
+        total_matches: scored.total_matches,
+    })
+}
+
+async fn labels_for_search_preview(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_ids: &[String],
+) -> Result<HashMap<String, Vec<String>>> {
+    let mut labels_by_task = HashMap::new();
+    if task_ids.is_empty() {
+        return Ok(labels_by_task);
+    }
+    for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT task_id, label FROM task_labels WHERE workspace_id = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(" AND task_id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for task_id in chunk {
+                separated.push_bind(task_id);
+            }
+        }
+        query.push(") ORDER BY task_id, label");
+
+        for row in query.build().fetch_all(&mut *conn).await? {
+            let task_id: String = row.get("task_id");
+            let label: String = row.get("label");
+            labels_by_task
+                .entry(task_id)
+                .or_insert_with(Vec::new)
+                .push(label);
+        }
+    }
+    Ok(labels_by_task)
 }
 
 async fn load_candidate_search_documents(

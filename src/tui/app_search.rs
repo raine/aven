@@ -90,19 +90,19 @@ impl App {
             .items
             .into_iter()
             .map(|result| SearchResultItem {
-                task_id: result.item.task.id,
-                display_ref: result.item.display_ref,
-                title: result.item.task.title,
-                description: result.item.task.description,
-                project_key: result.item.task.project_key,
-                status: result.item.task.status,
-                priority: result.item.task.priority,
-                created_at: result.item.task.created_at,
-                labels: result.item.labels,
+                task_id: result.task_id,
+                display_ref: result.display_ref,
+                title: result.title,
+                description: String::new(),
+                project_key: result.project_key,
+                status: result.status,
+                priority: result.priority,
+                created_at: result.created_at,
+                labels: result.labels,
                 matched_field: result.matched_field,
                 snippet: result.snippet,
                 score: result.score,
-                deleted: result.item.task.deleted,
+                deleted: result.deleted,
             })
             .collect();
         state.normalize_selection();

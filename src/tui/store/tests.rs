@@ -1009,7 +1009,7 @@ mod views_filters_and_sort {
         let ids = results
             .items
             .iter()
-            .map(|result| result.item.task.id.as_str())
+            .map(|result| result.task_id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(ids, vec![live_id.as_str()]);
         assert!(!ids.contains(&deleted_id.as_str()));
@@ -1041,6 +1041,115 @@ mod views_filters_and_sort {
         assert_eq!(ids, vec![live_id.as_str()]);
         assert!(!ids.contains(&deleted_id.as_str()));
         assert_eq!(store.view_state.view, TaskView::Search);
+    }
+
+    #[tokio::test]
+    async fn search_view_preview_returns_rendered_fields_without_full_hydration() {
+        let mut store = test_store().await;
+        let task_id = create_search_task(&mut store, "Preview needle").await;
+        let index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+        store.set_exact_priority(Some(index), "high").await.unwrap();
+        store.create_label("fast".to_string()).await.unwrap();
+        store
+            .update_labels(Some(index), vec!["fast".to_string()])
+            .await
+            .unwrap();
+        store
+            .add_note_to_task(&task_id, "needle note body".to_string())
+            .await
+            .unwrap();
+
+        let results = store.search_preview("Preview", 10).await.unwrap();
+
+        assert_eq!(results.total_matches, 1);
+        let result = &results.items[0];
+        assert_eq!(result.task_id, task_id);
+        assert_eq!(result.title, "Preview needle");
+        assert_eq!(result.priority, "high");
+        assert_eq!(result.labels, vec!["fast"]);
+        assert_eq!(
+            result.matched_field,
+            crate::query::SearchMatchedField::Title
+        );
+        assert!(!result.created_at.is_empty());
+        assert!(!result.deleted);
+    }
+
+    #[tokio::test]
+    async fn search_view_submitted_search_keeps_full_result_hydration() {
+        let mut store = test_store().await;
+        let blocker_id = create_search_task(&mut store, "Blocker task").await;
+        let task_id = create_search_task(&mut store, "Hydrated needle").await;
+        let dependent_id = create_search_task(&mut store, "Dependent task").await;
+
+        let blocker_display_ref = store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == blocker_id)
+            .map(|item| item.display_ref.clone())
+            .unwrap();
+        let dependent_display_ref = store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == dependent_id)
+            .map(|item| item.display_ref.clone())
+            .unwrap();
+
+        let task_index = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            .unwrap();
+        store
+            .create_label("needs-review".to_string())
+            .await
+            .unwrap();
+        store
+            .update_labels(Some(task_index), vec!["needs-review".to_string()])
+            .await
+            .unwrap();
+        store
+            .add_note_to_task(&task_id, "hydrated note".to_string())
+            .await
+            .unwrap();
+
+        let pool = store.pool.clone();
+        seed_title_conflict(&pool, &task_id).await;
+        store.refresh(Some(&task_id)).await.unwrap();
+
+        let mut conn = store.pool.acquire().await.unwrap();
+        crate::operations::add_task_dependency(&mut conn, &task_id, &blocker_id)
+            .await
+            .unwrap();
+        drop(conn);
+
+        let mut conn = store.pool.acquire().await.unwrap();
+        crate::operations::add_task_dependency(&mut conn, &dependent_id, &task_id)
+            .await
+            .unwrap();
+        drop(conn);
+
+        store.refresh(Some(&task_id)).await.unwrap();
+        store.accept_search("Hydrated").await.unwrap();
+
+        let item = store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == task_id)
+            .unwrap();
+        assert_eq!(item.notes.len(), 1);
+        assert_eq!(item.notes[0].body, "hydrated note");
+        assert!(item.has_conflict);
+        assert_eq!(item.unresolved_blocker_count, 1);
+        assert_eq!(item.dependent_count, 1);
+        assert_eq!(item.depends_on.len(), 1);
+        assert_eq!(item.blocks.len(), 1);
+        assert_eq!(item.depends_on[0].display_ref, blocker_display_ref);
+        assert_eq!(item.blocks[0].display_ref, dependent_display_ref);
     }
 
     #[tokio::test]
