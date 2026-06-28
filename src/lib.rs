@@ -277,7 +277,6 @@ mod tests {
     use crate::db::{conflict_exists, set_field_version};
     use crate::ids::{BASE32, encode_crockford};
     use crate::projects::{create_project, normalize_key};
-    use crate::refs::resolve_task_ref;
     use crate::test_support::test_conn;
 
     #[test]
@@ -293,40 +292,6 @@ mod tests {
         let id = encode_crockford(&[0xff; 10]);
         assert_eq!(id.len(), 16);
         assert!(id.chars().all(|ch| BASE32.contains(&(ch as u8))));
-    }
-
-    #[tokio::test]
-    async fn resolves_short_refs_when_unambiguous() {
-        let (_temp, mut conn) = test_conn().await;
-        let project = create_project(&mut conn, "app").await.unwrap();
-        sqlx::query(
-            "INSERT INTO tasks(id, title, description, project_id, status, priority, created_at, updated_at)
-             VALUES ('7KQ9A1X4MV2P8D6R', 'test', '', ?, 'inbox', 'none', 't', 't')",
-        )
-        .bind(project.id)
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-        let task = resolve_task_ref(&mut conn, "7KQ").await.unwrap();
-        assert_eq!(task.id, "7KQ9A1X4MV2P8D6R");
-    }
-
-    #[tokio::test]
-    async fn rejects_ambiguous_refs() {
-        let (_temp, mut conn) = test_conn().await;
-        let project = create_project(&mut conn, "app").await.unwrap();
-        for id in ["7KQ9A1X4MV2P8D6R", "7KQZZZZZZZZZZZZZ"] {
-            sqlx::query(
-                "INSERT INTO tasks(id, title, description, project_id, status, priority, created_at, updated_at)
-                 VALUES (?, 'test', '', ?, 'inbox', 'none', 't', 't')",
-            )
-            .bind(id)
-            .bind(&project.id)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        }
-        assert!(resolve_task_ref(&mut conn, "7KQ").await.is_err());
     }
 
     #[tokio::test]

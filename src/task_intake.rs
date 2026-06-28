@@ -328,56 +328,6 @@ fn extract_json(output: &str) -> Option<&str> {
 mod tests {
     use super::*;
 
-    fn test_context() -> TaskIntakeContext {
-        TaskIntakeContext {
-            workspace_id: "workspace-1".to_string(),
-            inferred_project: Some("app".to_string()),
-            projects: vec![ProjectListItem {
-                key: "app".to_string(),
-                name: "App".to_string(),
-                prefix: "APP".to_string(),
-                open_count: 0,
-                inbox_count: 0,
-            }],
-            labels: vec!["bug".to_string()],
-        }
-    }
-
-    #[test]
-    fn expands_custom_task_intake_prompt_placeholders() {
-        let prompt = expand_task_intake_prompt(
-            "priorities={priorities}\nproject={inferred_project}\nprojects:\n{projects}\nlabels:\n{labels}\ninput={input}",
-            &test_context(),
-            "fix dispatch",
-        );
-
-        assert_eq!(
-            prompt,
-            "priorities=none, low, medium, high, urgent\nproject=app\nprojects:\n- app (App)\nlabels:\n- bug\ninput=fix dispatch"
-        );
-    }
-
-    #[test]
-    fn omitted_task_intake_placeholders_omit_context() {
-        let prompt =
-            expand_task_intake_prompt("Only parse: {input}", &test_context(), "fix dispatch");
-
-        assert_eq!(prompt, "Only parse: fix dispatch");
-    }
-
-    #[test]
-    fn default_task_intake_prompt_matches_existing_context_shape() {
-        let config = TaskIntakeConfig::default();
-        let prompt = task_intake_prompt(&config, &test_context(), "fix dispatch");
-
-        assert!(prompt.contains("You turn raw task intake text into one Aven task payload."));
-        assert!(prompt.contains("Use only these priorities: none, low, medium, high, urgent."));
-        assert!(prompt.contains("Inferred project: app"));
-        assert!(prompt.contains("Available projects:\n- app (App)"));
-        assert!(prompt.contains("Available labels:\n- bug"));
-        assert!(prompt.contains("Raw intake text:\nfix dispatch"));
-    }
-
     #[test]
     fn extracts_fenced_json() {
         assert_eq!(

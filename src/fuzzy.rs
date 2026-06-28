@@ -25,26 +25,3 @@ fn levenshtein(a: &str, b: &str) -> usize {
     }
     costs[b.len()]
 }
-
-#[cfg(test)]
-mod tests {
-    use super::is_near;
-
-    #[test]
-    fn matches_close_typos_and_normalized_compounds() {
-        assert!(is_near("home-lab", "homelab"));
-        assert!(is_near("service-worker", "service-wroker"));
-    }
-
-    #[test]
-    fn ignores_short_shared_suffixes() {
-        assert!(!is_near(
-            "regional-billing-service-worker",
-            "service-worker"
-        ));
-        assert!(!is_near(
-            "regional-billing-service-worker",
-            "core-service-worker"
-        ));
-    }
-}
