@@ -43,25 +43,17 @@ aven dep list APP-7KQ9
 aven update APP-7KQ9 --status active
 aven update APP-7KQ9 --title "clearer title" --priority medium
 aven project list --search app
-aven project rename old-project "New Project Name" --prefix NPN
 aven label list --search bug
 aven note APP-7KQ9 "durable handoff context"
 aven delete APP-7KQ9
 aven restore APP-7KQ9
-aven project delete old-project
-aven label delete obsolete
-aven note-delete APP-7KQ9 0123456789ABCDEF
-aven backup --output .backup/data.sqlite
-aven backup restore .backup/data.sqlite --yes
-aven export --output snapshot.json
-aven import snapshot.json --yes
-aven doctor --integrity
 ```
+
+- Use `aven <command> --help` to find maintenance commands for renaming,
+  deletion, backup, export, import, and integrity checks.
 
 - Use `show --full` before decisions that depend on description, labels, notes,
   deletion state, or conflicts.
-- `aven prime` includes local convention summaries for the inferred or requested
-  project, such as sampled title style, statuses, and labels.
 - Use `context <ref>` when one task snapshot is needed before acting. It gathers
   task fields, description, labels, notes, dependencies, blockers, conflicts,
   deletion state, refs, and project metadata.
@@ -92,46 +84,10 @@ aven doctor --integrity
 
 ```sh
 aven sync
-aven sync --server http://127.0.0.1:3000
 aven daemon
 ```
 
-- `aven sync` drains bounded push and pull pages until local unsynced changes and
-  remote pages are complete.
-- Sync pins a database to its server URL. Use a fresh database for a different
-  sync server.
-- Sync output reports `synced pushed=<n> pulled=<n> cursor=<server_seq>`. The
-  cursor is based on `server_seq` and advances after validated pages apply.
-- The sync client pushes at most 256 local changes per page and requests at most
-  512 remote changes per pull page.
-- The sync server validates protocol version, request cursor, push batch size,
-  pull limit, operation names, entity types, and payload shapes before accepting
-  changes.
-- Push acknowledgements match pushed change IDs. Duplicate pushed change IDs keep
-  their existing `server_seq` values.
-- Pull pages are ordered by increasing `server_seq`; `has_more` means another
-  bounded pull page is available.
-- The daemon sync path processes a fixed page budget per wake. Incomplete daemon
-  rounds print `daemon-synced pushed=<n> pulled=<n> cursor=<server_seq>
-  complete=false pages=<n>` and schedule follow-up sync work.
-- Sync logs and daemon sync output carry counts, cursor, completion, and page
-  count. They do not include task titles, descriptions, note bodies, labels,
-  project names, auth tokens, or raw payloads.
-- Use `project delete`, `label delete`, and `note-delete` for synced project,
-  label, and note deletion. Their sync logs use counts and IDs rather than
-  user-authored names or note bodies.
-
-Focused validation commands:
-
-```sh
-cargo test --test cli_sync sync_server_returns_bounded_pull_pages
-cargo test --test cli_sync sync_client_drains_paged_remote_changes
-cargo test --test cli_sync sync_client_drains_paged_local_changes
-cargo test --test cli_sync current_protocol_version_sync_succeeds
-cargo test --test cli_sync wrong_response_protocol_version_is_rejected
-cargo test --test cli_daemon_sync daemon_syncs_large_backlog_across_budgeted_rounds
-cargo test --test cli_logging daemon_sync_logging_redacts_task_content
-```
+- Sync output reports pushed and pulled counts, a cursor, and completion state.
 
 ## Long input and secrets
 
@@ -151,13 +107,7 @@ cargo test --test cli_logging daemon_sync_logging_redacts_task_content
 ```sh
 aven conflict list
 aven conflict show APP-7KQ9
-aven conflict resolve APP-7KQ9 description --use <variant-token>
-aven conflict resolve APP-7KQ9 description --value-file value.md
 aven conflict diff APP-7KQ9 description
-aven conflict export APP-7KQ9 description --dir ./conflict-variants
 ```
 
 - Inspect conflicts before resolving them.
-- Use `conflict show` to see stable variant tokens.
-- Resolve only after selecting the intended value.
-- Do not bulk resolve conflicts or default to newest, local, or remote.
