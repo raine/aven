@@ -410,10 +410,10 @@ fn prefix_hint_lines(context: CommandContext, pending: &[String]) -> Vec<Line<'s
     );
     matches
         .into_iter()
-        .map(|(command, _, next_key)| {
+        .map(|(command, _, key_hint)| {
             command_hint_line(
                 Span::styled(
-                    format!(" {:<6} ", next_key),
+                    format!(" {:<6} ", key_hint),
                     Style::new().fg(FG_MUTED).bg(BG_PANEL),
                 ),
                 command,
@@ -555,7 +555,23 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(rendered.contains(":detail-edit-title"));
-        assert!(rendered.contains(" e "));
+        assert!(rendered.contains(" e t "));
+    }
+
+    #[test]
+    fn prefix_hint_lines_show_remaining_chord_sequence() {
+        let rendered = prefix_hint_lines(CommandContext::Normal, &["t".to_string()])
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains(" e t "));
+        assert!(rendered.contains(":edit-title"));
+        assert!(rendered.contains(" e d "));
+        assert!(rendered.contains(":edit-description"));
+        assert!(rendered.contains(" e p "));
+        assert!(rendered.contains(":edit-project"));
     }
 
     #[test]
@@ -877,6 +893,7 @@ mod tests {
                         .map(|code| key_label(*code))
                         .collect::<Vec<_>>();
                     if labels.len() > prefix.len() && labels.starts_with(&prefix) {
+                        let remaining = labels[prefix.len()..].join(" ");
                         assert!(
                             rendered.contains(&format!(":{}", command.name)),
                             "prefix {} missing :{}",
@@ -884,10 +901,10 @@ mod tests {
                             command.name
                         );
                         assert!(
-                            rendered.contains(&format!(" {:<6} ", labels[prefix.len()])),
-                            "prefix {} missing next key {}",
+                            rendered.contains(&format!(" {:<6} ", remaining)),
+                            "prefix {} missing remaining keys {}",
                             prefix.join(" "),
-                            labels[prefix.len()]
+                            remaining
                         );
                     }
                 }

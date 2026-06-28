@@ -237,7 +237,7 @@ pub(crate) fn prefix_hint_commands(
                 {
                     return None;
                 }
-                Some((command, key, labels[pending.len()].clone()))
+                Some((command, key, labels[pending.len()..].join(" ")))
             })
         })
         .collect()
