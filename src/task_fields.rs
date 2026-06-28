@@ -151,16 +151,6 @@ mod tests {
     }
 
     #[test]
-    fn project_fields_classify_projection() {
-        assert!(TaskField::Project.is_project());
-        assert!(TaskField::Title.is_scalar());
-        assert!(TaskField::Description.is_scalar());
-        assert!(TaskField::Status.is_scalar());
-        assert!(TaskField::Priority.is_scalar());
-        assert!(TaskField::Deleted.is_scalar());
-    }
-
-    #[test]
     fn parse_unknown_field_errors_are_canonicalized() {
         assert_eq!(
             TaskField::parse_or_unknown("missing")

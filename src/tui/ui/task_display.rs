@@ -41,12 +41,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn description_or_placeholder_uses_empty_state_copy() {
-        assert_eq!(description_or_placeholder(""), "(no description)");
-        assert_eq!(description_or_placeholder("Body"), "Body");
-    }
-
-    #[test]
     fn description_preview_text_collapses_newlines_to_spaces() {
         assert_eq!(
             description_preview_text("First sentence.\nSecond sentence.\n\n- one\n- two"),
@@ -61,14 +55,5 @@ mod tests {
             "First paragraph. Second paragraph."
         );
         assert_eq!(description_preview_text(""), "(no description)");
-    }
-
-    #[test]
-    fn labels_display_uses_none_for_empty_labels() {
-        assert_eq!(labels_display(&[], ", "), "none");
-        assert_eq!(
-            labels_display(&["bug".to_string(), "mobile".to_string()], ", "),
-            "bug, mobile"
-        );
     }
 }

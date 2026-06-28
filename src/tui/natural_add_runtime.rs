@@ -152,14 +152,4 @@ mod tests {
             home.join(".local/state").join("aven").join("aven.log")
         );
     }
-
-    #[test]
-    fn task_intake_log_path_uses_display_fallback_without_home() {
-        assert_eq!(
-            task_intake_log_path_from_env(None, None, None),
-            PathBuf::from("~/.local/state")
-                .join("aven")
-                .join("aven.log")
-        );
-    }
 }

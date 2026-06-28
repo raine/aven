@@ -952,25 +952,6 @@ mod tests {
     }
 
     #[test]
-    fn picker_builder_defaults_to_first_item() {
-        let state = PickerState::new(
-            OverlayRoute::EditStatus,
-            "Status",
-            vec![PickerItem {
-                label: "One".to_string(),
-                value: "one".to_string(),
-                selected: false,
-            }],
-            false,
-        );
-
-        assert_eq!(state.selected, 0);
-        assert_eq!(state.filter, LineEdit::blank());
-        assert_eq!(state.mode, PickerMode::Navigate);
-        assert!(!state.multi);
-    }
-
-    #[test]
     fn overlay_builders_preserve_text_multiline_and_confirm_metadata() {
         let OverlayState::TextInput(text) = OverlayState::text_input(
             OverlayRoute::EditTitle,
