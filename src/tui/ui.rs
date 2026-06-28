@@ -58,6 +58,7 @@ pub(crate) struct ViewState {
     pub(crate) focus: Focus,
     pub(crate) overlay: Option<OverlayView>,
     pub(crate) detail_underlay: bool,
+    pub(crate) detail_underlay_scroll: u16,
     pub(crate) notification: Option<Toast>,
     pub(crate) pending_shortcut: Vec<String>,
     pub(crate) surface: ViewSurface,
@@ -76,11 +77,11 @@ impl ViewState {
     }
 }
 
-fn detail_underlay_scroll(overlay: &Option<OverlayView>) -> u16 {
-    match overlay {
+fn detail_underlay_scroll(view: &ViewState) -> u16 {
+    match &view.overlay {
         Some(OverlayView::Detail { scroll }) => *scroll,
         Some(OverlayView::DetailHelp { .. }) => 0,
-        _ => 0,
+        _ => view.detail_underlay_scroll,
     }
 }
 
@@ -151,7 +152,7 @@ pub(crate) fn render(
             frame,
             store,
             widgets,
-            detail_underlay_scroll(&view.overlay),
+            detail_underlay_scroll(view),
             inline_detail_title_editor,
         );
     }

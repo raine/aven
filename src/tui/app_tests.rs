@@ -81,6 +81,10 @@ fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
 
+fn shift_key(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::SHIFT)
+}
+
 fn ctrl_s() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)
 }
@@ -3206,15 +3210,21 @@ mod detail_mode {
         )
         .await;
 
-        for (codes, expected_route) in [
-            (&[KeyCode::Char('s')][..], OverlayRoute::EditStatus),
-            (&[KeyCode::Char('P')][..], OverlayRoute::EditPriority),
+        for (events, expected_route) in [
+            (vec![key(KeyCode::Char('s'))], OverlayRoute::EditStatus),
             (
-                &[KeyCode::Char('e'), KeyCode::Char('l')][..],
+                vec![shift_key(KeyCode::Char('P'))],
+                OverlayRoute::EditPriority,
+            ),
+            (
+                vec![key(KeyCode::Char('e')), key(KeyCode::Char('l'))],
                 OverlayRoute::EditLabels,
             ),
-            (&[KeyCode::Char('N')][..], OverlayRoute::AddNote),
-            (&[KeyCode::Char('D')][..], OverlayRoute::DeleteTaskConfirm),
+            (vec![shift_key(KeyCode::Char('N'))], OverlayRoute::AddNote),
+            (
+                vec![shift_key(KeyCode::Char('D'))],
+                OverlayRoute::DeleteTaskConfirm,
+            ),
         ] {
             app.overlay = Some(OverlayState::Detail { scroll: 4 });
             app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
@@ -3226,8 +3236,8 @@ mod detail_mode {
                 Some(OverlayState::Detail { scroll: 4 })
             ));
 
-            for code in codes {
-                app.dispatch_key(key(*code), (80, 24).into()).await.unwrap();
+            for event in events {
+                app.dispatch_key(event, (80, 24).into()).await.unwrap();
             }
             match (&app.overlay, expected_route) {
                 (Some(OverlayState::TextInput(state)), route) => assert_eq!(state.route, route),
@@ -3241,6 +3251,7 @@ mod detail_mode {
             }
             assert_pending_empty(&app);
             assert!(app.view().detail_underlay);
+            assert_eq!(app.view().detail_underlay_scroll, 4);
         }
     }
 
@@ -3383,7 +3394,7 @@ mod detail_mode {
 
         assert!(matches!(
             app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
+            Some(OverlayState::Detail { scroll: 4 })
         ));
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, selected_task_id);
@@ -3418,7 +3429,7 @@ mod detail_mode {
 
         assert!(matches!(
             app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
+            Some(OverlayState::Detail { scroll: 3 })
         ));
         assert_eq!(app.store.tasks[selected].task.status, "active");
     }
@@ -3481,7 +3492,7 @@ mod detail_mode {
 
         assert!(matches!(
             app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
+            Some(OverlayState::Detail { scroll: 3 })
         ));
         assert_eq!(app.store.tasks[selected].task.priority, "urgent");
     }
@@ -4151,7 +4162,7 @@ mod delete_and_restore {
 
         assert!(matches!(
             app.overlay,
-            Some(OverlayState::Detail { scroll: 0 })
+            Some(OverlayState::Detail { scroll: 7 })
         ));
         assert!(app.store.tasks[selected].task.deleted);
     }

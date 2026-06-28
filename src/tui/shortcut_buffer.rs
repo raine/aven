@@ -71,7 +71,7 @@ impl ShortcutBuffer {
     }
 
     pub(crate) fn resolve_detail(&mut self, key: KeyEvent) -> DetailShortcutResolution {
-        if !key.modifiers.is_empty() {
+        if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
             return DetailShortcutResolution::PassThrough;
         }
 

@@ -303,6 +303,7 @@ impl App {
         };
         self.last_task_click = None;
         self.detail_context = true;
+        self.detail_context_scroll = scroll;
         match target {
             crate::tui::ui::DetailMetadataTarget::Status => self.show_status_menu(column, row),
             crate::tui::ui::DetailMetadataTarget::Priority => self.show_priority_menu(column, row),
@@ -713,13 +714,14 @@ impl App {
         key: KeyEvent,
         scroll: u16,
     ) -> Result<Option<Option<OverlayState>>> {
-        if !key.modifiers.is_empty() {
+        if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
             return Ok(None);
         }
 
         match self.pending_shortcut.resolve_detail(key) {
             DetailShortcutResolution::Action(action) => {
                 self.detail_context = true;
+                self.detail_context_scroll = scroll;
                 self.execute(action).await?;
                 if self.detail_context && self.overlay.is_none() {
                     self.restore_detail_overlay_at_scroll(true, scroll);

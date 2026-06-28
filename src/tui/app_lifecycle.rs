@@ -126,6 +126,7 @@ impl App {
             focus: self.focus,
             overlay,
             detail_underlay: self.detail_underlay(),
+            detail_underlay_scroll: self.detail_context_scroll,
             notification: self
                 .notification
                 .as_ref()

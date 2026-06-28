@@ -119,6 +119,7 @@ impl App {
             self.overlay = None;
         } else {
             self.overlay = Some(OverlayState::Detail { scroll: 0 });
+            self.detail_context_scroll = 0;
         }
         Ok(())
     }
@@ -137,7 +138,7 @@ impl App {
     }
 
     pub(super) fn restore_detail_overlay(&mut self, return_to_detail: bool) {
-        self.restore_detail_overlay_at_scroll(return_to_detail, 0);
+        self.restore_detail_overlay_at_scroll(return_to_detail, self.detail_context_scroll);
     }
 
     pub(super) fn restore_detail_overlay_at_scroll(&mut self, return_to_detail: bool, scroll: u16) {
@@ -148,6 +149,7 @@ impl App {
                 .is_some()
         {
             self.detail_context = false;
+            self.detail_context_scroll = scroll;
             self.overlay = Some(OverlayState::Detail { scroll });
         }
     }
