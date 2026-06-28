@@ -1069,4 +1069,47 @@ mod tests {
         assert_eq!(list_project_items(&mut conn).await.unwrap()[0].key, "beta");
         assert_eq!(sidebar_counts(&mut conn).await.unwrap().open, 1);
     }
+
+    #[tokio::test]
+    async fn task_search_accepts_unsafe_query_parser_input() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+        insert_test_task(
+            &mut conn,
+            "7KQ9A1X4MV2P8D6R",
+            "Pager rotation cleanup",
+            "todo",
+            "none",
+            "001",
+        )
+        .await;
+
+        for input in [
+            "",
+            "\"",
+            "\"\"",
+            "(",
+            ")",
+            "a*b",
+            "\"(",
+            "AND OR NOT",
+            ":",
+            "/",
+            "-",
+            "a:b",
+            "\"unfinished",
+            "x OR y",
+        ] {
+            search_task_items(
+                &mut conn,
+                TaskSearchQuery {
+                    text: input.to_string(),
+                    include_deleted: false,
+                    limit: 5,
+                },
+            )
+            .await
+            .expect("search input must parse and search safely");
+        }
+    }
 }

@@ -10,6 +10,8 @@ use crate::workspaces::active_workspace_id;
 
 use super::TaskListItem;
 
+mod parser;
+
 const DEFAULT_LIMIT: usize = 50;
 const REF_WEIGHT: i64 = 1_000;
 const TITLE_WEIGHT: i64 = 420;
@@ -116,18 +118,18 @@ pub(crate) async fn search_task_item_set_in_workspace(
     } else {
         query.limit
     };
-    let documents = load_search_documents(conn, workspace_id, query.include_deleted).await?;
-    let text = query.text.trim();
-    if text.is_empty() {
+    let parsed = parser::parse_task_search_query(&query.text);
+    if parsed.trimmed.is_empty() {
         return Ok(TaskSearchResultSet {
             items: Vec::new(),
             total_matches: 0,
         });
     }
+    let documents = load_search_documents(conn, workspace_id, query.include_deleted).await?;
 
     let mut scored = documents
         .into_iter()
-        .filter_map(|document| score_document(document, text))
+        .filter_map(|document| score_document(document, &parsed))
         .collect::<Vec<_>>();
     let total_matches = scored.len();
     scored.sort_by(|a, b| {
@@ -255,7 +257,10 @@ async fn load_search_documents(
         .collect())
 }
 
-fn score_document(document: SearchDocument, query: &str) -> Option<ScoredDocument> {
+fn score_document(
+    document: SearchDocument,
+    query: &parser::ParsedTaskSearchQuery,
+) -> Option<ScoredDocument> {
     let ref_text = format!(
         "{} {} {}-{}",
         document.display_ref, document.task.id, document.task.project_prefix, document.task.id
@@ -308,7 +313,7 @@ fn score_document(document: SearchDocument, query: &str) -> Option<ScoredDocumen
     lanes
         .into_iter()
         .filter_map(|(field, text, weight)| {
-            score_lane(text, query).map(|(score, span)| {
+            score_lane(text, query.trimmed.as_str()).map(|(score, span)| {
                 let snippet = if matches!(
                     field,
                     SearchMatchedField::Description | SearchMatchedField::Note
