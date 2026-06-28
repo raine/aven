@@ -1,3 +1,14 @@
+mod hit_test;
+mod view_model;
+
+use self::hit_test::{task_list_hit, task_list_hit_in_view};
+use self::view_model::{
+    TaskGroupRow, TaskListRow, TaskListView, scrollbar_position, task_list_scroll,
+    task_list_top_scroll, task_list_visible_rows,
+};
+
+pub(crate) use self::hit_test::TaskListHit;
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -29,18 +40,6 @@ impl TaskListRenderMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TaskGroupRow {
-    label: &'static str,
-    count: usize,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum TaskListRow {
-    Group(TaskGroupRow),
-    Task { task_index: usize },
-}
-
 #[derive(Debug)]
 struct TaskListRenderModel {
     columns: [Constraint; 7],
@@ -64,85 +63,10 @@ struct TaskListTaskRow {
     cells: Vec<Line<'static>>,
 }
 
-struct TaskListView {
-    rows: Vec<TaskListRow>,
-    render_mode: TaskListRenderMode,
-}
-
-impl TaskListView {
-    fn new(store: &TuiStore) -> Self {
-        Self::from_tasks(store.view_state.render_mode(), &store.tasks)
-    }
-
-    fn from_tasks(render_mode: TaskListRenderMode, tasks: &[TaskListItem]) -> Self {
-        let rows = match render_mode {
-            TaskListRenderMode::Queue => queue_rows(tasks),
-            TaskListRenderMode::Flat => task_rows(tasks),
-        };
-        Self { rows, render_mode }
-    }
-
-    fn visual_row(&self, selected_task: usize) -> usize {
-        self.rows
-            .iter()
-            .position(|row| {
-                matches!(row, TaskListRow::Task { task_index } if *task_index == selected_task)
-            })
-            .unwrap_or(0)
-    }
-}
-
-fn task_rows(tasks: &[TaskListItem]) -> Vec<TaskListRow> {
-    tasks
-        .iter()
-        .enumerate()
-        .map(|(task_index, _)| TaskListRow::Task { task_index })
-        .collect()
-}
-
-fn queue_rows(tasks: &[TaskListItem]) -> Vec<TaskListRow> {
-    let mut rows = Vec::new();
-    let mut index = 0;
-    while index < tasks.len() {
-        let label = queue_group_label(&tasks[index]);
-        let start = index;
-        while index < tasks.len() && queue_group_label(&tasks[index]) == label {
-            index += 1;
-        }
-        rows.push(TaskListRow::Group(TaskGroupRow {
-            label,
-            count: index - start,
-        }));
-        rows.extend((start..index).map(|task_index| TaskListRow::Task { task_index }));
-    }
-    rows
-}
-
-fn queue_group_label(item: &TaskListItem) -> &'static str {
-    match item.task.status.as_str() {
-        "done" => "done",
-        "canceled" => "canceled",
-        _ => item.queue.band.label(),
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TaskListAreas {
     table_area: Rect,
     preview_area: Rect,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TaskListHit {
-    pub(crate) task_index: usize,
-    pub(crate) task_id: String,
-    pub(crate) viewport_row: u16,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TaskListHitCandidate {
-    task_index: usize,
-    viewport_row: u16,
 }
 
 fn task_list_areas(area: Rect) -> TaskListAreas {
@@ -154,60 +78,6 @@ fn task_list_areas(area: Rect) -> TaskListAreas {
     TaskListAreas {
         table_area,
         preview_area,
-    }
-}
-
-fn task_list_hit_in_view(
-    view: &TaskListView,
-    table_state: &TableState,
-    table_area: Rect,
-    column: u16,
-    row: u16,
-) -> Option<TaskListHitCandidate> {
-    if column < table_area.x || column >= table_area.x.saturating_add(table_area.width) {
-        return None;
-    }
-    if row <= table_area.y || row >= table_area.y.saturating_add(table_area.height) {
-        return None;
-    }
-    let viewport_rows = table_area.height.saturating_sub(1) as usize;
-    if view.rows.len() > viewport_rows
-        && column
-            == table_area
-                .x
-                .saturating_add(table_area.width)
-                .saturating_sub(1)
-    {
-        return None;
-    }
-    if viewport_rows == 0 {
-        return None;
-    }
-    let scroll = task_list_scroll(
-        table_state.offset(),
-        table_state
-            .selected()
-            .map(|selected| view.visual_row(selected))
-            .unwrap_or(0),
-        view.rows.len(),
-        viewport_rows,
-    );
-
-    let visual_row = row - table_area.y - 1;
-    let visual_row = usize::from(visual_row);
-    if visual_row >= viewport_rows {
-        return None;
-    }
-
-    let viewport_rows = task_list_visible_rows(view, scroll, viewport_rows);
-    let (_, row) = *viewport_rows.get(visual_row)?;
-    let viewport_row = u16::try_from(visual_row).ok()?;
-    match row {
-        TaskListRow::Task { task_index } => Some(TaskListHitCandidate {
-            task_index: *task_index,
-            viewport_row,
-        }),
-        TaskListRow::Group(_) => None,
     }
 }
 
@@ -239,18 +109,6 @@ pub(crate) fn task_status_at_position(
         return None;
     }
     task_list_hit(store, candidate)
-}
-
-fn task_list_hit(store: &TuiStore, candidate: TaskListHitCandidate) -> Option<TaskListHit> {
-    let task_id = store
-        .tasks
-        .get(candidate.task_index)
-        .map(|item| item.task.id.clone())?;
-    Some(TaskListHit {
-        task_index: candidate.task_index,
-        task_id,
-        viewport_row: candidate.viewport_row,
-    })
 }
 
 fn task_list_status_area(store: &TuiStore, table_area: Rect, visual_row: u16) -> Rect {
@@ -436,47 +294,6 @@ fn task_list_column_widths(columns: &[Constraint; 7], width: u16) -> [usize; 7] 
     ]
 }
 
-fn task_list_visible_rows(
-    view: &TaskListView,
-    scroll: usize,
-    viewport_rows: usize,
-) -> Vec<(usize, &TaskListRow)> {
-    let mut rows = Vec::new();
-    if let Some(TaskListRow::Task { .. }) = view.rows.get(scroll)
-        && let Some(group @ TaskListRow::Group(_)) = view.rows.get(scroll.saturating_sub(1))
-    {
-        rows.push((scroll.saturating_sub(1), group));
-    }
-    rows.extend(
-        view.rows
-            .iter()
-            .enumerate()
-            .skip(scroll)
-            .take(viewport_rows.saturating_sub(rows.len())),
-    );
-    rows
-}
-
-fn task_list_scroll(
-    current_scroll: usize,
-    selected_row: usize,
-    row_count: usize,
-    viewport_rows: usize,
-) -> usize {
-    if viewport_rows == 0 || row_count <= viewport_rows {
-        return 0;
-    }
-    let max_scroll = row_count - viewport_rows;
-    let scroll = current_scroll.min(max_scroll);
-    if selected_row <= scroll {
-        selected_row
-    } else if selected_row >= scroll + viewport_rows {
-        selected_row.saturating_sub(viewport_rows.saturating_sub(1))
-    } else {
-        scroll
-    }
-}
-
 fn render_task_scrollbar(
     frame: &mut Frame,
     scroll: usize,
@@ -504,26 +321,6 @@ fn render_task_scrollbar(
         ))
         .viewport_content_length(viewport_rows);
     frame.render_stateful_widget(scrollbar, list_scrollbar_area(area), &mut scrollbar_state);
-}
-
-fn task_list_top_scroll(view: &TaskListView) -> usize {
-    match view.rows.first() {
-        Some(TaskListRow::Group(_)) => 1,
-        _ => 0,
-    }
-}
-
-fn scrollbar_position(
-    scroll: usize,
-    row_count: usize,
-    viewport_rows: usize,
-    top_scroll: usize,
-) -> usize {
-    if viewport_rows == 0 || row_count <= viewport_rows || scroll <= top_scroll {
-        0
-    } else {
-        scroll.saturating_mul(row_count.saturating_sub(1)) / (row_count - viewport_rows)
-    }
 }
 
 fn list_scrollbar_area(area: Rect) -> Rect {
@@ -868,7 +665,6 @@ fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usi
 mod tests {
     use super::*;
     use crate::operations::TaskDraft;
-    use crate::queue::QueueBand;
     use crate::tui::overlay::OverlayRoute;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -940,18 +736,6 @@ mod tests {
         buffer.content.iter().map(|cell| cell.symbol()).collect()
     }
 
-    fn task_item_with(title: &str, status: &str, band: QueueBand) -> TaskListItem {
-        let mut item = task_item(title);
-        item.task.title = title.to_string();
-        item.task.status = status.to_string();
-        item.queue.band = band;
-        item
-    }
-
-    fn task_id(task: &mut TaskListItem, id: &str) {
-        task.task.id = id.to_string();
-    }
-
     async fn test_store_with_tasks(tasks: Vec<TaskListItem>) -> TuiStore {
         let dir = tempfile::tempdir().unwrap();
         let pool = crate::db::open_db(&dir.path().join("test.db"))
@@ -976,219 +760,6 @@ mod tests {
             store.create_task(draft, None).await.unwrap();
         }
         store
-    }
-
-    #[test]
-    fn project_filtered_queue_view_groups_by_queue_band() {
-        let tasks = vec![
-            task_item_with("todo high", "todo", QueueBand::Focus),
-            task_item_with("inbox", "inbox", QueueBand::Triage),
-            task_item_with("todo medium", "todo", QueueBand::Triage),
-            task_item_with("backlog", "backlog", QueueBand::Later),
-        ];
-
-        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks);
-
-        assert_eq!(view.render_mode, TaskListRenderMode::Queue);
-        assert_eq!(
-            view.rows,
-            vec![
-                TaskListRow::Group(TaskGroupRow {
-                    label: "focus",
-                    count: 1,
-                }),
-                TaskListRow::Task { task_index: 0 },
-                TaskListRow::Group(TaskGroupRow {
-                    label: "triage",
-                    count: 2,
-                }),
-                TaskListRow::Task { task_index: 1 },
-                TaskListRow::Task { task_index: 2 },
-                TaskListRow::Group(TaskGroupRow {
-                    label: "later",
-                    count: 1,
-                }),
-                TaskListRow::Task { task_index: 3 },
-            ]
-        );
-    }
-
-    #[test]
-    fn queue_view_groups_terminal_statuses_by_status() {
-        let tasks = vec![
-            task_item_with("backlog", "backlog", QueueBand::Later),
-            task_item_with("finished", "done", QueueBand::Later),
-            task_item_with("canceled", "canceled", QueueBand::Later),
-        ];
-
-        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks);
-
-        assert_eq!(
-            view.rows,
-            vec![
-                TaskListRow::Group(TaskGroupRow {
-                    label: "later",
-                    count: 1,
-                }),
-                TaskListRow::Task { task_index: 0 },
-                TaskListRow::Group(TaskGroupRow {
-                    label: "done",
-                    count: 1,
-                }),
-                TaskListRow::Task { task_index: 1 },
-                TaskListRow::Group(TaskGroupRow {
-                    label: "canceled",
-                    count: 1,
-                }),
-                TaskListRow::Task { task_index: 2 },
-            ]
-        );
-    }
-
-    #[test]
-    fn non_queue_sort_does_not_emit_duplicate_status_groups() {
-        let tasks = vec![
-            task_item_with("todo 1", "todo", QueueBand::Focus),
-            task_item_with("inbox", "inbox", QueueBand::Triage),
-            task_item_with("todo 2", "todo", QueueBand::Later),
-        ];
-
-        let view = TaskListView::from_tasks(TaskListRenderMode::Flat, &tasks);
-
-        assert_eq!(view.render_mode, TaskListRenderMode::Flat);
-        assert_eq!(
-            view.rows,
-            vec![
-                TaskListRow::Task { task_index: 0 },
-                TaskListRow::Task { task_index: 1 },
-                TaskListRow::Task { task_index: 2 },
-            ]
-        );
-    }
-
-    #[test]
-    fn visual_row_uses_planned_rows() {
-        let tasks = vec![
-            task_item_with("todo high", "todo", QueueBand::Focus),
-            task_item_with("inbox", "inbox", QueueBand::Triage),
-            task_item_with("todo medium", "todo", QueueBand::Triage),
-        ];
-        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks);
-
-        assert_eq!(view.visual_row(0), 1);
-        assert_eq!(view.visual_row(1), 3);
-        assert_eq!(view.visual_row(2), 4);
-    }
-
-    #[test]
-    fn queue_view_keeps_group_header_with_first_visible_task() {
-        let tasks = vec![
-            task_item_with("todo high", "todo", QueueBand::Focus),
-            task_item_with("inbox", "inbox", QueueBand::Triage),
-            task_item_with("todo medium", "todo", QueueBand::Triage),
-        ];
-        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks);
-
-        assert_eq!(
-            task_list_visible_rows(&view, 1, 3),
-            vec![
-                (
-                    0,
-                    &TaskListRow::Group(TaskGroupRow {
-                        label: "focus",
-                        count: 1
-                    })
-                ),
-                (1, &TaskListRow::Task { task_index: 0 }),
-                (
-                    2,
-                    &TaskListRow::Group(TaskGroupRow {
-                        label: "triage",
-                        count: 2
-                    })
-                ),
-            ]
-        );
-        assert_eq!(
-            task_list_visible_rows(&view, 3, 3),
-            vec![
-                (
-                    2,
-                    &TaskListRow::Group(TaskGroupRow {
-                        label: "triage",
-                        count: 2
-                    })
-                ),
-                (3, &TaskListRow::Task { task_index: 1 }),
-                (4, &TaskListRow::Task { task_index: 2 }),
-            ]
-        );
-    }
-
-    #[test]
-    fn task_at_position_skips_queue_group_rows() {
-        let mut tasks = vec![
-            task_item_with("todo high", "todo", QueueBand::Focus),
-            task_item_with("todo medium", "todo", QueueBand::Focus),
-            task_item_with("inbox", "inbox", QueueBand::Triage),
-        ];
-        task_id(&mut tasks[0], "task-1");
-        task_id(&mut tasks[1], "task-2");
-        task_id(&mut tasks[2], "task-3");
-        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks);
-        let table_area = Rect::new(0, 0, 80, 10);
-        let table_state = TableState::default();
-
-        let header_hit = task_list_hit_in_view(
-            &view,
-            &table_state,
-            table_area,
-            table_area.x + 1,
-            table_area.y + 1,
-        );
-        assert!(header_hit.is_none());
-
-        let first_task = task_list_hit_in_view(
-            &view,
-            &table_state,
-            table_area,
-            table_area.x + 1,
-            table_area.y + 2,
-        )
-        .unwrap();
-        assert_eq!(first_task.task_index, 0);
-        assert_eq!(first_task.viewport_row, 1);
-    }
-
-    #[test]
-    fn task_at_position_respects_scroll_position() {
-        let mut tasks = Vec::new();
-        for index in 0..20 {
-            let mut item = task_item(&format!("task {index}"));
-            task_id(&mut item, &format!("task-{index:02}"));
-            tasks.push(item);
-        }
-        let view = TaskListView::from_tasks(TaskListRenderMode::Flat, &tasks);
-        let mut table_state = TableState::default();
-        table_state.select(Some(10));
-
-        let hit = task_list_hit_in_view(&view, &table_state, Rect::new(0, 0, 80, 5), 1, 4).unwrap();
-        assert_eq!(hit.task_index, 10);
-        assert_eq!(hit.viewport_row, 3);
-    }
-
-    #[test]
-    fn task_at_position_ignores_scrollbar_column() {
-        let tasks = (0..20)
-            .map(|index| task_item(&format!("task {index}")))
-            .collect::<Vec<_>>();
-        let view = TaskListView::from_tasks(TaskListRenderMode::Flat, &tasks);
-        let mut table_state = TableState::default();
-        table_state.select(Some(10));
-
-        let hit = task_list_hit_in_view(&view, &table_state, Rect::new(0, 0, 80, 5), 79, 4);
-
-        assert!(hit.is_none());
     }
 
     #[tokio::test]
@@ -1233,48 +804,6 @@ mod tests {
     }
 
     #[test]
-    fn upward_selection_from_bottom_keeps_scroll_at_bottom_until_top_edge() {
-        assert_eq!(task_list_scroll(6, 9, 10, 4), 6);
-        assert_eq!(task_list_scroll(6, 8, 10, 4), 6);
-        assert_eq!(task_list_scroll(6, 7, 10, 4), 6);
-        assert_eq!(task_list_scroll(6, 6, 10, 4), 6);
-        assert_eq!(task_list_scroll(6, 5, 10, 4), 5);
-    }
-
-    #[test]
-    fn returning_to_first_row_resets_scroll_to_top() {
-        assert_eq!(task_list_scroll(1, 0, 10, 4), 0);
-        assert_eq!(task_list_scroll(6, 6, 10, 4), 6);
-    }
-
-    #[test]
-    fn downward_selection_scrolls_after_bottom_edge() {
-        assert_eq!(task_list_scroll(0, 0, 10, 4), 0);
-        assert_eq!(task_list_scroll(0, 1, 10, 4), 0);
-        assert_eq!(task_list_scroll(0, 2, 10, 4), 0);
-        assert_eq!(task_list_scroll(0, 3, 10, 4), 0);
-        assert_eq!(task_list_scroll(0, 4, 10, 4), 1);
-    }
-
-    #[test]
-    fn task_list_scroll_clamps_to_valid_rows() {
-        assert_eq!(task_list_scroll(6, 2, 3, 4), 0);
-        assert_eq!(task_list_scroll(8, 9, 10, 4), 6);
-    }
-
-    #[test]
-    fn scrollbar_position_maps_max_scroll_to_end() {
-        assert_eq!(scrollbar_position(0, 10, 4, 0), 0);
-        assert_eq!(scrollbar_position(6, 10, 4, 0), 9);
-        assert_eq!(scrollbar_position(0, 3, 4, 0), 0);
-    }
-
-    #[test]
-    fn grouped_queue_top_scroll_keeps_scrollbar_at_top() {
-        assert_eq!(scrollbar_position(1, 10, 4, 1), 0);
-    }
-
-    #[test]
     fn list_scrollbar_area_skips_header_row() {
         assert_eq!(
             list_scrollbar_area(Rect::new(2, 3, 10, 6)),
@@ -1298,14 +827,6 @@ mod tests {
         assert_eq!(buffer[(4, 3)].symbol(), "│");
         assert_eq!(buffer[(4, 4)].symbol(), "┃");
         assert_eq!(buffer[(4, 5)].symbol(), "┃");
-    }
-
-    #[test]
-    fn empty_task_view_has_no_rows() {
-        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &[]);
-
-        assert!(view.rows.is_empty());
-        assert_eq!(view.visual_row(0), 0);
     }
 
     #[test]
