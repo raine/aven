@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 
@@ -11,7 +11,8 @@ use super::super::truncate::truncate_chars;
 use crate::query::SearchMatchedField;
 use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::overlay::SearchResultItem;
-use crate::tui::theme::{ACCENT, BG, FG, FG_DIM, SELECTED};
+use crate::tui::theme::{self, ACCENT, BG, FG, FG_DIM, SELECTED};
+use crate::tui::widgets::{priority_icon, status_span};
 
 const RESULT_ROWS: usize = 8;
 const SEARCH_PLACEHOLDER: &str = "Search tasks, notes, labels, and projects...";
@@ -241,26 +242,61 @@ fn merge_ranges(ranges: Vec<std::ops::Range<usize>>) -> Vec<std::ops::Range<usiz
 }
 
 fn result_meta_line(result: &SearchResultItem, selected: bool, width: usize) -> Line<'static> {
-    let style = row_style(selected).fg(FG_DIM);
+    let bg = row_bg(selected);
+    let muted = Style::new().fg(FG_DIM).bg(bg);
     let labels = labels_display(&result.labels, ", ");
-    let deleted = if result.deleted { " deleted" } else { "" };
-    let meta = truncate_chars(
-        &format!(
-            "  {} · {} · {} · age={} · match={}{}",
-            result.status,
-            result.priority,
-            labels,
-            task_age(result),
-            result.matched_field.as_str(),
-            deleted
+    let priority = result.priority.as_str();
+    let priority_label = format!("{} {priority}", priority_icon(priority));
+    let mut spans = vec![
+        Span::styled("  ", muted),
+        apply_bg(status_span(&result.status), bg),
+        Span::styled(" · ", muted),
+        Span::styled(
+            priority_label,
+            theme::priority_style(priority)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
         ),
-        width,
-    );
-    let used_width = meta.chars().count();
-    Line::from(vec![
-        Span::styled(meta, style),
-        Span::styled(" ".repeat(width.saturating_sub(used_width)), style),
-    ])
+        Span::styled(" · ", muted),
+        Span::styled(labels, muted),
+        Span::styled(format!(" · age={}", task_age(result)), muted),
+        Span::styled(format!(" · match={}", result.matched_field.as_str()), muted),
+    ];
+    if result.deleted {
+        spans.push(Span::styled(" deleted", muted));
+    }
+    truncate_spans_to_width(&mut spans, width);
+    let used_width = spans_width(&spans);
+    spans.push(Span::styled(
+        " ".repeat(width.saturating_sub(used_width)),
+        muted,
+    ));
+    Line::from(spans)
+}
+
+fn apply_bg(mut span: Span<'static>, bg: Color) -> Span<'static> {
+    span.style = span.style.bg(bg);
+    span
+}
+
+fn truncate_spans_to_width(spans: &mut Vec<Span<'static>>, width: usize) {
+    let mut used = 0;
+    let mut index = 0;
+    while index < spans.len() {
+        let content_width = spans[index].content.chars().count();
+        if used + content_width > width {
+            let remaining = width.saturating_sub(used);
+            spans[index].content = truncate_chars(&spans[index].content, remaining).into();
+            spans.truncate(index + 1);
+            return;
+        }
+        used += content_width;
+        index += 1;
+    }
+}
+
+fn spans_width(spans: &[Span<'static>]) -> usize {
+    spans.iter().map(|span| span.content.chars().count()).sum()
 }
 
 fn row_style(selected: bool) -> Style {
@@ -268,6 +304,14 @@ fn row_style(selected: bool) -> Style {
         SELECTED
     } else {
         Style::new().fg(FG).bg(BG)
+    }
+}
+
+fn row_bg(selected: bool) -> Color {
+    if selected {
+        SELECTED.bg.unwrap_or(BG)
+    } else {
+        BG
     }
 }
 
