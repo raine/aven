@@ -3250,9 +3250,6 @@ mod detail_mode {
         create_and_select_task(&mut app, test_task_draft("Detail target")).await;
         app.overlay = Some(OverlayState::Detail { scroll: 3 });
 
-        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
-            .await
-            .unwrap();
         app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
             .await
             .unwrap();
@@ -3374,9 +3371,6 @@ mod detail_mode {
         let selected_task_id = app.store.tasks[selected].task.id.clone();
         app.overlay = Some(OverlayState::Detail { scroll: 4 });
 
-        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
-            .await
-            .unwrap();
         app.dispatch_key(key(KeyCode::Char('s')), (80, 24).into())
             .await
             .unwrap();

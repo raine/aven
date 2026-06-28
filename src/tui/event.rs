@@ -479,6 +479,14 @@ mod tests {
     #[test]
     fn detail_context_resolves_detail_shortcuts() {
         assert_eq!(
+            resolve_shortcut_for(CommandContext::Detail, &[KeyCode::Char('e')]),
+            ShortcutLookup::Prefix
+        );
+        assert_eq!(
+            resolve_shortcut_for(CommandContext::Detail, &[KeyCode::Char('s')]),
+            ShortcutLookup::Found(Action::BeginStatusPicker)
+        );
+        assert_eq!(
             resolve_shortcut_for(CommandContext::Detail, &[KeyCode::Char('t')]),
             ShortcutLookup::Prefix
         );
@@ -488,6 +496,13 @@ mod tests {
                 &[KeyCode::Char('t'), KeyCode::Char('e')]
             ),
             ShortcutLookup::Prefix
+        );
+        assert_eq!(
+            resolve_shortcut_for(
+                CommandContext::Detail,
+                &[KeyCode::Char('e'), KeyCode::Char('t')]
+            ),
+            ShortcutLookup::Found(Action::BeginEditTitle)
         );
         assert_eq!(
             resolve_shortcut_for(
