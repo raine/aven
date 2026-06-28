@@ -13,7 +13,7 @@ use crate::tui::overlay::SearchResultItem;
 use crate::tui::theme::{ACCENT, BG_ALT, FG, FG_DIM, SELECTED};
 
 const RESULT_ROWS: usize = 8;
-const SEARCH_PLACEHOLDER: &str = "Search by ref, title, label, project, note, status, or priority";
+const SEARCH_PLACEHOLDER: &str = "Search tasks, notes, labels, and projects...";
 
 pub(in crate::tui::ui) fn render_search(
     frame: &mut Frame,
