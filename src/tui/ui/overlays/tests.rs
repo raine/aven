@@ -199,6 +199,18 @@ mod text_panel_and_search {
     }
 
     #[test]
+    fn search_overlay_shows_empty_result_message() {
+        let rendered = render_overlay_view(OverlayView::Search {
+            input: "missing".to_string(),
+            cursor: 7,
+            results: Vec::new(),
+            selected: 0,
+        });
+
+        assert!(rendered.contains("No matching tasks"));
+    }
+
+    #[test]
     fn search_overlay_vertical_position_ignores_result_count() {
         let empty = overlay_buffer(OverlayView::Search {
             input: "query".to_string(),

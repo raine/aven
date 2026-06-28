@@ -24,16 +24,16 @@ pub(in crate::tui::ui) fn render_search(
     selected: usize,
 ) {
     let width = frame.area().width.saturating_sub(8).clamp(72, 110);
-    let result_rows = (results.len().min(RESULT_ROWS) as u16).clamp(3, RESULT_ROWS as u16);
+    let result_rows = results.len().min(RESULT_ROWS) as u16;
     let has_empty_input = input.trim().is_empty();
     let height = if results.is_empty() && has_empty_input {
         5
     } else if results.is_empty() {
-        6
+        7
     } else {
-        (result_rows * 2 + 5)
+        (result_rows * 2 + 6)
             .min(frame.area().height.saturating_sub(2))
-            .max(9)
+            .max(10)
     };
     let area = Dialog::new("Search", width, height)
         .render_block_at(frame, search_dialog_area(frame.area(), width, height));
