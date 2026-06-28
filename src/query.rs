@@ -828,6 +828,41 @@ mod tests {
         .unwrap();
         assert_eq!(listed_titles_from_search(&with_deleted), ["Deleted needle"]);
         assert!(with_deleted[0].item.task.deleted);
+
+        let single_token_without_deleted = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "needle".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            listed_titles_from_search(&single_token_without_deleted),
+            ["Needle in title"]
+        );
+        assert!(
+            single_token_without_deleted
+                .iter()
+                .all(|result| !result.item.task.deleted)
+        );
+
+        let deleted_by_ref = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "9KQ9".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(deleted_by_ref.len(), 1);
+        assert_eq!(deleted_by_ref[0].item.task.id, "9KQ9A1X4MV2P8D6R");
+        assert_eq!(deleted_by_ref[0].matched_field, SearchMatchedField::Ref);
+        assert!(deleted_by_ref[0].item.task.deleted);
     }
 
     #[tokio::test]

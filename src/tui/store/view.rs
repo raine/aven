@@ -110,7 +110,7 @@ impl TuiStore {
             self.active_workspace.id.as_str(),
             TaskSearchQuery {
                 text: text.to_string(),
-                include_deleted: true,
+                include_deleted: false,
                 limit,
             },
         )
@@ -130,7 +130,7 @@ impl TuiStore {
             self.active_workspace.id.as_str(),
             TaskSearchQuery {
                 text: text.to_string(),
-                include_deleted: true,
+                include_deleted: false,
                 limit: 100,
             },
         )

@@ -347,6 +347,38 @@ fn delete_restore_and_filters_work() {
 }
 
 #[test]
+fn search_controls_deleted_visibility() {
+    let env = TestEnv::new();
+    let db = env.db("search-deleted.sqlite");
+    let live = extract_ref(&ok(
+        env.aven(&db, ["add", "live needle", "--project", "app"])
+    ));
+    let deleted = extract_ref(&ok(
+        env.aven(&db, ["add", "deleted needle", "--project", "app"])
+    ));
+    ok(env.aven(&db, ["delete", &deleted]));
+
+    let ordinary = ok(env.aven(&db, ["search", "needle"]));
+    contains_all(&ordinary, &[&live, "live needle"]);
+    contains_none(&ordinary, &[&deleted, "deleted needle", "deleted=yes"]);
+
+    let all = ok(env.aven(&db, ["search", "needle", "--all"]));
+    contains_all(&all, &[&live, &deleted, "deleted needle", "deleted=yes"]);
+
+    let by_ref = ok(env.aven(&db, ["search", &deleted]));
+    contains_all(
+        &by_ref,
+        &[&deleted, "deleted needle", "match=ref", "deleted=yes"],
+    );
+
+    let by_ref_json = ok(env.aven(&db, ["search", "--json", &deleted]));
+    let items: serde_json::Value = serde_json::from_str(&by_ref_json).unwrap();
+    assert_eq!(items[0]["ref"], serde_json::json!(deleted));
+    assert_eq!(items[0]["deleted"], serde_json::json!(true));
+    assert_eq!(items[0]["matched_field"], serde_json::json!("ref"));
+}
+
+#[test]
 fn invalid_filter_values_fail() {
     let env = TestEnv::new();
     let db = env.db("bad-filter.sqlite");

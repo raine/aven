@@ -125,11 +125,22 @@ pub(crate) async fn search_task_item_set_in_workspace(
             total_matches: 0,
         });
     }
-    let documents = load_search_documents(conn, workspace_id, query.include_deleted).await?;
+    let load_deleted = query.include_deleted || parsed.ref_query.is_some();
+    let documents = load_search_documents(conn, workspace_id, load_deleted).await?;
 
     let mut scored = documents
         .into_iter()
-        .filter_map(|document| score_document(document, &parsed))
+        .filter_map(|document| {
+            let is_deleted = document.task.deleted;
+            let scored = score_document(document, &parsed)?;
+            if is_deleted
+                && !query.include_deleted
+                && scored.matched_field != SearchMatchedField::Ref
+            {
+                return None;
+            }
+            Some(scored)
+        })
         .collect::<Vec<_>>();
     let total_matches = scored.len();
     scored.sort_by(|a, b| {

@@ -81,7 +81,8 @@ aven restore APP-7KQ9
 - Use `list --deleted` with normal filters to list deleted tasks only.
 - Use `list --all` with normal filters to include deleted tasks with live tasks.
 - Use `search <query> --all` when deleted tasks should be included in broad
-  search results.
+  search results. Ref-shaped search input can return a deleted task and prints
+  deleted metadata when it does.
 - Use `bulk-update --dry-run` before broad mutations.
 - Use `list --ready` when selecting new work to avoid blocked or completed tasks.
 - In `aven prime`, Active, Ready, and Blocked partition open issues by
