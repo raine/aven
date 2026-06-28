@@ -34,10 +34,11 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("a", "add"),
             ("n", "note"),
             ("s", "status"),
-            ("p", "priority"),
+            ("p", "projects"),
             ("d", "done"),
             ("x", "cancel"),
-            ("g", "views"),
+            ("g", "scope"),
+            ("v", "views"),
             ("f", "filter"),
             ("o", "order"),
             ("?", "more"),
@@ -48,8 +49,8 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("Enter", "detail"),
             ("a", "add"),
             ("s", "status"),
-            ("p", "priority"),
-            ("g/f/o", "menus"),
+            ("p", "projects"),
+            ("g/v/f/o", "menus"),
             ("?", "more"),
             ("q", "quit"),
         ],
@@ -63,22 +64,21 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
         FooterMode::Detail if width >= 128 => &[
             ("j/k Pg", "scroll"),
             ("[/]", "task"),
-            ("e", "edit"),
-            ("s", "status"),
-            ("p", "priority"),
-            ("l", "labels"),
-            ("n", "note"),
-            ("d", "done"),
-            ("y/Y", "copy"),
+            ("t e", "edit"),
+            ("t s", "status"),
+            ("t P", "priority"),
+            ("t N", "note"),
+            ("t d", "done"),
+            ("t y/Y", "copy"),
             ("?", "more"),
             ("Esc", "back"),
         ],
         FooterMode::Detail if width >= 72 => &[
             ("j/k Pg", "scroll"),
             ("[/]", "task"),
-            ("e", "edit"),
-            ("s/p/l", "edit"),
-            ("n", "note"),
+            ("t e", "edit"),
+            ("t s/t P", "edit"),
+            ("t N", "note"),
             ("?", "more"),
             ("Esc", "back"),
         ],
@@ -141,8 +141,8 @@ mod tests {
         assert!(rendered.contains("j/k Pg"));
         assert!(rendered.contains("[/]"));
         assert!(rendered.contains("task"));
-        assert!(rendered.contains("status"));
-        assert!(rendered.contains("priority"));
+        assert!(rendered.contains("t s"));
+        assert!(rendered.contains("t P"));
         assert!(rendered.contains("more"));
     }
 
@@ -152,11 +152,14 @@ mod tests {
 
         assert!(hints.contains(&("a", "add")));
         assert!(hints.contains(&("s", "status")));
-        assert!(hints.contains(&("p", "priority")));
+        assert!(hints.contains(&("p", "projects")));
         assert!(hints.contains(&("d", "done")));
         assert!(hints.contains(&("x", "cancel")));
-        assert!(hints.contains(&("g", "views")));
+        assert!(hints.contains(&("g", "scope")));
+        assert!(hints.contains(&("v", "views")));
         assert!(hints.contains(&("?", "more")));
+        assert!(!hints.contains(&("p", "priority")));
+        assert!(!hints.contains(&("g", "views")));
         assert!(!hints.iter().any(|(_, label)| *label == "prefixes"));
     }
 

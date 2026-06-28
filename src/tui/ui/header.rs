@@ -524,7 +524,7 @@ mod tests {
         store.view_state.filter_modifiers.deleted_only = true;
         assert_eq!(
             spans_text(active_filter_spans(&store)),
-            " │ filter label=backend priority=urgent deleted_only search=\"needle\""
+            " │ filter label=backend priority=urgent deleted_only matches=2"
         );
         store.view_state.filter_modifiers.deleted_only = false;
         assert_eq!(
