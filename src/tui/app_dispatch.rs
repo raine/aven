@@ -415,6 +415,9 @@ impl App {
                 KeyCode::Enter if open_search_results_key(key) => {
                     self.accept_search_input(state.input.text).await?;
                 }
+                KeyCode::Tab => {
+                    self.accept_search_input(state.input.text).await?;
+                }
                 KeyCode::Enter => {
                     if let Some(result) = state.selected_result() {
                         self.accept_search_input(state.input.text.clone()).await?;
@@ -428,7 +431,24 @@ impl App {
                     state.selected = (state.selected + 1) % state.results.len();
                     self.overlay = Some(OverlayState::Search(state));
                 }
+                KeyCode::Char('n')
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !state.results.is_empty() =>
+                {
+                    state.selected = (state.selected + 1) % state.results.len();
+                    self.overlay = Some(OverlayState::Search(state));
+                }
                 KeyCode::Up if !state.results.is_empty() => {
+                    state.selected = state
+                        .selected
+                        .checked_sub(1)
+                        .unwrap_or(state.results.len().saturating_sub(1));
+                    self.overlay = Some(OverlayState::Search(state));
+                }
+                KeyCode::Char('p')
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !state.results.is_empty() =>
+                {
                     state.selected = state
                         .selected
                         .checked_sub(1)

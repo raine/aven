@@ -8,6 +8,7 @@ use super::super::dialog::Dialog;
 use super::super::input::{cursor_cell, input_line};
 use super::super::task_display::labels_display;
 use super::super::truncate::truncate_chars;
+use crate::query::SearchMatchedField;
 use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::overlay::SearchResultItem;
 use crate::tui::theme::{ACCENT, BG_ALT, FG, FG_DIM, SELECTED};
@@ -70,7 +71,7 @@ pub(in crate::tui::ui) fn render_search(
     if results.is_empty() {
         render_empty_state(frame, body_area, input);
     } else {
-        render_result_list(frame, body_area, results, selected);
+        render_result_list(frame, body_area, input, results, selected);
     }
 
     frame.render_widget(Paragraph::new(""), hint_spacer_area);
@@ -119,6 +120,7 @@ fn render_empty_state(frame: &mut Frame, area: Rect, input: &str) {
 fn render_result_list(
     frame: &mut Frame,
     area: Rect,
+    input: &str,
     results: &[SearchResultItem],
     selected: usize,
 ) {
@@ -128,7 +130,7 @@ fn render_result_list(
         .take(RESULT_ROWS)
         .flat_map(|(index, result)| {
             [
-                result_line(result, index == selected, area.width as usize),
+                result_line(result, index == selected, input, area.width as usize),
                 result_meta_line(result, index == selected, area.width as usize),
             ]
         })
@@ -139,14 +141,19 @@ fn render_result_list(
     );
 }
 
-fn result_line(result: &SearchResultItem, selected: bool, width: usize) -> Line<'static> {
+fn result_line(
+    result: &SearchResultItem,
+    selected: bool,
+    input: &str,
+    width: usize,
+) -> Line<'static> {
     let style = row_style(selected);
     let marker = if selected { "▸" } else { " " };
     let ref_width = 10;
     let title_width = width.saturating_sub(ref_width + 4).max(8);
     let title = truncate_chars(&result.title, title_width);
     let used_width = 2 + ref_width + 1 + title.chars().count();
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(format!("{marker} "), style),
         Span::styled(
             format!(
@@ -156,9 +163,81 @@ fn result_line(result: &SearchResultItem, selected: bool, width: usize) -> Line<
             style.fg(ACCENT).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" ", style),
-        Span::styled(title, style),
-        Span::styled(" ".repeat(width.saturating_sub(used_width)), style),
-    ])
+    ];
+    spans.extend(title_spans(&title, input, result.matched_field, style));
+    spans.push(Span::styled(
+        " ".repeat(width.saturating_sub(used_width)),
+        style,
+    ));
+    Line::from(spans)
+}
+
+fn title_spans(
+    title: &str,
+    input: &str,
+    matched_field: SearchMatchedField,
+    style: Style,
+) -> Vec<Span<'static>> {
+    if matched_field != SearchMatchedField::Title {
+        return vec![Span::styled(title.to_string(), style)];
+    }
+    let Some(ranges) = title_match_ranges(title, input) else {
+        return vec![Span::styled(title.to_string(), style)];
+    };
+    let mut spans = Vec::new();
+    let mut cursor = 0;
+    for range in ranges {
+        if range.start > cursor {
+            spans.push(Span::styled(title[cursor..range.start].to_string(), style));
+        }
+        spans.push(Span::styled(
+            title[range.clone()].to_string(),
+            style.fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
+        cursor = range.end;
+    }
+    if cursor < title.len() {
+        spans.push(Span::styled(title[cursor..].to_string(), style));
+    }
+    spans
+}
+
+fn title_match_ranges(title: &str, input: &str) -> Option<Vec<std::ops::Range<usize>>> {
+    let normalized_title = title.to_ascii_lowercase();
+    let query = input.trim().to_ascii_lowercase();
+    if query.is_empty() {
+        return None;
+    }
+    if let Some(index) = normalized_title.find(&query) {
+        return Some(std::iter::once(index..index + query.len()).collect());
+    }
+    let mut ranges = query
+        .split_whitespace()
+        .filter_map(|token| {
+            normalized_title
+                .find(token)
+                .map(|index| index..index + token.len())
+        })
+        .collect::<Vec<_>>();
+    if ranges.is_empty() {
+        return None;
+    }
+    ranges.sort_by_key(|range| range.start);
+    Some(merge_ranges(ranges))
+}
+
+fn merge_ranges(ranges: Vec<std::ops::Range<usize>>) -> Vec<std::ops::Range<usize>> {
+    let mut merged = Vec::<std::ops::Range<usize>>::new();
+    for range in ranges {
+        if let Some(last) = merged.last_mut()
+            && range.start <= last.end
+        {
+            last.end = last.end.max(range.end);
+            continue;
+        }
+        merged.push(range);
+    }
+    merged
 }
 
 fn result_meta_line(result: &SearchResultItem, selected: bool, width: usize) -> Line<'static> {
@@ -220,14 +299,14 @@ fn compact_age(age_seconds: i64) -> String {
 
 fn search_hint_line() -> Line<'static> {
     Line::from(vec![
-        Span::styled("↑/↓", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "↑/↓ ^N/^P",
+            Style::new().fg(FG).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" select", Style::new().fg(FG_DIM)),
         Span::styled("  Enter", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
         Span::styled(" open task", Style::new().fg(FG_DIM)),
-        Span::styled(
-            "  Ctrl+Enter",
-            Style::new().fg(FG).add_modifier(Modifier::BOLD),
-        ),
+        Span::styled("  Tab", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
         Span::styled(" open results", Style::new().fg(FG_DIM)),
         Span::styled("  Esc", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
         Span::styled(" close", Style::new().fg(FG_DIM)),

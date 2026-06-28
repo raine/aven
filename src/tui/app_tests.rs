@@ -121,10 +121,6 @@ fn ctrl_u() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)
 }
 
-fn ctrl_enter() -> KeyEvent {
-    KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)
-}
-
 fn header_click(column: u16) -> MouseEvent {
     click_at(column, 0)
 }
@@ -884,6 +880,29 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
+    async fn search_overlay_ctrl_n_and_ctrl_p_select_results() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("needle first")).await;
+        create_and_select_task(&mut app, test_task_draft("needle second")).await;
+
+        app.begin_search();
+        type_chars(&mut app, "needle").await;
+        app.handle_overlay_key(ctrl_n()).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Search(state)) if state.selected == 1
+        ));
+
+        app.handle_overlay_key(ctrl_p()).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Search(state)) if state.selected == 0
+        ));
+    }
+
+    #[tokio::test]
     async fn search_overlay_refreshes_results_after_paste() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("pasted needle")).await;
@@ -921,13 +940,13 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
-    async fn search_overlay_ctrl_enter_opens_results_list() {
+    async fn search_overlay_tab_opens_results_list() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("list needle")).await;
 
         app.begin_search();
         type_chars(&mut app, "needle").await;
-        app.handle_overlay_key(ctrl_enter()).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
 
         assert!(app.overlay.is_none());
         assert_eq!(app.store.tasks.len(), 1);
