@@ -68,6 +68,8 @@ aven restore APP-7KQ9
   alone. Capture rationale, scope, acceptance criteria, implementation notes,
   and related tasks when useful. Use `--description-file` or
   `--description-stdin` for multi-paragraph descriptions.
+- Add dependencies between related tasks when one task must finish before another
+  can start. Use `dep add <blocked> <blocker>`.
 - Let commands infer the project from the current directory, even if project
   does not exist yet. Pass `--project` only if project is specified by user.
 - Use `project rename <old> <new> [--prefix <prefix>]` when a project itself
@@ -84,7 +86,6 @@ aven restore APP-7KQ9
 - Use `list --ready` when selecting new work to avoid blocked or completed tasks.
 - Inspect dependency context with `show <ref> --full` before changing task order or
   status. The `depends_on` and `blocks` sections show blockers and dependents.
-- Use `dep add <blocked> <blocker>` when one task depends on another.
 
 ## Sync behavior
 
