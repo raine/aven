@@ -9,6 +9,7 @@ use ratatui::widgets::{
 use super::input::clipped_input_line;
 use super::scroll::{clamp_scroll_start, scrollbar_thumb_position};
 use super::task_display::{description_or_placeholder, labels_display};
+use super::truncate::truncate_width;
 use crate::query::TaskListItem;
 use crate::tui::app::WidgetState;
 use crate::tui::markdown::render_markdown;
@@ -18,6 +19,24 @@ use crate::tui::theme::{
     self, ACCENT, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, ORANGE, RED,
 };
 use crate::tui::widgets::{priority_short, status_chip, status_span};
+use unicode_width::UnicodeWidthStr;
+
+const DETAIL_DEPENDENCY_TREE_CAP: usize = 3;
+
+#[derive(Debug, Clone, Copy)]
+enum DependencyDirection {
+    Blocker,
+    Dependent,
+}
+
+impl DependencyDirection {
+    fn marker(self) -> &'static str {
+        match self {
+            Self::Blocker => "←",
+            Self::Dependent => "→",
+        }
+    }
+}
 
 #[derive(Debug)]
 struct DetailContentLayout {
@@ -28,6 +47,7 @@ struct DetailContentLayout {
 
 #[derive(Debug)]
 struct DetailContentRenderModel {
+    sticky_lines: Vec<Line<'static>>,
     lines: Vec<Line<'static>>,
     content_height: usize,
     scrollbar_position: usize,
@@ -99,9 +119,16 @@ pub(crate) fn detail_scroll_cap(
 ) -> u16 {
     let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
     let model = build_detail_content_model(item, layout.content_area, 0, None);
-    model
-        .content_height
-        .saturating_sub(layout.content_area.height as usize) as u16
+    let sticky_height = model
+        .sticky_lines
+        .len()
+        .min(layout.content_area.height as usize);
+    model.content_height.saturating_sub(
+        layout
+            .content_area
+            .height
+            .saturating_sub(sticky_height as u16) as usize,
+    ) as u16
 }
 
 fn detail_content_margin() -> Margin {
@@ -117,17 +144,20 @@ fn build_detail_content_model(
     scroll: u16,
     inline_title_editor: Option<&TextInputView>,
 ) -> DetailContentRenderModel {
-    let lines = detail_content_lines(item, area.width as usize, inline_title_editor);
-    let content_height = lines.len().max(1);
-    let visible = area.height as usize;
+    let sticky_lines = detail_header_options(item, area.width as usize, inline_title_editor);
+    let body_lines = detail_body_lines(item, area.width as usize);
+    let content_height = body_lines.len().max(1);
+    let sticky_height = sticky_lines.len().min(area.height as usize);
+    let visible = (area.height as usize).saturating_sub(sticky_height);
     let start = clamp_scroll_start(scroll, content_height, visible.max(1));
-    let lines = lines.into_iter().skip(start).collect();
+    let lines = body_lines.into_iter().skip(start).collect();
     let scrollbar_position = if content_height > visible {
         scrollbar_thumb_position(start, content_height, visible.max(1))
     } else {
         0
     };
     DetailContentRenderModel {
+        sticky_lines,
         lines,
         content_height,
         scrollbar_position,
@@ -140,34 +170,51 @@ fn render_detail_content_from_model(
     model: &DetailContentRenderModel,
 ) {
     let visible = area.height as usize;
+    let sticky_height = model.sticky_lines.len().min(visible);
+    let [sticky_area, body_area] = Layout::vertical([
+        Constraint::Length(sticky_height as u16),
+        Constraint::Fill(1),
+    ])
+    .areas(area);
+    frame.render_widget(
+        Paragraph::new(Text::from(model.sticky_lines.clone())).style(Style::new().fg(FG).bg(BG)),
+        sticky_area,
+    );
     frame.render_widget(
         Paragraph::new(Text::from(model.lines.clone())).style(Style::new().fg(FG).bg(BG)),
-        area,
+        body_area,
     );
-    if model.content_height > visible {
+    let body_visible = body_area.height as usize;
+    if model.content_height > body_visible {
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .style(Style::new().fg(FG_DIM).bg(BG))
                 .thumb_style(Style::new().fg(FG_MUTED)),
-            area,
+            body_area,
             &mut ScrollbarState::new(model.content_height)
                 .position(model.scrollbar_position)
-                .viewport_content_length(visible),
+                .viewport_content_length(body_visible.max(1)),
         );
     }
 }
 
+#[cfg(test)]
 fn detail_content_lines(
     item: &TaskListItem,
     width: usize,
     inline_title_editor: Option<&TextInputView>,
 ) -> Vec<Line<'static>> {
     let mut lines = detail_header_options(item, width, inline_title_editor);
-    lines.extend(quoted_block_lines(
+    lines.extend(detail_body_lines(item, width));
+    lines
+}
+
+fn detail_body_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
+    let mut lines = quoted_block_lines(
         &description_or_placeholder(&item.task.description),
         width,
         Style::new().fg(FG_MUTED),
-    ));
+    );
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
         Span::styled(
@@ -190,26 +237,61 @@ fn detail_content_lines(
             lines.extend(quoted_block_lines(&note.body, width, Style::new().fg(FG)));
         }
     }
-    lines.extend(detail_dependency_lines(item));
+    lines.extend(detail_dependency_lines(item, width));
     lines
 }
 
-fn detail_dependency_lines(item: &TaskListItem) -> Vec<Line<'static>> {
+fn detail_dependency_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
     if item.depends_on.is_empty() && item.blocks.is_empty() {
         return Vec::new();
     }
+
     let mut lines = vec![Line::from("")];
+
     if !item.depends_on.is_empty() {
-        lines.push(dependency_heading("BLOCKED BY", &item.depends_on));
-        lines.extend(item.depends_on.iter().map(dependency_item_line));
+        lines.push(dependency_heading("WHY BLOCKED", &item.depends_on));
+        lines.extend(dependency_branch_lines(
+            &item.depends_on,
+            DependencyDirection::Blocker,
+            width,
+        ));
     }
+
     if !item.blocks.is_empty() {
-        if !lines.last().is_some_and(|line| line.to_string().is_empty()) {
-            lines.push(Line::from(""));
-        }
-        lines.push(dependency_heading("BLOCKS", &item.blocks));
-        lines.extend(item.blocks.iter().map(dependency_item_line));
+        lines.push(Line::from(""));
+        lines.push(dependency_heading("WHAT THIS UNLOCKS", &item.blocks));
+        lines.extend(dependency_branch_lines(
+            &item.blocks,
+            DependencyDirection::Dependent,
+            width,
+        ));
     }
+
+    lines
+}
+
+fn dependency_branch_lines(
+    links: &[crate::query::TaskDependencyLink],
+    direction: DependencyDirection,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let visible = links.len().min(DETAIL_DEPENDENCY_TREE_CAP);
+    let hidden = links.len().saturating_sub(visible);
+    let rendered_len = visible + usize::from(hidden > 0);
+    let mut lines = Vec::with_capacity(rendered_len);
+
+    for (index, link) in links.iter().take(visible).enumerate() {
+        let is_last = index + 1 == rendered_len;
+        lines.extend(dependency_tree_item_lines(link, direction, is_last, width));
+    }
+
+    if hidden > 0 {
+        lines.push(Line::from(vec![
+            Span::styled("└─ ", Style::new().fg(BORDER)),
+            Span::styled(format!("+{hidden} more"), Style::new().fg(FG_MUTED)),
+        ]));
+    }
+
     lines
 }
 
@@ -227,20 +309,80 @@ fn dependency_heading(
     ])
 }
 
-fn dependency_item_line(link: &crate::query::TaskDependencyLink) -> Line<'static> {
-    Line::from(vec![
-        Span::styled("  ", Style::new().fg(FG_DIM)),
+fn dependency_tree_item_lines(
+    link: &crate::query::TaskDependencyLink,
+    direction: DependencyDirection,
+    is_last: bool,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let tree_glyph = if is_last { "└─ " } else { "├─ " };
+    let prefix = vec![
+        Span::styled(tree_glyph, Style::new().fg(BORDER)),
+        Span::styled(direction.marker(), Style::new().fg(FG_DIM)),
+        Span::styled(" ", Style::new().fg(FG_DIM)),
         Span::styled(link.display_ref.clone(), Style::new().fg(ACCENT)),
         Span::styled("  ", Style::new().fg(FG_DIM)),
-        Span::styled(link.title.clone(), Style::new().fg(FG)),
-        Span::styled("  ", Style::new().fg(FG_DIM)),
-        status_span(&link.status),
+    ];
+    dependency_node_lines(prefix, &link.title, &link.status, &link.priority, width)
+}
+
+fn dependency_node_lines(
+    mut spans: Vec<Span<'static>>,
+    title: &str,
+    status: &str,
+    priority: &str,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let title_width = dependency_title_width(&spans, status, priority, width);
+    if title_width > 0 {
+        spans.push(Span::styled(
+            truncate_width(title, title_width),
+            Style::new().fg(FG),
+        ));
+        spans.push(Span::styled("  ", Style::new().fg(FG_DIM)));
+        spans.push(status_span(status));
+        spans.push(Span::styled("  ", Style::new().fg(FG_DIM)));
+        spans.push(Span::styled(
+            priority_short(priority),
+            theme::priority_style(priority).add_modifier(Modifier::BOLD),
+        ));
+        return vec![Line::from(spans)];
+    }
+
+    let continuation_prefix = dependency_continuation_prefix(&spans);
+    let mut lines = vec![Line::from(spans)];
+    lines.push(Line::from(vec![
+        Span::styled(continuation_prefix.clone(), Style::new().fg(BORDER)),
+        Span::styled(
+            truncate_width(title, width.saturating_sub(continuation_prefix.width())),
+            Style::new().fg(FG),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(continuation_prefix.clone(), Style::new().fg(BORDER)),
+        status_span(status),
         Span::styled("  ", Style::new().fg(FG_DIM)),
         Span::styled(
-            priority_short(&link.priority),
-            theme::priority_style(&link.priority).add_modifier(Modifier::BOLD),
+            priority_short(priority),
+            theme::priority_style(priority).add_modifier(Modifier::BOLD),
         ),
-    ])
+    ]));
+    lines
+}
+
+fn dependency_continuation_prefix(prefix: &[Span<'static>]) -> String {
+    " ".repeat(prefix.iter().map(Span::width).sum::<usize>().min(4))
+}
+
+fn dependency_title_width(
+    prefix: &[Span<'static>],
+    status: &str,
+    priority: &str,
+    width: usize,
+) -> usize {
+    let prefix_width: usize = prefix.iter().map(Span::width).sum();
+    let trailing_width = 4 + status_span(status).width() + priority_short(priority).width();
+    width.saturating_sub(prefix_width + trailing_width)
 }
 
 fn detail_header_options(
@@ -464,18 +606,137 @@ mod tests {
     }
 
     #[test]
-    fn detail_content_includes_dependencies() {
+    fn detail_content_renders_dependency_tree() {
         let item = detail_test_item();
+        let rendered = detail_content_lines(&item, 80, None)
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("WHY BLOCKED open=1 total=1"));
+        assert!(rendered.contains("└─ ← APP-7KQ1"));
+        assert!(rendered.contains("Ship auth service"));
+        assert!(rendered.contains("WHAT THIS UNLOCKS open=1 total=1"));
+        assert!(rendered.contains("└─ → APP-7KQ2"));
+        assert!(rendered.contains("Write rollout notes"));
+    }
+
+    #[test]
+    fn detail_dependency_tree_caps_long_blockers() {
+        let mut item = detail_test_item();
+        item.depends_on = (0..5)
+            .map(|index| crate::query::TaskDependencyLink {
+                display_ref: format!("APP-B{index}"),
+                title: format!("blocker {index}"),
+                status: "todo".to_string(),
+                priority: "medium".to_string(),
+                unresolved: true,
+            })
+            .collect();
+        item.blocks.clear();
+
+        let rendered = detail_content_lines(&item, 80, None)
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("├─ ← APP-B0"));
+        assert!(rendered.contains("├─ ← APP-B2"));
+        assert!(rendered.contains("└─ +2 more"));
+        assert!(!rendered.contains("APP-B3"));
+    }
+
+    #[test]
+    fn detail_dependency_tree_caps_long_dependents() {
+        let mut item = detail_test_item();
+        item.blocks = (0..5)
+            .map(|index| crate::query::TaskDependencyLink {
+                display_ref: format!("APP-D{index}"),
+                title: format!("dependent {index}"),
+                status: "inbox".to_string(),
+                priority: "low".to_string(),
+                unresolved: true,
+            })
+            .collect();
+        item.depends_on.clear();
+
+        let rendered = detail_content_lines(&item, 80, None)
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("├─ → APP-D0"));
+        assert!(rendered.contains("├─ → APP-D2"));
+        assert!(rendered.contains("└─ +2 more"));
+        assert!(!rendered.contains("APP-D3"));
+    }
+
+    #[test]
+    fn detail_dependency_tree_truncates_titles_in_narrow_width() {
+        let mut item = detail_test_item();
+        item.depends_on[0].title =
+            "A very long title that should fit the dependency row".to_string();
+
+        let rendered = detail_content_lines(&item, 40, None);
+
+        let blocker_line = rendered
+            .iter()
+            .find(|line| line.to_string().contains("APP-7KQ1"))
+            .expect("blocker line rendered");
+
+        assert!(
+            blocker_line.width() <= 40,
+            "line width {} exceeded 40",
+            blocker_line.width()
+        );
+        assert!(blocker_line.to_string().contains('…'));
+    }
+
+    #[test]
+    fn detail_dependency_tree_stacks_when_narrow() {
+        let mut item = detail_test_item();
+        item.depends_on[0].title =
+            "A very long title that should stack in the dependency tree".to_string();
+
+        let rendered = detail_dependency_lines(&item, 20);
+        let rendered_text = rendered
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered_text.contains("└─ ← APP-7KQ1"));
+        assert!(rendered_text.contains("A very long tit…"));
+        assert!(rendered_text.contains("□ todo  ● high"));
+        for line in rendered.into_iter().filter(|line| {
+            let text = line.to_string();
+            text.contains("APP-") || text.contains("todo")
+        }) {
+            assert!(
+                line.width() <= 20,
+                "line width {} exceeded 20: {line:?}",
+                line.width()
+            );
+        }
+    }
+
+    #[test]
+    fn detail_dependency_tree_is_omitted_without_links() {
+        let mut item = detail_test_item();
+        item.depends_on.clear();
+        item.blocks.clear();
+
         let rendered = detail_content_lines(&item, 60, None)
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(rendered.contains("BLOCKED BY open=1 total=1"));
-        assert!(rendered.contains("APP-7KQ1  Ship auth service"));
-        assert!(rendered.contains("BLOCKS open=1 total=1"));
-        assert!(rendered.contains("APP-7KQ2  Write rollout notes"));
+        assert!(!rendered.contains("WHY BLOCKED"));
+        assert!(!rendered.contains("WHAT THIS UNLOCKS"));
     }
 
     #[test]
@@ -606,10 +867,12 @@ mod tests {
 
         let model = build_detail_content_model(&item, Rect::new(0, 0, 60, 5), 4, None);
 
+        assert_eq!(model.content_height, detail_body_lines(&item, 60).len());
         assert_eq!(
-            model.content_height,
-            detail_content_lines(&item, 60, None).len()
+            model.sticky_lines.len(),
+            detail_header_options(&item, 60, None).len()
         );
+        assert_eq!(model.sticky_lines[0].to_string(), "Fix token refresh race");
         assert_eq!(model.lines.len(), model.content_height.saturating_sub(4));
         assert!(model.scrollbar_position > 0);
     }
