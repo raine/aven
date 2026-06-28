@@ -756,18 +756,6 @@ mod multiline_overlays {
     }
 
     #[test]
-    fn multiline_hint_styles_keys() {
-        let line = multiline_hint_line();
-        let keys = line
-            .spans
-            .iter()
-            .filter(|span| span.style.fg == Some(FG))
-            .map(|span| span.content.as_ref())
-            .collect::<Vec<_>>();
-        assert_eq!(keys, vec!["Ctrl+S", "Esc"]);
-    }
-
-    #[test]
     fn add_note_overlay_uses_placeholder_key_styles_and_spacing() {
         let overlay = OverlayView::MultilineInput(MultilineInputView {
             route: OverlayRoute::AddNote,

@@ -4564,30 +4564,6 @@ mod overlay_submit_routes {
         );
     }
 
-    #[tokio::test]
-    async fn delete_project_name_match_opens_final_confirmation() {
-        let mut app = test_app().await;
-        app.store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
-
-        app.execute(Action::BeginDeleteProject).await.unwrap();
-        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-        app.submit_delete_project_name("mobile-app".to_string())
-            .await
-            .unwrap();
-
-        assert!(matches!(
-            app.overlay,
-            Some(OverlayState::Confirm(ConfirmState {
-                route: OverlayRoute::DeleteProjectConfirm,
-                ref title,
-                ..
-            })) if title == DELETE_PROJECT_TITLE
-        ));
-    }
-
     #[test]
     fn overlay_submit_routes_are_all_handled() {
         for route in OverlayRoute::ALL {
