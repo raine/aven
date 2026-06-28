@@ -21,6 +21,11 @@ const STATUS_WEIGHT: i64 = 160;
 const PRIORITY_WEIGHT: i64 = 150;
 const DESCRIPTION_WEIGHT: i64 = 100;
 const NOTE_WEIGHT: i64 = 80;
+const FIELD_MATCH_BONUS: i64 = 35_000;
+const EXTRA_FIELD_BONUS: i64 = 18_000;
+const FIELD_SCORE_DIVISOR: i64 = 5;
+const PRIORITY_BOOST_CAP: i64 = 18_000;
+const RECENCY_BOOST_CAP: i64 = 12_000;
 
 #[derive(Debug, Clone)]
 pub(crate) struct TaskSearchQuery {
@@ -86,6 +91,12 @@ struct ScoredDocument {
     snippet: Option<String>,
 }
 
+struct FieldEvidence {
+    score: i64,
+    matched_field: SearchMatchedField,
+    snippet: Option<String>,
+}
+
 pub(crate) async fn search_task_items(
     conn: &mut SqliteConnection,
     query: TaskSearchQuery,
@@ -129,6 +140,7 @@ pub(crate) async fn search_task_item_set_in_workspace(
     let documents =
         load_candidate_search_documents(conn, workspace_id, load_deleted, &parsed).await?;
 
+    let now_seconds = crate::queue::now_seconds();
     let mut scored = documents
         .into_iter()
         .filter_map(|document| {
@@ -137,7 +149,7 @@ pub(crate) async fn search_task_item_set_in_workspace(
                 .ref_query
                 .as_ref()
                 .is_some_and(|rq| ref_query_matches_display_or_full_id(&document, rq));
-            let scored = score_document(document, &parsed)?;
+            let scored = score_document(document, &parsed, now_seconds)?;
             if is_deleted
                 && !query.include_deleted
                 && (scored.matched_field != SearchMatchedField::Ref || !ref_strong_enough)
@@ -163,7 +175,6 @@ pub(crate) async fn search_task_item_set_in_workspace(
         .collect::<Vec<_>>();
     let task_ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
     let mut enrichment = load_task_enrichment(conn, workspace_id, &task_ids).await?;
-    let now_seconds = crate::queue::now_seconds();
     let items = scored
         .into_iter()
         .map(|scored| {
@@ -349,16 +360,22 @@ fn workspace_scoped_fts_match(workspace_id: &str, fts_match: &str) -> String {
 fn score_document(
     document: SearchDocument,
     query: &parser::ParsedTaskSearchQuery,
+    now_seconds: i64,
 ) -> Option<ScoredDocument> {
     let project_text = format!(
         "{} {} {}",
         document.task.project_key, document.project_name, document.task.project_prefix
     );
-    let labels_text = &document.labels_text;
-    let notes_text = &document.notes_text;
-    let mut best = query.ref_query.as_ref().and_then(|ref_query| {
-        score_ref_lane(&document, ref_query).map(|score| (score, SearchMatchedField::Ref, None))
-    });
+    let mut evidence = Vec::new();
+    if let Some(ref_query) = &query.ref_query
+        && let Some(score) = score_ref_lane(&document, ref_query)
+    {
+        evidence.push(FieldEvidence {
+            score,
+            matched_field: SearchMatchedField::Ref,
+            snippet: None,
+        });
+    }
     for (field, text, weight) in [
         (
             SearchMatchedField::Title,
@@ -367,7 +384,7 @@ fn score_document(
         ),
         (
             SearchMatchedField::Label,
-            labels_text.as_str(),
+            document.labels_text.as_str(),
             LABEL_WEIGHT,
         ),
         (
@@ -390,9 +407,13 @@ fn score_document(
             document.task.description.as_str(),
             DESCRIPTION_WEIGHT,
         ),
-        (SearchMatchedField::Note, notes_text.as_str(), NOTE_WEIGHT),
+        (
+            SearchMatchedField::Note,
+            document.notes_text.as_str(),
+            NOTE_WEIGHT,
+        ),
     ] {
-        if let Some((score, span)) = score_text_lane(text, query.trimmed.as_str()) {
+        if let Some((score, span)) = score_text_lane(text, query) {
             let snippet = if matches!(
                 field,
                 SearchMatchedField::Description | SearchMatchedField::Note
@@ -401,24 +422,69 @@ fn score_document(
             } else {
                 None
             };
-            let candidate = (score * weight, field, snippet);
-            if best
-                .as_ref()
-                .is_none_or(|(best_score, _, _)| candidate.0 > *best_score)
-            {
-                best = Some(candidate);
-            }
+            evidence.push(FieldEvidence {
+                score: score * weight,
+                matched_field: field,
+                snippet,
+            });
         }
     }
-    best.map(|(score, matched_field, snippet)| ScoredDocument {
+    if evidence.is_empty() {
+        return None;
+    }
+    let best_index = evidence
+        .iter()
+        .enumerate()
+        .max_by(|(_, left), (_, right)| left.score.cmp(&right.score))
+        .map(|(index, _)| index)
+        .unwrap();
+    let best = evidence.swap_remove(best_index);
+    let extra_score = evidence
+        .iter()
+        .map(|item| item.score / FIELD_SCORE_DIVISOR)
+        .sum::<i64>();
+    let field_bonus = FIELD_MATCH_BONUS + evidence.len() as i64 * EXTRA_FIELD_BONUS;
+    let score = best.score
+        + extra_score
+        + field_bonus
+        + priority_boost(document.task.priority.as_str())
+        + recency_boost(document.task.updated_at.as_str(), now_seconds);
+    Some(ScoredDocument {
         document,
         score,
-        matched_field,
-        snippet,
+        matched_field: best.matched_field,
+        snippet: best.snippet,
     })
 }
 
-fn score_text_lane(text: &str, query: &str) -> Option<(i64, std::ops::Range<usize>)> {
+fn priority_boost(priority: &str) -> i64 {
+    match priority {
+        "urgent" => PRIORITY_BOOST_CAP,
+        "high" => 12_000,
+        "medium" => 6_000,
+        "low" => 2_000,
+        _ => 0,
+    }
+}
+
+fn recency_boost(updated_at: &str, now_seconds: i64) -> i64 {
+    let Some(updated_seconds) = crate::queue::unix_seconds(updated_at) else {
+        return 0;
+    };
+    let age_days = now_seconds.saturating_sub(updated_seconds).max(0) / 86_400;
+    let decay = age_days.saturating_mul(RECENCY_BOOST_CAP / 30);
+    RECENCY_BOOST_CAP.saturating_sub(decay)
+}
+
+fn score_text_lane(
+    text: &str,
+    query: &parser::ParsedTaskSearchQuery,
+) -> Option<(i64, std::ops::Range<usize>)> {
+    score_contiguous_text_lane(text, query.trimmed.as_str())
+        .or_else(|| score_term_coverage_lane(text, query))
+}
+
+fn score_contiguous_text_lane(text: &str, query: &str) -> Option<(i64, std::ops::Range<usize>)> {
     let normalized_text = text.to_ascii_lowercase();
     let raw_query = query.trim();
     let normalized_query = raw_query.to_ascii_lowercase();
@@ -448,6 +514,56 @@ fn score_text_lane(text: &str, query: &str) -> Option<(i64, std::ops::Range<usiz
         let spread = span.end.saturating_sub(span.start + query.len()) as i64;
         (700 + boundary_bonus - spread * 4 - span.start as i64, span)
     })
+}
+
+fn score_term_coverage_lane(
+    text: &str,
+    query: &parser::ParsedTaskSearchQuery,
+) -> Option<(i64, std::ops::Range<usize>)> {
+    let terms = search_terms(query);
+    let normalized_text = text.to_ascii_lowercase();
+    if terms.len() < 2 || normalized_text.is_empty() {
+        return None;
+    }
+
+    let mut matched = 0_i64;
+    let mut start = usize::MAX;
+    let mut end = 0_usize;
+    for term in terms {
+        let normalized_term = term.to_ascii_lowercase();
+        if normalized_term.is_empty() {
+            continue;
+        }
+        if let Some(index) = normalized_text.find(&normalized_term) {
+            matched += 1;
+            start = start.min(index);
+            end = end.max(index + normalized_term.len());
+        }
+    }
+    if matched == 0 {
+        return None;
+    }
+
+    let boundary_bonus = if start == 0 || is_boundary(normalized_text.as_bytes()[start - 1]) {
+        120
+    } else {
+        0
+    };
+    let spread = end.saturating_sub(start) as i64;
+    Some((
+        450 + matched * 160 + boundary_bonus - spread * 3 - start as i64,
+        start..end,
+    ))
+}
+
+fn search_terms(query: &parser::ParsedTaskSearchQuery) -> Vec<&str> {
+    query
+        .phrases
+        .iter()
+        .map(String::as_str)
+        .chain(query.tokens.iter().map(String::as_str))
+        .chain(query.active_prefix.as_deref())
+        .collect()
 }
 
 fn score_ref_lane(
@@ -578,9 +694,9 @@ mod tests {
 
     #[test]
     fn score_text_lane_does_not_normalize_ref_glyphs() {
-        assert_eq!(score_text_lane("looking glass", "100king"), None);
-        assert_eq!(score_text_lane("looking glass", "100k1ng"), None);
-        assert!(score_text_lane("looking glass", "glass").is_some());
-        assert!(score_text_lane("looking glass", "looking").is_some());
+        assert_eq!(score_contiguous_text_lane("looking glass", "100king"), None);
+        assert_eq!(score_contiguous_text_lane("looking glass", "100k1ng"), None);
+        assert!(score_contiguous_text_lane("looking glass", "glass").is_some());
+        assert!(score_contiguous_text_lane("looking glass", "looking").is_some());
     }
 }

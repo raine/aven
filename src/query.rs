@@ -1515,4 +1515,172 @@ mod tests {
             SearchMatchedField::Title
         );
     }
+
+    #[tokio::test]
+    async fn task_search_reranks_title_ref_label_note_and_metadata_evidence() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+        insert_test_task(
+            &mut conn,
+            "7KQ9A1X4MV2P8D6R",
+            "Orchard release",
+            "todo",
+            "medium",
+            "001",
+        )
+        .await;
+        insert_test_task(
+            &mut conn,
+            "8KQ9A1X4MV2P8D6R",
+            "Label and note",
+            "todo",
+            "none",
+            "002",
+        )
+        .await;
+        insert_test_task(
+            &mut conn,
+            "9KQ9A1X4MV2P8D6R",
+            "Project metadata",
+            "todo",
+            "urgent",
+            "003",
+        )
+        .await;
+        insert_test_task(
+            &mut conn,
+            "AKQ9A1X4MV2P8D6R",
+            "Note only",
+            "todo",
+            "none",
+            "004",
+        )
+        .await;
+        insert_test_label(&mut conn, "8KQ9A1X4MV2P8D6R", "orchard").await;
+        sqlx::query(
+            "INSERT INTO notes(id, task_id, body, created_at, change_id)
+             VALUES ('note-rerank-a', '8KQ9A1X4MV2P8D6R', 'orchard detail', '002', 'change-rerank-a'),
+                    ('note-rerank-b', 'AKQ9A1X4MV2P8D6R', 'orchard detail', '004', 'change-rerank-b')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO projects(id, key, name, prefix, created_at, updated_at)
+             VALUES ('PROJECT000000002', 'meta', 'Orchard Metadata', 'MET', 't', 't')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE tasks SET project_id = 'PROJECT000000002' WHERE id = '9KQ9A1X4MV2P8D6R'",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let items = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "orchard".to_string(),
+                include_deleted: true,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+
+        let position = |title: &str| {
+            items
+                .iter()
+                .position(|item| item.item.task.title == title)
+                .unwrap()
+        };
+        let title = position("Orchard release");
+        let label = position("Label and note");
+        let project = position("Project metadata");
+        let note = position("Note only");
+
+        assert!(title < label);
+        assert!(label < project);
+        assert!(project < note);
+        assert_eq!(items[title].matched_field, SearchMatchedField::Title);
+        assert_eq!(items[label].matched_field, SearchMatchedField::Label);
+        assert_eq!(items[project].matched_field, SearchMatchedField::Project);
+        assert_eq!(items[note].matched_field, SearchMatchedField::Note);
+
+        let by_ref = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "7KQ9".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(by_ref[0].item.task.id, "7KQ9A1X4MV2P8D6R");
+        assert_eq!(by_ref[0].matched_field, SearchMatchedField::Ref);
+    }
+
+    #[tokio::test]
+    async fn task_search_reranks_multi_token_proximity_and_field_count() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+        insert_test_task(
+            &mut conn,
+            "7KQ9A1X4MV2P8D6R",
+            "Auth flow",
+            "todo",
+            "none",
+            "001",
+        )
+        .await;
+        insert_test_task(
+            &mut conn,
+            "8KQ9A1X4MV2P8D6R",
+            "Metadata bridge",
+            "todo",
+            "none",
+            "002",
+        )
+        .await;
+        insert_test_task(
+            &mut conn,
+            "9KQ9A1X4MV2P8D6R",
+            "Note spread",
+            "todo",
+            "urgent",
+            "003",
+        )
+        .await;
+        insert_test_label(&mut conn, "8KQ9A1X4MV2P8D6R", "auth").await;
+        insert_test_label(&mut conn, "8KQ9A1X4MV2P8D6R", "flow").await;
+        sqlx::query(
+            "INSERT INTO notes(id, task_id, body, created_at, change_id)
+             VALUES ('note-token-a', '9KQ9A1X4MV2P8D6R', 'auth text with several unrelated words before flow', '003', 'change-token-a')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let items = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "auth flow".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            listed_titles_from_search(&items),
+            ["Auth flow", "Metadata bridge", "Note spread"]
+        );
+        assert_eq!(items[0].matched_field, SearchMatchedField::Title);
+        assert_eq!(items[1].matched_field, SearchMatchedField::Label);
+        assert_eq!(items[2].matched_field, SearchMatchedField::Note);
+    }
 }
