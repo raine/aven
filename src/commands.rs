@@ -15,7 +15,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};
 
-use doctor::{DoctorRenderer, DoctorReport, sync_server_url_is_valid, workspace_counts};
+use crate::sync::sync_server_url_is_valid;
+use doctor::{DoctorRenderer, DoctorReport, workspace_counts};
 
 pub(crate) use self::config::cmd_config;
 pub(crate) use self::conflicts::cmd_conflict;

@@ -209,6 +209,62 @@ fn valid_create_project_change(change_id: &str, local_seq: i64) -> serde_json::V
     })
 }
 
+fn sync_pull_request(client_id: &str, after: usize) -> Value {
+    json!({
+        "protocol_version": 5,
+        "client_id": client_id,
+        "after": after,
+        "pull_limit": MAX_PULL_BATCH,
+        "changes": [],
+    })
+}
+
+fn note_delete_change(payload: Value) -> Value {
+    let mut change = task_change("note_delete", payload);
+    change
+        .as_object_mut()
+        .expect("change object")
+        .insert("field".to_string(), json!("notes"));
+    change
+}
+
+fn gzip_encode(data: &str) -> Vec<u8> {
+    use std::io::Write;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(data.as_bytes()).expect("write gzip body");
+    encoder.finish().expect("finish gzip body")
+}
+
+fn gzip_decode(data: &[u8]) -> String {
+    use std::io::Read;
+    let mut decoder = flate2::read::GzDecoder::new(data);
+    let mut result = String::new();
+    decoder.read_to_string(&mut result).expect("decode gzip");
+    result
+}
+
+fn post_sync_raw(host: &str, body: &[u8]) -> Vec<u8> {
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpStream;
+    let mut stream = TcpStream::connect(host).expect("connect sync server");
+    write!(
+        stream,
+        "POST /sync HTTP/1.0\r\n\
+         Content-Type: application/json\r\n\
+         Content-Encoding: gzip\r\n\
+         Accept-Encoding: gzip\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\
+         \r\n",
+        body.len()
+    )
+    .expect("write sync request head");
+    stream.write_all(body).expect("write sync request body");
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).expect("read sync response");
+    raw
+}
+
 fn project_change_json(change_id: &str, key: &str) -> serde_json::Value {
     serde_json::json!({
         "change_id": change_id,
@@ -1548,14 +1604,7 @@ fn sync_server_returns_bounded_pull_pages() {
 
     let (status, body) = post_sync_json(
         &server.url,
-        &json!({
-            "protocol_version": 5,
-            "client_id": "audit-client",
-            "after": 0,
-            "pull_limit": MAX_PULL_BATCH,
-            "changes": [],
-        })
-        .to_string(),
+        &sync_pull_request("audit-client", 0).to_string(),
     );
     assert_eq!(status, 200);
     let body: Value = serde_json::from_str(&body).expect("sync response json");
@@ -1568,14 +1617,7 @@ fn sync_server_returns_bounded_pull_pages() {
 
     let (status, body) = post_sync_json(
         &server.url,
-        &json!({
-            "protocol_version": 5,
-            "client_id": "audit-client",
-            "after": MAX_PULL_BATCH,
-            "pull_limit": MAX_PULL_BATCH,
-            "changes": [],
-        })
-        .to_string(),
+        &sync_pull_request("audit-client", MAX_PULL_BATCH).to_string(),
     );
     assert_eq!(status, 200);
     let body: Value = serde_json::from_str(&body).expect("sync response json");
@@ -2462,84 +2504,66 @@ async fn sync_server_rejects_malformed_delete_note_payloads() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
 
-    let mut missing_note_id = task_change(
-        "note_delete",
-        json!({
+    rejected_sync(
+        &server,
+        note_delete_change(json!({
             "workspace_id": "0000000000000000",
             "workspace_key": "default",
             "deleted_at": "2026-01-01T00:00:00Z",
-        }),
-    );
-    missing_note_id
-        .as_object_mut()
-        .expect("change object")
-        .insert("field".to_string(), json!("notes"));
-    rejected_sync(&server, missing_note_id, "note_id").await;
+        })),
+        "note_id",
+    )
+    .await;
 
-    let mut bad_note_id = task_change(
-        "note_delete",
-        json!({
+    rejected_sync(
+        &server,
+        note_delete_change(json!({
             "workspace_id": "0000000000000000",
             "workspace_key": "default",
             "note_id": "not-a-valid-id",
             "deleted_at": "2026-01-01T00:00:00Z",
-        }),
-    );
-    bad_note_id
-        .as_object_mut()
-        .expect("change object")
-        .insert("field".to_string(), json!("notes"));
-    rejected_sync(&server, bad_note_id, "note_id").await;
+        })),
+        "note_id",
+    )
+    .await;
 
-    let mut missing_workspace = task_change(
-        "note_delete",
-        json!({
+    rejected_sync(
+        &server,
+        note_delete_change(json!({
             "note_id": "0123456789ABCDEF",
             "deleted_at": "2026-01-01T00:00:00Z",
-        }),
-    );
-    missing_workspace
-        .as_object_mut()
-        .expect("change object")
-        .insert("field".to_string(), json!("notes"));
-    rejected_sync(&server, missing_workspace, "workspace_id").await;
+        })),
+        "workspace_id",
+    )
+    .await;
 
-    let mut wrong_field = task_change(
-        "note_delete",
-        json!({
-            "workspace_id": "0000000000000000",
-            "workspace_key": "default",
-            "note_id": "0123456789ABCDEF",
-            "deleted_at": "2026-01-01T00:00:00Z",
-        }),
-    );
+    let mut wrong_field = note_delete_change(json!({
+        "workspace_id": "0000000000000000",
+        "workspace_key": "default",
+        "note_id": "0123456789ABCDEF",
+        "deleted_at": "2026-01-01T00:00:00Z",
+    }));
     wrong_field
         .as_object_mut()
         .expect("change object")
         .insert("field".to_string(), json!("description"));
     rejected_sync(&server, wrong_field, "field=notes").await;
 
-    let mut bad_deleted_at = task_change(
-        "note_delete",
-        json!({
+    rejected_sync(
+        &server,
+        note_delete_change(json!({
             "workspace_id": "0000000000000000",
             "workspace_key": "default",
             "note_id": "0123456789ABCDEF",
             "deleted_at": "not-a-timestamp",
-        }),
-    );
-    bad_deleted_at
-        .as_object_mut()
-        .expect("change object")
-        .insert("field".to_string(), json!("notes"));
-    rejected_sync(&server, bad_deleted_at, "deleted_at").await;
+        })),
+        "deleted_at",
+    )
+    .await;
 }
 
 #[test]
 fn sync_server_accepts_compressed_requests_and_sends_compressed_responses() {
-    use std::io::{Read as _, Write as _};
-    use std::net::TcpStream;
-
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let body = json!({
@@ -2550,33 +2574,13 @@ fn sync_server_accepts_compressed_requests_and_sends_compressed_responses() {
         "changes": []
     })
     .to_string();
-    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-    encoder.write_all(body.as_bytes()).expect("write gzip body");
-    let compressed_body = encoder.finish().expect("finish gzip body");
+    let compressed_body = gzip_encode(&body);
 
     let host = server
         .url
         .strip_prefix("http://")
         .expect("loopback http url");
-    let mut stream = TcpStream::connect(host).expect("connect sync server");
-    write!(
-        stream,
-        "POST /sync HTTP/1.0\r\n\
-         Content-Type: application/json\r\n\
-         Content-Encoding: gzip\r\n\
-         Accept-Encoding: gzip\r\n\
-         Content-Length: {}\r\n\
-         Connection: close\r\n\
-         \r\n",
-        compressed_body.len()
-    )
-    .expect("write sync request head");
-    stream
-        .write_all(&compressed_body)
-        .expect("write sync request body");
-
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).expect("read sync response");
+    let raw = post_sync_raw(host, &compressed_body);
     let split = raw
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
@@ -2588,11 +2592,7 @@ fn sync_server_accepts_compressed_requests_and_sends_compressed_responses() {
         "missing content-encoding: gzip in head:\n{head}"
     );
 
-    let mut decoder = flate2::read::GzDecoder::new(&raw[(split + 4)..]);
-    let mut response_body = String::new();
-    decoder
-        .read_to_string(&mut response_body)
-        .expect("decode gzip response");
+    let response_body = gzip_decode(&raw[(split + 4)..]);
     let response: Value = serde_json::from_str(&response_body).expect("sync response json");
     assert_eq!(response["protocol_version"], json!(5));
     assert_eq!(response["cursor"], json!(0));
@@ -2604,9 +2604,6 @@ fn sync_server_accepts_compressed_requests_and_sends_compressed_responses() {
 
 #[test]
 fn sync_server_rejects_unauthorized_compressed_request_before_body_parse() {
-    use std::io::{Read as _, Write as _};
-    use std::net::TcpStream;
-
     let server_env = TestEnv::new();
     server_env.write_config(
         r#"
@@ -2616,31 +2613,11 @@ sync:
     );
     let server = TestServer::start_configured(&server_env, "server.sqlite");
 
-    let compressed_body = b"not gzip data";
-
     let host = server
         .url
         .strip_prefix("http://")
         .expect("loopback http url");
-    let mut stream = TcpStream::connect(host).expect("connect sync server");
-    write!(
-        stream,
-        "POST /sync HTTP/1.0\r\n\
-         Content-Type: application/json\r\n\
-         Content-Encoding: gzip\r\n\
-         Accept-Encoding: gzip\r\n\
-         Content-Length: {}\r\n\
-         Connection: close\r\n\
-         \r\n",
-        compressed_body.len()
-    )
-    .expect("write sync request head");
-    stream
-        .write_all(compressed_body)
-        .expect("write malformed gzip request body");
-
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).expect("read sync response");
+    let raw = post_sync_raw(host, b"not gzip data");
     let split = raw
         .windows(4)
         .position(|window| window == b"\r\n\r\n")

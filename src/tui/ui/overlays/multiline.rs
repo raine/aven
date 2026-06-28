@@ -127,34 +127,14 @@ fn render_add_task_free_text_input(
     placeholder: &'static str,
     hint_line: Line<'static>,
 ) {
-    let visible_rows = 8usize;
-    let content_rows = state.lines.len().min(visible_rows).max(1);
-    let height = (content_rows as u16).saturating_add(4).min(13);
-    let start = tail_viewport_start(state.row, visible_rows);
-    let mut lines = Vec::new();
-    for (row_index, line) in state
-        .lines
-        .iter()
-        .enumerate()
-        .skip(start)
-        .take(visible_rows)
-    {
-        lines.push(add_task_free_text_input_line(
+    render_tail_viewport_multiline(frame, state, 70, hint_line, |line, cursor| {
+        add_task_free_text_input_line(
             line,
-            if row_index == state.row {
-                Some(state.column)
-            } else {
-                None
-            },
+            cursor,
             line.is_empty() && state.lines.len() == 1,
             placeholder,
-        ));
-    }
-    lines.push(Line::from(""));
-    lines.push(hint_line);
-    Dialog::new(&state.title, 70, height)
-        .wrap()
-        .render_text(frame, Text::from(lines));
+        )
+    });
 }
 
 pub(in crate::tui::ui) fn description_editor_width(frame_width: u16) -> u16 {
@@ -276,6 +256,16 @@ pub(in crate::tui::ui) fn add_task_natural_hint_line() -> Line<'static> {
 }
 
 pub(in crate::tui::ui) fn render_add_note_input(frame: &mut Frame, state: &MultilineInputView) {
+    render_tail_viewport_multiline(frame, state, 60, multiline_hint_line(), add_note_input_line);
+}
+
+fn render_tail_viewport_multiline(
+    frame: &mut Frame,
+    state: &MultilineInputView,
+    width: u16,
+    hint_line: Line<'static>,
+    mut make_line: impl FnMut(&str, Option<usize>) -> Line<'static>,
+) {
     let visible_rows = 8usize;
     let content_rows = state.lines.len().min(visible_rows).max(1);
     let height = (content_rows as u16).saturating_add(4).min(13);
@@ -288,7 +278,7 @@ pub(in crate::tui::ui) fn render_add_note_input(frame: &mut Frame, state: &Multi
         .skip(start)
         .take(visible_rows)
     {
-        lines.push(add_note_input_line(
+        lines.push(make_line(
             line,
             if row_index == state.row {
                 Some(state.column)
@@ -298,8 +288,8 @@ pub(in crate::tui::ui) fn render_add_note_input(frame: &mut Frame, state: &Multi
         ));
     }
     lines.push(Line::from(""));
-    lines.push(multiline_hint_line());
-    Dialog::new(&state.title, 60, height)
+    lines.push(hint_line);
+    Dialog::new(&state.title, width, height)
         .wrap()
         .render_text(frame, Text::from(lines));
 }

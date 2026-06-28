@@ -7,6 +7,7 @@ use crate::operations::{
     init_config as init_config_operation, show_config as show_config_operation,
     show_config_paths as show_config_paths_operation,
 };
+use crate::sync::sync_server_url_is_valid;
 
 use super::TuiStore;
 use super::types::{SyncStatusCheck, TuiSyncStatus};
@@ -122,16 +123,4 @@ fn daemon_server_check(config: &app_config::AppConfig) -> Option<SyncStatusCheck
         None if config.sync.enabled => Some(SyncStatusCheck::new(false, "not configured")),
         None => None,
     }
-}
-
-fn sync_server_url_is_valid(server: &str) -> bool {
-    let Ok(url) = reqwest::Url::parse(server) else {
-        return false;
-    };
-    matches!(url.scheme(), "http" | "https")
-        && url.host_str().is_some()
-        && url.username().is_empty()
-        && url.password().is_none()
-        && url.query().is_none()
-        && url.fragment().is_none()
 }

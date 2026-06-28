@@ -8,6 +8,17 @@ use crate::ids::BASE32;
 use crate::task_fields::TaskField;
 
 pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 5;
+pub(crate) fn sync_server_url_is_valid(server: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(server) else {
+        return false;
+    };
+    matches!(url.scheme(), "http" | "https")
+        && url.host_str().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+}
 pub(crate) const MAX_PUSH_BATCH: usize = 256;
 pub(crate) const MAX_PULL_BATCH: u32 = 512;
 pub(crate) const DAEMON_SYNC_PAGE_BUDGET: usize = 8;

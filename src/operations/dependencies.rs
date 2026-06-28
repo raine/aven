@@ -15,18 +15,22 @@ pub(crate) struct DependencyOutcome {
     pub(crate) changed: bool,
 }
 
-pub(crate) async fn add_task_dependency(
+struct DependencyPair {
+    task: crate::types::Task,
+    depends_on: crate::types::Task,
+}
+
+async fn load_dependency_pair(
     conn: &mut SqliteConnection,
     task_id: &str,
     depends_on_id: &str,
-) -> Result<DependencyOutcome> {
+) -> Result<DependencyPair> {
     if task_id == depends_on_id {
         bail!("error dependency-self task_id={task_id}");
     }
 
-    let mut tx = begin_immediate(conn).await?;
-    let task = get_task(&mut tx, task_id).await?;
-    let depends_on = get_task(&mut tx, depends_on_id).await?;
+    let task = get_task(conn, task_id).await?;
+    let depends_on = get_task(conn, depends_on_id).await?;
 
     if task.workspace_id != depends_on.workspace_id {
         bail!(
@@ -34,19 +38,59 @@ pub(crate) async fn add_task_dependency(
         );
     }
 
-    if dependency_path_exists(&mut tx, &task.workspace_id, &depends_on.id, &task.id).await? {
+    Ok(DependencyPair { task, depends_on })
+}
+
+async fn record_dependency_change(
+    conn: &mut SqliteConnection,
+    pair: &DependencyPair,
+    op_type: &'static str,
+) -> Result<()> {
+    let workspace = workspace_for_id(conn, &pair.task.workspace_id).await?;
+    insert_change(
+        conn,
+        "task",
+        &pair.task.id,
+        Some("dependencies"),
+        op_type,
+        json!({
+            "workspace_id": &workspace.id,
+            "workspace_key": &workspace.key,
+            "depends_on_task_id": &pair.depends_on.id,
+        }),
+        None,
+    )
+    .await?;
+    Ok(())
+}
+
+pub(crate) async fn add_task_dependency(
+    conn: &mut SqliteConnection,
+    task_id: &str,
+    depends_on_id: &str,
+) -> Result<DependencyOutcome> {
+    let mut tx = begin_immediate(conn).await?;
+    let pair = load_dependency_pair(&mut tx, task_id, depends_on_id).await?;
+
+    if dependency_path_exists(
+        &mut tx,
+        &pair.task.workspace_id,
+        &pair.depends_on.id,
+        &pair.task.id,
+    )
+    .await?
+    {
         bail!("error dependency-cycle task_id={task_id} depends_on_task_id={depends_on_id}");
     }
 
-    let workspace_id = task.workspace_id.clone();
     let created_at = now();
     let changed = sqlx::query(
         "INSERT OR IGNORE INTO task_dependencies(workspace_id, task_id, depends_on_task_id, created_at)
          VALUES (?, ?, ?, ?)",
     )
-    .bind(&workspace_id)
-    .bind(&task.id)
-    .bind(&depends_on.id)
+    .bind(&pair.task.workspace_id)
+    .bind(&pair.task.id)
+    .bind(&pair.depends_on.id)
     .bind(&created_at)
     .execute(&mut *tx)
     .await?
@@ -54,27 +98,13 @@ pub(crate) async fn add_task_dependency(
         > 0;
 
     if changed {
-        let workspace = workspace_for_id(&mut tx, &workspace_id).await?;
-        insert_change(
-            &mut tx,
-            "task",
-            &task.id,
-            Some("dependencies"),
-            "dependency_add",
-            json!({
-                "workspace_id": &workspace.id,
-                "workspace_key": &workspace.key,
-                "depends_on_task_id": &depends_on.id,
-            }),
-            None,
-        )
-        .await?;
+        record_dependency_change(&mut tx, &pair, "dependency_add").await?;
     }
 
     tx.commit().await?;
     Ok(DependencyOutcome {
-        task,
-        depends_on,
+        task: pair.task,
+        depends_on: pair.depends_on,
         changed,
     })
 }
@@ -84,54 +114,29 @@ pub(crate) async fn remove_task_dependency(
     task_id: &str,
     depends_on_id: &str,
 ) -> Result<DependencyOutcome> {
-    if task_id == depends_on_id {
-        bail!("error dependency-self task_id={task_id}");
-    }
-
     let mut tx = begin_immediate(conn).await?;
-    let task = get_task(&mut tx, task_id).await?;
-    let depends_on = get_task(&mut tx, depends_on_id).await?;
-
-    if task.workspace_id != depends_on.workspace_id {
-        bail!(
-            "error dependency-cross-workspace task_id={task_id} depends_on_task_id={depends_on_id}"
-        );
-    }
+    let pair = load_dependency_pair(&mut tx, task_id, depends_on_id).await?;
 
     let changed = sqlx::query(
         "DELETE FROM task_dependencies
          WHERE workspace_id = ? AND task_id = ? AND depends_on_task_id = ?",
     )
-    .bind(&task.workspace_id)
-    .bind(&task.id)
-    .bind(&depends_on.id)
+    .bind(&pair.task.workspace_id)
+    .bind(&pair.task.id)
+    .bind(&pair.depends_on.id)
     .execute(&mut *tx)
     .await?
     .rows_affected()
         > 0;
 
     if changed {
-        let workspace = workspace_for_id(&mut tx, &task.workspace_id).await?;
-        insert_change(
-            &mut tx,
-            "task",
-            &task.id,
-            Some("dependencies"),
-            "dependency_remove",
-            json!({
-                "workspace_id": &workspace.id,
-                "workspace_key": &workspace.key,
-                "depends_on_task_id": &depends_on.id,
-            }),
-            None,
-        )
-        .await?;
+        record_dependency_change(&mut tx, &pair, "dependency_remove").await?;
     }
 
     tx.commit().await?;
     Ok(DependencyOutcome {
-        task,
-        depends_on,
+        task: pair.task,
+        depends_on: pair.depends_on,
         changed,
     })
 }

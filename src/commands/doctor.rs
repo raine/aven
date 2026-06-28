@@ -20,18 +20,6 @@ pub(super) async fn workspace_counts(
     Ok((active, all))
 }
 
-pub(super) fn sync_server_url_is_valid(server: &str) -> bool {
-    let Ok(url) = reqwest::Url::parse(server) else {
-        return false;
-    };
-    matches!(url.scheme(), "http" | "https")
-        && url.host_str().is_some()
-        && url.username().is_empty()
-        && url.password().is_none()
-        && url.query().is_none()
-        && url.fragment().is_none()
-}
-
 pub(super) struct DoctorReport {
     sections: Vec<DoctorSection>,
 }

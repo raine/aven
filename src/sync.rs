@@ -12,4 +12,4 @@ pub(crate) use client::{
 };
 pub(crate) use server::run_server;
 #[allow(unused_imports)]
-pub(crate) use wire::{ChangeWire, SYNC_PROTOCOL_VERSION};
+pub(crate) use wire::{ChangeWire, SYNC_PROTOCOL_VERSION, sync_server_url_is_valid};

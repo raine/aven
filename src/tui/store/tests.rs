@@ -169,16 +169,48 @@ fn assert_workspace_payload(payload: &serde_json::Value, workspace: &crate::work
     );
 }
 
+const MOBILE_PROJECT_NAME: &str = "Mobile App";
+
+async fn create_mobile_project(store: &mut TuiStore) {
+    store
+        .create_project(MOBILE_PROJECT_NAME.to_string())
+        .await
+        .unwrap();
+}
+
+async fn create_task_in_project(store: &mut TuiStore, title: &str, project_key: &str) -> usize {
+    let (_, selected) = store
+        .create_task(
+            TaskDraft {
+                title: title.to_string(),
+                project: Some(project_key.to_string()),
+                ..task_draft("")
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    selected.unwrap()
+}
+
+#[track_caller]
+fn assert_project_hidden(store: &TuiStore, key: &str) {
+    assert!(!store.projects.iter().any(|project| project.key == key));
+    assert!(!store.sidebar_entries.iter().any(|entry| {
+        entry.target
+            == Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(
+                key.to_string(),
+            )))
+    }));
+}
+
 mod domain_mutations_and_pickers {
     use super::*;
 
     #[tokio::test]
     async fn create_project_refreshes_sidebar() {
         let mut store = test_store().await;
-        store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
+        create_mobile_project(&mut store).await;
 
         assert!(
             store
@@ -197,26 +229,12 @@ mod domain_mutations_and_pickers {
     #[tokio::test]
     async fn delete_project_removes_unused_project() {
         let mut store = test_store().await;
-        store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
+        create_mobile_project(&mut store).await;
 
         let outcome = store.delete_project("mobile-app").await.unwrap();
 
         assert_eq!(outcome.message, "deleted project mobile-app");
-        assert!(
-            !store
-                .projects
-                .iter()
-                .any(|project| project.key == "mobile-app")
-        );
-        assert!(!store.sidebar_entries.iter().any(|entry| {
-            entry.target
-                == Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(
-                    "mobile-app".to_string(),
-                )))
-        }));
+        assert_project_hidden(&store, "mobile-app");
     }
 
     #[tokio::test]
@@ -304,62 +322,21 @@ mod domain_mutations_and_pickers {
     #[tokio::test]
     async fn delete_project_hides_project_with_tasks() {
         let mut store = test_store().await;
-        store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
-        store
-            .create_task(
-                TaskDraft {
-                    title: "Keep project".to_string(),
-                    project: Some("mobile-app".to_string()),
-                    ..task_draft("")
-                },
-                None,
-            )
-            .await
-            .unwrap();
+        create_mobile_project(&mut store).await;
+        create_task_in_project(&mut store, "Keep project", "mobile-app").await;
 
         let outcome = store.delete_project("mobile-app").await.unwrap();
 
         assert_eq!(outcome.message, "deleted project mobile-app");
-        assert!(
-            !store
-                .projects
-                .iter()
-                .any(|project| project.key == "mobile-app")
-        );
-        assert!(!store.sidebar_entries.iter().any(|entry| {
-            entry.target
-                == Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(
-                    "mobile-app".to_string(),
-                )))
-        }));
+        assert_project_hidden(&store, "mobile-app");
     }
 
     #[tokio::test]
     async fn delete_project_hides_project_with_deleted_tasks() {
         let mut store = test_store().await;
-        store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
-        store
-            .create_task(
-                TaskDraft {
-                    title: "Deleted project task".to_string(),
-                    project: Some("mobile-app".to_string()),
-                    ..task_draft("")
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        let selected = store
-            .tasks
-            .iter()
-            .position(|item| item.task.project_key == "mobile-app")
-            .unwrap();
+        create_mobile_project(&mut store).await;
+        let selected =
+            create_task_in_project(&mut store, "Deleted project task", "mobile-app").await;
         store.update_deleted(Some(selected), true).await.unwrap();
 
         let outcome = store.delete_project("mobile-app").await.unwrap();
@@ -393,10 +370,7 @@ mod domain_mutations_and_pickers {
     #[tokio::test]
     async fn project_picker_includes_infer_project_and_existing_projects() {
         let mut store = test_store().await;
-        store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
+        create_mobile_project(&mut store).await;
 
         let items = store.project_picker_items(None);
         assert!(items[0].label.starts_with("Infer project"));
@@ -415,10 +389,7 @@ mod domain_mutations_and_pickers {
     #[tokio::test]
     async fn existing_project_picker_items_excludes_infer_project() {
         let mut store = test_store().await;
-        store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
+        create_mobile_project(&mut store).await;
 
         let items = store.existing_project_picker_items("mobile-app");
         assert!(!items.iter().any(|item| item.label == "Infer project"));
@@ -844,10 +815,7 @@ mod views_filters_and_sort {
     #[tokio::test]
     async fn sidebar_selection_prefers_project_scope_when_scoped() {
         let mut store = test_store().await;
-        store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
+        create_mobile_project(&mut store).await;
         store
             .show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
             .await
@@ -866,10 +834,7 @@ mod views_filters_and_sort {
     #[tokio::test]
     async fn clear_filters_preserves_view_scope_and_order() {
         let mut store = test_store().await;
-        store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
+        create_mobile_project(&mut store).await;
         store
             .show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
             .await
@@ -924,10 +889,7 @@ mod views_filters_and_sort {
     #[tokio::test]
     async fn project_scope_hides_done_and_canceled_tasks_in_open_view() {
         let mut store = test_store().await;
-        store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
+        create_mobile_project(&mut store).await;
         for (title, status) in [
             ("Open task", "todo"),
             ("Finished", "done"),
@@ -970,10 +932,7 @@ mod views_filters_and_sort {
     #[tokio::test]
     async fn done_view_preserves_project_scope() {
         let mut store = test_store().await;
-        store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
+        create_mobile_project(&mut store).await;
         store.create_project("Ops".to_string()).await.unwrap();
         for (title, project) in [("Mobile done", "mobile-app"), ("Ops done", "ops")] {
             let (_, selected) = store
@@ -1054,26 +1013,9 @@ mod views_filters_and_sort {
     #[tokio::test]
     async fn toggle_deleted_filter_preserves_project_scope() {
         let mut store = test_store().await;
-        store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
-        store
-            .create_task(
-                TaskDraft {
-                    title: "Deleted project task".to_string(),
-                    project: Some("mobile-app".to_string()),
-                    ..task_draft("")
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        let selected = store
-            .tasks
-            .iter()
-            .position(|item| item.task.project_key == "mobile-app")
-            .unwrap();
+        create_mobile_project(&mut store).await;
+        let selected =
+            create_task_in_project(&mut store, "Deleted project task", "mobile-app").await;
         store.update_deleted(Some(selected), true).await.unwrap();
         store
             .show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
@@ -1742,21 +1684,8 @@ mod workspace_scoping {
     #[tokio::test]
     async fn default_startup_opens_all_projects() {
         let mut store = test_store().await;
-        store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
-        store
-            .create_task(
-                TaskDraft {
-                    title: "mobile task".to_string(),
-                    project: Some("mobile-app".to_string()),
-                    ..task_draft("")
-                },
-                None,
-            )
-            .await
-            .unwrap();
+        create_mobile_project(&mut store).await;
+        create_task_in_project(&mut store, "mobile task", "mobile-app").await;
 
         let reopened = TuiStore::new(store.pool.clone()).await.unwrap();
 
@@ -1768,22 +1697,9 @@ mod workspace_scoping {
     #[tokio::test]
     async fn initial_project_opens_project_view() {
         let mut store = test_store().await;
-        store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
+        create_mobile_project(&mut store).await;
         store.create_project("Ops".to_string()).await.unwrap();
-        store
-            .create_task(
-                TaskDraft {
-                    title: "mobile task".to_string(),
-                    project: Some("mobile-app".to_string()),
-                    ..task_draft("")
-                },
-                None,
-            )
-            .await
-            .unwrap();
+        create_task_in_project(&mut store, "mobile task", "mobile-app").await;
         store
             .create_task(
                 TaskDraft {
@@ -1814,10 +1730,7 @@ mod workspace_scoping {
     #[tokio::test]
     async fn delete_project_ignores_tasks_in_other_workspace() {
         let mut store = test_store().await;
-        store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
+        create_mobile_project(&mut store).await;
         let mut conn = store.pool.acquire().await.unwrap();
         let other = crate::workspaces::create_workspace(&mut conn, "Client Work")
             .await
@@ -1852,21 +1765,8 @@ mod workspace_scoping {
     #[tokio::test]
     async fn delete_project_uses_store_workspace() {
         let mut store = test_store().await;
-        store
-            .create_project("Mobile App".to_string())
-            .await
-            .unwrap();
-        store
-            .create_task(
-                TaskDraft {
-                    title: "Default task".to_string(),
-                    project: Some("mobile-app".to_string()),
-                    ..task_draft("")
-                },
-                None,
-            )
-            .await
-            .unwrap();
+        create_mobile_project(&mut store).await;
+        create_task_in_project(&mut store, "Default task", "mobile-app").await;
         let mut conn = store.pool.acquire().await.unwrap();
         let other = crate::workspaces::create_workspace(&mut conn, "Client Work")
             .await
