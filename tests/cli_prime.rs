@@ -17,7 +17,7 @@ fn prime_prints_skill_primer_and_inferred_project_open_issues() {
         &repo,
         ["label", "create", "bug"],
     ));
-    ok(aven_in_clean_git(
+    let blocker = ok(aven_in_clean_git(
         &env,
         &db,
         &repo,
@@ -30,6 +30,7 @@ fn prime_prints_skill_primer_and_inferred_project_open_issues() {
             "bug",
         ],
     ));
+    let blocker_ref = blocker.split_whitespace().nth(1).unwrap();
     let active = ok(aven_in_clean_git(
         &env,
         &db,
@@ -37,6 +38,12 @@ fn prime_prints_skill_primer_and_inferred_project_open_issues() {
         ["add", "Fix active convention", "--label", "bug"],
     ));
     let active_ref = active.split_whitespace().nth(1).unwrap();
+    ok(aven_in_clean_git(
+        &env,
+        &db,
+        &repo,
+        ["dep", "add", active_ref, blocker_ref],
+    ));
     ok(aven_in_clean_git(
         &env,
         &db,
@@ -86,8 +93,17 @@ fn prime_prints_skill_primer_and_inferred_project_open_issues() {
             "Common statuses: active=1, inbox=1.",
             "Common labels: bug=2.",
             "## Open Issues",
-            "status=inbox priority=high labels=bug title=\"fix active issue\"",
-            "status=active priority=none labels=bug title=\"Fix active convention\"",
+            "Summary: total=2 active=1 ready=1 blocked=0",
+            "Top blockers:",
+            "### Active",
+            "status=active labels=bug",
+            "blocked_by=[",
+            "title=\"Fix active convention\"",
+            "### Ready",
+            "status=inbox priority=high labels=bug blocks=[",
+            "title=\"fix active issue\"",
+            "### Blocked",
+            "(none)",
         ],
     );
     contains_none(&output, &["finished issue", "canceled issue"]);

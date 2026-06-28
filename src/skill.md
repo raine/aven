@@ -84,6 +84,10 @@ aven restore APP-7KQ9
   search results.
 - Use `bulk-update --dry-run` before broad mutations.
 - Use `list --ready` when selecting new work to avoid blocked or completed tasks.
+- In `aven prime`, Active, Ready, and Blocked partition open issues by
+  pickability. `blocked_by=[REFS]` lists unresolved blockers, and
+  `blocks=[REFS]` lists open dependents. Run `aven show <ref> --full` for
+  descriptions, notes, resolved dependencies, and conflicts.
 - Inspect dependency context with `show <ref> --full` before changing task order or
   status. The `depends_on` and `blocks` sections show blockers and dependents.
 

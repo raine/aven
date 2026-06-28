@@ -1090,16 +1090,120 @@ pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> R
     )
     .await?;
     print_prime_conventions(&project, &items);
+    print_prime_open_issues(&items);
+    Ok(())
+}
+
+fn print_prime_open_issues(items: &[query::TaskListItem]) {
     println!("## Open Issues");
     println!();
     if items.is_empty() {
         println!("No open issues.");
-        return Ok(());
+        return;
+    }
+
+    let active = items
+        .iter()
+        .filter(|item| item.task.status == "active")
+        .collect::<Vec<_>>();
+    let ready = items
+        .iter()
+        .filter(|item| item.task.status != "active" && item.unresolved_blocker_count == 0)
+        .collect::<Vec<_>>();
+    let blocked = items
+        .iter()
+        .filter(|item| item.task.status != "active" && item.unresolved_blocker_count > 0)
+        .collect::<Vec<_>>();
+
+    println!(
+        "Summary: total={} active={} ready={} blocked={}",
+        items.len(),
+        active.len(),
+        ready.len(),
+        blocked.len()
+    );
+    print_prime_top_blockers(items);
+    println!();
+    print_prime_issue_section("Active", &active);
+    print_prime_issue_section("Ready", &ready);
+    print_prime_issue_section("Blocked", &blocked);
+}
+
+fn print_prime_top_blockers(items: &[query::TaskListItem]) {
+    let mut blockers = items
+        .iter()
+        .filter(|item| item.dependent_count > 0)
+        .collect::<Vec<_>>();
+    blockers.sort_by(|left, right| {
+        right
+            .dependent_count
+            .cmp(&left.dependent_count)
+            .then_with(|| left.display_ref.cmp(&right.display_ref))
+    });
+    let summary = blockers
+        .into_iter()
+        .take(3)
+        .map(|item| format!("{} blocks={}", item.display_ref, item.dependent_count))
+        .collect::<Vec<_>>();
+    if summary.is_empty() {
+        println!("Top blockers: none.");
+    } else {
+        println!("Top blockers: {}", summary.join(", "));
+    }
+}
+
+fn print_prime_issue_section(label: &str, items: &[&query::TaskListItem]) {
+    println!("### {label}");
+    if items.is_empty() {
+        println!("(none)");
+        println!();
+        return;
     }
     for item in items {
-        print_task_line_item(&item).await?;
+        println!("{}", format_prime_issue_line(item));
     }
-    Ok(())
+    println!();
+}
+
+fn format_prime_issue_line(item: &query::TaskListItem) -> String {
+    let mut fields = vec![format!("{} status={}", item.display_ref, item.task.status)];
+    if item.task.priority != "none" {
+        fields.push(format!("priority={}", item.task.priority));
+    }
+    if !item.labels.is_empty() {
+        fields.push(format!("labels={}", item.labels.join(",")));
+    }
+    if let Some(dependencies) = format_prime_dependency_refs(&item.depends_on) {
+        fields.push(format!("blocked_by={dependencies}"));
+    }
+    if let Some(dependents) = format_prime_dependency_refs(&item.blocks) {
+        fields.push(format!("blocks={dependents}"));
+    }
+    fields.push(format!("title={}", quote(&item.task.title)));
+    fields.join(" ")
+}
+
+fn format_prime_dependency_refs(links: &[query::TaskDependencyLink]) -> Option<String> {
+    const PRIME_DEPENDENCY_REF_LIMIT: usize = 3;
+
+    let refs = links
+        .iter()
+        .filter(|link| link.unresolved)
+        .map(|link| link.display_ref.as_str())
+        .collect::<Vec<_>>();
+    if refs.is_empty() {
+        return None;
+    }
+
+    let mut parts = refs
+        .iter()
+        .take(PRIME_DEPENDENCY_REF_LIMIT)
+        .map(|ref_text| (*ref_text).to_string())
+        .collect::<Vec<_>>();
+    if refs.len() > PRIME_DEPENDENCY_REF_LIMIT {
+        parts.push(format!("+{}", refs.len() - PRIME_DEPENDENCY_REF_LIMIT));
+    }
+    Some(format!("[{}]", parts.join(",")))
 }
 
 fn print_prime_conventions(project: &str, items: &[query::TaskListItem]) {
