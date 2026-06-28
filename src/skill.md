@@ -70,6 +70,11 @@ aven doctor --integrity
   script, MCP server, bot, web UI, or other structured integration.
 - After `aven add`, capture and report the printed ref so future agents can use
   it.
+- When creating follow-up tasks from a discussion, investigation, review, or
+  plan, include enough detail in the task description for the task to stand
+  alone. Capture rationale, scope, acceptance criteria, implementation notes,
+  and related tasks when useful. Use `--description-file` or
+  `--description-stdin` for multi-paragraph descriptions.
 - Let commands infer the project from the current directory, even if project
   does not exist yet. Pass `--project` only if project is specified by user.
 - Use `project rename <old> <new> [--prefix <prefix>]` when a project itself
