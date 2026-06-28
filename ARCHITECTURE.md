@@ -6,7 +6,7 @@
 
 | Layer | Owns | Start here | Rules |
 | --- | --- | --- | --- |
-| CLI entry and dispatch | argument parsing, command routing, config load, database open, daemon wake | `src/main.rs`, `src/lib.rs`, `src/cli.rs`, `src/commands.rs`, `src/commands/` | Command-family modules own command orchestration and command-local formatting. Business writes belong in operations or mutation helpers. |
+| CLI entry and dispatch | argument parsing, command routing, config load, database open, daemon wake | `src/main.rs`, `src/lib.rs`, `src/cli.rs`, `src/commands.rs`, `src/commands/`, `src/commands/context.rs` | Command-family modules own command orchestration and command-local formatting. Business writes belong in operations or mutation helpers. |
 | Write model | transactional task, project, label, conflict, config, and workspace changes | `src/operations/`, `src/mutation.rs`, `src/task_fields.rs` | Synced scalar task writes must update tasks, `changes`, and `field_versions` together. |
 | Read model | task lists, task search, project lists, sidebar counts, filters, sorting, refs, and enrichment | `src/query.rs`, `src/query/`, `src/task_enrichment.rs`, `src/refs.rs`, `src/queue.rs` | Batch task-list enrichment. Avoid per-row queries on list paths. Keep retrieval-style task search separate from scoped list filters. |
 | Persistence | SQLite setup, migrations, sync metadata, conflict helpers, SQLx metadata | `src/db.rs`, `migrations/`, `.sqlx/` | Create migrations with `just migration-new <lower_snake_name>`. Refresh SQLx metadata after query or schema changes. |
@@ -29,8 +29,8 @@
 
 1. `src/tui/mod.rs` initializes Ratatui and constructs `App`.
 2. Input resolves through the command catalog in `src/tui/event/` unless a capturing overlay handles it first.
-3. `App` holds TUI flow state. Focused `src/tui/app_*.rs` modules coordinate feature flows, then call `TuiStore` facade methods in `src/tui/store.rs`.
-4. `TaskViewState` is the source of truth for TUI task lists. It carries scope, view, filter modifiers, flat order, and direction, then derives query filters, query mode, and render mode. Spotlight search renders live overlay results from the task search read model and stores matched task IDs in the submitted search view.
+3. `App` holds TUI flow state. Focused `src/tui/app_*.rs` modules coordinate feature flows, including search flow in `src/tui/app_search.rs`, then call `TuiStore` facade methods in `src/tui/store.rs`.
+4. `TaskViewState` is the source of truth for TUI task lists. It carries scope, view, filter modifiers, flat order, and direction, then derives query filters, query mode, and render mode. `src/tui/ui/task_list/` owns task-list view models and hit testing. Spotlight search renders live overlay results from the task search read model and stores matched task IDs in the submitted search view.
 5. Store modules call the same operations, mutation, and query helpers as the CLI.
 6. Natural-language add flow coordination lives in `src/tui/app_authoring.rs`; background worker command construction, environment propagation, process setup, and log path selection live in `src/tui/natural_add_runtime.rs`.
 7. `src/tui/ui.rs` and `src/tui/ui/` render state. Rendering code should not touch the database.
@@ -82,9 +82,10 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Keep scalar task fields aligned across validation, task rows, `changes`, `field_versions`, sync apply, and conflict resolution.
 - Keep workspace scope explicit on queries and mutations that operate on user data.
 - Keep config serialization and durable text writes in `src/config.rs`; keep managed-entry text transforms in `src/config_edit.rs`.
-- Keep CLI output formatting in command or render modules, not in persistence helpers. Use `src/render.rs` for shared quoting, changed flag text, multiline blocks, near-match errors, and text diffs.
-- Keep TUI database access in `src/tui/store/`; keep `src/tui/ui/` rendering-only.
+- Keep CLI output formatting in command or render modules, not in persistence helpers. Use `src/render.rs` for shared quoting, changed flag text, multiline blocks, near-match errors, and text diffs. Use focused command-family modules such as `src/commands/context.rs` for command-local snapshots and formatting.
+- Keep TUI database access in `src/tui/store/`; keep `src/tui/ui/` rendering-only. Keep task-list view modeling and hit testing in `src/tui/ui/task_list/`.
 - Derive TUI task list filters, query mode, and render mode from `TaskViewState`; do not keep parallel project, status, view, or queue-sort state.
+- Keep TUI search flow state transitions in `src/tui/app_search.rs`; keep search read-model behavior in `src/query/` and overlay rendering in `src/tui/ui/overlays/search.rs`.
 - Treat project selection in the TUI as scope. Project scope must not be modeled as a filter modifier or view.
 - TUI overlays carry `OverlayRoute`; behavior resolves through `OverlayRoute::descriptor` and never depends on title text. Titles are render-only chrome.
 - TUI shortcuts use intent prefixes in the command catalog. Navigation and scope use `g`, named views use `v`, composable filters use `f`, ordering uses `o`, editable task fields use `e`, other selected-task actions use `t`, project administration uses `p`, label administration uses `L`, conflicts use `c`, and config uses `C`.
@@ -101,10 +102,13 @@ SQLite stores synced task data and local UI state. Config files store local rout
 
 | Change | Start here | Also check | Tests |
 | --- | --- | --- | --- |
-| Add or change a CLI command | `src/cli.rs`, `src/lib.rs`, `src/commands.rs`, `src/commands/` | `src/operations/` for writes, `src/input.rs` for text input, `src/render.rs` for shared output helpers, `src/task_render.rs` for task output | focused `tests/cli_*.rs` |
+| Add or change a CLI command | `src/cli.rs`, `src/lib.rs`, `src/commands.rs`, focused `src/commands/` modules | `src/operations/` for writes, `src/input.rs` for text input, `src/render.rs` for shared output helpers, `src/task_render.rs` for task output | focused `tests/cli_*.rs` |
+| Change task context command output | `src/commands/context.rs` | `src/refs.rs`, `src/query/dependencies.rs`, `src/task_render.rs`, `src/render.rs`, `src/commands.rs` exports | focused context CLI tests or `cargo check` |
 | Add a task scalar field | migration, `src/types.rs`, `src/task_fields.rs`, `src/mutation.rs` | `src/operations/tasks.rs`, `src/sync/apply/task.rs`, `src/sync/apply/conflict.rs`, `src/sync/wire.rs`, `src/query/`, CLI and TUI renderers | sync, conflict, CLI, and TUI tests |
 | Add task dependency relations | `src/operations/dependencies.rs`, `src/query/dependencies.rs` | `src/commands.rs`, `src/task_render.rs`, `src/sync/apply/dependency.rs`, `src/sync/server.rs` | `tests/cli_dependencies.rs`, `tests/cli_sync.rs` |
-| Change task list, filters, sorting, search, or refs | `src/query/`, `src/query.rs`, `src/refs.rs`, `src/queue.rs` | CLI list and search rendering, `src/tui/store/types.rs`, `src/tui/store/view.rs`, indexes | query unit tests, `tests/tui_query.rs`, `tests/sqlite_read_path_indexes.rs`, focused CLI tests |
+| Change task list, filters, sorting, search read model, or refs | `src/query/`, `src/query.rs`, `src/refs.rs`, `src/queue.rs` | CLI list and search rendering, `src/tui/store/types.rs`, `src/tui/store/view.rs`, indexes | query unit tests, `tests/tui_query.rs`, `tests/sqlite_read_path_indexes.rs`, focused CLI tests |
+| Change TUI task-list rendering or hit testing | `src/tui/ui/task_list.rs`, `src/tui/ui/task_list/view_model.rs`, `src/tui/ui/task_list/hit_test.rs` | `src/tui/store/view.rs`, `src/tui/store/types.rs`, task display helpers, mouse event dispatch | `src/tui/ui/task_list.rs` module tests, `src/tui/app_tests.rs`, focused TUI tests |
+| Change TUI search flow | `src/tui/app_search.rs` | `src/tui/app_dispatch.rs`, `src/tui/overlay/`, `src/tui/ui/overlays/search.rs`, `src/query/` search helpers | `src/tui/app_tests.rs`, focused search and query tests |
 | Add or change a TUI action | `src/tui/event/catalog.rs`, `src/tui/app_dispatch.rs`, focused `src/tui/app_*.rs` modules | flow helpers, overlays, store module, undo, `src/tui/natural_add_runtime.rs` for natural-add worker setup | `src/tui/app_tests.rs`, `src/tui/store/tests.rs`, overlay module tests |
 | Add or change TUI overlay behavior | `src/tui/overlay.rs`, `src/tui/overlay/`, `src/tui/app_overlay_submit.rs` | `OverlayRoute::descriptor`, input helpers, state builders, view projection, submit dispatch, module-local tests | `cargo test tui::overlay` |
 | Add or change TUI overlay rendering | `src/tui/ui/overlays.rs`, `src/tui/ui/overlays/` | overlay view models, shared dialog helpers, input helpers, theme | overlay rendering tests in `src/tui/ui/overlays/tests.rs` |
