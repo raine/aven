@@ -2,6 +2,7 @@ use anyhow::{Result, bail};
 use sqlx::{Row, SqliteConnection};
 use tracing::info;
 
+use crate::change_log::op_type;
 use crate::db::{begin_immediate, insert_change, set_field_version};
 use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
 use crate::projects::{resolve_existing_project_in_workspace, resolve_project_for_stored_value};
@@ -159,7 +160,7 @@ pub(crate) async fn resolve_conflict(
         "task",
         task_id,
         Some(field),
-        "resolve_field",
+        op_type::RESOLVE_FIELD,
         payload,
         None,
     )

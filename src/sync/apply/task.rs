@@ -10,10 +10,12 @@ use crate::task_fields::TaskField;
 
 use super::conflict;
 use super::label::create_or_update_task_label;
+use super::payload::CreateTaskPayload;
 use super::project::ensure_project_for_payload;
 use super::shared::{str_payload, task_field_workspace_id_payload, workspace_id_payload};
 
 pub(super) async fn create_task(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
+    let p = CreateTaskPayload::from_change(change)?;
     let workspace_id = workspace_id_payload(conn, change).await?;
     if sqlx::query_scalar::<_, i64>("SELECT count(*) FROM tasks WHERE workspace_id = ? AND id = ?")
         .bind(&workspace_id)
@@ -24,20 +26,18 @@ pub(super) async fn create_task(conn: &mut SqliteConnection, change: &ChangeWire
     {
         return Ok(());
     }
-    let project_id = str_payload(&change.payload, "project_id")?;
-    let project_id = ensure_project_for_payload(conn, &workspace_id, &project_id, change).await?;
-    let title = str_payload(&change.payload, "title")?;
-    let description = str_payload(&change.payload, "description").unwrap_or_default();
-    let status = match str_payload(&change.payload, "status") {
-        Ok(value) => TaskStatus::parse(&value)?,
-        Err(_) => TaskStatus::Inbox,
+    let project_id = ensure_project_for_payload(conn, &workspace_id, &p.project_id, change).await?;
+    let title = p.title;
+    let description = p.description.unwrap_or_default();
+    let status = match p.status {
+        Some(ref value) => TaskStatus::parse(value)?,
+        None => TaskStatus::Inbox,
     };
-    let priority = match str_payload(&change.payload, "priority") {
-        Ok(value) => TaskPriority::parse(&value)?,
-        Err(_) => TaskPriority::None,
+    let priority = match p.priority {
+        Some(ref value) => TaskPriority::parse(value)?,
+        None => TaskPriority::None,
     };
-    let created_at =
-        str_payload(&change.payload, "created_at").unwrap_or_else(|_| change.created_at.clone());
+    let created_at = p.created_at.unwrap_or_else(|| change.created_at.clone());
     sqlx::query(
         "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

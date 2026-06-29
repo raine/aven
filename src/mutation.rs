@@ -2,6 +2,7 @@ use anyhow::{Result, bail, ensure};
 use sqlx::SqliteConnection;
 use tracing::{debug, info};
 
+use crate::change_log::op_type;
 use crate::choices::TaskPriority;
 use crate::db::{conflict_exists, field_version, insert_change, set_field_version, task_from_row};
 use crate::ids::now;
@@ -139,7 +140,7 @@ async fn finish_task_field_change(
         "task",
         task_id,
         Some(field),
-        "set_field",
+        op_type::SET_FIELD,
         payload,
         base,
     )

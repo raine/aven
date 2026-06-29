@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+mod change_log;
 mod choices;
 mod cli;
 mod commands;

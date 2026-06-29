@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::change_log::op_type;
 use crate::ids::BASE32;
 use crate::task_fields::TaskField;
 
@@ -232,14 +233,14 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
     }
 
     match change.op_type.as_str() {
-        "create_workspace" => {
+        op_type::CREATE_WORKSPACE => {
             ensure_entity_type(change, "workspace")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
             required_string_payload("key", &change.payload)?;
             required_string_payload("name", &change.payload)?;
             required_string_payload("created_at", &change.payload)?;
         }
-        "set_workspace_field" => {
+        op_type::SET_WORKSPACE_FIELD => {
             ensure_entity_type(change, "workspace")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
             let field = change
@@ -252,7 +253,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             }
             required_string_payload("value", &change.payload)?;
         }
-        "create_project" => {
+        op_type::CREATE_PROJECT => {
             ensure_entity_type(change, "project")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
             optional_workspace_payload(&change.payload)?;
@@ -261,7 +262,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             required_string_payload("prefix", &change.payload)?;
             required_string_payload("created_at", &change.payload)?;
         }
-        "set_project_metadata" => {
+        op_type::SET_PROJECT_METADATA => {
             ensure_entity_type(change, "project")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
             optional_workspace_payload(&change.payload)?;
@@ -270,13 +271,13 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             required_string_payload("prefix", &change.payload)?;
             required_string_payload("updated_at", &change.payload)?;
         }
-        "create_label" => {
+        op_type::CREATE_LABEL => {
             ensure_entity_type(change, "label")?;
             optional_workspace_payload(&change.payload)?;
             required_string_payload("name", &change.payload)?;
             required_string_payload("created_at", &change.payload)?;
         }
-        "create_task" => {
+        op_type::CREATE_TASK => {
             ensure_entity_type(change, "task")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
             optional_workspace_payload(&change.payload)?;
@@ -296,7 +297,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             optional_string_array_payload("labels", &change.payload)?;
             optional_string_payload("created_at", &change.payload)?;
         }
-        "set_field" | "resolve_field" => {
+        op_type::SET_FIELD | op_type::RESOLVE_FIELD => {
             ensure_entity_type(change, "task")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
             optional_workspace_payload(&change.payload)?;
@@ -319,13 +320,13 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
                 required_string_payload("project_prefix", &change.payload)?;
             }
         }
-        "label_add" | "label_remove" => {
+        op_type::LABEL_ADD | op_type::LABEL_REMOVE => {
             ensure_entity_type(change, "task")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
             optional_workspace_payload(&change.payload)?;
             required_string_payload("label", &change.payload)?;
         }
-        "note_add" => {
+        op_type::NOTE_ADD => {
             ensure_entity_type(change, "task")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
             optional_workspace_payload(&change.payload)?;
@@ -334,7 +335,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             required_string_payload("body", &change.payload)?;
             required_string_payload("created_at", &change.payload)?;
         }
-        "dependency_add" | "dependency_remove" => {
+        op_type::DEPENDENCY_ADD | op_type::DEPENDENCY_REMOVE => {
             ensure_entity_type(change, "task")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
             required_workspace_payload(&change.payload)?;
@@ -345,13 +346,13 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
                 bail!("error invalid-sync-change dependency-self");
             }
         }
-        "project_delete" => {
+        op_type::PROJECT_DELETE => {
             ensure_entity_type(change, "project")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
             required_workspace_payload(&change.payload)?;
             required_timestamp_payload("deleted_at", &change.payload)?;
         }
-        "label_delete" => {
+        op_type::LABEL_DELETE => {
             ensure_entity_type(change, "label")?;
             required_workspace_payload(&change.payload)?;
             let name = required_string_payload("name", &change.payload)?;
@@ -360,7 +361,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             }
             required_timestamp_payload("deleted_at", &change.payload)?;
         }
-        "note_delete" => {
+        op_type::NOTE_DELETE => {
             ensure_entity_type(change, "task")?;
             ensure_sync_id("entity_id", &change.entity_id)?;
             if change.field.as_deref() != Some("notes") {
@@ -603,6 +604,37 @@ fn optional_string_array_payload(key: &str, payload: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::change_log::{ChangePayload, op_type};
+    use crate::workspaces::Workspace;
+
+    fn test_workspace() -> Workspace {
+        Workspace {
+            id: "0000000000000000".to_string(),
+            key: "default".to_string(),
+            name: "default".to_string(),
+        }
+    }
+
+    fn make_change_wire(
+        op_type: &str,
+        entity_type: &str,
+        entity_id: &str,
+        payload: serde_json::Value,
+    ) -> ChangeWire {
+        ChangeWire {
+            change_id: "AAAAAAAAAAAAAAA0".to_string(),
+            client_id: "client".to_string(),
+            local_seq: 1,
+            entity_type: entity_type.to_string(),
+            entity_id: entity_id.to_string(),
+            field: None,
+            op_type: op_type.to_string(),
+            payload,
+            base_version: None,
+            created_at: "2026-06-01T00:00:00Z".to_string(),
+            server_seq: None,
+        }
+    }
 
     #[test]
     fn request_pull_limit_has_default_and_bounds() {
@@ -702,5 +734,82 @@ mod tests {
                 .to_string(),
             "error invalid-sync-response pull-too-large limit=512 got=513"
         );
+    }
+
+    #[test]
+    fn constructed_create_task_payload_passes_wire_validation() {
+        let ws = test_workspace();
+        let payload = ChangePayload::workspace(&ws)
+            .set("title", "test task")
+            .set("description", "a description")
+            .set("project_id", "1111111111111111")
+            .set("project_key", "app")
+            .set("project_name", "App")
+            .set("project_prefix", "APP")
+            .set("status", "inbox")
+            .set("priority", "none")
+            .set("created_at", "2026-06-01T00:00:00Z")
+            .into_value();
+        let change = make_change_wire(op_type::CREATE_TASK, "task", "BBBBBBBBBBBBBBBB", payload);
+        validate_pushed_change(&change)
+            .expect("create_task payload built with ChangePayload should be wire-valid");
+    }
+
+    #[test]
+    fn constructed_create_project_payload_passes_wire_validation() {
+        let ws = test_workspace();
+        let payload = ChangePayload::workspace(&ws)
+            .set("key", "app")
+            .set("name", "App")
+            .set("prefix", "APP")
+            .set("created_at", "2026-06-01T00:00:00Z")
+            .into_value();
+        let change = make_change_wire(
+            op_type::CREATE_PROJECT,
+            "project",
+            "1111111111111111",
+            payload,
+        );
+        validate_pushed_change(&change)
+            .expect("create_project payload built with ChangePayload should be wire-valid");
+    }
+
+    #[test]
+    fn constructed_label_add_payload_passes_wire_validation() {
+        let ws = test_workspace();
+        let payload = ChangePayload::workspace(&ws)
+            .set("label", "bug")
+            .into_value();
+        let mut change = make_change_wire(op_type::LABEL_ADD, "task", "BBBBBBBBBBBBBBBB", payload);
+        change.field = Some("labels".to_string());
+        validate_pushed_change(&change)
+            .expect("label_add payload built with ChangePayload should be wire-valid");
+    }
+
+    #[test]
+    fn constructed_dependency_add_payload_passes_wire_validation() {
+        let ws = test_workspace();
+        let payload = ChangePayload::workspace(&ws)
+            .set("depends_on_task_id", "CCCCCCCCCCCCCCCC")
+            .into_value();
+        let mut change =
+            make_change_wire(op_type::DEPENDENCY_ADD, "task", "BBBBBBBBBBBBBBBB", payload);
+        change.field = Some("dependencies".to_string());
+        validate_pushed_change(&change)
+            .expect("dependency_add payload built with ChangePayload should be wire-valid");
+    }
+
+    #[test]
+    fn constructed_note_add_payload_passes_wire_validation() {
+        let ws = test_workspace();
+        let payload = ChangePayload::workspace(&ws)
+            .set("note_id", "DDDDDDDDDDDDDDDD")
+            .set("body", "note body")
+            .set("created_at", "2026-06-01T00:00:00Z")
+            .into_value();
+        let mut change = make_change_wire(op_type::NOTE_ADD, "task", "BBBBBBBBBBBBBBBB", payload);
+        change.field = Some("notes".to_string());
+        validate_pushed_change(&change)
+            .expect("note_add payload built with ChangePayload should be wire-valid");
     }
 }

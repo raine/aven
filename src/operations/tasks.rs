@@ -1,10 +1,10 @@
 use anyhow::Result;
-use serde_json::json;
 use sqlx::SqliteConnection;
 use tracing::info;
 
+use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
 use crate::choices::{TaskPriority, TaskStatus};
-use crate::db::{begin_immediate, insert_change, set_field_version};
+use crate::db::{begin_immediate, set_field_version};
 use crate::ids::{new_id, now};
 use crate::labels::resolve_labels_in_workspace;
 use crate::mutation::{set_task_field, set_task_project};
@@ -109,27 +109,23 @@ pub(crate) async fn create_task_in_workspace(
         .execute(&mut *tx)
         .await?;
     }
-    let change_id = insert_change(
+    let change_id = append_change(
         &mut tx,
-        "task",
+        ChangeEntity::Task,
         &id,
         None,
-        "create_task",
-        json!({
-            "workspace_id": &workspace.id,
-            "workspace_key": &workspace.key,
-            "title": draft.title,
-            "description": draft.description,
-            "project_id": &project.id,
-            "project_key": &project.key,
-            "project_name": &project.name,
-            "project_prefix": &project.prefix,
-            "status": status.as_str(),
-            "priority": priority.as_str(),
-            "labels": labels,
-            "created_at": ts,
-        }),
-        None,
+        op_type::CREATE_TASK,
+        ChangePayload::workspace(&workspace)
+            .set("title", draft.title)
+            .set("description", draft.description)
+            .set("project_id", project.id.clone())
+            .set("project_key", project.key.clone())
+            .set("project_name", project.name.clone())
+            .set("project_prefix", project.prefix.clone())
+            .set("status", status.as_str())
+            .set("priority", priority.as_str())
+            .set("labels", &labels)
+            .set("created_at", ts),
     )
     .await?;
     for field in TaskField::VERSIONED {
@@ -248,18 +244,13 @@ pub(crate) async fn update_task_labels_in_workspace(
         .await?
         .rows_affected();
         if rows_affected > 0 {
-            insert_change(
+            append_change(
                 conn,
-                "task",
+                ChangeEntity::Task,
                 task_id,
                 Some("labels"),
-                "label_add",
-                json!({
-                    "workspace_id": &workspace.id,
-                    "workspace_key": &workspace.key,
-                    "label": label,
-                }),
-                None,
+                op_type::LABEL_ADD,
+                ChangePayload::workspace(&workspace).set("label", label),
             )
             .await?;
             changed = true;
@@ -276,18 +267,13 @@ pub(crate) async fn update_task_labels_in_workspace(
         .await?
         .rows_affected();
         if rows_affected > 0 {
-            insert_change(
+            append_change(
                 conn,
-                "task",
+                ChangeEntity::Task,
                 task_id,
                 Some("labels"),
-                "label_remove",
-                json!({
-                    "workspace_id": &workspace.id,
-                    "workspace_key": &workspace.key,
-                    "label": label,
-                }),
-                None,
+                op_type::LABEL_REMOVE,
+                ChangePayload::workspace(&workspace).set("label", label),
             )
             .await?;
             changed = true;
@@ -326,20 +312,16 @@ pub(crate) async fn add_note(
     let workspace = crate::workspaces::active_workspace();
     let ts = now();
     let mut tx = begin_immediate(conn).await?;
-    let change_id = insert_change(
+    let change_id = append_change(
         &mut tx,
-        "task",
+        ChangeEntity::Task,
         task_id,
         Some("notes"),
-        "note_add",
-        json!({
-            "workspace_id": &workspace.id,
-            "workspace_key": &workspace.key,
-            "note_id": note_id,
-            "body": body,
-            "created_at": ts,
-        }),
-        None,
+        op_type::NOTE_ADD,
+        ChangePayload::workspace(&workspace)
+            .set("note_id", &note_id)
+            .set("body", &body)
+            .set("created_at", &ts),
     )
     .await?;
     sqlx::query(
@@ -390,19 +372,15 @@ pub(crate) async fn delete_note(
             .bind(task_id)
             .execute(&mut *tx)
             .await?;
-        insert_change(
+        append_change(
             &mut tx,
-            "task",
+            ChangeEntity::Task,
             task_id,
             Some("notes"),
-            "note_delete",
-            json!({
-                "workspace_id": &workspace.id,
-                "workspace_key": &workspace.key,
-                "note_id": note_id,
-                "deleted_at": &deleted_at,
-            }),
-            None,
+            op_type::NOTE_DELETE,
+            ChangePayload::workspace(&workspace)
+                .set("note_id", note_id)
+                .set("deleted_at", deleted_at),
         )
         .await?;
     }

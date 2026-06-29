@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
 use anyhow::{Result, bail};
-use serde_json::json;
 use sqlx::SqliteConnection;
 
-use crate::db::{begin_immediate, insert_change};
+use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
+use crate::db::begin_immediate;
 use crate::ids::now;
 use crate::refs::get_task;
 use crate::workspaces::workspace_for_id;
@@ -47,18 +47,13 @@ async fn record_dependency_change(
     op_type: &'static str,
 ) -> Result<()> {
     let workspace = workspace_for_id(conn, &pair.task.workspace_id).await?;
-    insert_change(
+    append_change(
         conn,
-        "task",
+        ChangeEntity::Task,
         &pair.task.id,
         Some("dependencies"),
         op_type,
-        json!({
-            "workspace_id": &workspace.id,
-            "workspace_key": &workspace.key,
-            "depends_on_task_id": &pair.depends_on.id,
-        }),
-        None,
+        ChangePayload::workspace(&workspace).set("depends_on_task_id", pair.depends_on.id.clone()),
     )
     .await?;
     Ok(())
@@ -98,7 +93,7 @@ pub(crate) async fn add_task_dependency(
         > 0;
 
     if changed {
-        record_dependency_change(&mut tx, &pair, "dependency_add").await?;
+        record_dependency_change(&mut tx, &pair, op_type::DEPENDENCY_ADD).await?;
     }
 
     tx.commit().await?;
@@ -130,7 +125,7 @@ pub(crate) async fn remove_task_dependency(
         > 0;
 
     if changed {
-        record_dependency_change(&mut tx, &pair, "dependency_remove").await?;
+        record_dependency_change(&mut tx, &pair, op_type::DEPENDENCY_REMOVE).await?;
     }
 
     tx.commit().await?;

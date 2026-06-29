@@ -3,13 +3,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use serde_json::json;
 use sqlx::{Row, SqliteConnection};
 use tracing::info;
 
+use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
 use crate::config;
 use crate::config_edit::{self, ProjectPathMappingEdit};
-use crate::db::{begin_immediate, insert_change};
+use crate::db::begin_immediate;
 use crate::ids::now;
 use crate::labels::normalize_label;
 use crate::projects::{
@@ -106,19 +106,15 @@ pub(crate) async fn create_label_operation_in_workspace(
     let created = !existed;
     let change_id = if created {
         Some(
-            insert_change(
+            append_change(
                 conn,
-                "label",
+                ChangeEntity::Label,
                 &name,
                 None,
-                "create_label",
-                json!({
-                    "workspace_id": &workspace.id,
-                    "workspace_key": &workspace.key,
-                    "name": name,
-                    "created_at": created_at,
-                }),
-                None,
+                op_type::CREATE_LABEL,
+                ChangePayload::workspace(&workspace)
+                    .set("name", name.clone())
+                    .set("created_at", created_at),
             )
             .await?,
         )
@@ -160,19 +156,15 @@ pub(crate) async fn delete_label_operation(
         .rows_affected();
     let changed = task_labels > 0 || labels > 0;
     if changed {
-        insert_change(
+        append_change(
             &mut tx,
-            "label",
+            ChangeEntity::Label,
             &name,
             None,
-            "label_delete",
-            json!({
-                "workspace_id": &workspace.id,
-                "workspace_key": &workspace.key,
-                "name": &name,
-                "deleted_at": &deleted_at,
-            }),
-            None,
+            op_type::LABEL_DELETE,
+            ChangePayload::workspace(&workspace)
+                .set("name", name.clone())
+                .set("deleted_at", deleted_at),
         )
         .await?;
     }
@@ -244,18 +236,13 @@ pub(crate) async fn delete_project_operation(
     if deleted.rows_affected() != 1 {
         bail!("error project-delete-race project={}", project.key);
     }
-    insert_change(
+    append_change(
         &mut tx,
-        "project",
+        ChangeEntity::Project,
         &project.id,
         None,
-        "project_delete",
-        json!({
-            "workspace_id": &workspace.id,
-            "workspace_key": &workspace.key,
-            "deleted_at": &deleted_at,
-        }),
-        None,
+        op_type::PROJECT_DELETE,
+        ChangePayload::workspace(workspace).set("deleted_at", deleted_at),
     )
     .await?;
     tx.commit().await?;
@@ -379,21 +366,17 @@ pub(crate) async fn insert_project_metadata_change(
     metadata: ProjectMetadata<'_>,
     updated_at: &str,
 ) -> Result<String> {
-    insert_change(
+    append_change(
         conn,
-        "project",
+        ChangeEntity::Project,
         project_id,
         None,
-        "set_project_metadata",
-        json!({
-            "workspace_id": &workspace.id,
-            "workspace_key": &workspace.key,
-            "key": metadata.key,
-            "name": metadata.name,
-            "prefix": metadata.prefix,
-            "updated_at": updated_at,
-        }),
-        None,
+        op_type::SET_PROJECT_METADATA,
+        ChangePayload::workspace(workspace)
+            .set("key", metadata.key)
+            .set("name", metadata.name)
+            .set("prefix", metadata.prefix)
+            .set("updated_at", updated_at),
     )
     .await
 }

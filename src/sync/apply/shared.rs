@@ -13,6 +13,10 @@ pub(super) fn str_payload(payload: &Value, key: &str) -> Result<String> {
         .with_context(|| format!("payload missing {key}"))
 }
 
+pub(super) fn optional_str_payload(payload: &Value, key: &str) -> Option<String> {
+    payload.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
 pub(super) async fn workspace_id_payload(
     conn: &mut SqliteConnection,
     change: &ChangeWire,

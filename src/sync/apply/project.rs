@@ -5,6 +5,7 @@ use crate::operations::{ProjectMetadata, set_project_metadata as apply_project_m
 use crate::projects::{normalize_key, prefix_base};
 use crate::sync::wire::ChangeWire;
 
+use super::payload::{CreateProjectPayload, SetProjectMetadataPayload};
 use super::shared::str_payload;
 
 pub(super) async fn delete_project(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
@@ -47,19 +48,16 @@ async fn resolve_project_for_delete(
     Ok(None)
 }
 pub(super) async fn create_project(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
+    let p = CreateProjectPayload::from_change(change)?;
     let workspace_id = super::shared::workspace_id_payload(conn, change).await?;
-    let key = str_payload(&change.payload, "key")?;
-    let name = str_payload(&change.payload, "name")?;
-    let prefix = str_payload(&change.payload, "prefix")?;
-    let created_at =
-        str_payload(&change.payload, "created_at").unwrap_or_else(|_| crate::ids::now());
+    let created_at = p.created_at.unwrap_or_else(crate::ids::now);
     ensure_remote_project(
         conn,
         &workspace_id,
         &change.entity_id,
-        &key,
-        &name,
-        &prefix,
+        &p.key,
+        &p.name,
+        &p.prefix,
         &created_at,
     )
     .await?;
@@ -70,33 +68,37 @@ pub(super) async fn set_project_metadata(
     conn: &mut SqliteConnection,
     change: &ChangeWire,
 ) -> Result<()> {
+    let p = SetProjectMetadataPayload::from_change(change)?;
     let workspace_id = super::shared::workspace_id_payload(conn, change).await?;
-    let key = str_payload(&change.payload, "key")?;
-    let name = str_payload(&change.payload, "name")?;
-    let prefix = str_payload(&change.payload, "prefix")?;
-    validate_project_metadata_payload(&key, &name, &prefix)?;
+    validate_project_metadata_payload(&p.key, &p.name, &p.prefix)?;
     let project_id = ensure_project_for_metadata(conn, &workspace_id, change).await?;
     let previous_key = live_project_key_by_id(conn, &workspace_id, &project_id)
         .await?
         .context("project metadata target missing")?;
-    let key = unique_remote_key(conn, &workspace_id, &key, Some(&project_id)).await?;
-    let prefix =
-        unique_remote_prefix(conn, &workspace_id, &prefix, &key, Some(&project_id)).await?;
+    let resolved_key = unique_remote_key(conn, &workspace_id, &p.key, Some(&project_id)).await?;
+    let resolved_prefix = unique_remote_prefix(
+        conn,
+        &workspace_id,
+        &p.prefix,
+        &resolved_key,
+        Some(&project_id),
+    )
+    .await?;
     let workspace = crate::workspaces::workspace_for_id(conn, &workspace_id).await?;
     apply_project_metadata(
         conn,
         &workspace,
         &project_id,
         ProjectMetadata {
-            key: &key,
-            name: &name,
-            prefix: &prefix,
+            key: &resolved_key,
+            name: &p.name,
+            prefix: &resolved_prefix,
         },
         false,
     )
     .await?;
-    if previous_key != key {
-        crate::operations::rename_config_project_mapping(&workspace, &previous_key, &key)?;
+    if previous_key != resolved_key {
+        crate::operations::rename_config_project_mapping(&workspace, &previous_key, &resolved_key)?;
     }
     Ok(())
 }
