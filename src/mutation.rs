@@ -3,7 +3,7 @@ use sqlx::SqliteConnection;
 use tracing::{debug, info};
 
 use crate::choices::TaskPriority;
-use crate::db::{conflict_exists, field_version, insert_change, set_field_version};
+use crate::db::{conflict_exists, field_version, insert_change, set_field_version, task_from_row};
 use crate::ids::now;
 use crate::projects::resolve_project_for_add_in_workspace;
 use crate::refs::get_task;
@@ -79,8 +79,8 @@ pub(crate) async fn set_task_project(
 ) -> Result<bool> {
     let workspace = active_workspace();
     let field = TaskField::Project.as_str();
-    let current_project_id = current_project_id(conn, &workspace.id, task_id).await?;
-    if current_project_id == project.id {
+    let current = current_task(conn, &workspace.id, task_id).await?;
+    if current.project_id == project.id {
         return Ok(false);
     }
     if conflict_exists(conn, &workspace.id, task_id, field).await? {
@@ -108,9 +108,8 @@ async fn set_task_scalar_field(
 
     let workspace = active_workspace();
     let field = task_field.as_str();
-    let current_value =
-        current_scalar_field_value(conn, &workspace.id, task_id, task_field).await?;
-    if current_value == value {
+    let current = current_task(conn, &workspace.id, task_id).await?;
+    if task_field.current_value(&current) == value {
         return Ok(false);
     }
     if conflict_exists(conn, &workspace.id, task_id, field).await? {
@@ -155,85 +154,32 @@ async fn finish_task_field_change(
     Ok(())
 }
 
-async fn current_project_id(
+async fn current_task(
     conn: &mut SqliteConnection,
     workspace_id: &str,
     task_id: &str,
-) -> Result<String> {
-    sqlx::query_scalar("SELECT project_id FROM tasks WHERE workspace_id = ? AND id = ?")
-        .bind(workspace_id)
-        .bind(task_id)
-        .fetch_optional(&mut *conn)
-        .await?
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "error task-not-found task_id={} workspace_id={}",
-                task_id,
-                workspace_id
-            )
-        })
-}
-
-async fn current_scalar_field_value(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-    task_id: &str,
-    task_field: TaskField,
-) -> Result<String> {
-    let value = match task_field {
-        TaskField::Title => {
-            sqlx::query_scalar::<_, String>(
-                "SELECT title FROM tasks WHERE workspace_id = ? AND id = ?",
-            )
-            .bind(workspace_id)
-            .bind(task_id)
-            .fetch_optional(&mut *conn)
-            .await?
-        }
-        TaskField::Description => {
-            sqlx::query_scalar::<_, String>(
-                "SELECT description FROM tasks WHERE workspace_id = ? AND id = ?",
-            )
-            .bind(workspace_id)
-            .bind(task_id)
-            .fetch_optional(&mut *conn)
-            .await?
-        }
-        TaskField::Status => {
-            sqlx::query_scalar::<_, String>(
-                "SELECT status FROM tasks WHERE workspace_id = ? AND id = ?",
-            )
-            .bind(workspace_id)
-            .bind(task_id)
-            .fetch_optional(&mut *conn)
-            .await?
-        }
-        TaskField::Priority => {
-            sqlx::query_scalar::<_, String>(
-                "SELECT priority FROM tasks WHERE workspace_id = ? AND id = ?",
-            )
-            .bind(workspace_id)
-            .bind(task_id)
-            .fetch_optional(&mut *conn)
-            .await?
-        }
-        TaskField::Deleted => sqlx::query_scalar::<_, i64>(
-            "SELECT deleted FROM tasks WHERE workspace_id = ? AND id = ?",
-        )
-        .bind(workspace_id)
-        .bind(task_id)
-        .fetch_optional(&mut *conn)
-        .await?
-        .map(|deleted| i64::from(deleted != 0).to_string()),
-        TaskField::Project => bail!("error project-update-requires-project-id"),
-    };
-    value.ok_or_else(|| {
+) -> Result<Task> {
+    let row = sqlx::query(
+        "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
+                p.key AS project_key, p.prefix AS project_prefix, t.status,
+                t.priority, t.created_at, t.updated_at, t.queue_activity_at,
+                t.deleted
+         FROM tasks t
+         JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
+         WHERE t.workspace_id = ? AND t.id = ?",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or_else(|| {
         anyhow::anyhow!(
             "error task-not-found task_id={} workspace_id={}",
             task_id,
             workspace_id
         )
-    })
+    })?;
+    task_from_row(&row)
 }
 
 #[allow(dead_code)]
