@@ -67,9 +67,18 @@ CREATE TRIGGER IF NOT EXISTS task_search_documents_bd BEFORE DELETE ON task_sear
     DELETE FROM task_search_fts WHERE rowid = old.doc_id;
 END;
 
--- Sync content table updates to the FTS index.
--- INSERT with the same rowid replaces the existing FTS entry.
+-- Sync content table updates to the FTS index
 CREATE TRIGGER IF NOT EXISTS task_search_documents_au AFTER UPDATE ON task_search_documents BEGIN
+    INSERT INTO task_search_fts(
+        task_search_fts, rowid, workspace_token, title, description,
+        labels, notes, project_key, project_name, project_prefix, status,
+        priority
+    )
+    VALUES (
+        'delete', old.doc_id, old.workspace_token, old.title, old.description,
+        old.labels, old.notes, old.project_key, old.project_name,
+        old.project_prefix, old.status, old.priority
+    );
     INSERT INTO task_search_fts(rowid, workspace_token, title, description, labels, notes, project_key, project_name, project_prefix, status, priority)
     VALUES (new.doc_id, new.workspace_token, new.title, new.description, new.labels, new.notes, new.project_key, new.project_name, new.project_prefix, new.status, new.priority);
 END;

@@ -596,8 +596,23 @@ fn score_text_lane(
     text: &str,
     query: &parser::ParsedTaskSearchQuery,
 ) -> Option<(i64, std::ops::Range<usize>)> {
-    score_contiguous_text_lane(text, query.trimmed.as_str())
-        .or_else(|| score_term_coverage_lane(text, query))
+    if query.phrases.is_empty() {
+        score_contiguous_text_lane(text, query.trimmed.as_str())
+            .or_else(|| score_term_coverage_lane(text, query))
+    } else {
+        score_parsed_contiguous_text_lane(text, query)
+            .or_else(|| score_term_coverage_lane(text, query))
+    }
+}
+
+fn score_parsed_contiguous_text_lane(
+    text: &str,
+    query: &parser::ParsedTaskSearchQuery,
+) -> Option<(i64, std::ops::Range<usize>)> {
+    search_terms(query)
+        .into_iter()
+        .filter_map(|term| score_contiguous_text_lane(text, term))
+        .max_by_key(|(score, _)| *score)
 }
 
 fn score_contiguous_text_lane(text: &str, query: &str) -> Option<(i64, std::ops::Range<usize>)> {
@@ -814,5 +829,22 @@ mod tests {
         assert_eq!(score_contiguous_text_lane("looking glass", "100k1ng"), None);
         assert!(score_contiguous_text_lane("looking glass", "glass").is_some());
         assert!(score_contiguous_text_lane("looking glass", "looking").is_some());
+    }
+
+    #[test]
+    fn score_text_lane_matches_parser_owned_quoted_phrase() {
+        let parsed = parser::parse_task_search_query("\"pager rotation\"");
+        let (_, span) = score_text_lane("contains pager rotation context", &parsed).unwrap();
+
+        assert_eq!(&"contains pager rotation context"[span], "pager rotation");
+        assert!(score_text_lane("contains pager context", &parsed).is_none());
+    }
+
+    #[test]
+    fn score_text_lane_handles_unsafe_parser_input_without_panic() {
+        for input in ["\"", "\"(", "a*b", "\"unfinished", "x OR y", "\"*\""] {
+            let parsed = parser::parse_task_search_query(input);
+            let _ = score_text_lane("any task body", &parsed);
+        }
     }
 }

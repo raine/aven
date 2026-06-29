@@ -641,6 +641,12 @@ mod tests {
         .await;
         insert_test_label(&mut conn, "8KQ9A1X4MV2P8D6R", "security").await;
         sqlx::query(
+            "UPDATE tasks SET description = 'schedule pager rotation handoff' WHERE id = '9KQ9A1X4MV2P8D6R'",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
             "INSERT INTO notes(id, task_id, body, created_at, change_id)
              VALUES ('note-search', '7KQ9A1X4MV2P8D6R', 'contains pager rotation context', '003', 'change-search')",
         )
@@ -700,14 +706,132 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(listed_titles_from_search(&note), ["Done release cleanup"]);
-        assert_eq!(note[0].matched_field, SearchMatchedField::Note);
+        let note_titles = listed_titles_from_search(&note);
+        assert!(note_titles.contains(&"Done release cleanup"));
+        assert!(note_titles.contains(&"Add iOS API auth flow"));
+        let note_match = note
+            .iter()
+            .find(|r| r.item.task.title == "Done release cleanup")
+            .expect("note match should be in results");
+        assert_eq!(note_match.matched_field, SearchMatchedField::Note);
         assert!(
-            note[0]
+            note_match
                 .snippet
                 .as_deref()
                 .is_some_and(|value| value.contains("pager rotation"))
         );
+
+        let quoted_note = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "\"pager rotation\"".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        let quoted_note_titles = listed_titles_from_search(&quoted_note);
+        assert!(quoted_note_titles.contains(&"Done release cleanup"));
+        assert!(quoted_note_titles.contains(&"Add iOS API auth flow"));
+        let quoted_note_match = quoted_note
+            .iter()
+            .find(|r| r.item.task.title == "Done release cleanup")
+            .expect("note match should be in results");
+        assert_eq!(quoted_note_match.matched_field, SearchMatchedField::Note);
+        assert!(
+            quoted_note_match
+                .snippet
+                .as_deref()
+                .is_some_and(|value| value.contains("pager rotation"))
+        );
+
+        let desc_phrase = search_task_items(
+            &mut conn,
+            TaskSearchQuery {
+                text: "\"pager rotation handoff\"".to_string(),
+                include_deleted: false,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            listed_titles_from_search(&desc_phrase),
+            ["Add iOS API auth flow"]
+        );
+        assert_eq!(
+            desc_phrase[0].matched_field,
+            SearchMatchedField::Description
+        );
+        assert!(
+            desc_phrase[0]
+                .snippet
+                .as_deref()
+                .is_some_and(|value| value.contains("pager rotation handoff"))
+        );
+    }
+
+    fn task_search_fts_match(workspace_id: &str, term: &str) -> String {
+        fn phrase(value: &str) -> String {
+            format!("\"{}\"", value.replace('"', "\"\""))
+        }
+
+        format!("workspace_token:{} {}", phrase(workspace_id), phrase(term))
+    }
+
+    async fn task_search_fts_match_count(conn: &mut SqliteConnection, expression: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM task_search_fts WHERE task_search_fts MATCH ?",
+        )
+        .bind(expression)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn task_search_document_update_removes_stale_fts_terms() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+        insert_test_task(
+            &mut conn,
+            "7KQ9A1X4MV2P8D6R",
+            "FTS maintenance probe",
+            "todo",
+            "none",
+            "001",
+        )
+        .await;
+
+        let workspace_id = crate::workspaces::active_workspace_id();
+        sqlx::query(
+            "UPDATE task_search_documents SET notes = 'obsolete pager phrase'
+             WHERE workspace_id = ? AND task_id = ?",
+        )
+        .bind(&workspace_id)
+        .bind("7KQ9A1X4MV2P8D6R")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let obsolete = task_search_fts_match(&workspace_id, "obsolete pager phrase");
+        assert_eq!(task_search_fts_match_count(&mut conn, &obsolete).await, 1);
+
+        sqlx::query(
+            "UPDATE task_search_documents SET notes = 'fresh pager phrase'
+             WHERE workspace_id = ? AND task_id = ?",
+        )
+        .bind(&workspace_id)
+        .bind("7KQ9A1X4MV2P8D6R")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        assert_eq!(task_search_fts_match_count(&mut conn, &obsolete).await, 0);
+
+        let fresh = task_search_fts_match(&workspace_id, "fresh pager phrase");
+        assert_eq!(task_search_fts_match_count(&mut conn, &fresh).await, 1);
     }
 
     #[tokio::test]
