@@ -12,7 +12,6 @@ use crate::types::Task;
 pub(crate) struct ConflictListItem {
     pub(crate) task_id: String,
     pub(crate) title: String,
-    #[allow(dead_code)]
     pub(crate) project_key: String,
     pub(crate) project_prefix: String,
     pub(crate) field: String,

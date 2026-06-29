@@ -20,8 +20,9 @@ pub(super) async fn workspace_counts(
     Ok((active, all))
 }
 
+#[derive(serde::Serialize)]
 pub(super) struct DoctorReport {
-    sections: Vec<DoctorSection>,
+    pub(super) sections: Vec<DoctorSection>,
 }
 
 impl DoctorReport {
@@ -40,9 +41,10 @@ impl DoctorReport {
     }
 }
 
+#[derive(serde::Serialize)]
 pub(super) struct DoctorSection {
-    title: &'static str,
-    rows: Vec<DoctorRow>,
+    pub(super) title: &'static str,
+    pub(super) rows: Vec<DoctorRow>,
 }
 
 impl DoctorSection {
@@ -67,14 +69,16 @@ impl DoctorSection {
     }
 }
 
-struct DoctorRow {
-    status: DoctorStatus,
-    label: &'static str,
-    value: String,
+#[derive(serde::Serialize)]
+pub(super) struct DoctorRow {
+    pub(super) status: DoctorStatus,
+    pub(super) label: &'static str,
+    pub(super) value: String,
 }
 
-#[derive(Clone, Copy)]
-enum DoctorStatus {
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum DoctorStatus {
     Ok,
     Error,
     Info,

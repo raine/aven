@@ -2,7 +2,7 @@ mod common;
 
 use std::fs;
 
-use common::{TestEnv, command, contains_all, contains_none, ok};
+use common::{TestEnv, command, contains_all, contains_none, extract_ref, ok};
 
 #[test]
 fn prime_prints_skill_primer_and_inferred_project_open_issues() {
@@ -222,4 +222,61 @@ fn clean_git_env(command: &mut std::process::Command) {
     ] {
         command.env_remove(name);
     }
+}
+
+#[test]
+fn prime_json_returns_structured_output_with_explicit_project() {
+    let env = TestEnv::new();
+    let db = env.db("prime-json.sqlite");
+    ok(env.aven(&db, ["label", "create", "bug"]));
+    let active_ref = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "active task",
+            "--project",
+            "app",
+            "--priority",
+            "high",
+            "--label",
+            "bug",
+        ],
+    )));
+    ok(env.aven(&db, ["update", &active_ref, "--status", "active"]));
+    let _inbox_ref = extract_ref(&ok(env.aven(&db, ["add", "inbox task", "--project", "app"])));
+
+    let output = ok(env.aven(&db, ["prime", "--project", "app", "--json"]));
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["project"], "app");
+    assert!(json["unavailable_reason"].is_null());
+    assert!(json["open_issue_sample"].as_u64().unwrap_or(0) >= 2);
+    assert!(!json["active"].as_array().unwrap().is_empty());
+    assert!(!json["ready"].as_array().unwrap().is_empty());
+    assert!(json["conventions"]["title_style"].is_string());
+    assert!(json["conventions"]["statuses"].is_string());
+}
+
+#[test]
+fn prime_json_returns_unavailable_without_project() {
+    let env = TestEnv::new();
+    let db = env.db("prime-json-none.sqlite");
+    let cwd = env.path("plain");
+    std::fs::create_dir_all(&cwd).unwrap();
+
+    let output = ok(env.aven_in(&db, &cwd, ["prime", "--json"]));
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert!(json["project"].is_null());
+    assert!(json["unavailable_reason"].is_string());
+}
+
+#[test]
+fn prime_json_supports_limit() {
+    let env = TestEnv::new();
+    let db = env.db("prime-json-limit.sqlite");
+    let _r1 = extract_ref(&ok(env.aven(&db, ["add", "task one", "--project", "app"])));
+    let _r2 = extract_ref(&ok(env.aven(&db, ["add", "task two", "--project", "app"])));
+
+    let output = ok(env.aven(&db, ["prime", "--project", "app", "--json", "--limit", "1"]));
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["open_issue_sample"], 1);
 }

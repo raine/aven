@@ -92,6 +92,15 @@ aven restore APP-7KQ9
 - Inspect dependency context with `show <ref> --full` before changing task order or
   status. The `depends_on` and `blocks` sections show blockers and dependents.
 
+## Structured output
+
+- Human-readable output is the default and preferred for agent use.
+- `--json` is available on `context`, `search`, `list`, `show`, `dep list`,
+  `project list`, `label list`, `conflict list`, `conflict show`, `prime`, and
+  `doctor`.
+- Use `--limit <n>` with list-style reads such as `list`, `project list`,
+  `label list`, `conflict list`, and `prime` to bound response size.
+
 ## Sync behavior
 
 ```sh

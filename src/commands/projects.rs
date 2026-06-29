@@ -1,4 +1,5 @@
 use anyhow::Result;
+use serde::Serialize;
 use sqlx::SqliteConnection;
 
 use crate::cli::{ProjectCommand, ProjectPathSubcommand, ProjectSubcommand, SearchArgs};
@@ -84,15 +85,38 @@ pub(crate) async fn cmd_project(conn: &mut SqliteConnection, args: ProjectComman
     Ok(())
 }
 
+#[derive(Serialize)]
+struct ProjectListJsonItem {
+    key: String,
+    name: String,
+    prefix: String,
+}
+
 async fn cmd_projects(conn: &mut SqliteConnection, args: SearchArgs) -> Result<()> {
-    let projects = list_projects(conn, args.search.as_deref()).await?;
-    for project in projects {
-        println!(
-            "{} prefix={} name={}",
-            project.key,
-            project.prefix,
-            quote(&project.name)
-        );
+    let mut projects = list_projects(conn, args.search.as_deref()).await?;
+    if let Some(limit) = args.limit {
+        projects.truncate(limit);
+    }
+    if args.json {
+        let items: Vec<ProjectListJsonItem> = projects
+            .into_iter()
+            .map(|p| ProjectListJsonItem {
+                key: p.key,
+                name: p.name,
+                prefix: p.prefix,
+            })
+            .collect();
+        serde_json::to_writer_pretty(std::io::stdout(), &items)?;
+        println!();
+    } else {
+        for project in projects {
+            println!(
+                "{} prefix={} name={}",
+                project.key,
+                project.prefix,
+                quote(&project.name)
+            );
+        }
     }
     Ok(())
 }

@@ -346,6 +346,8 @@ pub(crate) struct ShowArgs {
     pub(crate) task_ref: String,
     #[arg(long)]
     pub(crate) full: bool,
+    #[arg(long, help = "Print machine-readable JSON")]
+    pub(crate) json: bool,
 }
 
 #[derive(Args)]
@@ -373,6 +375,10 @@ pub(crate) struct ListArgs {
     pub(crate) ready: bool,
     #[arg(long)]
     pub(crate) blocked: bool,
+    #[arg(long)]
+    pub(crate) limit: Option<usize>,
+    #[arg(long, help = "Print machine-readable JSON")]
+    pub(crate) json: bool,
 }
 
 #[derive(Args)]
@@ -414,6 +420,8 @@ pub(crate) struct DepRemoveArgs {
 #[derive(Args)]
 pub(crate) struct DepListArgs {
     pub(crate) task_ref: String,
+    #[arg(long, help = "Print machine-readable JSON")]
+    pub(crate) json: bool,
 }
 
 #[derive(Args)]
@@ -448,6 +456,10 @@ pub(crate) struct BulkUpdateArgs {
 pub(crate) struct PrimeArgs {
     #[arg(long)]
     pub(crate) project: Option<String>,
+    #[arg(long)]
+    pub(crate) limit: Option<usize>,
+    #[arg(long, help = "Print machine-readable JSON")]
+    pub(crate) json: bool,
 }
 
 #[derive(Args)]
@@ -493,6 +505,10 @@ pub(crate) struct NoteDeleteArgs {
 pub(crate) struct SearchArgs {
     #[arg(long)]
     pub(crate) search: Option<String>,
+    #[arg(long)]
+    pub(crate) limit: Option<usize>,
+    #[arg(long, help = "Print machine-readable JSON")]
+    pub(crate) json: bool,
 }
 
 #[derive(Args)]
@@ -598,6 +614,8 @@ pub(crate) struct ImportArgs {
 pub(crate) struct DoctorArgs {
     #[arg(long)]
     pub(crate) integrity: bool,
+    #[arg(long, help = "Print machine-readable JSON")]
+    pub(crate) json: bool,
 }
 
 #[derive(Subcommand)]
@@ -620,6 +638,10 @@ pub(crate) enum ConflictSubcommand {
         project: Option<String>,
         #[arg(long)]
         field: Option<String>,
+        #[arg(long)]
+        limit: Option<usize>,
+        #[arg(long, help = "Print machine-readable JSON")]
+        json: bool,
     },
     Diff {
         task_ref: String,
@@ -635,6 +657,8 @@ pub(crate) enum ConflictSubcommand {
         task_ref: String,
         #[arg(long)]
         field: Option<String>,
+        #[arg(long, help = "Print machine-readable JSON")]
+        json: bool,
     },
     Resolve {
         task_ref: String,

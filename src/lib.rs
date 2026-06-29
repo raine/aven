@@ -166,6 +166,7 @@ pub async fn run_cli() -> Result<()> {
                         db_flag_set,
                         workspace.as_deref(),
                         args.integrity,
+                        args.json,
                     )
                     .await
                 }

@@ -207,3 +207,33 @@ fn invalid_deleted_conflict_resolution_preserves_task_and_change_log() {
     let conflicts = ok(env.aven(&a, ["conflict", "list"]));
     contains_all(&conflicts, &[&task_ref, "conflict field=deleted"]);
 }
+
+#[test]
+fn conflict_list_json_supports_limit() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let (a, _, _task_ref) = title_conflict(&env, &server);
+
+    let listed = ok(env.aven(&a, ["conflict", "list", "--json", "--limit", "1"]));
+    let listed: serde_json::Value = serde_json::from_str(&listed).unwrap();
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["field"], "title");
+    assert!(listed[0]["variants"].as_array().unwrap().len() >= 2);
+}
+
+#[test]
+fn conflict_show_json_returns_detail() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let (a, _, task_ref) = title_conflict(&env, &server);
+
+    let shown = ok(env.aven(
+        &a,
+        ["conflict", "show", &task_ref, "--field", "title", "--json"],
+    ));
+    let shown: serde_json::Value = serde_json::from_str(&shown).unwrap();
+    assert_eq!(shown.as_array().unwrap().len(), 1);
+    assert_eq!(shown[0]["field"], "title");
+    assert!(shown[0]["variants"][0]["token"].is_string());
+    assert!(shown[0]["variants"][0]["value"].is_string());
+}

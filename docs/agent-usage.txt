@@ -36,6 +36,14 @@ Markdown input:
   * Use note --file or note --stdin for durable task notes.
   * Notes are append-only and are better for handoff context than scratch work.
 
+Structured output:
+
+  * Human-readable output is the default and preferred for agent use.
+  * --json is available on context, search, list, show, dep list, project list,
+    label list, conflict list, conflict show, prime, and doctor.
+  * Use --limit <n> with list-style reads such as list, project list, label
+    list, conflict list, and prime to bound response size.
+
 Conflicts:
 
   * Inspect conflicts before resolving them.

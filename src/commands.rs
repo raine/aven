@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, HashSet};
 use anyhow::{Result, bail};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use sqlx::Row;
 use sqlx::SqliteConnection;
 
 use crate::sync::sync_server_url_is_valid;
@@ -54,7 +55,10 @@ use crate::query::{
 use crate::refs::{display_ref, display_suffix, resolve_task_ref};
 use crate::render::{changed_text, print_multiline_block, print_text_diff, quote};
 use crate::task_fields::TaskField;
-use crate::task_render::{print_task, print_task_dependency_summary, print_task_line_item};
+use crate::task_render::{
+    TaskConflictJson, TaskFullJson, TaskNoteJson, print_task, print_task_dependency_summary,
+    print_task_line_item, task_dependency_summary_json, task_line_json_item,
+};
 use crate::types::Task;
 use crate::workspaces::{resolve_active_workspace, set_active_workspace, workspace_for_id};
 
@@ -197,7 +201,82 @@ fn shell_quote(value: &str) -> String {
 
 pub(crate) async fn cmd_show(conn: &mut SqliteConnection, args: ShowArgs) -> Result<()> {
     let task = resolve_task_ref(conn, &args.task_ref).await?;
-    print_task(conn, &task, args.full).await
+    if args.json {
+        let item = query::list_task_items(
+            conn,
+            TaskFilters {
+                include_deleted: task.deleted,
+                task_ids: vec![task.id.clone()],
+                ..Default::default()
+            },
+            TaskQueryMode::Flat,
+            TaskSort::Updated,
+            SortDirection::Desc,
+        )
+        .await?
+        .into_iter()
+        .next()
+        .expect("task must exist after resolve");
+        if args.full {
+            let summary =
+                query::task_dependency_summary(conn, &task.workspace_id, &task.id).await?;
+            let notes = sqlx::query(
+                "SELECT body, created_at FROM notes
+                 WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, id",
+            )
+            .bind(&task.workspace_id)
+            .bind(&task.id)
+            .fetch_all(&mut *conn)
+            .await?;
+            let mut note_items = Vec::new();
+            for row in notes {
+                let created_at: String = row.get("created_at");
+                let body: String = row.get("body");
+                note_items.push(TaskNoteJson { body, created_at });
+            }
+            let conflict_rows = sqlx::query(
+                "SELECT field, variant_a, local_value, variant_b, remote_value
+                 FROM conflicts
+                 WHERE workspace_id = ? AND task_id = ? AND resolved = 0
+                 ORDER BY field, id",
+            )
+            .bind(&task.workspace_id)
+            .bind(&task.id)
+            .fetch_all(&mut *conn)
+            .await?;
+            let mut conflict_items = Vec::new();
+            for row in conflict_rows {
+                let field: String = row.get("field");
+                let variant_a: String = row.get("variant_a");
+                let local_value: String = row.get("local_value");
+                let variant_b: String = row.get("variant_b");
+                let remote_value: String = row.get("remote_value");
+                conflict_items.push(TaskConflictJson {
+                    field,
+                    variant_a,
+                    local_value,
+                    variant_b,
+                    remote_value,
+                });
+            }
+            let full = TaskFullJson {
+                task: task_line_json_item(&item),
+                project_prefix: task.project_prefix.clone(),
+                description: task.description.clone(),
+                dependencies: task_dependency_summary_json(&summary),
+                notes: note_items,
+                conflicts: conflict_items,
+            };
+            serde_json::to_writer_pretty(std::io::stdout(), &full)?;
+        } else {
+            let line = task_line_json_item(&item);
+            serde_json::to_writer_pretty(std::io::stdout(), &line)?;
+        }
+        println!();
+    } else {
+        print_task(conn, &task, args.full).await?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Result<()> {
@@ -211,17 +290,26 @@ pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Res
             "error list-dependency-filter-all-conflict hint=\"dependency filters only include open tasks\""
         );
     }
-    let filters = list_task_filters(args);
-    for item in query::list_task_items(
+    let filters = list_task_filters(&args);
+    let mut items = query::list_task_items(
         conn,
         filters,
         TaskQueryMode::Flat,
         TaskSort::Updated,
         SortDirection::Desc,
     )
-    .await?
-    {
-        print_task_line_item(&item).await?;
+    .await?;
+    if let Some(limit) = args.limit {
+        items.truncate(limit);
+    }
+    if args.json {
+        let items = items.iter().map(task_line_json_item).collect::<Vec<_>>();
+        serde_json::to_writer_pretty(std::io::stdout(), &items)?;
+        println!();
+    } else {
+        for item in items {
+            print_task_line_item(&item).await?;
+        }
     }
     Ok(())
 }
@@ -336,7 +424,13 @@ pub(crate) async fn cmd_dep(conn: &mut SqliteConnection, args: DepCommand) -> Re
             let task = resolve_task_ref(conn, &args.task_ref).await?;
             let summary =
                 query::task_dependency_summary(conn, &task.workspace_id, &task.id).await?;
-            print_task_dependency_summary(&summary);
+            if args.json {
+                let json = task_dependency_summary_json(&summary);
+                serde_json::to_writer_pretty(std::io::stdout(), &json)?;
+                println!();
+            } else {
+                print_task_dependency_summary(&summary);
+            }
         }
     }
     Ok(())
@@ -698,6 +792,21 @@ async fn ensure_bulk_field_clear(
 }
 
 pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> Result<()> {
+    let workspace_id = crate::workspaces::active_workspace_id();
+    let project = if let Some(project) = args.project {
+        Some(
+            resolve_existing_project_in_workspace(conn, workspace_id.as_str(), &project)
+                .await?
+                .key,
+        )
+    } else {
+        inferred_project_key_for_add_in_workspace(conn, workspace_id.as_str()).await?
+    };
+
+    if args.json {
+        return cmd_prime_json(conn, project, args.limit).await;
+    }
+
     print!("{}", include_str!("skill.md"));
     if !include_str!("skill.md").ends_with('\n') {
         println!();
@@ -718,17 +827,6 @@ pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> R
     );
     println!("- Use `canceled` only when the user says the issue is no longer needed.");
     println!();
-
-    let workspace_id = crate::workspaces::active_workspace_id();
-    let project = if let Some(project) = args.project {
-        Some(
-            resolve_existing_project_in_workspace(conn, workspace_id.as_str(), &project)
-                .await?
-                .key,
-        )
-    } else {
-        inferred_project_key_for_add_in_workspace(conn, workspace_id.as_str()).await?
-    };
 
     let Some(project) = project else {
         println!("No current project could be inferred. Run with --project <project>.");
@@ -754,6 +852,227 @@ pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> R
     print_prime_conventions(&project, &items);
     print_prime_open_issues(&items);
     Ok(())
+}
+
+#[derive(Serialize)]
+struct PrimeJson {
+    project: Option<String>,
+    unavailable_reason: Option<String>,
+    open_issue_sample: usize,
+    conventions: PrimeConventionsJson,
+    top_blockers: Vec<PrimeBlockerJson>,
+    active: Vec<PrimeIssueJson>,
+    ready: Vec<PrimeIssueJson>,
+    blocked: Vec<PrimeIssueJson>,
+}
+
+#[derive(Serialize)]
+struct PrimeConventionsJson {
+    title_style: String,
+    statuses: String,
+    labels: String,
+}
+
+#[derive(Serialize)]
+struct PrimeBlockerJson {
+    r#ref: String,
+    blocks: i64,
+}
+
+#[derive(Serialize)]
+struct PrimeIssueJson {
+    r#ref: String,
+    status: String,
+    priority: String,
+    labels: Vec<String>,
+    title: String,
+    blocked_by_refs: Vec<String>,
+    blocks_refs: Vec<String>,
+}
+
+async fn cmd_prime_json(
+    conn: &mut SqliteConnection,
+    project: Option<String>,
+    limit: Option<usize>,
+) -> Result<()> {
+    let project_key = project.clone();
+    let Some(project) = project_key else {
+        let json = PrimeJson {
+            project: None,
+            unavailable_reason: Some(
+                "No current project could be inferred. Run with --project <project>.".to_string(),
+            ),
+            open_issue_sample: 0,
+            conventions: PrimeConventionsJson {
+                title_style: String::new(),
+                statuses: String::new(),
+                labels: String::new(),
+            },
+            top_blockers: Vec::new(),
+            active: Vec::new(),
+            ready: Vec::new(),
+            blocked: Vec::new(),
+        };
+        serde_json::to_writer_pretty(std::io::stdout(), &json)?;
+        println!();
+        return Ok(());
+    };
+
+    let workspace_id = crate::workspaces::active_workspace_id();
+    if find_project_in_workspace(conn, workspace_id.as_str(), &project)
+        .await?
+        .is_none()
+    {
+        let json = PrimeJson {
+            project: Some(project),
+            unavailable_reason: Some("No open issues.".to_string()),
+            open_issue_sample: 0,
+            conventions: PrimeConventionsJson {
+                title_style: String::new(),
+                statuses: String::new(),
+                labels: String::new(),
+            },
+            top_blockers: Vec::new(),
+            active: Vec::new(),
+            ready: Vec::new(),
+            blocked: Vec::new(),
+        };
+        serde_json::to_writer_pretty(std::io::stdout(), &json)?;
+        println!();
+        return Ok(());
+    }
+
+    let filters = prime_task_filters(project.clone());
+    let mut items = query::list_task_items(
+        conn,
+        filters,
+        TaskQueryMode::Flat,
+        TaskSort::Updated,
+        SortDirection::Desc,
+    )
+    .await?;
+    if let Some(limit) = limit {
+        items.truncate(limit);
+    }
+
+    let active: Vec<PrimeIssueJson> = items
+        .iter()
+        .filter(|item| item.task.status.as_str() == "active")
+        .map(prime_issue_json)
+        .collect();
+    let ready: Vec<PrimeIssueJson> = items
+        .iter()
+        .filter(|item| item.task.status.as_str() != "active" && item.unresolved_blocker_count == 0)
+        .map(prime_issue_json)
+        .collect();
+    let blocked: Vec<PrimeIssueJson> = items
+        .iter()
+        .filter(|item| item.task.status.as_str() != "active" && item.unresolved_blocker_count > 0)
+        .map(prime_issue_json)
+        .collect();
+
+    let mut blockers: Vec<PrimeBlockerJson> = items
+        .iter()
+        .filter(|item| item.dependent_count > 0)
+        .map(|item| PrimeBlockerJson {
+            r#ref: item.display_ref.clone(),
+            blocks: item.dependent_count,
+        })
+        .collect();
+    blockers.sort_by(|a, b| b.blocks.cmp(&a.blocks).then_with(|| a.r#ref.cmp(&b.r#ref)));
+    blockers.truncate(3);
+
+    let title_style = compute_title_style(&items);
+
+    let status_counts = count_value_strings(items.iter().map(|item| item.task.status.as_str()));
+    let statuses = format_counts_str(&status_counts, 4);
+
+    let label_counts = count_value_strings(
+        items
+            .iter()
+            .flat_map(|item| item.labels.iter().map(String::as_str)),
+    );
+    let labels = format_counts_str(&label_counts, 6);
+
+    let json = PrimeJson {
+        project: Some(project),
+        unavailable_reason: None,
+        open_issue_sample: items.len(),
+        conventions: PrimeConventionsJson {
+            title_style,
+            statuses,
+            labels,
+        },
+        top_blockers: blockers,
+        active,
+        ready,
+        blocked,
+    };
+    serde_json::to_writer_pretty(std::io::stdout(), &json)?;
+    println!();
+    Ok(())
+}
+
+fn compute_title_style(items: &[query::TaskListItem]) -> String {
+    let lowercase = items
+        .iter()
+        .filter(|item| starts_with_lowercase(&item.task.title))
+        .count();
+    let uppercase = items
+        .iter()
+        .filter(|item| starts_with_uppercase(&item.task.title))
+        .count();
+    if lowercase > uppercase {
+        "mostly lower-case starts".to_string()
+    } else if uppercase > lowercase {
+        "mostly capitalized starts".to_string()
+    } else if lowercase > 0 {
+        "mixed lower-case and capitalized starts".to_string()
+    } else {
+        "no alphabetic title starts in sample".to_string()
+    }
+}
+
+fn count_value_strings<'a>(values: impl Iterator<Item = &'a str>) -> Vec<(String, usize)> {
+    use std::collections::BTreeMap;
+    let mut counts = BTreeMap::<String, usize>::new();
+    for value in values {
+        *counts.entry(value.to_string()).or_default() += 1;
+    }
+    let mut counts = counts.into_iter().collect::<Vec<_>>();
+    counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    counts
+}
+
+fn format_counts_str(counts: &[(String, usize)], limit: usize) -> String {
+    counts
+        .iter()
+        .take(limit)
+        .map(|(value, count)| format!("{value}={count}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn prime_issue_json(item: &query::TaskListItem) -> PrimeIssueJson {
+    PrimeIssueJson {
+        r#ref: item.display_ref.clone(),
+        status: item.task.status.to_string(),
+        priority: item.task.priority.to_string(),
+        labels: item.labels.clone(),
+        title: item.task.title.clone(),
+        blocked_by_refs: item
+            .depends_on
+            .iter()
+            .filter(|link| link.unresolved)
+            .map(|link| link.display_ref.clone())
+            .collect(),
+        blocks_refs: item
+            .blocks
+            .iter()
+            .filter(|link| link.unresolved)
+            .map(|link| link.display_ref.clone())
+            .collect(),
+    }
 }
 
 fn print_prime_open_issues(items: &[query::TaskListItem]) {
@@ -955,13 +1274,13 @@ fn format_counts(counts: &[(String, usize)], limit: usize) -> String {
         .join(", ")
 }
 
-fn list_task_filters(args: ListArgs) -> TaskFilters {
+fn list_task_filters(args: &ListArgs) -> TaskFilters {
     TaskFilters {
-        project: args.project,
-        status: args.status,
+        project: args.project.clone(),
+        status: args.status.clone(),
         statuses: Vec::new(),
-        priority: args.priority,
-        label: args.label,
+        priority: args.priority.clone(),
+        label: args.label.clone(),
         include_deleted: args.all || args.deleted,
         deleted_only: args.deleted,
         hide_done: false,
@@ -1130,9 +1449,17 @@ pub(crate) async fn cmd_text(conn: &mut SqliteConnection, args: TextCommand) -> 
 }
 
 pub(crate) async fn cmd_labels(conn: &mut SqliteConnection, args: SearchArgs) -> Result<()> {
-    let labels = list_labels(conn, args.search.as_deref()).await?;
-    for label in labels {
-        println!("{label}");
+    let mut labels = list_labels(conn, args.search.as_deref()).await?;
+    if let Some(limit) = args.limit {
+        labels.truncate(limit);
+    }
+    if args.json {
+        serde_json::to_writer_pretty(std::io::stdout(), &labels)?;
+        println!();
+    } else {
+        for label in labels {
+            println!("{label}");
+        }
     }
     Ok(())
 }
@@ -1184,6 +1511,7 @@ pub(crate) async fn cmd_doctor(
     db_flag_set: bool,
     workspace_flag: Option<&str>,
     integrity: bool,
+    json: bool,
 ) -> Result<()> {
     let config_file = app_config::config_file_path();
     let db_source = if db_flag_set {
@@ -1330,6 +1658,11 @@ pub(crate) async fn cmd_doctor(
         }
     }
 
-    DoctorRenderer::auto().print(&report);
+    if json {
+        serde_json::to_writer_pretty(std::io::stdout(), &report)?;
+        println!();
+    } else {
+        DoctorRenderer::auto().print(&report);
+    }
     Ok(())
 }

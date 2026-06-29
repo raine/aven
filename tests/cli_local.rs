@@ -3,6 +3,99 @@ mod common;
 use common::{TestEnv, command, contains_all, contains_none, extract_ref, fail, ok, suffix};
 
 #[test]
+fn list_json_supports_limit() {
+    let env = TestEnv::new();
+    let db = env.db("list-json.sqlite");
+    ok(env.aven(&db, ["add", "task one", "--project", "app"]));
+    ok(env.aven(&db, ["add", "task two", "--project", "app"]));
+
+    let output = ok(env.aven(&db, ["list", "--json", "--limit", "1"]));
+    let items: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(items.as_array().unwrap().len(), 1);
+    assert!(items[0]["ref"].is_string());
+    assert!(items[0]["title"].is_string());
+    assert!(items[0]["status"].is_string());
+    assert!(items[0]["project"].is_string());
+}
+
+#[test]
+fn show_json_returns_single_task() {
+    let env = TestEnv::new();
+    let db = env.db("show-json.sqlite");
+    let task_ref = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "show json test",
+            "--project",
+            "app",
+            "--priority",
+            "high",
+        ],
+    )));
+
+    let output = ok(env.aven(&db, ["show", &task_ref, "--json"]));
+    let item: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(item["ref"], task_ref);
+    assert_eq!(item["title"], "show json test");
+    assert_eq!(item["priority"], "high");
+    assert!(item.get("task").is_none());
+    assert!(item.get("description").is_none());
+}
+
+#[test]
+fn show_json_full_includes_description_dependencies_notes_conflicts() {
+    let env = TestEnv::new();
+    let db = env.db("show-json-full.sqlite");
+    let task_ref = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "full json test",
+            "--project",
+            "app",
+            "--description",
+            "full json description",
+        ],
+    )));
+
+    let output = ok(env.aven(&db, ["show", &task_ref, "--json", "--full"]));
+    let item: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(item["task"]["ref"], task_ref);
+    assert_eq!(item["description"], "full json description");
+    assert!(item["dependencies"]["depends_on"].is_array());
+    assert!(item["dependencies"]["blocks"].is_array());
+    assert!(item["notes"].is_array());
+    assert!(item["conflicts"].is_array());
+}
+
+#[test]
+fn project_list_json_supports_limit() {
+    let env = TestEnv::new();
+    let db = env.db("project-list-json.sqlite");
+    ok(env.aven(&db, ["project", "create", "agent-offload"]));
+    ok(env.aven(&db, ["project", "create", "docs"]));
+
+    let output = ok(env.aven(&db, ["project", "list", "--json", "--limit", "1"]));
+    let items: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(items.as_array().unwrap().len(), 1);
+    assert!(items[0]["key"].is_string());
+    assert!(items[0]["prefix"].is_string());
+}
+
+#[test]
+fn label_list_json_supports_limit() {
+    let env = TestEnv::new();
+    let db = env.db("label-list-json.sqlite");
+    ok(env.aven(&db, ["label", "create", "bug"]));
+    ok(env.aven(&db, ["label", "create", "sync"]));
+
+    let output = ok(env.aven(&db, ["label", "list", "--json", "--limit", "1"]));
+    let items: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(items.as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn creates_db_and_captures_task() {
     let env = TestEnv::new();
     let implicit = env.db("implicit.sqlite");

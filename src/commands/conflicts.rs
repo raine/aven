@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Result, bail};
+use serde::Serialize;
 use sqlx::SqliteConnection;
 
 use crate::cli::{ConflictCommand, ConflictSubcommand};
@@ -15,25 +16,115 @@ use crate::render::{print_multiline_block, print_text_diff, quote};
 use crate::task_fields::TaskField;
 use crate::types::Task;
 
+#[derive(Serialize)]
+struct ConflictListJsonItem {
+    r#ref: String,
+    task_id: String,
+    title: String,
+    project: String,
+    field: String,
+    variants: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ConflictDetailJson {
+    r#ref: String,
+    task_id: String,
+    field: String,
+    variants: Vec<ConflictVariantJson>,
+}
+
+#[derive(Serialize)]
+struct ConflictVariantJson {
+    token: String,
+    value: String,
+}
+
 pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictCommand) -> Result<()> {
     match args.command {
-        ConflictSubcommand::List { project, field } => {
+        ConflictSubcommand::List {
+            project,
+            field,
+            limit,
+            json,
+        } => {
             let project_key = resolve_conflict_project_filter(
                 conn,
                 crate::workspaces::active_workspace_id().as_str(),
                 project,
             )
             .await?;
-            let items = list_conflicts(conn, project_key.as_deref(), field.as_deref()).await?;
-            for item in items {
-                print_conflict_list_item(conn, item).await?;
+            let mut items = list_conflicts(conn, project_key.as_deref(), field.as_deref()).await?;
+            if let Some(limit) = limit {
+                items.truncate(limit);
+            }
+            if json {
+                let mut json_items = Vec::new();
+                for item in items {
+                    let suffix = display_suffix(conn, &item.task_id).await?;
+                    json_items.push(ConflictListJsonItem {
+                        r#ref: format!("{}-{}", item.project_prefix, suffix),
+                        task_id: item.task_id,
+                        title: item.title,
+                        project: item.project_key,
+                        field: item.field,
+                        variants: vec![item.variant_a, item.variant_b],
+                    });
+                }
+                serde_json::to_writer_pretty(std::io::stdout(), &json_items)?;
+                println!();
+            } else {
+                for item in items {
+                    print_conflict_list_item(conn, item).await?;
+                }
             }
         }
-        ConflictSubcommand::Show { task_ref, field } => {
+        ConflictSubcommand::Show {
+            task_ref,
+            field,
+            json,
+        } => {
             let task = resolve_task_ref(conn, &task_ref).await?;
             let details = task_conflicts(conn, &task.id, field.as_deref()).await?;
-            for detail in details {
-                print_conflict_detail(conn, &task, detail).await?;
+            if json {
+                let mut json_details = Vec::new();
+                for detail in details {
+                    let local_value = conflict_display_value(
+                        conn,
+                        &task.workspace_id,
+                        &detail.field,
+                        &detail.local_value,
+                    )
+                    .await?;
+                    let remote_value = conflict_display_value(
+                        conn,
+                        &task.workspace_id,
+                        &detail.field,
+                        &detail.remote_value,
+                    )
+                    .await?;
+                    json_details.push(ConflictDetailJson {
+                        r#ref: task_ref.clone(),
+                        task_id: task.id.clone(),
+                        field: detail.field,
+                        variants: vec![
+                            ConflictVariantJson {
+                                token: detail.variant_a,
+                                value: local_value,
+                            },
+                            ConflictVariantJson {
+                                token: detail.variant_b,
+                                value: remote_value,
+                            },
+                        ],
+                    });
+                }
+                serde_json::to_writer_pretty(std::io::stdout(), &json_details)?;
+                println!();
+            } else {
+                for detail in details {
+                    print_conflict_detail(conn, &task, detail).await?;
+                }
             }
         }
         ConflictSubcommand::Diff { task_ref, field } => {

@@ -3,6 +3,29 @@ mod common;
 use common::{TestEnv, contains_all, contains_none, extract_ref, fail, ok};
 
 #[test]
+fn dependency_list_json_returns_structured_summary() {
+    let env = TestEnv::new();
+    let db = env.db("dep-list-json.sqlite");
+
+    let root = extract_ref(&ok(env.aven(&db, ["add", "root task", "--project", "app"])));
+    let blocked = extract_ref(&ok(
+        env.aven(&db, ["add", "blocked task", "--project", "app"])
+    ));
+    ok(env.aven(&db, ["dep", "add", &blocked, &root]));
+
+    let output = ok(env.aven(&db, ["dep", "list", &blocked, "--json"]));
+    let summary: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(summary["depends_on_open"], 1);
+    assert_eq!(summary["depends_on_total"], 1);
+    assert_eq!(summary["blocks_open"], 0);
+    assert_eq!(summary["blocks_total"], 0);
+    assert_eq!(summary["depends_on"].as_array().unwrap().len(), 1);
+    assert_eq!(summary["depends_on"][0]["ref"], root);
+    assert_eq!(summary["depends_on"][0]["title"], "root task");
+    assert_eq!(summary["blocks"].as_array().unwrap().len(), 0);
+}
+
+#[test]
 fn dependency_add_list_ready_blocked_and_remove_workflow() {
     let env = TestEnv::new();
     let db = env.db("dependency-workflow.sqlite");

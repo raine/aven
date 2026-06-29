@@ -344,6 +344,44 @@ fn doctor_with_integrity_reports_orphaned_task_data() {
     contains_all(&output, &["Integrity", "!! notes", "!! result"]);
 }
 
+#[test]
+fn doctor_json_reports_default_database_health() {
+    let env = TestEnv::new();
+    let db = env.db("doctor-json.sqlite");
+
+    let output = ok(env.aven(&db, ["doctor", "--json"]));
+    let report: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let sections = report["sections"].as_array().unwrap();
+    assert!(
+        sections
+            .iter()
+            .any(|section| section["title"] == "Database")
+    );
+    assert!(sections.iter().any(|section| {
+        section["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["label"] == "sqlite" && row["status"] == "ok")
+    }));
+}
+
+#[test]
+fn doctor_json_with_integrity_reports_integrity_section() {
+    let env = TestEnv::new();
+    let db = env.db("integrity-json-doctor.sqlite");
+    ok(env.aven(&db, ["add", "integrity task", "--project", "app"]));
+
+    let output = ok(env.aven(&db, ["doctor", "--json", "--integrity"]));
+    let report: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let sections = report["sections"].as_array().unwrap();
+    assert!(
+        sections
+            .iter()
+            .any(|section| section["title"] == "Integrity")
+    );
+}
+
 fn run_sql(db: &Path, sql: &'static str) {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
