@@ -205,9 +205,8 @@ pub(crate) async fn cmd_show(conn: &mut SqliteConnection, args: ShowArgs) -> Res
         let item = query::list_task_items(
             conn,
             TaskFilters {
-                include_deleted: task.deleted,
                 task_ids: vec![task.id.clone()],
-                ..Default::default()
+                ..TaskFilters::default().include_deleted(task.deleted)
             },
             TaskQueryMode::Flat,
             TaskSort::Updated,
@@ -591,19 +590,12 @@ async fn resolve_bulk_project_mutation(
 
 fn bulk_update_filters(args: &BulkUpdateArgs) -> TaskFilters {
     TaskFilters {
-        project: args.project.clone(),
-        status: args.status.clone(),
-        statuses: Vec::new(),
-        priority: args.priority.clone(),
         label: args.filter_label.clone(),
-        include_deleted: args.include_deleted,
-        deleted_only: false,
-        hide_done: false,
-        conflicts_only: false,
-        ready_only: false,
-        blocked_only: false,
-        search: None,
-        task_ids: Vec::new(),
+        ..TaskFilters::default()
+            .with_project(args.project.clone())
+            .with_status(args.status.clone())
+            .with_priority(args.priority.clone())
+            .include_deleted(args.include_deleted)
     }
 }
 
@@ -1276,37 +1268,22 @@ fn format_counts(counts: &[(String, usize)], limit: usize) -> String {
 
 fn list_task_filters(args: &ListArgs) -> TaskFilters {
     TaskFilters {
-        project: args.project.clone(),
-        status: args.status.clone(),
-        statuses: Vec::new(),
-        priority: args.priority.clone(),
-        label: args.label.clone(),
-        include_deleted: args.all || args.deleted,
-        deleted_only: args.deleted,
-        hide_done: false,
-        conflicts_only: false,
         ready_only: args.ready,
         blocked_only: args.blocked,
-        search: None,
-        task_ids: Vec::new(),
+        label: args.label.clone(),
+        ..TaskFilters::default()
+            .with_project(args.project.clone())
+            .with_status(args.status.clone())
+            .with_priority(args.priority.clone())
+            .include_deleted(args.all || args.deleted)
+            .deleted_only(args.deleted)
     }
 }
 
 fn prime_task_filters(project: String) -> TaskFilters {
     TaskFilters {
-        project: Some(project),
-        status: None,
-        statuses: Vec::new(),
-        priority: None,
-        label: None,
-        include_deleted: false,
-        deleted_only: false,
         hide_done: true,
-        conflicts_only: false,
-        ready_only: false,
-        blocked_only: false,
-        search: None,
-        task_ids: Vec::new(),
+        ..TaskFilters::default().with_project(Some(project))
     }
 }
 

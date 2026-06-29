@@ -5,14 +5,21 @@ use crate::projects::resolve_existing_project_in_workspace;
 use crate::workspaces::active_workspace_id;
 
 use super::SidebarCounts;
+use super::fragments;
 
-const SIDEBAR_TASK_COUNT_COLUMNS: &str = "\
-COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status NOT IN ('done', 'canceled') THEN 1 ELSE 0 END), 0) AS open_count,
+fn sidebar_task_count_columns() -> String {
+    format!(
+        "\
+COALESCE(SUM(CASE WHEN {} THEN 1 ELSE 0 END), 0) AS open_count,
 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'inbox' THEN 1 ELSE 0 END), 0) AS inbox_count,
 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'active' THEN 1 ELSE 0 END), 0) AS active_count,
 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'backlog' THEN 1 ELSE 0 END), 0) AS backlog_count,
 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'todo' THEN 1 ELSE 0 END), 0) AS todo_count,
-COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status IN ('done', 'canceled') THEN 1 ELSE 0 END), 0) AS done_count";
+COALESCE(SUM(CASE WHEN {} THEN 1 ELSE 0 END), 0) AS done_count",
+        fragments::open_task_clause("t"),
+        fragments::terminal_status_clause("t"),
+    )
+}
 
 fn sidebar_counts_sql(project_scoped: bool) -> String {
     let conflict_project = if project_scoped {
@@ -26,13 +33,14 @@ fn sidebar_counts_sql(project_scoped: bool) -> String {
         ""
     };
     format!(
-        "SELECT {SIDEBAR_TASK_COUNT_COLUMNS},
+        "SELECT {},
          (SELECT COUNT(DISTINCT c.task_id)
           FROM conflicts c
           JOIN tasks ct ON ct.workspace_id = c.workspace_id AND ct.id = c.task_id
           WHERE c.workspace_id = ? AND c.resolved = 0 AND ct.deleted = 0{conflict_project}) AS conflicts_count
          FROM tasks t
-         WHERE t.workspace_id = ?{task_project}"
+         WHERE t.workspace_id = ?{task_project}",
+        sidebar_task_count_columns(),
     )
 }
 

@@ -5,6 +5,8 @@ use crate::choices::TaskStatus;
 use crate::refs::display_refs_for_tasks;
 use crate::types::Task;
 
+use super::fragments;
+
 #[derive(Debug)]
 pub(crate) struct TaskDependencyItem {
     pub(crate) task: Task,
@@ -86,8 +88,7 @@ async fn query_dependency_items(
         .zip(rows_tasks.drain(..))
         .map(|(row, task)| {
             let created_at: String = row.get("dependency_created_at");
-            let task_is_open =
-                !task.deleted && !matches!(task.status.as_str(), "done" | "canceled");
+            let task_is_open = !task.deleted && task.status.is_open();
             let unresolved = task_is_open && (!blocks_only || subject_is_open);
             let display_ref = display_refs
                 .get(&task.id)
@@ -119,14 +120,16 @@ async fn subject_task_is_open(
     workspace_id: &str,
     task_id: &str,
 ) -> Result<bool> {
-    let open: i64 = sqlx::query_scalar(
+    let sql = format!(
         "SELECT count(*) FROM tasks
-         WHERE workspace_id = ? AND id = ? AND deleted = 0 AND status NOT IN ('done', 'canceled')",
-    )
-    .bind(workspace_id)
-    .bind(task_id)
-    .fetch_one(&mut *conn)
-    .await?;
+         WHERE workspace_id = ? AND id = ? AND {}",
+        fragments::open_task_clause("tasks"),
+    );
+    let open: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
+        .bind(workspace_id)
+        .bind(task_id)
+        .fetch_one(&mut *conn)
+        .await?;
     Ok(open > 0)
 }
 

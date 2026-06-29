@@ -48,6 +48,33 @@ pub(crate) struct TaskFilters {
     pub(crate) task_ids: Vec<String>,
 }
 
+impl TaskFilters {
+    pub(crate) fn with_project(mut self, project: Option<String>) -> Self {
+        self.project = project;
+        self
+    }
+
+    pub(crate) fn with_status(mut self, status: Option<String>) -> Self {
+        self.status = status;
+        self
+    }
+
+    pub(crate) fn with_priority(mut self, priority: Option<String>) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    pub(crate) fn include_deleted(mut self, include_deleted: bool) -> Self {
+        self.include_deleted = include_deleted;
+        self
+    }
+
+    pub(crate) fn deleted_only(mut self, deleted_only: bool) -> Self {
+        self.deleted_only = deleted_only;
+        self
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct TaskListItem {
     pub(crate) task: Task,

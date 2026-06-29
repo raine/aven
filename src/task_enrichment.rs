@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::query::fragments;
 use crate::query::{TaskDependencyLink, TaskNote};
 use crate::refs::display_ref_for_id;
 use anyhow::Result;
@@ -178,10 +179,10 @@ async fn unresolved_blocker_counts_for_tasks(
                 separated.push_bind(task_id);
             }
         }
-        query.push(
-            ") AND blocker.deleted = 0 AND blocker.status NOT IN ('done', 'canceled')
-             GROUP BY d.task_id",
-        );
+        query.push(format!(
+            ") AND {} GROUP BY d.task_id",
+            fragments::open_task_clause("blocker"),
+        ));
 
         for row in query.build().fetch_all(&mut *conn).await? {
             counts.insert(row.get("task_id"), row.get::<i64, _>("blockers"));
@@ -220,11 +221,11 @@ async fn dependent_counts_for_tasks(
                 separated.push_bind(task_id);
             }
         }
-        query.push(
-            ") AND blocker.deleted = 0 AND blocker.status NOT IN ('done', 'canceled')
-             AND dependent.deleted = 0 AND dependent.status NOT IN ('done', 'canceled')
-             GROUP BY d.depends_on_task_id",
-        );
+        query.push(format!(
+            ") AND {} AND {} GROUP BY d.depends_on_task_id",
+            fragments::open_task_clause("blocker"),
+            fragments::open_task_clause("dependent"),
+        ));
 
         for row in query.build().fetch_all(&mut *conn).await? {
             counts.insert(
@@ -251,16 +252,14 @@ async fn dependency_links_for_tasks(
         if chunk.is_empty() {
             continue;
         }
-        let mut query = if blocks_only {
-            QueryBuilder::<Sqlite>::new(
+        let initial = if blocks_only {
+            format!(
                 "SELECT d.depends_on_task_id AS source_task_id,
                         t.id, t.title, t.status, t.priority, p.prefix AS project_prefix,
                         d.created_at AS dependency_created_at,
                         CASE
-                            WHEN blocker.deleted = 0
-                             AND blocker.status NOT IN ('done', 'canceled')
-                             AND t.deleted = 0
-                             AND t.status NOT IN ('done', 'canceled')
+                            WHEN {}
+                             AND {}
                             THEN 1 ELSE 0
                         END AS unresolved
                  FROM task_dependencies d
@@ -271,15 +270,16 @@ async fn dependency_links_for_tasks(
                  JOIN projects p
                   ON p.workspace_id = t.workspace_id AND p.id = t.project_id
                  WHERE d.workspace_id =",
+                fragments::open_task_clause("blocker"),
+                fragments::open_task_clause("t"),
             )
         } else {
-            QueryBuilder::<Sqlite>::new(
+            format!(
                 "SELECT d.task_id AS source_task_id,
                         t.id, t.title, t.status, t.priority, p.prefix AS project_prefix,
                         d.created_at AS dependency_created_at,
                         CASE
-                            WHEN t.deleted = 0
-                             AND t.status NOT IN ('done', 'canceled')
+                            WHEN {}
                             THEN 1 ELSE 0
                         END AS unresolved
                  FROM task_dependencies d
@@ -288,8 +288,10 @@ async fn dependency_links_for_tasks(
                  JOIN projects p
                   ON p.workspace_id = t.workspace_id AND p.id = t.project_id
                  WHERE d.workspace_id =",
+                fragments::open_task_clause("t"),
             )
         };
+        let mut query = QueryBuilder::<Sqlite>::new(&initial);
         query.push_bind(workspace_id);
         let source_column = if blocks_only {
             "d.depends_on_task_id"

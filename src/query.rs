@@ -1,4 +1,6 @@
 mod dependencies;
+pub(crate) mod fragments;
+mod hydration;
 mod projects;
 mod search;
 mod sidebar;
@@ -8,6 +10,8 @@ mod types;
 
 #[allow(unused_imports)]
 pub(crate) use dependencies::{TaskDependencyItem, TaskDependencySummary, task_dependency_summary};
+#[allow(unused_imports)]
+pub(crate) use hydration::build_task_list_items;
 #[allow(unused_imports)]
 pub(crate) use projects::{list_project_items, list_project_items_in_workspace};
 #[allow(unused_imports)]

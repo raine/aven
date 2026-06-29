@@ -5,11 +5,11 @@ use crate::choices::{TaskPriority, TaskStatus};
 use crate::db::task_from_row;
 use crate::labels::ensure_label_exists_in_workspace;
 use crate::projects::resolve_existing_project_in_workspace;
-use crate::queue::{now_seconds, queue_meta, queue_order};
-use crate::refs::display_refs_for_tasks;
-use crate::task_enrichment::load_task_enrichment;
+use crate::queue::{now_seconds, queue_order};
 use crate::workspaces::active_workspace_id;
 
+use super::fragments;
+use super::hydration::build_task_list_items;
 use super::sorting::push_sort;
 use super::{SortDirection, TaskFilters, TaskListItem, TaskQueryMode, TaskSort};
 
@@ -123,27 +123,27 @@ pub(crate) async fn list_task_items_in_workspace(
     }
     if filters.ready_only || filters.blocked_only {
         push_filter_prefix(&mut query, &mut filters_added);
-        query.push("t.deleted = 0");
-        push_filter_prefix(&mut query, &mut filters_added);
-        query.push("t.status NOT IN ('done', 'canceled')");
+        query.push(fragments::open_task_clause("t"));
     }
     if filters.ready_only {
         push_filter_prefix(&mut query, &mut filters_added);
-        query.push(
+        query.push(format!(
                 "NOT EXISTS (SELECT 1 FROM task_dependencies d
                  JOIN tasks blocker ON blocker.workspace_id = d.workspace_id AND blocker.id = d.depends_on_task_id
                  WHERE d.workspace_id = t.workspace_id AND d.task_id = t.id
-                   AND blocker.deleted = 0 AND blocker.status NOT IN ('done', 'canceled'))",
-            );
+                   AND {})",
+                fragments::open_task_clause("blocker"),
+            ));
     }
     if filters.blocked_only {
         push_filter_prefix(&mut query, &mut filters_added);
-        query.push(
+        query.push(format!(
                 "EXISTS (SELECT 1 FROM task_dependencies d
                  JOIN tasks blocker ON blocker.workspace_id = d.workspace_id AND blocker.id = d.depends_on_task_id
                  WHERE d.workspace_id = t.workspace_id AND d.task_id = t.id
-                   AND blocker.deleted = 0 AND blocker.status NOT IN ('done', 'canceled'))",
-            );
+                   AND {})",
+                fragments::open_task_clause("blocker"),
+            ));
     }
     if let Some(search) = filters.search.filter(|search| !search.is_empty()) {
         push_filter_prefix(&mut query, &mut filters_added);
@@ -163,60 +163,8 @@ pub(crate) async fn list_task_items_in_workspace(
         .into_iter()
         .map(|row| task_from_row(&row))
         .collect::<Result<Vec<_>>>()?;
-    let display_refs = display_refs_for_tasks(conn, &tasks).await?;
-    let task_ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
-    let mut enrichment = load_task_enrichment(conn, workspace_id, &task_ids).await?;
-    let mut items = Vec::with_capacity(tasks.len());
     let now_seconds = now_seconds();
-    for task in tasks {
-        let display_ref = display_refs
-            .get(&task.id)
-            .cloned()
-            .unwrap_or_else(|| format!("{}-{}", task.project_prefix, task.id));
-        let labels = enrichment
-            .labels_by_task
-            .remove(&task.id)
-            .unwrap_or_default();
-        let notes = enrichment
-            .notes_by_task
-            .remove(&task.id)
-            .unwrap_or_default();
-        let has_conflict = enrichment.conflicted_task_ids.contains(&task.id);
-        let unresolved_blocker_count = *enrichment
-            .unresolved_blocker_counts_by_task
-            .get(&task.id)
-            .unwrap_or(&0);
-        let dependent_count = *enrichment
-            .dependent_counts_by_task
-            .get(&task.id)
-            .unwrap_or(&0);
-        let depends_on = enrichment
-            .depends_on_by_task
-            .remove(&task.id)
-            .unwrap_or_default();
-        let blocks = enrichment
-            .blocks_by_task
-            .remove(&task.id)
-            .unwrap_or_default();
-        let queue = queue_meta(
-            &task,
-            has_conflict,
-            unresolved_blocker_count > 0,
-            now_seconds,
-        );
-        items.push(TaskListItem {
-            task,
-            display_ref,
-            labels,
-            notes,
-            has_conflict,
-            unresolved_blocker_count,
-            dependent_count,
-            depends_on,
-            blocks,
-            queue,
-        });
-    }
+    let mut items = build_task_list_items(conn, workspace_id, tasks, now_seconds).await?;
     if mode == TaskQueryMode::RankedQueue {
         items.sort_by(|a, b| queue_order((&a.task, a.queue), (&b.task, b.queue)));
     }

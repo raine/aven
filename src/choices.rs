@@ -11,6 +11,23 @@ pub(crate) enum TaskStatus {
 }
 
 impl TaskStatus {
+    #[allow(dead_code)]
+    pub(crate) const OPEN: [Self; 4] = [Self::Inbox, Self::Backlog, Self::Todo, Self::Active];
+    #[allow(dead_code)]
+    pub(crate) const TERMINAL: [Self; 2] = [Self::Done, Self::Canceled];
+
+    pub(crate) const fn is_open(self) -> bool {
+        matches!(
+            self,
+            Self::Inbox | Self::Backlog | Self::Todo | Self::Active
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) const fn is_terminal(self) -> bool {
+        matches!(self, Self::Done | Self::Canceled)
+    }
+
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Inbox => "inbox",

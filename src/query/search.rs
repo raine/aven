@@ -5,11 +5,11 @@ use std::collections::HashMap;
 
 use crate::db::task_from_row;
 use crate::refs::display_refs_for_tasks;
-use crate::task_enrichment::load_task_enrichment;
 use crate::types::Task;
 use crate::workspaces::active_workspace_id;
 
 use super::TaskListItem;
+use super::hydration::build_task_list_items;
 
 mod parser;
 
@@ -154,67 +154,33 @@ pub(crate) async fn search_task_item_set_in_workspace(
     query: TaskSearchQuery,
 ) -> Result<TaskSearchResultSet> {
     let scored = scored_search_documents(conn, workspace_id, &query).await?;
-    let task_ids = scored
+    let tasks = scored
         .items
         .iter()
-        .map(|scored| scored.document.task.id.clone())
+        .map(|scored| scored.document.task.clone())
         .collect::<Vec<_>>();
-    let mut enrichment = load_task_enrichment(conn, workspace_id, &task_ids).await?;
     let now_seconds = crate::queue::now_seconds();
-    let items = scored
+    let items = build_task_list_items(conn, workspace_id, tasks, now_seconds).await?;
+    let by_id = items
+        .into_iter()
+        .map(|item| (item.task.id.clone(), item))
+        .collect::<HashMap<_, _>>();
+    let results = scored
         .items
         .into_iter()
-        .map(|scored| {
-            let task = scored.document.task;
-            let labels = enrichment
-                .labels_by_task
-                .remove(&task.id)
-                .unwrap_or_default();
-            let notes = enrichment
-                .notes_by_task
-                .remove(&task.id)
-                .unwrap_or_default();
-            let has_conflict = enrichment.conflicted_task_ids.contains(&task.id);
-            let unresolved_blocker_count = *enrichment
-                .unresolved_blocker_counts_by_task
-                .get(&task.id)
-                .unwrap_or(&0);
-            let dependent_count = *enrichment
-                .dependent_counts_by_task
-                .get(&task.id)
-                .unwrap_or(&0);
-            let queue = crate::queue::queue_meta(
-                &task,
-                has_conflict,
-                unresolved_blocker_count > 0,
-                now_seconds,
-            );
-            TaskSearchResult {
-                item: TaskListItem {
-                    display_ref: scored.document.display_ref,
-                    labels,
-                    notes,
-                    has_conflict,
-                    unresolved_blocker_count,
-                    dependent_count,
-                    depends_on: enrichment
-                        .depends_on_by_task
-                        .remove(&task.id)
-                        .unwrap_or_default(),
-                    blocks: enrichment
-                        .blocks_by_task
-                        .remove(&task.id)
-                        .unwrap_or_default(),
-                    queue,
-                    task,
-                },
-                score: scored.score,
-                matched_field: scored.matched_field,
-                snippet: scored.snippet,
-            }
+        .filter_map(|scored| {
+            by_id
+                .get(&scored.document.task.id)
+                .cloned()
+                .map(|item| TaskSearchResult {
+                    item,
+                    score: scored.score,
+                    matched_field: scored.matched_field,
+                    snippet: scored.snippet,
+                })
         })
         .collect();
-    Ok(TaskSearchResultSet { items })
+    Ok(TaskSearchResultSet { items: results })
 }
 
 async fn scored_search_documents(
