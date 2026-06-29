@@ -38,6 +38,7 @@ fn deleted_conflict(
 ) -> (std::path::PathBuf, std::path::PathBuf, String) {
     let (a, b, task_ref) = synced_task(env, server, "deleted conflict");
     ok(env.aven(&b, ["delete", &task_ref]));
+    ok(env.aven(&a, ["delete", &task_ref]));
     ok(env.aven(&a, ["restore", &task_ref]));
     sync(env, &b, server);
     sync(env, &a, server);

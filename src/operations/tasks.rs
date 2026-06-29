@@ -162,12 +162,10 @@ pub(crate) async fn update_task(
     let mut changed = false;
     let mut tx = begin_immediate(conn).await?;
     if let Some(title) = update.title {
-        update_task_field(&mut tx, task_id, "title", &title).await?;
-        changed = true;
+        changed |= update_task_field(&mut tx, task_id, "title", &title).await?;
     }
     if let Some(description) = update.description {
-        update_task_field(&mut tx, task_id, "description", &description).await?;
-        changed = true;
+        changed |= update_task_field(&mut tx, task_id, "description", &description).await?;
     }
     if let Some(project) = update.project {
         let project = resolve_project_for_add_in_workspace(
@@ -176,16 +174,13 @@ pub(crate) async fn update_task(
             Some(&project),
         )
         .await?;
-        set_task_project(&mut tx, task_id, &project).await?;
-        changed = true;
+        changed |= set_task_project(&mut tx, task_id, &project).await?;
     }
     if let Some(status) = update.status {
-        update_task_field(&mut tx, task_id, "status", &status).await?;
-        changed = true;
+        changed |= update_task_field(&mut tx, task_id, "status", &status).await?;
     }
     if let Some(priority) = update.priority {
-        update_task_field(&mut tx, task_id, "priority", &priority).await?;
-        changed = true;
+        changed |= update_task_field(&mut tx, task_id, "priority", &priority).await?;
     }
     let workspace_id = crate::workspaces::active_workspace_id();
     if update_task_labels_in_workspace(
@@ -212,7 +207,7 @@ pub(crate) async fn update_task_field(
     task_id: &str,
     field: &str,
     value: &str,
-) -> Result<()> {
+) -> Result<bool> {
     set_task_field(conn, task_id, field, value).await
 }
 

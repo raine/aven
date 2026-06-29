@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::choices::{PRIORITIES, TaskPriority, TaskStatus};
-use crate::operations::TaskDraft;
+use crate::operations::{TaskDraft, TaskUpdate};
 use crate::query::SortDirection;
 
 async fn test_store() -> TuiStore {
@@ -634,6 +634,38 @@ mod task_creation_and_updates {
         assert_eq!(outcome.message, format!("unchanged {display_ref} title"));
         assert_eq!(pending_change_count(&pool).await, pending_before);
         assert_eq!(store.tasks[selected].task.title, "Stable");
+    }
+
+    #[tokio::test]
+    async fn unchanged_task_fields_leave_pending_change_count() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        store.create_project("Side".to_string()).await.unwrap();
+        let (task_id, _selected) = create_selected_task(&mut store, "Stable").await;
+        let pending_before = pending_change_count(&pool).await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let outcome = crate::operations::update_task(
+            &mut conn,
+            &task_id,
+            TaskUpdate {
+                title: Some("Stable".to_string()),
+                description: Some(String::new()),
+                project: Some("aven".to_string()),
+                status: Some("inbox".to_string()),
+                priority: Some("none".to_string()),
+                ..TaskUpdate::default()
+            },
+        )
+        .await
+        .unwrap();
+        let deleted = crate::operations::set_task_deleted(&mut conn, &task_id, false)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert!(!outcome.changed);
+        assert_eq!(deleted.task.title, "Stable");
+        assert_eq!(pending_change_count(&pool).await, pending_before);
     }
 
     #[tokio::test]

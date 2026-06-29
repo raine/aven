@@ -60,7 +60,7 @@ pub(crate) async fn set_task_field(
     task_id: &str,
     field: &str,
     value: &str,
-) -> Result<()> {
+) -> Result<bool> {
     let task_field = TaskField::parse_or_unknown(field)?;
     let workspace = active_workspace();
     if task_field.is_project() {
@@ -76,9 +76,13 @@ pub(crate) async fn set_task_project(
     conn: &mut SqliteConnection,
     task_id: &str,
     project: &Project,
-) -> Result<()> {
+) -> Result<bool> {
     let workspace = active_workspace();
     let field = TaskField::Project.as_str();
+    let current_project_id = current_project_id(conn, &workspace.id, task_id).await?;
+    if current_project_id == project.id {
+        return Ok(false);
+    }
     if conflict_exists(conn, &workspace.id, task_id, field).await? {
         bail!(
             "error conflicted-field ref={} field={} hint=\"use conflict resolve\"",
@@ -90,7 +94,8 @@ pub(crate) async fn set_task_project(
     let base = field_version(conn, task_id, field).await?;
     apply_project_id_in_workspace(conn, &workspace.id, task_id, &project.id).await?;
     let payload = TaskField::project_payload(&workspace.id, &workspace.key, project);
-    finish_task_field_change(conn, task_id, field, payload, base.as_deref()).await
+    finish_task_field_change(conn, task_id, field, payload, base.as_deref()).await?;
+    Ok(true)
 }
 
 async fn set_task_scalar_field(
@@ -98,9 +103,16 @@ async fn set_task_scalar_field(
     task_id: &str,
     task_field: TaskField,
     value: &str,
-) -> Result<()> {
+) -> Result<bool> {
+    task_field.validate_value(value)?;
+
     let workspace = active_workspace();
     let field = task_field.as_str();
+    let current_value =
+        current_scalar_field_value(conn, &workspace.id, task_id, task_field).await?;
+    if current_value == value {
+        return Ok(false);
+    }
     if conflict_exists(conn, &workspace.id, task_id, field).await? {
         bail!(
             "error conflicted-field ref={} field={} hint=\"use conflict resolve\"",
@@ -112,7 +124,8 @@ async fn set_task_scalar_field(
     let base = field_version(conn, task_id, field).await?;
     apply_scalar_field_value_in_workspace(conn, &workspace.id, task_id, task_field, value).await?;
     let payload = task_field.scalar_payload(&workspace.id, &workspace.key, value)?;
-    finish_task_field_change(conn, task_id, field, payload, base.as_deref()).await
+    finish_task_field_change(conn, task_id, field, payload, base.as_deref()).await?;
+    Ok(true)
 }
 
 async fn finish_task_field_change(
@@ -140,6 +153,87 @@ async fn finish_task_field_change(
         "task field mutated"
     );
     Ok(())
+}
+
+async fn current_project_id(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+) -> Result<String> {
+    sqlx::query_scalar("SELECT project_id FROM tasks WHERE workspace_id = ? AND id = ?")
+        .bind(workspace_id)
+        .bind(task_id)
+        .fetch_optional(&mut *conn)
+        .await?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "error task-not-found task_id={} workspace_id={}",
+                task_id,
+                workspace_id
+            )
+        })
+}
+
+async fn current_scalar_field_value(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+    task_field: TaskField,
+) -> Result<String> {
+    let value = match task_field {
+        TaskField::Title => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT title FROM tasks WHERE workspace_id = ? AND id = ?",
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .fetch_optional(&mut *conn)
+            .await?
+        }
+        TaskField::Description => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT description FROM tasks WHERE workspace_id = ? AND id = ?",
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .fetch_optional(&mut *conn)
+            .await?
+        }
+        TaskField::Status => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT status FROM tasks WHERE workspace_id = ? AND id = ?",
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .fetch_optional(&mut *conn)
+            .await?
+        }
+        TaskField::Priority => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT priority FROM tasks WHERE workspace_id = ? AND id = ?",
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .fetch_optional(&mut *conn)
+            .await?
+        }
+        TaskField::Deleted => sqlx::query_scalar::<_, i64>(
+            "SELECT deleted FROM tasks WHERE workspace_id = ? AND id = ?",
+        )
+        .bind(workspace_id)
+        .bind(task_id)
+        .fetch_optional(&mut *conn)
+        .await?
+        .map(|deleted| i64::from(deleted != 0).to_string()),
+        TaskField::Project => bail!("error project-update-requires-project-id"),
+    };
+    value.ok_or_else(|| {
+        anyhow::anyhow!(
+            "error task-not-found task_id={} workspace_id={}",
+            task_id,
+            workspace_id
+        )
+    })
 }
 
 #[allow(dead_code)]
