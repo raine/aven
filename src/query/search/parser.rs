@@ -152,9 +152,11 @@ fn build_fts_match(
 
 fn parse_ref_query(input: &str) -> Option<ParsedRefSearchQuery> {
     let trimmed = input.trim();
-    if trimmed.is_empty() || trimmed.contains(char::is_whitespace) {
+    if trimmed.is_empty() {
         return None;
     }
+    let has_whitespace = trimmed.contains(char::is_whitespace);
+    let has_ref_marker = trimmed.starts_with('/');
     let raw = trimmed.strip_prefix('/').unwrap_or(trimmed);
     let groups = raw
         .split(|ch: char| !ch.is_ascii_alphanumeric())
@@ -165,12 +167,15 @@ fn parse_ref_query(input: &str) -> Option<ParsedRefSearchQuery> {
     }
     if groups.len() >= 2 && groups[0].chars().all(|c| c.is_ascii_alphabetic()) {
         let suffix = groups[1..].join("");
-        if suffix.len() >= 3 {
+        if suffix.len() >= 3 && (!has_whitespace || has_ref_marker || suffix_has_digit(&suffix)) {
             return Some(ParsedRefSearchQuery {
                 normalized_prefix: Some(normalize_ref_string(groups[0])),
                 normalized_suffix: normalize_ref_string(&suffix),
             });
         }
+    }
+    if has_whitespace {
+        return None;
     }
     let suffix = groups.join("");
     if suffix.len() >= 3 {
@@ -180,6 +185,10 @@ fn parse_ref_query(input: &str) -> Option<ParsedRefSearchQuery> {
         });
     }
     None
+}
+
+fn suffix_has_digit(input: &str) -> bool {
+    input.chars().any(|ch| ch.is_ascii_digit())
 }
 
 fn normalize_ref_string(input: &str) -> String {
@@ -263,6 +272,10 @@ mod tests {
         let qualified = parse_task_search_query("/APP.7OKI").ref_query.unwrap();
         assert_eq!(qualified.normalized_prefix.as_deref(), Some("APP"));
         assert_eq!(qualified.normalized_suffix, "70K1");
+
+        let spaced = parse_task_search_query("APP 7OKI").ref_query.unwrap();
+        assert_eq!(spaced.normalized_prefix.as_deref(), Some("APP"));
+        assert_eq!(spaced.normalized_suffix, "70K1");
 
         let suffix = parse_task_search_query("7KQ-9").ref_query.unwrap();
         assert_eq!(suffix.normalized_prefix, None);
