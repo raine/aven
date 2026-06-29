@@ -238,52 +238,60 @@ pub(crate) async fn update_task_labels_in_workspace(
     let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
     let mut changed = false;
     for label in resolve_labels_in_workspace(conn, &workspace.id, add_labels).await? {
-        sqlx::query(
+        let rows_affected = sqlx::query(
             "INSERT OR IGNORE INTO task_labels(workspace_id, task_id, label) VALUES (?, ?, ?)",
         )
         .bind(&workspace.id)
         .bind(task_id)
         .bind(&label)
         .execute(&mut *conn)
-        .await?;
-        insert_change(
-            conn,
-            "task",
-            task_id,
-            Some("labels"),
-            "label_add",
-            json!({
-                "workspace_id": &workspace.id,
-                "workspace_key": &workspace.key,
-                "label": label,
-            }),
-            None,
-        )
-        .await?;
-        changed = true;
+        .await?
+        .rows_affected();
+        if rows_affected > 0 {
+            insert_change(
+                conn,
+                "task",
+                task_id,
+                Some("labels"),
+                "label_add",
+                json!({
+                    "workspace_id": &workspace.id,
+                    "workspace_key": &workspace.key,
+                    "label": label,
+                }),
+                None,
+            )
+            .await?;
+            changed = true;
+        }
     }
     for label in resolve_labels_in_workspace(conn, &workspace.id, remove_labels).await? {
-        sqlx::query("DELETE FROM task_labels WHERE workspace_id = ? AND task_id = ? AND label = ?")
-            .bind(&workspace.id)
-            .bind(task_id)
-            .bind(&label)
-            .execute(&mut *conn)
-            .await?;
-        insert_change(
-            conn,
-            "task",
-            task_id,
-            Some("labels"),
-            "label_remove",
-            json!({
-                "workspace_id": &workspace.id,
-                "workspace_key": &workspace.key,
-                "label": label,
-            }),
-            None,
+        let rows_affected = sqlx::query(
+            "DELETE FROM task_labels WHERE workspace_id = ? AND task_id = ? AND label = ?",
         )
-        .await?;
-        changed = true;
+        .bind(&workspace.id)
+        .bind(task_id)
+        .bind(&label)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+        if rows_affected > 0 {
+            insert_change(
+                conn,
+                "task",
+                task_id,
+                Some("labels"),
+                "label_remove",
+                json!({
+                    "workspace_id": &workspace.id,
+                    "workspace_key": &workspace.key,
+                    "label": label,
+                }),
+                None,
+            )
+            .await?;
+            changed = true;
+        }
     }
     if changed {
         info!(

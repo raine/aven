@@ -669,6 +669,44 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
+    async fn unchanged_label_updates_leave_pending_change_count() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        store.create_label("bug".to_string()).await.unwrap();
+        store.create_label("missing".to_string()).await.unwrap();
+        let (task_id, _selected) = create_selected_task(&mut store, "Labels").await;
+        let mut conn = pool.acquire().await.unwrap();
+        crate::operations::update_task(
+            &mut conn,
+            &task_id,
+            TaskUpdate {
+                add_labels: vec!["bug".to_string()],
+                ..TaskUpdate::default()
+            },
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        let pending_before = pending_change_count(&pool).await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let outcome = crate::operations::update_task(
+            &mut conn,
+            &task_id,
+            TaskUpdate {
+                add_labels: vec!["bug".to_string()],
+                remove_labels: vec!["missing".to_string()],
+                ..TaskUpdate::default()
+            },
+        )
+        .await
+        .unwrap();
+        drop(conn);
+
+        assert!(!outcome.changed);
+        assert_eq!(pending_change_count(&pool).await, pending_before);
+    }
+
+    #[tokio::test]
     async fn priority_edit_refreshes_queue_activity_timestamp() {
         let (_dir, pool, mut store) = test_store_with_pool().await;
         let (_task_id, selected) =
