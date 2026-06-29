@@ -11,6 +11,8 @@ pub(crate) const EDIT_DESCRIPTION_TITLE: &str = "Edit description";
 pub(crate) const EDIT_PROJECT_TITLE: &str = "Edit project";
 pub(crate) const EDIT_PRIORITY_TITLE: &str = "Edit task: priority";
 pub(crate) const EDIT_LABELS_TITLE: &str = "Edit task: labels";
+pub(crate) const ADD_DEPENDENCY_TITLE: &str = "Add dependency";
+pub(crate) const REMOVE_DEPENDENCY_TITLE: &str = "Remove dependency";
 
 impl App {
     pub(super) async fn update_status(&mut self, status: &'static str) -> Result<()> {
@@ -228,6 +230,40 @@ impl App {
         ));
     }
 
+    pub(super) async fn begin_add_dependency(&mut self) -> Result<()> {
+        let Some(index) = self.guard_selected_task() else {
+            return Ok(());
+        };
+        let task_id = self
+            .store
+            .selected_task(Some(index))
+            .unwrap()
+            .task
+            .id
+            .clone();
+        let items = self.store.dependency_picker_items(&task_id).await?;
+        self.open_picker_overlay(
+            OverlayRoute::AddDependency,
+            ADD_DEPENDENCY_TITLE,
+            items,
+            false,
+        );
+        Ok(())
+    }
+
+    pub(super) fn begin_remove_dependency(&mut self) {
+        let Some(index) = self.guard_selected_task() else {
+            return;
+        };
+        let items = self.store.selected_dependency_picker_items(Some(index));
+        self.open_picker_overlay(
+            OverlayRoute::RemoveDependency,
+            REMOVE_DEPENDENCY_TITLE,
+            items,
+            false,
+        );
+    }
+
     pub(super) async fn submit_edit_status(&mut self, status: String) -> Result<()> {
         let preserve_done_detail = status == "done"
             && (self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. })));
@@ -309,6 +345,41 @@ impl App {
             .update_labels(self.widgets.table.selected(), labels)
             .await;
         self.apply_edit_mutation(result, |app| app.begin_edit_labels());
+        Ok(())
+    }
+
+    pub(super) async fn submit_add_dependency(&mut self, depends_on_task_id: String) -> Result<()> {
+        match self
+            .store
+            .add_dependency(self.widgets.table.selected(), &depends_on_task_id)
+            .await
+        {
+            Ok(Some(result)) => self.apply_mutation_result(result),
+            Ok(None) => self.set_info("no selected task to edit"),
+            Err(error) => {
+                self.set_error(format!("{error:#}"));
+                self.begin_add_dependency().await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) async fn submit_remove_dependency(
+        &mut self,
+        depends_on_task_id: String,
+    ) -> Result<()> {
+        match self
+            .store
+            .remove_dependency(self.widgets.table.selected(), &depends_on_task_id)
+            .await
+        {
+            Ok(Some(result)) => self.apply_mutation_result(result),
+            Ok(None) => self.set_info("no selected task to edit"),
+            Err(error) => {
+                self.set_error(format!("{error:#}"));
+                self.begin_remove_dependency();
+            }
+        }
         Ok(())
     }
 }

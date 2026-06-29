@@ -585,8 +585,8 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(rendered.contains(":detail-edit-title        edit selected task title"));
-        assert!(rendered.contains(":detail-edit-description  edit selected task description"));
+        assert!(rendered.contains(":detail-edit-title         edit selected task title"));
+        assert!(rendered.contains(":detail-edit-description   edit selected task description"));
     }
 
     #[test]

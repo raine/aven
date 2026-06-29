@@ -97,6 +97,7 @@ pub(crate) struct TaskNote {
 
 #[derive(Debug, Clone)]
 pub(crate) struct TaskDependencyLink {
+    pub(crate) task_id: String,
     pub(crate) display_ref: String,
     pub(crate) title: String,
     pub(crate) status: String,

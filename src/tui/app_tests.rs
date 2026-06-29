@@ -5018,3 +5018,138 @@ mod overlay_submit_routes {
         assert_eq!(toast_message(&app).as_deref(), Some("selected overlay"));
     }
 }
+
+mod task_dependencies {
+    use super::*;
+
+    #[tokio::test]
+    async fn add_shortcut_opens_picker_and_excludes_selected() {
+        let mut app = test_app().await;
+        let selected_index = create_and_select_task(&mut app, test_task_draft("Selected")).await;
+        let selected_id = app.store.tasks[selected_index].task.id.clone();
+        let other_index = create_and_select_task(&mut app, test_task_draft("Other")).await;
+        let other_id = app.store.tasks[other_index].task.id.clone();
+        let selected_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == selected_id)
+            .unwrap();
+        app.widgets.table.select(Some(selected_index));
+
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('B')).await.unwrap();
+
+        let Some(OverlayState::Picker(state)) = &app.overlay else {
+            panic!("expected dependency picker");
+        };
+        assert_eq!(state.route, OverlayRoute::AddDependency);
+        let values = state
+            .items
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>();
+        assert!(values.contains(&other_id.as_str()));
+        assert!(!values.contains(&selected_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn submitting_blocker_adds_dependency() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Blocker")).await;
+        let _selected = create_and_select_task(&mut app, test_task_draft("Blocked")).await;
+
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('B')).await.unwrap();
+
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        let toast = toast_message(&app);
+        assert!(
+            toast.is_some() && toast.as_deref().unwrap().contains("added dependency"),
+            "expected success message, got: {:?}",
+            toast,
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_shortcut_opens_current_dependency_picker() {
+        let mut app = test_app().await;
+        let blocker_index = create_and_select_task(&mut app, test_task_draft("Blocker")).await;
+        let blocker_id = app.store.tasks[blocker_index].task.id.clone();
+        let blocked_index = create_and_select_task(&mut app, test_task_draft("Blocked")).await;
+        let blocked_id = app.store.tasks[blocked_index].task.id.clone();
+        app.store
+            .add_dependency(Some(blocked_index), &blocker_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let blocked_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == blocked_id)
+            .unwrap();
+        app.widgets.table.select(Some(blocked_index));
+
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('U')).await.unwrap();
+
+        let Some(OverlayState::Picker(state)) = &app.overlay else {
+            panic!("expected dependency picker");
+        };
+        assert_eq!(state.route, OverlayRoute::RemoveDependency);
+        assert_eq!(state.items.len(), 1);
+        assert_eq!(state.items[0].value, blocker_id);
+    }
+
+    #[tokio::test]
+    async fn submitting_dependency_removal_removes_dependency() {
+        let mut app = test_app().await;
+        let blocker_index = create_and_select_task(&mut app, test_task_draft("Blocker")).await;
+        let blocker_id = app.store.tasks[blocker_index].task.id.clone();
+        let blocked_index = create_and_select_task(&mut app, test_task_draft("Blocked")).await;
+        let blocked_id = app.store.tasks[blocked_index].task.id.clone();
+        app.store
+            .add_dependency(Some(blocked_index), &blocker_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let blocked_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == blocked_id)
+            .unwrap();
+        app.widgets.table.select(Some(blocked_index));
+
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('U')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let blocked_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == blocked_id)
+            .unwrap();
+        assert!(app.store.tasks[blocked_index].depends_on.is_empty());
+        assert!(
+            toast_message(&app).is_some_and(|message| { message.contains("removed dependency") })
+        );
+    }
+
+    #[tokio::test]
+    async fn no_selected_task_shows_info() {
+        let mut app = test_app().await;
+        app.widgets.table.select(None);
+
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('B')).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("no selected task to edit")
+        );
+    }
+}

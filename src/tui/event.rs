@@ -77,6 +77,8 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::ShowConfigPaths
             | Action::ShowDatabaseStats
             | Action::BeginConfigInit
+            | Action::BeginAddDependency
+            | Action::BeginRemoveDependency
             | Action::Undo
     )
 }
@@ -205,6 +207,7 @@ mod tests {
                 "restore",
                 "rename-project",
                 "remove-project-path",
+                "remove-dependency",
                 "move-right",
                 "copy-ref",
                 "order-reverse",
@@ -645,6 +648,8 @@ mod tests {
             "config-paths",
             "database-stats",
             "config-init",
+            "add-dependency",
+            "remove-dependency",
         ] {
             assert!(
                 COMMANDS.iter().any(|command| command.name == name),
@@ -710,6 +715,14 @@ mod tests {
         assert!(matches!(
             resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('Y')]),
             ShortcutLookup::Found(Action::CopyDurableRef)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('U')]),
+            ShortcutLookup::Found(Action::BeginRemoveDependency)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('B')]),
+            ShortcutLookup::Found(Action::BeginAddDependency)
         ));
     }
 

@@ -73,6 +73,8 @@ pub(crate) enum Action {
     ShowConfigPaths,
     ShowDatabaseStats,
     BeginConfigInit,
+    BeginAddDependency,
+    BeginRemoveDependency,
     Undo,
     Planned {
         name: &'static str,

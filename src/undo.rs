@@ -80,6 +80,14 @@ pub(crate) enum UndoCommand {
         after: String,
         conflict_id: i64,
     },
+    AddTaskDependency {
+        task_id: String,
+        depends_on_task_id: String,
+    },
+    RemoveTaskDependency {
+        task_id: String,
+        depends_on_task_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -249,7 +257,9 @@ fn undo_payload_has_effect(payload: &UndoPayload) -> bool {
         | UndoCommand::DeleteCreatedNote { .. }
         | UndoCommand::DeleteCreatedProject { .. }
         | UndoCommand::DeleteCreatedLabel { .. }
-        | UndoCommand::RestoreConflictResolution { .. } => true,
+        | UndoCommand::RestoreConflictResolution { .. }
+        | UndoCommand::AddTaskDependency { .. }
+        | UndoCommand::RemoveTaskDependency { .. } => true,
     })
 }
 
@@ -562,6 +572,46 @@ async fn apply_undo_command(
                 restored.rows_affected() == 1,
                 "error undo-state-changed task_id={task_id} field={field}"
             );
+            Ok(CommandOutcome {
+                task_id: Some(task_id.clone()),
+                include_deleted: None,
+                project_rename: None,
+            })
+        }
+        UndoCommand::AddTaskDependency {
+            task_id,
+            depends_on_task_id,
+        } => {
+            ensure!(
+                dependency_edge_exists(conn, workspace_id, task_id, depends_on_task_id).await?,
+                "error undo-state-changed task_id={task_id} field=dependency"
+            );
+            remove_dependency_for_undo(conn, workspace_id, task_id, depends_on_task_id).await?;
+            Ok(CommandOutcome {
+                task_id: Some(task_id.clone()),
+                include_deleted: None,
+                project_rename: None,
+            })
+        }
+        UndoCommand::RemoveTaskDependency {
+            task_id,
+            depends_on_task_id,
+        } => {
+            ensure!(
+                !dependency_edge_exists(conn, workspace_id, task_id, depends_on_task_id).await?,
+                "error undo-state-changed task_id={task_id} field=dependency"
+            );
+            ensure!(
+                !crate::operations::dependency_path_exists(
+                    conn,
+                    workspace_id,
+                    depends_on_task_id,
+                    task_id,
+                )
+                .await?,
+                "error dependency-cycle task_id={task_id} depends_on_task_id={depends_on_task_id}"
+            );
+            add_dependency_for_undo(conn, workspace_id, task_id, depends_on_task_id).await?;
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),
                 include_deleted: None,
@@ -893,5 +943,118 @@ async fn delete_created_label(
         .bind(create_change_id)
         .execute(&mut *conn)
         .await?;
+    Ok(())
+}
+
+async fn dependency_task_exists(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+) -> Result<bool> {
+    Ok(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM tasks WHERE workspace_id = ? AND id = ?",
+        )
+        .bind(workspace_id)
+        .bind(task_id)
+        .fetch_one(&mut *conn)
+        .await?
+            > 0,
+    )
+}
+
+async fn dependency_edge_exists(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+    depends_on_task_id: &str,
+) -> Result<bool> {
+    ensure!(
+        dependency_task_exists(conn, workspace_id, task_id).await?
+            && dependency_task_exists(conn, workspace_id, depends_on_task_id).await?,
+        "error undo-state-changed task_id={task_id} field=dependency"
+    );
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM task_dependencies
+         WHERE workspace_id = ? AND task_id = ? AND depends_on_task_id = ?",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .bind(depends_on_task_id)
+    .fetch_one(&mut *conn)
+    .await?
+        > 0)
+}
+
+async fn add_dependency_for_undo(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+    depends_on_task_id: &str,
+) -> Result<()> {
+    let created_at = now();
+    sqlx::query(
+        "INSERT OR IGNORE INTO task_dependencies(workspace_id, task_id, depends_on_task_id, created_at)
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .bind(depends_on_task_id)
+    .bind(&created_at)
+    .execute(&mut *conn)
+    .await?;
+    append_dependency_change(
+        conn,
+        workspace_id,
+        task_id,
+        depends_on_task_id,
+        crate::change_log::op_type::DEPENDENCY_ADD,
+    )
+    .await
+}
+
+async fn remove_dependency_for_undo(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+    depends_on_task_id: &str,
+) -> Result<()> {
+    sqlx::query(
+        "DELETE FROM task_dependencies
+         WHERE workspace_id = ? AND task_id = ? AND depends_on_task_id = ?",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .bind(depends_on_task_id)
+    .execute(&mut *conn)
+    .await?;
+    append_dependency_change(
+        conn,
+        workspace_id,
+        task_id,
+        depends_on_task_id,
+        crate::change_log::op_type::DEPENDENCY_REMOVE,
+    )
+    .await
+}
+
+async fn append_dependency_change(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+    depends_on_task_id: &str,
+    op_type: &'static str,
+) -> Result<()> {
+    let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+    crate::change_log::append_change(
+        conn,
+        crate::change_log::ChangeEntity::Task,
+        task_id,
+        Some("dependencies"),
+        op_type,
+        crate::change_log::ChangePayload::workspace(&workspace)
+            .set("depends_on_task_id", depends_on_task_id.to_string()),
+    )
+    .await?;
     Ok(())
 }

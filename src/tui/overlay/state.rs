@@ -312,6 +312,8 @@ pub(crate) enum OverlayRoute {
     ConflictConfirm,
     ConflictManual,
     ConfigInit,
+    AddDependency,
+    RemoveDependency,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -350,6 +352,8 @@ pub(crate) enum PickerSubmitRoute {
     SwitchWorkspace,
     ConflictField,
     ConflictManual,
+    AddDependency,
+    RemoveDependency,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -557,6 +561,15 @@ impl OverlayRoute {
                 confirm_submit: Some(ConfirmSubmitRoute::ConfigInit),
                 ..OverlayRouteDescriptor::default()
             },
+            Self::AddDependency => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::AddDependency),
+                initial_picker_mode: PickerMode::Filter,
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::RemoveDependency => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::RemoveDependency),
+                ..OverlayRouteDescriptor::default()
+            },
         }
     }
 
@@ -587,7 +600,7 @@ impl OverlayRoute {
 
 #[cfg(test)]
 impl OverlayRoute {
-    pub(crate) const ALL: [Self; 29] = [
+    pub(crate) const ALL: [Self; 31] = [
         Self::MessageOnly,
         Self::AddTaskTitle,
         Self::AddTaskDescription,
@@ -617,6 +630,8 @@ impl OverlayRoute {
         Self::ConflictConfirm,
         Self::ConflictManual,
         Self::ConfigInit,
+        Self::AddDependency,
+        Self::RemoveDependency,
     ];
 
     pub(crate) fn submit_kinds(self) -> Vec<OverlaySubmitKind> {

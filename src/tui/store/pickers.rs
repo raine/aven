@@ -1,5 +1,7 @@
+use anyhow::Result;
+
 use crate::choices::{PRIORITIES, STATUSES};
-use crate::query::ProjectListItem;
+use crate::query::{ProjectListItem, SortDirection, TaskFilters, TaskQueryMode, TaskSort};
 use crate::tui::overlay::PickerItem;
 use crate::workspaces::Workspace;
 
@@ -83,6 +85,47 @@ impl TuiStore {
                     .filter(|workspace| workspace.key != self.active_workspace.key),
             )
             .map(|workspace| workspace_picker_item(workspace, selected_key))
+            .collect()
+    }
+
+    pub(crate) async fn dependency_picker_items(
+        &mut self,
+        selected_task_id: &str,
+    ) -> Result<Vec<PickerItem>> {
+        self.activate_workspace();
+        let workspace_id = self.active_workspace.id.clone();
+        let mut conn = self.pool.acquire().await?;
+        let items = crate::query::list_task_items_in_workspace(
+            &mut conn,
+            &workspace_id,
+            TaskFilters::default(),
+            TaskQueryMode::Flat,
+            TaskSort::Project,
+            SortDirection::Asc,
+        )
+        .await?
+        .into_iter()
+        .filter(|item| !item.task.deleted && item.task.id != selected_task_id)
+        .map(|item| PickerItem {
+            label: format!("{} {}", item.display_ref, item.task.title),
+            value: item.task.id,
+            selected: false,
+        })
+        .collect();
+        Ok(items)
+    }
+
+    pub(crate) fn selected_dependency_picker_items(&self, index: Option<usize>) -> Vec<PickerItem> {
+        let Some(item) = self.selected_task(index) else {
+            return Vec::new();
+        };
+        item.depends_on
+            .iter()
+            .map(|link| PickerItem {
+                label: format!("{} {}", link.display_ref, link.title),
+                value: link.task_id.clone(),
+                selected: false,
+            })
             .collect()
     }
 }

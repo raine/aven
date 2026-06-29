@@ -752,6 +752,8 @@ impl App {
             Action::ShowConfigPaths => self.show_config_paths()?,
             Action::ShowDatabaseStats => self.show_database_stats().await?,
             Action::BeginConfigInit => self.begin_config_init()?,
+            Action::BeginAddDependency => self.begin_add_dependency().await?,
+            Action::BeginRemoveDependency => self.begin_remove_dependency(),
             Action::Undo => self.undo_last().await?,
             Action::Planned { name, reason } => {
                 self.set_warning(format!(":{name} is not yet implemented: {reason}"));

@@ -628,6 +628,7 @@ mod tests {
         let mut item = detail_test_item();
         item.depends_on = (0..5)
             .map(|index| crate::query::TaskDependencyLink {
+                task_id: format!("blocker-id-{index}"),
                 display_ref: format!("APP-B{index}"),
                 title: format!("blocker {index}"),
                 status: "todo".to_string(),
@@ -654,6 +655,7 @@ mod tests {
         let mut item = detail_test_item();
         item.blocks = (0..5)
             .map(|index| crate::query::TaskDependencyLink {
+                task_id: format!("dependent-id-{index}"),
                 display_ref: format!("APP-D{index}"),
                 title: format!("dependent {index}"),
                 status: "inbox".to_string(),
@@ -905,6 +907,7 @@ mod tests {
             unresolved_blocker_count: 0,
             dependent_count: 0,
             depends_on: vec![crate::query::TaskDependencyLink {
+                task_id: "blocker-task-id".to_string(),
                 display_ref: "APP-7KQ1".to_string(),
                 title: "Ship auth service".to_string(),
                 status: "todo".to_string(),
@@ -912,6 +915,7 @@ mod tests {
                 unresolved: true,
             }],
             blocks: vec![crate::query::TaskDependencyLink {
+                task_id: "dependent-task-id".to_string(),
                 display_ref: "APP-7KQ2".to_string(),
                 title: "Write rollout notes".to_string(),
                 status: "inbox".to_string(),

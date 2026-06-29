@@ -396,4 +396,80 @@ impl TuiStore {
         }
         Ok(None)
     }
+
+    pub(crate) async fn add_dependency(
+        &mut self,
+        index: Option<usize>,
+        depends_on_task_id: &str,
+    ) -> Result<Option<MutationMessage>> {
+        let Some(item) = self.selected_task(index).cloned() else {
+            return Ok(None);
+        };
+        self.activate_workspace();
+        let mut conn = self.pool.acquire().await?;
+        let outcome =
+            crate::operations::add_task_dependency(&mut conn, &item.task.id, depends_on_task_id)
+                .await?;
+        let depends_on_ref = crate::refs::display_ref(&mut conn, &outcome.depends_on).await?;
+        drop(conn);
+        if outcome.changed {
+            self.record_undo_commands(
+                &format!("dependency {}", item.display_ref),
+                vec![UndoCommand::AddTaskDependency {
+                    task_id: item.task.id.clone(),
+                    depends_on_task_id: outcome.depends_on.id.clone(),
+                }],
+            )
+            .await?;
+        }
+        let verb = if outcome.changed { "added" } else { "kept" };
+        Ok(Some(
+            self.refresh_task_message(
+                &item.task.id,
+                format!(
+                    "{verb} dependency {} depends_on {depends_on_ref}",
+                    item.display_ref
+                ),
+            )
+            .await?,
+        ))
+    }
+
+    pub(crate) async fn remove_dependency(
+        &mut self,
+        index: Option<usize>,
+        depends_on_task_id: &str,
+    ) -> Result<Option<MutationMessage>> {
+        let Some(item) = self.selected_task(index).cloned() else {
+            return Ok(None);
+        };
+        self.activate_workspace();
+        let mut conn = self.pool.acquire().await?;
+        let outcome =
+            crate::operations::remove_task_dependency(&mut conn, &item.task.id, depends_on_task_id)
+                .await?;
+        let depends_on_ref = crate::refs::display_ref(&mut conn, &outcome.depends_on).await?;
+        drop(conn);
+        if outcome.changed {
+            self.record_undo_commands(
+                &format!("dependency {}", item.display_ref),
+                vec![UndoCommand::RemoveTaskDependency {
+                    task_id: item.task.id.clone(),
+                    depends_on_task_id: outcome.depends_on.id.clone(),
+                }],
+            )
+            .await?;
+        }
+        let verb = if outcome.changed { "removed" } else { "kept" };
+        Ok(Some(
+            self.refresh_task_message(
+                &item.task.id,
+                format!(
+                    "{verb} dependency {} depends_on {depends_on_ref}",
+                    item.display_ref
+                ),
+            )
+            .await?,
+        ))
+    }
 }

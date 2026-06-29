@@ -317,6 +317,7 @@ async fn dependency_links_for_tasks(
                 .entry(source_task_id)
                 .or_insert_with(Vec::new)
                 .push(TaskDependencyLink {
+                    task_id: task_id.clone(),
                     display_ref: display_ref_for_id(&project_prefix, &task_id, &workspace_task_ids),
                     title: row.get("title"),
                     status: row.get("status"),

@@ -814,6 +814,27 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetPriority("urgent"),
     ),
+    // Dependencies
+    CommandSpec::implemented(
+        "add-dependency",
+        "add blocker to selected task",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('B')],
+            label: "t B",
+        }],
+        Action::BeginAddDependency,
+    ),
+    CommandSpec::implemented(
+        "remove-dependency",
+        "remove blocker from selected task",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('U')],
+            label: "t U",
+        }],
+        Action::BeginRemoveDependency,
+    ),
     // Filters
     CommandSpec::implemented(
         "filter-label",
@@ -1206,6 +1227,26 @@ pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
             label: "u",
         }],
         Action::Undo,
+    ),
+    CommandSpec::implemented(
+        "detail-add-dependency",
+        "add blocker to selected task",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('B')],
+            label: "t B",
+        }],
+        Action::BeginAddDependency,
+    ),
+    CommandSpec::implemented(
+        "detail-remove-dependency",
+        "remove blocker from selected task",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('U')],
+            label: "t U",
+        }],
+        Action::BeginRemoveDependency,
     ),
 ];
 
