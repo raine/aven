@@ -2,6 +2,7 @@ mod handlers;
 mod layout;
 mod multiline;
 mod picker;
+mod scroll;
 mod state;
 mod tag_combobox;
 mod text_input;

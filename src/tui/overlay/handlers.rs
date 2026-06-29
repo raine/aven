@@ -1,6 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Rect, Size};
 
+use super::scroll::{ScrollKeyOutcome, ScrollState, handle_scroll_key};
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::navigation::scroll_with_delta;
 use crate::tui::ui::text_panel_scroll_cap;
@@ -153,72 +154,104 @@ pub(crate) fn handle_generic_overlay_key(
             }
             _ => OverlayOutcome::None(OverlayState::Confirm(state)),
         },
-        OverlayState::TextPanel(mut state) => match key.code {
-            KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
-            KeyCode::Char('j') | KeyCode::Down => {
-                let cap = text_panel_scroll_cap(&state.lines);
-                state.scroll = scroll_with_delta(state.scroll, 1, cap);
-                OverlayOutcome::None(OverlayState::TextPanel(state))
+        OverlayState::TextPanel(mut state) => {
+            let cap = text_panel_scroll_cap(&state.lines);
+            match handle_scroll_key(
+                key,
+                ScrollState {
+                    scroll: state.scroll,
+                    cap,
+                },
+                &[KeyCode::Esc, KeyCode::Enter],
+                0,
+            ) {
+                ScrollKeyOutcome::Cancelled => OverlayOutcome::Cancelled,
+                ScrollKeyOutcome::Continue(s) => {
+                    state.scroll = s.scroll;
+                    OverlayOutcome::None(OverlayState::TextPanel(state))
+                }
+                ScrollKeyOutcome::Ignored => OverlayOutcome::None(OverlayState::TextPanel(state)),
             }
-            KeyCode::Char('k') | KeyCode::Up => {
-                let cap = text_panel_scroll_cap(&state.lines);
-                state.scroll = scroll_with_delta(state.scroll, -1, cap);
-                OverlayOutcome::None(OverlayState::TextPanel(state))
-            }
-            _ => OverlayOutcome::None(OverlayState::TextPanel(state)),
-        },
+        }
         OverlayState::SyncStatus(state) => match key.code {
             KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
             _ => OverlayOutcome::None(OverlayState::SyncStatus(state)),
         },
-        OverlayState::DatabaseStats { stats, mut scroll } => match key.code {
-            KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
-            KeyCode::Char('j') | KeyCode::Down => {
-                scroll = scroll.saturating_add(1).min(help_scroll_cap);
-                OverlayOutcome::None(OverlayState::DatabaseStats { stats, scroll })
+        OverlayState::DatabaseStats { stats, scroll } => {
+            match handle_scroll_key(
+                key,
+                ScrollState {
+                    scroll,
+                    cap: help_scroll_cap,
+                },
+                &[KeyCode::Esc, KeyCode::Enter],
+                0,
+            ) {
+                ScrollKeyOutcome::Cancelled => OverlayOutcome::Cancelled,
+                ScrollKeyOutcome::Continue(s) => {
+                    OverlayOutcome::None(OverlayState::DatabaseStats {
+                        stats,
+                        scroll: s.scroll,
+                    })
+                }
+                ScrollKeyOutcome::Ignored => {
+                    OverlayOutcome::None(OverlayState::DatabaseStats { stats, scroll })
+                }
             }
-            KeyCode::Char('k') | KeyCode::Up => {
-                scroll = scroll.saturating_sub(1);
-                OverlayOutcome::None(OverlayState::DatabaseStats { stats, scroll })
+        }
+        OverlayState::Help { scroll } => {
+            match handle_scroll_key(
+                key,
+                ScrollState {
+                    scroll,
+                    cap: help_scroll_cap,
+                },
+                &[KeyCode::Esc, KeyCode::Enter],
+                0,
+            ) {
+                ScrollKeyOutcome::Cancelled => OverlayOutcome::Cancelled,
+                ScrollKeyOutcome::Continue(s) => {
+                    OverlayOutcome::None(OverlayState::Help { scroll: s.scroll })
+                }
+                ScrollKeyOutcome::Ignored => OverlayOutcome::None(OverlayState::Help { scroll }),
             }
-            _ => OverlayOutcome::None(OverlayState::DatabaseStats { stats, scroll }),
-        },
-        OverlayState::Help { mut scroll } => match key.code {
-            KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
-            KeyCode::Char('j') | KeyCode::Down => {
-                scroll = scroll.saturating_add(1).min(help_scroll_cap);
-                OverlayOutcome::None(OverlayState::Help { scroll })
+        }
+        OverlayState::DetailHelp { scroll } => {
+            match handle_scroll_key(
+                key,
+                ScrollState {
+                    scroll,
+                    cap: help_scroll_cap,
+                },
+                &[KeyCode::Esc, KeyCode::Enter, KeyCode::Char('?')],
+                0,
+            ) {
+                ScrollKeyOutcome::Cancelled => OverlayOutcome::Cancelled,
+                ScrollKeyOutcome::Continue(s) => {
+                    OverlayOutcome::None(OverlayState::DetailHelp { scroll: s.scroll })
+                }
+                ScrollKeyOutcome::Ignored => {
+                    OverlayOutcome::None(OverlayState::DetailHelp { scroll })
+                }
             }
-            KeyCode::Char('k') | KeyCode::Up => {
-                scroll = scroll.saturating_sub(1);
-                OverlayOutcome::None(OverlayState::Help { scroll })
+        }
+        OverlayState::Detail { scroll } => {
+            match handle_scroll_key(
+                key,
+                ScrollState {
+                    scroll,
+                    cap: u16::MAX,
+                },
+                &[KeyCode::Esc, KeyCode::Enter],
+                0,
+            ) {
+                ScrollKeyOutcome::Cancelled => OverlayOutcome::Cancelled,
+                ScrollKeyOutcome::Continue(s) => {
+                    OverlayOutcome::None(OverlayState::Detail { scroll: s.scroll })
+                }
+                ScrollKeyOutcome::Ignored => OverlayOutcome::None(OverlayState::Detail { scroll }),
             }
-            _ => OverlayOutcome::None(OverlayState::Help { scroll }),
-        },
-        OverlayState::DetailHelp { mut scroll } => match key.code {
-            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') => OverlayOutcome::Cancelled,
-            KeyCode::Char('j') | KeyCode::Down => {
-                scroll = scroll.saturating_add(1).min(help_scroll_cap);
-                OverlayOutcome::None(OverlayState::DetailHelp { scroll })
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                scroll = scroll.saturating_sub(1);
-                OverlayOutcome::None(OverlayState::DetailHelp { scroll })
-            }
-            _ => OverlayOutcome::None(OverlayState::DetailHelp { scroll }),
-        },
-        OverlayState::Detail { mut scroll } => match key.code {
-            KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
-            KeyCode::Char('j') | KeyCode::Down => {
-                scroll = scroll.saturating_add(1);
-                OverlayOutcome::None(OverlayState::Detail { scroll })
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                scroll = scroll.saturating_sub(1);
-                OverlayOutcome::None(OverlayState::Detail { scroll })
-            }
-            _ => OverlayOutcome::None(OverlayState::Detail { scroll }),
-        },
+        }
         other => OverlayOutcome::None(other),
     }
 }

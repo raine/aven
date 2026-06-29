@@ -3,6 +3,7 @@ use anyhow::Result;
 mod change_log;
 mod choices;
 mod cli;
+mod command_metadata;
 mod commands;
 mod config;
 mod config_edit;
@@ -36,11 +37,7 @@ mod test_support;
 
 pub use cli::Cli;
 
-use cli::{
-    BackupSubcommand, Commands, ConflictCommand, ConflictSubcommand, DaemonSubcommand, DepCommand,
-    DepSubcommand, InternalSubcommand, LabelCommand, LabelSubcommand, ProjectCommand,
-    ProjectPathSubcommand, ProjectSubcommand, TextCommand, TextSubcommand, TmuxSubcommand,
-};
+use cli::{BackupSubcommand, Commands, DaemonSubcommand, InternalSubcommand, TmuxSubcommand};
 use commands::{
     cmd_add, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
     cmd_delete_restore, cmd_dep, cmd_doctor, cmd_export, cmd_import, cmd_internal_natural_add,
@@ -53,8 +50,7 @@ use workspaces::{resolve_active_workspace, set_active_workspace};
 
 pub async fn run_cli() -> Result<()> {
     let cli = cli::parse();
-    let metadata = command_metadata(&cli.command);
-    logging::init(metadata.log_mode)?;
+    logging::init(cli.command.metadata().log_mode)?;
 
     match cli.command {
         Commands::Backup(backup)
@@ -105,7 +101,7 @@ pub async fn run_cli() -> Result<()> {
             let db_path = config::resolve_db_path(cli.db, &config)?;
             let pool = open_db(&db_path).await?;
             let mut conn = pool.acquire().await?;
-            let metadata = command_metadata(&command);
+            let metadata = command.metadata();
             if metadata.needs_workspace {
                 let cwd = std::env::current_dir()?;
                 let workspace =
@@ -194,83 +190,6 @@ pub async fn run_cli() -> Result<()> {
 
 fn load_config_for_command(_db_flag_set: bool, _command: &Commands) -> Result<config::AppConfig> {
     config::AppConfig::load()
-}
-
-struct CommandMetadata {
-    log_mode: logging::LogMode,
-    needs_workspace: bool,
-    wakes_daemon: bool,
-}
-
-fn command_metadata(command: &Commands) -> CommandMetadata {
-    let log_mode = match command {
-        Commands::Server(_) => logging::LogMode::Server,
-        Commands::Daemon(_) => logging::LogMode::Daemon,
-        Commands::Tui(_) => logging::LogMode::Tui,
-        _ => logging::LogMode::Cli,
-    };
-
-    let needs_workspace = matches!(
-        command,
-        Commands::Add(_)
-            | Commands::Context(_)
-            | Commands::Show(_)
-            | Commands::List(_)
-            | Commands::Search(_)
-            | Commands::Dep(_)
-            | Commands::BulkUpdate(_)
-            | Commands::Prime(_)
-            | Commands::Update(_)
-            | Commands::Note(_)
-            | Commands::NoteDelete(_)
-            | Commands::Label(_)
-            | Commands::Project(_)
-            | Commands::Delete(_)
-            | Commands::Restore(_)
-            | Commands::Conflict(_)
-            | Commands::Text(_)
-            | Commands::Tui(_)
-    );
-
-    let wakes_daemon = matches!(command, Commands::BulkUpdate(args) if !args.dry_run)
-        || matches!(
-            command,
-            Commands::Add(_)
-                | Commands::Update(_)
-                | Commands::Note(_)
-                | Commands::NoteDelete(_)
-                | Commands::Dep(DepCommand {
-                    command: DepSubcommand::Add { .. } | DepSubcommand::Remove { .. }
-                })
-                | Commands::Label(LabelCommand {
-                    command: LabelSubcommand::Create { .. } | LabelSubcommand::Delete { .. },
-                })
-                | Commands::Project(ProjectCommand {
-                    command: ProjectSubcommand::Create { .. }
-                        | ProjectSubcommand::Delete { .. }
-                        | ProjectSubcommand::Rename { .. }
-                        | ProjectSubcommand::Path {
-                            command: ProjectPathSubcommand::Add { .. }
-                                | ProjectPathSubcommand::Remove { .. },
-                        },
-                })
-                | Commands::Workspace(_)
-                | Commands::Delete(_)
-                | Commands::Restore(_)
-                | Commands::Conflict(ConflictCommand {
-                    command: ConflictSubcommand::Resolve { .. }
-                })
-                | Commands::Text(TextCommand {
-                    command: TextSubcommand::Set { .. }
-                })
-                | Commands::Import(_)
-        );
-
-    CommandMetadata {
-        log_mode,
-        needs_workspace,
-        wakes_daemon,
-    }
 }
 
 #[cfg(test)]

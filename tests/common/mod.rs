@@ -190,6 +190,30 @@ sync:
             .expect("write stdin");
         child.wait_with_output().expect("wait for aven")
     }
+
+    pub fn aven_ok<I, S>(&self, db: &Path, args: I) -> Output
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let output = self.aven(db, args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+
+    pub fn sync_ok(&self, db: &Path, server_url: &str) -> Output {
+        let output = self.aven(db, ["sync", "--server", server_url]);
+        assert!(
+            output.status.success(),
+            "sync failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
 }
 
 pub fn bin() -> PathBuf {
