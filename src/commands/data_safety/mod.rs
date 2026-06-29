@@ -4,9 +4,11 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqliteConnection, query_scalar};
+use sqlx::{SqliteConnection, query_scalar};
 
 use crate::cli::{BackupCommand, BackupRestoreArgs, ExportArgs, ImportArgs};
+
+mod tables;
 use crate::db;
 use crate::ids::now;
 use crate::render::quote;
@@ -51,7 +53,7 @@ struct ExportTables {
     meta: Vec<MetaRow>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct WorkspaceRow {
     id: String,
     name: String,
@@ -61,7 +63,7 @@ struct WorkspaceRow {
     archived: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct ProjectRow {
     id: String,
     workspace_id: String,
@@ -73,28 +75,28 @@ struct ProjectRow {
     deleted: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct ProjectPathRow {
     workspace_id: String,
     project_id: String,
     path: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct ProjectIdAliasRow {
     workspace_id: String,
     remote_project_id: String,
     local_project_id: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct LabelRow {
     workspace_id: String,
     name: String,
     created_at: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct TaskRow {
     workspace_id: String,
     id: String,
@@ -109,14 +111,14 @@ struct TaskRow {
     deleted: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct TaskLabelRow {
     workspace_id: String,
     task_id: String,
     label: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct NoteRow {
     workspace_id: String,
     id: String,
@@ -126,7 +128,7 @@ struct NoteRow {
     change_id: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct TaskDependencyRow {
     workspace_id: String,
     task_id: String,
@@ -134,7 +136,7 @@ struct TaskDependencyRow {
     created_at: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct ChangeRow {
     change_id: String,
     client_id: String,
@@ -149,14 +151,14 @@ struct ChangeRow {
     server_seq: Option<i64>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct FieldVersionRow {
     entity_id: String,
     field: String,
     version: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct ConflictRow {
     id: i64,
     workspace_id: String,
@@ -173,7 +175,7 @@ struct ConflictRow {
     resolved: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct MetaRow {
     key: String,
     value: String,
@@ -292,249 +294,79 @@ pub(crate) async fn cmd_import(
 }
 
 async fn scan_workspaces(conn: &mut SqliteConnection) -> Result<Vec<WorkspaceRow>> {
-    let rows =
-        sqlx::query("SELECT id, name, key, created_at, updated_at, archived FROM workspaces")
-            .fetch_all(&mut *conn)
-            .await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(WorkspaceRow {
-            id: row.try_get("id")?,
-            name: row.try_get("name")?,
-            key: row.try_get("key")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-            archived: row.try_get("archived")?,
-        });
-    }
-    Ok(items)
+    tables::scan_rows(
+        conn,
+        "SELECT id, name, key, created_at, updated_at, archived FROM workspaces",
+    )
+    .await
 }
 
 async fn scan_projects(conn: &mut SqliteConnection) -> Result<Vec<ProjectRow>> {
-    let rows = sqlx::query(
+    tables::scan_rows(
+        conn,
         "SELECT id, workspace_id, key, name, prefix, created_at, updated_at, deleted FROM projects",
     )
-    .fetch_all(&mut *conn)
-    .await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(ProjectRow {
-            id: row.try_get("id")?,
-            workspace_id: row.try_get("workspace_id")?,
-            key: row.try_get("key")?,
-            name: row.try_get("name")?,
-            prefix: row.try_get("prefix")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-            deleted: row.try_get("deleted")?,
-        });
-    }
-    Ok(items)
+    .await
 }
 
 async fn scan_project_paths(conn: &mut SqliteConnection) -> Result<Vec<ProjectPathRow>> {
-    let rows = sqlx::query("SELECT workspace_id, project_id, path FROM project_paths")
-        .fetch_all(&mut *conn)
-        .await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(ProjectPathRow {
-            workspace_id: row.try_get("workspace_id")?,
-            project_id: row.try_get("project_id")?,
-            path: row.try_get("path")?,
-        });
-    }
-    Ok(items)
+    tables::scan_rows(
+        conn,
+        "SELECT workspace_id, project_id, path FROM project_paths",
+    )
+    .await
 }
 
 async fn scan_project_id_aliases(conn: &mut SqliteConnection) -> Result<Vec<ProjectIdAliasRow>> {
-    let rows = sqlx::query(
+    tables::scan_rows(
+        conn,
         "SELECT workspace_id, remote_project_id, local_project_id FROM project_id_aliases",
     )
-    .fetch_all(&mut *conn)
-    .await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(ProjectIdAliasRow {
-            workspace_id: row.try_get("workspace_id")?,
-            remote_project_id: row.try_get("remote_project_id")?,
-            local_project_id: row.try_get("local_project_id")?,
-        });
-    }
-    Ok(items)
+    .await
 }
 
 async fn scan_labels(conn: &mut SqliteConnection) -> Result<Vec<LabelRow>> {
-    let rows = sqlx::query("SELECT workspace_id, name, created_at FROM labels")
-        .fetch_all(&mut *conn)
-        .await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(LabelRow {
-            workspace_id: row.try_get("workspace_id")?,
-            name: row.try_get("name")?,
-            created_at: row.try_get("created_at")?,
-        });
-    }
-    Ok(items)
+    tables::scan_rows(conn, "SELECT workspace_id, name, created_at FROM labels").await
 }
 
 async fn scan_tasks(conn: &mut SqliteConnection) -> Result<Vec<TaskRow>> {
-    let rows = sqlx::query(
-        "SELECT workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, deleted FROM tasks",
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(TaskRow {
-            workspace_id: row.try_get("workspace_id")?,
-            id: row.try_get("id")?,
-            title: row.try_get("title")?,
-            description: row.try_get("description")?,
-            project_id: row.try_get("project_id")?,
-            status: row.try_get("status")?,
-            priority: row.try_get("priority")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-            queue_activity_at: row.try_get("queue_activity_at")?,
-            deleted: row.try_get("deleted")?,
-        });
-    }
-    Ok(items)
+    tables::scan_rows(conn, "SELECT workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, deleted FROM tasks").await
 }
 
 async fn scan_task_labels(conn: &mut SqliteConnection) -> Result<Vec<TaskLabelRow>> {
-    let rows = sqlx::query("SELECT workspace_id, task_id, label FROM task_labels")
-        .fetch_all(&mut *conn)
-        .await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(TaskLabelRow {
-            workspace_id: row.try_get("workspace_id")?,
-            task_id: row.try_get("task_id")?,
-            label: row.try_get("label")?,
-        });
-    }
-    Ok(items)
+    tables::scan_rows(conn, "SELECT workspace_id, task_id, label FROM task_labels").await
 }
 
 async fn scan_notes(conn: &mut SqliteConnection) -> Result<Vec<NoteRow>> {
-    let rows =
-        sqlx::query("SELECT workspace_id, id, task_id, body, created_at, change_id FROM notes")
-            .fetch_all(&mut *conn)
-            .await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(NoteRow {
-            workspace_id: row.try_get("workspace_id")?,
-            id: row.try_get("id")?,
-            task_id: row.try_get("task_id")?,
-            body: row.try_get("body")?,
-            created_at: row.try_get("created_at")?,
-            change_id: row.try_get("change_id")?,
-        });
-    }
-    Ok(items)
+    tables::scan_rows(
+        conn,
+        "SELECT workspace_id, id, task_id, body, created_at, change_id FROM notes",
+    )
+    .await
 }
 
 async fn scan_task_dependencies(conn: &mut SqliteConnection) -> Result<Vec<TaskDependencyRow>> {
-    let rows = sqlx::query(
+    tables::scan_rows(
+        conn,
         "SELECT workspace_id, task_id, depends_on_task_id, created_at FROM task_dependencies",
     )
-    .fetch_all(&mut *conn)
-    .await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(TaskDependencyRow {
-            workspace_id: row.try_get("workspace_id")?,
-            task_id: row.try_get("task_id")?,
-            depends_on_task_id: row.try_get("depends_on_task_id")?,
-            created_at: row.try_get("created_at")?,
-        });
-    }
-    Ok(items)
+    .await
 }
 
 async fn scan_changes(conn: &mut SqliteConnection) -> Result<Vec<ChangeRow>> {
-    let rows = sqlx::query(
-        "SELECT change_id, client_id, local_seq, entity_type, entity_id, field, op_type, payload, base_version, created_at, server_seq FROM changes",
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(ChangeRow {
-            change_id: row.try_get("change_id")?,
-            client_id: row.try_get("client_id")?,
-            local_seq: row.try_get("local_seq")?,
-            entity_type: row.try_get("entity_type")?,
-            entity_id: row.try_get("entity_id")?,
-            field: row.try_get("field")?,
-            op_type: row.try_get("op_type")?,
-            payload: row.try_get("payload")?,
-            base_version: row.try_get("base_version")?,
-            created_at: row.try_get("created_at")?,
-            server_seq: row.try_get("server_seq")?,
-        });
-    }
-    Ok(items)
+    tables::scan_rows(conn, "SELECT change_id, client_id, local_seq, entity_type, entity_id, field, op_type, payload, base_version, created_at, server_seq FROM changes").await
 }
 
 async fn scan_field_versions(conn: &mut SqliteConnection) -> Result<Vec<FieldVersionRow>> {
-    let rows = sqlx::query("SELECT entity_id, field, version FROM field_versions")
-        .fetch_all(&mut *conn)
-        .await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(FieldVersionRow {
-            entity_id: row.try_get("entity_id")?,
-            field: row.try_get("field")?,
-            version: row.try_get("version")?,
-        });
-    }
-    Ok(items)
+    tables::scan_rows(conn, "SELECT entity_id, field, version FROM field_versions").await
 }
 
 async fn scan_conflicts(conn: &mut SqliteConnection) -> Result<Vec<ConflictRow>> {
-    let rows = sqlx::query(
-        "SELECT id, workspace_id, task_id, field, base_version, local_value, remote_value, local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved FROM conflicts",
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(ConflictRow {
-            id: row.try_get("id")?,
-            workspace_id: row.try_get("workspace_id")?,
-            task_id: row.try_get("task_id")?,
-            field: row.try_get("field")?,
-            base_version: row.try_get("base_version")?,
-            local_value: row.try_get("local_value")?,
-            remote_value: row.try_get("remote_value")?,
-            local_change_id: row.try_get("local_change_id")?,
-            remote_change_id: row.try_get("remote_change_id")?,
-            variant_a: row.try_get("variant_a")?,
-            variant_b: row.try_get("variant_b")?,
-            created_at: row.try_get("created_at")?,
-            resolved: row.try_get("resolved")?,
-        });
-    }
-    Ok(items)
+    tables::scan_rows(conn, "SELECT id, workspace_id, task_id, field, base_version, local_value, remote_value, local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved FROM conflicts").await
 }
 
 async fn scan_meta(conn: &mut SqliteConnection) -> Result<Vec<MetaRow>> {
-    let rows = sqlx::query("SELECT key, value FROM meta")
-        .fetch_all(&mut *conn)
-        .await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(MetaRow {
-            key: row.try_get("key")?,
-            value: row.try_get("value")?,
-        });
-    }
-    Ok(items)
+    tables::scan_rows(conn, "SELECT key, value FROM meta").await
 }
 
 async fn ensure_supported_export(conn: &mut SqliteConnection, export: &AvenExport) -> Result<()> {
@@ -756,167 +588,18 @@ async fn replace_from_export(
         db::set_meta(tx, &meta.key, &meta.value).await?;
     }
 
-    for row in &export.tables.workspaces {
-        sqlx::query(
-            "INSERT INTO workspaces(id, name, key, created_at, updated_at, archived) VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&row.id)
-        .bind(&row.name)
-        .bind(&row.key)
-        .bind(&row.created_at)
-        .bind(&row.updated_at)
-        .bind(row.archived)
-        .execute(&mut *tx)
-        .await?;
-    }
-
-    for row in &export.tables.projects {
-        sqlx::query(
-            "INSERT INTO projects(id, workspace_id, key, name, prefix, created_at, updated_at, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&row.id)
-        .bind(&row.workspace_id)
-        .bind(&row.key)
-        .bind(&row.name)
-        .bind(&row.prefix)
-        .bind(&row.created_at)
-        .bind(&row.updated_at)
-        .bind(row.deleted)
-        .execute(&mut *tx)
-        .await?;
-    }
-
-    for row in &export.tables.project_id_aliases {
-        sqlx::query(
-            "INSERT INTO project_id_aliases(workspace_id, remote_project_id, local_project_id) VALUES (?, ?, ?)",
-        )
-        .bind(&row.workspace_id)
-        .bind(&row.remote_project_id)
-        .bind(&row.local_project_id)
-        .execute(&mut *tx)
-        .await?;
-    }
-
-    for row in &export.tables.project_paths {
-        sqlx::query("INSERT INTO project_paths(workspace_id, project_id, path) VALUES (?, ?, ?)")
-            .bind(&row.workspace_id)
-            .bind(&row.project_id)
-            .bind(&row.path)
-            .execute(&mut *tx)
-            .await?;
-    }
-
-    for row in &export.tables.labels {
-        sqlx::query("INSERT INTO labels(workspace_id, name, created_at) VALUES (?, ?, ?)")
-            .bind(&row.workspace_id)
-            .bind(&row.name)
-            .bind(&row.created_at)
-            .execute(&mut *tx)
-            .await?;
-    }
-
-    for row in &export.tables.tasks {
-        sqlx::query(
-            "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&row.workspace_id)
-        .bind(&row.id)
-        .bind(&row.title)
-        .bind(&row.description)
-        .bind(&row.project_id)
-        .bind(&row.status)
-        .bind(&row.priority)
-        .bind(&row.created_at)
-        .bind(&row.updated_at)
-        .bind(&row.queue_activity_at)
-        .bind(row.deleted)
-        .execute(&mut *tx)
-        .await?;
-    }
-
-    for row in &export.tables.task_labels {
-        sqlx::query("INSERT INTO task_labels(workspace_id, task_id, label) VALUES (?, ?, ?)")
-            .bind(&row.workspace_id)
-            .bind(&row.task_id)
-            .bind(&row.label)
-            .execute(&mut *tx)
-            .await?;
-    }
-
-    for row in &export.tables.notes {
-        sqlx::query(
-            "INSERT INTO notes(workspace_id, id, task_id, body, created_at, change_id) VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&row.workspace_id)
-        .bind(&row.id)
-        .bind(&row.task_id)
-        .bind(&row.body)
-        .bind(&row.created_at)
-        .bind(&row.change_id)
-        .execute(&mut *tx)
-        .await?;
-    }
-
-    for row in &export.tables.task_dependencies {
-        sqlx::query(
-            "INSERT INTO task_dependencies(workspace_id, task_id, depends_on_task_id, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .bind(&row.workspace_id)
-        .bind(&row.task_id)
-        .bind(&row.depends_on_task_id)
-        .bind(&row.created_at)
-        .execute(&mut *tx)
-        .await?;
-    }
-
-    for row in &export.tables.changes {
-        sqlx::query(
-            "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field, op_type, payload, base_version, created_at, server_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&row.change_id)
-        .bind(&row.client_id)
-        .bind(row.local_seq)
-        .bind(&row.entity_type)
-        .bind(&row.entity_id)
-        .bind(&row.field)
-        .bind(&row.op_type)
-        .bind(&row.payload)
-        .bind(&row.base_version)
-        .bind(&row.created_at)
-        .bind(row.server_seq)
-        .execute(&mut *tx)
-        .await?;
-    }
-
-    for row in &export.tables.field_versions {
-        sqlx::query("INSERT INTO field_versions(entity_id, field, version) VALUES (?, ?, ?)")
-            .bind(&row.entity_id)
-            .bind(&row.field)
-            .bind(&row.version)
-            .execute(&mut *tx)
-            .await?;
-    }
-
-    for row in &export.tables.conflicts {
-        sqlx::query(
-            "INSERT INTO conflicts(id, workspace_id, task_id, field, base_version, local_value, remote_value, local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(row.id)
-        .bind(&row.workspace_id)
-        .bind(&row.task_id)
-        .bind(&row.field)
-        .bind(&row.base_version)
-        .bind(&row.local_value)
-        .bind(&row.remote_value)
-        .bind(&row.local_change_id)
-        .bind(&row.remote_change_id)
-        .bind(&row.variant_a)
-        .bind(&row.variant_b)
-        .bind(&row.created_at)
-        .bind(row.resolved)
-        .execute(&mut *tx)
-        .await?;
-    }
+    tables::import_workspaces(tx, &export.tables.workspaces).await?;
+    tables::import_projects(tx, &export.tables.projects).await?;
+    tables::import_project_id_aliases(tx, &export.tables.project_id_aliases).await?;
+    tables::import_project_paths(tx, &export.tables.project_paths).await?;
+    tables::import_labels(tx, &export.tables.labels).await?;
+    tables::import_tasks(tx, &export.tables.tasks).await?;
+    tables::import_task_labels(tx, &export.tables.task_labels).await?;
+    tables::import_notes(tx, &export.tables.notes).await?;
+    tables::import_task_dependencies(tx, &export.tables.task_dependencies).await?;
+    tables::import_changes(tx, &export.tables.changes).await?;
+    tables::import_field_versions(tx, &export.tables.field_versions).await?;
+    tables::import_conflicts(tx, &export.tables.conflicts).await?;
 
     Ok(())
 }

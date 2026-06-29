@@ -5,7 +5,7 @@ use sqlx::{Row, SqliteConnection};
 use crate::db::task_has_conflict;
 use crate::query::{TaskDependencySummary, TaskListItem, task_dependency_summary};
 use crate::refs::display_ref;
-use crate::render::{print_multiline_block, quote};
+use crate::render::{KvLine, print_multiline_block, quote};
 use crate::types::Task;
 
 #[allow(dead_code)]
@@ -56,38 +56,23 @@ async fn print_task_line(conn: &mut SqliteConnection, task: &Task) -> Result<()>
 
 pub(crate) async fn print_task_line_item(item: &TaskListItem) -> Result<()> {
     let labels = item.labels.join(",");
-    let conflict = if item.has_conflict {
-        " conflicts=yes"
-    } else {
-        ""
-    };
-    let deleted = if item.task.deleted {
-        " deleted=yes"
-    } else {
-        ""
-    };
-    let blocked_by = if item.unresolved_blocker_count > 0 {
-        format!(" blocked_by={}", item.unresolved_blocker_count)
-    } else {
-        String::new()
-    };
-    let blocks = if item.dependent_count > 0 {
-        format!(" blocks={}", item.dependent_count)
-    } else {
-        String::new()
-    };
-    println!(
-        "{} status={} priority={} labels={}{}{}{}{} title={}",
-        item.display_ref,
-        item.task.status,
-        item.task.priority,
-        labels,
-        conflict,
-        deleted,
-        blocked_by,
-        blocks,
-        quote(&item.task.title)
-    );
+    let line = KvLine::new(item.display_ref.clone())
+        .field("status", item.task.status)
+        .field("priority", item.task.priority)
+        .field("labels", &labels)
+        .optional("conflicts", item.has_conflict.then(|| "yes".to_string()))
+        .optional("deleted", item.task.deleted.then(|| "yes".to_string()))
+        .optional(
+            "blocked_by",
+            (item.unresolved_blocker_count > 0).then(|| item.unresolved_blocker_count.to_string()),
+        )
+        .optional(
+            "blocks",
+            (item.dependent_count > 0).then(|| item.dependent_count.to_string()),
+        )
+        .quoted("title", &item.task.title)
+        .finish();
+    println!("{line}");
     Ok(())
 }
 

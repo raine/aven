@@ -7,7 +7,7 @@ use crate::cli::ContextArgs;
 use crate::operations::{ConflictDetail, task_conflicts};
 use crate::query::{TaskDependencyItem, task_dependency_summary};
 use crate::refs::{display_ref, display_suffix, resolve_task_ref};
-use crate::render::{print_multiline_block, quote};
+use crate::render::{print_json_pretty, print_multiline_block, quote};
 use crate::task_render::labels_for_task_in_workspace;
 use crate::types::Task;
 use crate::workspaces::active_workspace;
@@ -16,8 +16,7 @@ pub(crate) async fn cmd_context(conn: &mut SqliteConnection, args: ContextArgs) 
     let task = resolve_task_ref(conn, &args.task_ref).await?;
     let snapshot = task_context_snapshot(conn, &task).await?;
     if args.json {
-        serde_json::to_writer_pretty(std::io::stdout(), &snapshot)?;
-        println!();
+        print_json_pretty(&snapshot)?;
     } else {
         print_task_context(&snapshot);
     }

@@ -53,7 +53,9 @@ use crate::query::{
     self, SortDirection, TaskFilters, TaskQueryMode, TaskSearchQuery, TaskSearchResult, TaskSort,
 };
 use crate::refs::{display_ref, display_suffix, resolve_task_ref};
-use crate::render::{changed_text, print_multiline_block, print_text_diff, quote};
+use crate::render::{
+    KvLine, changed_text, print_json_pretty, print_multiline_block, print_text_diff, quote,
+};
 use crate::task_fields::TaskField;
 use crate::task_render::{
     TaskConflictJson, TaskFullJson, TaskNoteJson, print_task, print_task_dependency_summary,
@@ -266,12 +268,11 @@ pub(crate) async fn cmd_show(conn: &mut SqliteConnection, args: ShowArgs) -> Res
                 notes: note_items,
                 conflicts: conflict_items,
             };
-            serde_json::to_writer_pretty(std::io::stdout(), &full)?;
+            print_json_pretty(&full)?;
         } else {
             let line = task_line_json_item(&item);
-            serde_json::to_writer_pretty(std::io::stdout(), &line)?;
+            print_json_pretty(&line)?;
         }
-        println!();
     } else {
         print_task(conn, &task, args.full).await?;
     }
@@ -303,8 +304,7 @@ pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Res
     }
     if args.json {
         let items = items.iter().map(task_line_json_item).collect::<Vec<_>>();
-        serde_json::to_writer_pretty(std::io::stdout(), &items)?;
-        println!();
+        print_json_pretty(&items)?;
     } else {
         for item in items {
             print_task_line_item(&item).await?;
@@ -344,8 +344,7 @@ pub(crate) async fn cmd_search(conn: &mut SqliteConnection, args: TaskSearchArgs
     .await?;
     if args.json {
         let items = results.iter().map(search_json_item).collect::<Vec<_>>();
-        serde_json::to_writer_pretty(std::io::stdout(), &items)?;
-        println!();
+        print_json_pretty(&items)?;
     } else {
         for result in results {
             print_search_result(&result);
@@ -357,23 +356,17 @@ pub(crate) async fn cmd_search(conn: &mut SqliteConnection, args: TaskSearchArgs
 fn print_search_result(result: &TaskSearchResult) {
     let item = &result.item;
     let labels = item.labels.join(",");
-    let deleted = if item.task.deleted {
-        " deleted=yes"
-    } else {
-        ""
-    };
-    println!(
-        "{} status={} priority={} project={} labels={} match={} score={}{} title={}",
-        item.display_ref,
-        item.task.status,
-        item.task.priority,
-        item.task.project_key,
-        labels,
-        result.matched_field.as_str(),
-        result.score,
-        deleted,
-        quote(&item.task.title)
-    );
+    let line = KvLine::new(item.display_ref.clone())
+        .field("status", item.task.status)
+        .field("priority", item.task.priority)
+        .field("project", &item.task.project_key)
+        .field("labels", &labels)
+        .field("match", result.matched_field.as_str())
+        .field("score", result.score)
+        .optional("deleted", item.task.deleted.then(|| "yes".to_string()))
+        .quoted("title", &item.task.title)
+        .finish();
+    println!("{line}");
     if let Some(snippet) = &result.snippet {
         println!("  snippet={}", quote(snippet));
     }
@@ -425,8 +418,7 @@ pub(crate) async fn cmd_dep(conn: &mut SqliteConnection, args: DepCommand) -> Re
                 query::task_dependency_summary(conn, &task.workspace_id, &task.id).await?;
             if args.json {
                 let json = task_dependency_summary_json(&summary);
-                serde_json::to_writer_pretty(std::io::stdout(), &json)?;
-                println!();
+                print_json_pretty(&json)?;
             } else {
                 print_task_dependency_summary(&summary);
             }
@@ -623,37 +615,34 @@ async fn plan_bulk_updates(
 }
 
 fn print_dry_run_bulk_update(item: &query::TaskListItem, will_change: bool) {
-    println!(
-        "would-update {} changed={} status={} priority={} labels={} title={}",
-        item.display_ref,
-        changed_text(will_change),
-        item.task.status,
-        item.task.priority,
-        item.labels.join(","),
-        quote(&item.task.title)
-    );
+    let line = KvLine::new(format!("would-update {}", item.display_ref))
+        .field("changed", changed_text(will_change))
+        .field("status", item.task.status)
+        .field("priority", item.task.priority)
+        .field("labels", item.labels.join(","))
+        .quoted("title", &item.task.title)
+        .finish();
+    println!("{line}");
 }
 
 fn print_unchanged_bulk_update(item: &query::TaskListItem) {
-    println!(
-        "bulk-updated {} changed={} status={} priority={} title={}",
-        item.display_ref,
-        changed_text(false),
-        item.task.status,
-        item.task.priority,
-        quote(&item.task.title)
-    );
+    let line = KvLine::new(format!("bulk-updated {}", item.display_ref))
+        .field("changed", changed_text(false))
+        .field("status", item.task.status)
+        .field("priority", item.task.priority)
+        .quoted("title", &item.task.title)
+        .finish();
+    println!("{line}");
 }
 
 async fn print_changed_bulk_update(conn: &mut SqliteConnection, task: &Task) -> Result<()> {
-    println!(
-        "bulk-updated {} changed={} status={} priority={} title={}",
-        display_ref(conn, task).await?,
-        changed_text(true),
-        task.status,
-        task.priority,
-        quote(&task.title)
-    );
+    let line = KvLine::new(format!("bulk-updated {}", display_ref(conn, task).await?))
+        .field("changed", changed_text(true))
+        .field("status", task.status)
+        .field("priority", task.priority)
+        .quoted("title", &task.title)
+        .finish();
+    println!("{line}");
     Ok(())
 }
 
@@ -905,8 +894,7 @@ async fn cmd_prime_json(
             ready: Vec::new(),
             blocked: Vec::new(),
         };
-        serde_json::to_writer_pretty(std::io::stdout(), &json)?;
-        println!();
+        print_json_pretty(&json)?;
         return Ok(());
     };
 
@@ -929,8 +917,7 @@ async fn cmd_prime_json(
             ready: Vec::new(),
             blocked: Vec::new(),
         };
-        serde_json::to_writer_pretty(std::io::stdout(), &json)?;
-        println!();
+        print_json_pretty(&json)?;
         return Ok(());
     }
 
@@ -1000,8 +987,7 @@ async fn cmd_prime_json(
         ready,
         blocked,
     };
-    serde_json::to_writer_pretty(std::io::stdout(), &json)?;
-    println!();
+    print_json_pretty(&json)?;
     Ok(())
 }
 
@@ -1431,8 +1417,7 @@ pub(crate) async fn cmd_labels(conn: &mut SqliteConnection, args: SearchArgs) ->
         labels.truncate(limit);
     }
     if args.json {
-        serde_json::to_writer_pretty(std::io::stdout(), &labels)?;
-        println!();
+        print_json_pretty(&labels)?;
     } else {
         for label in labels {
             println!("{label}");
@@ -1636,8 +1621,7 @@ pub(crate) async fn cmd_doctor(
     }
 
     if json {
-        serde_json::to_writer_pretty(std::io::stdout(), &report)?;
-        println!();
+        print_json_pretty(&report)?;
     } else {
         DoctorRenderer::auto().print(&report);
     }

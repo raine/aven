@@ -12,7 +12,7 @@ use crate::operations::{
 };
 use crate::projects::resolve_existing_project_in_workspace;
 use crate::refs::{display_ref, display_suffix, resolve_task_ref};
-use crate::render::{print_multiline_block, print_text_diff, quote};
+use crate::render::{print_json_pretty, print_multiline_block, print_text_diff, quote};
 use crate::task_fields::TaskField;
 use crate::types::Task;
 
@@ -71,8 +71,7 @@ pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictComm
                         variants: vec![item.variant_a, item.variant_b],
                     });
                 }
-                serde_json::to_writer_pretty(std::io::stdout(), &json_items)?;
-                println!();
+                print_json_pretty(&json_items)?;
             } else {
                 for item in items {
                     print_conflict_list_item(conn, item).await?;
@@ -119,8 +118,7 @@ pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictComm
                         ],
                     });
                 }
-                serde_json::to_writer_pretty(std::io::stdout(), &json_details)?;
-                println!();
+                print_json_pretty(&json_details)?;
             } else {
                 for detail in details {
                     print_conflict_detail(conn, &task, detail).await?;

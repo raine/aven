@@ -1,3 +1,4 @@
+use anyhow::Context;
 use similar::TextDiff;
 
 pub(crate) fn quote(input: &str) -> String {
@@ -23,6 +24,45 @@ pub(crate) fn print_near_error(kind: &str, input: &str, choices: &[String]) {
 
 pub(crate) fn changed_text(changed: bool) -> &'static str {
     if changed { "yes" } else { "none" }
+}
+
+pub(crate) struct KvLine {
+    parts: Vec<String>,
+}
+
+impl KvLine {
+    pub(crate) fn new(head: impl Into<String>) -> Self {
+        Self {
+            parts: vec![head.into()],
+        }
+    }
+
+    pub(crate) fn field(mut self, key: &str, value: impl std::fmt::Display) -> Self {
+        self.parts.push(format!("{key}={value}"));
+        self
+    }
+
+    pub(crate) fn quoted(mut self, key: &str, value: &str) -> Self {
+        self.parts.push(format!("{key}={}", quote(value)));
+        self
+    }
+
+    pub(crate) fn optional(mut self, key: &str, value: Option<String>) -> Self {
+        if let Some(value) = value {
+            self.parts.push(format!("{key}={value}"));
+        }
+        self
+    }
+
+    pub(crate) fn finish(self) -> String {
+        self.parts.join(" ")
+    }
+}
+
+pub(crate) fn print_json_pretty<T: serde::Serialize>(value: &T) -> anyhow::Result<()> {
+    serde_json::to_writer_pretty(std::io::stdout(), value).context("could not serialize JSON")?;
+    println!();
+    Ok(())
 }
 
 pub(crate) fn print_text_diff(from_label: &str, old: &str, to_label: &str, new: &str) {
