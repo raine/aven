@@ -2,7 +2,7 @@ use anyhow::{Result, bail, ensure};
 use sqlx::SqliteConnection;
 use tracing::{debug, info};
 
-use crate::choices::PRIORITIES;
+use crate::choices::TaskPriority;
 use crate::db::{conflict_exists, field_version, insert_change, set_field_version};
 use crate::ids::now;
 use crate::projects::resolve_project_for_add_in_workspace;
@@ -34,16 +34,16 @@ pub(crate) async fn cycle_priority(
     task: &Task,
     reverse: bool,
 ) -> Result<Task> {
-    let index = PRIORITIES
+    let index = TaskPriority::ALL
         .iter()
         .position(|priority| *priority == task.priority)
         .unwrap_or(0);
     let next = if reverse {
-        (index + PRIORITIES.len() - 1) % PRIORITIES.len()
+        (index + TaskPriority::ALL.len() - 1) % TaskPriority::ALL.len()
     } else {
-        (index + 1) % PRIORITIES.len()
+        (index + 1) % TaskPriority::ALL.len()
     };
-    set_priority(conn, task, PRIORITIES[next]).await
+    set_priority(conn, task, TaskPriority::ALL[next].as_str()).await
 }
 
 pub(crate) async fn set_deleted(

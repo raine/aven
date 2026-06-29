@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState};
 
 use super::truncate::truncate_chars;
+use crate::choices::TaskPriority;
 use crate::tui::app::{Focus, WidgetState};
 use crate::tui::store::{
     SidebarEntry, SidebarEntryTarget, TaskScope, TaskScopeTarget, TaskView, TuiStore,
@@ -189,7 +190,7 @@ pub(super) fn render_sidebar(
     let urgent_count = store
         .tasks
         .iter()
-        .filter(|task| task.task.priority == "urgent")
+        .filter(|task| task.task.priority == TaskPriority::Urgent)
         .count() as i64;
     let conflict_count = store.tasks.iter().filter(|task| task.has_conflict).count() as i64;
     items.extend([

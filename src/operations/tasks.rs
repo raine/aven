@@ -3,7 +3,7 @@ use serde_json::json;
 use sqlx::SqliteConnection;
 use tracing::info;
 
-use crate::choices::{PRIORITIES, STATUSES, validate_choice};
+use crate::choices::{TaskPriority, TaskStatus};
 use crate::db::{begin_immediate, insert_change, set_field_version};
 use crate::ids::{new_id, now};
 use crate::labels::resolve_labels_in_workspace;
@@ -73,8 +73,8 @@ pub(crate) async fn create_task_in_workspace(
     workspace_id: &str,
     draft: TaskDraft,
 ) -> Result<TaskOutcome> {
-    validate_choice("status", &draft.status, STATUSES)?;
-    validate_choice("priority", &draft.priority, PRIORITIES)?;
+    let status = TaskStatus::parse(&draft.status)?;
+    let priority = TaskPriority::parse(&draft.priority)?;
     let id = new_id();
     let ts = now();
     let mut tx = begin_immediate(conn).await?;
@@ -92,8 +92,8 @@ pub(crate) async fn create_task_in_workspace(
     .bind(&draft.title)
     .bind(&draft.description)
     .bind(&project.id)
-    .bind(&draft.status)
-    .bind(&draft.priority)
+    .bind(status.as_str())
+    .bind(priority.as_str())
     .bind(&ts)
     .bind(&ts)
     .bind(&ts)
@@ -124,8 +124,8 @@ pub(crate) async fn create_task_in_workspace(
             "project_key": &project.key,
             "project_name": &project.name,
             "project_prefix": &project.prefix,
-            "status": draft.status,
-            "priority": draft.priority,
+            "status": status.as_str(),
+            "priority": priority.as_str(),
             "labels": labels,
             "created_at": ts,
         }),
@@ -154,10 +154,10 @@ pub(crate) async fn update_task(
     update: TaskUpdate,
 ) -> Result<TaskUpdateOutcome> {
     if let Some(status) = update.status.as_deref() {
-        validate_choice("status", status, STATUSES)?;
+        TaskStatus::parse(status)?;
     }
     if let Some(priority) = update.priority.as_deref() {
-        validate_choice("priority", priority, PRIORITIES)?;
+        TaskPriority::parse(priority)?;
     }
     let mut changed = false;
     let mut tx = begin_immediate(conn).await?;

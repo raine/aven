@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sqlx::{QueryBuilder, Sqlite, SqliteConnection};
 
-use crate::choices::{PRIORITIES, STATUSES, validate_choice};
+use crate::choices::{TaskPriority, TaskStatus};
 use crate::db::task_from_row;
 use crate::labels::ensure_label_exists_in_workspace;
 use crate::projects::resolve_existing_project_in_workspace;
@@ -33,14 +33,14 @@ pub(crate) async fn list_task_items_in_workspace(
     direction: SortDirection,
 ) -> Result<Vec<TaskListItem>> {
     if let Some(status) = filters.status.as_deref() {
-        validate_choice("status", status, STATUSES)?;
+        TaskStatus::parse(status)?;
     }
     for status in &filters.statuses {
-        validate_choice("status", status, STATUSES)?;
+        TaskStatus::parse(status)?;
     }
     let hide_done = filters.hide_done && filters.status.is_none() && filters.statuses.is_empty();
     if let Some(priority) = filters.priority.as_deref() {
-        validate_choice("priority", priority, PRIORITIES)?;
+        TaskPriority::parse(priority)?;
     }
 
     let project = if let Some(project) = filters.project.as_deref() {

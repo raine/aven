@@ -9,7 +9,7 @@ use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::{error, info};
 
-use crate::choices::{PRIORITIES, validate_choice};
+use crate::choices::{PRIORITIES, TaskPriority};
 use crate::config::TaskIntakeConfig;
 use crate::labels::{list_labels_in_workspace, resolve_labels_in_workspace};
 use crate::operations::TaskDraft;
@@ -276,7 +276,7 @@ pub(crate) async fn parsed_output_to_draft(
         bail!("error task-intake-title-required");
     }
     let priority = parsed.priority.unwrap_or_else(|| "none".to_string());
-    validate_choice("priority", &priority, PRIORITIES)?;
+    TaskPriority::parse(&priority)?;
     let project = if let Some(project) = parsed
         .project
         .as_deref()

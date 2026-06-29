@@ -28,7 +28,7 @@ pub(crate) use self::data_safety::{
 };
 pub(crate) use self::projects::cmd_project;
 pub(crate) use self::workspaces::cmd_workspace;
-use crate::choices::{PRIORITIES, STATUSES, validate_choice};
+use crate::choices::{TaskPriority, TaskStatus};
 use crate::cli::{
     AddArgs, BulkUpdateArgs, DepCommand, DepSubcommand, InternalNaturalAddArgs, LabelCommand,
     LabelSubcommand, ListArgs, NoteArgs, NoteDeleteArgs, PrimeArgs, RefArgs, SearchArgs, ShowArgs,
@@ -298,8 +298,8 @@ fn search_json_item(result: &TaskSearchResult) -> SearchJsonItem {
         id: result.item.task.id.clone(),
         title: result.item.task.title.clone(),
         project: result.item.task.project_key.clone(),
-        status: result.item.task.status.clone(),
-        priority: result.item.task.priority.clone(),
+        status: result.item.task.status.as_str().to_string(),
+        priority: result.item.task.priority.as_str().to_string(),
         labels: result.item.labels.clone(),
         deleted: result.item.task.deleted,
         score: result.score,
@@ -429,11 +429,11 @@ fn ensure_bulk_update_has_mutation(args: &BulkUpdateArgs) -> Result<()> {
 }
 
 fn validate_status(status: &str) -> Result<()> {
-    validate_choice("status", status, STATUSES)
+    TaskStatus::parse(status).map(|_| ())
 }
 
 fn validate_priority(priority: &str) -> Result<()> {
-    validate_choice("priority", priority, PRIORITIES)
+    TaskPriority::parse(priority).map(|_| ())
 }
 
 fn validate_optional_status(status: Option<&str>) -> Result<()> {
@@ -605,12 +605,12 @@ fn bulk_update_for_item(
         status: args
             .set_status
             .as_deref()
-            .filter(|status| *status != item.task.status)
+            .filter(|status| *status != item.task.status.as_str())
             .map(str::to_string),
         priority: args
             .set_priority
             .as_deref()
-            .filter(|priority| *priority != item.task.priority)
+            .filter(|priority| *priority != item.task.priority.as_str())
             .map(str::to_string),
         add_labels: add_labels
             .iter()
@@ -766,15 +766,15 @@ fn print_prime_open_issues(items: &[query::TaskListItem]) {
 
     let active = items
         .iter()
-        .filter(|item| item.task.status == "active")
+        .filter(|item| item.task.status == TaskStatus::Active)
         .collect::<Vec<_>>();
     let ready = items
         .iter()
-        .filter(|item| item.task.status != "active" && item.unresolved_blocker_count == 0)
+        .filter(|item| item.task.status != TaskStatus::Active && item.unresolved_blocker_count == 0)
         .collect::<Vec<_>>();
     let blocked = items
         .iter()
-        .filter(|item| item.task.status != "active" && item.unresolved_blocker_count > 0)
+        .filter(|item| item.task.status != TaskStatus::Active && item.unresolved_blocker_count > 0)
         .collect::<Vec<_>>();
 
     println!(
@@ -829,7 +829,7 @@ fn print_prime_issue_section(label: &str, items: &[&query::TaskListItem]) {
 
 fn format_prime_issue_line(item: &query::TaskListItem) -> String {
     let mut fields = vec![format!("{} status={}", item.display_ref, item.task.status)];
-    if item.task.priority != "none" {
+    if item.task.priority != TaskPriority::None {
         fields.push(format!("priority={}", item.task.priority));
     }
     if !item.labels.is_empty() {

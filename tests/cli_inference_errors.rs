@@ -471,3 +471,28 @@ fn rejects_invalid_status_and_priority() {
         ],
     );
 }
+
+#[test]
+fn database_rejects_invalid_status_and_priority_values() {
+    let env = TestEnv::new();
+    let db = env.db("status-priority-checks.sqlite");
+    ok(env.aven(&db, ["add", "checked task", "--project", "app"]));
+
+    let status_error = Command::new("sqlite3")
+        .arg(&db)
+        .arg("UPDATE tasks SET status = 'blocked'")
+        .output()
+        .expect("run sqlite");
+    assert!(!status_error.status.success());
+    let status_stderr = String::from_utf8_lossy(&status_error.stderr);
+    assert!(status_stderr.contains("CHECK constraint failed"));
+
+    let priority_error = Command::new("sqlite3")
+        .arg(&db)
+        .arg("UPDATE tasks SET priority = 'soon'")
+        .output()
+        .expect("run sqlite");
+    assert!(!priority_error.status.success());
+    let priority_stderr = String::from_utf8_lossy(&priority_error.stderr);
+    assert!(priority_stderr.contains("CHECK constraint failed"));
+}

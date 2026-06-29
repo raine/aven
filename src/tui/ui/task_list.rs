@@ -431,10 +431,10 @@ fn build_task_row_cells(
         title,
         metadata_cell(item),
         project_cell(item, column_widths[3]),
-        status_chip(&item.task.status),
+        status_chip(item.task.status.as_str()),
         Line::from(Span::styled(
-            priority_icon(&item.task.priority),
-            theme::priority_style(&item.task.priority).add_modifier(Modifier::BOLD),
+            priority_icon(item.task.priority.as_str()),
+            theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
             age_seconds.map(compact_age).unwrap_or_default(),
@@ -578,11 +578,11 @@ fn task_preview_fields_line(item: &TaskListItem) -> Line<'static> {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("  status ", Style::new().fg(FG_DIM)),
-        status_span(&item.task.status),
+        status_span(item.task.status.as_str()),
         Span::styled("  priority ", Style::new().fg(FG_DIM)),
         Span::styled(
-            priority_short(&item.task.priority),
-            theme::priority_style(&item.task.priority).add_modifier(Modifier::BOLD),
+            priority_short(item.task.priority.as_str()),
+            theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
         ),
     ];
     if item.task.deleted {
@@ -664,6 +664,7 @@ fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::choices::{TaskPriority, TaskStatus};
     use crate::operations::TaskDraft;
     use crate::tui::overlay::OverlayRoute;
     use ratatui::Terminal;
@@ -679,8 +680,8 @@ mod tests {
                 project_id: "project-id".to_string(),
                 project_key: "app".to_string(),
                 project_prefix: "APP".to_string(),
-                status: "todo".to_string(),
-                priority: "none".to_string(),
+                status: TaskStatus::Todo,
+                priority: TaskPriority::None,
                 created_at: "2026-06-20T00:00:00Z".to_string(),
                 updated_at: "2026-06-20T00:00:00Z".to_string(),
                 queue_activity_at: "2026-06-20T00:00:00Z".to_string(),
@@ -753,8 +754,8 @@ mod tests {
                 title: item.task.title,
                 description: item.task.description,
                 project: None,
-                status: item.task.status,
-                priority: item.task.priority,
+                status: item.task.status.as_str().to_string(),
+                priority: item.task.priority.as_str().to_string(),
                 labels: Vec::new(),
             };
             store.create_task(draft, None).await.unwrap();

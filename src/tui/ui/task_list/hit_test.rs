@@ -90,6 +90,7 @@ pub(super) fn task_list_hit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::choices::{TaskPriority, TaskStatus};
     use crate::queue::QueueBand;
     use crate::tui::store::TaskListRenderMode;
 
@@ -103,8 +104,8 @@ mod tests {
                 project_id: "project-id".to_string(),
                 project_key: "app".to_string(),
                 project_prefix: "APP".to_string(),
-                status: "todo".to_string(),
-                priority: "none".to_string(),
+                status: TaskStatus::Todo,
+                priority: TaskPriority::None,
                 created_at: "2026-06-20T00:00:00Z".to_string(),
                 updated_at: "2026-06-20T00:00:00Z".to_string(),
                 queue_activity_at: "2026-06-20T00:00:00Z".to_string(),
@@ -125,7 +126,7 @@ mod tests {
     fn task_item_with(title: &str, status: &str, band: QueueBand) -> TaskListItem {
         let mut item = task_item(title);
         item.task.title = title.to_string();
-        item.task.status = status.to_string();
+        item.task.status = TaskStatus::parse(status).expect("valid status");
         item.queue.band = band;
         item
     }

@@ -396,11 +396,11 @@ fn detail_header_options(
         Line::from(vec![
             Span::styled(item.display_ref.clone(), Style::new().fg(FG_DIM)),
             Span::styled("   ", Style::new().fg(FG_DIM)),
-            status_span(&item.task.status),
+            status_span(item.task.status.as_str()),
             Span::styled("   ", Style::new().fg(FG_DIM)),
             Span::styled(
-                priority_short(&item.task.priority),
-                theme::priority_style(&item.task.priority).add_modifier(Modifier::BOLD),
+                priority_short(item.task.priority.as_str()),
+                theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(""),
@@ -485,12 +485,12 @@ fn detail_metadata_lines(item: &TaskListItem) -> Vec<Line<'static>> {
         ]),
         Line::from(""),
         metadata_label("STATUS"),
-        status_chip(&item.task.status),
+        status_chip(item.task.status.as_str()),
         Line::from(""),
         metadata_label("PRIORITY"),
         Line::from(Span::styled(
-            priority_short(&item.task.priority),
-            theme::priority_style(&item.task.priority).add_modifier(Modifier::BOLD),
+            priority_short(item.task.priority.as_str()),
+            theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         metadata_label("LABELS"),
@@ -590,6 +590,7 @@ pub(super) fn render_detail_underlay(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::choices::{TaskPriority, TaskStatus};
 
     #[test]
     fn detail_content_includes_notes() {
@@ -887,8 +888,8 @@ mod tests {
                 project_id: "project-id".to_string(),
                 project_key: "app".to_string(),
                 project_prefix: "APP".to_string(),
-                status: "active".to_string(),
-                priority: "urgent".to_string(),
+                status: TaskStatus::Active,
+                priority: TaskPriority::Urgent,
                 created_at: "2026-06-19T12:00:00Z".to_string(),
                 updated_at: "2026-06-20T12:00:00Z".to_string(),
                 queue_activity_at: "2026-06-20T12:00:00Z".to_string(),

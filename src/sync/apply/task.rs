@@ -2,6 +2,7 @@ use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use sqlx::SqliteConnection;
 
+use crate::choices::{TaskPriority, TaskStatus};
 use crate::db::{field_version, set_field_version};
 use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
 use crate::sync::wire::ChangeWire;
@@ -27,8 +28,14 @@ pub(super) async fn create_task(conn: &mut SqliteConnection, change: &ChangeWire
     let project_id = ensure_project_for_payload(conn, &workspace_id, &project_id, change).await?;
     let title = str_payload(&change.payload, "title")?;
     let description = str_payload(&change.payload, "description").unwrap_or_default();
-    let status = str_payload(&change.payload, "status").unwrap_or_else(|_| "inbox".to_string());
-    let priority = str_payload(&change.payload, "priority").unwrap_or_else(|_| "none".to_string());
+    let status = match str_payload(&change.payload, "status") {
+        Ok(value) => TaskStatus::parse(&value)?,
+        Err(_) => TaskStatus::Inbox,
+    };
+    let priority = match str_payload(&change.payload, "priority") {
+        Ok(value) => TaskPriority::parse(&value)?,
+        Err(_) => TaskPriority::None,
+    };
     let created_at =
         str_payload(&change.payload, "created_at").unwrap_or_else(|_| change.created_at.clone());
     sqlx::query(
@@ -40,8 +47,8 @@ pub(super) async fn create_task(conn: &mut SqliteConnection, change: &ChangeWire
     .bind(&title)
     .bind(&description)
     .bind(&project_id)
-    .bind(&status)
-    .bind(&priority)
+    .bind(status.as_str())
+    .bind(priority.as_str())
     .bind(&created_at)
     .bind(&change.created_at)
     .bind(&change.created_at)

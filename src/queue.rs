@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::choices::{TaskPriority, TaskStatus};
 use crate::types::Task;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -59,9 +60,9 @@ pub(crate) fn queue_meta(
         .map(|activity| now_seconds.saturating_sub(activity).max(0));
     let idle_days = idle_seconds.map(|seconds| seconds.saturating_div(86_400));
     let idle = idle_days.unwrap_or(0);
-    let score = status_score(&task.status)
-        + priority_score(&task.priority)
-        + idle_score(&task.status, idle)
+    let score = status_score(task.status)
+        + priority_score(task.priority)
+        + idle_score(task.status, idle)
         + if has_conflict { 50 } else { 0 };
     QueueMeta {
         band: queue_band(task, has_conflict, has_unresolved_blockers, idle),
@@ -76,7 +77,7 @@ pub(crate) fn queue_order(a: (&Task, QueueMeta), b: (&Task, QueueMeta)) -> Order
         .order()
         .cmp(&b.1.band.order())
         .then_with(|| b.1.score.cmp(&a.1.score))
-        .then_with(|| priority_score(&b.0.priority).cmp(&priority_score(&a.0.priority)))
+        .then_with(|| priority_score(b.0.priority).cmp(&priority_score(a.0.priority)))
         .then_with(|| a.0.created_at.cmp(&b.0.created_at))
         .then_with(|| a.0.id.cmp(&b.0.id))
 }
@@ -111,47 +112,54 @@ fn queue_band(
     has_unresolved_blockers: bool,
     idle_days: i64,
 ) -> QueueBand {
-    if has_conflict || task.priority == "urgent" || (task.status == "active" && idle_days >= 7) {
+    if has_conflict
+        || task.priority == TaskPriority::Urgent
+        || (task.status == TaskStatus::Active && idle_days >= 7)
+    {
         QueueBand::NeedsAction
     } else if has_unresolved_blockers {
         QueueBand::Blocked
-    } else if task.status == "active" || (task.status == "todo" && task.priority == "high") {
+    } else if task.status == TaskStatus::Active
+        || (task.status == TaskStatus::Todo && task.priority == TaskPriority::High)
+    {
         QueueBand::Focus
-    } else if task.status == "inbox" || (task.status == "todo" && task.priority == "medium") {
+    } else if task.status == TaskStatus::Inbox
+        || (task.status == TaskStatus::Todo && task.priority == TaskPriority::Medium)
+    {
         QueueBand::Triage
     } else {
         QueueBand::Later
     }
 }
 
-fn priority_score(priority: &str) -> i32 {
+fn priority_score(priority: TaskPriority) -> i32 {
     match priority {
-        "urgent" => 40,
-        "high" => 30,
-        "medium" => 20,
-        "low" => 10,
-        _ => 0,
+        TaskPriority::Urgent => 40,
+        TaskPriority::High => 30,
+        TaskPriority::Medium => 20,
+        TaskPriority::Low => 10,
+        TaskPriority::None => 0,
     }
 }
 
-fn status_score(status: &str) -> i32 {
+fn status_score(status: TaskStatus) -> i32 {
     match status {
-        "active" => 50,
-        "todo" => 35,
-        "inbox" => 25,
-        "backlog" => 5,
-        _ => 0,
+        TaskStatus::Active => 50,
+        TaskStatus::Todo => 35,
+        TaskStatus::Inbox => 25,
+        TaskStatus::Backlog => 5,
+        TaskStatus::Done | TaskStatus::Canceled => 0,
     }
 }
 
-fn idle_score(status: &str, idle_days: i64) -> i32 {
+fn idle_score(status: TaskStatus, idle_days: i64) -> i32 {
     match status {
-        "active" if idle_days >= 14 => 25,
-        "active" if idle_days >= 7 => 15,
-        "todo" if idle_days >= 30 => 15,
-        "todo" if idle_days >= 14 => 10,
-        "inbox" if idle_days >= 14 => 10,
-        "inbox" if idle_days >= 7 => 5,
+        TaskStatus::Active if idle_days >= 14 => 25,
+        TaskStatus::Active if idle_days >= 7 => 15,
+        TaskStatus::Todo if idle_days >= 30 => 15,
+        TaskStatus::Todo if idle_days >= 14 => 10,
+        TaskStatus::Inbox if idle_days >= 14 => 10,
+        TaskStatus::Inbox if idle_days >= 7 => 5,
         _ => 0,
     }
 }
@@ -179,8 +187,8 @@ mod tests {
             project_id: "project-id".to_string(),
             project_key: "app".to_string(),
             project_prefix: "APP".to_string(),
-            status: status.to_string(),
-            priority: priority.to_string(),
+            status: TaskStatus::parse(status).expect("valid status"),
+            priority: TaskPriority::parse(priority).expect("valid priority"),
             created_at: queue_activity_at.to_string(),
             updated_at: queue_activity_at.to_string(),
             queue_activity_at: queue_activity_at.to_string(),

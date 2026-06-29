@@ -9,6 +9,7 @@ use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
 use sqlx::{Connection as _, Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
 
+use crate::choices::{TaskPriority, TaskStatus};
 use crate::ids::{new_id, now};
 use crate::types::Task;
 use crate::workspaces::ensure_default_workspace;
@@ -322,8 +323,8 @@ pub(crate) fn task_from_row(row: &SqliteRow) -> Result<Task> {
         project_id: row.try_get("project_id")?,
         project_key: row.try_get("project_key")?,
         project_prefix: row.try_get("project_prefix")?,
-        status: row.try_get("status")?,
-        priority: row.try_get("priority")?,
+        status: TaskStatus::parse(row.try_get::<String, _>("status")?.as_str())?,
+        priority: TaskPriority::parse(row.try_get::<String, _>("priority")?.as_str())?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
         queue_activity_at: row.try_get("queue_activity_at")?,
@@ -395,4 +396,61 @@ pub(crate) async fn conflict_exists(
     .fetch_one(&mut *conn)
     .await?
         > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn task_from_row_rejects_invalid_status_and_priority() {
+        let mut conn = SqliteConnection::connect(":memory:")
+            .await
+            .expect("open db");
+        let row = sqlx::query(
+            "SELECT 'TASK000000000001' AS id,
+                    '0000000000000000' AS workspace_id,
+                    'bad status' AS title,
+                    '' AS description,
+                    'PROJECT000000001' AS project_id,
+                    'app' AS project_key,
+                    'APP' AS project_prefix,
+                    'blocked' AS status,
+                    'none' AS priority,
+                    't' AS created_at,
+                    't' AS updated_at,
+                    't' AS queue_activity_at,
+                    0 AS deleted",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .expect("row");
+        assert_eq!(
+            task_from_row(&row).unwrap_err().to_string(),
+            "error invalid-status input=blocked choices=inbox,backlog,todo,active,done,canceled"
+        );
+
+        let row = sqlx::query(
+            "SELECT 'TASK000000000001' AS id,
+                    '0000000000000000' AS workspace_id,
+                    'bad priority' AS title,
+                    '' AS description,
+                    'PROJECT000000001' AS project_id,
+                    'app' AS project_key,
+                    'APP' AS project_prefix,
+                    'inbox' AS status,
+                    'soon' AS priority,
+                    't' AS created_at,
+                    't' AS updated_at,
+                    't' AS queue_activity_at,
+                    0 AS deleted",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .expect("row");
+        assert_eq!(
+            task_from_row(&row).unwrap_err().to_string(),
+            "error invalid-priority input=soon choices=none,low,medium,high,urgent"
+        );
+    }
 }

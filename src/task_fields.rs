@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow, ensure};
 use serde_json::{Value, json};
 
-use crate::choices::{PRIORITIES, STATUSES, validate_choice};
+use crate::choices::{TaskPriority, TaskStatus};
 use crate::types::Project;
 use crate::types::Task;
 
@@ -66,8 +66,8 @@ impl TaskField {
 
     pub(crate) fn validate_value(self, value: &str) -> Result<()> {
         match self {
-            Self::Status => validate_choice("status", value, STATUSES),
-            Self::Priority => validate_choice("priority", value, PRIORITIES),
+            Self::Status => TaskStatus::parse(value).map(|_| ()),
+            Self::Priority => TaskPriority::parse(value).map(|_| ()),
             Self::Deleted if matches!(value, "0" | "1") => Ok(()),
             Self::Deleted => anyhow::bail!("error invalid-deleted value={value}"),
             _ => Ok(()),
@@ -113,8 +113,8 @@ impl TaskField {
             Self::Title => task.title.clone(),
             Self::Description => task.description.clone(),
             Self::Project => task.project_id.clone(),
-            Self::Status => task.status.clone(),
-            Self::Priority => task.priority.clone(),
+            Self::Status => task.status.as_str().to_string(),
+            Self::Priority => task.priority.as_str().to_string(),
             Self::Deleted => {
                 if task.deleted {
                     "1".to_string()

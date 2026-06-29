@@ -1,6 +1,7 @@
 use anyhow::Result;
 use sqlx::{Row, SqliteConnection};
 
+use crate::choices::TaskStatus;
 use crate::refs::display_refs_for_tasks;
 use crate::types::Task;
 
@@ -103,8 +104,8 @@ async fn query_dependency_items(
 
     items.sort_by(|a, b| {
         b.unresolved.cmp(&a.unresolved).then_with(|| {
-            status_order(&a.task.status)
-                .cmp(&status_order(&b.task.status))
+            status_order(a.task.status)
+                .cmp(&status_order(b.task.status))
                 .then_with(|| a.task.title.cmp(&b.task.title))
                 .then_with(|| a.created_at.cmp(&b.created_at))
                 .then_with(|| a.task.id.cmp(&b.task.id))
@@ -129,14 +130,13 @@ async fn subject_task_is_open(
     Ok(open > 0)
 }
 
-fn status_order(status: &str) -> u8 {
+fn status_order(status: TaskStatus) -> u8 {
     match status {
-        "active" => 0,
-        "todo" => 1,
-        "inbox" => 2,
-        "backlog" => 3,
-        "done" => 4,
-        "canceled" => 5,
-        _ => 6,
+        TaskStatus::Active => 0,
+        TaskStatus::Todo => 1,
+        TaskStatus::Inbox => 2,
+        TaskStatus::Backlog => 3,
+        TaskStatus::Done => 4,
+        TaskStatus::Canceled => 5,
     }
 }

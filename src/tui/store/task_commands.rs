@@ -65,7 +65,7 @@ impl TuiStore {
             return Ok(None);
         };
 
-        let before = item.task.status.clone();
+        let before = item.task.status.as_str().to_string();
         self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
         let task = set_status(&mut conn, &item.task, status).await?;
@@ -122,7 +122,7 @@ impl TuiStore {
         reverse: bool,
     ) -> Result<Option<MutationMessage>> {
         if let Some(item) = self.selected_task(index).cloned() {
-            let before = item.task.priority.clone();
+            let before = item.task.priority.as_str().to_string();
             self.activate_workspace();
             let mut conn = self.pool.acquire().await?;
             let task = cycle_priority(&mut conn, &item.task, reverse).await?;
@@ -133,7 +133,7 @@ impl TuiStore {
                     task_id: item.task.id.clone(),
                     field: "priority".to_string(),
                     before,
-                    after: task.priority.clone(),
+                    after: task.priority.as_str().to_string(),
                 }],
             )
             .await?;
@@ -156,7 +156,7 @@ impl TuiStore {
         let Some(item) = self.selected_task(index).cloned() else {
             return Ok(None);
         };
-        let before = item.task.priority.clone();
+        let before = item.task.priority.as_str().to_string();
         let outcome = self
             .update_selected_task(
                 index,

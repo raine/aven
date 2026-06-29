@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::choices::PRIORITIES;
+use crate::choices::{PRIORITIES, TaskPriority, TaskStatus};
 use crate::operations::TaskDraft;
 use crate::query::SortDirection;
 
@@ -429,7 +429,7 @@ mod task_creation_and_updates {
         );
         let task = &store.tasks[selected];
         assert_eq!(task.task.title, "Write docs");
-        assert_eq!(task.task.priority, "high");
+        assert_eq!(task.task.priority, TaskPriority::High);
         assert!(task.labels.iter().any(|label| label == "needs-review"));
     }
 
@@ -515,7 +515,7 @@ mod task_creation_and_updates {
 
         assert_eq!(result.selected, Some(selected));
         assert_eq!(store.tasks[selected].task.id, task_id);
-        assert_eq!(store.tasks[selected].task.status, "done");
+        assert_eq!(store.tasks[selected].task.status, TaskStatus::Done);
         assert_eq!(store.counts.done, 1);
     }
 
@@ -579,7 +579,7 @@ mod task_creation_and_updates {
         let task = &store.tasks[selected].task;
         assert_eq!(task.title, "New");
         assert_eq!(task.description, "new body");
-        assert_eq!(task.priority, "urgent");
+        assert_eq!(task.priority, TaskPriority::Urgent);
     }
 
     #[tokio::test]
@@ -623,7 +623,7 @@ mod task_creation_and_updates {
             .unwrap();
 
         let task = &store.tasks[selected].task;
-        assert_eq!(task.priority, "high");
+        assert_eq!(task.priority, TaskPriority::High);
         assert_ne!(task.queue_activity_at, old_activity);
     }
 
@@ -879,7 +879,12 @@ mod views_filters_and_sort {
 
         store.show_view(TaskView::Queue).await.unwrap();
 
-        assert!(store.tasks.iter().all(|item| item.task.status != "done"));
+        assert!(
+            store
+                .tasks
+                .iter()
+                .all(|item| item.task.status != TaskStatus::Done)
+        );
         assert_eq!(store.counts.done, 1);
         assert!(store.sidebar_entries.iter().any(|entry| {
             entry.target == Some(SidebarEntryTarget::View(TaskView::Done)) && entry.count == 1
@@ -1860,7 +1865,7 @@ mod undo {
             .iter()
             .position(|item| item.task.id == task_id)
             .unwrap();
-        assert_eq!(store.tasks[index].task.status, "inbox");
+        assert_eq!(store.tasks[index].task.status, TaskStatus::Inbox);
         assert_eq!(pending_undo_count(&pool, &workspace_id).await, 1);
     }
 }

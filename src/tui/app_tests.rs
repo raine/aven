@@ -1,4 +1,5 @@
 use super::*;
+use crate::choices::{TaskPriority, TaskStatus};
 use crate::operations::TaskDraft;
 use crate::tui::app_conflicts::CONFLICT_CONFIRM_LOCAL_TITLE;
 use crate::tui::app_edit::{
@@ -2107,11 +2108,11 @@ mod task_row_mouse {
             .await
             .unwrap();
 
-        assert_eq!(app.store.tasks[0].task.status, "active");
+        assert_eq!(app.store.tasks[0].task.status, TaskStatus::Active);
         assert!(toast_message(&app).is_some_and(|message| message.ends_with("status=active")));
 
         app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
-        assert_eq!(app.store.tasks[0].task.status, "inbox");
+        assert_eq!(app.store.tasks[0].task.status, TaskStatus::Inbox);
         assert!(toast_message(&app).is_some_and(|message| message.contains("undid")));
     }
 
@@ -2244,8 +2245,8 @@ mod authoring {
         let selected = app.widgets.table.selected().unwrap();
         let task = &app.store.tasks[selected];
         assert_eq!(task.task.title, "Write docs");
-        assert_eq!(task.task.status, "inbox");
-        assert_eq!(task.task.priority, "none");
+        assert_eq!(task.task.status, TaskStatus::Inbox);
+        assert_eq!(task.task.priority, TaskPriority::None);
         assert_eq!(task.task.description, "");
         assert!(task.labels.is_empty());
     }
@@ -2288,7 +2289,7 @@ mod authoring {
         assert!(app.overlay.is_none());
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.title, "Write docs");
-        assert_eq!(app.store.tasks[selected].task.status, "active");
+        assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Active);
     }
 
     #[tokio::test]
@@ -2329,7 +2330,7 @@ mod authoring {
         assert!(app.overlay.is_none());
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.title, "Fix release");
-        assert_eq!(app.store.tasks[selected].task.priority, "high");
+        assert_eq!(app.store.tasks[selected].task.priority, TaskPriority::High);
     }
 
     #[tokio::test]
@@ -2444,7 +2445,7 @@ mod authoring {
         let task = &app.store.tasks[selected];
         assert_eq!(task.task.title, "Write docs");
         assert_eq!(task.task.project_key, "mobile-app");
-        assert_eq!(task.task.priority, "high");
+        assert_eq!(task.task.priority, TaskPriority::High);
         assert_eq!(task.task.description, "");
         assert!(task.labels.is_empty());
     }
@@ -2586,7 +2587,7 @@ mod authoring {
         let selected = app.widgets.table.selected().unwrap();
         let task = &app.store.tasks[selected];
         assert_eq!(task.task.project_key, "mobile-app");
-        assert_eq!(task.task.priority, "high");
+        assert_eq!(task.task.priority, TaskPriority::High);
         assert_eq!(task.task.description, "Details");
     }
 
@@ -2737,7 +2738,7 @@ mod authoring {
         let task = &app.store.tasks[selected];
         assert_eq!(task.task.title, "fix parsed dispatch");
         assert_eq!(task.task.description, "from parsed title");
-        assert_eq!(task.task.priority, "medium");
+        assert_eq!(task.task.priority, TaskPriority::Medium);
         assert!(toast_message(&app).is_some_and(|message| message.starts_with("created task ")));
     }
 
@@ -3572,7 +3573,7 @@ mod detail_mode {
         );
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, selected_task_id);
-        assert_eq!(app.store.tasks[selected].task.status, "done");
+        assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Done);
     }
 
     #[tokio::test]
@@ -3598,7 +3599,7 @@ mod detail_mode {
         ));
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, selected_task_id);
-        assert_eq!(app.store.tasks[selected].task.status, "done");
+        assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Done);
     }
 
     #[tokio::test]
@@ -3631,7 +3632,7 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll: 3 })
         ));
-        assert_eq!(app.store.tasks[selected].task.status, "active");
+        assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Active);
     }
 
     #[tokio::test]
@@ -3694,7 +3695,10 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll: 3 })
         ));
-        assert_eq!(app.store.tasks[selected].task.priority, "urgent");
+        assert_eq!(
+            app.store.tasks[selected].task.priority,
+            TaskPriority::Urgent
+        );
     }
 
     #[tokio::test]
@@ -3747,7 +3751,7 @@ mod detail_mode {
 
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.id, task_id);
-        assert_eq!(app.store.tasks[selected].task.status, "inbox");
+        assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Inbox);
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
@@ -4016,7 +4020,10 @@ mod task_editing {
         type_chars(&mut app, "urgent").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         let selected = app.widgets.table.selected().unwrap();
-        assert_eq!(app.store.tasks[selected].task.priority, "urgent");
+        assert_eq!(
+            app.store.tasks[selected].task.priority,
+            TaskPriority::Urgent
+        );
     }
 
     #[tokio::test]
@@ -4071,7 +4078,7 @@ mod task_editing {
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
         let selected = app.widgets.table.selected().unwrap();
-        assert_eq!(app.store.tasks[selected].task.status, "todo");
+        assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Todo);
     }
 
     #[tokio::test]
@@ -4089,7 +4096,7 @@ mod task_editing {
         assert_eq!(app.widgets.table.selected(), Some(selected));
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.title, next_title);
-        assert_eq!(app.store.tasks[selected].task.status, "inbox");
+        assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Inbox);
     }
 
     #[tokio::test]
@@ -4121,13 +4128,13 @@ mod task_editing {
         let selected = app.store.show_view(TaskView::Done).await.unwrap();
         app.widgets.table.select(selected);
         let selected = app.widgets.table.selected().unwrap();
-        assert_eq!(app.store.tasks[selected].task.status, "done");
+        assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Done);
 
         app.handle_normal_key(KeyCode::Char('x')).await.unwrap();
         let selected = app.store.show_view(TaskView::Done).await.unwrap();
         app.widgets.table.select(selected);
         let selected = app.widgets.table.selected().unwrap();
-        assert_eq!(app.store.tasks[selected].task.status, "canceled");
+        assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Canceled);
     }
 
     #[tokio::test]
@@ -4139,7 +4146,10 @@ mod task_editing {
         app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
 
         let selected = app.widgets.table.selected().unwrap();
-        assert_eq!(app.store.tasks[selected].task.priority, "urgent");
+        assert_eq!(
+            app.store.tasks[selected].task.priority,
+            TaskPriority::Urgent
+        );
     }
 
     #[tokio::test]
@@ -4241,7 +4251,7 @@ mod task_editing {
         app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
 
         assert_eq!(app.widgets.table.selected(), Some(selected));
-        assert_eq!(app.store.tasks[selected].task.status, "inbox");
+        assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Inbox);
     }
 
     #[tokio::test]
