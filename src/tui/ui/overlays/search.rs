@@ -17,6 +17,12 @@ use crate::tui::widgets::{priority_icon, status_span};
 const RESULT_ROWS: usize = 8;
 const SEARCH_PLACEHOLDER: &str = "Search tasks, notes, labels, and projects...";
 
+#[derive(Clone, Copy)]
+pub(in crate::tui::ui) struct SearchRenderStatus {
+    pub(in crate::tui::ui) stale: bool,
+    pub(in crate::tui::ui) no_matches_cached: bool,
+}
+
 pub(in crate::tui::ui) fn render_search(
     frame: &mut Frame,
     input: &str,
@@ -24,22 +30,28 @@ pub(in crate::tui::ui) fn render_search(
     results: &[SearchResultItem],
     selected: usize,
     total_matches: usize,
+    status: SearchRenderStatus,
 ) {
     let width = frame.area().width.saturating_sub(8).clamp(72, 110);
     let result_rows = results.len().min(RESULT_ROWS) as u16;
-    let has_empty_input = input.trim().is_empty();
-    let height = if results.is_empty() && has_empty_input {
+    let height = if results.is_empty() {
         5
-    } else if results.is_empty() {
-        7
     } else {
         (result_rows * 2 + 6).min(frame.area().height.saturating_sub(2))
     };
-    let area = Dialog::new("Search", width, height)
-        .right_title(search_summary_line(input, results.len(), total_matches))
-        .render_block_at(frame, search_dialog_area(frame.area(), width, height));
+    let mut dialog = Dialog::new("Search", width, height);
+    if let Some(summary) = search_summary_line(
+        input,
+        results.len(),
+        total_matches,
+        status.stale,
+        status.no_matches_cached,
+    ) {
+        dialog = dialog.right_title(summary);
+    }
+    let area = dialog.render_block_at(frame, search_dialog_area(frame.area(), width, height));
 
-    if results.is_empty() && has_empty_input {
+    if results.is_empty() {
         let [input_area, input_spacer_area, hint_area] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(1),
@@ -69,29 +81,31 @@ pub(in crate::tui::ui) fn render_search(
     frame.render_widget(Paragraph::new(search_input_line(input, cursor)), input_area);
     frame.render_widget(Paragraph::new(""), input_spacer_area);
 
-    if results.is_empty() {
-        render_empty_state(frame, body_area, input);
-    } else {
-        render_result_list(frame, body_area, input, results, selected);
-    }
+    render_result_list(frame, body_area, input, results, selected, status.stale);
 
     frame.render_widget(Paragraph::new(""), hint_spacer_area);
     frame.render_widget(Paragraph::new(search_hint_line()), hint_area);
 }
 
-fn search_summary_line(input: &str, shown: usize, total: usize) -> Line<'static> {
-    if input.trim().is_empty() {
-        return Line::from(Span::styled("", Style::new().fg(FG_DIM)));
+fn search_summary_line(
+    input: &str,
+    shown: usize,
+    total: usize,
+    stale: bool,
+    no_matches_cached: bool,
+) -> Option<Line<'static>> {
+    if input.trim().is_empty() || (stale && !no_matches_cached) {
+        return None;
     }
     let label = if total == 0 {
         "0 matches".to_string()
     } else {
         format!("{} of {}", format_count(shown), format_count(total))
     };
-    Line::from(vec![
+    Some(Line::from(vec![
         Span::styled(" ", Style::new().fg(FG_DIM)),
         Span::styled(label, Style::new().fg(FG_DIM)),
-    ])
+    ]))
 }
 
 fn format_count(count: usize) -> String {
@@ -135,22 +149,13 @@ fn search_input_line(input: &str, cursor: usize) -> Line<'static> {
     input_line("", input, cursor)
 }
 
-fn render_empty_state(frame: &mut Frame, area: Rect, input: &str) {
-    if !input.trim().is_empty() {
-        frame.render_widget(
-            Paragraph::new(Span::styled("No matching tasks", Style::new().fg(FG_DIM)))
-                .style(Style::new().bg(BG)),
-            area,
-        );
-    }
-}
-
 fn render_result_list(
     frame: &mut Frame,
     area: Rect,
     input: &str,
     results: &[SearchResultItem],
     selected: usize,
+    stale: bool,
 ) {
     let lines = results
         .iter()
@@ -158,8 +163,8 @@ fn render_result_list(
         .take(RESULT_ROWS)
         .flat_map(|(index, result)| {
             [
-                result_line(result, index == selected, input, area.width as usize),
-                result_meta_line(result, index == selected, area.width as usize),
+                result_line(result, index == selected, input, area.width as usize, stale),
+                result_meta_line(result, index == selected, area.width as usize, stale),
             ]
         })
         .collect::<Vec<_>>();
@@ -174,8 +179,9 @@ fn result_line(
     selected: bool,
     input: &str,
     width: usize,
+    stale: bool,
 ) -> Line<'static> {
-    let style = row_style(selected);
+    let style = row_style(selected, stale);
     let marker = if selected { "▸" } else { " " };
     let ref_width = 10;
     let title_width = width.saturating_sub(ref_width + 4).max(8);
@@ -281,9 +287,18 @@ fn merge_ranges(ranges: Vec<std::ops::Range<usize>>) -> Vec<std::ops::Range<usiz
     merged
 }
 
-fn result_meta_line(result: &SearchResultItem, selected: bool, width: usize) -> Line<'static> {
+fn result_meta_line(
+    result: &SearchResultItem,
+    selected: bool,
+    width: usize,
+    stale: bool,
+) -> Line<'static> {
     let bg = row_bg(selected);
-    let muted = Style::new().fg(FG_DIM).bg(bg);
+    let muted = if stale && !selected {
+        Style::new().fg(FG_DIM).bg(bg).add_modifier(Modifier::DIM)
+    } else {
+        Style::new().fg(FG_DIM).bg(bg)
+    };
     let labels = labels_display(&result.labels, ", ");
     let priority = result.priority.as_str();
     let priority_label = format!("{} {priority}", priority_icon(priority));
@@ -339,9 +354,11 @@ fn spans_width(spans: &[Span<'static>]) -> usize {
     spans.iter().map(|span| span.content.chars().count()).sum()
 }
 
-fn row_style(selected: bool) -> Style {
+fn row_style(selected: bool, stale: bool) -> Style {
     if selected {
         SELECTED
+    } else if stale {
+        Style::new().fg(FG_DIM).bg(BG).add_modifier(Modifier::DIM)
     } else {
         Style::new().fg(FG).bg(BG)
     }

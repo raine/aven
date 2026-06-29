@@ -997,7 +997,33 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
-    async fn search_overlay_runs_latest_pending_after_active_preview() {
+    async fn search_overlay_marks_first_preview_as_stale_while_running() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("needle first")).await;
+
+        app.begin_search();
+        app.handle_overlay_key(key(KeyCode::Char('n')))
+            .await
+            .unwrap();
+
+        let Some(OverlayState::Search(state)) = &app.overlay else {
+            panic!("expected search overlay");
+        };
+        assert_eq!(state.input.as_str(), "n");
+        assert!(state.results.is_empty());
+        assert!(state.results_query.is_none());
+        assert!(!state.results_are_current());
+        assert_eq!(
+            app.live_search
+                .active
+                .as_ref()
+                .map(|active| active.query.as_str()),
+            Some("n")
+        );
+    }
+
+    #[tokio::test]
+    async fn search_overlay_runs_latest_preview_after_input_changes() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("needle first")).await;
 
@@ -1012,8 +1038,13 @@ mod command_and_config_overlays {
             .await
             .unwrap();
 
-        assert!(app.live_search.active.is_some());
-        assert_eq!(app.live_search.pending.as_deref(), Some("nee"));
+        assert_eq!(
+            app.live_search
+                .active
+                .as_ref()
+                .map(|active| active.query.as_str()),
+            Some("nee")
+        );
 
         settle_search_preview(&mut app).await;
 
@@ -1064,7 +1095,7 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
-    async fn search_overlay_clears_results_when_input_changes() {
+    async fn search_overlay_keeps_stale_results_when_input_changes() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("alpha needle")).await;
 
@@ -1086,8 +1117,16 @@ mod command_and_config_overlays {
             panic!("expected search overlay");
         };
         assert_eq!(state.input.as_str(), "alphax");
-        assert!(state.results.is_empty());
-        assert!(state.results_query.is_none());
+        assert!(!state.results.is_empty());
+        assert_eq!(state.results_query.as_deref(), Some("alpha"));
+        assert!(!state.results_are_current());
+        assert_eq!(
+            app.live_search
+                .active
+                .as_ref()
+                .map(|active| active.query.as_str()),
+            Some("alphax")
+        );
     }
 
     #[tokio::test]

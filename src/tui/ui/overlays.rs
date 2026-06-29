@@ -19,7 +19,7 @@ pub(super) use multiline::{
     render_multiline_input,
 };
 pub(super) use picker::render_picker;
-pub(super) use search::render_search;
+pub(super) use search::{SearchRenderStatus, render_search};
 pub(super) use shared::tail_viewport_start;
 pub(super) use sync_status::render_sync_status;
 pub(super) use tag_combobox::render_tag_combobox;

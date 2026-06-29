@@ -68,7 +68,6 @@ pub(super) struct PendingSearchPreview {
 #[derive(Default)]
 pub(super) struct LiveSearchPreview {
     pub(super) active: Option<PendingSearchPreview>,
-    pub(super) pending: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -223,11 +222,10 @@ impl App {
         if let Some(active) = self.live_search.active.take() {
             active.handle.abort();
         }
-        self.live_search.pending = None;
     }
 
     pub(super) fn search_preview_work_pending(&self) -> bool {
-        self.live_search.active.is_some() || self.live_search.pending.is_some()
+        self.live_search.active.is_some()
     }
 
     pub(super) async fn set_sort(&mut self, sort: TaskOrder) -> Result<()> {

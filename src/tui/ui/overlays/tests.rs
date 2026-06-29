@@ -33,7 +33,20 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
             results,
             selected,
             total_matches,
-        } => render_search(frame, input, *cursor, results, *selected, *total_matches),
+            stale,
+            no_matches_cached,
+        } => render_search(
+            frame,
+            input,
+            *cursor,
+            results,
+            *selected,
+            *total_matches,
+            SearchRenderStatus {
+                stale: *stale,
+                no_matches_cached: *no_matches_cached,
+            },
+        ),
         OverlayView::AddTask(state) => render_add_task(frame, state),
         OverlayView::TextInput(state) => render_text_input(frame, state),
         OverlayView::MultilineInput(state) => render_multiline_input(frame, state),
@@ -193,6 +206,8 @@ mod text_panel_and_search {
             results: vec![search_result_item("Query result")],
             selected: 0,
             total_matches: 12,
+            stale: false,
+            no_matches_cached: false,
         });
         assert!(rendered.contains("Search"));
         assert!(rendered.contains("query"));
@@ -202,16 +217,53 @@ mod text_panel_and_search {
     }
 
     #[test]
-    fn search_overlay_shows_empty_result_message() {
+    fn search_overlay_shows_empty_result_summary() {
         let rendered = render_overlay_view(OverlayView::Search {
             input: "missing".to_string(),
             cursor: 7,
             results: Vec::new(),
             selected: 0,
             total_matches: 0,
+            stale: false,
+            no_matches_cached: false,
         });
 
-        assert!(rendered.contains("No matching tasks"));
+        assert!(rendered.contains("0 matches"));
+        assert!(!rendered.contains("No matching tasks"));
+    }
+
+    #[test]
+    fn stale_search_overlay_keeps_empty_state_blank() {
+        let rendered = render_overlay_view(OverlayView::Search {
+            input: "query".to_string(),
+            cursor: 5,
+            results: Vec::new(),
+            selected: 0,
+            total_matches: 0,
+            stale: true,
+            no_matches_cached: false,
+        });
+
+        assert!(!rendered.contains("searching..."));
+        assert!(!rendered.contains("No matching tasks"));
+        assert!(!rendered.contains("0 matches"));
+    }
+
+    #[test]
+    fn stale_search_overlay_preserves_cached_empty_summary() {
+        let rendered = render_overlay_view(OverlayView::Search {
+            input: "quer".to_string(),
+            cursor: 4,
+            results: Vec::new(),
+            selected: 0,
+            total_matches: 0,
+            stale: true,
+            no_matches_cached: true,
+        });
+
+        assert!(rendered.contains("0 matches"));
+        assert!(!rendered.contains("searching..."));
+        assert!(!rendered.contains("No matching tasks"));
     }
 
     #[test]
@@ -222,6 +274,8 @@ mod text_panel_and_search {
             results: vec![search_result_item("Query result")],
             selected: 0,
             total_matches: 12,
+            stale: false,
+            no_matches_cached: false,
         });
         let prefix_cell = buffer
             .content
@@ -240,6 +294,8 @@ mod text_panel_and_search {
             results: Vec::new(),
             selected: 0,
             total_matches: 0,
+            stale: false,
+            no_matches_cached: false,
         });
         let populated = overlay_buffer(OverlayView::Search {
             input: "query".to_string(),
@@ -250,6 +306,8 @@ mod text_panel_and_search {
             ],
             selected: 0,
             total_matches: 12,
+            stale: false,
+            no_matches_cached: false,
         });
         let title_row = |buffer: &ratatui::buffer::Buffer| {
             (0..buffer.area.height)
@@ -1199,6 +1257,8 @@ mod route_specific_rendering {
                 results: Vec::new(),
                 selected: 0,
                 total_matches: 12,
+                stale: false,
+                no_matches_cached: false,
             },
             OverlayView::AddTask(AddTaskView {
                 title: "ship dialogs".to_string(),

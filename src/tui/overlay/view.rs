@@ -26,6 +26,8 @@ pub(crate) enum OverlayView {
         results: Vec<SearchResultItem>,
         selected: usize,
         total_matches: usize,
+        stale: bool,
+        no_matches_cached: bool,
     },
     Command {
         input: String,
@@ -175,6 +177,10 @@ impl From<&OverlayState> for OverlayView {
                 results: state.results.clone(),
                 selected: state.selected,
                 total_matches: state.total_matches,
+                stale: !state.results_are_current(),
+                no_matches_cached: state.results_query.is_some()
+                    && state.results.is_empty()
+                    && state.total_matches == 0,
             },
             Command { state } => Self::Command {
                 input: state.input.text.clone(),

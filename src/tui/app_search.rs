@@ -110,20 +110,17 @@ impl App {
             return;
         }
 
-        if state.results_query.as_deref() != Some(query.as_str()) {
-            state.clear_results();
-        }
-
-        match self
+        if self
             .live_search
             .active
             .as_ref()
-            .map(|active| active.query.as_str())
+            .is_some_and(|active| active.query == query)
         {
-            None => self.start_search_preview(query),
-            Some(active) if active == query => self.live_search.pending = None,
-            Some(_) => self.live_search.pending = Some(query),
+            return;
         }
+
+        self.clear_live_search_preview();
+        self.start_search_preview(query);
     }
 
     pub(super) async fn poll_search_preview(&mut self) -> Result<bool> {
@@ -152,10 +149,6 @@ impl App {
         {
             Self::apply_search_preview_results(state, active.query, result_set);
             changed = true;
-        }
-
-        if let Some(query) = self.live_search.pending.take() {
-            self.start_search_preview(query);
         }
 
         Ok(changed)
