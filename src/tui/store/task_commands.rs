@@ -192,6 +192,15 @@ impl TuiStore {
             return Ok(None);
         };
         let before = item.task.title.clone();
+        if title == before {
+            return Ok(Some(
+                self.refresh_task_message(
+                    &item.task.id,
+                    format!("unchanged {} title", item.display_ref),
+                )
+                .await?,
+            ));
+        }
         let outcome = self
             .update_selected_task(
                 index,

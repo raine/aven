@@ -118,6 +118,14 @@ async fn create_selected_task_with_stale_queue_activity(
     (task_id, selected)
 }
 
+async fn pending_change_count(pool: &sqlx::SqlitePool) -> i64 {
+    let mut conn = pool.acquire().await.unwrap();
+    sqlx::query_scalar("SELECT count(*) FROM changes WHERE server_seq IS NULL")
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap()
+}
+
 async fn pending_undo_count(pool: &sqlx::SqlitePool, workspace_id: &str) -> i64 {
     let mut conn = pool.acquire().await.unwrap();
     sqlx::query_scalar(
@@ -608,6 +616,24 @@ mod task_creation_and_updates {
         assert_eq!(task.title, "New");
         assert_ne!(task.updated_at, old_updated);
         assert_eq!(task.queue_activity_at, old_activity);
+    }
+
+    #[tokio::test]
+    async fn unchanged_title_edit_leaves_pending_change_count() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (_task_id, selected) = create_selected_task(&mut store, "Stable").await;
+        let pending_before = pending_change_count(&pool).await;
+        let display_ref = store.tasks[selected].display_ref.clone();
+
+        let outcome = store
+            .update_title(Some(selected), "Stable".to_string())
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(outcome.message, format!("unchanged {display_ref} title"));
+        assert_eq!(pending_change_count(&pool).await, pending_before);
+        assert_eq!(store.tasks[selected].task.title, "Stable");
     }
 
     #[tokio::test]
