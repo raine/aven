@@ -405,34 +405,40 @@ impl TuiStore {
         let Some(item) = self.selected_task(index).cloned() else {
             return Ok(None);
         };
+        Ok(Some(
+            self.add_dependency_to_task(&item.task.id, depends_on_task_id)
+                .await?,
+        ))
+    }
+
+    pub(crate) async fn add_dependency_to_task(
+        &mut self,
+        task_id: &str,
+        depends_on_task_id: &str,
+    ) -> Result<MutationMessage> {
         self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
         let outcome =
-            crate::operations::add_task_dependency(&mut conn, &item.task.id, depends_on_task_id)
-                .await?;
+            crate::operations::add_task_dependency(&mut conn, task_id, depends_on_task_id).await?;
+        let task_ref = crate::refs::display_ref(&mut conn, &outcome.task).await?;
         let depends_on_ref = crate::refs::display_ref(&mut conn, &outcome.depends_on).await?;
         drop(conn);
         if outcome.changed {
             self.record_undo_commands(
-                &format!("dependency {}", item.display_ref),
+                &format!("dependency {task_ref}"),
                 vec![UndoCommand::AddTaskDependency {
-                    task_id: item.task.id.clone(),
+                    task_id: outcome.task.id.clone(),
                     depends_on_task_id: outcome.depends_on.id.clone(),
                 }],
             )
             .await?;
         }
         let verb = if outcome.changed { "added" } else { "kept" };
-        Ok(Some(
-            self.refresh_task_message(
-                &item.task.id,
-                format!(
-                    "{verb} dependency {} depends_on {depends_on_ref}",
-                    item.display_ref
-                ),
-            )
-            .await?,
-        ))
+        self.refresh_task_message(
+            &outcome.task.id,
+            format!("{verb} dependency {task_ref} depends_on {depends_on_ref}"),
+        )
+        .await
     }
 
     pub(crate) async fn remove_dependency(

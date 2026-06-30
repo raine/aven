@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::tui::app::{App, PendingSearchPreview, SEARCH_PREVIEW_LIMIT};
-use crate::tui::overlay::{OverlayState, SearchResultItem, SearchState};
+use crate::tui::overlay::{LineEdit, OverlayState, SearchPurpose, SearchResultItem, SearchState};
 
 fn open_search_results_key(key: KeyEvent) -> bool {
     key.modifiers
@@ -40,10 +40,9 @@ impl App {
             }
             KeyCode::Enter => {
                 self.clear_live_search_preview();
-                if let Some(result) = state.selected_current_result() {
-                    self.accept_search_input(state.input.text.clone()).await?;
-                    self.select_task_by_id(&result.task_id);
-                    self.overlay = Some(OverlayState::Detail { scroll: 0 });
+                if let Some(result) = state.selected_current_result().cloned() {
+                    self.accept_search_result(state.purpose.clone(), state.input.text, result)
+                        .await?;
                 } else {
                     self.accept_search_input(state.input.text).await?;
                 }
@@ -88,6 +87,58 @@ impl App {
             .table
             .select(self.store.accept_search(&input).await?);
         Ok(())
+    }
+
+    async fn accept_search_result(
+        &mut self,
+        purpose: SearchPurpose,
+        input: String,
+        result: SearchResultItem,
+    ) -> Result<()> {
+        match purpose {
+            SearchPurpose::Navigate => {
+                self.accept_search_input(result.display_ref.clone()).await?;
+                self.select_task_by_id(&result.task_id);
+                self.overlay = Some(OverlayState::Detail { scroll: 0 });
+            }
+            SearchPurpose::AddDependency {
+                task_id,
+                display_ref,
+            } => {
+                if task_id == result.task_id {
+                    self.set_warning(format!("{display_ref} cannot depend on itself"));
+                    self.reopen_add_dependency_search(task_id, display_ref, input);
+                    return Ok(());
+                }
+                match self
+                    .store
+                    .add_dependency_to_task(&task_id, &result.task_id)
+                    .await
+                {
+                    Ok(result) => self.apply_mutation_result(result),
+                    Err(error) => {
+                        self.set_error(format!("{error:#}"));
+                        self.reopen_add_dependency_search(task_id, display_ref, input);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn reopen_add_dependency_search(
+        &mut self,
+        task_id: String,
+        display_ref: String,
+        input: String,
+    ) {
+        let mut state = SearchState::for_purpose(SearchPurpose::AddDependency {
+            task_id,
+            display_ref,
+        });
+        state.input = LineEdit::new(input);
+        self.schedule_search_preview(&mut state);
+        self.overlay = Some(OverlayState::Search(state));
     }
 
     fn start_search_preview(&mut self, query: String) {
@@ -164,6 +215,10 @@ impl App {
         state.results = result_set
             .items
             .into_iter()
+            .filter(|result| match &state.purpose {
+                SearchPurpose::Navigate => true,
+                SearchPurpose::AddDependency { task_id, .. } => result.task_id != *task_id,
+            })
             .map(|result| SearchResultItem {
                 task_id: result.task_id,
                 display_ref: result.display_ref,

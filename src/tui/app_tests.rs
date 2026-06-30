@@ -13,7 +13,8 @@ use crate::tui::config_overlay::{CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PA
 use crate::tui::event::Action;
 use crate::tui::overlay::{
     CommandState, ConfirmState, LineEdit, MultilineInputState, OverlayRoute, OverlayState,
-    OverlayView, PickerItem, PickerMode, PickerState, SearchState, TextInputState, TextPanelState,
+    OverlayView, PickerItem, PickerMode, PickerState, SearchPurpose, SearchState, TextInputState,
+    TextPanelState,
 };
 use crate::tui::store::{SidebarEntryTarget, TaskOrder, TaskScope, TaskScopeTarget, TaskView};
 use crate::tui::toast::ToastSeverity;
@@ -668,6 +669,7 @@ mod keyboard_dispatch {
                 selected: 0,
                 total_matches: 0,
                 results_query: None,
+                purpose: SearchPurpose::Navigate,
             }),
             OverlayState::Command {
                 state: CommandState::new(LineEdit::new("ref".to_string())),
@@ -5023,12 +5025,13 @@ mod task_dependencies {
     use super::*;
 
     #[tokio::test]
-    async fn add_shortcut_opens_picker_and_excludes_selected() {
+    async fn add_shortcut_opens_search_and_excludes_selected() {
         let mut app = test_app().await;
-        let selected_index = create_and_select_task(&mut app, test_task_draft("Selected")).await;
+        let selected_index =
+            create_and_select_task(&mut app, test_task_draft("Selected needle")).await;
         let selected_id = app.store.tasks[selected_index].task.id.clone();
-        let other_index = create_and_select_task(&mut app, test_task_draft("Other")).await;
-        let other_id = app.store.tasks[other_index].task.id.clone();
+        let selected_ref = app.store.tasks[selected_index].display_ref.clone();
+        create_and_select_task(&mut app, test_task_draft("Other needle")).await;
         let selected_index = app
             .store
             .tasks
@@ -5039,30 +5042,51 @@ mod task_dependencies {
 
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('B')).await.unwrap();
+        type_chars(&mut app, "needle").await;
+        settle_search_preview(&mut app).await;
 
-        let Some(OverlayState::Picker(state)) = &app.overlay else {
-            panic!("expected dependency picker");
+        let Some(OverlayState::Search(state)) = &app.overlay else {
+            panic!("expected dependency search");
         };
-        assert_eq!(state.route, OverlayRoute::AddDependency);
-        let values = state
-            .items
-            .iter()
-            .map(|item| item.value.as_str())
-            .collect::<Vec<_>>();
-        assert!(values.contains(&other_id.as_str()));
-        assert!(!values.contains(&selected_id.as_str()));
+        assert!(matches!(
+            &state.purpose,
+            SearchPurpose::AddDependency { task_id, display_ref }
+                if task_id == &selected_id && display_ref == &selected_ref
+        ));
+        assert!(
+            state
+                .results
+                .iter()
+                .all(|result| result.task_id != selected_id)
+        );
+        assert!(
+            state
+                .results
+                .iter()
+                .any(|result| result.title == "Other needle")
+        );
     }
 
     #[tokio::test]
-    async fn submitting_blocker_adds_dependency() {
+    async fn search_selected_blocker_adds_dependency() {
         let mut app = test_app().await;
-        create_and_select_task(&mut app, test_task_draft("Blocker")).await;
-        let _selected = create_and_select_task(&mut app, test_task_draft("Blocked")).await;
+        create_and_select_task(&mut app, test_task_draft("Blocker needle")).await;
+        let blocked_index = create_and_select_task(&mut app, test_task_draft("Blocked")).await;
+        let blocked_id = app.store.tasks[blocked_index].task.id.clone();
 
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('B')).await.unwrap();
-
+        type_chars(&mut app, "needle").await;
+        settle_search_preview(&mut app).await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let blocked_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == blocked_id)
+            .unwrap();
+        assert_eq!(app.store.tasks[blocked_index].depends_on.len(), 1);
         let toast = toast_message(&app);
         assert!(
             toast.is_some() && toast.as_deref().unwrap().contains("added dependency"),

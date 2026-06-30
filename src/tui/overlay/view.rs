@@ -5,7 +5,7 @@ use super::layout::TAG_COMBOBOX_VIEWPORT_ROWS;
 use super::picker::visible_picker_indices;
 use super::state::{
     HeaderMenuItem, HeaderMenuKind, HeaderMenuState, OrderMenuState, OverlayRoute, OverlayState,
-    OverlayState::*, PickerItem, PickerMode, SearchResultItem,
+    OverlayState::*, PickerItem, PickerMode, SearchPurpose, SearchResultItem,
 };
 use super::tag_combobox::{tag_combobox_completion, tag_combobox_matches};
 
@@ -28,6 +28,7 @@ pub(crate) enum OverlayView {
         total_matches: usize,
         stale: bool,
         no_matches_cached: bool,
+        purpose: SearchPurpose,
     },
     Command {
         input: String,
@@ -181,6 +182,7 @@ impl From<&OverlayState> for OverlayView {
                 no_matches_cached: state.results_query.is_some()
                     && state.results.is_empty()
                     && state.total_matches == 0,
+                purpose: state.purpose.clone(),
             },
             Command { state } => Self::Command {
                 input: state.input.text.clone(),

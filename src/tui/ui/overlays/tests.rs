@@ -3,7 +3,8 @@ use crate::tui::authoring::AddTaskStep;
 use crate::tui::config_overlay::{CONFIG_STATUS_TITLE, DATABASE_STATS_TITLE};
 use crate::tui::overlay::{
     AddTaskView, ConfirmView, MultilineInputView, OverlayRoute, OverlayView, PickerItem,
-    PickerMode, PickerView, SearchResultItem, TagComboboxView, TextInputView, TextPanelView,
+    PickerMode, PickerView, SearchPurpose, SearchResultItem, TagComboboxView, TextInputView,
+    TextPanelView,
 };
 use crate::tui::store::{
     DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts, SyncStatusCheck, TuiDatabaseStats,
@@ -35,6 +36,7 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
             total_matches,
             stale,
             no_matches_cached,
+            purpose,
         } => render_search(
             frame,
             input,
@@ -46,6 +48,7 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
                 stale: *stale,
                 no_matches_cached: *no_matches_cached,
             },
+            purpose,
         ),
         OverlayView::AddTask(state) => render_add_task(frame, state),
         OverlayView::TextInput(state) => render_text_input(frame, state),
@@ -208,6 +211,7 @@ mod text_panel_and_search {
             total_matches: 12,
             stale: false,
             no_matches_cached: false,
+            purpose: SearchPurpose::Navigate,
         });
         assert!(rendered.contains("Search"));
         assert!(rendered.contains("query"));
@@ -226,6 +230,7 @@ mod text_panel_and_search {
             total_matches: 0,
             stale: false,
             no_matches_cached: false,
+            purpose: SearchPurpose::Navigate,
         });
 
         assert!(rendered.contains("0 matches"));
@@ -242,6 +247,7 @@ mod text_panel_and_search {
             total_matches: 0,
             stale: true,
             no_matches_cached: false,
+            purpose: SearchPurpose::Navigate,
         });
 
         assert!(!rendered.contains("searching..."));
@@ -259,6 +265,7 @@ mod text_panel_and_search {
             total_matches: 0,
             stale: true,
             no_matches_cached: true,
+            purpose: SearchPurpose::Navigate,
         });
 
         assert!(rendered.contains("0 matches"));
@@ -276,6 +283,7 @@ mod text_panel_and_search {
             total_matches: 12,
             stale: false,
             no_matches_cached: false,
+            purpose: SearchPurpose::Navigate,
         });
         let prefix_cell = buffer
             .content
@@ -296,6 +304,7 @@ mod text_panel_and_search {
             total_matches: 0,
             stale: false,
             no_matches_cached: false,
+            purpose: SearchPurpose::Navigate,
         });
         let populated = overlay_buffer(OverlayView::Search {
             input: "query".to_string(),
@@ -308,6 +317,7 @@ mod text_panel_and_search {
             total_matches: 12,
             stale: false,
             no_matches_cached: false,
+            purpose: SearchPurpose::Navigate,
         });
         let title_row = |buffer: &ratatui::buffer::Buffer| {
             (0..buffer.area.height)
@@ -1259,6 +1269,7 @@ mod route_specific_rendering {
                 total_matches: 12,
                 stale: false,
                 no_matches_cached: false,
+                purpose: SearchPurpose::Navigate,
             },
             OverlayView::AddTask(AddTaskView {
                 title: "ship dialogs".to_string(),

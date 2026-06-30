@@ -2,7 +2,9 @@ use anyhow::Result;
 
 use crate::labels::normalize_label;
 use crate::tui::app::App;
-use crate::tui::overlay::{MultilineInputState, OverlayRoute, OverlayState};
+use crate::tui::overlay::{
+    MultilineInputState, OverlayRoute, OverlayState, SearchPurpose, SearchState,
+};
 use crate::tui::platform::edit_text_externally;
 
 pub(crate) const EDIT_STATUS_TITLE: &str = "Edit task: status";
@@ -11,7 +13,6 @@ pub(crate) const EDIT_DESCRIPTION_TITLE: &str = "Edit description";
 pub(crate) const EDIT_PROJECT_TITLE: &str = "Edit project";
 pub(crate) const EDIT_PRIORITY_TITLE: &str = "Edit task: priority";
 pub(crate) const EDIT_LABELS_TITLE: &str = "Edit task: labels";
-pub(crate) const ADD_DEPENDENCY_TITLE: &str = "Add dependency";
 pub(crate) const REMOVE_DEPENDENCY_TITLE: &str = "Remove dependency";
 
 impl App {
@@ -234,20 +235,16 @@ impl App {
         let Some(index) = self.guard_selected_task() else {
             return Ok(());
         };
-        let task_id = self
-            .store
-            .selected_task(Some(index))
-            .unwrap()
-            .task
-            .id
-            .clone();
-        let items = self.store.dependency_picker_items(&task_id).await?;
-        self.open_picker_overlay(
-            OverlayRoute::AddDependency,
-            ADD_DEPENDENCY_TITLE,
-            items,
-            false,
-        );
+        let item = self.store.selected_task(Some(index)).unwrap();
+        let task_id = item.task.id.clone();
+        let display_ref = item.display_ref.clone();
+        self.clear_live_search_preview();
+        self.overlay = Some(OverlayState::Search(SearchState::for_purpose(
+            SearchPurpose::AddDependency {
+                task_id,
+                display_ref,
+            },
+        )));
         Ok(())
     }
 

@@ -514,6 +514,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
             total_matches,
             stale,
             no_matches_cached,
+            purpose,
         } => render_search(
             frame,
             input,
@@ -525,6 +526,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
                 stale: *stale,
                 no_matches_cached: *no_matches_cached,
             },
+            purpose,
         ),
         OverlayView::Command {
             input,

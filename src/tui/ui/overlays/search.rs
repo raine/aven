@@ -10,13 +10,11 @@ use super::super::task_display::labels_display;
 use super::super::truncate::truncate_chars;
 use crate::query::SearchMatchedField;
 use crate::queue::{now_seconds, unix_seconds};
-use crate::tui::overlay::SearchResultItem;
+use crate::tui::overlay::{SearchPurpose, SearchResultItem};
 use crate::tui::theme::{self, ACCENT, BG, FG, FG_DIM, FG_MUTED, SELECTED};
 use crate::tui::widgets::{priority_icon, status_span};
 
 const RESULT_ROWS: usize = 8;
-const SEARCH_PLACEHOLDER: &str = "Search tasks, notes, labels, and projects...";
-
 #[derive(Clone, Copy)]
 pub(in crate::tui::ui) struct SearchRenderStatus {
     pub(in crate::tui::ui) stale: bool,
@@ -31,6 +29,7 @@ pub(in crate::tui::ui) fn render_search(
     selected: usize,
     total_matches: usize,
     status: SearchRenderStatus,
+    purpose: &SearchPurpose,
 ) {
     let width = frame.area().width.saturating_sub(8).clamp(72, 110);
     let result_rows = results.len().min(RESULT_ROWS) as u16;
@@ -39,7 +38,7 @@ pub(in crate::tui::ui) fn render_search(
     } else {
         (result_rows * 2 + 6).min(frame.area().height.saturating_sub(2))
     };
-    let mut dialog = Dialog::new("Search", width, height);
+    let mut dialog = Dialog::new(purpose.title(), width, height);
     if let Some(summary) = search_summary_line(
         input,
         results.len(),
@@ -58,9 +57,12 @@ pub(in crate::tui::ui) fn render_search(
             Constraint::Length(1),
         ])
         .areas(area);
-        frame.render_widget(Paragraph::new(search_input_line(input, cursor)), input_area);
+        frame.render_widget(
+            Paragraph::new(search_input_line(input, cursor, purpose)),
+            input_area,
+        );
         frame.render_widget(Paragraph::new(""), input_spacer_area);
-        frame.render_widget(Paragraph::new(search_hint_line()), hint_area);
+        frame.render_widget(Paragraph::new(search_hint_line(purpose)), hint_area);
         return;
     }
 
@@ -78,13 +80,16 @@ pub(in crate::tui::ui) fn render_search(
         Constraint::Length(1),
     ])
     .areas(area);
-    frame.render_widget(Paragraph::new(search_input_line(input, cursor)), input_area);
+    frame.render_widget(
+        Paragraph::new(search_input_line(input, cursor, purpose)),
+        input_area,
+    );
     frame.render_widget(Paragraph::new(""), input_spacer_area);
 
     render_result_list(frame, body_area, input, results, selected, status.stale);
 
     frame.render_widget(Paragraph::new(""), hint_spacer_area);
-    frame.render_widget(Paragraph::new(search_hint_line()), hint_area);
+    frame.render_widget(Paragraph::new(search_hint_line(purpose)), hint_area);
 }
 
 fn search_summary_line(
@@ -137,9 +142,9 @@ fn search_dialog_area(frame: Rect, width: u16, height: u16) -> Rect {
     }
 }
 
-fn search_input_line(input: &str, cursor: usize) -> Line<'static> {
+fn search_input_line(input: &str, cursor: usize, purpose: &SearchPurpose) -> Line<'static> {
     if input.is_empty() {
-        let mut chars = SEARCH_PLACEHOLDER.chars();
+        let mut chars = purpose.placeholder().chars();
         let first = chars.next().unwrap_or_default().to_string();
         return Line::from(vec![
             cursor_cell(first),
@@ -398,18 +403,28 @@ fn compact_age(age_seconds: i64) -> String {
     format!("{}mo", days / 30)
 }
 
-fn search_hint_line() -> Line<'static> {
-    Line::from(vec![
+fn search_hint_line(purpose: &SearchPurpose) -> Line<'static> {
+    let mut spans = vec![
         Span::styled(
             "↑/↓ ^N/^P",
             Style::new().fg(FG).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" select", Style::new().fg(FG_DIM)),
         Span::styled("  Enter", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" open task", Style::new().fg(FG_DIM)),
-        Span::styled("  Tab", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" open results", Style::new().fg(FG_DIM)),
+        Span::styled(
+            format!(" {}", purpose.enter_hint()),
+            Style::new().fg(FG_DIM),
+        ),
+    ];
+    if let Some(tab_hint) = purpose.tab_hint() {
+        spans.extend([
+            Span::styled("  Tab", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+            Span::styled(format!(" {tab_hint}"), Style::new().fg(FG_DIM)),
+        ]);
+    }
+    spans.extend([
         Span::styled("  Esc", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
         Span::styled(" close", Style::new().fg(FG_DIM)),
-    ])
+    ]);
+    Line::from(spans)
 }

@@ -55,22 +55,53 @@ pub(crate) struct SearchResultItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SearchPurpose {
+    Navigate,
+    AddDependency {
+        task_id: String,
+        display_ref: String,
+    },
+}
+
+impl SearchPurpose {
+    pub(crate) fn title(&self) -> &'static str {
+        match self {
+            Self::Navigate => "Search",
+            Self::AddDependency { .. } => "Add dependency",
+        }
+    }
+
+    pub(crate) fn enter_hint(&self) -> &'static str {
+        match self {
+            Self::Navigate => "open task",
+            Self::AddDependency { .. } => "add blocker",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SearchState {
     pub(crate) input: LineEdit,
     pub(crate) results: Vec<SearchResultItem>,
     pub(crate) selected: usize,
     pub(crate) total_matches: usize,
     pub(crate) results_query: Option<String>,
+    pub(crate) purpose: SearchPurpose,
 }
 
 impl SearchState {
     pub(crate) fn blank() -> Self {
+        Self::for_purpose(SearchPurpose::Navigate)
+    }
+
+    pub(crate) fn for_purpose(purpose: SearchPurpose) -> Self {
         Self {
             input: LineEdit::blank(),
             results: Vec::new(),
             selected: 0,
             total_matches: 0,
             results_query: None,
+            purpose,
         }
     }
 
