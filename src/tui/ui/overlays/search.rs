@@ -15,6 +15,7 @@ use crate::tui::theme::{self, ACCENT, BG, FG, FG_DIM, FG_MUTED, SELECTED};
 use crate::tui::widgets::{priority_icon, status_span};
 
 const RESULT_ROWS: usize = 8;
+
 #[derive(Clone, Copy)]
 pub(in crate::tui::ui) struct SearchRenderStatus {
     pub(in crate::tui::ui) stale: bool,

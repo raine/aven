@@ -74,7 +74,21 @@ impl SearchPurpose {
     pub(crate) fn enter_hint(&self) -> &'static str {
         match self {
             Self::Navigate => "open task",
-            Self::AddDependency { .. } => "add blocker",
+            Self::AddDependency { .. } => "add selected as blocker",
+        }
+    }
+
+    pub(crate) fn placeholder(&self) -> &'static str {
+        match self {
+            Self::Navigate => "Search tasks, notes, labels, and projects...",
+            Self::AddDependency { .. } => "Search for the task that blocks this task...",
+        }
+    }
+
+    pub(crate) fn tab_hint(&self) -> Option<&'static str> {
+        match self {
+            Self::Navigate => Some("open results"),
+            Self::AddDependency { .. } => None,
         }
     }
 }

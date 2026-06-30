@@ -30,13 +30,19 @@ impl App {
             KeyCode::Esc => {
                 self.clear_live_search_preview();
             }
-            KeyCode::Enter if open_search_results_key(key) => {
+            KeyCode::Enter
+                if open_search_results_key(key)
+                    && matches!(state.purpose, SearchPurpose::Navigate) =>
+            {
+                self.clear_live_search_preview();
+                self.accept_search_input(state.input.text).await?;
+            }
+            KeyCode::Tab if matches!(state.purpose, SearchPurpose::Navigate) => {
                 self.clear_live_search_preview();
                 self.accept_search_input(state.input.text).await?;
             }
             KeyCode::Tab => {
-                self.clear_live_search_preview();
-                self.accept_search_input(state.input.text).await?;
+                self.overlay = Some(OverlayState::Search(state));
             }
             KeyCode::Enter => {
                 self.clear_live_search_preview();

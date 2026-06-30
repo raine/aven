@@ -5096,6 +5096,22 @@ mod task_dependencies {
     }
 
     #[tokio::test]
+    async fn add_dependency_search_tab_keeps_picker_context() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Blocked")).await;
+
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('B')).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Search(state))
+                if matches!(state.purpose, SearchPurpose::AddDependency { .. })
+        ));
+    }
+
+    #[tokio::test]
     async fn remove_shortcut_opens_current_dependency_picker() {
         let mut app = test_app().await;
         let blocker_index = create_and_select_task(&mut app, test_task_draft("Blocker")).await;

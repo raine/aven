@@ -274,6 +274,28 @@ mod text_panel_and_search {
     }
 
     #[test]
+    fn add_dependency_search_explains_blocker_selection() {
+        let rendered = render_overlay_view(OverlayView::Search {
+            input: String::new(),
+            cursor: 0,
+            results: Vec::new(),
+            selected: 0,
+            total_matches: 0,
+            stale: false,
+            no_matches_cached: false,
+            purpose: SearchPurpose::AddDependency {
+                task_id: "task-1".to_string(),
+                display_ref: "AVN-1".to_string(),
+            },
+        });
+
+        assert!(rendered.contains("Add dependency"));
+        assert!(rendered.contains("Search for the task that blocks this task"));
+        assert!(rendered.contains("Enter add selected as blocker"));
+        assert!(!rendered.contains("Tab open results"));
+    }
+
+    #[test]
     fn search_overlay_colors_project_prefix() {
         let buffer = overlay_buffer(OverlayView::Search {
             input: "query".to_string(),
