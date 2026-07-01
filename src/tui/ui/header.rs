@@ -127,8 +127,11 @@ fn header_spans(store: &TuiStore, width: u16) -> Vec<Span<'static>> {
     spans.push(separator());
     spans.extend(header_metrics(store, compact));
     spans.extend(active_filter_spans(store));
-    if !compact || width >= 84 {
-        spans.extend(active_order_spans(store));
+    let order_spans = active_order_spans(store);
+    if (!compact || width >= 84)
+        && spans_width(spans.clone()).saturating_add(spans_width(order_spans.clone())) <= width
+    {
+        spans.extend(order_spans);
     }
     spans
 }
@@ -185,11 +188,12 @@ fn header_hitboxes(store: &TuiStore, width: u16) -> Vec<HeaderHitbox> {
     }
     let filter_width = spans_width(active_filter_spans(store));
     push_text(&mut x, &" ".repeat(filter_width as usize));
-    if !compact || width >= 84 {
+    let order_width = spans_width(active_order_spans(store));
+    if (!compact || width >= 84) && x.saturating_add(order_width) <= width {
         push_target(
             &mut hitboxes,
             &mut x,
-            spans_width(active_order_spans(store)),
+            order_width,
             HeaderTarget::Order { column: 0 },
         );
     }
@@ -536,6 +540,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn compact_header_omits_order_when_it_does_not_fit() {
+        let mut store = test_store().await;
+        store.counts = crate::query::SidebarCounts::default();
+
+        let rendered = spans_text(header_spans(&store, 75));
+
+        assert!(!rendered.contains("order"));
+    }
+
+    #[tokio::test]
     async fn queue_header_shows_ranked_order_without_direction() {
         let mut store = test_store().await;
         store.view_state.view = TaskView::Queue;
@@ -549,7 +563,7 @@ mod tests {
     async fn header_hitboxes_map_clicks_to_scope_and_views() {
         let mut store = test_store().await;
         store.view_state.scope = TaskScope::Project("mobile-app".to_string());
-        let area = Rect::new(0, 0, 140, 2);
+        let area = Rect::new(0, 0, 150, 2);
 
         assert_eq!(
             header_target_at(&store, area, 2, 0),
@@ -580,7 +594,7 @@ mod tests {
             Some(HeaderTarget::Order { column: 123 })
         );
         assert_eq!(
-            header_target_at(&store, area, 135, 0),
+            header_target_at(&store, area, 145, 0),
             Some(HeaderTarget::SyncStatus)
         );
         assert_eq!(header_target_at(&store, area, 36, 1), None);
