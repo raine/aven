@@ -11,6 +11,8 @@ use crate::tui::theme::{
     PINK, RED,
 };
 
+const HEADER_STATUS_GAP: u16 = 2;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HeaderTarget {
     Home,
@@ -129,7 +131,11 @@ fn header_spans(store: &TuiStore, width: u16) -> Vec<Span<'static>> {
     spans.extend(active_filter_spans(store));
     let order_spans = active_order_spans(store);
     if (!compact || width >= 84)
-        && spans_width(spans.clone()).saturating_add(spans_width(order_spans.clone())) <= width
+        && header_segment_fits(
+            spans_width(spans.clone()),
+            spans_width(order_spans.clone()),
+            width,
+        )
     {
         spans.extend(order_spans);
     }
@@ -189,7 +195,7 @@ fn header_hitboxes(store: &TuiStore, width: u16) -> Vec<HeaderHitbox> {
     let filter_width = spans_width(active_filter_spans(store));
     push_text(&mut x, &" ".repeat(filter_width as usize));
     let order_width = spans_width(active_order_spans(store));
-    if (!compact || width >= 84) && x.saturating_add(order_width) <= width {
+    if (!compact || width >= 84) && header_segment_fits(x, order_width, width) {
         push_target(
             &mut hitboxes,
             &mut x,
@@ -229,6 +235,13 @@ fn spans_width(spans: Vec<Span<'static>>) -> u16 {
 
 fn spans_text(spans: Vec<Span<'static>>) -> String {
     Line::from(spans).to_string()
+}
+
+fn header_segment_fits(base_width: u16, segment_width: u16, available_width: u16) -> bool {
+    base_width
+        .saturating_add(segment_width)
+        .saturating_add(HEADER_STATUS_GAP)
+        <= available_width
 }
 
 fn separator_text() -> &'static str {
@@ -547,6 +560,13 @@ mod tests {
         let rendered = spans_text(header_spans(&store, 75));
 
         assert!(!rendered.contains("order"));
+    }
+
+    #[test]
+    fn header_segment_fit_requires_gap() {
+        assert!(!header_segment_fits(10, 5, 15));
+        assert!(!header_segment_fits(10, 5, 16));
+        assert!(header_segment_fits(10, 5, 17));
     }
 
     #[tokio::test]
