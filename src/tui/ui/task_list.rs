@@ -269,14 +269,16 @@ fn build_task_list_render_model(
 fn task_list_columns(store: &TuiStore, narrow: bool) -> [Constraint; 8] {
     let project_width = project_column_width(store, narrow);
     let label_width = label_column_width(store, narrow);
+    let metadata_width = metadata_column_width(store);
+    let priority_width = priority_column_width(store);
     [
         Constraint::Length(12),
         Constraint::Fill(1),
         Constraint::Length(label_width),
-        Constraint::Length(6),
+        Constraint::Length(metadata_width),
         Constraint::Length(project_width),
         Constraint::Length(10),
-        Constraint::Length(3),
+        Constraint::Length(priority_width),
         Constraint::Length(5),
     ]
 }
@@ -371,6 +373,40 @@ fn label_column_width_from_tasks(tasks: &[TaskListItem], narrow: bool) -> u16 {
         .max()
         .unwrap_or(0)
         .min(18)
+}
+
+fn metadata_column_width(store: &TuiStore) -> u16 {
+    metadata_column_width_from_tasks(&store.tasks)
+}
+
+fn metadata_column_width_from_tasks(tasks: &[TaskListItem]) -> u16 {
+    if tasks.iter().any(task_has_metadata) {
+        6
+    } else {
+        0
+    }
+}
+
+fn task_has_metadata(item: &TaskListItem) -> bool {
+    item.task.deleted
+        || item.unresolved_blocker_count > 0
+        || item.dependent_count > 0
+        || !item.notes.is_empty()
+}
+
+fn priority_column_width(store: &TuiStore) -> u16 {
+    priority_column_width_from_tasks(&store.tasks)
+}
+
+fn priority_column_width_from_tasks(tasks: &[TaskListItem]) -> u16 {
+    if tasks
+        .iter()
+        .any(|item| item.task.priority.as_str() != "none")
+    {
+        3
+    } else {
+        0
+    }
 }
 
 fn render_task_header(frame: &mut Frame, area: Rect, columns: [Constraint; 8]) {
@@ -842,6 +878,39 @@ mod tests {
     fn label_header_cell_aligns_with_label_column_content() {
         assert_eq!(label_header_cell("LABELS", 12).to_string(), "     LABELS ");
         assert_eq!(label_header_cell("LABELS", 6).to_string(), "LABELS");
+    }
+
+    #[test]
+    fn metadata_column_width_collapses_without_metadata() {
+        let tasks = vec![task_item("plain"), task_item("also plain")];
+
+        assert_eq!(metadata_column_width_from_tasks(&tasks), 0);
+    }
+
+    #[test]
+    fn metadata_column_width_reserves_lane_for_metadata() {
+        let mut task = task_item("documented");
+        task.notes = vec![crate::query::TaskNote {
+            body: "one".to_string(),
+            created_at: "001".to_string(),
+        }];
+
+        assert_eq!(metadata_column_width_from_tasks(&[task]), 6);
+    }
+
+    #[test]
+    fn priority_column_width_collapses_without_priority() {
+        let tasks = vec![task_item("plain"), task_item("also plain")];
+
+        assert_eq!(priority_column_width_from_tasks(&tasks), 0);
+    }
+
+    #[test]
+    fn priority_column_width_reserves_lane_for_priority() {
+        let mut task = task_item("prioritized");
+        task.task.priority = TaskPriority::High;
+
+        assert_eq!(priority_column_width_from_tasks(&[task]), 3);
     }
 
     #[tokio::test]
