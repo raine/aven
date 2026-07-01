@@ -236,27 +236,30 @@ impl App {
             return Ok(());
         }
         let project = self.add_task_project_context();
+        if create_on_success {
+            spawn_add_task_only_natural(
+                raw,
+                self.store.active_workspace.id.as_str(),
+                self.add_task_db_path.as_deref(),
+                project.as_deref(),
+            )?;
+            self.overlay = None;
+            self.set_info("adding task in background");
+            return Ok(());
+        }
         let handle = self.store.spawn_task_intake(
             self.add_task_config.agent.task_intake.clone(),
             raw.to_string(),
             project,
         );
-        self.notification = Some(Notification::loading(if create_on_success {
-            "adding task with LLM"
-        } else {
-            "parsing task with LLM"
-        }));
+        self.notification = Some(Notification::loading("parsing task with LLM"));
         self.pending_task_intake = Some(PendingTaskIntake {
             handle,
             retry,
             value: value.clone(),
             create_on_success,
         });
-        if create_on_success {
-            self.overlay = None;
-        } else {
-            self.retry_add_task_natural(value, retry);
-        }
+        self.retry_add_task_natural(value, retry);
         Ok(())
     }
 
@@ -389,5 +392,18 @@ fn add_task_natural_intake(title: &str, description: &str) -> String {
         (false, true) => title.to_string(),
         (true, false) => format!("Description:\n{description}"),
         (true, true) => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::add_task_natural_intake;
+
+    #[test]
+    fn add_task_natural_intake_combines_title_and_description() {
+        assert_eq!(
+            add_task_natural_intake("Write docs", "Include setup details"),
+            "Title:\nWrite docs\n\nDescription:\nInclude setup details"
+        );
     }
 }

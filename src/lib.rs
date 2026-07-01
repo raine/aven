@@ -138,6 +138,7 @@ pub async fn run_cli() -> Result<()> {
                     args.project.as_deref(),
                     args.add_task,
                     args.natural,
+                    db_path,
                     config,
                 )
                 .await;

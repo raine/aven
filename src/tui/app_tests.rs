@@ -2855,48 +2855,21 @@ mod authoring {
     #[tokio::test]
     async fn add_task_ctrl_n_creates_task_in_background_in_full_tui() {
         let mut app = test_app().await;
-        configure_task_intake(
-            &mut app,
-            "parse-title.sh",
-            r#"{"title":"fix parsed dispatch","description":"from parsed title","project":null,"priority":"medium","labels":[]}"#,
-        );
 
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "in slack-agent fix dispatch").await;
         app.handle_overlay_key(ctrl_n()).await.unwrap();
 
-        assert!(matches!(
-            app.notification.as_ref(),
-            Some(Notification::Loading { message, .. }) if message == "adding task with LLM"
-        ));
+        assert!(app.pending_task_intake.is_none());
         assert!(app.overlay.is_none());
         assert!(
-            toast_message(&app).is_some_and(|message| message.contains("adding task with LLM"))
+            toast_message(&app).is_some_and(|message| { message == "adding task in background" })
         );
-        for _ in 0..500 {
-            app.poll_pending_task_intake().await.unwrap();
-            if toast_message(&app).is_some_and(|message| message.starts_with("created task ")) {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-
-        let selected = app.widgets.table.selected().unwrap();
-        let task = &app.store.tasks[selected];
-        assert_eq!(task.task.title, "fix parsed dispatch");
-        assert_eq!(task.task.description, "from parsed title");
-        assert_eq!(task.task.priority, TaskPriority::Medium);
-        assert!(toast_message(&app).is_some_and(|message| message.starts_with("created task ")));
     }
 
     #[tokio::test]
-    async fn add_task_ctrl_n_from_description_sends_title_and_description() {
+    async fn add_task_ctrl_n_from_description_runs_in_background() {
         let mut app = test_app().await;
-        let capture = configure_task_intake_capture(
-            &mut app,
-            "parse-description.sh",
-            r#"{"title":"parsed docs task","description":"parsed handoff","project":null,"priority":"none","labels":[]}"#,
-        );
 
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
@@ -2904,24 +2877,11 @@ mod authoring {
         type_chars(&mut app, "Include setup details").await;
         app.handle_overlay_key(ctrl_n()).await.unwrap();
 
-        for _ in 0..500 {
-            app.poll_pending_task_intake().await.unwrap();
-            if capture.exists()
-                && toast_message(&app).is_some_and(|message| message.starts_with("created task "))
-            {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-
-        let prompt = std::fs::read_to_string(capture).unwrap();
-        assert!(prompt.contains(
-            "Raw intake text:\nTitle:\nWrite docs\n\nDescription:\nInclude setup details"
-        ));
-        let selected = app.widgets.table.selected().unwrap();
-        let task = &app.store.tasks[selected];
-        assert_eq!(task.task.title, "parsed docs task");
-        assert_eq!(task.task.description, "parsed handoff");
+        assert!(app.pending_task_intake.is_none());
+        assert!(app.overlay.is_none());
+        assert!(
+            toast_message(&app).is_some_and(|message| { message == "adding task in background" })
+        );
     }
 
     #[tokio::test]
@@ -2962,17 +2922,19 @@ mod authoring {
     }
 
     #[tokio::test]
-    async fn add_task_ctrl_n_error_reopens_add_task_dialog() {
+    async fn add_task_natural_dialog_error_reopens_natural_dialog() {
         let mut app = test_app().await;
         configure_task_intake_failure(&mut app, "parse-title-fail.sh");
 
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.begin_add_task_natural();
         type_chars(&mut app, "raw natural title").await;
-        app.handle_overlay_key(ctrl_n()).await.unwrap();
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
         for _ in 0..100 {
             app.poll_pending_task_intake().await.unwrap();
-            if matches!(&app.overlay, Some(OverlayState::AddTask(state)) if state.title.as_str() == "raw natural title")
-            {
+            if toast_message(&app).is_some_and(|message| {
+                message.contains("task intake failed") && message.contains("logged to")
+            }) {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -2980,50 +2942,12 @@ mod authoring {
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::AddTask(state))
-                if state.title.as_str() == "raw natural title"
+            Some(OverlayState::MultilineInput(state))
+                if state.lines.join("\n") == "raw natural title"
         ));
         assert!(toast_message(&app).is_some_and(|message| {
             message.contains("task intake failed") && message.contains("logged to")
         }));
-    }
-
-    fn configure_task_intake(app: &mut App, script_name: &str, output: &str) {
-        let dir = tempfile::tempdir().unwrap().keep();
-        let command = dir.join(script_name);
-        std::fs::write(
-            &command,
-            format!("#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{}'\n", output),
-        )
-        .unwrap();
-        set_executable(&command);
-        app.add_task_config.agent.task_intake.command = Some(command.display().to_string());
-        app.add_task_config.agent.task_intake.args = Vec::new();
-        app.add_task_config.agent.task_intake.timeout_seconds = Some(5);
-    }
-
-    fn configure_task_intake_capture(
-        app: &mut App,
-        script_name: &str,
-        output: &str,
-    ) -> std::path::PathBuf {
-        let dir = tempfile::tempdir().unwrap().keep();
-        let command = dir.join(script_name);
-        let capture = dir.join("prompt.txt");
-        std::fs::write(
-            &command,
-            format!(
-                "#!/bin/sh\ncat > '{}'\nprintf '%s\\n' '{}'\n",
-                capture.display(),
-                output
-            ),
-        )
-        .unwrap();
-        set_executable(&command);
-        app.add_task_config.agent.task_intake.command = Some(command.display().to_string());
-        app.add_task_config.agent.task_intake.args = Vec::new();
-        app.add_task_config.agent.task_intake.timeout_seconds = Some(5);
-        capture
     }
 
     fn configure_task_intake_failure(app: &mut App, script_name: &str) {
