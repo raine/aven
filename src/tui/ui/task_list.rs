@@ -31,7 +31,7 @@ use crate::tui::theme::{
     SELECTED_INACTIVE,
 };
 use crate::tui::widgets::{
-    age_style, priority_icon, priority_short, status_chip, status_span, title_cell,
+    age_style, label_cell, priority_icon, priority_short, status_chip, status_span, title_cell,
 };
 
 impl TaskListRenderMode {
@@ -42,7 +42,7 @@ impl TaskListRenderMode {
 
 #[derive(Debug)]
 struct TaskListRenderModel {
-    columns: [Constraint; 7],
+    columns: [Constraint; 8],
     row_areas: Vec<Rect>,
     rows: Vec<TaskListRenderRow>,
     scroll: usize,
@@ -119,7 +119,7 @@ fn task_list_status_area(store: &TuiStore, table_area: Rect, visual_row: u16) ->
         table_area.width,
         1,
     );
-    Layout::horizontal(columns).areas::<7>(row_area)[4]
+    Layout::horizontal(columns).areas::<8>(row_area)[5]
 }
 
 pub(super) fn render_tasks(
@@ -240,8 +240,9 @@ fn build_task_list_render_model(
                     continue;
                 };
                 let selected = selected_task == Some(*task_index);
+                let style = row_style(selected, focus == Focus::Tasks);
                 rows.push(TaskListRenderRow::Task(TaskListTaskRow {
-                    style: row_style(selected, focus == Focus::Tasks),
+                    style,
                     cells: build_task_row_cells(
                         item,
                         now,
@@ -265,11 +266,13 @@ fn build_task_list_render_model(
     }
 }
 
-fn task_list_columns(store: &TuiStore, narrow: bool) -> [Constraint; 7] {
+fn task_list_columns(store: &TuiStore, narrow: bool) -> [Constraint; 8] {
     let project_width = project_column_width(store, narrow);
+    let label_width = label_column_width(store, narrow);
     [
         Constraint::Length(12),
         Constraint::Fill(1),
+        Constraint::Length(label_width),
         Constraint::Length(6),
         Constraint::Length(project_width),
         Constraint::Length(10),
@@ -278,11 +281,11 @@ fn task_list_columns(store: &TuiStore, narrow: bool) -> [Constraint; 7] {
     ]
 }
 
-fn task_list_column_widths(columns: &[Constraint; 7], width: u16) -> [usize; 7] {
+fn task_list_column_widths(columns: &[Constraint; 8], width: u16) -> [usize; 8] {
     if width == 0 {
-        return [0; 7];
+        return [0; 8];
     }
-    let cells = Layout::horizontal(*columns).areas::<7>(Rect::new(0, 0, width, 1));
+    let cells = Layout::horizontal(*columns).areas::<8>(Rect::new(0, 0, width, 1));
     [
         cells[0].width as usize,
         cells[1].width as usize,
@@ -291,6 +294,7 @@ fn task_list_column_widths(columns: &[Constraint; 7], width: u16) -> [usize; 7] 
         cells[4].width as usize,
         cells[5].width as usize,
         cells[6].width as usize,
+        cells[7].width as usize,
     ]
 }
 
@@ -343,19 +347,62 @@ fn project_column_width(store: &TuiStore, narrow: bool) -> u16 {
         .min(max_width)
 }
 
-fn render_task_header(frame: &mut Frame, area: Rect, columns: [Constraint; 7]) {
-    let cells = Layout::horizontal(columns).areas::<7>(area);
+fn label_column_width(store: &TuiStore, narrow: bool) -> u16 {
+    label_column_width_from_tasks(&store.tasks, narrow)
+}
+
+fn label_column_width_from_tasks(tasks: &[TaskListItem], narrow: bool) -> u16 {
+    if narrow {
+        return 0;
+    }
+    tasks
+        .iter()
+        .filter(|item| !item.labels.is_empty())
+        .map(|item| {
+            let first = item.labels.first().map_or(0, |label| label.chars().count());
+            let more = item.labels.len().saturating_sub(1);
+            let summary_width = if more == 0 {
+                first
+            } else {
+                first + more.to_string().chars().count() + 3
+            };
+            summary_width as u16 + 4
+        })
+        .max()
+        .unwrap_or(0)
+        .min(18)
+}
+
+fn render_task_header(frame: &mut Frame, area: Rect, columns: [Constraint; 8]) {
+    let cells = Layout::horizontal(columns).areas::<8>(area);
     let style = Style::new()
         .fg(INVERSE_FG)
         .bg(BORDER)
         .add_modifier(Modifier::BOLD);
     frame.render_widget(Block::new().style(style), area);
-    for (area, label) in cells
+    for (index, (area, label)) in cells
         .into_iter()
-        .zip([" REF", "TITLE", "", "PROJECT", "STATUS", "P", "IDLE"])
+        .zip([
+            " REF", "TITLE", "LABELS", "", "PROJECT", "STATUS", "P", "IDLE",
+        ])
+        .enumerate()
     {
+        let label = if index == 2 {
+            label_header_cell(label, area.width as usize)
+        } else {
+            Line::from(label)
+        };
         frame.render_widget(Paragraph::new(label).style(style), area);
     }
+}
+
+fn label_header_cell(label: &str, max_width: usize) -> Line<'static> {
+    let label_width = label.chars().count();
+    if label_width >= max_width {
+        return Line::from(label.to_string());
+    }
+    let padding = max_width.saturating_sub(label_width + 1);
+    Line::from(format!("{}{label} ", " ".repeat(padding)))
 }
 
 fn render_group_row(frame: &mut Frame, label: &str, count: usize, area: Rect) {
@@ -386,7 +433,7 @@ fn row_style(selected: bool, focused: bool) -> Style {
 fn render_task_row_from_model(
     frame: &mut Frame,
     area: Rect,
-    columns: &[Constraint; 7],
+    columns: &[Constraint; 8],
     row: &TaskListTaskRow,
 ) {
     render_task_row_cells(frame, area, row.style, columns, &row.cells);
@@ -396,11 +443,11 @@ fn render_task_row_cells(
     frame: &mut Frame,
     area: Rect,
     style: Style,
-    columns: &[Constraint; 7],
+    columns: &[Constraint; 8],
     values: &[Line<'static>],
 ) {
     frame.render_widget(Block::new().style(style), area);
-    let areas = Layout::horizontal(columns).areas::<7>(area);
+    let areas = Layout::horizontal(columns).areas::<8>(area);
     for (area, value) in areas.into_iter().zip(values) {
         frame.render_widget(Paragraph::new(value.clone()).style(style), area);
     }
@@ -411,7 +458,7 @@ fn build_task_row_cells(
     now_seconds: i64,
     render_mode: TaskListRenderMode,
     inline_title_editor: Option<&TextInputView>,
-    column_widths: &[usize; 7],
+    column_widths: &[usize; 8],
 ) -> Vec<Line<'static>> {
     let age_seconds = if render_mode.uses_queue_age() {
         item.queue.idle_seconds()
@@ -426,11 +473,13 @@ fn build_task_row_cells(
     let title = inline_title_editor
         .map(|editor| inline_title_edit_cell(editor, column_widths[1]))
         .unwrap_or_else(|| title_cell(item, column_widths[1]));
+    let labels = label_cell(&item.labels, column_widths[2]);
     vec![
         task_ref_cell(item),
         title,
+        labels,
         metadata_cell(item),
-        project_cell(item, column_widths[3]),
+        project_cell(item, column_widths[4]),
         status_chip(item.task.status.as_str()),
         Line::from(Span::styled(
             priority_icon(item.task.priority.as_str()),
@@ -445,6 +494,7 @@ fn build_task_row_cells(
 
 fn blank_task_row_cells() -> Vec<Line<'static>> {
     vec![
+        Line::from(""),
         Line::from(""),
         Line::from(""),
         Line::from(""),
@@ -716,6 +766,7 @@ mod tests {
         let columns = [
             Constraint::Length(12),
             Constraint::Fill(1),
+            Constraint::Length(12),
             Constraint::Length(6),
             Constraint::Length(9),
             Constraint::Length(10),
@@ -725,9 +776,10 @@ mod tests {
         terminal
             .draw(|frame| {
                 let column_widths = task_list_column_widths(&columns, frame.area().width);
+                let style = row_style(true, true);
                 let cells =
                     build_task_row_cells(item, 0, render_mode, inline_title_editor, &column_widths);
-                render_task_row_cells(frame, frame.area(), row_style(true, true), &columns, &cells);
+                render_task_row_cells(frame, frame.area(), style, &columns, &cells);
             })
             .unwrap();
         terminal.backend().buffer().clone()
@@ -761,6 +813,35 @@ mod tests {
             store.create_task(draft, None).await.unwrap();
         }
         store
+    }
+
+    #[test]
+    fn label_column_width_collapses_without_visible_labels() {
+        let tasks = vec![task_item("plain"), task_item("also plain")];
+
+        assert_eq!(label_column_width_from_tasks(&tasks, false), 0);
+    }
+
+    #[test]
+    fn label_column_width_reserves_lane_for_visible_labels() {
+        let mut task = task_item("labeled");
+        task.labels = vec!["search".to_string(), "ux".to_string()];
+
+        assert_eq!(label_column_width_from_tasks(&[task], false), 14);
+    }
+
+    #[test]
+    fn label_column_width_collapses_in_narrow_layout() {
+        let mut task = task_item("labeled");
+        task.labels = vec!["search".to_string()];
+
+        assert_eq!(label_column_width_from_tasks(&[task], true), 0);
+    }
+
+    #[test]
+    fn label_header_cell_aligns_with_label_column_content() {
+        assert_eq!(label_header_cell("LABELS", 12).to_string(), "     LABELS ");
+        assert_eq!(label_header_cell("LABELS", 6).to_string(), "LABELS");
     }
 
     #[tokio::test]
@@ -897,13 +978,13 @@ mod tests {
             0,
             TaskListRenderMode::Flat,
             None,
-            &[12, 40, 6, 9, 10, 3, 5],
+            &[12, 40, 12, 6, 9, 10, 3, 5],
         );
 
         assert!(rendered.contains("original title"));
         assert!(!rendered.contains("deleted original title"));
-        assert_eq!(cells[2].to_string(), "×");
-        assert_eq!(cells[4].to_string(), "□ todo");
+        assert_eq!(cells[3].to_string(), "×");
+        assert_eq!(cells[5].to_string(), "□ todo");
         assert!(
             task_preview_fields_line(&item)
                 .to_string()
@@ -977,12 +1058,12 @@ mod tests {
             0,
             TaskListRenderMode::Flat,
             None,
-            &[12, 40, 6, 9, 10, 3, 5],
+            &[12, 40, 12, 6, 9, 10, 3, 5],
         );
 
-        assert_eq!(cells.len(), 7);
-        assert_eq!(cells[2].to_string(), "←1 →1 ✎");
-        assert_eq!(cells[3].to_string(), "app ");
+        assert_eq!(cells.len(), 8);
+        assert_eq!(cells[3].to_string(), "←1 →1 ✎");
+        assert_eq!(cells[4].to_string(), "app ");
 
         item.task.deleted = true;
         let cells = build_task_row_cells(
@@ -990,9 +1071,9 @@ mod tests {
             0,
             TaskListRenderMode::Flat,
             None,
-            &[12, 40, 6, 9, 10, 3, 5],
+            &[12, 40, 12, 6, 9, 10, 3, 5],
         );
-        assert_eq!(cells[2].to_string(), "× ←1 →1 ✎");
+        assert_eq!(cells[3].to_string(), "× ←1 →1 ✎");
     }
 
     #[test]
@@ -1011,7 +1092,7 @@ mod tests {
             0,
             TaskListRenderMode::Flat,
             Some(&editor),
-            &[12, 40, 6, 9, 10, 3, 5],
+            &[12, 40, 12, 6, 9, 10, 3, 5],
         );
 
         assert!(cells[1].to_string().contains("edited title"));
