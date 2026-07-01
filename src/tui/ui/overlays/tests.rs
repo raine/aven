@@ -43,8 +43,8 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
             *cursor,
             results,
             *selected,
-            *total_matches,
             SearchRenderStatus {
+                total_matches: *total_matches,
                 stale: *stale,
                 no_matches_cached: *no_matches_cached,
             },

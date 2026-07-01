@@ -26,8 +26,17 @@ pub(crate) struct SidebarLayout {
     pub(crate) overlay: bool,
 }
 
+#[cfg(test)]
 pub(crate) fn sidebar_layout(terminal: Rect, focus: Focus) -> Option<SidebarLayout> {
-    if terminal.width < 70 || terminal.height < 18 {
+    sidebar_layout_for(terminal, focus, true)
+}
+
+pub(crate) fn sidebar_layout_for(
+    terminal: Rect,
+    focus: Focus,
+    sidebar_visible: bool,
+) -> Option<SidebarLayout> {
+    if !sidebar_visible || terminal.width < 70 || terminal.height < 18 {
         return None;
     }
 
@@ -88,15 +97,16 @@ pub(crate) fn sidebar_content_area(sidebar: Rect, overlay: bool) -> Rect {
     }
 }
 
-pub(crate) fn sidebar_click_at(
+pub(crate) fn sidebar_click_at_for(
     entries: &[SidebarEntry],
     state: &ListState,
     focus: Focus,
+    sidebar_visible: bool,
     terminal: Rect,
     column: u16,
     row: u16,
 ) -> Option<SidebarClick> {
-    let layout = sidebar_layout(terminal, focus)?;
+    let layout = sidebar_layout_for(terminal, focus, sidebar_visible)?;
     if column < layout.content.x
         || column >= layout.content.x.saturating_add(layout.content.width)
         || row < layout.content.y

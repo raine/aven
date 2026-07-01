@@ -14,7 +14,9 @@ mod task_list;
 mod toast;
 mod truncate;
 
-pub(crate) use self::sidebar::{sidebar_click_at, sidebar_layout};
+#[cfg(test)]
+pub(crate) use self::sidebar::sidebar_layout;
+pub(crate) use self::sidebar::{sidebar_click_at_for, sidebar_layout_for};
 
 use self::detail::render_detail_underlay;
 use self::footer::{FooterMode, footer_bar};
@@ -62,6 +64,7 @@ pub(crate) struct ViewState {
     pub(crate) detail_underlay_scroll: u16,
     pub(crate) notification: Option<Toast>,
     pub(crate) pending_shortcut: Vec<String>,
+    pub(crate) sidebar_visible: bool,
     pub(crate) surface: ViewSurface,
 }
 
@@ -123,28 +126,34 @@ pub(crate) fn render(
     let inline_detail_title_editor = inline_detail_title_editor(view);
     if body.width < 100 {
         render_tasks(frame, store, widgets, view.focus, body, inline_title_editor);
-        if let Some(layout) = crate::tui::ui::sidebar_layout(inner, view.focus)
+        if let Some(layout) =
+            crate::tui::ui::sidebar_layout_for(inner, view.focus, view.sidebar_visible)
             && layout.overlay
         {
             render_sidebar_overlay(frame, store, widgets, view.focus, body);
         }
     } else {
-        let layout = crate::tui::ui::sidebar_layout(inner, view.focus).unwrap();
-        let main = ratatui::layout::Rect {
-            x: layout.sidebar.x.saturating_add(layout.sidebar.width),
-            y: body.y,
-            width: body.width.saturating_sub(layout.sidebar.width),
-            height: body.height,
-        };
-        render_sidebar(
-            frame,
-            store,
-            widgets,
-            view.focus,
-            layout.sidebar,
-            layout.overlay,
-        );
-        render_tasks(frame, store, widgets, view.focus, main, inline_title_editor);
+        if let Some(layout) =
+            crate::tui::ui::sidebar_layout_for(inner, view.focus, view.sidebar_visible)
+        {
+            let main = ratatui::layout::Rect {
+                x: layout.sidebar.x.saturating_add(layout.sidebar.width),
+                y: body.y,
+                width: body.width.saturating_sub(layout.sidebar.width),
+                height: body.height,
+            };
+            render_sidebar(
+                frame,
+                store,
+                widgets,
+                view.focus,
+                layout.sidebar,
+                layout.overlay,
+            );
+            render_tasks(frame, store, widgets, view.focus, main, inline_title_editor);
+        } else {
+            render_tasks(frame, store, widgets, view.focus, body, inline_title_editor);
+        }
     }
     frame.render_widget(footer_bar(view.footer_mode(), footer.width), footer);
 
@@ -521,8 +530,8 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
             *cursor,
             results,
             *selected,
-            *total_matches,
             SearchRenderStatus {
+                total_matches: *total_matches,
                 stale: *stale,
                 no_matches_cached: *no_matches_cached,
             },

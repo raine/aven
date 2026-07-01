@@ -18,6 +18,7 @@ const RESULT_ROWS: usize = 8;
 
 #[derive(Clone, Copy)]
 pub(in crate::tui::ui) struct SearchRenderStatus {
+    pub(in crate::tui::ui) total_matches: usize,
     pub(in crate::tui::ui) stale: bool,
     pub(in crate::tui::ui) no_matches_cached: bool,
 }
@@ -28,7 +29,6 @@ pub(in crate::tui::ui) fn render_search(
     cursor: usize,
     results: &[SearchResultItem],
     selected: usize,
-    total_matches: usize,
     status: SearchRenderStatus,
     purpose: &SearchPurpose,
 ) {
@@ -43,7 +43,7 @@ pub(in crate::tui::ui) fn render_search(
     if let Some(summary) = search_summary_line(
         input,
         results.len(),
-        total_matches,
+        status.total_matches,
         status.stale,
         status.no_matches_cached,
     ) {

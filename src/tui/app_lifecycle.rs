@@ -136,6 +136,7 @@ impl App {
                 .as_ref()
                 .map(|notification| notification.toast_view()),
             pending_shortcut: self.pending_shortcut.labels(),
+            sidebar_visible: self.sidebar_visible,
             surface: if self.add_task_only {
                 ViewSurface::AddTask
             } else {

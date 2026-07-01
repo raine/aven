@@ -31,6 +31,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::First
             | Action::Last
             | Action::ToggleFocus
+            | Action::ToggleSidebar
             | Action::ToggleDetail
             | Action::ToggleHelp
             | Action::BeginSearch

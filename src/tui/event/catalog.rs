@@ -329,6 +329,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ToggleFocus,
     ),
     CommandSpec::implemented(
+        "toggle-sidebar",
+        "toggle the sidebar",
+        "Navigation",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('s')],
+            label: "g s",
+        }],
+        Action::ToggleSidebar,
+    ),
+    CommandSpec::implemented(
         "detail",
         "select a view or toggle task detail",
         "Navigation",

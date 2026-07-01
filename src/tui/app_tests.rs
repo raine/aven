@@ -637,6 +637,108 @@ mod keyboard_dispatch {
     }
 
     #[tokio::test]
+    async fn sidebar_toggle_shortcut_expands_task_list_and_restores_sidebar_focus() {
+        let mut app = test_app().await;
+        app.focus = Focus::Sidebar;
+
+        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
+
+        assert!(!app.sidebar_visible);
+        assert_eq!(app.focus, Focus::Tasks);
+        assert_eq!(toast_message(&app).as_deref(), Some("task list expanded"));
+        let hidden = app.view();
+        assert!(!hidden.sidebar_visible);
+
+        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
+
+        assert!(app.sidebar_visible);
+        assert_eq!(app.focus, Focus::Sidebar);
+        assert_eq!(toast_message(&app).as_deref(), Some("sidebar visible"));
+    }
+
+    #[tokio::test]
+    async fn command_panel_runs_sidebar_toggle() {
+        let mut app = test_app().await;
+
+        app.begin_command();
+        type_chars(&mut app, "toggle-sidebar").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(!app.sidebar_visible);
+        assert_eq!(app.focus, Focus::Tasks);
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn hidden_sidebar_allows_wide_task_click_at_left_edge() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("task one")).await;
+        create_and_select_task(&mut app, test_task_draft("task two")).await;
+        app.widgets.table.select(Some(1));
+        app.sidebar_visible = false;
+
+        let area = ratatui::layout::Rect::new(0, 2, 140, 20);
+        let mut click = None;
+        'rows: for row in area.y..area.y.saturating_add(area.height) {
+            for column in area.x..area.x.saturating_add(area.width) {
+                if crate::tui::ui::task_at_position(
+                    &app.store,
+                    &app.widgets.table,
+                    area,
+                    column,
+                    row,
+                )
+                .is_some_and(|hit| hit.task_index == 0)
+                {
+                    click = Some(task_row_click(column, row));
+                    break 'rows;
+                }
+            }
+        }
+        let click = click.expect("expected task hit target");
+
+        app.dispatch_mouse(click, (140, 24).into()).await.unwrap();
+
+        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.focus, Focus::Tasks);
+    }
+
+    #[tokio::test]
+    async fn hidden_sidebar_is_not_rendered_in_wide_layout() {
+        let mut app = test_app().await;
+        app.sidebar_visible = false;
+
+        let text = render_app_text(&mut app, 140, 24);
+
+        assert!(!text.contains("FILTERS"));
+    }
+
+    #[tokio::test]
+    async fn h_reveals_sidebar() {
+        let mut app = test_app().await;
+        app.sidebar_visible = false;
+
+        app.handle_normal_key(KeyCode::Char('h')).await.unwrap();
+
+        assert!(app.sidebar_visible);
+        assert_eq!(app.focus, Focus::Sidebar);
+    }
+
+    #[tokio::test]
+    async fn tab_reveals_sidebar_when_task_list_is_expanded() {
+        let mut app = test_app().await;
+        app.sidebar_visible = false;
+
+        app.handle_normal_key(KeyCode::Tab).await.unwrap();
+
+        assert!(app.sidebar_visible);
+        assert_eq!(app.focus, Focus::Sidebar);
+        assert_eq!(toast_message(&app).as_deref(), Some("sidebar visible"));
+    }
+
+    #[tokio::test]
     async fn planned_and_disabled_shortcut_and_command_report_non_executing() {
         let mut app = test_app().await;
 

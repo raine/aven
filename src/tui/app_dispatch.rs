@@ -180,11 +180,11 @@ impl App {
             };
         }
 
-        if !Self::sidebar_contains_mouse(terminal_size, self.focus, mouse.column, mouse.row)
+        if !self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row)
             && let Some(hit) = task_at_position(
                 &self.store,
                 &self.widgets.table,
-                Self::task_area_for_mouse(terminal_size),
+                self.task_area_for_mouse(terminal_size),
                 mouse.column,
                 mouse.row,
             )
@@ -211,10 +211,11 @@ impl App {
         }
 
         self.last_task_click = None;
-        if let Some(click) = crate::tui::ui::sidebar_click_at(
+        if let Some(click) = crate::tui::ui::sidebar_click_at_for(
             &self.store.sidebar_entries,
             &self.widgets.sidebar,
             self.focus,
+            self.sidebar_visible,
             ratatui::layout::Rect::new(0, 0, terminal_size.width, terminal_size.height),
             mouse.column,
             mouse.row,
@@ -226,10 +227,10 @@ impl App {
         Ok(())
     }
 
-    fn task_area_for_mouse(terminal_size: Size) -> Rect {
+    fn task_area_for_mouse(&self, terminal_size: Size) -> Rect {
         let body_height = terminal_size.height.saturating_sub(4);
         let body = Rect::new(0, 2, terminal_size.width, body_height);
-        if body.width < 100 {
+        if !self.sidebar_visible || body.width < 100 {
             body
         } else {
             let sidebar_width = body.width.min(26);
@@ -251,13 +252,13 @@ impl App {
         if self.overlay.is_some() || terminal_size.width < 70 || terminal_size.height < 18 {
             return Ok(());
         }
-        if Self::sidebar_contains_mouse(terminal_size, self.focus, mouse.column, mouse.row) {
+        if self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row) {
             return Ok(());
         }
         let Some(hit) = task_status_at_position(
             &self.store,
             &self.widgets.table,
-            Self::task_area_for_mouse(terminal_size),
+            self.task_area_for_mouse(terminal_size),
             mouse.column,
             mouse.row,
         ) else {
@@ -270,14 +271,16 @@ impl App {
         Ok(())
     }
 
-    fn sidebar_contains_mouse(terminal_size: Size, focus: Focus, column: u16, row: u16) -> bool {
+    fn sidebar_contains_mouse(&self, terminal_size: Size, column: u16, row: u16) -> bool {
         let terminal = Rect::new(0, 0, terminal_size.width, terminal_size.height);
-        crate::tui::ui::sidebar_layout(terminal, focus).is_some_and(|layout| {
-            column >= layout.sidebar.x
-                && column < layout.sidebar.x.saturating_add(layout.sidebar.width)
-                && row >= layout.sidebar.y
-                && row < layout.sidebar.y.saturating_add(layout.sidebar.height)
-        })
+        crate::tui::ui::sidebar_layout_for(terminal, self.focus, self.sidebar_visible).is_some_and(
+            |layout| {
+                column >= layout.sidebar.x
+                    && column < layout.sidebar.x.saturating_add(layout.sidebar.width)
+                    && row >= layout.sidebar.y
+                    && row < layout.sidebar.y.saturating_add(layout.sidebar.height)
+            },
+        )
     }
 
     fn handle_detail_mouse_click(
@@ -697,6 +700,7 @@ impl App {
             Action::First => self.select_edge(false).await?,
             Action::Last => self.select_edge(true).await?,
             Action::ToggleFocus => self.toggle_focus(),
+            Action::ToggleSidebar => self.toggle_sidebar(),
             Action::ToggleDetail => self.activate_or_toggle_detail().await?,
             Action::ToggleHelp => self.toggle_help_at_height(24),
             Action::BeginSearch => self.begin_search(),

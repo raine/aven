@@ -18,6 +18,7 @@ pub(crate) enum Action {
     First,
     Last,
     ToggleFocus,
+    ToggleSidebar,
     ToggleDetail,
     ToggleHelp,
     BeginSearch,

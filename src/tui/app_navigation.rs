@@ -61,6 +61,14 @@ impl App {
     }
 
     pub(super) fn toggle_focus(&mut self) {
+        if !self.sidebar_visible && self.focus == Focus::Tasks {
+            self.sidebar_visible = true;
+            self.focus = Focus::Sidebar;
+            self.widgets.sidebar.select(self.store.sidebar_selection());
+            self.set_info("sidebar visible");
+            return;
+        }
+
         self.focus = match self.focus {
             Focus::Sidebar => {
                 self.widgets.sidebar.select(self.store.sidebar_selection());
@@ -70,7 +78,22 @@ impl App {
         };
     }
 
+    pub(super) fn toggle_sidebar(&mut self) {
+        self.sidebar_visible = !self.sidebar_visible;
+        if self.sidebar_visible {
+            self.focus = Focus::Sidebar;
+            self.widgets.sidebar.select(self.store.sidebar_selection());
+            self.set_info("sidebar visible");
+        } else {
+            self.focus = Focus::Tasks;
+            self.overlay = None;
+            self.widgets.sidebar.select(self.store.sidebar_selection());
+            self.set_info("task list expanded");
+        }
+    }
+
     pub(super) fn move_left(&mut self) {
+        self.sidebar_visible = true;
         self.focus = Focus::Sidebar;
         self.widgets.sidebar.select(self.store.sidebar_selection());
         self.overlay = None;
