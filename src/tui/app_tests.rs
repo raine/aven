@@ -3991,7 +3991,7 @@ mod task_editing {
     async fn add_project_shortcut_opens_prompt_and_creates_project() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
-        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         assert!(matches!(
             &app.overlay,
             Some(OverlayState::TextInput(state)) if state.prompt == "project name:"

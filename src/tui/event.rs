@@ -573,7 +573,7 @@ mod tests {
             ShortcutLookup::Prefix
         ));
         assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('p'), KeyCode::Char('n')]),
+            resolve_shortcut(&[KeyCode::Char('p'), KeyCode::Char('a')]),
             ShortcutLookup::Found(Action::BeginAddProject)
         ));
         assert!(matches!(

@@ -617,8 +617,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "create a new project",
         "Projects",
         &[KeySequence {
-            codes: &[KeyCode::Char('p'), KeyCode::Char('n')],
-            label: "p n",
+            codes: &[KeyCode::Char('p'), KeyCode::Char('a')],
+            label: "p a",
         }],
         Action::BeginAddProject,
     ),
@@ -657,8 +657,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "add a path to a project",
         "Projects",
         &[KeySequence {
-            codes: &[KeyCode::Char('p'), KeyCode::Char('a')],
-            label: "p a",
+            codes: &[KeyCode::Char('p'), KeyCode::Char('n')],
+            label: "p n",
         }],
         PROJECT_PATH_FLOW_REASON,
     ),
