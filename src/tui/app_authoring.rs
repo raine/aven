@@ -207,6 +207,7 @@ impl App {
             self.store.active_workspace.id.as_str(),
             self.add_task_db_path.as_deref(),
             project.as_deref(),
+            false,
         )?;
         self.add_task_only_message = Some("adding task in background".to_string());
         self.should_quit = true;
@@ -242,6 +243,7 @@ impl App {
                 self.store.active_workspace.id.as_str(),
                 self.add_task_db_path.as_deref(),
                 project.as_deref(),
+                true,
             )?;
             self.overlay = None;
             self.set_info("adding task in background");

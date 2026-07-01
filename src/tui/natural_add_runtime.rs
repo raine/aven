@@ -9,6 +9,7 @@ pub(crate) fn spawn_add_task_only_natural(
     workspace_id: &str,
     db_path: Option<&Path>,
     project: Option<&str>,
+    tui_undo: bool,
 ) -> Result<()> {
     let exe = std::env::current_exe()?;
     let cwd = std::env::current_dir()?;
@@ -30,6 +31,9 @@ pub(crate) fn spawn_add_task_only_natural(
         .arg(input);
     if let Some(project) = project {
         command.arg("--project").arg(project);
+    }
+    if tui_undo {
+        command.arg("--tui-undo");
     }
     command
         .current_dir(cwd)
@@ -65,6 +69,7 @@ pub(crate) fn spawn_add_task_only_natural(
     _workspace_id: &str,
     _db_path: Option<&Path>,
     _project: Option<&str>,
+    _tui_undo: bool,
 ) -> Result<()> {
     Ok(())
 }

@@ -304,6 +304,8 @@ pub(crate) struct InternalNaturalAddArgs {
     pub(crate) project: Option<String>,
     #[arg(long, allow_hyphen_values = true)]
     pub(crate) input: String,
+    #[arg(long, hide = true)]
+    pub(crate) tui_undo: bool,
 }
 
 #[derive(Subcommand)]

@@ -132,7 +132,25 @@ pub(crate) async fn cmd_internal_natural_add(
             args.project.as_deref(),
         )
         .await?;
-        create_task_in_workspace(conn, &args.workspace_id, draft).await
+        let outcome = create_task_in_workspace(conn, &args.workspace_id, draft).await?;
+        if args.tui_undo {
+            let task_id = outcome.task.id.clone();
+            let snapshot = crate::undo::task_snapshot(conn, &args.workspace_id, &task_id).await?;
+            crate::undo::record_tui_undo(
+                conn,
+                &args.workspace_id,
+                &format!("task {task_id}"),
+                crate::undo::UndoPayload {
+                    commands: vec![crate::undo::UndoCommand::DeleteCreatedTask {
+                        task_id,
+                        create_change_id: outcome.create_change_id.clone(),
+                        expected: snapshot,
+                    }],
+                },
+            )
+            .await?;
+        }
+        Ok(outcome)
     }
     .await;
     let outcome = match outcome {

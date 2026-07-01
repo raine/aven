@@ -179,6 +179,51 @@ agent:
 
     let prompt = fs::read_to_string(prompt).unwrap();
     assert!(prompt.contains("Project=app"));
+    assert_eq!(pending_undo_count(&db, &client_workspace_id), 0);
+}
+
+#[test]
+fn internal_natural_add_can_record_tui_undo() {
+    let env = TestEnv::new();
+    let db = env.db("natural-internal-undo.sqlite");
+    let command = env.path("task-intake-undo.sh");
+    fs::write(
+        &command,
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"title\":\"fix undoable sync\",\"description\":\"from model\",\"project\":null,\"priority\":\"none\",\"labels\":[]}'\n",
+    )
+    .unwrap();
+    set_executable(&command);
+    env.write_config(&format!(
+        r#"
+local:
+  db_path: "{}"
+
+agent:
+  task_intake:
+    command: "{}"
+    args: []
+    timeout_seconds: 5
+"#,
+        db.display(),
+        command.display()
+    ));
+
+    ok(env.aven_config(["workspace", "create", "client"]));
+    let client_workspace_id = workspace_id(&db, "client");
+    let out = ok(env.aven_config([
+        "internal",
+        "natural-add",
+        "--workspace-id",
+        &client_workspace_id,
+        "--input",
+        "make this undoable",
+        "--tui-undo",
+    ]));
+    let task_ref = extract_ref(&out);
+
+    let created = ok(env.aven_config(["--workspace", "client", "show", &task_ref, "--full"]));
+    contains_all(&created, &["title=\"fix undoable sync\""]);
+    assert_eq!(pending_undo_count(&db, &client_workspace_id), 1);
 }
 
 #[test]
@@ -206,11 +251,29 @@ fn tmux_add_task_popup_prints_binding() {
 }
 
 fn workspace_id(db: &std::path::Path, key: &str) -> String {
+    sqlite_scalar(
+        db,
+        &format!("SELECT id FROM workspaces WHERE key = '{key}'"),
+    )
+}
+
+fn pending_undo_count(db: &std::path::Path, workspace_id: &str) -> i64 {
+    sqlite_scalar(
+        db,
+        &format!(
+            "SELECT count(*) FROM tui_undo_entries WHERE workspace_id = '{workspace_id}' AND undone_at IS NULL"
+        ),
+    )
+    .parse()
+    .unwrap()
+}
+
+fn sqlite_scalar(db: &std::path::Path, query: &str) -> String {
     let output = std::process::Command::new("sqlite3")
         .arg(db)
-        .arg(format!("SELECT id FROM workspaces WHERE key = '{key}'"))
+        .arg(query)
         .output()
-        .expect("read workspace id");
+        .expect("read sqlite scalar");
     assert!(output.status.success(), "sqlite failed");
     String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
