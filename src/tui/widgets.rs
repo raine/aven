@@ -157,6 +157,7 @@ mod tests {
                 updated_at: "2026-06-20T00:00:00Z".to_string(),
                 queue_activity_at: "2026-06-20T00:00:00Z".to_string(),
                 deleted: false,
+                is_epic: false,
             },
             display_ref: "APP-1".to_string(),
             labels: Vec::new(),
@@ -166,6 +167,8 @@ mod tests {
             dependent_count: 0,
             depends_on: Vec::new(),
             blocks: Vec::new(),
+            epic_children: Vec::new(),
+            epic_parent: None,
             queue: Default::default(),
         }
     }

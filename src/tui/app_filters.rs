@@ -151,6 +151,7 @@ impl App {
             ("a", "active", TaskView::Active),
             ("b", "backlog", TaskView::Backlog),
             ("d", "done", TaskView::Done),
+            ("e", "epics", TaskView::Epics),
             ("c", "conflicts", TaskView::Conflicts),
             ("s", "search", TaskView::Search),
         ]

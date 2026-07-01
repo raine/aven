@@ -759,6 +759,27 @@ impl App {
             Action::BeginAddDependency => self.begin_add_dependency().await?,
             Action::BeginRemoveDependency => self.begin_remove_dependency(),
             Action::Undo => self.undo_last().await?,
+            Action::ToggleEpicExpanded => {
+                let index = self.widgets.table.selected();
+                if let Some(message) = self.store.toggle_selected_epic(index).await? {
+                    self.set_info(message.message);
+                    self.widgets.table.select(message.selected);
+                }
+            }
+            Action::DetachEpicChild => {
+                let index = self.widgets.table.selected();
+                if let Some(message) = self.store.detach_selected_epic_child(index).await? {
+                    self.set_info(message.message);
+                    self.widgets.table.select(message.selected);
+                }
+            }
+            Action::PromoteEpicChild => {
+                let index = self.widgets.table.selected();
+                if let Some(message) = self.store.promote_selected_epic_child(index).await? {
+                    self.set_info(message.message);
+                    self.widgets.table.select(message.selected);
+                }
+            }
             Action::Planned { name, reason } => {
                 self.set_warning(format!(":{name} is not yet implemented: {reason}"));
             }

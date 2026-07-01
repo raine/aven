@@ -2,13 +2,17 @@ use anyhow::Result;
 use serde::Serialize;
 use sqlx::{Row, SqliteConnection};
 
-use super::conflicts::conflict_display_value;
 use crate::cli::ContextArgs;
 use crate::operations::{ConflictDetail, task_conflicts};
-use crate::query::{TaskDependencyItem, task_dependency_summary};
+use crate::query::{
+    self, SortDirection, TaskDependencyItem, TaskFilters, TaskQueryMode, TaskSort,
+    task_dependency_summary,
+};
 use crate::refs::{display_ref, display_suffix, resolve_task_ref};
 use crate::render::{print_json_pretty, print_multiline_block, quote};
-use crate::task_render::labels_for_task_in_workspace;
+use crate::task_render::{
+    TaskEpicLinkJson, conflict_display_value, labels_for_task_in_workspace, task_epic_link_json,
+};
 use crate::types::Task;
 use crate::workspaces::active_workspace;
 
@@ -35,6 +39,8 @@ struct TaskContextSnapshot {
     has_conflicts: bool,
     is_blocked: bool,
     has_open_dependents: bool,
+    epic_parent: Option<TaskEpicLinkJson>,
+    epic_children: Vec<TaskEpicLinkJson>,
 }
 
 #[derive(Serialize)]
@@ -47,6 +53,7 @@ struct ContextTask {
     status: String,
     priority: String,
     deleted: bool,
+    is_epic: bool,
     created_at: String,
     updated_at: String,
 }
@@ -115,6 +122,26 @@ async fn task_context_snapshot(
     let display_ref = display_ref(conn, task).await?;
     let ref_suffix = display_suffix(conn, &task.id).await?;
     let labels = labels_for_task_in_workspace(conn, &task.workspace_id, &task.id).await?;
+    let item = query::list_task_items(
+        conn,
+        TaskFilters {
+            task_ids: vec![task.id.clone()],
+            ..TaskFilters::default().include_deleted(task.deleted)
+        },
+        TaskQueryMode::Flat,
+        TaskSort::Updated,
+        SortDirection::Desc,
+    )
+    .await?
+    .into_iter()
+    .next();
+    let epic_parent = item
+        .as_ref()
+        .and_then(|item| item.epic_parent.as_ref().map(task_epic_link_json));
+    let epic_children = item
+        .as_ref()
+        .map(|item| item.epic_children.iter().map(task_epic_link_json).collect())
+        .unwrap_or_default();
     let summary = task_dependency_summary(conn, &task.workspace_id, &task.id).await?;
     let notes = load_context_notes(conn, &task.workspace_id, &task.id).await?;
     let details = task_conflicts(conn, &task.id, None).await?;
@@ -141,6 +168,7 @@ async fn task_context_snapshot(
             status: task.status.as_str().to_string(),
             priority: task.priority.as_str().to_string(),
             deleted: task.deleted,
+            is_epic: task.is_epic,
             created_at: task.created_at.clone(),
             updated_at: task.updated_at.clone(),
         },
@@ -177,6 +205,8 @@ async fn task_context_snapshot(
         has_conflicts,
         is_blocked,
         has_open_dependents,
+        epic_parent,
+        epic_children,
     })
 }
 
@@ -261,13 +291,14 @@ async fn context_conflicts(
 
 fn print_task_context(snapshot: &TaskContextSnapshot) {
     println!(
-        "context {} suffix={} id={} status={} priority={} deleted={} blocked={} conflicts={} blocks_open={} labels={} title={}",
+        "context {} suffix={} id={} status={} priority={} deleted={} epic={} blocked={} conflicts={} blocks_open={} labels={} title={}",
         snapshot.task.display_ref,
         snapshot.task.ref_suffix,
         snapshot.task.id,
         snapshot.task.status,
         snapshot.task.priority,
         yes_no(snapshot.task.deleted),
+        yes_no(snapshot.task.is_epic),
         yes_no(snapshot.is_blocked),
         yes_no(snapshot.has_conflicts),
         yes_no(snapshot.has_open_dependents),
@@ -313,6 +344,25 @@ fn print_task_context(snapshot: &TaskContextSnapshot) {
             item.status,
             yes_no(item.unresolved),
             quote(&item.title),
+        );
+    }
+    if let Some(parent) = &snapshot.epic_parent {
+        println!(
+            "epic_parent {} status={} open={} title={}",
+            parent.r#ref,
+            parent.status,
+            yes_no(parent.open),
+            quote(&parent.title)
+        );
+    }
+    println!("epic_children total={}", snapshot.epic_children.len());
+    for child in &snapshot.epic_children {
+        println!(
+            "- {} status={} open={} title={}",
+            child.r#ref,
+            child.status,
+            yes_no(child.open),
+            quote(&child.title)
         );
     }
     for note in &snapshot.notes {

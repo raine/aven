@@ -34,6 +34,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
             "note",
             "note-delete",
             "dep",
+            "epic",
             "text",
             "bulk-update",
             "delete",
@@ -205,6 +206,8 @@ pub(crate) enum Commands {
     Add(AddArgs),
     /// Inspect and modify task dependencies
     Dep(DepCommand),
+    /// Inspect and modify epic membership
+    Epic(EpicCommand),
     /// Show a task context snapshot
     Context(ContextArgs),
     /// Show task details
@@ -337,6 +340,8 @@ pub(crate) struct AddArgs {
     pub(crate) priority: String,
     #[arg(long)]
     pub(crate) label: Vec<String>,
+    #[arg(long, help = "Create the task as an epic container")]
+    pub(crate) epic: bool,
     #[arg(long)]
     pub(crate) natural: bool,
 }
@@ -375,6 +380,8 @@ pub(crate) struct ListArgs {
     pub(crate) ready: bool,
     #[arg(long)]
     pub(crate) blocked: bool,
+    #[arg(long)]
+    pub(crate) epics: bool,
     #[arg(long)]
     pub(crate) limit: Option<usize>,
     #[arg(long, help = "Print machine-readable JSON")]
@@ -420,6 +427,38 @@ pub(crate) struct DepRemoveArgs {
 #[derive(Args)]
 pub(crate) struct DepListArgs {
     pub(crate) task_ref: String,
+    #[arg(long, help = "Print machine-readable JSON")]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct EpicCommand {
+    #[command(subcommand)]
+    pub(crate) command: EpicSubcommand,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum EpicSubcommand {
+    Add(EpicAddArgs),
+    Remove(EpicRemoveArgs),
+    List(EpicListArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct EpicAddArgs {
+    pub(crate) child_ref: String,
+    pub(crate) epic_ref: String,
+}
+
+#[derive(Args)]
+pub(crate) struct EpicRemoveArgs {
+    pub(crate) child_ref: String,
+    pub(crate) epic_ref: String,
+}
+
+#[derive(Args)]
+pub(crate) struct EpicListArgs {
+    pub(crate) epic_ref: String,
     #[arg(long, help = "Print machine-readable JSON")]
     pub(crate) json: bool,
 }
@@ -479,6 +518,8 @@ pub(crate) struct UpdateArgs {
     pub(crate) status: Option<String>,
     #[arg(long)]
     pub(crate) priority: Option<String>,
+    #[arg(long, value_name = "on|off")]
+    pub(crate) epic: Option<String>,
     #[arg(long)]
     pub(crate) label: Vec<String>,
     #[arg(long)]

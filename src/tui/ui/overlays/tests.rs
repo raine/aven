@@ -39,16 +39,18 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
             purpose,
         } => render_search(
             frame,
-            input,
-            *cursor,
-            results,
-            *selected,
-            SearchRenderStatus {
+            SearchRenderView {
+                input,
+                cursor: *cursor,
+                results,
+                selected: *selected,
                 total_matches: *total_matches,
-                stale: *stale,
-                no_matches_cached: *no_matches_cached,
+                status: SearchRenderStatus {
+                    stale: *stale,
+                    no_matches_cached: *no_matches_cached,
+                },
+                purpose,
             },
-            purpose,
         ),
         OverlayView::AddTask(state) => render_add_task(frame, state),
         OverlayView::TextInput(state) => render_text_input(frame, state),

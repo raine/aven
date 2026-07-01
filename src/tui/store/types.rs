@@ -24,6 +24,8 @@ pub(crate) struct ConflictTarget {
     pub(crate) remote_value: String,
 }
 
+use std::collections::BTreeSet;
+
 use crate::query::{SortDirection, TaskFilters, TaskQueryMode, TaskSort};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +45,7 @@ pub(crate) enum TaskView {
     Done,
     Conflicts,
     Search,
+    Epics,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -68,6 +71,7 @@ pub(crate) enum TaskOrder {
 pub(crate) enum TaskListRenderMode {
     Flat,
     Queue,
+    Epics,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +81,8 @@ pub(crate) struct TaskViewState {
     pub(crate) filter_modifiers: TaskFilterModifiers,
     pub(crate) order: TaskOrder,
     pub(crate) direction: SortDirection,
+    pub(crate) expanded_epic_ids: BTreeSet<String>,
+    pub(crate) collapsed_epic_ids: BTreeSet<String>,
 }
 
 impl Default for TaskViewState {
@@ -87,6 +93,8 @@ impl Default for TaskViewState {
             filter_modifiers: TaskFilterModifiers::default(),
             order: TaskOrder::Created,
             direction: SortDirection::Asc,
+            expanded_epic_ids: BTreeSet::new(),
+            collapsed_epic_ids: BTreeSet::new(),
         }
     }
 }
@@ -106,13 +114,21 @@ impl TaskViewState {
             filters.project = Some(project.clone());
         }
         match self.view {
-            TaskView::Queue | TaskView::Open => filters.hide_done = true,
+            TaskView::Queue => {
+                filters.hide_done = true;
+                filters.exclude_epics = true;
+            }
+            TaskView::Open => filters.hide_done = true,
             TaskView::Inbox => filters.status = Some("inbox".to_string()),
             TaskView::Active => filters.status = Some("active".to_string()),
             TaskView::Backlog => filters.status = Some("backlog".to_string()),
             TaskView::Todo => filters.status = Some("todo".to_string()),
             TaskView::Done => filters.statuses = vec!["done".to_string(), "canceled".to_string()],
             TaskView::Conflicts => filters.conflicts_only = true,
+            TaskView::Epics => {
+                filters.epics_only = true;
+                filters.hide_done = true;
+            }
             TaskView::Search => {
                 filters.include_deleted = true;
             }
@@ -132,9 +148,10 @@ impl TaskViewState {
     }
 
     pub(crate) fn render_mode(&self) -> TaskListRenderMode {
-        match self.query_mode() {
-            TaskQueryMode::RankedQueue => TaskListRenderMode::Queue,
-            TaskQueryMode::Flat => TaskListRenderMode::Flat,
+        match self.view {
+            TaskView::Queue => TaskListRenderMode::Queue,
+            TaskView::Epics => TaskListRenderMode::Epics,
+            _ => TaskListRenderMode::Flat,
         }
     }
 }

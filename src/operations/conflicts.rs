@@ -135,6 +135,12 @@ pub(crate) async fn resolve_conflict(
     let task_field = TaskField::parse_or_unknown(field)?;
     let field = task_field.as_str();
     let workspace = crate::workspaces::active_workspace();
+    if task_field == TaskField::IsEpic
+        && value == "0"
+        && crate::operations::task_has_epic_children(conn, &workspace.id, task_id).await?
+    {
+        bail!("error epic-has-children task_id={task_id}");
+    }
     let mut tx = begin_immediate(conn).await?;
     let result = sqlx::query(
         "UPDATE conflicts SET resolved = 1 WHERE workspace_id = ? AND task_id = ? AND field = ? AND resolved = 0",

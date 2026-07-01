@@ -57,7 +57,7 @@ pub(crate) async fn list_task_items_in_workspace(
     let mut query = QueryBuilder::<Sqlite>::new(
         "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
          p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
-         t.queue_activity_at, t.deleted
+         t.queue_activity_at, t.deleted, t.is_epic
          FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id",
     );
 
@@ -144,6 +144,14 @@ pub(crate) async fn list_task_items_in_workspace(
                    AND {})",
                 fragments::open_task_clause("blocker"),
             ));
+    }
+    if filters.epics_only {
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push("t.is_epic = 1");
+    }
+    if filters.exclude_epics {
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push("t.is_epic = 0");
     }
     if let Some(search) = filters.search.filter(|search| !search.is_empty()) {
         push_filter_prefix(&mut query, &mut filters_added);

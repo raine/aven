@@ -3,9 +3,12 @@ use serde::Serialize;
 use sqlx::{Row, SqliteConnection};
 
 use crate::db::task_has_conflict;
-use crate::query::{TaskDependencySummary, TaskListItem, task_dependency_summary};
+use crate::query::{
+    TaskDependencyLink, TaskDependencySummary, TaskListItem, task_dependency_summary,
+};
 use crate::refs::display_ref;
 use crate::render::{KvLine, print_multiline_block, quote};
+use crate::task_fields::TaskField;
 use crate::types::Task;
 
 #[allow(dead_code)]
@@ -41,14 +44,16 @@ async fn print_task_line(conn: &mut SqliteConnection, task: &Task) -> Result<()>
         ""
     };
     let deleted = if task.deleted { " deleted=yes" } else { "" };
+    let epic = if task.is_epic { " epic=yes" } else { "" };
     println!(
-        "{} status={} priority={} labels={}{}{} title={}",
+        "{} status={} priority={} labels={}{}{}{} title={}",
         display_ref(conn, task).await?,
         task.status,
         task.priority,
         labels,
         conflict,
         deleted,
+        epic,
         quote(&task.title)
     );
     Ok(())
@@ -62,6 +67,7 @@ pub(crate) async fn print_task_line_item(item: &TaskListItem) -> Result<()> {
         .field("labels", &labels)
         .optional("conflicts", item.has_conflict.then(|| "yes".to_string()))
         .optional("deleted", item.task.deleted.then(|| "yes".to_string()))
+        .optional("epic", item.task.is_epic.then(|| "yes".to_string()))
         .optional(
             "blocked_by",
             (item.unresolved_blocker_count > 0).then(|| item.unresolved_blocker_count.to_string()),
@@ -160,6 +166,10 @@ pub(crate) async fn print_conflicts(
         let local_value: String = row.get("local_value");
         let variant_b: String = row.get("variant_b");
         let remote_value: String = row.get("remote_value");
+        let local_value =
+            conflict_display_value(conn, &task.workspace_id, &field, &local_value).await?;
+        let remote_value =
+            conflict_display_value(conn, &task.workspace_id, &field, &remote_value).await?;
         println!(
             "conflict {} field={}",
             display_ref(conn, task).await?,
@@ -176,6 +186,16 @@ pub(crate) async fn print_conflicts(
 // --- JSON DTOs ---
 
 #[derive(Serialize)]
+pub(crate) struct TaskEpicLinkJson {
+    pub(crate) r#ref: String,
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) status: String,
+    pub(crate) priority: String,
+    pub(crate) open: bool,
+}
+
+#[derive(Serialize)]
 pub(crate) struct TaskLineJson {
     pub(crate) r#ref: String,
     pub(crate) id: String,
@@ -185,6 +205,9 @@ pub(crate) struct TaskLineJson {
     pub(crate) priority: String,
     pub(crate) labels: Vec<String>,
     pub(crate) deleted: bool,
+    pub(crate) is_epic: bool,
+    pub(crate) epic_parent: Option<TaskEpicLinkJson>,
+    pub(crate) epic_children: Vec<TaskEpicLinkJson>,
     pub(crate) has_conflict: bool,
     pub(crate) blocked_by: i64,
     pub(crate) blocks: i64,
@@ -202,12 +225,61 @@ pub(crate) fn task_line_json_item(item: &TaskListItem) -> TaskLineJson {
         priority: item.task.priority.to_string(),
         labels: item.labels.clone(),
         deleted: item.task.deleted,
+        is_epic: item.task.is_epic,
+        epic_parent: item.epic_parent.as_ref().map(task_epic_link_json),
+        epic_children: item.epic_children.iter().map(task_epic_link_json).collect(),
         has_conflict: item.has_conflict,
         blocked_by: item.unresolved_blocker_count,
         blocks: item.dependent_count,
         created_at: item.task.created_at.clone(),
         updated_at: item.task.updated_at.clone(),
     }
+}
+
+pub(crate) fn task_epic_link_json(link: &TaskDependencyLink) -> TaskEpicLinkJson {
+    TaskEpicLinkJson {
+        r#ref: link.display_ref.clone(),
+        id: link.task_id.clone(),
+        title: link.title.clone(),
+        status: link.status.clone(),
+        priority: link.priority.clone(),
+        open: link.unresolved,
+    }
+}
+
+pub(crate) async fn conflict_display_value(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    field: &str,
+    value: &str,
+) -> Result<String> {
+    match TaskField::parse(field) {
+        Some(TaskField::Project) => display_project_conflict_value(conn, workspace_id, value).await,
+        Some(TaskField::IsEpic) => Ok(match value {
+            "1" => "on".to_string(),
+            "0" => "off".to_string(),
+            other => other.to_string(),
+        }),
+        _ => Ok(value.to_string()),
+    }
+}
+
+async fn display_project_conflict_value(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    value: &str,
+) -> Result<String> {
+    if let Some((key, prefix)) = sqlx::query_as::<_, (String, String)>(
+        "SELECT key, prefix FROM projects WHERE workspace_id = ? AND id = ?",
+    )
+    .bind(workspace_id)
+    .bind(value)
+    .fetch_optional(&mut *conn)
+    .await?
+    {
+        return Ok(format!("{key} prefix={prefix}"));
+    }
+    Ok(value.to_string())
 }
 
 #[derive(Serialize)]

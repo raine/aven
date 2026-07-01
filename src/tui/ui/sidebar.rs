@@ -3,6 +3,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState};
+use unicode_width::UnicodeWidthStr;
 
 use super::truncate::truncate_chars;
 use crate::choices::TaskPriority;
@@ -11,8 +12,23 @@ use crate::tui::store::{
     SidebarEntry, SidebarEntryTarget, TaskScope, TaskScopeTarget, TaskView, TuiStore,
 };
 use crate::tui::theme::{
-    self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, PINK, RED, SELECTED, SELECTED_INACTIVE,
+    self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, PINK, RED, SELECTED_BG,
+    SELECTED_INACTIVE, YELLOW,
 };
+
+const QUEUE_MARKER: &str = "\u{f03a}";
+const INBOX_MARKER: &str = "\u{f01c}";
+const TODO_MARKER: &str = "\u{f0ae}";
+const ACTIVE_MARKER: &str = "\u{f111}";
+const BACKLOG_MARKER: &str = "\u{f017}";
+const DONE_MARKER: &str = "\u{f00c}";
+const CONFLICT_MARKER: &str = "\u{f071}";
+const SEARCH_MARKER: &str = "\u{f002}";
+const EPIC_MARKER: &str = "\u{f005}";
+const OPEN_MARKER: &str = "\u{f07c}";
+const WORKSPACE_MARKER: &str = "\u{f0e8}";
+const PROJECT_MARKER: &str = "\u{f07b}";
+const SIDEBAR_ICON_WIDTH: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SidebarClick {
@@ -164,12 +180,9 @@ pub(super) fn render_sidebar(
                     ),
                 );
             }
-            let marker = if index == widgets.sidebar.selected().unwrap_or(usize::MAX) {
-                "≡"
-            } else {
-                sidebar_icon(entry)
-            };
+            let marker = sidebar_icon(entry);
             let label = sidebar_label(entry);
+            let selected = index == widgets.sidebar.selected().unwrap_or(usize::MAX);
             let is_active_view = sidebar_entry_active(entry, store);
             let color = match &entry.target {
                 Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(project))) => {
@@ -177,10 +190,13 @@ pub(super) fn render_sidebar(
                 }
                 Some(SidebarEntryTarget::View(TaskView::Active)) => FG_MUTED,
                 Some(SidebarEntryTarget::View(TaskView::Todo)) => FG_DIM,
+                Some(SidebarEntryTarget::View(TaskView::Epics)) => YELLOW,
                 _ => FG,
             };
             let label_style = if is_active_view {
                 Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
+            } else if selected {
+                Style::new().fg(FG).add_modifier(Modifier::BOLD)
             } else {
                 Style::new().fg(FG)
             };
@@ -213,7 +229,7 @@ pub(super) fn render_sidebar(
     ]);
 
     let highlight_style = if focus == Focus::Sidebar {
-        SELECTED
+        Style::new().bg(SELECTED_BG)
     } else {
         SELECTED_INACTIVE
     };
@@ -260,17 +276,18 @@ fn sidebar_entry_active(entry: &SidebarEntry, store: &TuiStore) -> bool {
 
 fn sidebar_icon(entry: &SidebarEntry) -> &'static str {
     match entry.target {
-        Some(SidebarEntryTarget::View(TaskView::Queue)) => "○",
-        Some(SidebarEntryTarget::View(TaskView::Inbox)) => "▣",
-        Some(SidebarEntryTarget::View(TaskView::Todo)) => "□",
-        Some(SidebarEntryTarget::View(TaskView::Active)) => "●",
-        Some(SidebarEntryTarget::View(TaskView::Backlog)) => "◌",
-        Some(SidebarEntryTarget::View(TaskView::Done)) => "✓",
-        Some(SidebarEntryTarget::View(TaskView::Conflicts)) => "!",
-        Some(SidebarEntryTarget::View(TaskView::Search)) => "⌕",
-        Some(SidebarEntryTarget::View(TaskView::Open)) => "○",
-        Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => "◆",
-        Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(_))) => "●",
+        Some(SidebarEntryTarget::View(TaskView::Queue)) => QUEUE_MARKER,
+        Some(SidebarEntryTarget::View(TaskView::Inbox)) => INBOX_MARKER,
+        Some(SidebarEntryTarget::View(TaskView::Todo)) => TODO_MARKER,
+        Some(SidebarEntryTarget::View(TaskView::Active)) => ACTIVE_MARKER,
+        Some(SidebarEntryTarget::View(TaskView::Backlog)) => BACKLOG_MARKER,
+        Some(SidebarEntryTarget::View(TaskView::Done)) => DONE_MARKER,
+        Some(SidebarEntryTarget::View(TaskView::Conflicts)) => CONFLICT_MARKER,
+        Some(SidebarEntryTarget::View(TaskView::Search)) => SEARCH_MARKER,
+        Some(SidebarEntryTarget::View(TaskView::Epics)) => EPIC_MARKER,
+        Some(SidebarEntryTarget::View(TaskView::Open)) => OPEN_MARKER,
+        Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => WORKSPACE_MARKER,
+        Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(_))) => PROJECT_MARKER,
         None => " ",
     }
 }
@@ -285,6 +302,7 @@ fn sidebar_label(entry: &SidebarEntry) -> String {
         Some(SidebarEntryTarget::View(TaskView::Done)) => "Done".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Conflicts)) => "Conflicts".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Search)) => "Search".to_string(),
+        Some(SidebarEntryTarget::View(TaskView::Epics)) => "Epics".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Open)) => "Open".to_string(),
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => "Workspace".to_string(),
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(_))) => entry
@@ -298,6 +316,12 @@ fn sidebar_label(entry: &SidebarEntry) -> String {
     }
 }
 
+fn sidebar_icon_cell(marker: &str) -> String {
+    let marker_width = marker.width();
+    let padding = SIDEBAR_ICON_WIDTH.saturating_sub(marker_width) + 1;
+    format!("{marker}{}", " ".repeat(padding))
+}
+
 fn sidebar_entry_line(
     entry: &SidebarEntry,
     marker: &str,
@@ -307,12 +331,12 @@ fn sidebar_entry_line(
     active: bool,
     width: usize,
 ) -> Line<'static> {
-    let marker_cell = format!("{marker} ");
+    let marker_cell = sidebar_icon_cell(marker);
     let count = entry.count.to_string();
-    let reserved_width = marker_cell.chars().count() + count.chars().count() + 1;
+    let reserved_width = marker_cell.width() + count.width() + 1;
     let label_width = width.saturating_sub(reserved_width);
     let label = truncate_chars(label, label_width);
-    let used_width = marker_cell.chars().count() + label.chars().count() + count.chars().count();
+    let used_width = marker_cell.width() + label.width() + count.width();
     let spacer_width = width.saturating_sub(used_width).max(1);
     let count_style = if active {
         Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
@@ -345,6 +369,13 @@ fn filter_item(icon: &str, label: &str, count: i64, color: Color, width: u16) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sidebar_icon_cell_uses_fixed_display_width() {
+        assert_eq!(sidebar_icon_cell("○").width(), 3);
+        assert_eq!(sidebar_icon_cell(QUEUE_MARKER).width(), 3);
+        assert_eq!(sidebar_icon_cell(EPIC_MARKER).width(), 3);
+    }
 
     #[test]
     fn sidebar_entry_line_truncates_label_and_preserves_count() {

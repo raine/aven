@@ -479,6 +479,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ShowView(TaskView::Open),
     ),
     CommandSpec::implemented(
+        "view-epics",
+        "show epics view",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('v'), KeyCode::Char('e')],
+            label: "v e",
+        }],
+        Action::ShowView(TaskView::Epics),
+    ),
+    CommandSpec::implemented(
         "view-inbox",
         "show inbox view",
         "Views",
@@ -844,6 +854,37 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             label: "t U",
         }],
         Action::BeginRemoveDependency,
+    ),
+    // Epic
+    CommandSpec::implemented(
+        "task-epic-toggle",
+        "toggle epic parent expand/collapse",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('t')],
+            label: "t c t",
+        }],
+        Action::ToggleEpicExpanded,
+    ),
+    CommandSpec::implemented(
+        "task-child-detach",
+        "detach selected child from its epic parent",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('d')],
+            label: "t c d",
+        }],
+        Action::DetachEpicChild,
+    ),
+    CommandSpec::implemented(
+        "task-child-promote",
+        "promote selected child by removing its epic parent edge",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('p')],
+            label: "t c p",
+        }],
+        Action::PromoteEpicChild,
     ),
     // Filters
     CommandSpec::implemented(

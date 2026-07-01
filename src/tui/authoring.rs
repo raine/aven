@@ -220,6 +220,7 @@ impl AuthoringState {
             status: draft.status,
             priority: draft.priority,
             labels: Vec::new(),
+            is_epic: false,
         })
     }
 

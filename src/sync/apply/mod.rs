@@ -1,5 +1,6 @@
 mod conflict;
 mod dependency;
+mod epic;
 mod label;
 mod note;
 mod payload;
@@ -42,6 +43,8 @@ pub(super) async fn apply_remote_change(
         op_type::NOTE_DELETE => note::delete_note(conn, change).await?,
         op_type::DEPENDENCY_ADD => dependency::add_dependency(conn, change).await?,
         op_type::DEPENDENCY_REMOVE => dependency::remove_dependency(conn, change).await?,
+        op_type::EPIC_LINK_ADD => epic::add_epic_link(conn, change).await?,
+        op_type::EPIC_LINK_REMOVE => epic::remove_epic_link(conn, change).await?,
         op_type::PROJECT_DELETE => project::delete_project(conn, change).await?,
         op_type::LABEL_DELETE => label::delete_label(conn, change).await?,
         _ => {}

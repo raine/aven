@@ -1,6 +1,7 @@
 mod config;
 mod conflicts;
 mod domain;
+mod epics;
 mod pickers;
 mod sidebar;
 mod sort;
@@ -152,6 +153,9 @@ impl TuiStore {
             self.view_state.direction,
         )
         .await?;
+        self.expand_visible_epics_by_default();
+        self.load_epic_child_tasks(&mut conn, &workspace_id).await?;
+        self.prune_expanded_epic_ids();
         self.sync_status = self.load_sync_status(&mut conn).await?;
         self.rebuild_sidebar();
         self.last_refresh = Instant::now();
@@ -178,5 +182,83 @@ impl TuiStore {
         let project = project.clone();
         self.view_state.scope = TaskScope::Workspace;
         Some(project)
+    }
+
+    async fn load_epic_child_tasks(
+        &mut self,
+        conn: &mut sqlx::SqliteConnection,
+        workspace_id: &str,
+    ) -> Result<()> {
+        let expanded = &self.view_state.expanded_epic_ids;
+        if expanded.is_empty() {
+            return Ok(());
+        }
+        let existing_ids = self
+            .tasks
+            .iter()
+            .map(|item| item.task.id.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        let child_ids = self
+            .tasks
+            .iter()
+            .filter(|item| expanded.contains(&item.task.id))
+            .flat_map(|item| {
+                item.epic_children
+                    .iter()
+                    .filter(|link| link.unresolved)
+                    .map(|link| link.task_id.clone())
+            })
+            .filter(|task_id| !existing_ids.contains(task_id))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        if child_ids.is_empty() {
+            return Ok(());
+        }
+        let children = list_task_items_in_workspace(
+            conn,
+            workspace_id,
+            crate::query::TaskFilters {
+                task_ids: child_ids,
+                ..crate::query::TaskFilters::default()
+            },
+            crate::query::TaskQueryMode::Flat,
+            crate::query::TaskSort::Created,
+            crate::query::SortDirection::Asc,
+        )
+        .await?;
+        self.tasks.extend(children);
+        Ok(())
+    }
+
+    fn expand_visible_epics_by_default(&mut self) {
+        if self.view_state.view != TaskView::Epics {
+            return;
+        }
+        for item in &self.tasks {
+            if item.task.is_epic && !self.view_state.collapsed_epic_ids.contains(&item.task.id) {
+                self.view_state
+                    .expanded_epic_ids
+                    .insert(item.task.id.clone());
+            }
+        }
+    }
+
+    fn prune_expanded_epic_ids(&mut self) {
+        let visible_parent_ids = self.visible_epic_ids();
+        self.view_state
+            .expanded_epic_ids
+            .retain(|id| visible_parent_ids.contains(id));
+        self.view_state
+            .collapsed_epic_ids
+            .retain(|id| visible_parent_ids.contains(id));
+    }
+
+    fn visible_epic_ids(&self) -> std::collections::BTreeSet<String> {
+        self.tasks
+            .iter()
+            .filter(|item| item.task.is_epic)
+            .map(|item| item.task.id.clone())
+            .collect()
     }
 }

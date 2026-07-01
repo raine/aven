@@ -14,6 +14,7 @@ pub(crate) const BLUE: Color = Color::Rgb(70, 128, 203);
 pub(crate) const ORANGE: Color = Color::Rgb(244, 166, 54);
 pub(crate) const RED: Color = Color::Rgb(239, 82, 86);
 pub(crate) const PINK: Color = Color::Rgb(225, 91, 139);
+pub(crate) const YELLOW: Color = Color::Rgb(255, 207, 87);
 pub(crate) const PURPLE: Color = Color::Rgb(137, 124, 232);
 pub(crate) const GREEN: Color = Color::Rgb(137, 199, 82);
 const PROJECT_COLORS: [Color; 14] = [

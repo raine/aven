@@ -54,6 +54,11 @@ pub(crate) async fn build_task_list_items(
             .blocks_by_task
             .remove(&task_id)
             .unwrap_or_default();
+        let epic_children = enrichment
+            .epic_children_by_task
+            .remove(&task_id)
+            .unwrap_or_default();
+        let epic_parent = enrichment.epic_parent_by_task.remove(&task_id);
         let queue = queue_meta(
             &task,
             has_conflict,
@@ -71,6 +76,8 @@ pub(crate) async fn build_task_list_items(
             dependent_count,
             depends_on,
             blocks,
+            epic_children,
+            epic_parent,
             queue,
         });
     }

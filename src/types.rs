@@ -15,6 +15,7 @@ pub(crate) struct Task {
     pub(crate) updated_at: String,
     pub(crate) queue_activity_at: String,
     pub(crate) deleted: bool,
+    pub(crate) is_epic: bool,
 }
 
 #[derive(Debug, Clone)]

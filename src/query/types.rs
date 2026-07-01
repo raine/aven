@@ -44,6 +44,8 @@ pub(crate) struct TaskFilters {
     pub(crate) conflicts_only: bool,
     pub(crate) ready_only: bool,
     pub(crate) blocked_only: bool,
+    pub(crate) epics_only: bool,
+    pub(crate) exclude_epics: bool,
     pub(crate) search: Option<String>,
     pub(crate) task_ids: Vec<String>,
 }
@@ -86,6 +88,8 @@ pub(crate) struct TaskListItem {
     pub(crate) dependent_count: i64,
     pub(crate) depends_on: Vec<TaskDependencyLink>,
     pub(crate) blocks: Vec<TaskDependencyLink>,
+    pub(crate) epic_children: Vec<TaskDependencyLink>,
+    pub(crate) epic_parent: Option<TaskDependencyLink>,
     pub(crate) queue: QueueMeta,
 }
 
@@ -123,4 +127,5 @@ pub(crate) struct SidebarCounts {
     pub(crate) todo: i64,
     pub(crate) conflicts: i64,
     pub(crate) done: i64,
+    pub(crate) epics: i64,
 }

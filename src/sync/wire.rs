@@ -294,6 +294,9 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             if let Some(priority) = optional_string_payload("priority", &change.payload)? {
                 validate_sync_task_field_value(TaskField::Priority, &priority)?;
             }
+            if let Some(is_epic) = optional_string_payload("is_epic", &change.payload)? {
+                validate_sync_task_field_value(TaskField::IsEpic, &is_epic)?;
+            }
             optional_string_array_payload("labels", &change.payload)?;
             optional_string_payload("created_at", &change.payload)?;
         }
@@ -344,6 +347,19 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             ensure_sync_id("depends_on_task_id", &depends_on_task_id)?;
             if change.entity_id == depends_on_task_id {
                 bail!("error invalid-sync-change dependency-self");
+            }
+        }
+        op_type::EPIC_LINK_ADD | op_type::EPIC_LINK_REMOVE => {
+            ensure_entity_type(change, "task")?;
+            ensure_sync_id("entity_id", &change.entity_id)?;
+            required_workspace_payload(&change.payload)?;
+            let epic_task_id = required_string_payload("epic_task_id", &change.payload)?;
+            ensure_sync_id("epic_task_id", &epic_task_id)?;
+            if change.entity_id == epic_task_id {
+                bail!("error invalid-sync-change epic-self");
+            }
+            if change.op_type == op_type::EPIC_LINK_ADD {
+                required_timestamp_payload("created_at", &change.payload)?;
             }
         }
         op_type::PROJECT_DELETE => {

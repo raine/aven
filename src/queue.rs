@@ -193,6 +193,7 @@ mod tests {
             updated_at: queue_activity_at.to_string(),
             queue_activity_at: queue_activity_at.to_string(),
             deleted: false,
+            is_epic: false,
         }
     }
 

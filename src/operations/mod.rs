@@ -1,6 +1,7 @@
 mod config;
 mod conflicts;
 mod dependencies;
+mod epics;
 mod projects;
 mod tasks;
 
@@ -17,6 +18,10 @@ pub(crate) use conflicts::{
 #[allow(unused_imports)]
 pub(crate) use dependencies::{
     DependencyOutcome, add_task_dependency, dependency_path_exists, remove_task_dependency,
+};
+#[allow(unused_imports)]
+pub(crate) use epics::{
+    EpicLinkOutcome, add_task_to_epic, remove_task_from_epic, task_has_epic_children,
 };
 #[allow(unused_imports)]
 pub(crate) use projects::{

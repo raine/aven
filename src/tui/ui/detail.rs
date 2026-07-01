@@ -896,6 +896,7 @@ mod tests {
                 updated_at: "2026-06-20T12:00:00Z".to_string(),
                 queue_activity_at: "2026-06-20T12:00:00Z".to_string(),
                 deleted: false,
+                is_epic: false,
             },
             display_ref: "APP-7KQ9A1X".to_string(),
             labels: vec!["bug".to_string(), "mobile".to_string()],
@@ -922,6 +923,8 @@ mod tests {
                 priority: "none".to_string(),
                 unresolved: true,
             }],
+            epic_children: Vec::new(),
+            epic_parent: None,
             queue: Default::default(),
         }
     }

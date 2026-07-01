@@ -51,6 +51,9 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginEditLabels
             | Action::Delete
             | Action::Restore
+            | Action::ToggleEpicExpanded
+            | Action::DetachEpicChild
+            | Action::PromoteEpicChild
             | Action::BeginStatusPicker
             | Action::BeginRenameProject
             | Action::BeginDeleteProject
@@ -710,6 +713,22 @@ mod tests {
             ShortcutLookup::Found(Action::BeginEditLabels)
         ));
         assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('c')]),
+            ShortcutLookup::Prefix
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('t')]),
+            ShortcutLookup::Found(Action::ToggleEpicExpanded)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('d')]),
+            ShortcutLookup::Found(Action::DetachEpicChild)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('p')]),
+            ShortcutLookup::Found(Action::PromoteEpicChild)
+        ));
+        assert!(matches!(
             resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('y')]),
             ShortcutLookup::Found(Action::CopyShortRef)
         ));
@@ -800,6 +819,10 @@ mod tests {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('q')]),
             ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskView::Queue))
+        );
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('e')]),
+            ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskView::Epics))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('c')]),

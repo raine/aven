@@ -13,16 +13,18 @@ pub(crate) enum TaskField {
     Status,
     Priority,
     Deleted,
+    IsEpic,
 }
 
 impl TaskField {
-    pub(crate) const VERSIONED: [TaskField; 6] = [
+    pub(crate) const VERSIONED: [TaskField; 7] = [
         TaskField::Title,
         TaskField::Description,
         TaskField::Project,
         TaskField::Status,
         TaskField::Priority,
         TaskField::Deleted,
+        TaskField::IsEpic,
     ];
 
     pub(crate) fn parse(field: &str) -> Option<Self> {
@@ -33,6 +35,7 @@ impl TaskField {
             "status" => Some(Self::Status),
             "priority" => Some(Self::Priority),
             "deleted" => Some(Self::Deleted),
+            "is_epic" => Some(Self::IsEpic),
             _ => None,
         }
     }
@@ -61,6 +64,7 @@ impl TaskField {
             Self::Status => "status",
             Self::Priority => "priority",
             Self::Deleted => "deleted",
+            Self::IsEpic => "is_epic",
         }
     }
 
@@ -70,6 +74,8 @@ impl TaskField {
             Self::Priority => TaskPriority::parse(value).map(|_| ()),
             Self::Deleted if matches!(value, "0" | "1") => Ok(()),
             Self::Deleted => anyhow::bail!("error invalid-deleted value={value}"),
+            Self::IsEpic if matches!(value, "0" | "1") => Ok(()),
+            Self::IsEpic => anyhow::bail!("error invalid-is-epic value={value}"),
             _ => Ok(()),
         }
     }
@@ -122,6 +128,13 @@ impl TaskField {
                     "0".to_string()
                 }
             }
+            Self::IsEpic => {
+                if task.is_epic {
+                    "1".to_string()
+                } else {
+                    "0".to_string()
+                }
+            }
         }
     }
 }
@@ -145,7 +158,8 @@ mod tests {
                 "project",
                 "status",
                 "priority",
-                "deleted"
+                "deleted",
+                "is_epic"
             ]
         );
     }

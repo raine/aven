@@ -16,6 +16,8 @@ pub(crate) struct TaskEnrichment {
     pub(crate) dependent_counts_by_task: HashMap<String, i64>,
     pub(crate) depends_on_by_task: HashMap<String, Vec<TaskDependencyLink>>,
     pub(crate) blocks_by_task: HashMap<String, Vec<TaskDependencyLink>>,
+    pub(crate) epic_children_by_task: HashMap<String, Vec<TaskDependencyLink>>,
+    pub(crate) epic_parent_by_task: HashMap<String, TaskDependencyLink>,
 }
 
 pub(crate) async fn load_task_enrichment(
@@ -36,6 +38,8 @@ pub(crate) async fn load_task_enrichment(
         dependent_counts_by_task: dependent_counts_for_tasks(conn, workspace_id, task_ids).await?,
         depends_on_by_task: dependency_links_for_tasks(conn, workspace_id, task_ids, false).await?,
         blocks_by_task: dependency_links_for_tasks(conn, workspace_id, task_ids, true).await?,
+        epic_children_by_task: epic_children_for_tasks(conn, workspace_id, task_ids).await?,
+        epic_parent_by_task: epic_parents_for_tasks(conn, workspace_id, task_ids).await?,
     })
 }
 
@@ -324,6 +328,116 @@ async fn dependency_links_for_tasks(
                     priority: row.get("priority"),
                     unresolved: row.get::<i64, _>("unresolved") != 0,
                 });
+        }
+    }
+    Ok(links)
+}
+
+async fn epic_children_for_tasks(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_ids: &[String],
+) -> Result<HashMap<String, Vec<TaskDependencyLink>>> {
+    let mut links = HashMap::new();
+    if task_ids.is_empty() {
+        return Ok(links);
+    }
+    let workspace_task_ids = workspace_task_ids(conn, workspace_id).await?;
+    for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT l.epic_task_id AS source_task_id,
+                    t.id, t.title, t.status, t.priority, p.prefix AS project_prefix,
+                    CASE WHEN ",
+        );
+        query.push(fragments::open_task_clause("t"));
+        query.push(
+            " THEN 1 ELSE 0 END AS unresolved
+             FROM task_epic_links l
+             JOIN tasks t ON t.workspace_id = l.workspace_id AND t.id = l.child_task_id
+             JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
+             WHERE l.workspace_id = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(" AND l.epic_task_id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for task_id in chunk {
+                separated.push_bind(task_id);
+            }
+        }
+        query.push(
+            ") AND t.deleted = 0 ORDER BY unresolved DESC, t.status, t.title, l.created_at, t.id",
+        );
+
+        for row in query.build().fetch_all(&mut *conn).await? {
+            let source_task_id: String = row.get("source_task_id");
+            let task_id: String = row.get("id");
+            let project_prefix: String = row.get("project_prefix");
+            links
+                .entry(source_task_id)
+                .or_insert_with(Vec::new)
+                .push(TaskDependencyLink {
+                    task_id: task_id.clone(),
+                    display_ref: display_ref_for_id(&project_prefix, &task_id, &workspace_task_ids),
+                    title: row.get("title"),
+                    status: row.get("status"),
+                    priority: row.get("priority"),
+                    unresolved: row.get::<i64, _>("unresolved") != 0,
+                });
+        }
+    }
+    Ok(links)
+}
+
+async fn epic_parents_for_tasks(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_ids: &[String],
+) -> Result<HashMap<String, TaskDependencyLink>> {
+    let mut links = HashMap::new();
+    if task_ids.is_empty() {
+        return Ok(links);
+    }
+    let workspace_task_ids = workspace_task_ids(conn, workspace_id).await?;
+    for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT l.child_task_id AS source_task_id,
+                    t.id, t.title, t.status, t.priority, p.prefix AS project_prefix,
+                    CASE WHEN ",
+        );
+        query.push(fragments::open_task_clause("t"));
+        query.push(
+            " THEN 1 ELSE 0 END AS unresolved
+             FROM task_epic_links l
+             JOIN tasks t ON t.workspace_id = l.workspace_id AND t.id = l.epic_task_id
+             JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
+             WHERE l.workspace_id = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(" AND l.child_task_id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for task_id in chunk {
+                separated.push_bind(task_id);
+            }
+        }
+        query.push(") AND t.deleted = 0 ORDER BY t.title, l.created_at, t.id");
+
+        for row in query.build().fetch_all(&mut *conn).await? {
+            let source_task_id: String = row.get("source_task_id");
+            let task_id: String = row.get("id");
+            let project_prefix: String = row.get("project_prefix");
+            links.insert(
+                source_task_id,
+                TaskDependencyLink {
+                    task_id: task_id.clone(),
+                    display_ref: display_ref_for_id(&project_prefix, &task_id, &workspace_task_ids),
+                    title: row.get("title"),
+                    status: row.get("status"),
+                    priority: row.get("priority"),
+                    unresolved: row.get::<i64, _>("unresolved") != 0,
+                },
+            );
         }
     }
     Ok(links)

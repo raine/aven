@@ -13,7 +13,7 @@ use crate::operations::{
 use crate::projects::resolve_existing_project_in_workspace;
 use crate::refs::{display_ref, display_suffix, resolve_task_ref};
 use crate::render::{print_json_pretty, print_multiline_block, print_text_diff, quote};
-use crate::task_fields::TaskField;
+use crate::task_render::conflict_display_value;
 use crate::types::Task;
 
 #[derive(Serialize)]
@@ -251,29 +251,7 @@ fn export_conflict_variant(dir: &Path, field: &str, variant: &str, value: &str) 
     Ok(())
 }
 
-pub(super) async fn conflict_display_value(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-    field: &str,
-    value: &str,
-) -> Result<String> {
-    if field != TaskField::Project.as_str() {
-        return Ok(value.to_string());
-    }
-    if let Some((key, prefix)) = sqlx::query_as::<_, (String, String)>(
-        "SELECT key, prefix FROM projects WHERE workspace_id = ? AND id = ?",
-    )
-    .bind(workspace_id)
-    .bind(value)
-    .fetch_optional(&mut *conn)
-    .await?
-    {
-        return Ok(format!("{key} prefix={prefix}"));
-    }
-    Ok(value.to_string())
-}
-
-fn single_conflict(
+pub(super) fn single_conflict(
     details: Vec<ConflictDetail>,
     task_id: &str,
     field: &str,

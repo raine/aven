@@ -15,6 +15,8 @@ pub(crate) mod op_type {
     pub(crate) const NOTE_DELETE: &str = "note_delete";
     pub(crate) const DEPENDENCY_ADD: &str = "dependency_add";
     pub(crate) const DEPENDENCY_REMOVE: &str = "dependency_remove";
+    pub(crate) const EPIC_LINK_ADD: &str = "epic_link_add";
+    pub(crate) const EPIC_LINK_REMOVE: &str = "epic_link_remove";
     pub(crate) const CREATE_PROJECT: &str = "create_project";
     pub(crate) const SET_PROJECT_METADATA: &str = "set_project_metadata";
     pub(crate) const PROJECT_DELETE: &str = "project_delete";

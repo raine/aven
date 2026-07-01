@@ -64,10 +64,12 @@ pub(super) fn task_list_hit_in_view(
     let (_, row) = *viewport_rows.get(visual_row)?;
     let viewport_row = u16::try_from(visual_row).ok()?;
     match row {
-        TaskListRow::Task { task_index } => Some(TaskListHitCandidate {
-            task_index: *task_index,
-            viewport_row,
-        }),
+        TaskListRow::Task { task_index } | TaskListRow::EpicChild { task_index, .. } => {
+            Some(TaskListHitCandidate {
+                task_index: *task_index,
+                viewport_row,
+            })
+        }
         TaskListRow::Group(_) => None,
     }
 }
@@ -93,6 +95,7 @@ mod tests {
     use crate::choices::{TaskPriority, TaskStatus};
     use crate::queue::QueueBand;
     use crate::tui::store::TaskListRenderMode;
+    use std::collections::BTreeSet;
 
     fn task_item(title: &str) -> TaskListItem {
         TaskListItem {
@@ -110,6 +113,7 @@ mod tests {
                 updated_at: "2026-06-20T00:00:00Z".to_string(),
                 queue_activity_at: "2026-06-20T00:00:00Z".to_string(),
                 deleted: false,
+                is_epic: false,
             },
             display_ref: "APP-1".to_string(),
             labels: Vec::new(),
@@ -119,6 +123,8 @@ mod tests {
             dependent_count: 0,
             depends_on: Vec::new(),
             blocks: Vec::new(),
+            epic_children: Vec::new(),
+            epic_parent: None,
             queue: Default::default(),
         }
     }
@@ -147,7 +153,7 @@ mod tests {
         task_id(&mut tasks[0], "task-1");
         task_id(&mut tasks[1], "task-2");
         task_id(&mut tasks[2], "task-3");
-        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks);
+        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
         let table_area = Rect::new(0, 0, 80, 10);
         let table_state = TableState::default();
 
@@ -180,7 +186,7 @@ mod tests {
             task_id(&mut item, &format!("task-{index:02}"));
             tasks.push(item);
         }
-        let view = TaskListView::from_tasks(TaskListRenderMode::Flat, &tasks);
+        let view = TaskListView::from_tasks(TaskListRenderMode::Flat, &tasks, &BTreeSet::new());
         let mut table_state = TableState::default();
         table_state.select(Some(10));
 
@@ -194,7 +200,7 @@ mod tests {
         let tasks = (0..20)
             .map(|index| task_item(&format!("task {index}")))
             .collect::<Vec<_>>();
-        let view = TaskListView::from_tasks(TaskListRenderMode::Flat, &tasks);
+        let view = TaskListView::from_tasks(TaskListRenderMode::Flat, &tasks, &BTreeSet::new());
         let mut table_state = TableState::default();
         table_state.select(Some(10));
 

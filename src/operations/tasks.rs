@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use sqlx::SqliteConnection;
 use tracing::info;
 
@@ -20,6 +20,7 @@ pub(crate) struct TaskDraft {
     pub(crate) status: String,
     pub(crate) priority: String,
     pub(crate) labels: Vec<String>,
+    pub(crate) is_epic: bool,
 }
 
 pub(crate) struct TaskOutcome {
@@ -34,6 +35,7 @@ pub(crate) struct TaskUpdate {
     pub(crate) project: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) priority: Option<String>,
+    pub(crate) is_epic: Option<bool>,
     pub(crate) add_labels: Vec<String>,
     pub(crate) remove_labels: Vec<String>,
 }
@@ -84,8 +86,8 @@ pub(crate) async fn create_task_in_workspace(
             .await?;
     let labels = resolve_labels_in_workspace(&mut tx, &workspace.id, &draft.labels).await?;
     sqlx::query(
-        "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, is_epic)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&workspace.id)
     .bind(&id)
@@ -97,6 +99,7 @@ pub(crate) async fn create_task_in_workspace(
     .bind(&ts)
     .bind(&ts)
     .bind(&ts)
+    .bind(i64::from(draft.is_epic))
     .execute(&mut *tx)
     .await?;
     for label in &labels {
@@ -124,6 +127,7 @@ pub(crate) async fn create_task_in_workspace(
             .set("project_prefix", project.prefix.clone())
             .set("status", status.as_str())
             .set("priority", priority.as_str())
+            .set("is_epic", if draft.is_epic { "1" } else { "0" })
             .set("labels", &labels)
             .set("created_at", ts),
     )
@@ -177,6 +181,16 @@ pub(crate) async fn update_task(
     }
     if let Some(priority) = update.priority {
         changed |= update_task_field(&mut tx, task_id, "priority", &priority).await?;
+    }
+    if let Some(is_epic) = update.is_epic {
+        if !is_epic {
+            let task = get_task(&mut tx, task_id).await?;
+            if super::epics::task_has_epic_children(&mut tx, &task.workspace_id, task_id).await? {
+                bail!("error epic-has-children task_id={task_id}");
+            }
+        }
+        changed |=
+            update_task_field(&mut tx, task_id, "is_epic", if is_epic { "1" } else { "0" }).await?;
     }
     let workspace_id = crate::workspaces::active_workspace_id();
     if update_task_labels_in_workspace(

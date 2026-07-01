@@ -301,6 +301,7 @@ pub(crate) async fn parsed_output_to_draft(
         status: "inbox".to_string(),
         priority,
         labels,
+        is_epic: false,
     })
 }
 

@@ -28,7 +28,7 @@ use crate::tui::overlay::TextInputView;
 use crate::tui::store::{TaskListRenderMode, TuiStore};
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, RED, SELECTED,
-    SELECTED_INACTIVE,
+    SELECTED_INACTIVE, YELLOW,
 };
 use crate::tui::widgets::{
     age_style, label_cell, priority_icon, priority_short, status_chip, status_span, title_cell,
@@ -39,6 +39,8 @@ impl TaskListRenderMode {
         matches!(self, Self::Queue)
     }
 }
+
+const EPIC_MARKER: &str = "\u{f04ce}";
 
 #[derive(Debug)]
 struct TaskListRenderModel {
@@ -70,8 +72,15 @@ struct TaskListAreas {
 }
 
 fn task_list_areas(area: Rect) -> TaskListAreas {
-    let [table_area, preview_area] = if area.height >= 24 {
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(8)]).areas(area)
+    let preview_height = if area.height >= 32 {
+        12
+    } else if area.height >= 24 {
+        8
+    } else {
+        0
+    };
+    let [table_area, preview_area] = if preview_height > 0 {
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(preview_height)]).areas(area)
     } else {
         [area, Rect::default()]
     };
@@ -241,15 +250,41 @@ fn build_task_list_render_model(
                 };
                 let selected = selected_task == Some(*task_index);
                 let style = row_style(selected, focus == Focus::Tasks);
-                rows.push(TaskListRenderRow::Task(TaskListTaskRow {
-                    style,
-                    cells: build_task_row_cells(
+                let cells = if view.render_mode == TaskListRenderMode::Epics && item.task.is_epic {
+                    build_epic_parent_row_cells(
+                        item,
+                        now,
+                        store,
+                        inline_title_editor.filter(|_| selected),
+                        &column_widths,
+                    )
+                } else {
+                    build_task_row_cells(
                         item,
                         now,
                         view.render_mode,
                         inline_title_editor.filter(|_| selected),
                         &column_widths,
-                    ),
+                    )
+                };
+                rows.push(TaskListRenderRow::Task(TaskListTaskRow { style, cells }));
+            }
+            TaskListRow::EpicChild {
+                parent_index: _,
+                task_index,
+                last,
+            } => {
+                let Some(item) = store.tasks.get(*task_index) else {
+                    rows.push(TaskListRenderRow::Task(TaskListTaskRow {
+                        style: row_style(false, focus == Focus::Tasks),
+                        cells: blank_task_row_cells(),
+                    }));
+                    continue;
+                };
+                let selected = selected_task == Some(*task_index);
+                rows.push(TaskListRenderRow::Task(TaskListTaskRow {
+                    style: row_style(selected, focus == Focus::Tasks),
+                    cells: build_epic_child_row_cells(item, *last, now, &column_widths),
                 }));
             }
         }
@@ -271,8 +306,13 @@ fn task_list_columns(store: &TuiStore, narrow: bool) -> [Constraint; 8] {
     let label_width = label_column_width(store, narrow);
     let metadata_width = metadata_column_width(store);
     let priority_width = priority_column_width(store);
+    let ref_width = if store.view_state.render_mode() == TaskListRenderMode::Epics {
+        14
+    } else {
+        12
+    };
     [
-        Constraint::Length(12),
+        Constraint::Length(ref_width),
         Constraint::Fill(1),
         Constraint::Length(label_width),
         Constraint::Length(metadata_width),
@@ -528,6 +568,90 @@ fn build_task_row_cells(
     ]
 }
 
+fn build_epic_parent_row_cells(
+    item: &TaskListItem,
+    now_seconds: i64,
+    store: &TuiStore,
+    inline_title_editor: Option<&TextInputView>,
+    column_widths: &[usize; 8],
+) -> Vec<Line<'static>> {
+    let age_seconds = task_seconds_since(&item.task.created_at, now_seconds);
+    let title = inline_title_editor
+        .map(|editor| inline_title_edit_cell(editor, column_widths[1]))
+        .unwrap_or_else(|| title_cell(item, column_widths[1]));
+    let expanded = store.view_state.expanded_epic_ids.contains(&item.task.id);
+    let mut ref_spans = vec![
+        Span::raw(" "),
+        Span::styled(if expanded { "▾" } else { "▸" }, Style::new().fg(ACCENT)),
+        Span::raw(" "),
+    ];
+    if let Some((project, suffix)) = item.display_ref.split_once('-') {
+        ref_spans.push(Span::styled(
+            project.to_string(),
+            Style::new().fg(theme::project_color(&item.task.project_key)),
+        ));
+        ref_spans.push(Span::styled("-", Style::new().fg(FG_DIM)));
+        ref_spans.push(Span::styled(suffix.to_string(), Style::new().fg(FG_MUTED)));
+    } else {
+        ref_spans.push(Span::styled(
+            item.display_ref.clone(),
+            Style::new().fg(FG_MUTED),
+        ));
+    }
+    vec![
+        Line::from(ref_spans),
+        title,
+        label_cell(&item.labels, column_widths[2]),
+        metadata_cell(item),
+        project_cell(item, column_widths[4]),
+        status_chip(item.task.status.as_str()),
+        Line::from(Span::styled(
+            priority_icon(item.task.priority.as_str()),
+            theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            age_seconds.map(compact_age).unwrap_or_default(),
+            age_style(&item.task.created_at, now_seconds),
+        )),
+    ]
+}
+
+fn build_epic_child_row_cells(
+    item: &TaskListItem,
+    last: bool,
+    now_seconds: i64,
+    column_widths: &[usize; 8],
+) -> Vec<Line<'static>> {
+    let age_seconds = task_seconds_since(&item.task.created_at, now_seconds);
+    let branch = if last { "└─" } else { "├─" };
+    let ref_prefix = format!(" {branch} ");
+    let display_ref = truncate_chars(
+        &item.display_ref,
+        column_widths[0].saturating_sub(ref_prefix.chars().count() + 1),
+    );
+    let ref_line = Line::from(vec![
+        Span::styled(ref_prefix, Style::new().fg(FG_DIM)),
+        Span::styled(display_ref, Style::new().fg(FG_MUTED)),
+        Span::raw(" "),
+    ]);
+    vec![
+        ref_line,
+        title_cell(item, column_widths[1]),
+        label_cell(&item.labels, column_widths[2]),
+        metadata_cell(item),
+        project_cell(item, column_widths[4]),
+        status_chip(item.task.status.as_str()),
+        Line::from(Span::styled(
+            priority_icon(item.task.priority.as_str()),
+            theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            age_seconds.map(compact_age).unwrap_or_default(),
+            age_style(&item.task.created_at, now_seconds),
+        )),
+    ]
+}
+
 fn blank_task_row_cells() -> Vec<Line<'static>> {
     vec![
         Line::from(""),
@@ -543,7 +667,16 @@ fn blank_task_row_cells() -> Vec<Line<'static>> {
 
 fn metadata_cell(item: &TaskListItem) -> Line<'static> {
     let mut spans = Vec::new();
+    if item.task.is_epic {
+        spans.push(Span::styled(
+            EPIC_MARKER,
+            Style::new().fg(YELLOW).remove_modifier(Modifier::BOLD),
+        ));
+    }
     if item.task.deleted {
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+        }
         spans.push(Span::styled(
             "×",
             Style::new().fg(RED).add_modifier(Modifier::BOLD),
@@ -727,6 +860,49 @@ fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usi
         ]),
     ];
     lines.extend(dependency_preview_lines(item));
+    if let Some(parent) = &item.epic_parent {
+        lines.push(Line::from(vec![
+            Span::styled("part of ", Style::new().fg(FG_DIM)),
+            Span::styled(
+                format!("{} {}", parent.display_ref, parent.title),
+                Style::new().fg(FG_MUTED),
+            ),
+        ]));
+    }
+    let open_child_links: Vec<_> = item
+        .epic_children
+        .iter()
+        .filter(|link| link.unresolved)
+        .collect();
+    if !open_child_links.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled(
+                "CHILD TASKS ",
+                Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("({}/{})", open_child_links.len(), item.epic_children.len()),
+                Style::new().fg(ACCENT),
+            ),
+        ]));
+        for link in open_child_links.iter().take(5) {
+            lines.push(Line::from(vec![
+                Span::styled("  └ ", Style::new().fg(FG_DIM)),
+                Span::styled(
+                    format!("{} ", link.display_ref),
+                    Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(&link.title, Style::new().fg(FG_MUTED)),
+                Span::styled(format!(" {}", link.status), Style::new().fg(FG_DIM)),
+            ]));
+        }
+        if open_child_links.len() > 5 {
+            lines.push(Line::from(vec![Span::styled(
+                format!("  ... +{} more", open_child_links.len() - 5),
+                Style::new().fg(FG_DIM),
+            )]));
+        }
+    }
     lines.extend([
         Line::from(""),
         Line::from(description_preview_text(&item.task.description)),
@@ -772,6 +948,7 @@ mod tests {
                 updated_at: "2026-06-20T00:00:00Z".to_string(),
                 queue_activity_at: "2026-06-20T00:00:00Z".to_string(),
                 deleted: false,
+                is_epic: false,
             },
             display_ref: "APP-1".to_string(),
             labels: Vec::new(),
@@ -781,6 +958,8 @@ mod tests {
             dependent_count: 0,
             depends_on: Vec::new(),
             blocks: Vec::new(),
+            epic_children: Vec::new(),
+            epic_parent: None,
             queue: Default::default(),
         }
     }
@@ -845,6 +1024,7 @@ mod tests {
                 status: item.task.status.as_str().to_string(),
                 priority: item.task.priority.as_str().to_string(),
                 labels: Vec::new(),
+                is_epic: false,
             };
             store.create_task(draft, None).await.unwrap();
         }
@@ -1095,6 +1275,17 @@ mod tests {
     }
 
     #[test]
+    fn metadata_cell_marks_epics() {
+        let mut item = task_item("epic");
+        item.task.is_epic = true;
+
+        let line = metadata_cell(&item);
+
+        assert_eq!(line.to_string(), EPIC_MARKER);
+        assert_eq!(line.spans[0].style.fg, Some(YELLOW));
+    }
+
+    #[test]
     fn metadata_cell_shows_dependency_counts() {
         let mut item = task_item("blocked");
         item.unresolved_blocker_count = 2;
@@ -1165,5 +1356,80 @@ mod tests {
         );
 
         assert!(cells[1].to_string().contains("edited title"));
+    }
+
+    #[test]
+    fn preview_shows_child_tasks_for_epic_parent() {
+        let mut item = task_item("epic");
+        item.epic_children = vec![
+            crate::query::TaskDependencyLink {
+                task_id: "child-1".to_string(),
+                display_ref: "APP-C001".to_string(),
+                title: "first child".to_string(),
+                status: "todo".to_string(),
+                priority: "none".to_string(),
+                unresolved: true,
+            },
+            crate::query::TaskDependencyLink {
+                task_id: "child-2".to_string(),
+                display_ref: "APP-C002".to_string(),
+                title: "second child".to_string(),
+                status: "active".to_string(),
+                priority: "none".to_string(),
+                unresolved: true,
+            },
+        ];
+
+        let lines = vec![
+            task_heading_line(&item),
+            task_preview_fields_line(&item),
+            Line::from(vec![
+                Span::styled("labels ", Style::new().fg(FG_DIM)),
+                Span::styled(String::new(), Style::new().fg(FG_MUTED)),
+            ]),
+        ];
+        let mut extended_lines = lines.clone();
+        extended_lines.extend(dependency_preview_lines(&item));
+        let open_child_links: Vec<_> = item
+            .epic_children
+            .iter()
+            .filter(|link| link.unresolved)
+            .collect();
+        if !open_child_links.is_empty() {
+            extended_lines.push(Line::from(vec![
+                Span::styled(
+                    "CHILD TASKS ",
+                    Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("({}/{})", open_child_links.len(), item.epic_children.len()),
+                    Style::new().fg(ACCENT),
+                ),
+            ]));
+            for link in open_child_links.iter().take(5) {
+                extended_lines.push(Line::from(vec![
+                    Span::styled("  └ ", Style::new().fg(FG_DIM)),
+                    Span::styled(
+                        format!("{} ", link.display_ref),
+                        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(&link.title, Style::new().fg(FG_MUTED)),
+                    Span::styled(format!(" {}", link.status), Style::new().fg(FG_DIM)),
+                ]));
+            }
+        }
+
+        let rendered = extended_lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("CHILD TASKS"));
+        assert!(rendered.contains("(2/2)"));
+        assert!(rendered.contains("APP-C001"));
+        assert!(rendered.contains("first child"));
+        assert!(rendered.contains("APP-C002"));
+        assert!(rendered.contains("second child"));
     }
 }

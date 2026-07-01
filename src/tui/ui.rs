@@ -22,9 +22,9 @@ use self::detail::render_detail_underlay;
 use self::footer::{FooterMode, footer_bar};
 use self::header::render_header;
 use self::overlays::{
-    SearchRenderStatus, render_confirm, render_database_stats, render_multiline_input,
-    render_picker, render_search, render_sync_status, render_tag_combobox, render_text_input,
-    render_text_panel,
+    SearchRenderStatus, SearchRenderView, render_confirm, render_database_stats,
+    render_multiline_input, render_picker, render_search, render_sync_status, render_tag_combobox,
+    render_text_input, render_text_panel,
 };
 use self::shortcuts::{render_command, render_detail_help, render_help, render_prefix_hints};
 use self::sidebar::{render_sidebar, render_sidebar_overlay};
@@ -526,16 +526,18 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
             purpose,
         } => render_search(
             frame,
-            input,
-            *cursor,
-            results,
-            *selected,
-            SearchRenderStatus {
+            SearchRenderView {
+                input,
+                cursor: *cursor,
+                results,
+                selected: *selected,
                 total_matches: *total_matches,
-                stale: *stale,
-                no_matches_cached: *no_matches_cached,
+                status: SearchRenderStatus {
+                    stale: *stale,
+                    no_matches_cached: *no_matches_cached,
+                },
+                purpose,
             },
-            purpose,
         ),
         OverlayView::Command {
             input,

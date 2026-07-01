@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use anyhow::{Result, bail};
 use serde::Serialize;
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use sqlx::SqliteConnection;
@@ -31,9 +32,10 @@ pub(crate) use self::projects::cmd_project;
 pub(crate) use self::workspaces::cmd_workspace;
 use crate::choices::{TaskPriority, TaskStatus};
 use crate::cli::{
-    AddArgs, BulkUpdateArgs, DepCommand, DepSubcommand, InternalNaturalAddArgs, LabelCommand,
-    LabelSubcommand, ListArgs, NoteArgs, NoteDeleteArgs, PrimeArgs, RefArgs, SearchArgs, ShowArgs,
-    TaskSearchArgs, TextCommand, TextSubcommand, TmuxAddTaskPopupArgs, UpdateArgs,
+    AddArgs, BulkUpdateArgs, DepCommand, DepSubcommand, EpicCommand, EpicSubcommand,
+    InternalNaturalAddArgs, LabelCommand, LabelSubcommand, ListArgs, NoteArgs, NoteDeleteArgs,
+    PrimeArgs, RefArgs, SearchArgs, ShowArgs, TaskSearchArgs, TextCommand, TextSubcommand,
+    TmuxAddTaskPopupArgs, UpdateArgs,
 };
 use crate::config::{self as app_config, AppConfig};
 use crate::db::{conflict_exists, get_meta};
@@ -41,9 +43,9 @@ use crate::input::{read_optional_text, read_required_text};
 use crate::labels::list_labels;
 use crate::labels::resolve_labels_in_workspace;
 use crate::operations::{
-    TaskDraft, TaskUpdate, add_note, add_task_dependency, create_label_operation, create_task,
-    create_task_in_workspace, delete_label_operation, delete_note, remove_task_dependency,
-    set_task_deleted, update_task,
+    TaskDraft, TaskUpdate, add_note, add_task_dependency, add_task_to_epic, create_label_operation,
+    create_task, create_task_in_workspace, delete_label_operation, delete_note,
+    remove_task_dependency, remove_task_from_epic, set_task_deleted, update_task,
 };
 use crate::projects::{
     find_project_in_workspace, inferred_project_key_for_add_in_workspace,
@@ -58,8 +60,9 @@ use crate::render::{
 };
 use crate::task_fields::TaskField;
 use crate::task_render::{
-    TaskConflictJson, TaskFullJson, TaskNoteJson, print_task, print_task_dependency_summary,
-    print_task_line_item, task_dependency_summary_json, task_line_json_item,
+    TaskConflictJson, TaskFullJson, TaskNoteJson, conflict_display_value, print_task,
+    print_task_dependency_summary, print_task_line_item, task_dependency_summary_json,
+    task_epic_link_json, task_line_json_item,
 };
 use crate::types::Task;
 use crate::workspaces::{resolve_active_workspace, set_active_workspace, workspace_for_id};
@@ -96,6 +99,7 @@ pub(crate) async fn cmd_add(
             status: "inbox".to_string(),
             priority: args.priority,
             labels: args.label,
+            is_epic: args.epic,
         }
     };
     let outcome = create_task(conn, draft).await?;
@@ -252,6 +256,10 @@ pub(crate) async fn cmd_show(conn: &mut SqliteConnection, args: ShowArgs) -> Res
                 let local_value: String = row.get("local_value");
                 let variant_b: String = row.get("variant_b");
                 let remote_value: String = row.get("remote_value");
+                let local_value =
+                    conflict_display_value(conn, &task.workspace_id, &field, &local_value).await?;
+                let remote_value =
+                    conflict_display_value(conn, &task.workspace_id, &field, &remote_value).await?;
                 conflict_items.push(TaskConflictJson {
                     field,
                     variant_a,
@@ -289,6 +297,9 @@ pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Res
         bail!(
             "error list-dependency-filter-all-conflict hint=\"dependency filters only include open tasks\""
         );
+    }
+    if args.ready && args.epics {
+        bail!("error list-epic-ready-conflict hint=\"pass at most one of --ready or --epics\"");
     }
     let filters = list_task_filters(&args);
     let mut items = query::list_task_items(
@@ -421,6 +432,74 @@ pub(crate) async fn cmd_dep(conn: &mut SqliteConnection, args: DepCommand) -> Re
                 print_json_pretty(&json)?;
             } else {
                 print_task_dependency_summary(&summary);
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) async fn cmd_epic(conn: &mut SqliteConnection, args: EpicCommand) -> Result<()> {
+    match args.command {
+        EpicSubcommand::Add(args) => {
+            let child = resolve_task_ref(conn, &args.child_ref).await?;
+            let epic = resolve_task_ref(conn, &args.epic_ref).await?;
+            let outcome = add_task_to_epic(conn, &child.id, &epic.id).await?;
+            println!(
+                "epic-added {} changed={} epic={}",
+                display_ref(conn, &outcome.child).await?,
+                changed_text(outcome.changed),
+                display_ref(conn, &outcome.epic).await?,
+            );
+        }
+        EpicSubcommand::Remove(args) => {
+            let child = resolve_task_ref(conn, &args.child_ref).await?;
+            let epic = resolve_task_ref(conn, &args.epic_ref).await?;
+            let outcome = remove_task_from_epic(conn, &child.id, &epic.id).await?;
+            println!(
+                "epic-removed {} changed={} epic={}",
+                display_ref(conn, &outcome.child).await?,
+                changed_text(outcome.changed),
+                display_ref(conn, &outcome.epic).await?,
+            );
+        }
+        EpicSubcommand::List(args) => {
+            let epic = resolve_task_ref(conn, &args.epic_ref).await?;
+            let mut items = query::list_task_items(
+                conn,
+                TaskFilters {
+                    task_ids: vec![epic.id.clone()],
+                    include_deleted: true,
+                    ..TaskFilters::default()
+                },
+                TaskQueryMode::Flat,
+                TaskSort::Created,
+                SortDirection::Asc,
+            )
+            .await?;
+            let Some(item) = items.pop() else {
+                bail!("error task-not-found ref={}", args.epic_ref);
+            };
+            if args.json {
+                print_json_pretty(&json!({
+                    "epic": task_line_json_item(&item),
+                    "children": item.epic_children.iter().map(task_epic_link_json).collect::<Vec<_>>()
+                }))?;
+            } else {
+                println!(
+                    "epic {} title={} children={}",
+                    item.display_ref,
+                    quote(&item.task.title),
+                    item.epic_children.len()
+                );
+                for child in &item.epic_children {
+                    println!(
+                        "- {} status={} priority={} title={}",
+                        child.display_ref,
+                        child.status,
+                        child.priority,
+                        quote(&child.title)
+                    );
+                }
             }
         }
     }
@@ -687,6 +766,7 @@ fn bulk_update_for_item(
             .as_deref()
             .filter(|priority| *priority != item.task.priority.as_str())
             .map(str::to_string),
+        is_epic: None,
         add_labels: add_labels
             .iter()
             .filter(|label| !item.labels.contains(label))
@@ -867,6 +947,9 @@ struct PrimeIssueJson {
     priority: String,
     labels: Vec<String>,
     title: String,
+    is_epic: bool,
+    epic_parent_ref: Option<String>,
+    epic_child_refs: Vec<String>,
     blocked_by_refs: Vec<String>,
     blocks_refs: Vec<String>,
 }
@@ -1038,6 +1121,16 @@ fn prime_issue_json(item: &query::TaskListItem) -> PrimeIssueJson {
         priority: item.task.priority.to_string(),
         labels: item.labels.clone(),
         title: item.task.title.clone(),
+        is_epic: item.task.is_epic,
+        epic_parent_ref: item
+            .epic_parent
+            .as_ref()
+            .map(|parent| parent.display_ref.clone()),
+        epic_child_refs: item
+            .epic_children
+            .iter()
+            .map(|child| child.display_ref.clone())
+            .collect(),
         blocked_by_refs: item
             .depends_on
             .iter()
@@ -1256,6 +1349,8 @@ fn list_task_filters(args: &ListArgs) -> TaskFilters {
     TaskFilters {
         ready_only: args.ready,
         blocked_only: args.blocked,
+        epics_only: args.epics,
+        exclude_epics: args.ready,
         label: args.label.clone(),
         ..TaskFilters::default()
             .with_project(args.project.clone())
@@ -1269,8 +1364,19 @@ fn list_task_filters(args: &ListArgs) -> TaskFilters {
 fn prime_task_filters(project: String) -> TaskFilters {
     TaskFilters {
         hide_done: true,
+        exclude_epics: true,
         ..TaskFilters::default().with_project(Some(project))
     }
+}
+
+fn parse_epic_switch(value: Option<String>) -> Result<Option<bool>> {
+    value
+        .map(|value| match value.as_str() {
+            "on" | "true" | "1" => Ok(true),
+            "off" | "false" | "0" => Ok(false),
+            _ => bail!("error invalid-epic value={value}"),
+        })
+        .transpose()
 }
 
 pub(crate) async fn cmd_update(conn: &mut SqliteConnection, args: UpdateArgs) -> Result<()> {
@@ -1283,6 +1389,7 @@ pub(crate) async fn cmd_update(conn: &mut SqliteConnection, args: UpdateArgs) ->
     )?;
     validate_optional_status(args.status.as_deref())?;
     validate_optional_priority(args.priority.as_deref())?;
+    let is_epic = parse_epic_switch(args.epic)?;
     let outcome = update_task(
         conn,
         &task.id,
@@ -1292,6 +1399,7 @@ pub(crate) async fn cmd_update(conn: &mut SqliteConnection, args: UpdateArgs) ->
             project: args.project,
             status: args.status,
             priority: args.priority,
+            is_epic,
             add_labels: args.label,
             remove_labels: args.remove_label,
         },

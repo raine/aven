@@ -47,6 +47,7 @@ struct ExportTables {
     task_labels: Vec<TaskLabelRow>,
     notes: Vec<NoteRow>,
     task_dependencies: Vec<TaskDependencyRow>,
+    task_epic_links: Vec<TaskEpicLinkRow>,
     changes: Vec<ChangeRow>,
     field_versions: Vec<FieldVersionRow>,
     conflicts: Vec<ConflictRow>,
@@ -109,6 +110,15 @@ struct TaskRow {
     updated_at: String,
     queue_activity_at: String,
     deleted: i64,
+    is_epic: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+struct TaskEpicLinkRow {
+    workspace_id: String,
+    child_task_id: String,
+    epic_task_id: String,
+    created_at: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
@@ -228,6 +238,7 @@ pub(crate) async fn cmd_export(conn: &mut SqliteConnection, args: ExportArgs) ->
         task_labels: scan_task_labels(conn).await?,
         notes: scan_notes(conn).await?,
         task_dependencies: scan_task_dependencies(conn).await?,
+        task_epic_links: scan_task_epic_links(conn).await?,
         changes: scan_changes(conn).await?,
         field_versions: scan_field_versions(conn).await?,
         conflicts: scan_conflicts(conn).await?,
@@ -330,7 +341,7 @@ async fn scan_labels(conn: &mut SqliteConnection) -> Result<Vec<LabelRow>> {
 }
 
 async fn scan_tasks(conn: &mut SqliteConnection) -> Result<Vec<TaskRow>> {
-    tables::scan_rows(conn, "SELECT workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, deleted FROM tasks").await
+    tables::scan_rows(conn, "SELECT workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, deleted, is_epic FROM tasks").await
 }
 
 async fn scan_task_labels(conn: &mut SqliteConnection) -> Result<Vec<TaskLabelRow>> {
@@ -349,6 +360,14 @@ async fn scan_task_dependencies(conn: &mut SqliteConnection) -> Result<Vec<TaskD
     tables::scan_rows(
         conn,
         "SELECT workspace_id, task_id, depends_on_task_id, created_at FROM task_dependencies",
+    )
+    .await
+}
+
+async fn scan_task_epic_links(conn: &mut SqliteConnection) -> Result<Vec<TaskEpicLinkRow>> {
+    tables::scan_rows(
+        conn,
+        "SELECT workspace_id, child_task_id, epic_task_id, created_at FROM task_epic_links",
     )
     .await
 }
@@ -518,6 +537,21 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
         }
     }
 
+    for epic_link in &export.tables.task_epic_links {
+        let tasks = task_ids.get(&epic_link.workspace_id).ok_or_else(|| {
+            anyhow::Error::msg(format!(
+                "error invalid-export-snapshot epic_link.workspace_id={} is missing",
+                epic_link.workspace_id
+            ))
+        })?;
+        if !tasks.contains(&epic_link.child_task_id) || !tasks.contains(&epic_link.epic_task_id) {
+            bail!(
+                "error invalid-export-snapshot task_epic_links are missing tasks in workspace {}",
+                epic_link.workspace_id
+            );
+        }
+    }
+
     for alias in &export.tables.project_id_aliases {
         let workspace_projects = project_ids.get(&alias.workspace_id).ok_or_else(|| {
             anyhow::Error::msg(format!(
@@ -549,6 +583,7 @@ async fn replace_from_export(
     target_client_id: &str,
 ) -> Result<()> {
     let delete_order = [
+        "DELETE FROM task_epic_links",
         "DELETE FROM task_dependencies",
         "DELETE FROM task_labels",
         "DELETE FROM notes",
@@ -597,6 +632,7 @@ async fn replace_from_export(
     tables::import_task_labels(tx, &export.tables.task_labels).await?;
     tables::import_notes(tx, &export.tables.notes).await?;
     tables::import_task_dependencies(tx, &export.tables.task_dependencies).await?;
+    tables::import_task_epic_links(tx, &export.tables.task_epic_links).await?;
     tables::import_changes(tx, &export.tables.changes).await?;
     tables::import_field_versions(tx, &export.tables.field_versions).await?;
     tables::import_conflicts(tx, &export.tables.conflicts).await?;
@@ -667,6 +703,24 @@ pub(crate) async fn database_integrity_report(
     .await?);
     checks.push(count_check(
         conn,
+        "epic link children",
+        "SELECT count(*) FROM task_epic_links l LEFT JOIN tasks t ON t.workspace_id = l.workspace_id AND t.id = l.child_task_id WHERE t.id IS NULL",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
+        "epic link parents",
+        "SELECT count(*) FROM task_epic_links l LEFT JOIN tasks t ON t.workspace_id = l.workspace_id AND t.id = l.epic_task_id WHERE t.id IS NULL",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
+        "epic link parent flags",
+        "SELECT count(*) FROM task_epic_links l JOIN tasks t ON t.workspace_id = l.workspace_id AND t.id = l.epic_task_id WHERE t.is_epic = 0",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
         "conflict tasks",
         "SELECT count(*) FROM conflicts c LEFT JOIN tasks t ON t.workspace_id = c.workspace_id AND t.id = c.task_id WHERE c.resolved = 0 AND t.id IS NULL",
     )
@@ -674,7 +728,7 @@ pub(crate) async fn database_integrity_report(
     checks.push(count_check(
         conn,
         "field version tasks",
-        "SELECT count(*) FROM field_versions fv LEFT JOIN tasks t ON t.id = fv.entity_id WHERE t.id IS NULL AND fv.field IN ('title','description','status','priority','project','labels','deleted')",
+        "SELECT count(*) FROM field_versions fv LEFT JOIN tasks t ON t.id = fv.entity_id WHERE t.id IS NULL AND fv.field IN ('title','description','status','priority','project','labels','deleted','is_epic')",
     )
     .await?);
     checks.push(count_check(

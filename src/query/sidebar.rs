@@ -37,7 +37,11 @@ fn sidebar_counts_sql(project_scoped: bool) -> String {
          (SELECT COUNT(DISTINCT c.task_id)
           FROM conflicts c
           JOIN tasks ct ON ct.workspace_id = c.workspace_id AND ct.id = c.task_id
-          WHERE c.workspace_id = ? AND c.resolved = 0 AND ct.deleted = 0{conflict_project}) AS conflicts_count
+          WHERE c.workspace_id = ? AND c.resolved = 0 AND ct.deleted = 0{conflict_project}) AS conflicts_count,
+         (SELECT COUNT(*)
+          FROM tasks ep
+          WHERE ep.workspace_id = ?{task_project}
+            AND ep.deleted = 0 AND ep.status NOT IN ('done', 'canceled') AND ep.is_epic = 1) AS epics_count
          FROM tasks t
          WHERE t.workspace_id = ?{task_project}",
         sidebar_task_count_columns(),
@@ -81,6 +85,10 @@ pub(crate) async fn sidebar_counts_for_scope_in_workspace(
     if let Some(ref pid) = project_id {
         q = q.bind(pid);
     }
+    q = q.bind(workspace_id);
+    if let Some(ref pid) = project_id {
+        q = q.bind(pid);
+    }
     let row = q.fetch_one(&mut *conn).await?;
     Ok(SidebarCounts {
         open: row.get("open_count"),
@@ -90,5 +98,6 @@ pub(crate) async fn sidebar_counts_for_scope_in_workspace(
         todo: row.get("todo_count"),
         conflicts: row.get("conflicts_count"),
         done: row.get("done_count"),
+        epics: row.get("epics_count"),
     })
 }

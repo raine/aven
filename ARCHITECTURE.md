@@ -52,7 +52,7 @@
 
 SQLite stores synced task data and local UI state. Config files store local routing and service settings.
 
-- Synced domain tables: `workspaces`, `tasks`, `projects`, `labels`, `task_labels`, `notes`, `task_dependencies`.
+- Synced domain tables: `workspaces`, `tasks`, `projects`, `labels`, `task_labels`, `notes`, `task_dependencies`, `task_epic_links`.
 - Sync bookkeeping: `changes`, `field_versions`, `conflicts`, `meta`.
 - Local-only config: database path, sync settings, project path mappings, directory overrides.
 - Local-only TUI state: view, filter, selection, overlay, sort state, and `tui_undo_entries`; pending undo entries are cleared when a TUI store starts.
@@ -93,6 +93,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Overlay behavior tests live in the overlay module they exercise under `src/tui/overlay/`; the facade in `src/tui/overlay.rs` stays focused on module wiring and exports.
 - Record a TUI undo entry for completed TUI mutations unless the action is undo itself; pending TUI undo entries are valid only within the current `TuiStore` lifecycle and are cleared on store startup.
 - Do not log auth tokens, raw sync payloads, task descriptions, note bodies, user-authored labels or project names, or secret config values.
+- Keep epic membership represented by `tasks.is_epic` and `task_epic_links`. Dependency read models represent ordering only. JSON task surfaces include `is_epic`, `epic_parent`, and `epic_children` so agents can keep membership separate from blockers.
 - Keep sync protocol changes aligned across `src/sync/wire.rs`, `src/sync/client.rs`, `src/sync/server.rs`, `src/sync/apply.rs`, and `src/daemon.rs`. Request and response validation must match the client page loop and server page construction.
 - Keep bounded sync limits explicit: `MAX_PUSH_BATCH` bounds client push pages, `MAX_PULL_BATCH` bounds server pull pages, and `DAEMON_SYNC_PAGE_BUDGET` bounds daemon work per wake.
 - Keep cursor semantics based on `server_seq`. Pull pages are ordered by increasing `server_seq`; response cursors equal the last returned `server_seq` or the request cursor for an empty page; local `sync_cursor` advances only after a validated page applies successfully.
@@ -106,6 +107,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 | Change task context command output | `src/commands/context.rs` | `src/refs.rs`, `src/query/dependencies.rs`, `src/task_render.rs`, `src/render.rs`, `src/commands.rs` exports | focused context CLI tests or `cargo check` |
 | Add a task scalar field | migration, `src/types.rs`, `src/task_fields.rs`, `src/mutation.rs` | `src/operations/tasks.rs`, `src/sync/apply/task.rs`, `src/sync/apply/conflict.rs`, `src/sync/wire.rs`, `src/query/`, CLI and TUI renderers | sync, conflict, CLI, and TUI tests |
 | Add task dependency relations | `src/operations/dependencies.rs`, `src/query/dependencies.rs` | `src/commands.rs`, `src/task_render.rs`, `src/sync/apply/dependency.rs`, `src/sync/server.rs` | `tests/cli_dependencies.rs`, `tests/cli_sync.rs` |
+| Add or change epic membership | `src/operations/epics.rs`, `src/task_enrichment.rs`, `src/query/tasks.rs` | `src/commands.rs`, `src/tui/store/epics.rs`, `src/tui/ui/task_list/`, `src/sync/apply/epic.rs`, `src/skill.md` | `tests/cli_epics.rs`, TUI store tests, query tests, sync tests |
 | Change task list, filters, sorting, search read model, or refs | `src/query/`, `src/query.rs`, `src/refs.rs`, `src/queue.rs` | CLI list and search rendering, `src/tui/store/types.rs`, `src/tui/store/view.rs`, indexes | query unit tests, `tests/tui_query.rs`, `tests/sqlite_read_path_indexes.rs`, focused CLI tests |
 | Change TUI task-list rendering or hit testing | `src/tui/ui/task_list.rs`, `src/tui/ui/task_list/view_model.rs`, `src/tui/ui/task_list/hit_test.rs` | `src/tui/store/view.rs`, `src/tui/store/types.rs`, task display helpers, mouse event dispatch | `src/tui/ui/task_list.rs` module tests, `src/tui/app_tests.rs`, focused TUI tests |
 | Change TUI search flow | `src/tui/app_search.rs` | `src/tui/app_dispatch.rs`, `src/tui/overlay/`, `src/tui/ui/overlays/search.rs`, `src/query/` search helpers | `src/tui/app_tests.rs`, focused search and query tests |

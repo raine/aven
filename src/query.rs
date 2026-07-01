@@ -1825,4 +1825,168 @@ mod tests {
         assert_eq!(items[1].matched_field, SearchMatchedField::Label);
         assert_eq!(items[2].matched_field, SearchMatchedField::Note);
     }
+
+    #[tokio::test]
+    async fn epics_filter_lists_explicit_epics_with_children() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+
+        let workspace_id = crate::workspaces::active_workspace_id();
+
+        // Parent task - open
+        insert_test_task(
+            &mut conn,
+            "EPIC00000000001",
+            "epic parent",
+            "todo",
+            "high",
+            "001",
+        )
+        .await;
+        // Child task - open
+        insert_test_task(
+            &mut conn,
+            "EPIC00000000002",
+            "open child",
+            "active",
+            "none",
+            "002",
+        )
+        .await;
+        // Another parent - done (should NOT match the filter)
+        insert_test_task(
+            &mut conn,
+            "EPIC00000000003",
+            "done parent",
+            "done",
+            "none",
+            "003",
+        )
+        .await;
+        // A parent with a done child (should NOT match the filter)
+        insert_test_task(
+            &mut conn,
+            "EPIC00000000004",
+            "parent with done child",
+            "todo",
+            "none",
+            "004",
+        )
+        .await;
+        insert_test_task(
+            &mut conn,
+            "EPIC00000000005",
+            "done child",
+            "done",
+            "none",
+            "005",
+        )
+        .await;
+        // An open task with no dependents (should NOT match)
+        insert_test_task(
+            &mut conn,
+            "EPIC00000000006",
+            "lonely task",
+            "todo",
+            "none",
+            "006",
+        )
+        .await;
+
+        sqlx::query(
+            "UPDATE tasks SET is_epic = 1 WHERE id IN ('EPIC00000000001', 'EPIC00000000004')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        // epic parent -> open child
+        sqlx::query(
+            "INSERT INTO task_epic_links(workspace_id, child_task_id, epic_task_id, created_at)
+             VALUES (?, 'EPIC00000000002', 'EPIC00000000001', '002')",
+        )
+        .bind(&workspace_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        // done parent -> (no-op, parent is done)
+        sqlx::query(
+            "INSERT INTO task_dependencies(workspace_id, task_id, depends_on_task_id, created_at)
+             VALUES (?, 'EPIC00000000001', 'EPIC00000000003', '003')",
+        )
+        .bind(&workspace_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        // parent with done child -> done child
+        sqlx::query(
+            "INSERT INTO task_epic_links(workspace_id, child_task_id, epic_task_id, created_at)
+             VALUES (?, 'EPIC00000000005', 'EPIC00000000004', '005')",
+        )
+        .bind(&workspace_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let items = list_task_items(
+            &mut conn,
+            TaskFilters {
+                epics_only: true,
+                hide_done: true,
+                ..TaskFilters::default()
+            },
+            TaskQueryMode::Flat,
+            TaskSort::Created,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            listed_titles(&items),
+            ["epic parent", "parent with done child"]
+        );
+        assert_eq!(items[0].epic_children.len(), 1);
+        assert_eq!(items[0].epic_children[0].task_id, "EPIC00000000002");
+        assert_eq!(items[0].epic_children[0].display_ref, "APP-EPIC00000000002");
+        assert!(items[0].epic_children[0].unresolved);
+    }
+
+    #[tokio::test]
+    async fn sidebar_counts_include_epics_count() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+
+        insert_test_task(&mut conn, "EPCS00000000001", "epic", "todo", "none", "001").await;
+        insert_test_task(
+            &mut conn,
+            "EPCS00000000002",
+            "child",
+            "active",
+            "none",
+            "002",
+        )
+        .await;
+        insert_test_task(
+            &mut conn,
+            "EPCS00000000003",
+            "not epic",
+            "todo",
+            "none",
+            "003",
+        )
+        .await;
+
+        sqlx::query("UPDATE tasks SET is_epic = 1 WHERE id = 'EPCS00000000001'")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let counts = sidebar_counts(&mut conn).await.unwrap();
+
+        assert_eq!(counts.open, 3);
+        assert_eq!(counts.epics, 1);
+    }
 }

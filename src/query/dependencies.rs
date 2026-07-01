@@ -47,7 +47,7 @@ async fn query_dependency_items(
         sqlx::query(
             "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
          p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
-         t.queue_activity_at, t.deleted, d.created_at AS dependency_created_at
+         t.queue_activity_at, t.deleted, t.is_epic, d.created_at AS dependency_created_at
          FROM task_dependencies d
          JOIN tasks t ON t.workspace_id = d.workspace_id AND t.id = d.task_id
          JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
@@ -61,7 +61,7 @@ async fn query_dependency_items(
         sqlx::query(
             "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
          p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
-         t.queue_activity_at, t.deleted, d.created_at AS dependency_created_at
+         t.queue_activity_at, t.deleted, t.is_epic, d.created_at AS dependency_created_at
          FROM task_dependencies d
          JOIN tasks t ON t.workspace_id = d.workspace_id AND t.id = d.depends_on_task_id
          JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id

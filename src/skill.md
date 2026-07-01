@@ -38,6 +38,10 @@ aven search "auth bug"
 aven context APP-7KQ9
 aven show APP-7KQ9 --full
 aven add "fix conflict display" --priority high --label bug
+aven add "add due dates" --epic
+aven epic add APP-7KQ9 APP-7KQ0
+aven epic remove APP-7KQ9 APP-7KQ0
+aven epic list APP-7KQ0
 aven dep add APP-7KQ9 APP-7KQ0
 aven dep remove APP-7KQ9 APP-7KQ0
 aven dep list APP-7KQ9
@@ -70,6 +74,14 @@ aven restore APP-7KQ9
   `--description-stdin` for multi-paragraph descriptions.
 - Add dependencies between related tasks when one task must finish before another
   can start. Use `dep add <blocked> <blocker>`.
+- Use epics when one task is part of a larger body of work. Create an empty epic
+  with `add --epic`, convert a task with `update <ref> --epic on`, and link
+  children with `epic add <child> <epic>`.
+- Epic membership does not make a child blocked. Do not use dependencies to model
+  epic membership, and do not use epics to model ordering.
+- Epics do not nest, and each child belongs to one epic. Work child tasks
+  individually and mark the epic done when the larger outcome is complete.
+- `list --ready` excludes epics so agents pick actionable child tasks.
 - Let commands infer the project from the current directory, even if project
   does not exist yet. Pass `--project` only if project is specified by user.
 - Use `project rename <old> <new> [--prefix <prefix>]` when a project itself
@@ -96,8 +108,10 @@ aven restore APP-7KQ9
 
 - Human-readable output is the default and preferred for agent use.
 - `--json` is available on `context`, `search`, `list`, `show`, `dep list`,
-  `project list`, `label list`, `conflict list`, `conflict show`, `prime`, and
-  `doctor`.
+  `epic list`, `project list`, `label list`, `conflict list`, `conflict show`,
+  `prime`, and `doctor`.
+- JSON task objects include `is_epic`, `epic_parent`, and `epic_children`.
+  Use these fields to distinguish epic membership from dependency ordering.
 - Use `--limit <n>` with list-style reads such as `list`, `project list`,
   `label list`, `conflict list`, and `prime` to bound response size.
 

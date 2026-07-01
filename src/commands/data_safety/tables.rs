@@ -101,7 +101,7 @@ pub(super) async fn import_labels(
 pub(super) async fn import_tasks(tx: &mut SqliteConnection, rows: &[super::TaskRow]) -> Result<()> {
     for row in rows {
         sqlx::query(
-            "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, deleted, is_epic) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&row.workspace_id)
         .bind(&row.id)
@@ -114,6 +114,7 @@ pub(super) async fn import_tasks(tx: &mut SqliteConnection, rows: &[super::TaskR
         .bind(&row.updated_at)
         .bind(&row.queue_activity_at)
         .bind(row.deleted)
+        .bind(row.is_epic)
         .execute(&mut *tx)
         .await?;
     }
@@ -163,6 +164,24 @@ pub(super) async fn import_task_dependencies(
         .bind(&row.workspace_id)
         .bind(&row.task_id)
         .bind(&row.depends_on_task_id)
+        .bind(&row.created_at)
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
+pub(super) async fn import_task_epic_links(
+    tx: &mut SqliteConnection,
+    rows: &[super::TaskEpicLinkRow],
+) -> Result<()> {
+    for row in rows {
+        sqlx::query(
+            "INSERT INTO task_epic_links(workspace_id, child_task_id, epic_task_id, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(&row.workspace_id)
+        .bind(&row.child_task_id)
+        .bind(&row.epic_task_id)
         .bind(&row.created_at)
         .execute(&mut *tx)
         .await?;

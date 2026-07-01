@@ -169,14 +169,14 @@ fn pending_push_acks(db: &std::path::Path, first_server_seq: i64) -> Vec<Value> 
 }
 
 fn assert_task_field_versions(db: &std::path::Path) {
-    assert_eq!(scalar_i64(db, "SELECT count(*) FROM field_versions"), 6);
+    assert_eq!(scalar_i64(db, "SELECT count(*) FROM field_versions"), 7);
     assert_eq!(
         scalar_i64(
             db,
             "SELECT count(*) FROM field_versions
-             WHERE field IN ('title','description','project','status','priority','deleted')",
+             WHERE field IN ('title','description','project','status','priority','deleted','is_epic')",
         ),
-        6
+        7
     );
 }
 

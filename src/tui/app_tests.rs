@@ -51,6 +51,7 @@ fn test_task_draft(title: &str) -> TaskDraft {
         status: "inbox".to_string(),
         priority: "none".to_string(),
         labels: Vec::new(),
+        is_epic: false,
     }
 }
 
@@ -1382,6 +1383,7 @@ mod command_and_config_overlays {
                 status: "inbox".to_string(),
                 priority: "urgent".to_string(),
                 labels: Vec::new(),
+                is_epic: false,
             },
         )
         .await;
@@ -1522,6 +1524,7 @@ mod filters_and_workspaces {
                         status: "inbox".to_string(),
                         priority: "none".to_string(),
                         labels: Vec::new(),
+                        is_epic: false,
                     },
                     None,
                 )
@@ -1562,6 +1565,7 @@ mod filters_and_workspaces {
                 status: "inbox".to_string(),
                 priority: "urgent".to_string(),
                 labels: vec!["backend".to_string()],
+                is_epic: false,
             },
         )
         .await;
@@ -3550,6 +3554,7 @@ mod detail_mode {
                 status: "inbox".to_string(),
                 priority: "none".to_string(),
                 labels: vec!["bug".to_string()],
+                is_epic: false,
             },
         )
         .await;

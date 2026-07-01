@@ -210,6 +210,38 @@ fn invalid_deleted_conflict_resolution_preserves_task_and_change_log() {
 }
 
 #[test]
+fn remote_epic_demotion_conflict_displays_on_off() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("epic-conflict-a.sqlite");
+    let b = env.db("epic-conflict-b.sqlite");
+
+    let epic = extract_ref(&ok(
+        env.aven(&a, ["add", "sync epic", "--project", "app", "--epic"])
+    ));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    let child = extract_ref(&ok(env.aven(&b, ["add", "sync child", "--project", "app"])));
+    ok(env.aven(&b, ["epic", "add", &child, &epic]));
+    ok(env.aven(&a, ["update", &epic, "--epic", "off"]));
+    sync(&env, &b, &server);
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    let conflict = ok(env.aven(&b, ["conflict", "show", &epic, "--field", "is_epic"]));
+    contains_all(&conflict, &["field=is_epic", "on", "off"]);
+    let full = ok(env.aven(&b, ["show", &epic, "--full"]));
+    contains_all(&full, &["field=is_epic", "on", "off"]);
+    let full_json = ok(env.aven(&b, ["show", &epic, "--full", "--json"]));
+    contains_all(&full_json, &["\"field\": \"is_epic\"", "\"on\"", "\"off\""]);
+    let resolve_error = fail(env.aven(
+        &b,
+        ["conflict", "resolve", &epic, "is_epic", "--value", "0"],
+    ));
+    contains_all(&resolve_error, &["error epic-has-children"]);
+}
+
+#[test]
 fn conflict_list_json_supports_limit() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);

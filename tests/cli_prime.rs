@@ -243,7 +243,11 @@ fn prime_json_returns_structured_output_with_explicit_project() {
         ],
     )));
     ok(env.aven(&db, ["update", &active_ref, "--status", "active"]));
-    let _inbox_ref = extract_ref(&ok(env.aven(&db, ["add", "inbox task", "--project", "app"])));
+    let inbox_ref = extract_ref(&ok(env.aven(&db, ["add", "inbox task", "--project", "app"])));
+    let epic_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "parent epic", "--project", "app", "--epic"])
+    ));
+    ok(env.aven(&db, ["epic", "add", &inbox_ref, &epic_ref]));
 
     let output = ok(env.aven(&db, ["prime", "--project", "app", "--json"]));
     let json: serde_json::Value = serde_json::from_str(&output).unwrap();
@@ -254,6 +258,20 @@ fn prime_json_returns_structured_output_with_explicit_project() {
     assert!(!json["ready"].as_array().unwrap().is_empty());
     assert!(json["conventions"]["title_style"].is_string());
     assert!(json["conventions"]["statuses"].is_string());
+    let ready = json["ready"].as_array().unwrap();
+    let inbox_item = ready
+        .iter()
+        .find(|item| item["title"] == "inbox task")
+        .expect("inbox task in ready items");
+    assert_eq!(inbox_item["is_epic"], false);
+    assert!(inbox_item["epic_parent_ref"].as_str().is_some());
+    assert!(inbox_item["epic_child_refs"].as_array().unwrap().is_empty());
+    assert!(
+        ready
+            .iter()
+            .chain(json["active"].as_array().unwrap().iter())
+            .all(|item| item["title"] != "parent epic")
+    );
 }
 
 #[test]

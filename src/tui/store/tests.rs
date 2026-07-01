@@ -41,6 +41,7 @@ async fn create_selected_task(store: &mut TuiStore, title: &str) -> (String, usi
                 status: "inbox".to_string(),
                 priority: "none".to_string(),
                 labels: Vec::new(),
+                is_epic: false,
             },
             None,
         )
@@ -75,6 +76,7 @@ fn task_draft(title: &str) -> TaskDraft {
         status: "inbox".to_string(),
         priority: "none".to_string(),
         labels: Vec::new(),
+        is_epic: false,
     }
 }
 
@@ -2224,6 +2226,156 @@ mod workspace_scoping {
     }
 }
 
+mod epics {
+    use super::*;
+
+    async fn create_epic_child_pair(store: &mut TuiStore) -> (String, String, usize) {
+        let (parent_id, _parent_index) = create_selected_task(store, "epic parent").await;
+        let child_title = format!("child of {}", &parent_id[..4]);
+        let (child_id, _) = create_selected_task(store, &child_title).await;
+
+        let mut conn = store.pool.acquire().await.unwrap();
+        crate::operations::add_task_to_epic(&mut conn, &child_id, &parent_id)
+            .await
+            .unwrap();
+        drop(conn);
+
+        store.view_state.view = TaskView::Epics;
+        store.refresh(Some(&parent_id)).await.unwrap();
+        let parent_index = store
+            .tasks
+            .iter()
+            .position(|t| t.task.id == parent_id)
+            .unwrap();
+        assert!(store.view_state.expanded_epic_ids.contains(&parent_id));
+        assert!(store.tasks.iter().any(|task| task.task.id == child_id));
+        (parent_id, child_id, parent_index)
+    }
+
+    #[tokio::test]
+    async fn epics_view_expands_parent_by_default() {
+        let mut store = test_store().await;
+        let (parent_id, child_id, _) = create_epic_child_pair(&mut store).await;
+
+        assert!(store.view_state.expanded_epic_ids.contains(&parent_id));
+        assert!(store.tasks.iter().any(|task| task.task.id == child_id));
+    }
+
+    #[tokio::test]
+    async fn toggle_epic_collapses_and_expands_parent() {
+        let mut store = test_store().await;
+        let (parent_task_id, child_id, parent_index) = create_epic_child_pair(&mut store).await;
+
+        assert!(store.view_state.expanded_epic_ids.contains(&parent_task_id));
+
+        store
+            .toggle_selected_epic(Some(parent_index))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!store.view_state.expanded_epic_ids.contains(&parent_task_id));
+        assert!(
+            store
+                .view_state
+                .collapsed_epic_ids
+                .contains(&parent_task_id)
+        );
+        assert!(!store.tasks.iter().any(|task| task.task.id == child_id));
+
+        let parent_index = store
+            .tasks
+            .iter()
+            .position(|task| task.task.id == parent_task_id)
+            .unwrap();
+        store
+            .toggle_selected_epic(Some(parent_index))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(store.view_state.expanded_epic_ids.contains(&parent_task_id));
+        assert!(
+            !store
+                .view_state
+                .collapsed_epic_ids
+                .contains(&parent_task_id)
+        );
+        assert!(store.tasks.iter().any(|task| task.task.id == child_id));
+    }
+
+    #[tokio::test]
+    async fn toggle_epic_noop_when_no_selection() {
+        let mut store = test_store().await;
+        assert!(store.toggle_selected_epic(None).await.unwrap().is_none());
+        assert!(
+            store
+                .toggle_selected_epic(Some(99))
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn detach_epic_child_removes_link() {
+        let mut store = test_store().await;
+        let (parent_id, child_id, _parent_index) = create_epic_child_pair(&mut store).await;
+
+        let parent_index = store
+            .tasks
+            .iter()
+            .position(|t| t.task.id == parent_id)
+            .unwrap();
+        let child_index = store
+            .tasks
+            .iter()
+            .position(|t| t.task.id == child_id)
+            .unwrap();
+
+        assert!(
+            store.tasks[parent_index]
+                .epic_children
+                .iter()
+                .any(|l| l.task_id == child_id)
+        );
+
+        let outcome = store
+            .detach_selected_epic_child(Some(child_index))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(outcome.message.contains("detached"));
+
+        if let Some(refreshed_parent) = store.tasks.iter().position(|t| t.task.id == parent_id) {
+            assert!(
+                !store.tasks[refreshed_parent]
+                    .epic_children
+                    .iter()
+                    .any(|l| l.task_id == child_id)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn promote_epic_child_removes_link_and_selects_child() {
+        let mut store = test_store().await;
+        let (_parent_id, child_id, _parent_index) = create_epic_child_pair(&mut store).await;
+
+        let child_index = store
+            .tasks
+            .iter()
+            .position(|t| t.task.id == child_id)
+            .unwrap();
+
+        let outcome = store
+            .promote_selected_epic_child(Some(child_index))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(outcome.message.contains("promoted"));
+    }
+}
 mod dependency_actions {
     use super::*;
 

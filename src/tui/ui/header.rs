@@ -363,6 +363,7 @@ fn active_view_label(store: &TuiStore) -> &'static str {
         TaskView::Done => "done",
         TaskView::Conflicts => "conflicts",
         TaskView::Search => "search",
+        TaskView::Epics => "epics",
     }
 }
 
@@ -501,6 +502,7 @@ mod tests {
             todo: 2,
             conflicts: 1,
             done: 4,
+            epics: 0,
         };
         store
     }
@@ -525,6 +527,8 @@ mod tests {
             },
             order: TaskOrder::Priority,
             direction: crate::query::SortDirection::Desc,
+            expanded_epic_ids: std::collections::BTreeSet::new(),
+            collapsed_epic_ids: std::collections::BTreeSet::new(),
         };
 
         assert_eq!(store.active_workspace.key, "default");

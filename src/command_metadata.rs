@@ -1,6 +1,6 @@
 use crate::cli::{
-    Commands, ConflictSubcommand, DepSubcommand, LabelSubcommand, ProjectPathSubcommand,
-    ProjectSubcommand, TextSubcommand,
+    Commands, ConflictSubcommand, DepSubcommand, EpicSubcommand, LabelSubcommand,
+    ProjectPathSubcommand, ProjectSubcommand, TextSubcommand,
 };
 use crate::logging;
 
@@ -100,6 +100,11 @@ impl Commands {
                 needs_workspace: true,
                 wakes_daemon: args.command.wakes_daemon(),
             },
+            Self::Epic(args) => CommandMetadata {
+                log_mode: logging::LogMode::Cli,
+                needs_workspace: true,
+                wakes_daemon: args.command.wakes_daemon(),
+            },
             Self::Conflict(args) => CommandMetadata {
                 log_mode: logging::LogMode::Cli,
                 needs_workspace: true,
@@ -143,6 +148,12 @@ impl ProjectSubcommand {
 }
 
 impl DepSubcommand {
+    pub(crate) fn wakes_daemon(&self) -> bool {
+        matches!(self, Self::Add { .. } | Self::Remove { .. })
+    }
+}
+
+impl EpicSubcommand {
     pub(crate) fn wakes_daemon(&self) -> bool {
         matches!(self, Self::Add { .. } | Self::Remove { .. })
     }
