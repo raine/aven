@@ -1,0 +1,67 @@
+:root {
+  --sl-color-accent-low: hsl(258, 39%, 22%);
+  --sl-color-accent: rgb(166, 139, 255);
+  --sl-color-accent-high: hsl(258, 100%, 92%);
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-high: hsl(258, 65%, 44%);
+  --sl-color-accent: rgb(166, 139, 255);
+  --sl-color-accent-low: hsl(258, 100%, 94%);
+  --sl-color-text-accent: var(--sl-color-accent-high);
+}
+
+:root[data-theme='light'] .sidebar [aria-current='page'] {
+  color: var(--sl-color-text-invert);
+  background-color: hsl(258, 72%, 55%);
+}
+
+.expressive-code {
+  --ec-brdRad: 0.6rem;
+  --ec-codeFontSize: 0.9rem;
+  --ec-codeLineHt: 1.6;
+  --ec-codePadBlk: 0.8rem;
+  --ec-codePadInl: 0.95rem;
+  --ec-frm-frameBoxShdCssVal: none;
+  margin-block: 1rem;
+}
+
+.expressive-code .frame {
+  border-radius: var(--ec-brdRad) !important;
+  box-shadow: none !important;
+}
+
+.expressive-code .frame.is-terminal .header {
+  display: none !important;
+}
+
+.expressive-code .frame.is-terminal pre {
+  border: 1px solid color-mix(in srgb, var(--sl-color-gray-5) 72%, transparent) !important;
+  border-radius: var(--ec-brdRad) !important;
+  background: color-mix(in srgb, var(--sl-color-gray-7) 88%, var(--sl-color-bg)) !important;
+  overflow-x: auto !important;
+  scrollbar-width: none;
+}
+
+.expressive-code .frame.is-terminal pre::-webkit-scrollbar {
+  display: none;
+}
+
+.expressive-code .frame.is-terminal pre code {
+  border-radius: inherit !important;
+}
+
+.expressive-code .ec-line .code {
+  white-space: pre !important;
+  overflow-wrap: normal !important;
+  padding-inline-start: calc(var(--ecIndent, 0ch) + var(--ec-codePadInl) - var(--ecGtrBrdWd));
+}
+
+.expressive-code .copy {
+  inset-block-start: 0.45rem !important;
+  inset-inline-end: 0.45rem !important;
+}
+
+.expressive-code .copy button {
+  border-radius: 0.4rem !important;
+}

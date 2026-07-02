@@ -22,7 +22,7 @@ staged_paths_are_docs_or_media_only() {
   while IFS= read -r path; do
     found=1
     case "${path,,}" in
-      *.md|*.markdown|*.avif|*.gif|*.jpeg|*.jpg|*.png|*.svg|*.webp) ;;
+      docs/*|*.md|*.markdown|*.avif|*.gif|*.jpeg|*.jpg|*.png|*.svg|*.webp) ;;
       *) return 1 ;;
     esac
   done < <(git diff --cached --name-only --diff-filter=ACMRD)

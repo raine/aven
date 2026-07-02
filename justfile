@@ -152,6 +152,12 @@ run *ARGS:
 tui:
     env ${AVEN_DEV_DB:+AVEN_DB="$AVEN_DEV_DB"} cargo run -- tui
 
+# Run the docs development server from a clean dependency install
+docs:
+    rm -rf docs/node_modules
+    npm --prefix docs ci
+    npm --prefix docs run dev
+
 # Internal release helper
 _release bump:
     @cargo-release {{bump}}

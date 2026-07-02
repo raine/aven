@@ -1,66 +1,59 @@
 # aven
 
-`aven` is a task manager for humans and coding agents. It is my attempt to build
-the perfect personal, power-user task system for myself.
+`aven` is a local-first task manager for humans and coding agents. It is built as
+a personal, power-user task system: one overview across projects, task capture
+from wherever work appears, first-class agent workflows, workspace isolation,
+and a polished terminal UI.
 
-It came from a few specific needs:
+Docs: <https://aven.raine.dev>
 
-- one overview across many projects (what should I do next?)
-- task capture from anywhere (e.g. voice message to an agent in messaging app)
-- first-class coding-agent workflows
-- workspace isolation for personal and work tasks
-- power user ergonomics (e.g. easily add a new task from a tmux popup)
+![aven TUI showing the queue view and add-task popup](meta/tui.webp)
 
 ## Why aven?
 
 - **Offline-first, repo-independent storage.** Tasks live in a local SQLite
-  database, not in tracked files inside each repo. One task store can span
-  projects and devices, with optional self-hosted sync when you want tasks
-  reachable from anywhere.
+  database, not in tracked files inside each repo. Task capture and agent updates
+  stay independent from git state, branches, worktrees, and checkouts.
+
+- **Optional self-hosted sync.** Keep the local-first workflow and make the same
+  tasks available across laptops, agents, and other devices through a server you
+  control.
 
 - **Projects map to repos.** Each repository becomes a project by default,
   created on demand when you add its first task.
 
-- **Agent-first CLI, human-first TUI.** Agents get token-efficient output,
-  explicit task refs, and ergonomic commands for scripted updates. Humans get a
-  keyboard-first TUI with project views, filters, sorting, detail view, undo,
-  and command palette.
+- **Agent-first CLI, human-first TUI.** Agents get token-efficient output, stable
+  refs, and commands for capturing follow-up work, updating tasks, and preserving
+  context from AI coding agents. Humans get a polished, keyboard-first TUI with
+  project views, filters, sorting, task detail, undo, mouse support, and command
+  palette.
 
-- **Stable task refs.** Stable, unique Jira/Linear-style refs like `APP-7KQ9`
-  work offline and show the task's project at a glance.
+- **Stable task refs.** Stable, unique Jira-style refs like `APP-7KQ9` work
+  offline and show the task's project at a glance.
 
-- **Workspaces are first class.** Personal and work tasks can share the same
-  tool without sharing the same visible task universe. Simply configure that
-  everything under `~/work` belongs to the `work` workspace.
+- **Workspaces are first class.** Personal and work tasks can share the same tool
+  without sharing the same visible task universe.
 
-- **Markdown-native tasks.** Tasks can carry Markdown descriptions and
-  append-only notes, so context stays with the task.
+- **Markdown-native tasks.** Tasks carry Markdown descriptions and append-style
+  notes, so context stays with the task.
 
-- **Fast capture from anywhere.** Comes with LLM-powered natural-language task
-  intake and tmux popup capture.
+- **Fast capture from anywhere.** Natural-language task intake, tmux popup
+  capture, and agent-friendly commands make it easy to add tasks.
 
 Inspired by Taskwarrior. See [Why not Taskwarrior?](#why-not-taskwarrior).
 
-![aven TUI showing the queue view and add-task popup](meta/tui.webp)
-
 ## Quick start
 
-### Quick install
+Install with the release script:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install | bash
 ```
 
-### Homebrew (macOS/Linux)
+Or install with Homebrew:
 
 ```sh
 brew install raine/aven/aven
-```
-
-Create a config file:
-
-```sh
-aven config init
 ```
 
 Open the TUI:
@@ -69,115 +62,31 @@ Open the TUI:
 aven tui
 ```
 
-## Agent workflow
+See [Getting started](https://aven.raine.dev/getting-started/) for first-run
+usage.
 
-`aven` is designed so agents can use the CLI without guessing hidden state.
+## Documentation
 
-Start with:
-
-```sh
-aven prime
-```
-
-That prints the agent primer plus open issues for the inferred project. Use an
-explicit project when inference is wrong:
-
-```sh
-aven prime --project app
-```
-
-Core commands:
-
-```sh
-aven list --project app
-aven list --status todo
-aven list --deleted
-aven show APP-7KQ9 --full
-aven add "fix conflict display" --project app --priority high --label bug
-aven add --natural "fix conflict display and assign it to app"
-aven update APP-7KQ9 --status active
-aven note APP-7KQ9 "durable handoff context"
-aven delete APP-7KQ9
-aven restore APP-7KQ9
-```
-
-Guidelines for agents:
-
-- Prefer refs printed by command output, such as `APP-7KQ9`.
-- Use `show --full` before decisions that depend on descriptions, labels, notes,
-  deletion state, or conflicts.
-- Use `--description-file`, `--description-stdin`, `note --file`, or
-  `note --stdin` for long Markdown.
-- Use `bulk-update --dry-run` before broad mutations.
-- Do not put secrets in titles, descriptions, labels, projects, notes, or logs.
-
-## Sync
-
-Local commands write directly to SQLite. Sync is optional.
-
-Start a local test server:
-
-```sh
-aven server --bind 127.0.0.1:0 --data /tmp/aven-server.sqlite
-```
-
-Sync a client:
-
-```sh
-aven sync --server http://127.0.0.1:<port>
-```
-
-Run the background daemon for the configured local database:
-
-```sh
-aven daemon
-```
-
-On macOS, install it as a user LaunchAgent:
-
-```sh
-aven daemon install
-aven daemon uninstall
-```
-
-The daemon wakes after successful local mutations when possible and also syncs
-periodically while it is running.
-
-Current sync limits:
-
-- v1 sync is an HTTP/JSON operation log, not a CRDT.
-- v1 supports one configured sync server per local database.
-- Conflict resolution is explicit and field based.
-- Plain HTTP is intended for loopback, trusted VPNs, private networks, or TLS
-  termination you provide externally.
-
-## tmux capture
-
-Open a tmux popup for fast task capture:
-
-```sh
-aven tmux add-task-popup
-```
-
-Print a binding you can add to your tmux config:
-
-```sh
-aven tmux add-task-popup --print-binding
-```
+- [What is aven?](https://aven.raine.dev/)
+- [Getting started](https://aven.raine.dev/getting-started/)
+- [Concepts](https://aven.raine.dev/concepts/)
+- [Configuration](https://aven.raine.dev/configuration/)
+- [TUI](https://aven.raine.dev/tui/)
+- [Agents](https://aven.raine.dev/agents/)
+- [Sync and backups](https://aven.raine.dev/sync/)
 
 ## Why not Taskwarrior?
 
-I built this to replace Taskwarrior for me. Taskwarrior is great but obviously
-it was not originally designed around coding agents as first-class users.
+I built this to replace Taskwarrior for me. Taskwarrior is great but it was not
+designed around coding agents as first-class users.
 
 - Task ids need to be stable, short, and visible in normal command output. UUIDs
   are ugly.
 - Taskwarrior's CLI tries to be the human interface, which makes it unergonomic
   for agents to work with. I want the CLI to primarily be an agent interface,
-  and the TUI to be optimized for humans. Everything should be easier through
-  TUI than CLI for humans.
-- Tasks need first-class Markdown descriptions and notes, not just references to
-  sidecar files that only exist on one machine, which is the Taskwarrior way.
+  and the TUI to be optimized for humans.
+- Tasks need first-class Markdown descriptions and notes, not references to
+  sidecar files that only exist on one machine.
 - Workspaces should be part of the model, so personal and work tasks can be
   isolated without shell aliases or database juggling.
 - There is no adequate TUI, or GUI in general.
