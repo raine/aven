@@ -21,6 +21,7 @@ fn doctor_reports_default_database_health() {
             "Database",
             "Workspace",
             "Sync",
+            "Daemon",
             "database source    --db",
             "ok sqlite",
             "ok client id",

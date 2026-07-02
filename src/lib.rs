@@ -86,10 +86,21 @@ pub async fn run_cli() -> Result<()> {
             let db_path = config::resolve_db_path(cli.db, &config)?;
             match args.command {
                 None => daemon::run(daemon::DaemonRunArgs { db_path, config }).await,
-                Some(DaemonSubcommand::Install) => {
-                    daemon::install(daemon::ServiceInstallArgs { db_path, config })
+                Some(DaemonSubcommand::Install(args)) => {
+                    daemon::install(daemon::ServiceInstallArgs {
+                        db_path,
+                        config,
+                        program: args.program,
+                    })
                 }
                 Some(DaemonSubcommand::Uninstall) => daemon::uninstall(),
+                Some(DaemonSubcommand::Restart) => daemon::restart(),
+                Some(DaemonSubcommand::Repair(args)) => daemon::repair(daemon::ServiceRepairArgs {
+                    db_path,
+                    config,
+                    program: args.program,
+                    if_installed: args.if_installed,
+                }),
             }
         }
         Commands::Tmux(args) => match args.command {

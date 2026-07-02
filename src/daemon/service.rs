@@ -11,14 +11,43 @@ const DEFAULT_PATH: &str = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/
 pub struct ServiceInstallArgs {
     pub db_path: PathBuf,
     pub config: AppConfig,
+    pub program: Option<PathBuf>,
 }
 
+pub struct ServiceRepairArgs {
+    pub db_path: PathBuf,
+    pub config: AppConfig,
+    pub program: Option<PathBuf>,
+    pub if_installed: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ServiceStatus {
+    pub installed: bool,
+    pub loaded: Option<bool>,
+    pub plist_path: PathBuf,
+    pub program: Option<PathBuf>,
+    pub current_executable: PathBuf,
+    pub program_matches_current: Option<bool>,
+}
 pub fn install(args: ServiceInstallArgs) -> Result<()> {
     install_with_runner(args, &SystemRunner)
 }
 
 pub fn uninstall() -> Result<()> {
     uninstall_with_runner(&SystemRunner)
+}
+
+pub fn restart() -> Result<()> {
+    restart_with_runner(&SystemRunner)
+}
+
+pub fn repair(args: ServiceRepairArgs) -> Result<()> {
+    repair_with_runner(args, &SystemRunner)
+}
+
+pub fn status_snapshot() -> Result<ServiceStatus> {
+    status_with_runner(&SystemRunner)
 }
 
 trait LaunchctlRunner {
@@ -39,7 +68,7 @@ impl LaunchctlRunner for SystemRunner {
 #[cfg(target_os = "macos")]
 fn install_with_runner(args: ServiceInstallArgs, runner: &impl LaunchctlRunner) -> Result<()> {
     validate_install_config(&args.config)?;
-    let spec = ServiceSpec::from_current_process(args.db_path)?;
+    let spec = ServiceSpec::from_install_args(args.db_path, args.program)?;
     let plist = render_plist(&spec);
     if service_is_loaded(runner, &spec)? {
         run_launchctl(runner, &["bootout", &spec.service_target])?;
@@ -84,6 +113,89 @@ fn uninstall_with_runner(_runner: &impl LaunchctlRunner) -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
+fn restart_with_runner(runner: &impl LaunchctlRunner) -> Result<()> {
+    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    run_launchctl(runner, &["kickstart", "-k", &spec.service_target])?;
+    println!("restarted {}", spec.service_target);
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn restart_with_runner(_runner: &impl LaunchctlRunner) -> Result<()> {
+    bail!(
+        "error unsupported-platform command=daemon-restart platform={}",
+        std::env::consts::OS
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn repair_with_runner(args: ServiceRepairArgs, runner: &impl LaunchctlRunner) -> Result<()> {
+    let spec = ServiceSpec::from_install_args(args.db_path, args.program)?;
+    if !spec.plist_path.exists() {
+        if args.if_installed {
+            println!("daemon repair skipped installed=no");
+            return Ok(());
+        }
+        bail!(
+            "error daemon-not-installed path={}",
+            spec.plist_path.display()
+        );
+    }
+    validate_install_config(&args.config)?;
+    let plist = render_plist(&spec);
+    let loaded = service_is_loaded(runner, &spec)?;
+    if loaded {
+        run_launchctl(runner, &["bootout", &spec.service_target])?;
+    }
+    write_plist(&spec, &plist)?;
+    run_launchctl(runner, &["enable", &spec.service_target])?;
+    run_launchctl(runner, &["bootstrap", &spec.domain, spec.plist_path_str()?])?;
+    println!(
+        "daemon repair installed=yes restarted=yes path={}",
+        spec.executable.display()
+    );
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn repair_with_runner(_args: ServiceRepairArgs, _runner: &impl LaunchctlRunner) -> Result<()> {
+    bail!(
+        "error unsupported-platform command=daemon-repair platform={}",
+        std::env::consts::OS
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn status_with_runner(runner: &impl LaunchctlRunner) -> Result<ServiceStatus> {
+    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    let program = read_plist_program(&spec.plist_path)?;
+    let current_executable = std::env::current_exe().context("resolve current executable")?;
+    let program_matches_current = program
+        .as_ref()
+        .map(|program| paths_resolve_to_same_file(program, &current_executable));
+    Ok(ServiceStatus {
+        installed: spec.plist_path.exists(),
+        loaded: Some(service_is_loaded(runner, &spec)?),
+        plist_path: spec.plist_path,
+        program,
+        current_executable,
+        program_matches_current,
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn status_with_runner(_runner: &impl LaunchctlRunner) -> Result<ServiceStatus> {
+    Ok(ServiceStatus {
+        installed: false,
+        loaded: None,
+        plist_path: PathBuf::new(),
+        program: None,
+        current_executable: std::env::current_exe().unwrap_or_default(),
+        program_matches_current: None,
+    })
+}
+
+#[cfg(target_os = "macos")]
 fn validate_install_config(config: &AppConfig) -> Result<()> {
     if !config.sync.enabled {
         bail!("error sync-disabled hint=\"set sync.enabled = true in config.yaml\"");
@@ -118,6 +230,10 @@ struct ServiceSpec {
 #[cfg(target_os = "macos")]
 impl ServiceSpec {
     fn from_current_process(db_path: PathBuf) -> Result<Self> {
+        Self::from_install_args(db_path, None)
+    }
+
+    fn from_install_args(db_path: PathBuf, program: Option<PathBuf>) -> Result<Self> {
         let home = dirs::home_dir().context("could not find home directory")?;
         let launch_agents_dir = home.join("Library/LaunchAgents");
         let log_dir = home.join("Library/Logs/aven");
@@ -129,9 +245,14 @@ impl ServiceSpec {
             .map(PathBuf::from)
             .map(absolute_path)
             .transpose()?;
+        let current_exe = std::env::current_exe().context("resolve current executable")?;
+        let executable = match program {
+            Some(program) => absolute_path(program)?,
+            None => stable_program_path(&current_exe),
+        };
         Ok(Self {
             label: label.clone(),
-            executable: std::env::current_exe().context("resolve current executable")?,
+            executable,
             db_path: absolute_path(db_path)?,
             config_dir,
             path_env: std::env::var("PATH").unwrap_or_else(|_| DEFAULT_PATH.to_string()),
@@ -158,6 +279,72 @@ fn absolute_path(path: PathBuf) -> Result<PathBuf> {
         return Ok(path);
     }
     Ok(std::env::current_dir()?.join(path))
+}
+
+#[cfg(target_os = "macos")]
+fn stable_program_path(current_exe: &Path) -> PathBuf {
+    let mut candidates = vec![
+        PathBuf::from("/opt/homebrew/opt/aven/bin/aven"),
+        PathBuf::from("/usr/local/opt/aven/bin/aven"),
+        PathBuf::from("/opt/homebrew/bin/aven"),
+        PathBuf::from("/usr/local/bin/aven"),
+    ];
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join(".cargo/bin/aven"));
+        candidates.push(home.join(".local/bin/aven"));
+    }
+    stable_program_path_from_candidates(current_exe, candidates)
+}
+
+#[cfg(target_os = "macos")]
+fn stable_program_path_from_candidates(
+    current_exe: &Path,
+    candidates: impl IntoIterator<Item = PathBuf>,
+) -> PathBuf {
+    candidates
+        .into_iter()
+        .find(|candidate| paths_resolve_to_same_file(candidate, current_exe))
+        .unwrap_or_else(|| current_exe.to_path_buf())
+}
+
+#[cfg(target_os = "macos")]
+fn paths_resolve_to_same_file(left: &Path, right: &Path) -> bool {
+    let Ok(left) = left.canonicalize() else {
+        return false;
+    };
+    let Ok(right) = right.canonicalize() else {
+        return false;
+    };
+    left == right
+}
+
+#[cfg(target_os = "macos")]
+fn read_plist_program(path: &Path) -> Result<Option<PathBuf>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    Ok(program_from_plist_text(&text).map(PathBuf::from))
+}
+
+#[cfg(target_os = "macos")]
+fn program_from_plist_text(text: &str) -> Option<String> {
+    let program_args_index = text.find("<key>ProgramArguments</key>")?;
+    let after_program_args = &text[program_args_index..];
+    let string_start = after_program_args.find("<string>")? + "<string>".len();
+    let after_string = &after_program_args[string_start..];
+    let string_end = after_string.find("</string>")?;
+    Some(unescape_xml(&after_string[..string_end]))
+}
+
+#[cfg(target_os = "macos")]
+fn unescape_xml(value: &str) -> String {
+    value
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&gt;", ">")
+        .replace("&lt;", "<")
+        .replace("&amp;", "&")
 }
 
 #[cfg(target_os = "macos")]
@@ -245,12 +432,7 @@ fn render_plist(spec: &ServiceSpec) -> String {
   <key>RunAtLoad</key>\n\
   <true/>\n\
   <key>KeepAlive</key>\n\
-  <dict>\n\
-    <key>SuccessfulExit</key>\n\
-    <false/>\n\
-    <key>Crashed</key>\n\
-    <true/>\n\
-  </dict>\n\
+  <true/>\n\
   <key>ThrottleInterval</key>\n\
   <integer>30</integer>\n\
   <key>StandardOutPath</key>\n\
@@ -337,6 +519,8 @@ mod tests {
         assert!(plist.contains("<key>AVEN_LOG_FILE</key>"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
         assert!(plist.contains("<key>KeepAlive</key>"));
+        assert!(plist.contains("<true/>"));
+        assert!(!plist.contains("<key>SuccessfulExit</key>"));
         assert!(plist.contains("<key>ThrottleInterval</key>"));
     }
 
@@ -361,6 +545,51 @@ mod tests {
                 vec!["enable", "gui/501/com.raine.aven.daemon"],
                 vec!["bootstrap", "gui/501", spec.plist_path_str().unwrap()],
             ]
+        );
+    }
+
+    #[test]
+    fn restart_uses_kickstart() {
+        let runner = FakeRunner::new(vec![success()]);
+        let spec = test_spec();
+        run_launchctl(&runner, &["kickstart", "-k", &spec.service_target]).unwrap();
+        assert_eq!(
+            runner.commands(),
+            vec![vec!["kickstart", "-k", "gui/501/com.raine.aven.daemon"]]
+        );
+    }
+
+    #[test]
+    fn extracts_program_from_plist_text() {
+        let spec = test_spec();
+        let plist = render_plist(&spec);
+        assert_eq!(
+            program_from_plist_text(&plist).as_deref(),
+            Some("/bin/aven")
+        );
+    }
+
+    #[test]
+    fn stable_program_path_prefers_matching_installed_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let current = dir.path().join("cellar/aven/1.0.0/bin/aven");
+        let stable = dir.path().join("opt/aven/bin/aven");
+        std::fs::create_dir_all(current.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(stable.parent().unwrap()).unwrap();
+        std::fs::write(&current, "aven").unwrap();
+        std::os::unix::fs::symlink(&current, &stable).unwrap();
+        assert_eq!(
+            stable_program_path_from_candidates(&current, vec![stable.clone()]),
+            stable
+        );
+    }
+
+    #[test]
+    fn program_from_plist_text_unescapes_xml() {
+        let plist = "<key>ProgramArguments</key><array><string>/bin/aven&amp;test</string></array>";
+        assert_eq!(
+            program_from_plist_text(plist).as_deref(),
+            Some("/bin/aven&test")
         );
     }
 

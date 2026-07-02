@@ -779,10 +779,33 @@ pub(crate) struct DaemonArgs {
 
 #[derive(Subcommand)]
 pub(crate) enum DaemonSubcommand {
-    Install,
+    Install(DaemonInstallArgs),
     Uninstall,
+    Restart,
+    Repair(DaemonRepairArgs),
 }
 
+#[derive(Args)]
+pub(crate) struct DaemonInstallArgs {
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Write this executable path into the LaunchAgent"
+    )]
+    pub(crate) program: Option<PathBuf>,
+}
+
+#[derive(Args)]
+pub(crate) struct DaemonRepairArgs {
+    #[arg(long, help = "Succeed without changes when the LaunchAgent is absent")]
+    pub(crate) if_installed: bool,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Write this executable path into the LaunchAgent"
+    )]
+    pub(crate) program: Option<PathBuf>,
+}
 #[derive(Args)]
 pub(crate) struct ServerArgs {
     #[arg(long, default_value = "127.0.0.1:0")]

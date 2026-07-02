@@ -1,11 +1,14 @@
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use sqlx::SqlitePool;
 use tokio::net::UdpSocket;
 use tokio::time::{Instant, sleep_until, timeout};
+
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use tracing::{debug, info, warn};
 
 use crate::config::AppConfig;
@@ -16,7 +19,22 @@ use crate::sync::wire::{DAEMON_INCOMPLETE_RESCHEDULE_MS, DAEMON_SYNC_PAGE_BUDGET
 
 mod service;
 
-pub use service::{ServiceInstallArgs, install, uninstall};
+pub use service::{
+    ServiceInstallArgs, ServiceRepairArgs, install, repair, restart, status_snapshot, uninstall,
+};
+
+const BINARY_CHECK_INTERVAL: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BinaryFingerprint {
+    path: PathBuf,
+    len: u64,
+    modified_ns: Option<u128>,
+    #[cfg(unix)]
+    dev: u64,
+    #[cfg(unix)]
+    ino: u64,
+}
 
 pub struct DaemonRunArgs {
     pub db_path: PathBuf,
@@ -53,6 +71,7 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         wake_addr
     );
 
+    let binary_fingerprint = current_binary_fingerprint()?;
     let client = SyncHttpClient::new().context("build daemon sync HTTP client")?;
     info!(server = %server, http_client_id = %client.id(), "daemon sync client ready");
     run_loop(
@@ -62,6 +81,7 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         interval_seconds,
         args.config.sync_auth_token().map(str::to_string),
         client,
+        binary_fingerprint,
     )
     .await
 }
@@ -73,10 +93,12 @@ async fn run_loop(
     interval_seconds: u64,
     auth_token: Option<String>,
     client: SyncHttpClient,
+    binary_fingerprint: BinaryFingerprint,
 ) -> Result<()> {
     let mut wake_buf = [0_u8; 16];
     let mut backoff_seconds = 1_u64;
     let mut next_sync = Instant::now();
+    let mut next_binary_check = Instant::now() + BINARY_CHECK_INTERVAL;
     loop {
         tokio::select! {
             _ = shutdown_signal() => {
@@ -92,6 +114,14 @@ async fn run_loop(
                 }
                 drain_wakes(&socket, &mut wake_buf);
                 next_sync = Instant::now();
+            }
+            _ = sleep_until(next_binary_check) => {
+                if binary_changed(&binary_fingerprint)? {
+                    info!(path = %binary_fingerprint.path.display(), "daemon executable changed");
+                    println!("daemon-executable-changed path={}", binary_fingerprint.path.display());
+                    break;
+                }
+                next_binary_check = Instant::now() + BINARY_CHECK_INTERVAL;
             }
             _ = sleep_until(next_sync) => {
                 match timeout(
@@ -125,6 +155,35 @@ async fn run_loop(
         }
     }
     Ok(())
+}
+
+fn current_binary_fingerprint() -> Result<BinaryFingerprint> {
+    let path = std::env::current_exe().context("resolve current executable")?;
+    binary_fingerprint(&path)
+}
+
+fn binary_changed(initial: &BinaryFingerprint) -> Result<bool> {
+    Ok(binary_fingerprint(&initial.path)? != *initial)
+}
+
+fn binary_fingerprint(path: &Path) -> Result<BinaryFingerprint> {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let metadata = std::fs::metadata(&path)
+        .with_context(|| format!("read executable metadata {}", path.display()))?;
+    let modified_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos());
+    Ok(BinaryFingerprint {
+        path,
+        len: metadata.len(),
+        modified_ns,
+        #[cfg(unix)]
+        dev: metadata.dev(),
+        #[cfg(unix)]
+        ino: metadata.ino(),
+    })
 }
 
 fn drain_wakes(socket: &UdpSocket, wake_buf: &mut [u8]) {
@@ -171,5 +230,21 @@ pub fn wake(addr: SocketAddr) {
     match std::net::UdpSocket::bind(bind_addr).and_then(|socket| socket.send_to(b"1", addr)) {
         Ok(_) => debug!(wake_addr = %addr, "daemon wake sent"),
         Err(err) => warn!(wake_addr = %addr, error = %err, "daemon wake send failed"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binary_fingerprint_changes_when_file_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("aven");
+        std::fs::write(&path, "one").unwrap();
+        let initial = binary_fingerprint(&path).unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+        std::fs::write(&path, "two-two").unwrap();
+        assert!(binary_changed(&initial).unwrap());
     }
 }

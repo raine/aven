@@ -1712,6 +1712,36 @@ pub(crate) async fn cmd_doctor(
         Err(error) => sync_section.check("daemon wake", false, format!("{error:#}")),
     }
 
+    let daemon_status = crate::daemon::status_snapshot()?;
+    let daemon_section = report.section("Daemon");
+    daemon_section.info(
+        "installed",
+        if daemon_status.installed { "yes" } else { "no" },
+    );
+    match daemon_status.loaded {
+        Some(loaded) => daemon_section.check("loaded", loaded, if loaded { "yes" } else { "no" }),
+        None => daemon_section.info("loaded", "unknown"),
+    }
+    daemon_section.info("plist", daemon_status.plist_path.display().to_string());
+    daemon_section.info(
+        "program",
+        daemon_status
+            .program
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "missing".to_string()),
+    );
+    daemon_section.info(
+        "current exe",
+        daemon_status.current_executable.display().to_string(),
+    );
+    match daemon_status.program_matches_current {
+        Some(matches) => {
+            daemon_section.check("program match", matches, if matches { "yes" } else { "no" })
+        }
+        None => daemon_section.info("program match", "unknown"),
+    }
+
     if integrity {
         let integrity_report = database_integrity_report(conn).await?;
         let integrity_section = report.section("Integrity");

@@ -145,7 +145,18 @@ Run automatic sync for the configured local database:
 On macOS, install it as a user LaunchAgent:
 
   aven daemon install
+  aven daemon restart
   aven daemon uninstall
+
+Installer and package scripts can refresh an installed LaunchAgent after
+replacing the binary:
+
+  aven daemon repair --if-installed --program /path/to/aven
+
+The repair command succeeds without changes when the LaunchAgent is absent.
+`aven doctor` reports daemon installation state, launchd load state, plist
+program path, current executable, and whether the plist program resolves to the
+current executable.
 
 The daemon uses the same local SQLite database as the CLI. CLI commands still
 work offline and write directly to SQLite. The daemon runs sync in the

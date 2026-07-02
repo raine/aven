@@ -120,9 +120,11 @@ aven restore APP-7KQ9
 ```sh
 aven sync
 aven daemon
+aven daemon restart
 ```
 
 - Sync output reports pushed and pulled counts, a cursor, and completion state.
+- `aven daemon restart` restarts the macOS LaunchAgent service.
 
 ## Long input and secrets
 
