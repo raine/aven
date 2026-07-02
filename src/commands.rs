@@ -1456,7 +1456,7 @@ fn ensure_description_field(field: &str) -> Result<TaskField> {
 fn sha256_hex(value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(value.as_bytes());
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 pub(crate) async fn cmd_text(conn: &mut SqliteConnection, args: TextCommand) -> Result<()> {
