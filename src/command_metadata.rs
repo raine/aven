@@ -115,7 +115,7 @@ impl Commands {
             Self::Export(_) => CommandMetadata::cli(),
             Self::Import(_) => CommandMetadata::cli_workspace_wake(),
             Self::Doctor(_) => CommandMetadata::cli_workspace(),
-            Self::Skill => CommandMetadata::cli(),
+            Self::Skill(_) => CommandMetadata::cli(),
             Self::Sync(_) => CommandMetadata::cli_workspace(),
             Self::Server(_) => CommandMetadata::server(),
             Self::Daemon(_) => CommandMetadata::daemon(),

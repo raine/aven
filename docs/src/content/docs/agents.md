@@ -7,11 +7,25 @@ aven gives AI coding agents access to the same local task system you use in the 
 
 For a human setting this up, the model is simple:
 
-1. `aven skill` teaches an agent how to use aven.
-2. `aven prime` combines that skill with live open-task context.
-3. Your agent environment can run `aven prime` automatically when a session starts.
+1. `aven skill install` gives the agent an on-demand way to learn aven for task-management requests.
+2. `aven prime` gives the agent the aven instructions plus live open-task context at session start.
+3. Your agent environment can run `aven prime` automatically for repos where task context belongs in every session.
 
 After that, you can ask an agent to work from aven tasks without explaining the task model or pasting command instructions into every prompt.
+
+## Skill or prime?
+
+Use the installed skill and priming for different levels of commitment:
+
+| Setup | What the agent receives | Choose it when |
+| --- | --- | --- |
+| Installed skill | Reusable aven instructions loaded on demand | You want the agent to know how to find tasks, update status, and leave handoff context when the request calls for task management, without adding open-task context to every session. |
+| `aven prime` | Aven instructions plus live active, ready, and blocked work for the current project | You want the agent to see current task context as part of session startup. |
+| Both | On-demand aven knowledge everywhere, and live task context in selected sessions | Aven is part of your workflow, but only some projects need automatic task context. |
+
+`aven prime` includes the same guidance as the installed skill. A prime hook is the best fit for projects where the agent should connect the current work to active, ready, or blocked tasks without being asked to run a command first. Installing the skill is the best fit for agent sessions where task-management requests should load aven guidance on demand, while live task context can be loaded only when useful.
+
+A common setup is to install the skill globally, then add a project-local prime hook only in repositories tracked in aven. That keeps agents aware of aven everywhere and gives them open-task context where it is useful.
 
 ## Automatic priming
 
@@ -47,6 +61,24 @@ AVN-12YM status=inbox labels=keybindings,ux title="Resolve Ctrl+P keybinding con
 ### Blocked
 (none)
 ```
+
+## Install the aven skill
+
+```sh
+aven skill install
+```
+
+`aven skill install` writes the bundled skill to every detected coding-agent skill directory. Detection checks Claude Code, OpenCode, and Codex user directories, plus matching agent config directories in the current workspace.
+
+Use `--agent` to choose explicit targets:
+
+```sh
+aven skill install --agent claude
+aven skill install --agent opencode
+aven skill install --agent codex
+```
+
+Explicit targets are installed even when the agent directory is absent. The command reports a clear error when no supported agent is detected and no target is provided.
 
 ## Agent session setup
 

@@ -7,6 +7,9 @@ inspect tasks, update status, and leave durable handoff context.
 
 - Use `aven doctor` when the active workspace, database, or project routing is
   unclear.
+- Run `aven skill install` when the aven skill should be installed into detected
+  coding-agent skill directories. Use `--agent <claude|opencode|codex>` to
+  choose explicit targets.
 - Run `aven <command> --help` when you need flags not shown here.
 
 ## Task refs and values

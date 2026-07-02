@@ -260,8 +260,8 @@ pub(crate) enum Commands {
     Export(ExportArgs),
     /// Import portable JSON data
     Import(ImportArgs),
-    /// Print a Claude Code skill primer
-    Skill,
+    /// Print or install the coding-agent skill
+    Skill(SkillCommand),
     /// Diagnose configuration and workspace state
     Doctor(DoctorArgs),
     /// Run or manage the background daemon
@@ -276,6 +276,32 @@ pub(crate) enum Commands {
     Tui(TuiArgs),
     #[command(hide = true)]
     Internal(InternalCommand),
+}
+
+#[derive(Args)]
+pub(crate) struct SkillCommand {
+    #[command(subcommand)]
+    pub(crate) command: Option<SkillSubcommand>,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum SkillSubcommand {
+    /// Install the aven skill for coding agents
+    Install(SkillInstallArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct SkillInstallArgs {
+    /// Target a coding agent (default: all detected)
+    #[arg(long = "agent", value_enum)]
+    pub(crate) agent: Vec<CodingAgentArg>,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CodingAgentArg {
+    Claude,
+    Opencode,
+    Codex,
 }
 
 #[derive(Args)]

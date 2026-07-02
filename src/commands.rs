@@ -4,6 +4,7 @@ mod context;
 mod data_safety;
 mod doctor;
 mod projects;
+mod skill;
 mod workspaces;
 
 use std::fs;
@@ -29,6 +30,7 @@ pub(crate) use self::data_safety::{
     ensure_integrity_ok,
 };
 pub(crate) use self::projects::cmd_project;
+pub(crate) use self::skill::install as cmd_skill_install;
 pub(crate) use self::workspaces::cmd_workspace;
 use crate::choices::{TaskPriority, TaskStatus};
 use crate::cli::{

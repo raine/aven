@@ -37,13 +37,16 @@ mod test_support;
 
 pub use cli::Cli;
 
-use cli::{BackupSubcommand, Commands, DaemonSubcommand, InternalSubcommand, TmuxSubcommand};
+use cli::{
+    BackupSubcommand, Commands, DaemonSubcommand, InternalSubcommand, SkillSubcommand,
+    TmuxSubcommand,
+};
 use commands::{
     cmd_add, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
     cmd_delete_restore, cmd_dep, cmd_doctor, cmd_epic, cmd_export, cmd_import,
     cmd_internal_natural_add, cmd_label, cmd_list, cmd_note, cmd_note_delete, cmd_prime,
-    cmd_project, cmd_search, cmd_show, cmd_skill, cmd_text, cmd_tmux_add_task_popup, cmd_update,
-    cmd_workspace,
+    cmd_project, cmd_search, cmd_show, cmd_skill, cmd_skill_install, cmd_text,
+    cmd_tmux_add_task_popup, cmd_update, cmd_workspace,
 };
 use db::open_db;
 use sync::{run_server, sync_client};
@@ -68,7 +71,10 @@ pub async fn run_cli() -> Result<()> {
             let config = config::AppConfig::load()?;
             run_server(args, config).await
         }
-        Commands::Skill => cmd_skill().await,
+        Commands::Skill(args) => match args.command {
+            None => cmd_skill().await,
+            Some(SkillSubcommand::Install(args)) => cmd_skill_install(args),
+        },
         Commands::Config(args) => cmd_config(args).await,
         Commands::Internal(args) => {
             let config = config::AppConfig::load()?;
@@ -187,7 +193,7 @@ pub async fn run_cli() -> Result<()> {
                 | Commands::Server(_)
                 | Commands::Internal(_)
                 | Commands::Tmux(_)
-                | Commands::Skill => unreachable!(),
+                | Commands::Skill(_) => unreachable!(),
             };
             if result.is_ok()
                 && should_wake
