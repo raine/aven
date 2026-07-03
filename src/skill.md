@@ -7,6 +7,7 @@ inspect tasks, update status, and leave durable handoff context.
 
 - Use `aven doctor` when the active workspace, database, or project routing is
   unclear.
+- Use `aven --version` when an installed binary version is needed.
 - Run `aven <command> --help` when you need flags not shown here.
 
 ## Task refs and values

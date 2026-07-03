@@ -3,6 +3,15 @@ mod common;
 use common::{TestEnv, command, contains_all, contains_none, extract_ref, fail, ok, suffix};
 
 #[test]
+fn version_flag_prints_package_version() {
+    let output = ok(command()
+        .arg("--version")
+        .output()
+        .expect("run aven --version"));
+    assert_eq!(output.trim(), format!("aven {}", env!("CARGO_PKG_VERSION")));
+}
+
+#[test]
 fn list_json_supports_limit() {
     let env = TestEnv::new();
     let db = env.db("list-json.sqlite");

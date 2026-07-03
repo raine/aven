@@ -150,6 +150,17 @@ fn render_options_section(help: &mut String) {
     );
     render_row(
         help,
+        "-V, --version",
+        &format!(
+            "{}, {}",
+            paint("-V", LITERAL_STYLE),
+            paint("--version", LITERAL_STYLE)
+        ),
+        "Print version",
+        27,
+    );
+    render_row(
+        help,
         "-h, --help",
         &format!(
             "{}, {}",
@@ -190,6 +201,7 @@ fn paint(text: &str, style: Style) -> String {
 #[derive(Parser)]
 #[command(name = "aven")]
 #[command(about = "Local-first task manager")]
+#[command(version)]
 #[command(styles = STYLES)]
 pub struct Cli {
     #[arg(long, global = true, help = "Use a specific SQLite database path")]
