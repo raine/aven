@@ -13,6 +13,27 @@ export default defineConfig({
         light: './src/assets/aven-logo-grape-violet-light.svg',
         alt: 'Aven logo',
       },
+      favicon: '/favicon-dark.svg',
+      head: [
+        {
+          tag: 'link',
+          attrs: {
+            rel: 'icon',
+            href: '/favicon-dark.svg',
+            type: 'image/svg+xml',
+            media: '(prefers-color-scheme: dark)',
+          },
+        },
+        {
+          tag: 'link',
+          attrs: {
+            rel: 'icon',
+            href: '/favicon-light.svg',
+            type: 'image/svg+xml',
+            media: '(prefers-color-scheme: light)',
+          },
+        },
+      ],
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/raine/aven' },
       ],
