@@ -8,6 +8,11 @@ export default defineConfig({
     starlight({
       title: 'aven',
       description: 'Local-first task management for humans and coding agents.',
+      logo: {
+        dark: './src/assets/aven-logo-grape-violet.svg',
+        light: './src/assets/aven-logo-grape-violet-light.svg',
+        alt: 'Aven logo',
+      },
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/raine/aven' },
       ],
