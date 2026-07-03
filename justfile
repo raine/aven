@@ -152,11 +152,19 @@ run *ARGS:
 tui:
     env ${AVEN_DEV_DB:+AVEN_DB="$AVEN_DEV_DB"} cargo run -- tui
 
-# Run the docs development server from a clean dependency install
+# Run the docs development server
 docs:
-    rm -rf docs/node_modules
-    npm --prefix docs ci
-    npm --prefix docs run dev
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bun install --cwd docs --frozen-lockfile
+    for _ in {1..50}; do
+        port=$((49152 + RANDOM % 16384))
+        if ! nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
+            exec bun run --cwd docs dev --port "$port"
+        fi
+    done
+    echo "Error: could not find an available docs port" >&2
+    exit 1
 
 # Internal release helper
 _release bump:

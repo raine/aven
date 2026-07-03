@@ -2,6 +2,7 @@
   "name": "aven-docs",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "bun@1.3.13",
   "type": "module",
   "scripts": {
     "dev": "astro dev",
