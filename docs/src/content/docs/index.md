@@ -1,6 +1,6 @@
 ---
 title: What is aven?
-description: Learn what aven is and who it is for.
+description: Local-first task management for humans and coding agents.
 ---
 
 aven is a local-first task manager for humans and coding agents. It is built as a personal, power-user task system: one overview across projects, task capture from wherever work appears, first-class agent workflows, workspace isolation, and a polished terminal UI.
