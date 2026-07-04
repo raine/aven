@@ -157,13 +157,14 @@ docs:
     #!/usr/bin/env bash
     set -euo pipefail
     bun install --cwd docs --frozen-lockfile
-    for _ in {1..50}; do
-        port=$((49152 + RANDOM % 16384))
+    preferred_port=4321
+    max_port=$((preferred_port + 50))
+    for ((port = preferred_port; port <= max_port; port++)); do
         if ! nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
             exec bun run --cwd docs dev --port "$port"
         fi
     done
-    echo "Error: could not find an available docs port" >&2
+    echo "Error: could not find an available docs port between ${preferred_port} and ${max_port}" >&2
     exit 1
 
 # Internal release helper
