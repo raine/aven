@@ -84,6 +84,9 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginAddDependency
             | Action::BeginRemoveDependency
             | Action::Undo
+            | Action::ToggleMarkSelected
+            | Action::ToggleMarkAllInView
+            | Action::ClearMarks
     )
 }
 

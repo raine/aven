@@ -153,6 +153,9 @@ impl App {
             Some(PickerSubmitRoute::EditLabels) => {
                 self.submit_edit_labels(values).await?;
             }
+            Some(PickerSubmitRoute::EditLabelsMulti) => {
+                self.submit_edit_labels_multi(values).await?;
+            }
             Some(PickerSubmitRoute::FilterLabel) => {
                 self.submit_filter_label(values).await?;
             }

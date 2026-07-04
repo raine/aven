@@ -834,6 +834,36 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
         Action::SetPriority("urgent"),
     ),
+    CommandSpec::implemented(
+        "toggle-mark",
+        "toggle mark on selected task",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char(' ')],
+            label: "Space",
+        }],
+        Action::ToggleMarkSelected,
+    ),
+    CommandSpec::implemented(
+        "toggle-mark-all",
+        "toggle marks on visible tasks",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('V')],
+            label: "t V",
+        }],
+        Action::ToggleMarkAllInView,
+    ),
+    CommandSpec::implemented(
+        "clear-marks",
+        "clear task marks",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('C')],
+            label: "t C",
+        }],
+        Action::ClearMarks,
+    ),
     // Dependencies
     CommandSpec::implemented(
         "add-dependency",

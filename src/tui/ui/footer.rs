@@ -37,6 +37,8 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("p", "projects"),
             ("d", "done"),
             ("x", "cancel"),
+            ("Space", "mark"),
+            ("e l", "labels"),
             ("g", "scope"),
             ("v", "views"),
             ("f", "filter"),
@@ -155,6 +157,8 @@ mod tests {
         assert!(hints.contains(&("p", "projects")));
         assert!(hints.contains(&("d", "done")));
         assert!(hints.contains(&("x", "cancel")));
+        assert!(hints.contains(&("Space", "mark")));
+        assert!(hints.contains(&("e l", "labels")));
         assert!(hints.contains(&("g", "scope")));
         assert!(hints.contains(&("v", "views")));
         assert!(hints.contains(&("?", "more")));

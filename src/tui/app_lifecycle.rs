@@ -166,6 +166,7 @@ impl App {
             .await?;
         self.widgets.table.select(result.selected);
         self.widgets.sidebar.select(self.store.sidebar_selection());
+        self.prune_task_marks();
         if let Some(project) = result.fallback_scope {
             self.set_warning(format!("project scope {project} is no longer available"));
         }

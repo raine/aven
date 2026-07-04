@@ -829,6 +829,9 @@ impl App {
             Action::BeginAddDependency => self.begin_add_dependency().await?,
             Action::BeginRemoveDependency => self.begin_remove_dependency(),
             Action::Undo => self.undo_last().await?,
+            Action::ToggleMarkSelected => self.toggle_mark_selected(),
+            Action::ToggleMarkAllInView => self.toggle_mark_all_in_view(),
+            Action::ClearMarks => self.clear_marks(),
             Action::ToggleEpicExpanded => {
                 let index = self.widgets.table.selected();
                 if let Some(message) = self.store.toggle_selected_epic(index).await? {

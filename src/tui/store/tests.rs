@@ -753,6 +753,73 @@ mod task_creation_and_updates {
         assert_eq!(outcome.message, format!("set {display_ref} labels"));
         assert_eq!(store.tasks[selected].labels, vec!["docs".to_string()]);
     }
+
+    #[tokio::test]
+    async fn update_labels_for_tasks_sets_labels_on_each_marked_task() {
+        let mut store = test_store().await;
+        store.create_label("bug".to_string()).await.unwrap();
+        store.create_label("docs".to_string()).await.unwrap();
+        let (_, first_selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "First".to_string(),
+                    labels: vec!["bug".to_string()],
+                    ..task_draft("")
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let first_id = store.tasks[first_selected.unwrap()].task.id.clone();
+        let (_, second_selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Second".to_string(),
+                    labels: vec!["docs".to_string()],
+                    ..task_draft("")
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let second_id = store.tasks[second_selected.unwrap()].task.id.clone();
+        let task_ids = vec![first_id.clone(), second_id.clone()];
+
+        let outcome = store
+            .update_labels_for_tasks(None, &task_ids, vec!["bug".to_string(), "docs".to_string()])
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(outcome.message, "set labels on 2 tasks");
+        for task_id in task_ids {
+            let item = store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == task_id)
+                .unwrap();
+            assert_eq!(item.labels, vec!["bug".to_string(), "docs".to_string()]);
+        }
+    }
+
+    #[tokio::test]
+    async fn update_labels_for_tasks_reports_unchanged_batch() {
+        let mut store = test_store().await;
+        store.create_label("bug".to_string()).await.unwrap();
+        let (task_id, selected) = create_selected_task(&mut store, "Stable labels").await;
+        store
+            .update_labels(Some(selected), vec!["bug".to_string()])
+            .await
+            .unwrap();
+
+        let outcome = store
+            .update_labels_for_tasks(None, &[task_id], vec!["bug".to_string()])
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(outcome.message, "labels unchanged on 1 tasks");
+    }
 }
 
 mod conflicts {
@@ -1965,6 +2032,47 @@ mod undo {
             .unwrap();
         assert_eq!(store.tasks[index].task.status, TaskStatus::Inbox);
         assert_eq!(pending_undo_count(&pool, &workspace_id).await, 1);
+    }
+
+    #[tokio::test]
+    async fn update_labels_for_tasks_records_single_undo_payload() {
+        let mut store = test_store().await;
+        store.create_label("bug".to_string()).await.unwrap();
+        store.create_label("docs".to_string()).await.unwrap();
+        let (first_id, first) = create_selected_task(&mut store, "First").await;
+        store
+            .update_labels(Some(first), vec!["bug".to_string()])
+            .await
+            .unwrap();
+        let (second_id, second) = create_selected_task(&mut store, "Second").await;
+        store
+            .update_labels(Some(second), vec!["docs".to_string()])
+            .await
+            .unwrap();
+
+        store
+            .update_labels_for_tasks(
+                None,
+                &[first_id.clone(), second_id.clone()],
+                vec!["bug".to_string(), "docs".to_string()],
+            )
+            .await
+            .unwrap();
+
+        store.undo_last(None).await.unwrap().unwrap();
+        store.refresh(None).await.unwrap();
+        let first = store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == first_id)
+            .unwrap();
+        let second = store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == second_id)
+            .unwrap();
+        assert_eq!(first.labels, vec!["bug".to_string()]);
+        assert_eq!(second.labels, vec!["docs".to_string()]);
     }
 }
 

@@ -154,6 +154,7 @@ impl App {
         self.focus = Focus::Tasks;
         self.overlay = None;
         self.widgets.sidebar.select(self.store.sidebar_selection());
+        self.prune_task_marks();
         self.widgets
             .table
             .select(Some(0).filter(|_| !self.store.tasks.is_empty()));
@@ -195,6 +196,7 @@ impl App {
     pub(super) fn apply_mutation_result(&mut self, result: crate::tui::store::MutationMessage) {
         self.widgets.table.select(result.selected);
         self.widgets.sidebar.select(self.store.sidebar_selection());
+        self.prune_task_marks();
         self.set_success(result.message);
     }
 
@@ -224,6 +226,7 @@ impl App {
 
     pub(super) fn restore_selection_after_mutation(&mut self) {
         self.widgets.sidebar.select(self.store.sidebar_selection());
+        self.prune_task_marks();
         if self.store.tasks.is_empty() {
             self.widgets.table.select(None);
         } else if self

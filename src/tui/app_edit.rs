@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::Result;
 
 use crate::labels::normalize_label;
@@ -214,6 +216,11 @@ impl App {
     }
 
     pub(super) fn begin_edit_labels(&mut self) {
+        let task_ids = self.marked_task_ids_in_view();
+        if !task_ids.is_empty() {
+            self.open_edit_labels_multi(task_ids);
+            return;
+        }
         let Some(index) = self.guard_selected_task() else {
             return;
         };
@@ -343,6 +350,116 @@ impl App {
             .await;
         self.apply_edit_mutation(result, |app| app.begin_edit_labels());
         Ok(())
+    }
+
+    fn open_edit_labels_multi(&mut self, task_ids: Vec<String>) {
+        let labels = self.store.union_labels_for_tasks(&task_ids);
+        let count = task_ids.len();
+        self.overlay = Some(OverlayState::tag_combobox(
+            OverlayRoute::EditLabelsMulti,
+            format!("Edit labels: {count} marked tasks"),
+            self.store.labels.clone(),
+            labels,
+        ));
+    }
+
+    pub(super) async fn submit_edit_labels_multi(&mut self, labels: Vec<String>) -> Result<()> {
+        for label in &labels {
+            let label = normalize_label(label);
+            if !self.store.labels.contains(&label)
+                && let Err(error) = self.store.create_label(label).await
+            {
+                self.set_error(format!("{error:#}"));
+                self.begin_edit_labels();
+                return Ok(());
+            }
+        }
+        let selected = self.widgets.table.selected();
+        let task_ids = self.marked_task_ids_in_view();
+        let result = self
+            .store
+            .update_labels_for_tasks(selected, &task_ids, labels)
+            .await;
+        self.apply_edit_mutation(result, |app| app.begin_edit_labels());
+        Ok(())
+    }
+
+    pub(super) fn toggle_mark_selected(&mut self) {
+        self.pending_shortcut.clear();
+        let Some(index) = self.widgets.table.selected() else {
+            self.set_info("no selected task to mark");
+            return;
+        };
+        let Some((id, display_ref)) = self
+            .store
+            .selected_task(Some(index))
+            .map(|item| (item.task.id.clone(), item.display_ref.clone()))
+        else {
+            self.set_info("no selected task to mark");
+            return;
+        };
+        if self.widgets.marked_task_ids.insert(id.clone()) {
+            self.set_info(format!("marked {display_ref}"));
+        } else {
+            self.widgets.marked_task_ids.remove(&id);
+            self.set_info(format!("unmarked {display_ref}"));
+        }
+    }
+
+    pub(super) fn toggle_mark_all_in_view(&mut self) {
+        self.pending_shortcut.clear();
+        let visible = self
+            .store
+            .tasks
+            .iter()
+            .map(|item| item.task.id.clone())
+            .collect::<BTreeSet<_>>();
+        if visible.is_empty() {
+            self.set_info("no visible tasks to mark");
+            return;
+        }
+        if visible
+            .iter()
+            .all(|id| self.widgets.marked_task_ids.contains(id))
+        {
+            let count = visible.len();
+            self.widgets
+                .marked_task_ids
+                .retain(|id| !visible.contains(id));
+            self.set_info(format!("unmarked {count} tasks"));
+        } else {
+            let count = visible.len();
+            self.widgets.marked_task_ids.extend(visible);
+            self.set_info(format!("marked {count} tasks"));
+        }
+    }
+
+    pub(super) fn clear_marks(&mut self) {
+        self.pending_shortcut.clear();
+        let count = self.widgets.marked_task_ids.len();
+        self.widgets.marked_task_ids.clear();
+        self.set_info(format!("cleared {count} task marks"));
+    }
+
+    pub(super) fn marked_task_ids_in_view(&self) -> Vec<String> {
+        self.store
+            .tasks
+            .iter()
+            .filter(|item| self.widgets.marked_task_ids.contains(&item.task.id))
+            .map(|item| item.task.id.clone())
+            .collect()
+    }
+
+    pub(super) fn prune_task_marks(&mut self) {
+        let visible = self
+            .store
+            .tasks
+            .iter()
+            .map(|item| item.task.id.clone())
+            .collect::<BTreeSet<_>>();
+        self.widgets
+            .marked_task_ids
+            .retain(|id| visible.contains(id));
     }
 
     pub(super) async fn submit_add_dependency(&mut self, depends_on_task_id: String) -> Result<()> {

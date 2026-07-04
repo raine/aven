@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::Result;
 
 use crate::mutation::{cycle_priority, set_deleted, set_status};
@@ -477,5 +479,93 @@ impl TuiStore {
             )
             .await?,
         ))
+    }
+
+    pub(crate) fn union_labels_for_tasks(&self, task_ids: &[String]) -> Vec<String> {
+        let task_ids = task_ids.iter().collect::<BTreeSet<_>>();
+        self.tasks
+            .iter()
+            .filter(|item| task_ids.contains(&item.task.id))
+            .flat_map(|item| item.labels.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    pub(crate) async fn update_labels_for_tasks(
+        &mut self,
+        current_selected_index: Option<usize>,
+        task_ids: &[String],
+        selected_labels: Vec<String>,
+    ) -> Result<Option<MutationMessage>> {
+        if task_ids.is_empty() {
+            return Ok(None);
+        }
+        let selected_id = self
+            .selected_task(current_selected_index)
+            .map(|item| item.task.id.clone());
+        let task_ids = task_ids.iter().collect::<BTreeSet<_>>();
+        let selected_label_set = selected_labels.iter().collect::<BTreeSet<_>>();
+        let targets = self
+            .tasks
+            .iter()
+            .filter(|item| task_ids.contains(&item.task.id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            return Ok(None);
+        }
+
+        self.activate_workspace();
+        let mut undo_commands = Vec::new();
+        let mut conn = self.pool.acquire().await?;
+        for item in &targets {
+            let before = item.labels.clone();
+            let add_labels = selected_labels
+                .iter()
+                .filter(|label| !before.contains(label))
+                .cloned()
+                .collect::<Vec<_>>();
+            let remove_labels = before
+                .iter()
+                .filter(|label| !selected_label_set.contains(label))
+                .cloned()
+                .collect::<Vec<_>>();
+            if add_labels.is_empty() && remove_labels.is_empty() {
+                continue;
+            }
+            update_task_operation(
+                &mut conn,
+                &item.task.id,
+                TaskUpdate {
+                    add_labels,
+                    remove_labels,
+                    ..TaskUpdate::default()
+                },
+            )
+            .await?;
+            undo_commands.push(UndoCommand::SetTaskLabels {
+                task_id: item.task.id.clone(),
+                before,
+                after: selected_labels.clone(),
+            });
+        }
+        drop(conn);
+
+        let changed = undo_commands.len();
+        if changed > 0 {
+            self.record_undo_commands(&format!("labels {changed} tasks"), undo_commands)
+                .await?;
+        }
+        let fallback_id = targets.first().map(|item| item.task.id.clone());
+        let selected = self
+            .refresh(selected_id.as_deref().or(fallback_id.as_deref()))
+            .await?;
+        let message = if changed == 0 {
+            format!("labels unchanged on {} tasks", targets.len())
+        } else {
+            format!("set labels on {changed} tasks")
+        };
+        Ok(Some(MutationMessage::new(message, selected)))
     }
 }

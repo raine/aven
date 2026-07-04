@@ -836,6 +836,26 @@ mod keyboard_dispatch {
             assert_pending_empty(&app);
         }
     }
+
+    #[tokio::test]
+    async fn mark_shortcuts_update_task_marks() {
+        let mut app = test_app().await;
+        let first = create_and_select_task(&mut app, test_task_draft("first")).await;
+        create_and_select_task(&mut app, test_task_draft("second")).await;
+        app.widgets.table.select(Some(first));
+        let first_id = app.store.tasks[first].task.id.clone();
+
+        app.handle_normal_key(KeyCode::Char(' ')).await.unwrap();
+        assert!(app.widgets.marked_task_ids.contains(&first_id));
+
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('V')).await.unwrap();
+        assert_eq!(app.widgets.marked_task_ids.len(), 2);
+
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
+        assert!(app.widgets.marked_task_ids.is_empty());
+    }
 }
 
 mod command_and_config_overlays {
@@ -1482,6 +1502,70 @@ mod command_and_config_overlays {
         ));
 
         reset_default_workspace(&pool).await;
+    }
+
+    #[tokio::test]
+    async fn edit_labels_shortcut_opens_marked_overlay_when_tasks_are_marked() {
+        let mut app = test_app().await;
+        let index = create_and_select_task(&mut app, test_task_draft("marked")).await;
+        let id = app.store.tasks[index].task.id.clone();
+        app.widgets.marked_task_ids.insert(id);
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TagCombobox(state))
+                if state.route == OverlayRoute::EditLabelsMulti
+                    && state.title == "Edit labels: 1 marked tasks"
+        ));
+    }
+
+    #[tokio::test]
+    async fn edit_labels_shortcut_uses_selected_task_without_marks() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("selected")).await;
+
+        app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TagCombobox(state))
+                if state.route == OverlayRoute::EditLabels
+        ));
+    }
+
+    #[tokio::test]
+    async fn submit_edit_labels_multi_updates_only_marked_tasks() {
+        let mut app = test_app().await;
+        app.store.create_label("batch".to_string()).await.unwrap();
+        let first = create_and_select_task(&mut app, test_task_draft("first")).await;
+        let first_id = app.store.tasks[first].task.id.clone();
+        let second = create_and_select_task(&mut app, test_task_draft("second")).await;
+        let second_id = app.store.tasks[second].task.id.clone();
+        let third = create_and_select_task(&mut app, test_task_draft("third")).await;
+        let third_id = app.store.tasks[third].task.id.clone();
+        app.widgets.marked_task_ids.insert(first_id.clone());
+        app.widgets.marked_task_ids.insert(second_id.clone());
+
+        app.submit_edit_labels_multi(vec!["batch".to_string()])
+            .await
+            .unwrap();
+
+        let labels_for = |app: &App, task_id: &str| {
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == task_id)
+                .unwrap()
+                .labels
+                .clone()
+        };
+        assert_eq!(labels_for(&app, &first_id), vec!["batch".to_string()]);
+        assert_eq!(labels_for(&app, &second_id), vec!["batch".to_string()]);
+        assert!(labels_for(&app, &third_id).is_empty());
     }
 }
 

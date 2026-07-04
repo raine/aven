@@ -283,6 +283,7 @@ impl App {
     pub(super) fn apply_filter_selection(&mut self, selected: Option<usize>) {
         self.widgets.table.select(selected);
         self.widgets.sidebar.select(self.store.sidebar_selection());
+        self.prune_task_marks();
         self.focus = Focus::Tasks;
         self.overlay = None;
     }

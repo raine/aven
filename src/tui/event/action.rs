@@ -80,6 +80,9 @@ pub(crate) enum Action {
     BeginAddDependency,
     BeginRemoveDependency,
     Undo,
+    ToggleMarkSelected,
+    ToggleMarkAllInView,
+    ClearMarks,
     Planned {
         name: &'static str,
         reason: &'static str,

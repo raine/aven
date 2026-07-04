@@ -1,6 +1,8 @@
 mod hit_test;
 mod view_model;
 
+use std::collections::BTreeSet;
+
 use self::hit_test::{task_list_hit, task_list_hit_in_view};
 use self::view_model::{
     TaskGroupRow, TaskListRow, TaskListView, scrollbar_position, task_list_scroll,
@@ -169,6 +171,7 @@ pub(super) fn render_tasks(
         focus,
         table_area,
         inline_title_editor,
+        &widgets.marked_task_ids,
     );
     if preview_area.height > 0 {
         render_task_preview(frame, store, widgets.table.selected(), preview_area);
@@ -182,9 +185,17 @@ fn render_task_list(
     focus: Focus,
     area: Rect,
     inline_title_editor: Option<&TextInputView>,
+    marked_task_ids: &BTreeSet<String>,
 ) {
     frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
-    let model = build_task_list_render_model(store, table_state, focus, area, inline_title_editor);
+    let model = build_task_list_render_model(
+        store,
+        table_state,
+        focus,
+        area,
+        inline_title_editor,
+        marked_task_ids,
+    );
     if model.row_areas.is_empty() {
         return;
     }
@@ -221,6 +232,7 @@ fn build_task_list_render_model(
     focus: Focus,
     area: Rect,
     inline_title_editor: Option<&TextInputView>,
+    marked_task_ids: &BTreeSet<String>,
 ) -> TaskListRenderModel {
     let row_areas = Layout::vertical(vec![Constraint::Length(1); area.height as usize]).split(area);
     let columns = task_list_columns(store, area.width < 90);
@@ -265,13 +277,14 @@ fn build_task_list_render_model(
             TaskListRow::Task { task_index } => {
                 let Some(item) = store.tasks.get(*task_index) else {
                     rows.push(TaskListRenderRow::Task(TaskListTaskRow {
-                        style: row_style(false, focus == Focus::Tasks),
+                        style: row_style(false, focus == Focus::Tasks, false),
                         cells: blank_task_row_cells(),
                     }));
                     continue;
                 };
                 let selected = selected_task == Some(*task_index);
-                let style = row_style(selected, focus == Focus::Tasks);
+                let marked = marked_task_ids.contains(&item.task.id);
+                let style = row_style(selected, focus == Focus::Tasks, marked);
                 let cells = if view.render_mode == TaskListRenderMode::Epics && item.task.is_epic {
                     build_epic_parent_row_cells(
                         item,
@@ -279,6 +292,7 @@ fn build_task_list_render_model(
                         store,
                         inline_title_editor.filter(|_| selected),
                         &column_widths,
+                        marked,
                     )
                 } else {
                     build_task_row_cells(
@@ -287,6 +301,7 @@ fn build_task_list_render_model(
                         view.render_mode,
                         inline_title_editor.filter(|_| selected),
                         &column_widths,
+                        marked,
                     )
                 };
                 rows.push(TaskListRenderRow::Task(TaskListTaskRow { style, cells }));
@@ -298,15 +313,16 @@ fn build_task_list_render_model(
             } => {
                 let Some(item) = store.tasks.get(*task_index) else {
                     rows.push(TaskListRenderRow::Task(TaskListTaskRow {
-                        style: row_style(false, focus == Focus::Tasks),
+                        style: row_style(false, focus == Focus::Tasks, false),
                         cells: blank_task_row_cells(),
                     }));
                     continue;
                 };
                 let selected = selected_task == Some(*task_index);
+                let marked = marked_task_ids.contains(&item.task.id);
                 rows.push(TaskListRenderRow::Task(TaskListTaskRow {
-                    style: row_style(selected, focus == Focus::Tasks),
-                    cells: build_epic_child_row_cells(item, *last, now, &column_widths),
+                    style: row_style(selected, focus == Focus::Tasks, marked),
+                    cells: build_epic_child_row_cells(item, *last, now, &column_widths, marked),
                 }));
             }
         }
@@ -545,9 +561,11 @@ fn render_group_row(frame: &mut Frame, label: &str, count: usize, area: Rect) {
     );
 }
 
-fn row_style(selected: bool, focused: bool) -> Style {
+fn row_style(selected: bool, focused: bool, marked: bool) -> Style {
     if selected {
         if focused { SELECTED } else { SELECTED_INACTIVE }
+    } else if marked {
+        Style::new().bg(BG_ALT)
     } else {
         Style::new().bg(BG)
     }
@@ -582,6 +600,7 @@ fn build_task_row_cells(
     render_mode: TaskListRenderMode,
     inline_title_editor: Option<&TextInputView>,
     column_widths: &[usize; 8],
+    marked: bool,
 ) -> Vec<Line<'static>> {
     let age_seconds = if render_mode.uses_queue_age() {
         item.queue.idle_seconds()
@@ -598,7 +617,7 @@ fn build_task_row_cells(
         .unwrap_or_else(|| title_cell(item, column_widths[1]));
     let labels = label_cell(&item.labels, column_widths[2]);
     vec![
-        task_ref_cell(item),
+        task_ref_cell(item, marked),
         title,
         labels,
         metadata_cell(item),
@@ -621,6 +640,7 @@ fn build_epic_parent_row_cells(
     store: &TuiStore,
     inline_title_editor: Option<&TextInputView>,
     column_widths: &[usize; 8],
+    marked: bool,
 ) -> Vec<Line<'static>> {
     let age_seconds = task_seconds_since(&item.task.created_at, now_seconds);
     let title = inline_title_editor
@@ -628,7 +648,7 @@ fn build_epic_parent_row_cells(
         .unwrap_or_else(|| title_cell(item, column_widths[1]));
     let expanded = store.view_state.expanded_epic_ids.contains(&item.task.id);
     let mut ref_spans = vec![
-        Span::raw(" "),
+        Span::styled(if marked { "●" } else { " " }, Style::new().fg(YELLOW)),
         Span::styled(if expanded { "▾" } else { "▸" }, Style::new().fg(ACCENT)),
         Span::raw(" "),
     ];
@@ -668,10 +688,11 @@ fn build_epic_child_row_cells(
     last: bool,
     now_seconds: i64,
     column_widths: &[usize; 8],
+    marked: bool,
 ) -> Vec<Line<'static>> {
     let age_seconds = task_seconds_since(&item.task.created_at, now_seconds);
     let branch = if last { "└─" } else { "├─" };
-    let ref_prefix = format!(" {branch} ");
+    let ref_prefix = format!(" {} {branch} ", if marked { "●" } else { " " });
     let display_ref = truncate_chars(
         &item.display_ref,
         column_widths[0].saturating_sub(ref_prefix.chars().count() + 1),
@@ -763,21 +784,23 @@ fn inline_title_edit_cell(editor: &TextInputView, max_width: usize) -> Line<'sta
     clipped_input_line(&editor.input, editor.cursor, max_width.saturating_sub(1))
 }
 
-fn task_ref_cell(item: &TaskListItem) -> Line<'static> {
+fn task_ref_cell(item: &TaskListItem, marked: bool) -> Line<'static> {
+    let marker = if marked { "●" } else { " " };
     if let Some((project, suffix)) = item.display_ref.split_once('-') {
         Line::from(vec![
+            Span::styled(marker.to_string(), Style::new().fg(YELLOW)),
             Span::styled(
-                format!(" {project}"),
+                project.to_string(),
                 Style::new().fg(theme::project_color(&item.task.project_key)),
             ),
             Span::styled("-", Style::new().fg(FG_DIM)),
             Span::styled(suffix.to_string(), Style::new().fg(FG_MUTED)),
         ])
     } else {
-        Line::from(Span::styled(
-            format!(" {}", item.display_ref),
-            Style::new().fg(FG_MUTED),
-        ))
+        Line::from(vec![
+            Span::styled(marker.to_string(), Style::new().fg(YELLOW)),
+            Span::styled(item.display_ref.clone(), Style::new().fg(FG_MUTED)),
+        ])
     }
 }
 
@@ -1038,9 +1061,15 @@ mod tests {
         terminal
             .draw(|frame| {
                 let column_widths = task_list_column_widths(&columns, frame.area().width);
-                let style = row_style(true, true);
-                let cells =
-                    build_task_row_cells(item, 0, render_mode, inline_title_editor, &column_widths);
+                let style = row_style(true, true, false);
+                let cells = build_task_row_cells(
+                    item,
+                    0,
+                    render_mode,
+                    inline_title_editor,
+                    &column_widths,
+                    false,
+                );
                 render_task_row_cells(frame, frame.area(), style, &columns, &cells);
             })
             .unwrap();
@@ -1109,14 +1138,26 @@ mod tests {
         let area = Rect::new(0, 0, 100, 4);
         let mut table_state = TableState::default();
 
-        let top_model =
-            build_task_list_render_model(&store, &mut table_state, Focus::Tasks, area, None);
+        let top_model = build_task_list_render_model(
+            &store,
+            &mut table_state,
+            Focus::Tasks,
+            area,
+            None,
+            &BTreeSet::new(),
+        );
 
         assert_eq!(column_length(top_model.columns[2]), 0);
 
         table_state.select(Some(3));
-        let scrolled_model =
-            build_task_list_render_model(&store, &mut table_state, Focus::Tasks, area, None);
+        let scrolled_model = build_task_list_render_model(
+            &store,
+            &mut table_state,
+            Focus::Tasks,
+            area,
+            None,
+            &BTreeSet::new(),
+        );
 
         assert_eq!(column_length(scrolled_model.columns[2]), 17);
     }
@@ -1296,6 +1337,14 @@ mod tests {
     }
 
     #[test]
+    fn marked_row_shows_ref_marker() {
+        let item = task_item("marked");
+        let line = task_ref_cell(&item, true);
+
+        assert!(line.to_string().starts_with("●"));
+    }
+
+    #[test]
     fn normal_row_keeps_title_rendering_without_inline_editor() {
         let item = task_item("original title");
 
@@ -1318,6 +1367,7 @@ mod tests {
             TaskListRenderMode::Flat,
             None,
             &[12, 40, 12, 6, 9, 10, 3, 5],
+            false,
         );
 
         assert!(rendered.contains("original title"));
@@ -1409,6 +1459,7 @@ mod tests {
             TaskListRenderMode::Flat,
             None,
             &[12, 40, 12, 6, 9, 10, 3, 5],
+            false,
         );
 
         assert_eq!(cells.len(), 8);
@@ -1422,6 +1473,7 @@ mod tests {
             TaskListRenderMode::Flat,
             None,
             &[12, 40, 12, 6, 9, 10, 3, 5],
+            false,
         );
         assert_eq!(cells[3].to_string(), "× ←1 →1 ✎");
     }
@@ -1443,6 +1495,7 @@ mod tests {
             TaskListRenderMode::Flat,
             Some(&editor),
             &[12, 40, 12, 6, 9, 10, 3, 5],
+            false,
         );
 
         assert!(cells[1].to_string().contains("edited title"));

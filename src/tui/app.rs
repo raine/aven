@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -122,6 +123,7 @@ fn loading_frame(started_at: Instant) -> &'static str {
 pub(crate) struct WidgetState {
     pub(crate) sidebar: ListState,
     pub(crate) table: TableState,
+    pub(crate) marked_task_ids: BTreeSet<String>,
 }
 
 pub(crate) struct App {
@@ -177,6 +179,7 @@ impl App {
             widgets: WidgetState {
                 sidebar: ListState::default(),
                 table: TableState::default(),
+                marked_task_ids: BTreeSet::new(),
             },
             overlay: None,
             notification: None,

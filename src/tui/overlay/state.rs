@@ -343,6 +343,7 @@ pub(crate) enum OverlayRoute {
     EditProject,
     EditPriority,
     EditLabels,
+    EditLabelsMulti,
     FilterLabel,
     FilterPriority,
     ScopeProject,
@@ -389,6 +390,7 @@ pub(crate) enum PickerSubmitRoute {
     EditProject,
     EditPriority,
     EditLabels,
+    EditLabelsMulti,
     FilterLabel,
     FilterPriority,
     ScopeProject,
@@ -545,6 +547,10 @@ impl OverlayRoute {
                 picker_submit: Some(PickerSubmitRoute::EditLabels),
                 ..OverlayRouteDescriptor::default()
             },
+            Self::EditLabelsMulti => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::EditLabelsMulti),
+                ..OverlayRouteDescriptor::default()
+            },
             Self::FilterLabel => OverlayRouteDescriptor {
                 picker_submit: Some(PickerSubmitRoute::FilterLabel),
                 ..OverlayRouteDescriptor::default()
@@ -645,7 +651,7 @@ impl OverlayRoute {
 
 #[cfg(test)]
 impl OverlayRoute {
-    pub(crate) const ALL: [Self; 31] = [
+    pub(crate) const ALL: [Self; 32] = [
         Self::MessageOnly,
         Self::AddTaskTitle,
         Self::AddTaskDescription,
@@ -661,6 +667,7 @@ impl OverlayRoute {
         Self::EditProject,
         Self::EditPriority,
         Self::EditLabels,
+        Self::EditLabelsMulti,
         Self::FilterLabel,
         Self::FilterPriority,
         Self::ScopeProject,
