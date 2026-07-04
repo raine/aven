@@ -45,7 +45,7 @@ export default defineConfig({
             { label: 'What is aven?', link: '/' },
             { label: 'Getting started', slug: 'getting-started' },
             { label: 'Concepts', slug: 'concepts' },
-            { label: 'Why not Taskwarrior?', slug: 'taskwarrior' },
+            { label: 'Taskwarrior comparison', slug: 'taskwarrior' },
           ],
         },
         {

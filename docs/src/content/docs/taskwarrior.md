@@ -1,9 +1,9 @@
 ---
-title: Why not Taskwarrior?
+title: Taskwarrior comparison
 description: How aven differs from Taskwarrior.
 ---
 
-Taskwarrior is a great task manager and a major inspiration for aven. aven exists because I wanted a similar power-user, local-first tool with different defaults for coding-agent workflows, task identity, context, workspaces, and the human interface.
+[Taskwarrior](https://taskwarrior.org/) is a great task manager and a major inspiration for aven. aven exists because I wanted a similar power-user, local-first tool with different defaults for coding-agent workflows, task identity, context, workspaces, and the human interface.
 
 ## Different goals
 
@@ -11,7 +11,7 @@ Taskwarrior is built around a powerful CLI. aven is designed so the CLI is agent
 
 For humans, the TUI is optimized for speed. It starts instantly, supports keyboard-first workflows, and makes common task operations faster than running command sequences.
 
-For agents, the CLI output is compact and explicit. Commands print the task refs and fields agents need to update status, add notes, and leave handoff context without scraping a human UI.
+For agents, the CLI output is compact and explicit. Commands print the task refs and fields agents need to update status, add notes, and leave handoff context.
 
 ## Task identity
 
@@ -33,14 +33,10 @@ This matters for coding-agent workflows because handoff context should be durabl
 
 aven has first-class workspaces. Personal and work tasks can use the same tool while keeping queues, refs, labels, and projects separate.
 
-Workspace routes can select a workspace based on the current directory, so working under `~/work` can use the work workspace automatically.
-
-## Repo-independent storage
-
-Tasks live outside repositories. Repos provide project context, but they do not own the task data.
-
-That means tasks survive branches, worktrees, checkouts, and clones. It also leaves room for synced entrypoints such as an iOS app or Telegram agent to manage tasks without cloning every repository.
+Workspace routes can select a workspace based on the current directory, so working under `~/work` can use the work workspace automatically. In Taskwarrior, this kind of directory-aware isolation requires shell wrappers, filters, and custom config around `task` and `taskwarrior-tui`.
 
 ## Why build a separate tool?
 
-aven owns the full stack: data model, CLI, TUI, sync, and agent workflow. That makes these choices part of the product instead of layers on top of another task manager.
+The gaps above can be worked around with Taskwarrior configuration, UDAs, shell wrappers, filters, sidecar files, and separate TUI tools. aven aims to turn those hacks into a coherent system.
+
+Rather than adding more hacks on top of Taskwarrior, I want to own the full stack and make my own task manager. Before AI coding, building a task manager with aven's scope would perhaps have been an unrealistic side project, but now it is a reasonable one.
