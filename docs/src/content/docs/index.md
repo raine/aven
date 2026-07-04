@@ -32,8 +32,8 @@ aven makes a few opinionated choices. Taskwarrior is a major inspiration, and av
 
 ## Example workflow: capture from chat
 
-A synced aven setup can turn chat or voice input into project-scoped tasks.
+A synced aven setup can turn chat or voice input into project-scoped tasks without a repo checkout.
 
-For example, a private Telegram agent can receive a voice message, transcribe it, identify the project, create the task through the aven CLI, sync it, and reply with the created task ref.
+For example, a Raspberry Pi runs a private Telegram agent with voice transcription. The agent uses an aven skill to map spoken project names to aven projects, then calls a small `aven-add` wrapper that syncs, creates the task, captures the ref, and syncs again.
 
-That means an idea captured on the go can become a task without opening a laptop, cloning the repo, or manually triaging notes later.
+An idea captured on the go is already in the right project when you get back to your laptop.
