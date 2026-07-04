@@ -39,14 +39,29 @@ export default defineConfig({
       ],
       customCss: ['./src/styles/code.css'],
       sidebar: [
-        { label: 'What is aven?', link: '/' },
-        { label: 'Getting started', slug: 'getting-started' },
-        { label: 'Concepts', slug: 'concepts' },
-        { label: 'Why not Taskwarrior?', slug: 'taskwarrior' },
-        { label: 'Configuration', slug: 'configuration' },
-        { label: 'TUI', slug: 'tui' },
-        { label: 'Agents', slug: 'agents' },
-        { label: 'Sync and backups', slug: 'sync' },
+        {
+          label: 'Start here',
+          items: [
+            { label: 'What is aven?', link: '/' },
+            { label: 'Getting started', slug: 'getting-started' },
+            { label: 'Concepts', slug: 'concepts' },
+            { label: 'Why not Taskwarrior?', slug: 'taskwarrior' },
+          ],
+        },
+        {
+          label: 'Using aven',
+          items: [
+            { label: 'TUI', slug: 'tui' },
+            { label: 'Agents', slug: 'agents' },
+            { label: 'Sync and backups', slug: 'sync' },
+          ],
+        },
+        {
+          label: 'Reference',
+          items: [
+            { label: 'Configuration', slug: 'configuration' },
+          ],
+        },
       ],
     }),
   ],
