@@ -113,15 +113,34 @@ pub(crate) fn task_status_at_position(
     let table_area = task_list_areas(area).table_area;
     let view = TaskListView::new(store);
     let candidate = task_list_hit_in_view(&view, table_state, table_area, column, row)?;
-    let status_area = task_list_status_area(store, table_area, candidate.viewport_row);
+    let status_area = task_list_status_area(store, table_state, table_area, candidate.viewport_row);
     if column < status_area.x || column >= status_area.x.saturating_add(status_area.width) {
         return None;
     }
     task_list_hit(store, candidate)
 }
 
-fn task_list_status_area(store: &TuiStore, table_area: Rect, visual_row: u16) -> Rect {
-    let columns = task_list_columns(store, table_area.width < 90);
+fn task_list_status_area(
+    store: &TuiStore,
+    table_state: &TableState,
+    table_area: Rect,
+    visual_row: u16,
+) -> Rect {
+    let view = TaskListView::new(store);
+    let viewport_rows = table_area.height.saturating_sub(1) as usize;
+    let selected_row = table_state
+        .selected()
+        .map(|selected| view.visual_row(selected))
+        .unwrap_or(0);
+    let scroll = task_list_scroll(
+        table_state.offset(),
+        selected_row,
+        view.rows.len(),
+        viewport_rows,
+    );
+    let visible_rows = task_list_visible_rows(&view, scroll, viewport_rows);
+    let visible_tasks = visible_task_items(store, &visible_rows);
+    let columns = task_list_columns_for_tasks(store, table_area.width < 90, &visible_tasks);
     let row_area = Rect::new(
         table_area.x,
         table_area.y.saturating_add(1).saturating_add(visual_row),
@@ -230,6 +249,9 @@ fn build_task_list_render_model(
         viewport_rows,
     );
     *table_state.offset_mut() = scroll;
+    let visible_rows = task_list_visible_rows(&view, scroll, viewport_rows);
+    let visible_tasks = visible_task_items(store, &visible_rows);
+    let columns = task_list_columns_for_tasks(store, area.width < 90, &visible_tasks);
 
     let now = now_seconds();
     let column_widths = task_list_column_widths(
@@ -237,7 +259,7 @@ fn build_task_list_render_model(
         row_areas.get(1).map_or(area.width, |area| area.width),
     );
     let mut rows = Vec::new();
-    for (_, row) in task_list_visible_rows(&view, scroll, viewport_rows) {
+    for (_, row) in visible_rows {
         match row {
             TaskListRow::Group(group) => rows.push(TaskListRenderRow::Group(*group)),
             TaskListRow::Task { task_index } => {
@@ -302,8 +324,16 @@ fn build_task_list_render_model(
 }
 
 fn task_list_columns(store: &TuiStore, narrow: bool) -> [Constraint; 8] {
+    task_list_columns_for_tasks(store, narrow, &store.tasks.iter().collect::<Vec<_>>())
+}
+
+fn task_list_columns_for_tasks(
+    store: &TuiStore,
+    narrow: bool,
+    label_tasks: &[&TaskListItem],
+) -> [Constraint; 8] {
     let project_width = project_column_width(store, narrow);
-    let label_width = label_column_width(store, narrow);
+    let label_width = label_column_width_from_task_refs(label_tasks, narrow);
     let metadata_width = metadata_column_width(store);
     let priority_width = priority_column_width(store);
     let ref_width = if store.view_state.render_mode() == TaskListRenderMode::Epics {
@@ -389,11 +419,28 @@ fn project_column_width(store: &TuiStore, narrow: bool) -> u16 {
         .min(max_width)
 }
 
-fn label_column_width(store: &TuiStore, narrow: bool) -> u16 {
-    label_column_width_from_tasks(&store.tasks, narrow)
+fn visible_task_items<'a>(
+    store: &'a TuiStore,
+    visible_rows: &[(usize, &TaskListRow)],
+) -> Vec<&'a TaskListItem> {
+    visible_rows
+        .iter()
+        .filter_map(|(_, row)| match row {
+            TaskListRow::Group(_) => None,
+            TaskListRow::Task { task_index } | TaskListRow::EpicChild { task_index, .. } => {
+                store.tasks.get(*task_index)
+            }
+        })
+        .collect()
 }
 
+#[cfg(test)]
 fn label_column_width_from_tasks(tasks: &[TaskListItem], narrow: bool) -> u16 {
+    let tasks = tasks.iter().collect::<Vec<_>>();
+    label_column_width_from_task_refs(&tasks, narrow)
+}
+
+fn label_column_width_from_task_refs(tasks: &[&TaskListItem], narrow: bool) -> u16 {
     if narrow {
         return 0;
     }
@@ -1016,6 +1063,13 @@ mod tests {
         crate::workspaces::set_active_workspace(workspace);
         drop(conn);
         let mut store = TuiStore::new(pool).await.unwrap();
+        let labels = tasks
+            .iter()
+            .flat_map(|item| item.labels.iter().cloned())
+            .collect::<std::collections::BTreeSet<_>>();
+        for label in labels {
+            store.create_label(label).await.unwrap();
+        }
         for item in tasks {
             let draft = TaskDraft {
                 title: item.task.title,
@@ -1023,12 +1077,45 @@ mod tests {
                 project: None,
                 status: item.task.status.as_str().to_string(),
                 priority: item.task.priority.as_str().to_string(),
-                labels: Vec::new(),
+                labels: item.labels,
                 is_epic: false,
             };
             store.create_task(draft, None).await.unwrap();
         }
         store
+    }
+
+    fn column_length(column: Constraint) -> u16 {
+        match column {
+            Constraint::Length(width) => width,
+            other => panic!("expected fixed column width, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn label_column_width_uses_visible_task_labels() {
+        let mut hidden_wide = task_item("hidden wide label");
+        hidden_wide.labels = vec!["very-wide-label".to_string()];
+        let store = test_store_with_tasks(vec![
+            task_item("visible plain one"),
+            task_item("visible plain two"),
+            task_item("visible plain three"),
+            hidden_wide,
+        ])
+        .await;
+        let area = Rect::new(0, 0, 100, 4);
+        let mut table_state = TableState::default();
+
+        let top_model =
+            build_task_list_render_model(&store, &mut table_state, Focus::Tasks, area, None);
+
+        assert_eq!(column_length(top_model.columns[2]), 0);
+
+        table_state.select(Some(3));
+        let scrolled_model =
+            build_task_list_render_model(&store, &mut table_state, Focus::Tasks, area, None);
+
+        assert_eq!(column_length(scrolled_model.columns[2]), 18);
     }
 
     #[test]
@@ -1100,7 +1187,7 @@ mod tests {
         let area = Rect::new(0, 0, 140, 10);
         let task_id = store.tasks[0].task.id.clone();
 
-        let status_area = task_list_status_area(&store, area, 1);
+        let status_area = task_list_status_area(&store, &table_state, area, 1);
         let hit = task_status_at_position(&store, &table_state, area, status_area.x, 2).unwrap();
         assert_eq!(hit.task_index, 0);
         assert_eq!(hit.task_id, task_id);
@@ -1127,7 +1214,7 @@ mod tests {
         let area = Rect::new(26, 2, 114, 18);
         let task_id = store.tasks[0].task.id.clone();
 
-        let status_area = task_list_status_area(&store, area, 1);
+        let status_area = task_list_status_area(&store, &table_state, area, 1);
         let hit = task_status_at_position(&store, &table_state, area, status_area.x, 4).unwrap();
 
         assert_eq!(hit.task_index, 0);
