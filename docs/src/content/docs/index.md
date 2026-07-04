@@ -29,3 +29,11 @@ aven makes a few opinionated choices. Taskwarrior is a major inspiration, and av
 - **The same task store has many entrypoints.** Tasks should be reachable from the laptop TUI, agent CLI, terminal capture flows, sync clients, and integrations that talk to the local or synced task store. Run the sync server on a Raspberry Pi or home server, then sync devices through a VPN or private network. Because tasks live in the task store instead of repo files, a Telegram agent, future iOS app, or other synced entrypoint can create project-scoped tasks without cloning every repository.
 - **Context belongs with the task.** Markdown descriptions and append-style notes keep problem statements, decisions, blockers, and partial progress attached to the work.
 - **Workspaces isolate worlds.** Personal and work tasks can use the same tool while keeping queues, refs, labels, and projects separate. Workspace routes can make a directory such as `~/work` open the work workspace automatically, and the TUI can open a workspace explicitly when you want to switch context.
+
+## Example workflow: capture from chat
+
+A synced aven setup can turn chat or voice input into project-scoped tasks.
+
+For example, a private Telegram agent can receive a voice message, transcribe it, identify the project, create the task through the aven CLI, sync it, and reply with the created task ref.
+
+That means an idea captured on the go can become a task without opening a laptop, cloning the repo, or manually triaging notes later.
