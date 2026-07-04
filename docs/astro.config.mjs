@@ -4,6 +4,15 @@ import starlight from '@astrojs/starlight';
 
 export default defineConfig({
   site: 'https://aven.raine.dev',
+  vite: {
+    server: {
+      watch: {
+        ignored: ['**/out/**'],
+        usePolling: true,
+        interval: 100,
+      },
+    },
+  },
   integrations: [
     starlight({
       title: 'aven',
