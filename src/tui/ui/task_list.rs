@@ -285,11 +285,16 @@ fn build_task_list_render_model(
                 let selected = selected_task == Some(*task_index);
                 let marked = marked_task_ids.contains(&item.task.id);
                 let style = row_style(selected, focus == Focus::Tasks, marked);
-                let cells = if view.render_mode == TaskListRenderMode::Epics && item.task.is_epic {
+                let cells = if item.task.is_epic
+                    && matches!(
+                        view.render_mode,
+                        TaskListRenderMode::Epics | TaskListRenderMode::Queue
+                    ) {
                     build_epic_parent_row_cells(
                         item,
                         now,
-                        store,
+                        store.view_state.expanded_epic_ids.contains(&item.task.id),
+                        view.render_mode,
                         inline_title_editor.filter(|_| selected),
                         &column_widths,
                         marked,
@@ -352,7 +357,10 @@ fn task_list_columns_for_tasks(
     let label_width = label_column_width_from_task_refs(label_tasks, narrow);
     let metadata_width = metadata_column_width(store);
     let priority_width = priority_column_width(store);
-    let ref_width = if store.view_state.render_mode() == TaskListRenderMode::Epics {
+    let ref_width = if matches!(
+        store.view_state.render_mode(),
+        TaskListRenderMode::Epics | TaskListRenderMode::Queue
+    ) {
         14
     } else {
         12
@@ -637,16 +645,25 @@ fn build_task_row_cells(
 fn build_epic_parent_row_cells(
     item: &TaskListItem,
     now_seconds: i64,
-    store: &TuiStore,
+    expanded: bool,
+    render_mode: TaskListRenderMode,
     inline_title_editor: Option<&TextInputView>,
     column_widths: &[usize; 8],
     marked: bool,
 ) -> Vec<Line<'static>> {
-    let age_seconds = task_seconds_since(&item.task.created_at, now_seconds);
+    let age_seconds = if render_mode.uses_queue_age() {
+        item.queue.idle_seconds()
+    } else {
+        task_seconds_since(&item.task.created_at, now_seconds)
+    };
+    let age_style_input = if render_mode.uses_queue_age() {
+        &item.task.queue_activity_at
+    } else {
+        &item.task.created_at
+    };
     let title = inline_title_editor
         .map(|editor| inline_title_edit_cell(editor, column_widths[1]))
         .unwrap_or_else(|| title_cell(item, column_widths[1]));
-    let expanded = store.view_state.expanded_epic_ids.contains(&item.task.id);
     let mut ref_spans = vec![
         Span::styled(if marked { "●" } else { " " }, Style::new().fg(YELLOW)),
         Span::styled(if expanded { "▾" } else { "▸" }, Style::new().fg(ACCENT)),
@@ -678,7 +695,7 @@ fn build_epic_parent_row_cells(
         )),
         Line::from(Span::styled(
             age_seconds.map(compact_age).unwrap_or_default(),
-            age_style(&item.task.created_at, now_seconds),
+            age_style(age_style_input, now_seconds),
         )),
     ]
 }
@@ -692,7 +709,7 @@ fn build_epic_child_row_cells(
 ) -> Vec<Line<'static>> {
     let age_seconds = task_seconds_since(&item.task.created_at, now_seconds);
     let branch = if last { "└─" } else { "├─" };
-    let ref_prefix = format!(" {} {branch} ", if marked { "●" } else { " " });
+    let ref_prefix = format!("{}{branch} ", if marked { "●" } else { " " });
     let display_ref = truncate_chars(
         &item.display_ref,
         column_widths[0].saturating_sub(ref_prefix.chars().count() + 1),
@@ -1505,6 +1522,14 @@ mod tests {
         );
 
         assert!(cells[1].to_string().contains("edited title"));
+    }
+
+    #[test]
+    fn epic_child_ref_branch_aligns_under_parent_arrow() {
+        let item = task_item("child task");
+        let cells = build_epic_child_row_cells(&item, true, 0, &[14, 40, 0, 0, 9, 10, 0, 5], false);
+
+        assert!(cells[0].to_string().starts_with(" └─ "));
     }
 
     #[test]

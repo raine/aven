@@ -8,7 +8,10 @@ impl TuiStore {
         &mut self,
         index: Option<usize>,
     ) -> Result<Option<MutationMessage>, anyhow::Error> {
-        if self.view_state.render_mode() != TaskListRenderMode::Epics {
+        if !matches!(
+            self.view_state.render_mode(),
+            TaskListRenderMode::Epics | TaskListRenderMode::Queue
+        ) {
             return Ok(None);
         }
         let (task_id, display_ref) = {

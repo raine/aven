@@ -99,9 +99,24 @@ impl App {
         self.overlay = None;
     }
 
-    pub(super) fn move_right(&mut self) {
+    pub(super) async fn move_right(&mut self) -> Result<()> {
+        if self.focus == Focus::Tasks
+            && let Some(index) = self.widgets.table.selected()
+            && let Some(item) = self.store.selected_task(Some(index))
+            && item.task.is_epic
+            && !self
+                .store
+                .view_state
+                .expanded_epic_ids
+                .contains(&item.task.id)
+            && let Some(message) = self.store.toggle_selected_epic(Some(index)).await?
+        {
+            self.apply_mutation_result(message);
+            return Ok(());
+        }
         self.focus = Focus::Tasks;
         self.overlay = None;
+        Ok(())
     }
 
     pub(super) fn previous_item(&mut self) {

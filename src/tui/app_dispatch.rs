@@ -764,7 +764,7 @@ impl App {
             Action::MoveDown => self.move_selection(1).await?,
             Action::MoveUp => self.move_selection(-1).await?,
             Action::MoveLeft => self.move_left(),
-            Action::MoveRight => self.move_right(),
+            Action::MoveRight => self.move_right().await?,
             Action::PreviousItem => self.previous_item(),
             Action::NextItem => self.next_item(),
             Action::First => self.select_edge(false).await?,
