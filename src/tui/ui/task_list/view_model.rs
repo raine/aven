@@ -288,8 +288,8 @@ mod tests {
     fn project_filtered_queue_view_groups_by_queue_band() {
         let tasks = vec![
             task_item_with("todo high", "todo", QueueBand::Focus),
+            task_item_with("todo medium", "todo", QueueBand::Soon),
             task_item_with("inbox", "inbox", QueueBand::Triage),
-            task_item_with("todo medium", "todo", QueueBand::Triage),
             task_item_with("backlog", "backlog", QueueBand::Later),
         ];
 
@@ -305,10 +305,14 @@ mod tests {
                 }),
                 TaskListRow::Task { task_index: 0 },
                 TaskListRow::Group(TaskGroupRow {
-                    label: "triage",
-                    count: 2,
+                    label: "soon",
+                    count: 1,
                 }),
                 TaskListRow::Task { task_index: 1 },
+                TaskListRow::Group(TaskGroupRow {
+                    label: "triage",
+                    count: 1,
+                }),
                 TaskListRow::Task { task_index: 2 },
                 TaskListRow::Group(TaskGroupRow {
                     label: "later",
@@ -447,22 +451,22 @@ mod tests {
     fn visual_row_uses_planned_rows() {
         let tasks = vec![
             task_item_with("todo high", "todo", QueueBand::Focus),
+            task_item_with("todo medium", "todo", QueueBand::Soon),
             task_item_with("inbox", "inbox", QueueBand::Triage),
-            task_item_with("todo medium", "todo", QueueBand::Triage),
         ];
         let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
 
         assert_eq!(view.visual_row(0), 1);
         assert_eq!(view.visual_row(1), 3);
-        assert_eq!(view.visual_row(2), 4);
+        assert_eq!(view.visual_row(2), 5);
     }
 
     #[test]
     fn queue_view_keeps_group_header_with_first_visible_task() {
         let tasks = vec![
             task_item_with("todo high", "todo", QueueBand::Focus),
+            task_item_with("todo medium", "todo", QueueBand::Soon),
             task_item_with("inbox", "inbox", QueueBand::Triage),
-            task_item_with("todo medium", "todo", QueueBand::Triage),
         ];
         let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
 
@@ -480,8 +484,8 @@ mod tests {
                 (
                     2,
                     &TaskListRow::Group(TaskGroupRow {
-                        label: "triage",
-                        count: 2
+                        label: "soon",
+                        count: 1
                     })
                 ),
             ]
@@ -492,12 +496,18 @@ mod tests {
                 (
                     2,
                     &TaskListRow::Group(TaskGroupRow {
-                        label: "triage",
-                        count: 2
+                        label: "soon",
+                        count: 1
                     })
                 ),
                 (3, &TaskListRow::Task { task_index: 1 }),
-                (4, &TaskListRow::Task { task_index: 2 }),
+                (
+                    4,
+                    &TaskListRow::Group(TaskGroupRow {
+                        label: "triage",
+                        count: 1
+                    })
+                ),
             ]
         );
     }

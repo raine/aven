@@ -9,6 +9,7 @@ pub(crate) enum QueueBand {
     NeedsAction,
     Blocked,
     Focus,
+    Soon,
     Triage,
     #[default]
     Later,
@@ -29,6 +30,7 @@ impl QueueBand {
             Self::NeedsAction => "needs action",
             Self::Blocked => "blocked",
             Self::Focus => "focus",
+            Self::Soon => "soon",
             Self::Triage => "triage",
             Self::Later => "later",
             Self::Epics => "epics",
@@ -40,9 +42,10 @@ impl QueueBand {
             Self::NeedsAction => 0,
             Self::Blocked => 1,
             Self::Focus => 2,
-            Self::Triage => 3,
-            Self::Later => 4,
-            Self::Epics => 5,
+            Self::Soon => 3,
+            Self::Triage => 4,
+            Self::Later => 5,
+            Self::Epics => 6,
         }
     }
 }
@@ -122,9 +125,9 @@ fn queue_band(
         || (task.status == TaskStatus::Todo && task.priority == TaskPriority::High)
     {
         QueueBand::Focus
-    } else if task.status == TaskStatus::Inbox
-        || (task.status == TaskStatus::Todo && task.priority == TaskPriority::Medium)
-    {
+    } else if task.status == TaskStatus::Todo && task.priority == TaskPriority::Medium {
+        QueueBand::Soon
+    } else if task.status == TaskStatus::Inbox {
         QueueBand::Triage
     } else {
         QueueBand::Later
@@ -235,6 +238,14 @@ mod tests {
         assert_eq!(
             queue_meta(&task("todo", "high", "1000"), false, false, 1000).band,
             QueueBand::Focus
+        );
+    }
+
+    #[test]
+    fn medium_todo_tasks_are_soon() {
+        assert_eq!(
+            queue_meta(&task("todo", "medium", "1000"), false, false, 1000).band,
+            QueueBand::Soon
         );
     }
 
