@@ -481,11 +481,12 @@ fn metadata_column_width_from_tasks(tasks: &[TaskListItem]) -> u16 {
 }
 
 fn metadata_column_width_from_task_refs(tasks: &[&TaskListItem]) -> u16 {
-    tasks
+    let width = tasks
         .iter()
         .map(|item| metadata_cell(item).to_string().chars().count() as u16)
         .max()
-        .unwrap_or(0)
+        .unwrap_or(0);
+    if width == 0 { 0 } else { width + 1 }
 }
 
 fn priority_column_width(store: &TuiStore) -> u16 {
@@ -1271,7 +1272,7 @@ mod tests {
         let all_tasks = vec![&plain, &documented];
 
         assert_eq!(metadata_column_width_from_task_refs(&visible_tasks), 0);
-        assert_eq!(metadata_column_width_from_task_refs(&all_tasks), 1);
+        assert_eq!(metadata_column_width_from_task_refs(&all_tasks), 2);
     }
 
     #[test]
@@ -1282,7 +1283,7 @@ mod tests {
             created_at: "001".to_string(),
         }];
 
-        assert_eq!(metadata_column_width_from_tasks(&[task]), 1);
+        assert_eq!(metadata_column_width_from_tasks(&[task]), 2);
     }
 
     #[test]
@@ -1290,7 +1291,7 @@ mod tests {
         let mut task = task_item("epic");
         task.task.is_epic = true;
 
-        assert_eq!(metadata_column_width_from_tasks(&[task]), 1);
+        assert_eq!(metadata_column_width_from_tasks(&[task]), 2);
     }
 
     #[test]
