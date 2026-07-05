@@ -346,7 +346,7 @@ fn task_list_columns_for_tasks(
 ) -> [Constraint; 8] {
     let project_width = project_column_width(store, narrow);
     let label_width = label_column_width_from_task_refs(label_tasks, narrow);
-    let metadata_width = metadata_column_width(store);
+    let metadata_width = metadata_column_width_from_task_refs(label_tasks);
     let priority_width = priority_column_width(store);
     let ref_width = if store.view_state.render_mode() == TaskListRenderMode::Epics {
         14
@@ -474,24 +474,18 @@ fn label_column_width_from_task_refs(tasks: &[&TaskListItem], narrow: bool) -> u
         .min(18)
 }
 
-fn metadata_column_width(store: &TuiStore) -> u16 {
-    metadata_column_width_from_tasks(&store.tasks)
-}
-
+#[cfg(test)]
 fn metadata_column_width_from_tasks(tasks: &[TaskListItem]) -> u16 {
-    if tasks.iter().any(task_has_metadata) {
-        6
-    } else {
-        0
-    }
+    let tasks = tasks.iter().collect::<Vec<_>>();
+    metadata_column_width_from_task_refs(&tasks)
 }
 
-fn task_has_metadata(item: &TaskListItem) -> bool {
-    item.task.is_epic
-        || item.task.deleted
-        || item.unresolved_blocker_count > 0
-        || item.dependent_count > 0
-        || !item.notes.is_empty()
+fn metadata_column_width_from_task_refs(tasks: &[&TaskListItem]) -> u16 {
+    tasks
+        .iter()
+        .map(|item| metadata_cell(item).to_string().chars().count() as u16)
+        .max()
+        .unwrap_or(0)
 }
 
 fn priority_column_width(store: &TuiStore) -> u16 {
@@ -1266,6 +1260,21 @@ mod tests {
     }
 
     #[test]
+    fn metadata_column_width_uses_given_task_refs() {
+        let plain = task_item("plain");
+        let mut documented = task_item("documented");
+        documented.notes = vec![crate::query::TaskNote {
+            body: "one".to_string(),
+            created_at: "001".to_string(),
+        }];
+        let visible_tasks = vec![&plain];
+        let all_tasks = vec![&plain, &documented];
+
+        assert_eq!(metadata_column_width_from_task_refs(&visible_tasks), 0);
+        assert_eq!(metadata_column_width_from_task_refs(&all_tasks), 1);
+    }
+
+    #[test]
     fn metadata_column_width_reserves_lane_for_metadata() {
         let mut task = task_item("documented");
         task.notes = vec![crate::query::TaskNote {
@@ -1273,7 +1282,7 @@ mod tests {
             created_at: "001".to_string(),
         }];
 
-        assert_eq!(metadata_column_width_from_tasks(&[task]), 6);
+        assert_eq!(metadata_column_width_from_tasks(&[task]), 1);
     }
 
     #[test]
@@ -1281,7 +1290,7 @@ mod tests {
         let mut task = task_item("epic");
         task.task.is_epic = true;
 
-        assert_eq!(metadata_column_width_from_tasks(&[task]), 6);
+        assert_eq!(metadata_column_width_from_tasks(&[task]), 1);
     }
 
     #[test]
