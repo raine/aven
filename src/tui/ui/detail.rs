@@ -22,7 +22,6 @@ use crate::tui::widgets::{priority_short, status_chip, status_span};
 use unicode_width::UnicodeWidthStr;
 
 const DETAIL_DEPENDENCY_TREE_CAP: usize = 3;
-const DETAIL_EPIC_CHILDREN_CAP: usize = 5;
 
 #[derive(Debug, Clone, Copy)]
 enum DependencyDirection {
@@ -238,8 +237,66 @@ fn detail_body_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
             lines.extend(quoted_block_lines(&note.body, width, Style::new().fg(FG)));
         }
     }
+    lines.extend(detail_epic_child_lines(item, width));
     lines.extend(detail_dependency_lines(item, width));
     lines
+}
+
+fn detail_epic_child_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
+    if !item.task.is_epic {
+        return Vec::new();
+    }
+
+    let open = item
+        .epic_children
+        .iter()
+        .filter(|link| link.unresolved)
+        .count();
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "CHILD TASKS",
+                Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(" open={open} total={}", item.epic_children.len()),
+                Style::new().fg(FG_DIM),
+            ),
+        ]),
+    ];
+
+    if item.epic_children.is_empty() {
+        lines.push(Line::from(Span::styled("none", Style::new().fg(FG_MUTED))));
+        return lines;
+    }
+
+    let links = item
+        .epic_children
+        .iter()
+        .filter(|link| link.unresolved)
+        .chain(item.epic_children.iter().filter(|link| !link.unresolved))
+        .collect::<Vec<_>>();
+    for (index, link) in links.iter().enumerate() {
+        let is_last = index + 1 == links.len();
+        lines.extend(epic_child_tree_item_lines(link, is_last, width));
+    }
+
+    lines
+}
+
+fn epic_child_tree_item_lines(
+    link: &crate::query::TaskDependencyLink,
+    is_last: bool,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let tree_glyph = if is_last { "└─ " } else { "├─ " };
+    let prefix = vec![
+        Span::styled(tree_glyph, Style::new().fg(BORDER)),
+        Span::styled(link.display_ref.clone(), Style::new().fg(ACCENT)),
+        Span::styled("  ", Style::new().fg(FG_DIM)),
+    ];
+    dependency_node_lines(prefix, &link.title, &link.status, &link.priority, width)
 }
 
 fn detail_dependency_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
@@ -553,12 +610,7 @@ fn detail_epic_metadata_lines(item: &TaskListItem) -> Vec<Line<'static>> {
         .iter()
         .filter(|link| link.unresolved)
         .count();
-    let mut links = item
-        .epic_children
-        .iter()
-        .filter(|link| link.unresolved)
-        .chain(item.epic_children.iter().filter(|link| !link.unresolved));
-    let mut lines = vec![
+    let lines = vec![
         Line::from(""),
         metadata_label("CHILDREN"),
         Line::from(Span::styled(
@@ -568,34 +620,13 @@ fn detail_epic_metadata_lines(item: &TaskListItem) -> Vec<Line<'static>> {
     ];
 
     if item.epic_children.is_empty() {
-        lines.push(Line::from(Span::styled("none", Style::new().fg(FG_MUTED))));
-        return lines;
-    }
-
-    for link in links.by_ref().take(DETAIL_EPIC_CHILDREN_CAP) {
-        lines.push(Line::from(vec![
-            status_span(&link.status),
-            Span::styled(" ", Style::new().fg(FG_DIM)),
-            Span::styled(
-                link.display_ref.clone(),
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("  ", Style::new().fg(FG_DIM)),
-            Span::styled(truncate_width(&link.title, 26), Style::new().fg(FG_MUTED)),
-        ]));
-    }
-
-    let hidden = item
-        .epic_children
-        .len()
-        .saturating_sub(DETAIL_EPIC_CHILDREN_CAP);
-    if hidden > 0 {
-        lines.push(Line::from(Span::styled(
-            format!("+{hidden} more"),
-            Style::new().fg(FG_MUTED),
-        )));
+        return lines
+            .into_iter()
+            .chain(std::iter::once(Line::from(Span::styled(
+                "none",
+                Style::new().fg(FG_MUTED),
+            ))))
+            .collect();
     }
 
     lines
@@ -881,6 +912,42 @@ mod tests {
     }
 
     #[test]
+    fn detail_content_lists_epic_children() {
+        let mut item = detail_test_item();
+        item.task.is_epic = true;
+        item.epic_children = vec![
+            crate::query::TaskDependencyLink {
+                task_id: "child-task-id".to_string(),
+                display_ref: "APP-CHLD".to_string(),
+                title: "Build the first child task".to_string(),
+                status: "todo".to_string(),
+                priority: "medium".to_string(),
+                unresolved: true,
+            },
+            crate::query::TaskDependencyLink {
+                task_id: "done-child-task-id".to_string(),
+                display_ref: "APP-DONE".to_string(),
+                title: "Finished child task".to_string(),
+                status: "done".to_string(),
+                priority: "none".to_string(),
+                unresolved: false,
+            },
+        ];
+
+        let rendered = detail_content_lines(&item, 80, None)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("CHILD TASKS open=1 total=2"));
+        assert!(rendered.contains("├─ APP-CHLD"));
+        assert!(rendered.contains("Build the first child task"));
+        assert!(rendered.contains("└─ APP-DONE"));
+        assert!(rendered.contains("Finished child task"));
+    }
+
+    #[test]
     fn detail_metadata_includes_operational_fields() {
         let item = detail_test_item();
         let rendered = detail_metadata_lines(&item)
@@ -897,7 +964,7 @@ mod tests {
     }
 
     #[test]
-    fn detail_metadata_marks_epics_and_lists_children() {
+    fn detail_metadata_marks_epics_and_counts_children() {
         let mut item = detail_test_item();
         item.task.is_epic = true;
         item.epic_children = vec![
@@ -927,9 +994,9 @@ mod tests {
 
         assert!(rendered.contains(" EPIC "));
         assert!(rendered.contains("CHILDREN\nopen=1 total=2"));
-        assert!(rendered.contains("APP-CHLD"));
-        assert!(rendered.contains("Build the first child task"));
-        assert!(rendered.contains("APP-DONE"));
+        assert!(!rendered.contains("APP-CHLD"));
+        assert!(!rendered.contains("Build the first child task"));
+        assert!(!rendered.contains("APP-DONE"));
     }
 
     #[test]
