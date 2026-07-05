@@ -1,4 +1,5 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+use ratatui::DefaultTerminal;
 use sqlx::SqlitePool;
 
 mod app;
@@ -44,7 +45,7 @@ pub(crate) async fn run(
     if add_task {
         app.open_add_task_on_start(natural).await?;
     }
-    let mut terminal = ratatui::init();
+    let mut terminal = init_terminal()?;
     let result = app.run(&mut terminal).await;
     ratatui::restore();
     result
@@ -59,11 +60,21 @@ pub(crate) async fn run_add_task(
 ) -> Result<()> {
     let mut app = app::App::new(pool, project).await?;
     app.set_add_task_db_path(db_path);
-    let mut terminal = ratatui::init();
+    let mut terminal = init_terminal()?;
     let result = app.run_add_task_only(&mut terminal, natural, config).await;
     ratatui::restore();
     if let Ok(Some(message)) = &result {
         println!("{message}");
     }
     result.map(|_| ())
+}
+
+fn init_terminal() -> Result<DefaultTerminal> {
+    match ratatui::try_init() {
+        Ok(terminal) => Ok(terminal),
+        Err(error) => {
+            ratatui::restore();
+            Err(error).context("initialize terminal")
+        }
+    }
 }
