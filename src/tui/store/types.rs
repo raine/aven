@@ -116,7 +116,6 @@ impl TaskViewState {
         match self.view {
             TaskView::Queue => {
                 filters.hide_done = true;
-                filters.exclude_epics = true;
             }
             TaskView::Open => filters.hide_done = true,
             TaskView::Inbox => filters.status = Some("inbox".to_string()),

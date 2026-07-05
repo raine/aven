@@ -12,6 +12,7 @@ pub(crate) enum QueueBand {
     Triage,
     #[default]
     Later,
+    Epics,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -36,6 +37,7 @@ impl QueueBand {
             Self::Focus => "focus",
             Self::Triage => "triage",
             Self::Later => "later",
+            Self::Epics => "epics",
         }
     }
 
@@ -46,6 +48,7 @@ impl QueueBand {
             Self::Focus => 2,
             Self::Triage => 3,
             Self::Later => 4,
+            Self::Epics => 5,
         }
     }
 }
@@ -112,7 +115,9 @@ fn queue_band(
     has_unresolved_blockers: bool,
     idle_days: i64,
 ) -> QueueBand {
-    if has_conflict
+    if task.is_epic {
+        QueueBand::Epics
+    } else if has_conflict
         || task.priority == TaskPriority::Urgent
         || (task.status == TaskStatus::Active && idle_days >= 7)
     {
@@ -195,6 +200,21 @@ mod tests {
             deleted: false,
             is_epic: false,
         }
+    }
+
+    fn epic(status: &str, priority: &str, queue_activity_at: &str) -> Task {
+        Task {
+            is_epic: true,
+            ..task(status, priority, queue_activity_at)
+        }
+    }
+
+    #[test]
+    fn epic_tasks_have_epic_band() {
+        assert_eq!(
+            queue_meta(&epic("active", "urgent", "0"), true, true, 8 * 86_400).band,
+            QueueBand::Epics
+        );
     }
 
     #[test]

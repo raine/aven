@@ -273,6 +273,32 @@ mod tests {
     }
 
     #[test]
+    fn queue_view_groups_epics_separately() {
+        let tasks = vec![
+            task_item_with("backlog", "backlog", QueueBand::Later),
+            task_item_with("epic", "todo", QueueBand::Epics),
+        ];
+
+        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
+
+        assert_eq!(
+            view.rows,
+            vec![
+                TaskListRow::Group(TaskGroupRow {
+                    label: "later",
+                    count: 1,
+                }),
+                TaskListRow::Task { task_index: 0 },
+                TaskListRow::Group(TaskGroupRow {
+                    label: "epics",
+                    count: 1,
+                }),
+                TaskListRow::Task { task_index: 1 },
+            ]
+        );
+    }
+
+    #[test]
     fn queue_view_groups_terminal_statuses_by_status() {
         let tasks = vec![
             task_item_with("backlog", "backlog", QueueBand::Later),
