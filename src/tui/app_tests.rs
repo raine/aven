@@ -3025,6 +3025,28 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn refresh_preserves_recent_action_selection() {
+        let mut app = test_app().await;
+        app.store
+            .create_task(test_task_draft("first task"), None)
+            .await
+            .unwrap();
+        app.store
+            .create_task(test_task_draft("second task"), None)
+            .await
+            .unwrap();
+        app.store.view_state.view = TaskView::RecentActions;
+        app.refresh().await.unwrap();
+        app.widgets.table.select(Some(1));
+        let selected_change_id = app.store.recent_actions[1].change_id.clone();
+
+        app.refresh().await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.recent_actions[selected].change_id, selected_change_id);
+    }
+
+    #[tokio::test]
     async fn idle_poll_timeout_uses_refresh_deadline() {
         let app = test_app().await;
 

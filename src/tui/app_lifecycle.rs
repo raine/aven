@@ -16,6 +16,7 @@ use crate::config::AppConfig;
 use crate::tui::app::App;
 use crate::tui::overlay::OverlayView::AddTask;
 use crate::tui::overlay::{OverlayState, OverlayView};
+use crate::tui::store::TaskView;
 use crate::tui::ui::{self, ViewState, ViewSurface};
 
 impl App {
@@ -156,21 +157,57 @@ impl App {
     }
 
     pub(super) async fn refresh(&mut self) -> Result<()> {
-        let selected_id = self
-            .store
-            .selected_task(self.widgets.table.selected())
-            .map(|item| item.task.id.clone());
+        let selected = self.widgets.table.selected();
+        let recent_action_selection =
+            (self.store.view_state.view == TaskView::RecentActions).then(|| {
+                (
+                    selected,
+                    self.store
+                        .selected_recent_action(selected)
+                        .map(|action| action.change_id.clone()),
+                )
+            });
+        let selected_id = if self.store.view_state.view == TaskView::RecentActions {
+            None
+        } else {
+            self.store
+                .selected_task(selected)
+                .map(|item| item.task.id.clone())
+        };
         let result = self
             .store
             .refresh_with_scope_fallback(selected_id.as_deref())
             .await?;
-        self.widgets.table.select(result.selected);
+        let selected = recent_action_selection
+            .map(|(selected, change_id)| {
+                self.restored_recent_action_selection(selected, change_id.as_deref())
+            })
+            .unwrap_or(result.selected);
+        self.widgets.table.select(selected);
         self.widgets.sidebar.select(self.store.sidebar_selection());
         self.prune_task_marks();
         if let Some(project) = result.fallback_scope {
             self.set_warning(format!("project scope {project} is no longer available"));
         }
         Ok(())
+    }
+
+    fn restored_recent_action_selection(
+        &self,
+        selected: Option<usize>,
+        change_id: Option<&str>,
+    ) -> Option<usize> {
+        if self.store.recent_actions.is_empty() {
+            return None;
+        }
+        change_id
+            .and_then(|id| {
+                self.store
+                    .recent_actions
+                    .iter()
+                    .position(|action| action.change_id == id)
+            })
+            .or_else(|| selected.map(|index| index.min(self.store.recent_actions.len() - 1)))
     }
 
     pub(super) fn clear_expired_notification(&mut self) -> bool {
