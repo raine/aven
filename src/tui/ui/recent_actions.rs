@@ -13,7 +13,7 @@ use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::app::{Focus, WidgetState};
 use crate::tui::store::TuiStore;
 use crate::tui::theme::{
-    ACCENT, BG, BG_ALT, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, PINK, RED, SELECTED,
+    self, ACCENT, BG, BG_ALT, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, PINK, RED, SELECTED,
     SELECTED_INACTIVE, YELLOW,
 };
 
@@ -157,11 +157,7 @@ fn render_action_row(
     let cells = Layout::horizontal(columns).areas::<5>(area);
     let row_style = style;
     let when = compact_age_since(&action.created_at, now).unwrap_or_else(|| "?".to_string());
-    let ref_text = action
-        .target
-        .display_ref
-        .clone()
-        .unwrap_or_else(|| short_id(&action.entity_id));
+    let ref_cell = action_ref_cell(action, row_style.bg.unwrap_or(BG));
     let project = action_project_cell(
         action.target.project_key.as_deref(),
         cells[3].width as usize,
@@ -186,13 +182,7 @@ fn render_action_row(
                 row_style.fg(FG),
             ),
         ]),
-        Line::from(Span::styled(
-            format!(" {ref_text}"),
-            Style::new()
-                .fg(ACCENT)
-                .bg(row_style.bg.unwrap_or(BG))
-                .add_modifier(Modifier::BOLD),
-        )),
+        ref_cell,
         project,
         Line::from(vec![
             Span::styled(summary, row_style.fg(FG)),
@@ -205,6 +195,31 @@ fn render_action_row(
     for (cell, value) in cells.into_iter().zip(values) {
         frame.render_widget(Paragraph::new(value).style(row_style), cell);
     }
+}
+
+fn action_ref_cell(action: &RecentActionItem, bg: ratatui::style::Color) -> Line<'static> {
+    let Some(display_ref) = &action.target.display_ref else {
+        return Line::from(Span::styled(
+            format!(" {}", short_id(&action.entity_id)),
+            Style::new().fg(FG_MUTED).bg(bg),
+        ));
+    };
+    let Some((project, suffix)) = display_ref.split_once('-') else {
+        return Line::from(Span::styled(
+            format!(" {display_ref}"),
+            Style::new().fg(FG_MUTED).bg(bg),
+        ));
+    };
+    let project_key = action.target.project_key.as_deref().unwrap_or(project);
+    Line::from(vec![
+        Span::styled(" ", Style::new().bg(bg)),
+        Span::styled(
+            project.to_string(),
+            Style::new().fg(theme::project_color(project_key)).bg(bg),
+        ),
+        Span::styled("-", Style::new().fg(FG_DIM).bg(bg)),
+        Span::styled(suffix.to_string(), Style::new().fg(FG_MUTED).bg(bg)),
+    ])
 }
 
 fn action_project_cell(
@@ -478,7 +493,7 @@ mod tests {
         }
     }
 
-    fn row_text(action: &RecentActionItem, width: u16) -> String {
+    fn row_buffer(action: &RecentActionItem, width: u16) -> ratatui::buffer::Buffer {
         let backend = TestBackend::new(width, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -486,13 +501,29 @@ mod tests {
                 render_action_row(frame, action, 0, frame.area(), false, false);
             })
             .unwrap();
-        terminal
-            .backend()
-            .buffer()
+        terminal.backend().buffer().clone()
+    }
+
+    fn row_text(action: &RecentActionItem, width: u16) -> String {
+        row_buffer(action, width)
             .content
             .iter()
             .map(|cell| cell.symbol())
             .collect()
+    }
+
+    #[test]
+    fn action_ref_cell_uses_task_ref_style() {
+        let action = action_item("app");
+
+        let buffer = row_buffer(&action, 70);
+
+        assert_eq!(buffer[(22, 0)].symbol(), "A");
+        assert_eq!(buffer[(22, 0)].style().fg, Some(theme::project_color("app")));
+        assert_eq!(buffer[(25, 0)].symbol(), "-");
+        assert_eq!(buffer[(25, 0)].style().fg, Some(FG_DIM));
+        assert_eq!(buffer[(26, 0)].symbol(), "1");
+        assert_eq!(buffer[(26, 0)].style().fg, Some(FG_MUTED));
     }
 
     #[test]
