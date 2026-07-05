@@ -436,7 +436,22 @@ pub(super) fn render_prefix_hints(frame: &mut Frame, view: &ViewState) {
     let visible_rows = prefix_hint_visible_rows(frame.area().height, lines.len());
     let title = format!("{} …", view.pending_shortcut.join(" "));
     let content = Dialog::new(&title, 72, visible_rows.saturating_add(2)).render_block(frame);
-    render_scrollable_help_lines(frame, content, lines, 0);
+    render_scrollable_help_lines(frame, content, lines, view.pending_shortcut_scroll);
+}
+
+pub(crate) fn prefix_hint_scroll_cap(
+    frame_height: u16,
+    detail_underlay: bool,
+    pending: &[String],
+) -> u16 {
+    let context = if detail_underlay {
+        CommandContext::Detail
+    } else {
+        CommandContext::Normal
+    };
+    let line_count = prefix_hint_lines(context, pending).len();
+    let visible_rows = prefix_hint_visible_rows(frame_height, line_count) as usize;
+    line_count.saturating_sub(visible_rows) as u16
 }
 
 fn prefix_hint_visible_rows(frame_height: u16, line_count: usize) -> u16 {

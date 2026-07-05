@@ -18,8 +18,8 @@ use crate::tui::overlay::{CommandState, OverlayOutcome, OverlayRoute, OverlaySta
 use crate::tui::platform::is_editor_prefix_key;
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
 use crate::tui::ui::{
-    database_stats_scroll_cap, detail_help_scroll_cap, help_scroll_cap, task_at_position,
-    task_status_at_position, text_panel_scroll_cap,
+    database_stats_scroll_cap, detail_help_scroll_cap, help_scroll_cap, prefix_hint_scroll_cap,
+    task_at_position, task_status_at_position, text_panel_scroll_cap,
 };
 
 impl App {
@@ -39,6 +39,7 @@ impl App {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.handle(Action::Quit).await
         } else if key.code == KeyCode::Esc && self.pending_shortcut.cancel() {
+            self.pending_shortcut_scroll = 0;
             Ok(())
         } else if self.overlay_captures_input() {
             if key.code == KeyCode::Char('?')
@@ -46,11 +47,15 @@ impl App {
             {
                 self.toggle_help_at_height(terminal_size.height);
                 Ok(())
+            } else if self.dispatch_prefix_hint_key_scroll(key, terminal_size) {
+                Ok(())
             } else {
                 self.handle_overlay_key_at_size(key, terminal_size).await
             }
         } else if key.code == KeyCode::Char('?') {
             self.toggle_help_at_height(terminal_size.height);
+            Ok(())
+        } else if self.dispatch_prefix_hint_key_scroll(key, terminal_size) {
             Ok(())
         } else if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT {
             self.handle_normal_key(key.code).await
@@ -66,12 +71,18 @@ impl App {
     ) -> Result<()> {
         match mouse.kind {
             MouseEventKind::ScrollDown => {
+                if self.dispatch_prefix_hint_scroll(1, terminal_size) {
+                    return Ok(());
+                }
                 if self.dispatch_mouse_scroll(mouse.kind, terminal_size) {
                     return Ok(());
                 }
                 return self.handle_task_list_wheel(1, terminal_size).await;
             }
             MouseEventKind::ScrollUp => {
+                if self.dispatch_prefix_hint_scroll(-1, terminal_size) {
+                    return Ok(());
+                }
                 if self.dispatch_mouse_scroll(mouse.kind, terminal_size) {
                     return Ok(());
                 }
@@ -330,6 +341,45 @@ impl App {
         Ok(())
     }
 
+    fn dispatch_prefix_hint_key_scroll(&mut self, key: KeyEvent, terminal_size: Size) -> bool {
+        if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
+            return false;
+        }
+        let delta = match key.code {
+            KeyCode::Down => 1,
+            KeyCode::Up => -1,
+            KeyCode::PageDown => terminal_size.height.saturating_sub(4).max(1) as isize,
+            KeyCode::PageUp => -(terminal_size.height.saturating_sub(4).max(1) as isize),
+            _ => return false,
+        };
+        self.dispatch_prefix_hint_scroll(delta, terminal_size)
+    }
+
+    fn dispatch_prefix_hint_scroll(&mut self, delta: isize, terminal_size: Size) -> bool {
+        if !self.prefix_hints_active() {
+            return false;
+        }
+        let cap = prefix_hint_scroll_cap(
+            terminal_size.height,
+            self.detail_underlay(),
+            &self.pending_shortcut.labels(),
+        );
+        self.pending_shortcut_scroll = scroll_with_delta(self.pending_shortcut_scroll, delta, cap);
+        true
+    }
+
+    fn prefix_hints_active(&self) -> bool {
+        if self.pending_shortcut.is_empty() {
+            return false;
+        }
+        !matches!(
+            &self.overlay,
+            Some(OverlayState::AddTask(_))
+                if self.pending_shortcut.has_add_task_status_prefix()
+                    || self.pending_shortcut.has_add_task_priority_prefix()
+        )
+    }
+
     fn dispatch_mouse_scroll(&mut self, kind: MouseEventKind, terminal_size: Size) -> bool {
         let delta = match kind {
             MouseEventKind::ScrollDown => 1,
@@ -338,6 +388,16 @@ impl App {
         };
 
         match &mut self.overlay {
+            Some(OverlayState::Help { scroll }) => {
+                let cap = help_scroll_cap(terminal_size.height);
+                *scroll = scroll_with_delta(*scroll, delta, cap);
+                true
+            }
+            Some(OverlayState::DetailHelp { scroll }) => {
+                let cap = detail_help_scroll_cap(terminal_size.height);
+                *scroll = scroll_with_delta(*scroll, delta, cap);
+                true
+            }
             Some(OverlayState::Detail { scroll }) => {
                 let task = self.store.selected_task(self.widgets.table.selected());
                 *scroll = detail_scroll_with_delta(
@@ -377,15 +437,20 @@ impl App {
             if !self.pending_shortcut.cancel() {
                 self.handle(Action::CancelOverlay).await?;
             }
+            self.pending_shortcut_scroll = 0;
             return Ok(());
         }
 
         match self.pending_shortcut.resolve_normal(code) {
             NormalShortcutResolution::Action(action) => {
+                self.pending_shortcut_scroll = 0;
                 self.handle(action).await?;
             }
-            NormalShortcutResolution::Prefix => {}
+            NormalShortcutResolution::Prefix => {
+                self.pending_shortcut_scroll = 0;
+            }
             NormalShortcutResolution::Missing(label) => {
+                self.pending_shortcut_scroll = 0;
                 self.set_warning(format!("invalid shortcut: {label}"));
             }
         }
@@ -666,6 +731,7 @@ impl App {
 
         match self.pending_shortcut.resolve_detail(key) {
             DetailShortcutResolution::Action(action) => {
+                self.pending_shortcut_scroll = 0;
                 self.detail_context = true;
                 self.detail_context_scroll = scroll;
                 self.execute(action).await?;
@@ -674,8 +740,12 @@ impl App {
                 }
                 Ok(Some(self.overlay.take()))
             }
-            DetailShortcutResolution::Prefix => Ok(Some(Some(OverlayState::Detail { scroll }))),
+            DetailShortcutResolution::Prefix => {
+                self.pending_shortcut_scroll = 0;
+                Ok(Some(Some(OverlayState::Detail { scroll })))
+            }
             DetailShortcutResolution::MissingAfterPrefix(label) => {
+                self.pending_shortcut_scroll = 0;
                 self.set_warning(format!("invalid shortcut: {label}"));
                 Ok(Some(Some(OverlayState::Detail { scroll })))
             }

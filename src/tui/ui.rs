@@ -33,7 +33,7 @@ use self::toast::render_toast;
 
 pub(crate) use self::detail::{DetailMetadataTarget, detail_metadata_target_at, detail_scroll_cap};
 pub(crate) use self::overlays::{database_stats_scroll_cap, text_panel_scroll_cap};
-pub(crate) use self::shortcuts::{detail_help_scroll_cap, help_scroll_cap};
+pub(crate) use self::shortcuts::{detail_help_scroll_cap, help_scroll_cap, prefix_hint_scroll_cap};
 pub(crate) use self::task_list::{task_at_position, task_status_at_position};
 
 use ratatui::Frame;
@@ -64,6 +64,7 @@ pub(crate) struct ViewState {
     pub(crate) detail_underlay_scroll: u16,
     pub(crate) notification: Option<Toast>,
     pub(crate) pending_shortcut: Vec<String>,
+    pub(crate) pending_shortcut_scroll: u16,
     pub(crate) sidebar_visible: bool,
     pub(crate) surface: ViewSurface,
 }

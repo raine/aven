@@ -3179,6 +3179,92 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn mouse_wheel_scrolls_prefix_hint_overlay() {
+        let mut app = test_app().await;
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 10).into())
+            .await
+            .unwrap();
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 10).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.pending_shortcut.labels(), vec!["t".to_string()]);
+        assert_eq!(app.pending_shortcut_scroll, 1);
+    }
+
+    #[tokio::test]
+    async fn arrows_scroll_prefix_hint_overlay() {
+        let mut app = test_app().await;
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 10).into())
+            .await
+            .unwrap();
+
+        app.dispatch_key(key(KeyCode::Down), (80, 10).into())
+            .await
+            .unwrap();
+        assert_eq!(app.pending_shortcut.labels(), vec!["t".to_string()]);
+        assert_eq!(app.pending_shortcut_scroll, 1);
+
+        app.dispatch_key(key(KeyCode::Up), (80, 10).into())
+            .await
+            .unwrap();
+        assert_eq!(app.pending_shortcut.labels(), vec!["t".to_string()]);
+        assert_eq!(app.pending_shortcut_scroll, 0);
+    }
+
+    #[tokio::test]
+    async fn mouse_wheel_scrolls_help_overlay() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::Help { scroll: 0 });
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Help { scroll: 1 })
+        ));
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollUp), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Help { scroll: 0 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn mouse_wheel_clamps_help_overlay() {
+        let mut app = test_app().await;
+        let expected = crate::tui::ui::help_scroll_cap(24);
+        app.overlay = Some(OverlayState::Help { scroll: 0 });
+
+        for _ in 0..200 {
+            app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
+                .await
+                .unwrap();
+        }
+
+        assert!(matches!(app.overlay, Some(OverlayState::Help { scroll }) if scroll == expected));
+    }
+
+    #[tokio::test]
+    async fn mouse_wheel_scrolls_detail_help_overlay() {
+        let mut app = test_app().await;
+        app.overlay = Some(OverlayState::DetailHelp { scroll: 0 });
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 10).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::DetailHelp { scroll: 1 })
+        ));
+    }
+
+    #[tokio::test]
     async fn detail_mouse_wheel_updates_detail_offset() {
         let mut app = test_app().await;
         let mut draft = test_task_draft("Mouse detail scroll target");
