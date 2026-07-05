@@ -71,14 +71,18 @@ impl App {
     }
 
     pub(super) async fn show_view(&mut self, view: TaskView) -> Result<()> {
+        let previous = self.store.view_state.clone();
         let selected = self.store.show_view(view).await?;
+        self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         self.set_info("view updated");
         Ok(())
     }
 
     pub(super) async fn show_scope(&mut self, scope: TaskScopeTarget) -> Result<()> {
+        let previous = self.store.view_state.clone();
         let selected = self.store.show_scope(scope).await?;
+        self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         self.set_info("scope updated");
         Ok(())
@@ -233,6 +237,7 @@ impl App {
         match action {
             HeaderMenuAction::Workspace(workspace) => {
                 let (message, selected) = self.store.switch_workspace(workspace).await?;
+                self.clear_navigation_history();
                 self.apply_filter_selection(selected);
                 self.set_success(message);
                 Ok(())
@@ -289,14 +294,18 @@ impl App {
     }
 
     pub(super) async fn clear_filters(&mut self) -> Result<()> {
+        let previous = self.store.view_state.clone();
         let selected = self.store.clear_filters().await?;
+        self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         self.set_success("filters cleared");
         Ok(())
     }
 
     pub(super) async fn toggle_deleted_filter(&mut self) -> Result<()> {
+        let previous = self.store.view_state.clone();
         let selected = self.store.toggle_deleted_filter().await?;
+        self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         let modifiers = &self.store.view_state.filter_modifiers;
         let message = if modifiers.deleted_only {
@@ -329,7 +338,9 @@ impl App {
         else {
             return Ok(());
         };
+        let previous = self.store.view_state.clone();
         let selected = self.store.filter_label(label).await?;
+        self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         self.set_success("label filter applied");
         Ok(())
@@ -343,7 +354,9 @@ impl App {
         ) else {
             return Ok(());
         };
+        let previous = self.store.view_state.clone();
         let selected = self.store.filter_priority(priority).await?;
+        self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         self.set_success("priority filter applied");
         Ok(())
@@ -363,6 +376,7 @@ impl App {
             return Ok(());
         };
         let (message, selected) = self.store.switch_workspace(workspace).await?;
+        self.clear_navigation_history();
         self.apply_filter_selection(selected);
         self.set_success(message);
         Ok(())

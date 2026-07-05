@@ -163,9 +163,19 @@ impl App {
     }
 
     pub(super) async fn apply_sidebar_selection(&mut self) -> Result<()> {
-        self.store
-            .apply_sidebar_selection(self.widgets.sidebar.selected())
-            .await?;
+        let target = self
+            .widgets
+            .sidebar
+            .selected()
+            .and_then(|index| self.store.sidebar_entries.get(index))
+            .and_then(|entry| entry.target.clone());
+        match target {
+            Some(crate::tui::store::SidebarEntryTarget::View(view)) => self.show_view(view).await?,
+            Some(crate::tui::store::SidebarEntryTarget::Scope(scope)) => {
+                self.show_scope(scope).await?
+            }
+            None => {}
+        }
         self.focus = Focus::Tasks;
         self.overlay = None;
         self.widgets.sidebar.select(self.store.sidebar_selection());

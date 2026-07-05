@@ -14,7 +14,7 @@ use crate::tui::authoring::AuthoringState;
 use crate::tui::conflict_flow::ConflictFlowState;
 use crate::tui::overlay::OverlayState;
 use crate::tui::shortcut_buffer::ShortcutBuffer;
-use crate::tui::store::{TaskOrder, TuiStore};
+use crate::tui::store::{TaskOrder, TaskViewState, TuiStore};
 use crate::tui::toast::{Toast, ToastSeverity};
 
 pub(crate) const TASK_ROW_DOUBLE_CLICK: Duration = Duration::from_millis(500);
@@ -59,6 +59,7 @@ pub(super) struct ReadyTaskIntake {
 }
 
 pub(super) const SEARCH_PREVIEW_LIMIT: usize = 8;
+const NAVIGATION_HISTORY_LIMIT: usize = 32;
 
 pub(super) struct PendingSearchPreview {
     pub(super) query: String,
@@ -152,6 +153,7 @@ pub(crate) struct App {
     pub(super) live_search: LiveSearchPreview,
     pub(super) next_refresh_at: Instant,
     pub(crate) last_task_click: Option<TaskRowClick>,
+    pub(super) navigation_history: Vec<TaskViewState>,
 }
 
 impl App {
@@ -202,6 +204,7 @@ impl App {
             live_search: LiveSearchPreview::default(),
             next_refresh_at,
             last_task_click: None,
+            navigation_history: Vec::new(),
         };
         app.widgets.sidebar.select(app.store.sidebar_selection());
         app.widgets
@@ -225,6 +228,38 @@ impl App {
         });
     }
 
+    pub(super) fn push_navigation_state(&mut self, previous: TaskViewState) {
+        if previous == self.store.view_state {
+            return;
+        }
+        if self.navigation_history.last() == Some(&previous) {
+            return;
+        }
+        if self.navigation_history.len() >= NAVIGATION_HISTORY_LIMIT {
+            self.navigation_history.remove(0);
+        }
+        self.navigation_history.push(previous);
+    }
+
+    pub(super) fn clear_navigation_history(&mut self) {
+        self.navigation_history.clear();
+    }
+
+    pub(super) async fn go_back(&mut self) -> Result<()> {
+        let Some(previous) = self.navigation_history.pop() else {
+            self.set_info("no previous navigation state");
+            return Ok(());
+        };
+        let result = self.store.restore_view_state(previous).await?;
+        self.apply_filter_selection(result.selected);
+        if let Some(project) = result.fallback_scope {
+            self.set_warning(format!("project scope {project} is no longer available"));
+        } else {
+            self.set_info("returned to previous navigation state");
+        }
+        Ok(())
+    }
+
     pub(super) fn clear_live_search_preview(&mut self) {
         if let Some(active) = self.live_search.active.take() {
             active.handle.abort();
@@ -236,7 +271,9 @@ impl App {
     }
 
     pub(super) async fn set_sort(&mut self, sort: TaskOrder) -> Result<()> {
+        let previous = self.store.view_state.clone();
         let selected = self.store.set_order(sort).await?;
+        self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         self.set_info(format!(
             "order {} {}",
@@ -247,7 +284,9 @@ impl App {
     }
 
     pub(super) async fn reverse_sort(&mut self) -> Result<()> {
+        let previous = self.store.view_state.clone();
         let selected = self.store.reverse_sort().await?;
+        self.push_navigation_state(previous);
         self.apply_filter_selection(selected);
         self.set_info(format!(
             "order {} {}",

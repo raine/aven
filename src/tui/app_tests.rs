@@ -1720,6 +1720,61 @@ mod filters_and_workspaces {
     use super::*;
 
     #[tokio::test]
+    async fn back_shortcut_restores_filter_and_project_navigation() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        app.show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
+            .await
+            .unwrap();
+        app.submit_filter_priority(vec!["urgent".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            app.store.view_state.scope,
+            TaskScope::Project("mobile-app".to_string())
+        );
+        assert_eq!(
+            app.store.view_state.filter_modifiers.priority.as_deref(),
+            Some("urgent")
+        );
+
+        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('[')).await.unwrap();
+
+        assert_eq!(
+            app.store.view_state.scope,
+            TaskScope::Project("mobile-app".to_string())
+        );
+        assert_eq!(app.store.view_state.filter_modifiers.priority, None);
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("returned to previous navigation state")
+        );
+
+        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('[')).await.unwrap();
+
+        assert_eq!(app.store.view_state.scope, TaskScope::Workspace);
+    }
+
+    #[tokio::test]
+    async fn back_shortcut_reports_empty_history() {
+        let mut app = test_app().await;
+
+        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('[')).await.unwrap();
+
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("no previous navigation state")
+        );
+    }
+
+    #[tokio::test]
     async fn scope_project_shortcut_opens_project_picker() {
         let mut app = test_app().await;
         app.store

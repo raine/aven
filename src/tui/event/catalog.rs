@@ -329,6 +329,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ToggleFocus,
     ),
     CommandSpec::implemented(
+        "back",
+        "return to the previous navigation state",
+        "Navigation",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('[')],
+            label: "g [",
+        }],
+        Action::GoBack,
+    ),
+    CommandSpec::implemented(
         "toggle-sidebar",
         "toggle the sidebar",
         "Navigation",

@@ -772,6 +772,7 @@ impl App {
             Action::ToggleFocus => self.toggle_focus(),
             Action::ToggleSidebar => self.toggle_sidebar(),
             Action::ToggleDetail => self.activate_or_toggle_detail().await?,
+            Action::GoBack => self.go_back().await?,
             Action::ToggleHelp => self.toggle_help_at_height(24),
             Action::BeginSearch => self.begin_search(),
             Action::BeginCommand => self.begin_command(),

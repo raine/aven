@@ -56,30 +56,20 @@ impl TuiStore {
             .or(Some(1))
     }
 
-    pub(crate) async fn apply_sidebar_selection(&mut self, selected: Option<usize>) -> Result<()> {
-        let Some(target) = selected
-            .and_then(|index| self.sidebar_entries.get(index))
-            .and_then(|entry| entry.target.clone())
-        else {
-            return Ok(());
-        };
-        match target {
-            SidebarEntryTarget::View(view) => {
-                self.show_view(view).await?;
-            }
-            SidebarEntryTarget::Scope(scope) => {
-                self.show_scope(scope).await?;
-            }
-        }
-        Ok(())
-    }
-
     pub(crate) async fn show_view(&mut self, view: TaskView) -> Result<Option<usize>> {
         self.view_state.view = view;
         if view != TaskView::Search {
             self.view_state.filter_modifiers.task_ids.clear();
         }
         self.refresh(None).await
+    }
+
+    pub(crate) async fn restore_view_state(
+        &mut self,
+        view_state: super::TaskViewState,
+    ) -> Result<super::ScopeRefreshResult> {
+        self.view_state = view_state;
+        self.refresh_with_scope_fallback(None).await
     }
 
     pub(crate) async fn show_scope(&mut self, target: TaskScopeTarget) -> Result<Option<usize>> {

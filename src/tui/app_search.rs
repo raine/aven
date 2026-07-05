@@ -89,9 +89,11 @@ impl App {
     }
 
     async fn accept_search_input(&mut self, input: String) -> Result<()> {
+        let previous = self.store.view_state.clone();
         self.widgets
             .table
             .select(self.store.accept_search(&input).await?);
+        self.push_navigation_state(previous);
         Ok(())
     }
 
