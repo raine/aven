@@ -40,7 +40,8 @@ Docs: <https://aven.raine.dev>
 - **Fast capture from anywhere.** Natural-language task intake, tmux popup
   capture, and agent-friendly commands make it easy to add tasks.
 
-Inspired by Taskwarrior. See [Why not Taskwarrior?](#why-not-taskwarrior).
+Inspired by Taskwarrior. See
+[aven and Taskwarrior](https://aven.raine.dev/taskwarrior/).
 
 ## Quick start
 
@@ -75,22 +76,3 @@ usage.
 - [Agents](https://aven.raine.dev/agents/)
 - [Sync and backups](https://aven.raine.dev/sync/)
 
-## Why not Taskwarrior?
-
-I built this to replace Taskwarrior for me. Taskwarrior is great but it was not
-designed around coding agents as first-class users.
-
-- Task ids need to be stable, short, and visible in normal command output. UUIDs
-  are ugly.
-- Taskwarrior's CLI tries to be the human interface, which makes it unergonomic
-  for agents to work with. I want the CLI to primarily be an agent interface,
-  and the TUI to be optimized for humans.
-- Tasks need first-class Markdown descriptions and notes, not references to
-  sidecar files that only exist on one machine.
-- Workspaces should be part of the model, so personal and work tasks can be
-  isolated without shell aliases or database juggling.
-- There is no adequate TUI, or GUI in general.
-
-Rather than adding hacks on top of Taskwarrior, I want to own the full stack and
-make my own task manager. AI coding makes that reasonable side project instead
-of a fantasy.
