@@ -681,7 +681,7 @@ fn build_epic_child_row_cells(
 ) -> Vec<Line<'static>> {
     let age_seconds = task_seconds_since(&item.task.created_at, now_seconds);
     let branch = if last { "└─" } else { "├─" };
-    let ref_prefix = format!(" {} {branch} ", if marked { "●" } else { " " });
+    let ref_prefix = format!("{}{branch} ", if marked { "●" } else { " " });
     let display_ref = truncate_chars(
         &item.display_ref,
         column_widths[0].saturating_sub(ref_prefix.chars().count() + 1),
@@ -962,9 +962,15 @@ fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usi
                 Style::new().fg(ACCENT),
             ),
         ]));
-        for link in open_child_links.iter().take(5) {
+        let last_child_index = open_child_links.len().saturating_sub(1);
+        for (index, link) in open_child_links.iter().take(5).enumerate() {
+            let branch = if index == last_child_index {
+                "└─"
+            } else {
+                "├─"
+            };
             lines.push(Line::from(vec![
-                Span::styled("  └ ", Style::new().fg(FG_DIM)),
+                Span::styled(format!("  {branch} "), Style::new().fg(FG_DIM)),
                 Span::styled(
                     format!("{} ", link.display_ref),
                     Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
@@ -1598,6 +1604,16 @@ mod tests {
     }
 
     #[test]
+    fn epic_child_ref_prefix_aligns_tree_with_parent_marker() {
+        let item = task_item("child");
+
+        let cells =
+            build_epic_child_row_cells(&item, false, 0, &[14, 40, 12, 6, 9, 10, 3, 5], false);
+
+        assert_eq!(cells[0].to_string(), " ├─ APP-1 ");
+    }
+
+    #[test]
     fn preview_marks_epic_parent_with_star() {
         let parent = crate::query::TaskDependencyLink {
             task_id: "parent-task-id".to_string(),
@@ -1664,9 +1680,15 @@ mod tests {
                     Style::new().fg(ACCENT),
                 ),
             ]));
-            for link in open_child_links.iter().take(5) {
+            let last_child_index = open_child_links.len().saturating_sub(1);
+            for (index, link) in open_child_links.iter().take(5).enumerate() {
+                let branch = if index == last_child_index {
+                    "└─"
+                } else {
+                    "├─"
+                };
                 extended_lines.push(Line::from(vec![
-                    Span::styled("  └ ", Style::new().fg(FG_DIM)),
+                    Span::styled(format!("  {branch} "), Style::new().fg(FG_DIM)),
                     Span::styled(
                         format!("{} ", link.display_ref),
                         Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
@@ -1685,9 +1707,9 @@ mod tests {
 
         assert!(rendered.contains("CHILD TASKS"));
         assert!(rendered.contains("(2/2)"));
-        assert!(rendered.contains("APP-C001"));
+        assert!(rendered.contains("  ├─ APP-C001"));
         assert!(rendered.contains("first child"));
-        assert!(rendered.contains("APP-C002"));
+        assert!(rendered.contains("  └─ APP-C002"));
         assert!(rendered.contains("second child"));
     }
 }
