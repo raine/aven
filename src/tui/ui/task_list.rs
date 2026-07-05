@@ -931,13 +931,7 @@ fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usi
     ];
     lines.extend(dependency_preview_lines(item));
     if let Some(parent) = &item.epic_parent {
-        lines.push(Line::from(vec![
-            Span::styled("part of ", Style::new().fg(FG_DIM)),
-            Span::styled(
-                format!("{} {}", parent.display_ref, parent.title),
-                Style::new().fg(FG_MUTED),
-            ),
-        ]));
+        lines.push(epic_parent_preview_line(parent));
     }
     let open_child_links: Vec<_> = item
         .epic_children
@@ -991,6 +985,18 @@ fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usi
             .style(Style::new().fg(FG).bg(BG)),
         area,
     );
+}
+
+fn epic_parent_preview_line(parent: &crate::query::TaskDependencyLink) -> Line<'static> {
+    Line::from(vec![
+        Span::styled("part of ", Style::new().fg(FG_DIM)),
+        Span::styled(EPIC_MARKER, Style::new().fg(YELLOW)),
+        Span::styled(" ", Style::new().fg(FG_DIM)),
+        Span::styled(
+            format!("{} {}", parent.display_ref, parent.title),
+            Style::new().fg(FG_MUTED),
+        ),
+    ])
 }
 
 #[cfg(test)]
@@ -1499,6 +1505,25 @@ mod tests {
         );
 
         assert!(cells[1].to_string().contains("edited title"));
+    }
+
+    #[test]
+    fn preview_marks_epic_parent_with_star() {
+        let parent = crate::query::TaskDependencyLink {
+            task_id: "parent-task-id".to_string(),
+            display_ref: "APP-EPIC".to_string(),
+            title: "Build the epic container".to_string(),
+            status: "inbox".to_string(),
+            priority: "medium".to_string(),
+            unresolved: true,
+        };
+
+        let line = epic_parent_preview_line(&parent);
+
+        assert_eq!(
+            line.to_string(),
+            format!("part of {EPIC_MARKER} APP-EPIC Build the epic container")
+        );
     }
 
     #[test]
