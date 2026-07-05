@@ -1,9 +1,9 @@
 ---
 title: What is aven?
-description: Local-first task management for humans and coding agents.
+description: A local-first task manager for power users and agents.
 ---
 
-aven is a local-first task manager for humans and coding agents. It is built as a personal, power-user task system: one overview across projects, task capture from wherever work appears, first-class agent workflows, workspace isolation, and a polished terminal UI.
+aven is a local-first task manager for power users and agents. It gives you one overview across projects, task capture from wherever work appears, first-class agent workflows, workspace isolation, and a polished terminal UI.
 
 ![aven TUI showing the queue view and add-task popup](/tui.webp)
 

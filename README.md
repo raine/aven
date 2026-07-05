@@ -1,9 +1,8 @@
 # aven
 
-`aven` is a local-first task manager for humans and coding agents. It is built as
-a personal, power-user task system: one overview across projects, task capture
-from wherever work appears, first-class agent workflows, workspace isolation,
-and a polished terminal UI.
+`aven` is a local-first task manager for power users and agents. It gives you
+one overview across projects, task capture from wherever work appears,
+first-class agent workflows, workspace isolation, and a polished terminal UI.
 
 It is currently under active development, but already works really well and I
 use it as my daily driver.

@@ -7,7 +7,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'aven',
-      description: 'Local-first task management for humans and coding agents.',
+      description: 'A local-first task manager for power users and agents.',
       logo: {
         dark: './src/assets/aven-logo-grape-violet.svg',
         light: './src/assets/aven-logo-grape-violet-light.svg',
