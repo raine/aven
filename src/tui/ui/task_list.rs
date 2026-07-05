@@ -453,9 +453,9 @@ fn label_column_width_from_task_refs(tasks: &[&TaskListItem], narrow: bool) -> u
             let summary_width = if more == 0 {
                 first
             } else {
-                first + more.to_string().chars().count() + 3
+                first + more.to_string().chars().count() + 2
             };
-            summary_width as u16 + 4
+            summary_width as u16 + 2
         })
         .max()
         .unwrap_or(0)
@@ -1094,15 +1094,18 @@ mod tests {
 
     #[tokio::test]
     async fn label_column_width_uses_visible_task_labels() {
-        let mut hidden_wide = task_item("hidden wide label");
+        let mut hidden_wide = task_item("zz hidden wide label");
         hidden_wide.labels = vec!["very-wide-label".to_string()];
-        let store = test_store_with_tasks(vec![
-            task_item("visible plain one"),
-            task_item("visible plain two"),
-            task_item("visible plain three"),
+        let mut store = test_store_with_tasks(vec![
+            task_item("aa visible plain one"),
+            task_item("bb visible plain two"),
+            task_item("cc visible plain three"),
             hidden_wide,
         ])
         .await;
+        store
+            .tasks
+            .sort_by(|left, right| left.task.title.cmp(&right.task.title));
         let area = Rect::new(0, 0, 100, 4);
         let mut table_state = TableState::default();
 
@@ -1115,7 +1118,7 @@ mod tests {
         let scrolled_model =
             build_task_list_render_model(&store, &mut table_state, Focus::Tasks, area, None);
 
-        assert_eq!(column_length(scrolled_model.columns[2]), 18);
+        assert_eq!(column_length(scrolled_model.columns[2]), 17);
     }
 
     #[test]
@@ -1130,7 +1133,7 @@ mod tests {
         let mut task = task_item("labeled");
         task.labels = vec!["search".to_string(), "ux".to_string()];
 
-        assert_eq!(label_column_width_from_tasks(&[task], false), 14);
+        assert_eq!(label_column_width_from_tasks(&[task], false), 11);
     }
 
     #[test]
