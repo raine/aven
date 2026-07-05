@@ -129,13 +129,13 @@ fn action_text(
             "label".to_string(),
             title_summary("added label", task_title),
             payload_string(payload, "label"),
-            "yellow".to_string(),
+            "green".to_string(),
         ),
         ("task", op_type::LABEL_REMOVE) => (
             "label".to_string(),
             title_summary("removed label", task_title),
             payload_string(payload, "label"),
-            "dim".to_string(),
+            "red".to_string(),
         ),
         ("task", op_type::NOTE_ADD) => (
             "note".to_string(),

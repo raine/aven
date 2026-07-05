@@ -7,6 +7,7 @@ use ratatui::widgets::{
 };
 
 use super::truncate::truncate_chars;
+use crate::change_log::op_type;
 use crate::query::RecentActionItem;
 use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::app::{Focus, WidgetState};
@@ -308,6 +309,12 @@ fn action_columns(width: u16) -> [Constraint; 5] {
 }
 
 fn action_icon(action: &RecentActionItem) -> &'static str {
+    if action.op_type == op_type::LABEL_ADD {
+        return "+";
+    }
+    if action.op_type == op_type::LABEL_REMOVE {
+        return "-";
+    }
     match action.accent.as_str() {
         "green" => "●",
         "blue" => "◆",
