@@ -162,7 +162,11 @@ fn render_action_row(
         .display_ref
         .clone()
         .unwrap_or_else(|| short_id(&action.entity_id));
-    let project = action.target.project_key.clone().unwrap_or_default();
+    let project = action_project_cell(
+        action.target.project_key.as_deref(),
+        cells[3].width as usize,
+        row_style.bg.unwrap_or(BG),
+    );
     let sync_marker = if action.synced { "✓" } else { "•" };
     let summary = truncate_chars(&action.summary, cells[4].width.saturating_sub(1) as usize);
     let values = [
@@ -189,10 +193,7 @@ fn render_action_row(
                 .bg(row_style.bg.unwrap_or(BG))
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::from(Span::styled(
-            format!(" {project}"),
-            Style::new().fg(FG_MUTED).bg(row_style.bg.unwrap_or(BG)),
-        )),
+        project,
         Line::from(vec![
             Span::styled(summary, row_style.fg(FG)),
             Span::styled(
@@ -204,6 +205,21 @@ fn render_action_row(
     for (cell, value) in cells.into_iter().zip(values) {
         frame.render_widget(Paragraph::new(value).style(row_style), cell);
     }
+}
+
+fn action_project_cell(
+    project_key: Option<&str>,
+    max_width: usize,
+    bg: ratatui::style::Color,
+) -> Line<'static> {
+    let Some(project_key) = project_key else {
+        return Line::from("");
+    };
+    let project = truncate_chars(project_key, max_width.saturating_sub(1));
+    Line::from(vec![
+        Span::styled(project, Style::new().fg(FG_MUTED).bg(bg)),
+        Span::styled(" ", Style::new().bg(bg)),
+    ])
 }
 
 fn render_action_detail(frame: &mut Frame, store: &TuiStore, selected: Option<usize>, area: Rect) {
@@ -430,4 +446,67 @@ fn compact_age_since(value: &str, now_seconds: i64) -> Option<String> {
 
 fn short_id(id: &str) -> String {
     id.chars().take(6).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::query::{RecentActionItem, RecentActionTarget};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn action_item(project_key: &str) -> RecentActionItem {
+        RecentActionItem {
+            change_id: "change-1".to_string(),
+            entity_type: "task".to_string(),
+            entity_id: "task-1".to_string(),
+            op_type: op_type::CREATE_TASK.to_string(),
+            field: None,
+            created_at: "2026-07-05T00:00:00Z".to_string(),
+            synced: true,
+            target: RecentActionTarget {
+                display_ref: Some("APP-1".to_string()),
+                title: Some("Task".to_string()),
+                project_key: Some(project_key.to_string()),
+                status: Some("todo".to_string()),
+                deleted: false,
+            },
+            verb: "create".to_string(),
+            summary: "created task: Task".to_string(),
+            detail: None,
+            accent: "green".to_string(),
+        }
+    }
+
+    fn row_text(action: &RecentActionItem, width: u16) -> String {
+        let backend = TestBackend::new(width, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render_action_row(frame, action, 0, frame.area(), false, false);
+            })
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn action_project_cell_truncates_with_summary_spacing() {
+        let action = action_item("claude-code-procreated");
+
+        let rendered = row_text(&action, 70);
+
+        assert!(rendered.contains("claude-cod… created task"));
+        assert!(!rendered.contains("claude-code-procreated task"));
+    }
+
+    #[test]
+    fn action_project_cell_keeps_trailing_summary_spacing() {
+        assert_eq!(action_project_cell(Some("app"), 12, BG).to_string(), "app ");
+    }
 }
