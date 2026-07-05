@@ -19,8 +19,9 @@ use crate::tui::platform::is_editor_prefix_key;
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
 use crate::tui::ui::{
     database_stats_scroll_cap, detail_help_scroll_cap, help_scroll_cap, prefix_hint_scroll_cap,
-    task_at_position, task_status_at_position, text_panel_scroll_cap,
+    recent_action_at_position, task_at_position, task_status_at_position, text_panel_scroll_cap,
 };
+use crate::tui::store::TaskView;
 
 impl App {
     pub(super) async fn dispatch_paste(&mut self, text: &str) -> Result<()> {
@@ -189,6 +190,22 @@ impl App {
                 }
                 crate::tui::ui::HeaderTarget::SyncStatus => self.show_config_status(),
             };
+        }
+
+        if !self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row)
+            && self.store.view_state.view == TaskView::RecentActions
+            && let Some(hit) = recent_action_at_position(
+                &self.store,
+                &self.widgets.table,
+                self.task_area_for_mouse(terminal_size),
+                mouse.column,
+                mouse.row,
+            )
+        {
+            self.focus = Focus::Tasks;
+            self.widgets.table.select(Some(hit.action_index));
+            self.last_task_click = None;
+            return Ok(());
         }
 
         if !self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row)

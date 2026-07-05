@@ -36,6 +36,7 @@ use self::toast::render_toast;
 pub(crate) use self::detail::{DetailMetadataTarget, detail_metadata_target_at, detail_scroll_cap};
 pub(crate) use self::overlays::{database_stats_scroll_cap, text_panel_scroll_cap};
 pub(crate) use self::shortcuts::{detail_help_scroll_cap, help_scroll_cap, prefix_hint_scroll_cap};
+pub(crate) use self::recent_actions::recent_action_at_position;
 pub(crate) use self::task_list::{task_at_position, task_status_at_position};
 
 use ratatui::Frame;

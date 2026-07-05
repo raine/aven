@@ -17,6 +17,49 @@ use crate::tui::theme::{
     SELECTED_INACTIVE, YELLOW,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RecentActionHit {
+    pub(crate) action_index: usize,
+    pub(crate) viewport_row: u16,
+}
+
+pub(crate) fn recent_action_at_position(
+    store: &TuiStore,
+    table_state: &TableState,
+    area: Rect,
+    column: u16,
+    row: u16,
+) -> Option<RecentActionHit> {
+    let list_area = recent_action_areas(area)[0];
+    if column < list_area.x
+        || column >= list_area.x.saturating_add(list_area.width)
+        || row <= list_area.y
+        || row >= list_area.y.saturating_add(list_area.height)
+    {
+        return None;
+    }
+    let viewport_rows = list_area.height.saturating_sub(1) as usize;
+    if viewport_rows == 0 || store.recent_actions.is_empty() {
+        return None;
+    }
+    let selected = table_state
+        .selected()
+        .unwrap_or(0)
+        .min(store.recent_actions.len() - 1);
+    let scroll = scroll_offset(
+        table_state.offset(),
+        selected,
+        store.recent_actions.len(),
+        viewport_rows,
+    );
+    let viewport_row = row.saturating_sub(list_area.y).saturating_sub(1);
+    let action_index = scroll.saturating_add(viewport_row as usize);
+    (action_index < store.recent_actions.len()).then_some(RecentActionHit {
+        action_index,
+        viewport_row,
+    })
+}
+
 pub(super) fn render_recent_actions(
     frame: &mut Frame,
     store: &TuiStore,
@@ -29,14 +72,18 @@ pub(super) fn render_recent_actions(
         return;
     }
 
-    let [list_area, detail_area] = if area.height >= 24 {
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(8)]).areas(area)
-    } else {
-        [area, Rect::default()]
-    };
+    let [list_area, detail_area] = recent_action_areas(area);
     render_action_list(frame, store, &mut widgets.table, focus, list_area);
     if detail_area.height > 0 {
         render_action_detail(frame, store, widgets.table.selected(), detail_area);
+    }
+}
+
+fn recent_action_areas(area: Rect) -> [Rect; 2] {
+    if area.height >= 24 {
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(8)]).areas(area)
+    } else {
+        [area, Rect::default()]
     }
 }
 
