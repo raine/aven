@@ -309,14 +309,40 @@ fn action_columns(width: u16) -> [Constraint; 5] {
 }
 
 fn action_icon(action: &RecentActionItem) -> &'static str {
-    if action.op_type == op_type::LABEL_ADD {
-        return "+";
+    match action.op_type.as_str() {
+        op_type::CREATE_TASK => "+",
+        op_type::SET_FIELD => field_action_icon(action),
+        op_type::LABEL_ADD => "+",
+        op_type::LABEL_REMOVE => "-",
+        op_type::NOTE_ADD => "✎",
+        op_type::NOTE_DELETE => "⌫",
+        op_type::DEPENDENCY_ADD => "←",
+        op_type::DEPENDENCY_REMOVE => "-",
+        op_type::EPIC_LINK_ADD => "★",
+        op_type::EPIC_LINK_REMOVE => "☆",
+        op_type::CREATE_PROJECT | op_type::SET_PROJECT_METADATA | op_type::PROJECT_DELETE => "◆",
+        op_type::CREATE_LABEL | op_type::LABEL_DELETE => "#",
+        op_type::CREATE_WORKSPACE | op_type::SET_WORKSPACE_FIELD => "◎",
+        _ => fallback_action_icon(action),
     }
-    if action.op_type == op_type::LABEL_REMOVE {
-        return "-";
+}
+
+fn field_action_icon(action: &RecentActionItem) -> &'static str {
+    match action.field.as_deref().unwrap_or_default() {
+        "title" | "description" => "✎",
+        "status" => "●",
+        "priority" => "▲",
+        "project" => "◆",
+        "deleted" if action.summary.starts_with("restored") => "↺",
+        "deleted" => "×",
+        "is_epic" => "★",
+        _ => "✎",
     }
+}
+
+fn fallback_action_icon(action: &RecentActionItem) -> &'static str {
     match action.accent.as_str() {
-        "green" => "●",
+        "green" => "+",
         "blue" => "◆",
         "yellow" => "▲",
         "pink" => "✦",
