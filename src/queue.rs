@@ -23,12 +23,6 @@ pub(crate) struct QueueMeta {
     pub(crate) idle_seconds: Option<i64>,
 }
 
-impl QueueMeta {
-    pub(crate) fn idle_seconds(self) -> Option<i64> {
-        self.idle_seconds
-    }
-}
-
 impl QueueBand {
     pub(crate) fn label(self) -> &'static str {
         match self {

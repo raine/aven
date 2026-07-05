@@ -31,6 +31,7 @@ pulldown-cmark = "0.13"
 ratatui = "0.30"
 sha2 = "0.11"
 similar = "3.1"
+time = { version = "0.3", features = ["formatting", "local-offset", "macros", "parsing"] }
 tokio = { version = "1.45", features = ["io-util", "macros", "process", "rt-multi-thread", "signal", "net", "time"] }
 unicode-width = "0.2"
 tracing = "0.1"

@@ -19,6 +19,8 @@ use ratatui::widgets::{
     Block, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
     TableState, Wrap,
 };
+use time::format_description::well_known::Rfc3339;
+use time::{OffsetDateTime, UtcOffset};
 
 use super::input::clipped_input_line;
 use super::task_display::{description_preview_text, labels_display};
@@ -35,12 +37,6 @@ use crate::tui::theme::{
 use crate::tui::widgets::{
     age_style, label_cell, priority_icon, priority_short, status_chip, status_span, title_cell,
 };
-
-impl TaskListRenderMode {
-    fn uses_queue_age(self) -> bool {
-        matches!(self, Self::Queue)
-    }
-}
 
 const EPIC_MARKER: &str = "\u{f04ce}";
 
@@ -530,7 +526,7 @@ fn render_task_header(frame: &mut Frame, area: Rect, columns: [Constraint; 8]) {
     for (index, (area, label)) in cells
         .into_iter()
         .zip([
-            " REF", "TITLE", "LABELS", "", "PROJECT", "STATUS", "P", "IDLE",
+            " REF", "TITLE", "LABELS", "", "PROJECT", "STATUS", "P", "AGE",
         ])
         .enumerate()
     {
@@ -605,21 +601,13 @@ fn render_task_row_cells(
 fn build_task_row_cells(
     item: &TaskListItem,
     now_seconds: i64,
-    render_mode: TaskListRenderMode,
+    _render_mode: TaskListRenderMode,
     inline_title_editor: Option<&TextInputView>,
     column_widths: &[usize; 8],
     marked: bool,
 ) -> Vec<Line<'static>> {
-    let age_seconds = if render_mode.uses_queue_age() {
-        item.queue.idle_seconds()
-    } else {
-        task_seconds_since(&item.task.created_at, now_seconds)
-    };
-    let age_style_input = if render_mode.uses_queue_age() {
-        &item.task.queue_activity_at
-    } else {
-        &item.task.created_at
-    };
+    let age_seconds = task_seconds_since(&item.task.created_at, now_seconds);
+    let age_style_input = &item.task.created_at;
     let title = inline_title_editor
         .map(|editor| inline_title_edit_cell(editor, column_widths[1]))
         .unwrap_or_else(|| title_cell(item, column_widths[1]));
@@ -646,21 +634,13 @@ fn build_epic_parent_row_cells(
     item: &TaskListItem,
     now_seconds: i64,
     expanded: bool,
-    render_mode: TaskListRenderMode,
+    _render_mode: TaskListRenderMode,
     inline_title_editor: Option<&TextInputView>,
     column_widths: &[usize; 8],
     marked: bool,
 ) -> Vec<Line<'static>> {
-    let age_seconds = if render_mode.uses_queue_age() {
-        item.queue.idle_seconds()
-    } else {
-        task_seconds_since(&item.task.created_at, now_seconds)
-    };
-    let age_style_input = if render_mode.uses_queue_age() {
-        &item.task.queue_activity_at
-    } else {
-        &item.task.created_at
-    };
+    let age_seconds = task_seconds_since(&item.task.created_at, now_seconds);
+    let age_style_input = &item.task.created_at;
     let title = inline_title_editor
         .map(|editor| inline_title_edit_cell(editor, column_widths[1]))
         .unwrap_or_else(|| title_cell(item, column_widths[1]));
@@ -874,6 +854,25 @@ fn task_heading_line(item: &TaskListItem) -> Line<'_> {
     ])
 }
 
+fn local_timestamp_display(value: &str) -> String {
+    let Ok(datetime) = OffsetDateTime::parse(value, &Rfc3339) else {
+        return value.to_string();
+    };
+    let Ok(offset) = UtcOffset::local_offset_at(datetime) else {
+        return value.to_string();
+    };
+    timestamp_display_in_offset(datetime, offset).unwrap_or_else(|| value.to_string())
+}
+
+fn timestamp_display_in_offset(datetime: OffsetDateTime, offset: UtcOffset) -> Option<String> {
+    datetime
+        .to_offset(offset)
+        .format(&time::macros::format_description!(
+            "[year]-[month]-[day] [hour]:[minute]:[second]"
+        ))
+        .ok()
+}
+
 fn task_preview_fields_line(item: &TaskListItem) -> Line<'static> {
     let mut fields = vec![
         Span::styled("project ", Style::new().fg(FG_DIM)),
@@ -889,6 +888,11 @@ fn task_preview_fields_line(item: &TaskListItem) -> Line<'static> {
         Span::styled(
             priority_short(item.task.priority.as_str()),
             theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("  created ", Style::new().fg(FG_DIM)),
+        Span::styled(
+            local_timestamp_display(&item.task.created_at),
+            Style::new().fg(FG_MUTED),
         ),
     ];
     if item.task.deleted {
@@ -1215,6 +1219,48 @@ mod tests {
     }
 
     #[test]
+    fn queue_row_age_uses_created_timestamp() {
+        let mut item = task_item("queued");
+        item.task.created_at = "0".to_string();
+        item.task.queue_activity_at = (9 * 86_400).to_string();
+        item.queue.idle_seconds = Some(86_400);
+
+        let cells = build_task_row_cells(
+            &item,
+            10 * 86_400,
+            TaskListRenderMode::Queue,
+            None,
+            &[12, 40, 12, 6, 9, 10, 3, 5],
+            false,
+        );
+
+        assert_eq!(cells[7].to_string(), "10d");
+    }
+
+    #[test]
+    fn task_header_labels_age_column() {
+        let backend = TestBackend::new(80, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let columns = [
+            Constraint::Length(12),
+            Constraint::Fill(1),
+            Constraint::Length(12),
+            Constraint::Length(6),
+            Constraint::Length(9),
+            Constraint::Length(10),
+            Constraint::Length(3),
+            Constraint::Length(5),
+        ];
+        terminal
+            .draw(|frame| render_task_header(frame, frame.area(), columns))
+            .unwrap();
+
+        let rendered = buffer_text(terminal.backend().buffer());
+        assert!(rendered.contains("AGE"));
+        assert!(!rendered.contains("IDLE"));
+    }
+
+    #[test]
     fn metadata_column_width_collapses_without_metadata() {
         let tasks = vec![task_item("plain"), task_item("also plain")];
 
@@ -1463,6 +1509,33 @@ mod tests {
         item.task.description = "details".to_string();
 
         assert_eq!(metadata_cell(&item).to_string(), "");
+    }
+
+    #[test]
+    fn task_preview_fields_show_created_timestamp() {
+        let item = task_item("preview");
+        let rendered = task_preview_fields_line(&item).to_string();
+
+        assert!(rendered.contains("created "));
+    }
+
+    #[test]
+    fn timestamp_display_uses_given_offset() {
+        let datetime = OffsetDateTime::parse("2026-07-04T06:43:06Z", &Rfc3339).unwrap();
+        let offset = UtcOffset::from_hms(2, 0, 0).unwrap();
+
+        assert_eq!(
+            timestamp_display_in_offset(datetime, offset).unwrap(),
+            "2026-07-04 08:43:06"
+        );
+    }
+
+    #[test]
+    fn local_timestamp_display_keeps_unparsed_values() {
+        assert_eq!(
+            local_timestamp_display("not-a-timestamp"),
+            "not-a-timestamp"
+        );
     }
 
     #[test]
