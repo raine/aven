@@ -212,8 +212,6 @@ pub(crate) enum HeaderMenuKind {
     Workspace,
     Scope,
     View,
-    Status,
-    Priority,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -222,8 +220,6 @@ pub(crate) enum HeaderMenuAction {
     WorkspaceScope,
     ProjectScope(String),
     View(TaskView),
-    Status(String),
-    Priority(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -275,8 +271,6 @@ impl HeaderMenuState {
             HeaderMenuKind::Workspace => "workspace",
             HeaderMenuKind::Scope => "scope",
             HeaderMenuKind::View => "view",
-            HeaderMenuKind::Status => "status",
-            HeaderMenuKind::Priority => "priority",
         }
     }
 }

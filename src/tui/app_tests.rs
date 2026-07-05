@@ -3,8 +3,7 @@ use crate::choices::{TaskPriority, TaskStatus};
 use crate::operations::TaskDraft;
 use crate::tui::app_conflicts::CONFLICT_CONFIRM_LOCAL_TITLE;
 use crate::tui::app_edit::{
-    EDIT_DESCRIPTION_TITLE, EDIT_LABELS_TITLE, EDIT_PRIORITY_TITLE, EDIT_PROJECT_TITLE,
-    EDIT_STATUS_TITLE, EDIT_TITLE_TITLE,
+    EDIT_DESCRIPTION_TITLE, EDIT_LABELS_TITLE, EDIT_PROJECT_TITLE, EDIT_TITLE_TITLE,
 };
 use crate::tui::app_filters::{SCOPE_PROJECT_TITLE, SWITCH_WORKSPACE_TITLE};
 use crate::tui::app_projects::{DELETE_PROJECT_TITLE, DELETE_TASK_TITLE};
@@ -525,10 +524,7 @@ mod keyboard_dispatch {
             .await
             .unwrap();
 
-        assert!(matches!(
-            &app.overlay,
-            Some(OverlayState::Picker(state)) if state.title == EDIT_PRIORITY_TITLE
-        ));
+        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Priority));
     }
 
     #[tokio::test]
@@ -2499,14 +2495,8 @@ mod task_row_mouse {
 
         assert_eq!(app.widgets.table.selected(), Some(0));
         assert_eq!(app.focus, Focus::Tasks);
-        assert!(matches!(
-            &app.overlay,
-            Some(OverlayState::HeaderMenu(state))
-                if state.kind == crate::tui::overlay::HeaderMenuKind::Status
-                    && state.column == click.column
-                    && state.row == click.row
-                    && state.items.iter().any(|item| item.label == "inbox" && item.selected)
-        ));
+        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Status));
+        assert!(app.overlay.is_none());
     }
 
     #[tokio::test]
@@ -2533,11 +2523,8 @@ mod task_row_mouse {
         let size = (140, 24).into();
         let click = status_right_click_event(&app, (140, 24), 0);
         app.dispatch_mouse(click, size).await.unwrap();
-        let Some(OverlayState::HeaderMenu(state)) = app.overlay.as_ref() else {
-            panic!("expected status menu");
-        };
-        let area = state.area(size.width, size.height);
-        app.dispatch_mouse(left_click(area.x + 1, area.y + 4), size)
+        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Status));
+        app.dispatch_key(key(KeyCode::Char('a')), size)
             .await
             .unwrap();
 
@@ -3794,10 +3781,7 @@ mod detail_mode {
             .await
             .unwrap();
 
-        assert!(matches!(
-            &app.overlay,
-            Some(OverlayState::Picker(PickerState { title, .. })) if title == EDIT_PRIORITY_TITLE
-        ));
+        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Priority));
         assert!(app.view().detail_underlay);
     }
 
@@ -3908,11 +3892,6 @@ mod detail_mode {
         .await;
 
         for (events, expected_route) in [
-            (vec![key(KeyCode::Char('s'))], OverlayRoute::EditStatus),
-            (
-                vec![key(KeyCode::Char('e')), key(KeyCode::Char('p'))],
-                OverlayRoute::EditPriority,
-            ),
             (
                 vec![key(KeyCode::Char('e')), key(KeyCode::Char('l'))],
                 OverlayRoute::EditLabels,
@@ -3924,6 +3903,7 @@ mod detail_mode {
             ),
         ] {
             app.overlay = Some(OverlayState::Detail { scroll: 4 });
+            app.footer_choice_mode = None;
             app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
                 .await
                 .unwrap();
@@ -3946,6 +3926,33 @@ mod detail_mode {
                 (Some(OverlayState::Confirm(state)), route) => assert_eq!(state.route, route),
                 (overlay, route) => panic!("expected {route:?}, got {overlay:?}"),
             }
+            assert_pending_empty(&app);
+            assert!(app.view().detail_underlay);
+            assert_eq!(app.view().detail_underlay_scroll, 4);
+        }
+
+        for (events, expected_mode) in [
+            (vec![key(KeyCode::Char('s'))], FooterChoiceMode::Status),
+            (
+                vec![key(KeyCode::Char('e')), key(KeyCode::Char('p'))],
+                FooterChoiceMode::Priority,
+            ),
+        ] {
+            app.overlay = Some(OverlayState::Detail { scroll: 4 });
+            app.footer_choice_mode = None;
+            app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+                .await
+                .unwrap();
+            assert_pending(&app, &["t"]);
+            assert!(matches!(
+                app.overlay,
+                Some(OverlayState::Detail { scroll: 4 })
+            ));
+
+            for event in events {
+                app.dispatch_key(event, (80, 24).into()).await.unwrap();
+            }
+            assert_eq!(app.footer_choice_mode, Some(expected_mode));
             assert_pending_empty(&app);
             assert!(app.view().detail_underlay);
             assert_eq!(app.view().detail_underlay_scroll, 4);
@@ -4083,11 +4090,9 @@ mod detail_mode {
         app.dispatch_key(key(KeyCode::Char('s')), (80, 24).into())
             .await
             .unwrap();
-        app.handle_overlay_key(key(KeyCode::Char('/')))
+        app.dispatch_key(key(KeyCode::Char('d')), (80, 24).into())
             .await
             .unwrap();
-        type_chars(&mut app, "done").await;
-        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
         assert!(matches!(
             app.overlay,
@@ -4112,15 +4117,10 @@ mod detail_mode {
         .await
         .unwrap();
 
-        assert!(matches!(
-            &app.overlay,
-            Some(OverlayState::HeaderMenu(state))
-                if state.kind == crate::tui::overlay::HeaderMenuKind::Status
-                    && state.items.iter().any(|item| item.label == "inbox" && item.selected)
-        ));
+        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Status));
         assert!(app.view().detail_underlay);
 
-        app.dispatch_mouse(left_click(90, 13), (120, 30).into())
+        app.dispatch_key(key(KeyCode::Char('a')), (120, 30).into())
             .await
             .unwrap();
 
@@ -4175,15 +4175,10 @@ mod detail_mode {
         .await
         .unwrap();
 
-        assert!(matches!(
-            &app.overlay,
-            Some(OverlayState::HeaderMenu(state))
-                if state.kind == crate::tui::overlay::HeaderMenuKind::Priority
-                    && state.items.iter().any(|item| item.label == "medium" && item.selected)
-        ));
+        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Priority));
         assert!(app.view().detail_underlay);
 
-        app.dispatch_mouse(left_click(90, 17), (120, 30).into())
+        app.dispatch_key(key(KeyCode::Char('u')), (120, 30).into())
             .await
             .unwrap();
 
@@ -4233,7 +4228,8 @@ mod detail_mode {
         )
         .await
         .unwrap();
-        app.dispatch_mouse(left_click(90, 14), (120, 30).into())
+        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Status));
+        app.dispatch_key(key(KeyCode::Char('a')), (120, 30).into())
             .await
             .unwrap();
         assert!(matches!(
@@ -4503,18 +4499,11 @@ mod task_editing {
 
         app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
-        assert!(matches!(
-            &app.overlay,
-            Some(OverlayState::Picker(state))
-                if state.title == EDIT_PRIORITY_TITLE
-                    && state.items.iter().any(|item| item.value == "high" && item.selected)
-        ));
+        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Priority));
 
-        app.handle_overlay_key(key(KeyCode::Char('/')))
+        app.dispatch_key(key(KeyCode::Char('u')), (80, 24).into())
             .await
             .unwrap();
-        type_chars(&mut app, "urgent").await;
-        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(
             app.store.tasks[selected].task.priority,
@@ -4563,15 +4552,10 @@ mod task_editing {
         create_and_select_task(&mut app, test_task_draft("Status alias")).await;
 
         app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
-        assert!(matches!(
-            &app.overlay,
-            Some(OverlayState::Picker(state)) if state.title == EDIT_STATUS_TITLE
-        ));
-        app.handle_overlay_key(key(KeyCode::Char('/')))
+        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Status));
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
             .await
             .unwrap();
-        type_chars(&mut app, "todo").await;
-        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Todo);

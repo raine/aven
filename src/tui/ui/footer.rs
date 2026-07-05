@@ -2,19 +2,21 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::tui::theme::{BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED};
+use crate::tui::theme::{self, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum FooterMode {
     List,
     Detail,
+    StatusChoice,
+    PriorityChoice,
 }
 
 pub(super) fn footer_bar(mode: FooterMode, width: u16) -> Paragraph<'static> {
     let mut spans = Vec::new();
     for (keys, label) in footer_hints(mode, width) {
         spans.extend(key(keys));
-        spans.push(cmd(label));
+        spans.push(cmd(mode, label));
     }
     let hints = Line::from(spans);
     Paragraph::new(hints)
@@ -91,6 +93,23 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("?", "more"),
             ("Esc", "back"),
         ],
+        FooterMode::StatusChoice => &[
+            ("i", "inbox"),
+            ("b", "backlog"),
+            ("t", "todo"),
+            ("a", "active"),
+            ("d", "done"),
+            ("x", "canceled"),
+            ("Esc", "cancel"),
+        ],
+        FooterMode::PriorityChoice => &[
+            ("n", "none"),
+            ("l", "low"),
+            ("m", "medium"),
+            ("h", "high"),
+            ("u", "urgent"),
+            ("Esc", "cancel"),
+        ],
     }
 }
 
@@ -112,8 +131,13 @@ fn key(label: &str) -> Vec<Span<'static>> {
     spans
 }
 
-fn cmd(label: &str) -> Span<'static> {
-    Span::styled(format!(" {label}  "), Style::new().fg(FG_DIM))
+fn cmd(mode: FooterMode, label: &str) -> Span<'static> {
+    let style = match mode {
+        FooterMode::StatusChoice => theme::status_style(label),
+        FooterMode::PriorityChoice => theme::priority_style(label),
+        FooterMode::List | FooterMode::Detail => Style::new().fg(FG_DIM),
+    };
+    Span::styled(format!(" {label}  "), style)
 }
 
 #[cfg(test)]

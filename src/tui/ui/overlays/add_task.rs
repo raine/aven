@@ -227,26 +227,54 @@ pub(in crate::tui::ui) fn add_task_description_visual_lines(
 }
 
 pub(in crate::tui::ui) fn add_task_status_hint_line() -> Line<'static> {
-    dialog_hint_line(&[
-        ("i", "inbox"),
-        ("b", "backlog"),
-        ("t", "todo"),
-        ("a", "active"),
-        ("d", "done"),
-        ("x", "canceled"),
-        ("Esc", "cancel"),
-    ])
+    colored_add_task_hint_line(
+        &[
+            ("i", "inbox"),
+            ("b", "backlog"),
+            ("t", "todo"),
+            ("a", "active"),
+            ("d", "done"),
+            ("x", "canceled"),
+        ],
+        theme::status_style,
+    )
 }
 
 pub(in crate::tui::ui) fn add_task_priority_hint_line() -> Line<'static> {
-    dialog_hint_line(&[
-        ("n", "none"),
-        ("l", "low"),
-        ("m", "medium"),
-        ("h", "high"),
-        ("u", "urgent"),
-        ("Esc", "cancel"),
-    ])
+    colored_add_task_hint_line(
+        &[
+            ("n", "none"),
+            ("l", "low"),
+            ("m", "medium"),
+            ("h", "high"),
+            ("u", "urgent"),
+        ],
+        theme::priority_style,
+    )
+}
+
+fn colored_add_task_hint_line(
+    items: &[(&str, &str)],
+    label_style: fn(&str) -> Style,
+) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (index, (key, label)) in items.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled("  ", Style::new().fg(FG_MUTED)));
+        }
+        spans.push(Span::styled(
+            key.to_string(),
+            Style::new().fg(FG).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(format!(" {label}"), label_style(label)));
+    }
+    spans.push(Span::styled("  ", Style::new().fg(FG_MUTED)));
+    spans.push(Span::styled(
+        "Esc".to_string(),
+        Style::new().fg(FG).add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::styled(" cancel", Style::new().fg(FG_MUTED)));
+    Line::from(spans)
 }
 
 pub(in crate::tui::ui) fn add_task_hint_line(

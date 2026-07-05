@@ -3,17 +3,15 @@ use std::collections::BTreeSet;
 use anyhow::Result;
 
 use crate::labels::normalize_label;
-use crate::tui::app::App;
+use crate::tui::app::{App, FooterChoiceMode};
 use crate::tui::overlay::{
     MultilineInputState, OverlayRoute, OverlayState, SearchPurpose, SearchState,
 };
 use crate::tui::platform::edit_text_externally;
 
-pub(crate) const EDIT_STATUS_TITLE: &str = "Edit task: status";
 pub(crate) const EDIT_TITLE_TITLE: &str = "Edit title";
 pub(crate) const EDIT_DESCRIPTION_TITLE: &str = "Edit description";
 pub(crate) const EDIT_PROJECT_TITLE: &str = "Edit project";
-pub(crate) const EDIT_PRIORITY_TITLE: &str = "Edit task: priority";
 pub(crate) const EDIT_LABELS_TITLE: &str = "Edit task: labels";
 pub(crate) const REMOVE_DEPENDENCY_TITLE: &str = "Remove dependency";
 
@@ -158,18 +156,10 @@ impl App {
             );
             return;
         }
-        let Some(index) = self.guard_selected_task() else {
+        if self.guard_selected_task().is_none() {
             return;
-        };
-        let selected = self
-            .store
-            .selected_task(Some(index))
-            .unwrap()
-            .task
-            .status
-            .as_str();
-        let items = self.store.status_picker_items(Some(selected));
-        self.open_picker_overlay(OverlayRoute::EditStatus, EDIT_STATUS_TITLE, items, false);
+        }
+        self.footer_choice_mode = Some(FooterChoiceMode::Status);
     }
 
     pub(super) fn begin_edit_title(&mut self) {
@@ -259,23 +249,10 @@ impl App {
             );
             return;
         }
-        let Some(index) = self.guard_selected_task() else {
+        if self.guard_selected_task().is_none() {
             return;
-        };
-        let priority = self
-            .store
-            .selected_task(Some(index))
-            .unwrap()
-            .task
-            .priority
-            .as_str();
-        let items = self.store.priority_picker_items(priority);
-        self.open_picker_overlay(
-            OverlayRoute::EditPriority,
-            EDIT_PRIORITY_TITLE,
-            items,
-            false,
-        );
+        }
+        self.footer_choice_mode = Some(FooterChoiceMode::Priority);
     }
 
     pub(super) fn begin_edit_labels(&mut self) {

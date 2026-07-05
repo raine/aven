@@ -138,6 +138,7 @@ impl App {
                 .map(|notification| notification.toast_view()),
             pending_shortcut: self.pending_shortcut.labels(),
             pending_shortcut_scroll: self.pending_shortcut_scroll,
+            footer_choice_mode: self.footer_choice_mode,
             sidebar_visible: self.sidebar_visible,
             surface: if self.add_task_only {
                 ViewSurface::AddTask

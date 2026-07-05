@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use ratatui::layout::{Rect, Size};
 use std::time::Instant;
 
-use crate::tui::app::{App, Focus, TASK_ROW_DOUBLE_CLICK, TaskRefKind};
+use crate::tui::app::{App, Focus, FooterChoiceMode, TASK_ROW_DOUBLE_CLICK, TaskRefKind};
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::conflict_flow::ConflictResolutionChoice;
 use crate::tui::event::{
@@ -39,6 +39,8 @@ impl App {
     pub(crate) async fn dispatch_key(&mut self, key: KeyEvent, terminal_size: Size) -> Result<()> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.handle(Action::Quit).await
+        } else if self.footer_choice_mode.is_some() {
+            self.handle_footer_choice_key(key).await
         } else if key.code == KeyCode::Esc && self.pending_shortcut.cancel() {
             self.pending_shortcut_scroll = 0;
             Ok(())
@@ -63,6 +65,73 @@ impl App {
         } else {
             Ok(())
         }
+    }
+
+    async fn handle_footer_choice_key(&mut self, key: KeyEvent) -> Result<()> {
+        let Some(mode) = self.footer_choice_mode else {
+            return Ok(());
+        };
+        if !key.modifiers.is_empty() {
+            return Ok(());
+        }
+        match (mode, key.code) {
+            (_, KeyCode::Esc) => {
+                self.footer_choice_mode = None;
+                Ok(())
+            }
+            (FooterChoiceMode::Status, KeyCode::Char('i')) => {
+                self.submit_footer_status("inbox").await
+            }
+            (FooterChoiceMode::Status, KeyCode::Char('b')) => {
+                self.submit_footer_status("backlog").await
+            }
+            (FooterChoiceMode::Status, KeyCode::Char('t')) => {
+                self.submit_footer_status("todo").await
+            }
+            (FooterChoiceMode::Status, KeyCode::Char('a')) => {
+                self.submit_footer_status("active").await
+            }
+            (FooterChoiceMode::Status, KeyCode::Char('d')) => {
+                self.submit_footer_status("done").await
+            }
+            (FooterChoiceMode::Status, KeyCode::Char('x')) => {
+                self.submit_footer_status("canceled").await
+            }
+            (FooterChoiceMode::Priority, KeyCode::Char('n')) => {
+                self.submit_footer_priority("none").await
+            }
+            (FooterChoiceMode::Priority, KeyCode::Char('l')) => {
+                self.submit_footer_priority("low").await
+            }
+            (FooterChoiceMode::Priority, KeyCode::Char('m')) => {
+                self.submit_footer_priority("medium").await
+            }
+            (FooterChoiceMode::Priority, KeyCode::Char('h')) => {
+                self.submit_footer_priority("high").await
+            }
+            (FooterChoiceMode::Priority, KeyCode::Char('u')) => {
+                self.submit_footer_priority("urgent").await
+            }
+            _ => Ok(()),
+        }
+    }
+
+    async fn submit_footer_status(&mut self, status: &'static str) -> Result<()> {
+        self.footer_choice_mode = None;
+        self.update_status(status).await?;
+        if self.detail_context && self.overlay.is_none() {
+            self.restore_detail_overlay(true);
+        }
+        Ok(())
+    }
+
+    async fn submit_footer_priority(&mut self, priority: &'static str) -> Result<()> {
+        self.footer_choice_mode = None;
+        self.set_exact_priority(priority).await?;
+        if self.detail_context && self.overlay.is_none() {
+            self.restore_detail_overlay(true);
+        }
+        Ok(())
     }
 
     pub(crate) async fn dispatch_mouse(
@@ -209,6 +278,22 @@ impl App {
         }
 
         if !self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row)
+            && let Some(hit) = task_status_at_position(
+                &self.store,
+                &self.widgets.table,
+                self.task_area_for_mouse(terminal_size),
+                mouse.column,
+                mouse.row,
+            )
+        {
+            self.last_task_click = None;
+            self.focus = Focus::Tasks;
+            self.widgets.table.select(Some(hit.task_index));
+            self.footer_choice_mode = Some(FooterChoiceMode::Status);
+            return Ok(());
+        }
+
+        if !self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row)
             && let Some(hit) = task_at_position(
                 &self.store,
                 &self.widgets.table,
@@ -295,7 +380,7 @@ impl App {
 
         self.focus = Focus::Tasks;
         self.widgets.table.select(Some(hit.task_index));
-        self.show_status_menu(mouse.column, mouse.row);
+        self.footer_choice_mode = Some(FooterChoiceMode::Status);
         Ok(())
     }
 
@@ -317,7 +402,7 @@ impl App {
         terminal_size: Size,
         scroll: u16,
     ) -> bool {
-        let Some((target, column, row)) = crate::tui::ui::detail_metadata_target_at(
+        let Some((target, _column, _row)) = crate::tui::ui::detail_metadata_target_at(
             terminal_size.width,
             terminal_size.height,
             mouse.column,
@@ -329,8 +414,12 @@ impl App {
         self.detail_context = true;
         self.detail_context_scroll = scroll;
         match target {
-            crate::tui::ui::DetailMetadataTarget::Status => self.show_status_menu(column, row),
-            crate::tui::ui::DetailMetadataTarget::Priority => self.show_priority_menu(column, row),
+            crate::tui::ui::DetailMetadataTarget::Status => {
+                self.footer_choice_mode = Some(FooterChoiceMode::Status)
+            }
+            crate::tui::ui::DetailMetadataTarget::Priority => {
+                self.footer_choice_mode = Some(FooterChoiceMode::Priority)
+            }
         }
         if self.overlay.is_none() {
             self.overlay = Some(OverlayState::Detail { scroll });

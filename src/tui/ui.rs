@@ -45,7 +45,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Paragraph};
 
-use crate::tui::app::{Focus, WidgetState};
+use crate::tui::app::{Focus, FooterChoiceMode, WidgetState};
 use crate::tui::overlay::{
     HeaderMenuKind, HeaderMenuView, OrderMenuView, OverlayRoute, OverlayView, TextInputView,
 };
@@ -68,12 +68,18 @@ pub(crate) struct ViewState {
     pub(crate) notification: Option<Toast>,
     pub(crate) pending_shortcut: Vec<String>,
     pub(crate) pending_shortcut_scroll: u16,
+    pub(crate) footer_choice_mode: Option<FooterChoiceMode>,
     pub(crate) sidebar_visible: bool,
     pub(crate) surface: ViewSurface,
 }
 
 impl ViewState {
     fn footer_mode(&self) -> FooterMode {
+        match self.footer_choice_mode {
+            Some(FooterChoiceMode::Status) => return FooterMode::StatusChoice,
+            Some(FooterChoiceMode::Priority) => return FooterMode::PriorityChoice,
+            None => {}
+        }
         if matches!(
             self.overlay,
             Some(OverlayView::Detail { .. } | OverlayView::DetailHelp { .. })
@@ -414,8 +420,6 @@ fn header_menu_title(kind: HeaderMenuKind) -> &'static str {
         HeaderMenuKind::Workspace => "workspace",
         HeaderMenuKind::Scope => "scope",
         HeaderMenuKind::View => "view",
-        HeaderMenuKind::Status => "status",
-        HeaderMenuKind::Priority => "priority",
     }
 }
 
@@ -465,25 +469,14 @@ fn header_menu_label_style(
     row_style: Style,
     selected: bool,
 ) -> Style {
-    if matches!(kind, HeaderMenuKind::View | HeaderMenuKind::Status) {
+    if matches!(kind, HeaderMenuKind::View) {
         let bg = row_style.bg.unwrap_or(BG_PANEL);
         let style = match label {
             "queue" => Style::new().fg(ACCENT).bg(bg),
             "open" => Style::new().fg(GREEN).bg(bg),
             "conflicts" => Style::new().fg(PINK).bg(bg),
-            "active" | "todo" | "inbox" | "backlog" | "done" | "canceled" => {
-                crate::tui::theme::status_style(label).bg(bg)
-            }
             _ => row_style,
         };
-        if selected {
-            style.add_modifier(Modifier::BOLD)
-        } else {
-            style
-        }
-    } else if matches!(kind, HeaderMenuKind::Priority) {
-        let bg = row_style.bg.unwrap_or(BG_PANEL);
-        let style = crate::tui::theme::priority_style(label).bg(bg);
         if selected {
             style.add_modifier(Modifier::BOLD)
         } else {

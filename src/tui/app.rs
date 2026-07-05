@@ -127,6 +127,12 @@ pub(crate) struct WidgetState {
     pub(crate) marked_task_ids: BTreeSet<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FooterChoiceMode {
+    Status,
+    Priority,
+}
+
 pub(crate) struct App {
     pub(crate) store: TuiStore,
     pub(crate) should_quit: bool,
@@ -137,6 +143,7 @@ pub(crate) struct App {
     pub(crate) notification: Option<Notification>,
     pub(super) pending_shortcut: ShortcutBuffer,
     pub(super) pending_shortcut_scroll: u16,
+    pub(super) footer_choice_mode: Option<FooterChoiceMode>,
     pub(super) detail_context: bool,
     pub(super) sidebar_visible: bool,
     pub(super) detail_context_scroll: u16,
@@ -187,6 +194,7 @@ impl App {
             notification: None,
             pending_shortcut: ShortcutBuffer::default(),
             pending_shortcut_scroll: 0,
+            footer_choice_mode: None,
             detail_context: false,
             sidebar_visible: true,
             detail_context_scroll: 0,

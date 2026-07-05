@@ -1,6 +1,5 @@
 use anyhow::Result;
 
-use crate::choices::{PRIORITIES, STATUSES};
 use crate::tui::app::{App, Focus};
 use crate::tui::overlay::{
     HeaderMenuAction, HeaderMenuItem, HeaderMenuKind, HeaderMenuState, OrderMenuState,
@@ -185,54 +184,6 @@ impl App {
         ));
     }
 
-    pub(super) fn show_status_menu(&mut self, column: u16, row: u16) {
-        self.pending_shortcut.clear();
-        let selected = self
-            .store
-            .selected_task(self.widgets.table.selected())
-            .map(|item| item.task.status.as_str())
-            .unwrap_or_default();
-        let items = STATUSES
-            .iter()
-            .map(|status| HeaderMenuItem {
-                key: status_menu_key(status).to_string(),
-                label: (*status).to_string(),
-                selected: *status == selected,
-                action: HeaderMenuAction::Status((*status).to_string()),
-            })
-            .collect();
-        self.overlay = Some(OverlayState::header_menu(
-            HeaderMenuKind::Status,
-            column,
-            row,
-            items,
-        ));
-    }
-
-    pub(super) fn show_priority_menu(&mut self, column: u16, row: u16) {
-        self.pending_shortcut.clear();
-        let selected = self
-            .store
-            .selected_task(self.widgets.table.selected())
-            .map(|item| item.task.priority.as_str())
-            .unwrap_or_default();
-        let items = PRIORITIES
-            .iter()
-            .map(|priority| HeaderMenuItem {
-                key: priority_menu_key(priority).to_string(),
-                label: (*priority).to_string(),
-                selected: *priority == selected,
-                action: HeaderMenuAction::Priority((*priority).to_string()),
-            })
-            .collect();
-        self.overlay = Some(OverlayState::header_menu(
-            HeaderMenuKind::Priority,
-            column,
-            row,
-            items,
-        ));
-    }
-
     pub(super) async fn submit_header_menu(&mut self, action: HeaderMenuAction) -> Result<()> {
         self.overlay = None;
         match action {
@@ -248,8 +199,6 @@ impl App {
                 self.show_scope(TaskScopeTarget::Project(project)).await
             }
             HeaderMenuAction::View(view) => self.show_view(view).await,
-            HeaderMenuAction::Status(status) => self.submit_edit_status(status).await,
-            HeaderMenuAction::Priority(priority) => self.submit_edit_priority(priority).await,
         }
     }
 
@@ -381,29 +330,6 @@ impl App {
         self.apply_filter_selection(selected);
         self.set_success(message);
         Ok(())
-    }
-}
-
-fn status_menu_key(status: &str) -> &'static str {
-    match status {
-        "inbox" => "i",
-        "backlog" => "b",
-        "todo" => "t",
-        "active" => "a",
-        "done" => "d",
-        "canceled" => "c",
-        _ => "?",
-    }
-}
-
-fn priority_menu_key(priority: &str) -> &'static str {
-    match priority {
-        "none" => "n",
-        "low" => "l",
-        "medium" => "m",
-        "high" => "h",
-        "urgent" => "u",
-        _ => "?",
     }
 }
 
