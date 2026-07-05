@@ -42,7 +42,7 @@ impl TaskListView {
         expanded_epic_ids: &BTreeSet<String>,
     ) -> Self {
         let rows = match render_mode {
-            TaskListRenderMode::Queue => queue_rows(tasks, expanded_epic_ids),
+            TaskListRenderMode::Queue => queue_rows(tasks),
             TaskListRenderMode::Flat => task_rows(tasks),
             TaskListRenderMode::Epics => epics_rows(tasks, expanded_epic_ids),
         };
@@ -103,10 +103,7 @@ pub(super) fn task_rows(tasks: &[TaskListItem]) -> Vec<TaskListRow> {
         .collect()
 }
 
-pub(super) fn queue_rows(
-    tasks: &[TaskListItem],
-    expanded_epic_ids: &BTreeSet<String>,
-) -> Vec<TaskListRow> {
+pub(super) fn queue_rows(tasks: &[TaskListItem]) -> Vec<TaskListRow> {
     let mut rows = Vec::new();
     let mut index = 0;
     while index < tasks.len() {
@@ -115,55 +112,11 @@ pub(super) fn queue_rows(
         while index < tasks.len() && queue_group_label(&tasks[index]) == label {
             index += 1;
         }
-        let group_rows = queue_group_rows(tasks, start..index, expanded_epic_ids);
-        if group_rows.is_empty() {
-            continue;
-        }
         rows.push(TaskListRow::Group(TaskGroupRow {
             label,
-            count: group_rows
-                .iter()
-                .filter(|row| matches!(row, TaskListRow::Task { .. }))
-                .count(),
+            count: index - start,
         }));
-        rows.extend(group_rows);
-    }
-    rows
-}
-
-fn queue_group_rows(
-    tasks: &[TaskListItem],
-    range: std::ops::Range<usize>,
-    expanded_epic_ids: &BTreeSet<String>,
-) -> Vec<TaskListRow> {
-    let mut rows = Vec::new();
-    for task_index in range.clone() {
-        let item = &tasks[task_index];
-        if item
-            .epic_parent
-            .as_ref()
-            .is_some_and(|parent| expanded_epic_ids.contains(&parent.task_id))
-        {
-            continue;
-        }
-        rows.push(TaskListRow::Task { task_index });
-        if item.task.is_epic && expanded_epic_ids.contains(&item.task.id) {
-            let parent_index = task_index;
-            let child_task_indices = item
-                .epic_children
-                .iter()
-                .filter(|link| link.unresolved)
-                .filter_map(|link| tasks.iter().position(|task| task.task.id == link.task_id))
-                .collect::<Vec<_>>();
-            let last_child_index = child_task_indices.len().saturating_sub(1);
-            for (child_index, task_index) in child_task_indices.into_iter().enumerate() {
-                rows.push(TaskListRow::EpicChild {
-                    parent_index,
-                    task_index,
-                    last: child_index == last_child_index,
-                });
-            }
-        }
+        rows.extend((start..index).map(|task_index| TaskListRow::Task { task_index }));
     }
     rows
 }
@@ -345,51 +298,6 @@ mod tests {
                     count: 1,
                 }),
                 TaskListRow::Task { task_index: 1 },
-            ]
-        );
-    }
-
-    #[test]
-    fn queue_view_expands_epic_children_under_parent() {
-        let mut child = task_item_with("child", "todo", QueueBand::Focus);
-        child.task.id = "child-1".to_string();
-        child.epic_parent = Some(crate::query::TaskDependencyLink {
-            task_id: "epic-1".to_string(),
-            display_ref: "APP-EPIC".to_string(),
-            title: "epic".to_string(),
-            status: "todo".to_string(),
-            priority: "none".to_string(),
-            unresolved: true,
-        });
-        let mut epic = task_item_with("epic", "todo", QueueBand::Epics);
-        epic.task.id = "epic-1".to_string();
-        epic.task.is_epic = true;
-        epic.epic_children = vec![crate::query::TaskDependencyLink {
-            task_id: "child-1".to_string(),
-            display_ref: "APP-CHLD".to_string(),
-            title: "child".to_string(),
-            status: "todo".to_string(),
-            priority: "none".to_string(),
-            unresolved: true,
-        }];
-        let mut expanded = BTreeSet::new();
-        expanded.insert("epic-1".to_string());
-
-        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &[child, epic], &expanded);
-
-        assert_eq!(
-            view.rows,
-            vec![
-                TaskListRow::Group(TaskGroupRow {
-                    label: "epics",
-                    count: 1,
-                }),
-                TaskListRow::Task { task_index: 1 },
-                TaskListRow::EpicChild {
-                    parent_index: 1,
-                    task_index: 0,
-                    last: true,
-                },
             ]
         );
     }

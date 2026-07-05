@@ -2504,29 +2504,6 @@ mod epics {
     }
 
     #[tokio::test]
-    async fn queue_view_toggles_epic_parent() {
-        let mut store = test_store().await;
-        let (parent_task_id, _child_id, _parent_index) = create_epic_child_pair(&mut store).await;
-        store.view_state.view = TaskView::Queue;
-        store.view_state.expanded_epic_ids.clear();
-        store.refresh(Some(&parent_task_id)).await.unwrap();
-        let parent_index = store
-            .tasks
-            .iter()
-            .position(|task| task.task.id == parent_task_id)
-            .unwrap();
-
-        let outcome = store
-            .toggle_selected_epic(Some(parent_index))
-            .await
-            .unwrap()
-            .unwrap();
-
-        assert!(outcome.message.contains("expanded epic"));
-        assert!(store.view_state.expanded_epic_ids.contains(&parent_task_id));
-    }
-
-    #[tokio::test]
     async fn toggle_epic_noop_when_no_selection() {
         let mut store = test_store().await;
         assert!(store.toggle_selected_epic(None).await.unwrap().is_none());

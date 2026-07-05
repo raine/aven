@@ -17,11 +17,11 @@ use crate::tui::navigation::{
 use crate::tui::overlay::{CommandState, OverlayOutcome, OverlayRoute, OverlayState};
 use crate::tui::platform::is_editor_prefix_key;
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
+use crate::tui::store::TaskView;
 use crate::tui::ui::{
     database_stats_scroll_cap, detail_help_scroll_cap, help_scroll_cap, prefix_hint_scroll_cap,
     recent_action_at_position, task_at_position, task_status_at_position, text_panel_scroll_cap,
 };
-use crate::tui::store::TaskView;
 
 impl App {
     pub(super) async fn dispatch_paste(&mut self, text: &str) -> Result<()> {
@@ -781,7 +781,7 @@ impl App {
             Action::MoveDown => self.move_selection(1).await?,
             Action::MoveUp => self.move_selection(-1).await?,
             Action::MoveLeft => self.move_left(),
-            Action::MoveRight => self.move_right().await?,
+            Action::MoveRight => self.move_right(),
             Action::PreviousItem => self.previous_item(),
             Action::NextItem => self.next_item(),
             Action::First => self.select_edge(false).await?,
