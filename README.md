@@ -5,6 +5,9 @@ a personal, power-user task system: one overview across projects, task capture
 from wherever work appears, first-class agent workflows, workspace isolation,
 and a polished terminal UI.
 
+It is currently under active development, but already works really well and I
+use it as my daily driver.
+
 Docs: <https://aven.raine.dev>
 
 ![aven TUI showing the queue view and add-task popup](meta/tui.webp)
