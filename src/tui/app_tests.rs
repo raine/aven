@@ -1505,6 +1505,153 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
+    async fn edit_status_shortcut_opens_marked_overlay_when_tasks_are_marked() {
+        let mut app = test_app().await;
+        let index = create_and_select_task(&mut app, test_task_draft("marked")).await;
+        let id = app.store.tasks[index].task.id.clone();
+        app.widgets.marked_task_ids.insert(id);
+
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(PickerState { title, .. }))
+                if title == "Edit status: 1 marked tasks"
+        ));
+    }
+
+    #[tokio::test]
+    async fn submit_edit_status_updates_only_marked_tasks() {
+        let mut app = test_app().await;
+        let first = create_and_select_task(&mut app, test_task_draft("first")).await;
+        let first_id = app.store.tasks[first].task.id.clone();
+        let second = create_and_select_task(&mut app, test_task_draft("second")).await;
+        let second_id = app.store.tasks[second].task.id.clone();
+        let third = create_and_select_task(&mut app, test_task_draft("third")).await;
+        let third_id = app.store.tasks[third].task.id.clone();
+        app.widgets.marked_task_ids.insert(first_id.clone());
+        app.widgets.marked_task_ids.insert(second_id.clone());
+
+        app.submit_edit_status("todo".to_string()).await.unwrap();
+
+        let status_for = |app: &App, task_id: &str| {
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == task_id)
+                .unwrap()
+                .task
+                .status
+        };
+        assert_eq!(status_for(&app, &first_id), TaskStatus::Todo);
+        assert_eq!(status_for(&app, &second_id), TaskStatus::Todo);
+        assert_eq!(status_for(&app, &third_id), TaskStatus::Inbox);
+    }
+
+    #[tokio::test]
+    async fn submit_edit_project_updates_only_marked_tasks() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        let first = create_and_select_task(&mut app, test_task_draft("first")).await;
+        let first_id = app.store.tasks[first].task.id.clone();
+        let second = create_and_select_task(&mut app, test_task_draft("second")).await;
+        let second_id = app.store.tasks[second].task.id.clone();
+        let third = create_and_select_task(&mut app, test_task_draft("third")).await;
+        let third_id = app.store.tasks[third].task.id.clone();
+        let original_project = app.store.tasks[third].task.project_key.clone();
+        app.widgets.marked_task_ids.insert(first_id.clone());
+        app.widgets.marked_task_ids.insert(second_id.clone());
+
+        app.submit_edit_project("mobile-app".to_string())
+            .await
+            .unwrap();
+
+        let project_for = |app: &App, task_id: &str| {
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == task_id)
+                .unwrap()
+                .task
+                .project_key
+                .clone()
+        };
+        assert_eq!(project_for(&app, &first_id), "mobile-app");
+        assert_eq!(project_for(&app, &second_id), "mobile-app");
+        assert_eq!(project_for(&app, &third_id), original_project);
+    }
+
+    #[tokio::test]
+    async fn submit_edit_priority_updates_only_marked_tasks() {
+        let mut app = test_app().await;
+        let first = create_and_select_task(&mut app, test_task_draft("first")).await;
+        let first_id = app.store.tasks[first].task.id.clone();
+        let second = create_and_select_task(&mut app, test_task_draft("second")).await;
+        let second_id = app.store.tasks[second].task.id.clone();
+        let third = create_and_select_task(&mut app, test_task_draft("third")).await;
+        let third_id = app.store.tasks[third].task.id.clone();
+        app.widgets.marked_task_ids.insert(first_id.clone());
+        app.widgets.marked_task_ids.insert(second_id.clone());
+
+        app.submit_edit_priority("high".to_string()).await.unwrap();
+
+        let priority_for = |app: &App, task_id: &str| {
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == task_id)
+                .unwrap()
+                .task
+                .priority
+        };
+        assert_eq!(priority_for(&app, &first_id), TaskPriority::High);
+        assert_eq!(priority_for(&app, &second_id), TaskPriority::High);
+        assert_eq!(priority_for(&app, &third_id), TaskPriority::None);
+    }
+
+    #[tokio::test]
+    async fn begin_delete_task_confirms_marked_tasks_when_tasks_are_marked() {
+        let mut app = test_app().await;
+        let first = create_and_select_task(&mut app, test_task_draft("first")).await;
+        let first_id = app.store.tasks[first].task.id.clone();
+        let second = create_and_select_task(&mut app, test_task_draft("second")).await;
+        let second_id = app.store.tasks[second].task.id.clone();
+        app.widgets.marked_task_ids.insert(first_id);
+        app.widgets.marked_task_ids.insert(second_id);
+
+        app.begin_delete_task();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Confirm(ConfirmState { prompt, .. }))
+                if prompt == "Delete 2 marked tasks?"
+        ));
+    }
+
+    #[tokio::test]
+    async fn update_deleted_updates_only_marked_tasks() {
+        let mut app = test_app().await;
+        let first = create_and_select_task(&mut app, test_task_draft("first")).await;
+        let first_id = app.store.tasks[first].task.id.clone();
+        let second = create_and_select_task(&mut app, test_task_draft("second")).await;
+        let second_id = app.store.tasks[second].task.id.clone();
+        let third = create_and_select_task(&mut app, test_task_draft("third")).await;
+        let third_id = app.store.tasks[third].task.id.clone();
+        app.widgets.marked_task_ids.insert(first_id.clone());
+        app.widgets.marked_task_ids.insert(second_id.clone());
+
+        app.update_deleted(true).await.unwrap();
+
+        assert!(!app.store.tasks.iter().any(|item| item.task.id == first_id));
+        assert!(!app.store.tasks.iter().any(|item| item.task.id == second_id));
+        assert!(app.store.tasks.iter().any(|item| item.task.id == third_id));
+    }
+
+    #[tokio::test]
     async fn edit_labels_shortcut_opens_marked_overlay_when_tasks_are_marked() {
         let mut app = test_app().await;
         let index = create_and_select_task(&mut app, test_task_draft("marked")).await;

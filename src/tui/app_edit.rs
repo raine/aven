@@ -19,17 +19,26 @@ pub(crate) const REMOVE_DEPENDENCY_TITLE: &str = "Remove dependency";
 
 impl App {
     pub(super) async fn update_status(&mut self, status: &'static str) -> Result<()> {
-        let preserve_done_detail = status == "done"
-            && (self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. })));
-        if let Some(result) = if preserve_done_detail {
-            self.store
-                .update_status_preserving_task(self.widgets.table.selected(), status)
-                .await?
+        let task_ids = self.marked_task_ids_in_view();
+        let result = if task_ids.is_empty() {
+            let preserve_done_detail = status == "done"
+                && (self.detail_context
+                    || matches!(self.overlay, Some(OverlayState::Detail { .. })));
+            if preserve_done_detail {
+                self.store
+                    .update_status_preserving_task(self.widgets.table.selected(), status)
+                    .await?
+            } else {
+                self.store
+                    .update_status(self.widgets.table.selected(), status)
+                    .await?
+            }
         } else {
             self.store
-                .update_status(self.widgets.table.selected(), status)
+                .update_status_for_tasks(self.widgets.table.selected(), &task_ids, status)
                 .await?
-        } {
+        };
+        if let Some(result) = result {
             self.apply_mutation_result(result);
         } else {
             self.set_info("no selected task to edit");
@@ -38,11 +47,17 @@ impl App {
     }
 
     pub(super) async fn set_exact_priority(&mut self, priority: &'static str) -> Result<()> {
-        if let Some(result) = self
-            .store
-            .set_exact_priority(self.widgets.table.selected(), priority)
-            .await?
-        {
+        let task_ids = self.marked_task_ids_in_view();
+        let result = if task_ids.is_empty() {
+            self.store
+                .set_exact_priority(self.widgets.table.selected(), priority)
+                .await?
+        } else {
+            self.store
+                .set_exact_priority_for_tasks(self.widgets.table.selected(), &task_ids, priority)
+                .await?
+        };
+        if let Some(result) = result {
             self.apply_mutation_result(result);
         } else {
             self.set_info("no selected task to edit");
@@ -51,11 +66,17 @@ impl App {
     }
 
     pub(super) async fn update_priority(&mut self, reverse: bool) -> Result<()> {
-        if let Some(result) = self
-            .store
-            .update_priority(self.widgets.table.selected(), reverse)
-            .await?
-        {
+        let task_ids = self.marked_task_ids_in_view();
+        let result = if task_ids.is_empty() {
+            self.store
+                .update_priority(self.widgets.table.selected(), reverse)
+                .await?
+        } else {
+            self.store
+                .update_priority_for_tasks(self.widgets.table.selected(), &task_ids, reverse)
+                .await?
+        };
+        if let Some(result) = result {
             self.apply_mutation_result(result);
         } else {
             self.set_info("no selected task to edit");
@@ -64,11 +85,17 @@ impl App {
     }
 
     pub(super) async fn update_deleted(&mut self, deleted: bool) -> Result<()> {
-        if let Some(result) = self
-            .store
-            .update_deleted(self.widgets.table.selected(), deleted)
-            .await?
-        {
+        let task_ids = self.marked_task_ids_in_view();
+        let result = if task_ids.is_empty() {
+            self.store
+                .update_deleted(self.widgets.table.selected(), deleted)
+                .await?
+        } else {
+            self.store
+                .update_deleted_for_tasks(self.widgets.table.selected(), &task_ids, deleted)
+                .await?
+        };
+        if let Some(result) = result {
             self.apply_mutation_result(result);
         } else {
             self.set_info("no selected task to edit");
@@ -119,6 +146,18 @@ impl App {
     }
 
     pub(super) fn begin_status_picker(&mut self) {
+        let task_ids = self.marked_task_ids_in_view();
+        if !task_ids.is_empty() {
+            let items = self.store.status_picker_items(None);
+            let count = task_ids.len();
+            self.open_picker_overlay(
+                OverlayRoute::EditStatus,
+                format!("Edit status: {count} marked tasks"),
+                items,
+                false,
+            );
+            return;
+        }
         let Some(index) = self.guard_selected_task() else {
             return;
         };
@@ -181,6 +220,18 @@ impl App {
     }
 
     pub(super) fn begin_edit_project(&mut self) {
+        let task_ids = self.marked_task_ids_in_view();
+        if !task_ids.is_empty() {
+            let items = self.store.existing_project_picker_items("");
+            let count = task_ids.len();
+            self.open_picker_overlay(
+                OverlayRoute::EditProject,
+                format!("Edit project: {count} marked tasks"),
+                items,
+                false,
+            );
+            return;
+        }
         let Some(index) = self.guard_selected_task() else {
             return;
         };
@@ -196,6 +247,18 @@ impl App {
     }
 
     pub(super) fn begin_edit_priority(&mut self) {
+        let task_ids = self.marked_task_ids_in_view();
+        if !task_ids.is_empty() {
+            let items = self.store.priority_picker_items("");
+            let count = task_ids.len();
+            self.open_picker_overlay(
+                OverlayRoute::EditPriority,
+                format!("Edit priority: {count} marked tasks"),
+                items,
+                false,
+            );
+            return;
+        }
         let Some(index) = self.guard_selected_task() else {
             return;
         };
@@ -269,15 +332,23 @@ impl App {
     }
 
     pub(super) async fn submit_edit_status(&mut self, status: String) -> Result<()> {
-        let preserve_done_detail = status == "done"
-            && (self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. })));
-        let result = if preserve_done_detail {
-            self.store
-                .update_status_preserving_task(self.widgets.table.selected(), &status)
-                .await
+        let task_ids = self.marked_task_ids_in_view();
+        let result = if task_ids.is_empty() {
+            let preserve_done_detail = status == "done"
+                && (self.detail_context
+                    || matches!(self.overlay, Some(OverlayState::Detail { .. })));
+            if preserve_done_detail {
+                self.store
+                    .update_status_preserving_task(self.widgets.table.selected(), &status)
+                    .await
+            } else {
+                self.store
+                    .update_status(self.widgets.table.selected(), &status)
+                    .await
+            }
         } else {
             self.store
-                .update_status(self.widgets.table.selected(), &status)
+                .update_status_for_tasks(self.widgets.table.selected(), &task_ids, &status)
                 .await
         };
         self.apply_edit_mutation(result, |app| app.begin_status_picker());
@@ -316,19 +387,31 @@ impl App {
     }
 
     pub(super) async fn submit_edit_project(&mut self, project: String) -> Result<()> {
-        let result = self
-            .store
-            .update_project(self.widgets.table.selected(), project)
-            .await;
+        let task_ids = self.marked_task_ids_in_view();
+        let result = if task_ids.is_empty() {
+            self.store
+                .update_project(self.widgets.table.selected(), project)
+                .await
+        } else {
+            self.store
+                .update_project_for_tasks(self.widgets.table.selected(), &task_ids, project)
+                .await
+        };
         self.apply_edit_mutation(result, |app| app.begin_edit_project());
         Ok(())
     }
 
     pub(super) async fn submit_edit_priority(&mut self, priority: String) -> Result<()> {
-        let result = self
-            .store
-            .set_exact_priority(self.widgets.table.selected(), &priority)
-            .await;
+        let task_ids = self.marked_task_ids_in_view();
+        let result = if task_ids.is_empty() {
+            self.store
+                .set_exact_priority(self.widgets.table.selected(), &priority)
+                .await
+        } else {
+            self.store
+                .set_exact_priority_for_tasks(self.widgets.table.selected(), &task_ids, &priority)
+                .await
+        };
         self.apply_edit_mutation(result, |app| app.begin_edit_priority());
         Ok(())
     }

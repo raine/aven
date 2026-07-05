@@ -755,6 +755,99 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
+    async fn update_status_for_tasks_sets_status_on_each_marked_task() {
+        let mut store = test_store().await;
+        let (first_id, _) = create_selected_task(&mut store, "First").await;
+        let (second_id, _) = create_selected_task(&mut store, "Second").await;
+        let task_ids = vec![first_id.clone(), second_id.clone()];
+
+        let outcome = store
+            .update_status_for_tasks(None, &task_ids, "todo")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(outcome.message, "set status on 2 tasks");
+        for task_id in task_ids {
+            let item = store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == task_id)
+                .unwrap();
+            assert_eq!(item.task.status, TaskStatus::Todo);
+        }
+    }
+
+    #[tokio::test]
+    async fn set_exact_priority_for_tasks_sets_priority_on_each_marked_task() {
+        let mut store = test_store().await;
+        let (first_id, _) = create_selected_task(&mut store, "First").await;
+        let (second_id, _) = create_selected_task(&mut store, "Second").await;
+        let task_ids = vec![first_id.clone(), second_id.clone()];
+
+        let outcome = store
+            .set_exact_priority_for_tasks(None, &task_ids, "high")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(outcome.message, "set priority on 2 tasks");
+        for task_id in task_ids {
+            let item = store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == task_id)
+                .unwrap();
+            assert_eq!(item.task.priority, TaskPriority::High);
+        }
+    }
+
+    #[tokio::test]
+    async fn update_project_for_tasks_sets_project_on_each_marked_task() {
+        let mut store = test_store().await;
+        store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        let (first_id, _) = create_selected_task(&mut store, "First").await;
+        let (second_id, _) = create_selected_task(&mut store, "Second").await;
+        let task_ids = vec![first_id.clone(), second_id.clone()];
+
+        let outcome = store
+            .update_project_for_tasks(None, &task_ids, "mobile-app".to_string())
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(outcome.message, "set project on 2 tasks");
+        for task_id in task_ids {
+            let item = store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == task_id)
+                .unwrap();
+            assert_eq!(item.task.project_key, "mobile-app");
+        }
+    }
+
+    #[tokio::test]
+    async fn update_deleted_for_tasks_deletes_each_marked_task() {
+        let mut store = test_store().await;
+        let (first_id, _) = create_selected_task(&mut store, "First").await;
+        let (second_id, _) = create_selected_task(&mut store, "Second").await;
+        let task_ids = vec![first_id, second_id];
+
+        let outcome = store
+            .update_deleted_for_tasks(None, &task_ids, true)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(outcome.message, "deleted 2 tasks");
+        assert!(store.tasks.is_empty());
+    }
+
+    #[tokio::test]
     async fn update_labels_for_tasks_sets_labels_on_each_marked_task() {
         let mut store = test_store().await;
         store.create_label("bug".to_string()).await.unwrap();

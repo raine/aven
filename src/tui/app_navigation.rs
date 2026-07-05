@@ -203,7 +203,7 @@ impl App {
     pub(super) fn open_picker_overlay(
         &mut self,
         route: OverlayRoute,
-        title: &str,
+        title: impl Into<String>,
         items: Vec<PickerItem>,
         multi: bool,
     ) {

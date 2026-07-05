@@ -31,6 +31,18 @@ impl App {
 
     pub(super) fn begin_delete_task(&mut self) {
         self.pending_shortcut.clear();
+        let task_ids = self.marked_task_ids_in_view();
+        if !task_ids.is_empty() {
+            let count = task_ids.len();
+            self.detail_context =
+                self.detail_context || matches!(self.overlay, Some(OverlayState::Detail { .. }));
+            self.overlay = Some(OverlayState::confirm(
+                OverlayRoute::DeleteTaskConfirm,
+                DELETE_TASK_TITLE,
+                format!("Delete {count} marked tasks?"),
+            ));
+            return;
+        }
         let Some(task) = self.store.selected_task(self.widgets.table.selected()) else {
             self.set_info("no selected task to edit");
             return;

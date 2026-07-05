@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use anyhow::Result;
 
-use crate::mutation::{cycle_priority, set_deleted, set_status};
+use crate::mutation::{cycle_priority, set_deleted, set_priority, set_status};
 use crate::operations::{TaskUpdate, update_task as update_task_operation};
 use crate::query::TaskListItem;
 use crate::tui::store::MutationMessage;
@@ -490,6 +490,260 @@ impl TuiStore {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
+    }
+
+    fn tasks_matching_ids(&self, task_ids: &[String]) -> Vec<TaskListItem> {
+        let task_ids = task_ids.iter().collect::<BTreeSet<_>>();
+        self.tasks
+            .iter()
+            .filter(|item| task_ids.contains(&item.task.id))
+            .cloned()
+            .collect()
+    }
+
+    async fn refresh_after_task_batch(
+        &mut self,
+        current_selected_index: Option<usize>,
+        targets: &[TaskListItem],
+        message: String,
+    ) -> Result<MutationMessage> {
+        let selected_id = self
+            .selected_task(current_selected_index)
+            .map(|item| item.task.id.clone());
+        let fallback_id = targets.first().map(|item| item.task.id.clone());
+        let selected = self
+            .refresh(selected_id.as_deref().or(fallback_id.as_deref()))
+            .await?;
+        Ok(MutationMessage::new(message, selected))
+    }
+
+    pub(crate) async fn update_status_for_tasks(
+        &mut self,
+        current_selected_index: Option<usize>,
+        task_ids: &[String],
+        status: &str,
+    ) -> Result<Option<MutationMessage>> {
+        let targets = self.tasks_matching_ids(task_ids);
+        if targets.is_empty() {
+            return Ok(None);
+        }
+
+        self.activate_workspace();
+        let mut undo_commands = Vec::new();
+        let mut conn = self.pool.acquire().await?;
+        for item in &targets {
+            let before = item.task.status.as_str().to_string();
+            if before == status {
+                continue;
+            }
+            set_status(&mut conn, &item.task, status).await?;
+            undo_commands.push(UndoCommand::SetTaskField {
+                task_id: item.task.id.clone(),
+                field: "status".to_string(),
+                before,
+                after: status.to_string(),
+            });
+        }
+        drop(conn);
+
+        let changed = undo_commands.len();
+        if changed > 0 {
+            self.record_undo_commands(&format!("status {changed} tasks"), undo_commands)
+                .await?;
+        }
+        let message = if changed == 0 {
+            format!("status unchanged on {} tasks", targets.len())
+        } else {
+            format!("set status on {changed} tasks")
+        };
+        Ok(Some(
+            self.refresh_after_task_batch(current_selected_index, &targets, message)
+                .await?,
+        ))
+    }
+
+    pub(crate) async fn update_priority_for_tasks(
+        &mut self,
+        current_selected_index: Option<usize>,
+        task_ids: &[String],
+        reverse: bool,
+    ) -> Result<Option<MutationMessage>> {
+        let targets = self.tasks_matching_ids(task_ids);
+        if targets.is_empty() {
+            return Ok(None);
+        }
+
+        self.activate_workspace();
+        let mut undo_commands = Vec::new();
+        let mut conn = self.pool.acquire().await?;
+        for item in &targets {
+            let before = item.task.priority.as_str().to_string();
+            let task = cycle_priority(&mut conn, &item.task, reverse).await?;
+            undo_commands.push(UndoCommand::SetTaskField {
+                task_id: item.task.id.clone(),
+                field: "priority".to_string(),
+                before,
+                after: task.priority.as_str().to_string(),
+            });
+        }
+        drop(conn);
+
+        let changed = undo_commands.len();
+        self.record_undo_commands(&format!("priority {changed} tasks"), undo_commands)
+            .await?;
+        Ok(Some(
+            self.refresh_after_task_batch(
+                current_selected_index,
+                &targets,
+                format!("set priority on {changed} tasks"),
+            )
+            .await?,
+        ))
+    }
+
+    pub(crate) async fn set_exact_priority_for_tasks(
+        &mut self,
+        current_selected_index: Option<usize>,
+        task_ids: &[String],
+        priority: &str,
+    ) -> Result<Option<MutationMessage>> {
+        let targets = self.tasks_matching_ids(task_ids);
+        if targets.is_empty() {
+            return Ok(None);
+        }
+
+        self.activate_workspace();
+        let mut undo_commands = Vec::new();
+        let mut conn = self.pool.acquire().await?;
+        for item in &targets {
+            let before = item.task.priority.as_str().to_string();
+            if before == priority {
+                continue;
+            }
+            let task = set_priority(&mut conn, &item.task, priority).await?;
+            undo_commands.push(UndoCommand::SetTaskField {
+                task_id: item.task.id.clone(),
+                field: "priority".to_string(),
+                before,
+                after: task.priority.as_str().to_string(),
+            });
+        }
+        drop(conn);
+
+        let changed = undo_commands.len();
+        if changed > 0 {
+            self.record_undo_commands(&format!("priority {changed} tasks"), undo_commands)
+                .await?;
+        }
+        let message = if changed == 0 {
+            format!("priority unchanged on {} tasks", targets.len())
+        } else {
+            format!("set priority on {changed} tasks")
+        };
+        Ok(Some(
+            self.refresh_after_task_batch(current_selected_index, &targets, message)
+                .await?,
+        ))
+    }
+
+    pub(crate) async fn update_project_for_tasks(
+        &mut self,
+        current_selected_index: Option<usize>,
+        task_ids: &[String],
+        project: String,
+    ) -> Result<Option<MutationMessage>> {
+        let targets = self.tasks_matching_ids(task_ids);
+        if targets.is_empty() {
+            return Ok(None);
+        }
+
+        self.activate_workspace();
+        let mut undo_commands = Vec::new();
+        let mut conn = self.pool.acquire().await?;
+        for item in &targets {
+            let before = item.task.project_id.clone();
+            let outcome = update_task_operation(
+                &mut conn,
+                &item.task.id,
+                TaskUpdate {
+                    project: Some(project.clone()),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await?;
+            if !outcome.changed {
+                continue;
+            }
+            undo_commands.push(UndoCommand::SetTaskField {
+                task_id: item.task.id.clone(),
+                field: "project".to_string(),
+                before,
+                after: outcome.task.project_id.clone(),
+            });
+        }
+        drop(conn);
+
+        let changed = undo_commands.len();
+        if changed > 0 {
+            self.record_undo_commands(&format!("project {changed} tasks"), undo_commands)
+                .await?;
+        }
+        let message = if changed == 0 {
+            format!("project unchanged on {} tasks", targets.len())
+        } else {
+            format!("set project on {changed} tasks")
+        };
+        Ok(Some(
+            self.refresh_after_task_batch(current_selected_index, &targets, message)
+                .await?,
+        ))
+    }
+
+    pub(crate) async fn update_deleted_for_tasks(
+        &mut self,
+        current_selected_index: Option<usize>,
+        task_ids: &[String],
+        deleted: bool,
+    ) -> Result<Option<MutationMessage>> {
+        let targets = self.tasks_matching_ids(task_ids);
+        if targets.is_empty() {
+            return Ok(None);
+        }
+
+        self.activate_workspace();
+        let mut undo_commands = Vec::new();
+        let mut conn = self.pool.acquire().await?;
+        for item in &targets {
+            if item.task.deleted == deleted {
+                continue;
+            }
+            let before = if item.task.deleted { "1" } else { "0" };
+            set_deleted(&mut conn, &item.task, deleted).await?;
+            undo_commands.push(UndoCommand::SetTaskField {
+                task_id: item.task.id.clone(),
+                field: "deleted".to_string(),
+                before: before.to_string(),
+                after: if deleted { "1" } else { "0" }.to_string(),
+            });
+        }
+        drop(conn);
+
+        let changed = undo_commands.len();
+        if changed > 0 {
+            let summary = if deleted { "delete" } else { "restore" };
+            self.record_undo_commands(&format!("{summary} {changed} tasks"), undo_commands)
+                .await?;
+        }
+        let message = match (deleted, changed) {
+            (true, 0) => format!("already deleted {} tasks", targets.len()),
+            (false, 0) => format!("already restored {} tasks", targets.len()),
+            (true, _) => format!("deleted {changed} tasks"),
+            (false, _) => format!("restored {changed} tasks"),
+        };
+        Ok(Some(
+            self.refresh_after_task_batch(current_selected_index, &targets, message)
+                .await?,
+        ))
     }
 
     pub(crate) async fn update_labels_for_tasks(
