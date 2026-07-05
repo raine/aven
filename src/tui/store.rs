@@ -21,6 +21,7 @@ use std::time::Instant;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
+pub(crate) use crate::query::RecentActionItem;
 pub(crate) use pickers::deleted_picker_items;
 pub(crate) use types::{
     ConflictTarget, MutationMessage, SidebarEntry, SidebarEntryTarget, SyncStatusCheck,
@@ -36,13 +37,15 @@ use crate::projects::{
 };
 use crate::query::{
     ProjectListItem, SidebarCounts, TaskListItem, list_project_items_in_workspace,
-    list_task_items_in_workspace, sidebar_counts_for_scope_in_workspace,
+    list_recent_actions_in_workspace, list_task_items_in_workspace,
+    sidebar_counts_for_scope_in_workspace,
 };
 use crate::workspaces::{Workspace, active_workspace, list_workspaces, set_active_workspace};
 
 pub(crate) struct TuiStore {
     pool: SqlitePool,
     pub(crate) tasks: Vec<TaskListItem>,
+    pub(crate) recent_actions: Vec<RecentActionItem>,
     pub(crate) projects: Vec<ProjectListItem>,
     pub(crate) labels: Vec<String>,
     pub(crate) workspaces: Vec<Workspace>,
@@ -95,6 +98,7 @@ impl TuiStore {
         let mut store = Self {
             pool,
             tasks: Vec::new(),
+            recent_actions: Vec::new(),
             projects: Vec::new(),
             labels: Vec::new(),
             workspaces: Vec::new(),
@@ -118,6 +122,21 @@ impl TuiStore {
         selected.and_then(|index| self.tasks.get(index))
     }
 
+    pub(crate) fn selected_recent_action(
+        &self,
+        selected: Option<usize>,
+    ) -> Option<&RecentActionItem> {
+        selected.and_then(|index| self.recent_actions.get(index))
+    }
+
+    pub(crate) fn main_row_count(&self) -> usize {
+        if self.view_state.view == TaskView::RecentActions {
+            self.recent_actions.len()
+        } else {
+            self.tasks.len()
+        }
+    }
+
     fn activate_workspace(&self) {
         set_active_workspace(self.active_workspace.clone());
     }
@@ -139,20 +158,33 @@ impl TuiStore {
         self.projects = list_project_items_in_workspace(&mut conn, workspace_id.as_str()).await?;
         self.labels = list_labels_in_workspace(&mut conn, workspace_id.as_str(), None).await?;
         let fallback_scope = self.ensure_valid_scope();
-        let project_scope = self.scope_project();
-        self.counts =
-            sidebar_counts_for_scope_in_workspace(&mut conn, workspace_id.as_str(), project_scope)
-                .await?;
-        let filters = self.view_state.filters();
-        self.tasks = list_task_items_in_workspace(
+        let project_scope = self.scope_project().map(str::to_string);
+        self.counts = sidebar_counts_for_scope_in_workspace(
             &mut conn,
             workspace_id.as_str(),
-            filters,
-            self.view_state.query_mode(),
-            self.view_state.sort(),
-            self.view_state.direction,
+            project_scope.as_deref(),
         )
         .await?;
+        self.recent_actions = list_recent_actions_in_workspace(
+            &mut conn,
+            workspace_id.as_str(),
+            project_scope.as_deref(),
+        )
+        .await?;
+        if self.view_state.view == TaskView::RecentActions {
+            self.tasks.clear();
+        } else {
+            let filters = self.view_state.filters();
+            self.tasks = list_task_items_in_workspace(
+                &mut conn,
+                workspace_id.as_str(),
+                filters,
+                self.view_state.query_mode(),
+                self.view_state.sort(),
+                self.view_state.direction,
+            )
+            .await?;
+        }
         self.expand_visible_epics_by_default();
         self.load_epic_child_tasks(&mut conn, &workspace_id).await?;
         self.prune_expanded_epic_ids();

@@ -24,6 +24,7 @@ const BACKLOG_MARKER: &str = "\u{f017}";
 const DONE_MARKER: &str = "\u{f00c}";
 const CONFLICT_MARKER: &str = "\u{f071}";
 const SEARCH_MARKER: &str = "\u{f002}";
+const RECENT_MARKER: &str = "\u{f1da}";
 const EPIC_MARKER: &str = "\u{f005}";
 const OPEN_MARKER: &str = "\u{f07c}";
 const WORKSPACE_MARKER: &str = "\u{f0e8}";
@@ -191,6 +192,7 @@ pub(super) fn render_sidebar(
                 Some(SidebarEntryTarget::View(TaskView::Active)) => FG_MUTED,
                 Some(SidebarEntryTarget::View(TaskView::Todo)) => FG_DIM,
                 Some(SidebarEntryTarget::View(TaskView::Epics)) => YELLOW,
+                Some(SidebarEntryTarget::View(TaskView::RecentActions)) => ACCENT,
                 _ => FG,
             };
             let label_style = if is_active_view {
@@ -284,6 +286,7 @@ fn sidebar_icon(entry: &SidebarEntry) -> &'static str {
         Some(SidebarEntryTarget::View(TaskView::Done)) => DONE_MARKER,
         Some(SidebarEntryTarget::View(TaskView::Conflicts)) => CONFLICT_MARKER,
         Some(SidebarEntryTarget::View(TaskView::Search)) => SEARCH_MARKER,
+        Some(SidebarEntryTarget::View(TaskView::RecentActions)) => RECENT_MARKER,
         Some(SidebarEntryTarget::View(TaskView::Epics)) => EPIC_MARKER,
         Some(SidebarEntryTarget::View(TaskView::Open)) => OPEN_MARKER,
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => WORKSPACE_MARKER,
@@ -302,6 +305,7 @@ fn sidebar_label(entry: &SidebarEntry) -> String {
         Some(SidebarEntryTarget::View(TaskView::Done)) => "Done".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Conflicts)) => "Conflicts".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Search)) => "Search".to_string(),
+        Some(SidebarEntryTarget::View(TaskView::RecentActions)) => "Recent actions".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Epics)) => "Epics".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Open)) => "Open".to_string(),
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => "Workspace".to_string(),

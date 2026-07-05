@@ -333,7 +333,7 @@ impl App {
 
         let next = next_index(
             self.widgets.table.selected(),
-            self.store.tasks.len(),
+            self.store.main_row_count(),
             delta,
             false,
         );

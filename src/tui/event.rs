@@ -217,6 +217,7 @@ mod tests {
                 "remove-project-path",
                 "remove-dependency",
                 "move-right",
+                "view-recent",
                 "copy-ref",
                 "order-reverse",
                 "conflict-use-remote"
@@ -829,8 +830,8 @@ mod tests {
             ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskView::Epics))
         );
         assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('c')]),
-            ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskView::Conflicts))
+            resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('r')]),
+            ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskView::RecentActions))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('s')]),

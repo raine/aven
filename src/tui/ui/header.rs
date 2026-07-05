@@ -363,6 +363,7 @@ fn active_view_label(store: &TuiStore) -> &'static str {
         TaskView::Done => "done",
         TaskView::Conflicts => "conflicts",
         TaskView::Search => "search",
+        TaskView::RecentActions => "recent",
         TaskView::Epics => "epics",
     }
 }
@@ -388,7 +389,10 @@ fn active_order_spans(store: &TuiStore) -> Vec<Span<'static>> {
             Style::new().fg(FG_MUTED).add_modifier(Modifier::BOLD),
         ),
     ];
-    if !matches!(store.view_state.view, TaskView::Queue | TaskView::Search) {
+    if !matches!(
+        store.view_state.view,
+        TaskView::Queue | TaskView::Search | TaskView::RecentActions
+    ) {
         spans.push(Span::styled(
             format!(" {}", store.sort_direction_label()),
             Style::new().fg(FG_DIM),

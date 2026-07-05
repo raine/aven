@@ -110,6 +110,31 @@ pub(crate) struct TaskDependencyLink {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct RecentActionItem {
+    pub(crate) change_id: String,
+    pub(crate) entity_type: String,
+    pub(crate) entity_id: String,
+    pub(crate) op_type: String,
+    pub(crate) field: Option<String>,
+    pub(crate) created_at: String,
+    pub(crate) synced: bool,
+    pub(crate) target: RecentActionTarget,
+    pub(crate) verb: String,
+    pub(crate) summary: String,
+    pub(crate) detail: Option<String>,
+    pub(crate) accent: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RecentActionTarget {
+    pub(crate) display_ref: Option<String>,
+    pub(crate) title: Option<String>,
+    pub(crate) project_key: Option<String>,
+    pub(crate) status: Option<String>,
+    pub(crate) deleted: bool,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct ProjectListItem {
     pub(crate) key: String,
     pub(crate) name: String,

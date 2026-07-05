@@ -499,6 +499,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ShowView(TaskView::Epics),
     ),
     CommandSpec::implemented(
+        "view-recent",
+        "show recent actions",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('v'), KeyCode::Char('r')],
+            label: "v r",
+        }],
+        Action::ShowView(TaskView::RecentActions),
+    ),
+    CommandSpec::implemented(
         "view-inbox",
         "show inbox view",
         "Views",

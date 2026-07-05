@@ -2,6 +2,7 @@ mod dependencies;
 pub(crate) mod fragments;
 mod hydration;
 mod projects;
+mod recent_actions;
 mod search;
 mod sidebar;
 mod sorting;
@@ -14,6 +15,8 @@ pub(crate) use dependencies::{TaskDependencyItem, TaskDependencySummary, task_de
 pub(crate) use hydration::build_task_list_items;
 #[allow(unused_imports)]
 pub(crate) use projects::{list_project_items, list_project_items_in_workspace};
+#[allow(unused_imports)]
+pub(crate) use recent_actions::list_recent_actions_in_workspace;
 #[allow(unused_imports)]
 pub(crate) use search::{
     SearchMatchedField, TaskSearchPreviewResult, TaskSearchPreviewResultSet, TaskSearchQuery,
@@ -28,8 +31,8 @@ pub(crate) use sidebar::{
 pub(crate) use tasks::{list_task_items, list_task_items_in_workspace};
 #[allow(unused_imports)]
 pub(crate) use types::{
-    ProjectListItem, SidebarCounts, SortDirection, TaskDependencyLink, TaskFilters, TaskListItem,
-    TaskNote, TaskQueryMode, TaskSort,
+    ProjectListItem, RecentActionItem, RecentActionTarget, SidebarCounts, SortDirection,
+    TaskDependencyLink, TaskFilters, TaskListItem, TaskNote, TaskQueryMode, TaskSort,
 };
 
 #[cfg(test)]

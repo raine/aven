@@ -46,6 +46,7 @@ pub(crate) enum TaskView {
     Conflicts,
     Search,
     Epics,
+    RecentActions,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -131,6 +132,7 @@ impl TaskViewState {
             TaskView::Search => {
                 filters.include_deleted = true;
             }
+            TaskView::RecentActions => {}
         }
         filters
     }
@@ -138,6 +140,7 @@ impl TaskViewState {
     pub(crate) fn query_mode(&self) -> TaskQueryMode {
         match self.view {
             TaskView::Queue => TaskQueryMode::RankedQueue,
+            TaskView::RecentActions => TaskQueryMode::Flat,
             _ => TaskQueryMode::Flat,
         }
     }
@@ -150,6 +153,7 @@ impl TaskViewState {
         match self.view {
             TaskView::Queue => TaskListRenderMode::Queue,
             TaskView::Epics => TaskListRenderMode::Epics,
+            TaskView::RecentActions => TaskListRenderMode::Flat,
             _ => TaskListRenderMode::Flat,
         }
     }

@@ -6,6 +6,7 @@ mod header;
 pub(crate) use self::header::{HeaderTarget, header_target_at};
 mod input;
 mod overlays;
+mod recent_actions;
 mod scroll;
 mod shortcuts;
 mod sidebar;
@@ -26,6 +27,7 @@ use self::overlays::{
     render_multiline_input, render_picker, render_search, render_sync_status, render_tag_combobox,
     render_text_input, render_text_panel,
 };
+use self::recent_actions::render_recent_actions;
 use self::shortcuts::{render_command, render_detail_help, render_help, render_prefix_hints};
 use self::sidebar::{render_sidebar, render_sidebar_overlay};
 use self::task_list::render_tasks;
@@ -46,7 +48,7 @@ use crate::tui::app::{Focus, WidgetState};
 use crate::tui::overlay::{
     HeaderMenuKind, HeaderMenuView, OrderMenuView, OverlayRoute, OverlayView, TextInputView,
 };
-use crate::tui::store::{TaskOrder, TuiStore};
+use crate::tui::store::{TaskOrder, TaskView, TuiStore};
 use crate::tui::theme::{ACCENT, BG, BG_ALT, BG_PANEL, FG, FG_DIM, GREEN, PINK, SELECTED};
 use crate::tui::toast::Toast;
 
@@ -126,7 +128,7 @@ pub(crate) fn render(
     let inline_title_editor = inline_title_editor(view);
     let inline_detail_title_editor = inline_detail_title_editor(view);
     if body.width < 100 {
-        render_tasks(frame, store, widgets, view.focus, body, inline_title_editor);
+        render_main_surface(frame, store, widgets, view.focus, body, inline_title_editor);
         if let Some(layout) =
             crate::tui::ui::sidebar_layout_for(inner, view.focus, view.sidebar_visible)
             && layout.overlay
@@ -151,9 +153,9 @@ pub(crate) fn render(
                 layout.sidebar,
                 layout.overlay,
             );
-            render_tasks(frame, store, widgets, view.focus, main, inline_title_editor);
+            render_main_surface(frame, store, widgets, view.focus, main, inline_title_editor);
         } else {
-            render_tasks(frame, store, widgets, view.focus, body, inline_title_editor);
+            render_main_surface(frame, store, widgets, view.focus, body, inline_title_editor);
         }
     }
     frame.render_widget(footer_bar(view.footer_mode(), footer.width), footer);
@@ -181,6 +183,21 @@ pub(crate) fn render(
     }
     if let Some(toast) = &view.notification {
         render_toast(frame, toast);
+    }
+}
+
+fn render_main_surface(
+    frame: &mut Frame,
+    store: &TuiStore,
+    widgets: &mut WidgetState,
+    focus: Focus,
+    area: ratatui::layout::Rect,
+    inline_title_editor: Option<&TextInputView>,
+) {
+    if store.view_state.view == TaskView::RecentActions {
+        render_recent_actions(frame, store, widgets, focus, area);
+    } else {
+        render_tasks(frame, store, widgets, focus, area, inline_title_editor);
     }
 }
 

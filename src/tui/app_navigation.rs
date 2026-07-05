@@ -10,7 +10,7 @@ impl App {
             Focus::Tasks => {
                 let next = next_index(
                     self.widgets.table.selected(),
-                    self.store.tasks.len(),
+                    self.store.main_row_count(),
                     delta,
                     true,
                 );
@@ -32,14 +32,13 @@ impl App {
     pub(super) async fn select_edge(&mut self, last: bool) -> Result<()> {
         match self.focus {
             Focus::Tasks => {
-                if self.store.tasks.is_empty() {
+                let row_count = self.store.main_row_count();
+                if row_count == 0 {
                     self.widgets.table.select(None);
                 } else {
-                    self.widgets.table.select(Some(if last {
-                        self.store.tasks.len() - 1
-                    } else {
-                        0
-                    }));
+                    self.widgets
+                        .table
+                        .select(Some(if last { row_count - 1 } else { 0 }));
                 }
             }
             Focus::Sidebar => {
@@ -155,6 +154,8 @@ impl App {
             self.apply_sidebar_selection().await?;
         } else if matches!(self.overlay, Some(OverlayState::Detail { .. })) {
             self.overlay = None;
+        } else if self.store.view_state.view == crate::tui::store::TaskView::RecentActions {
+            self.set_info("recent actions are read-only");
         } else {
             self.overlay = Some(OverlayState::Detail { scroll: 0 });
             self.detail_context_scroll = 0;
@@ -182,7 +183,7 @@ impl App {
         self.prune_task_marks();
         self.widgets
             .table
-            .select(Some(0).filter(|_| !self.store.tasks.is_empty()));
+            .select(Some(0).filter(|_| self.store.main_row_count() > 0));
         Ok(())
     }
 
@@ -252,13 +253,14 @@ impl App {
     pub(super) fn restore_selection_after_mutation(&mut self) {
         self.widgets.sidebar.select(self.store.sidebar_selection());
         self.prune_task_marks();
-        if self.store.tasks.is_empty() {
+        let row_count = self.store.main_row_count();
+        if row_count == 0 {
             self.widgets.table.select(None);
         } else if self
             .widgets
             .table
             .selected()
-            .is_none_or(|index| index >= self.store.tasks.len())
+            .is_none_or(|index| index >= row_count)
         {
             self.widgets.table.select(Some(0));
         }
