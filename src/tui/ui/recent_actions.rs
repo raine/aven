@@ -566,7 +566,10 @@ mod tests {
         let buffer = row_buffer(&action, 70);
 
         assert_eq!(buffer[(22, 0)].symbol(), "A");
-        assert_eq!(buffer[(22, 0)].style().fg, Some(theme::project_color("app")));
+        assert_eq!(
+            buffer[(22, 0)].style().fg,
+            Some(theme::project_color("app"))
+        );
         assert_eq!(buffer[(25, 0)].symbol(), "-");
         assert_eq!(buffer[(25, 0)].style().fg, Some(FG_DIM));
         assert_eq!(buffer[(26, 0)].symbol(), "1");

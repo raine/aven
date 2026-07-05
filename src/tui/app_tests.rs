@@ -3043,7 +3043,10 @@ mod authoring {
         app.refresh().await.unwrap();
 
         let selected = app.widgets.table.selected().unwrap();
-        assert_eq!(app.store.recent_actions[selected].change_id, selected_change_id);
+        assert_eq!(
+            app.store.recent_actions[selected].change_id,
+            selected_change_id
+        );
     }
 
     #[tokio::test]
@@ -3067,7 +3070,10 @@ mod authoring {
 
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.focus, Focus::Tasks);
-        assert_eq!(app.store.recent_actions[selected].change_id, expected_change_id);
+        assert_eq!(
+            app.store.recent_actions[selected].change_id,
+            expected_change_id
+        );
     }
 
     #[tokio::test]

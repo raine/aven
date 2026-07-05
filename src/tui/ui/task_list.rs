@@ -487,7 +487,8 @@ fn metadata_column_width_from_tasks(tasks: &[TaskListItem]) -> u16 {
 }
 
 fn task_has_metadata(item: &TaskListItem) -> bool {
-    item.task.deleted
+    item.task.is_epic
+        || item.task.deleted
         || item.unresolved_blocker_count > 0
         || item.dependent_count > 0
         || !item.notes.is_empty()
@@ -1265,6 +1266,14 @@ mod tests {
             body: "one".to_string(),
             created_at: "001".to_string(),
         }];
+
+        assert_eq!(metadata_column_width_from_tasks(&[task]), 6);
+    }
+
+    #[test]
+    fn metadata_column_width_reserves_lane_for_epics() {
+        let mut task = task_item("epic");
+        task.task.is_epic = true;
 
         assert_eq!(metadata_column_width_from_tasks(&[task]), 6);
     }
