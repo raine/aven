@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.1.2 (2026-07-05)
+
+- Added `aven skill install` so Claude Code, OpenCode, and Codex can install the
+  bundled task-management skill into their agent skill directories.
+- Added a Recent Actions view in the TUI for reviewing task, project, label, and
+  dependency activity.
+- Improved the TUI queue with epic parent and child context, a `SOON` band,
+  created-age metadata, tighter task and label column sizing, and consistent
+  metadata spacing.
+- Added batch editing in the TUI: mark multiple tasks, then apply one status
+  change or add and remove labels across the selected tasks in a single action.
+- Improved TUI navigation and controls with back navigation, footer status
+  hotkeys, mouse-scrolled help overlays, and clearer terminal startup errors.
+- Improved task detail and preview panels with epic metadata and parent markers.
+
 ## v0.1.1 (2026-07-03)
 
 - Made natural task creation from the full TUI continue reliably after exiting
