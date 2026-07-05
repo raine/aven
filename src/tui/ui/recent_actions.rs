@@ -106,9 +106,10 @@ fn render_header(frame: &mut Frame, area: Rect) {
         .add_modifier(Modifier::BOLD);
     let columns = action_columns(area.width);
     let cells = Layout::horizontal(columns).areas::<5>(area);
-    for (cell, label) in cells
-        .into_iter()
-        .zip([" WHEN", "ACTION", "REF", "PROJECT", "SUMMARY"])
+    for (cell, label) in
+        cells
+            .into_iter()
+            .zip([" WHEN", "   ACTION", " REF", " PROJECT", "SUMMARY"])
     {
         frame.render_widget(Paragraph::new(label).style(style), cell);
     }
