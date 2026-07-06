@@ -5,7 +5,7 @@ description: A local-first task manager for power users and agents.
 
 aven is a local-first task manager for power users and agents. It gives you one overview across projects, task capture from wherever work appears, first-class agent workflows, workspace isolation, and a polished terminal UI.
 
-![aven TUI showing the queue view and add-task popup](/tui.webp)
+![aven TUI showing the queue view across workspace projects](/tui.webp)
 
 ## Why aven?
 
