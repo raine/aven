@@ -255,19 +255,16 @@ fn detail_epic_child_lines(item: &TaskListItem, width: usize) -> Vec<Line<'stati
         .iter()
         .filter(|link| link.unresolved)
         .count();
-    let mut lines = vec![
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "CHILD TASKS",
-                Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!(" open={open} total={}", item.epic_children.len()),
-                Style::new().fg(FG_DIM),
-            ),
-        ]),
-    ];
+    let mut lines = vec![Line::from(vec![
+        Span::styled(
+            "CHILD TASKS",
+            Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" open={open} total={}", item.epic_children.len()),
+            Style::new().fg(FG_DIM),
+        ),
+    ])];
 
     if item.epic_children.is_empty() {
         lines.push(Line::from(Span::styled("none", Style::new().fg(FG_MUTED))));
@@ -937,11 +934,18 @@ mod tests {
             },
         ];
 
-        let rendered = detail_content_lines(&item, 80, None)
+        let lines = detail_content_lines(&item, 80, None)
             .into_iter()
             .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
+            .collect::<Vec<_>>();
+        let rendered = lines.join("\n");
+        let child_heading_index = lines
+            .iter()
+            .position(|line| line.contains("CHILD TASKS"))
+            .unwrap();
+
+        assert_eq!(lines[child_heading_index.saturating_sub(1)], "");
+        assert!(lines[child_heading_index.saturating_sub(2)].contains("active"));
 
         assert!(rendered.contains("CHILD TASKS open=1 total=2"));
         assert!(rendered.contains("├─ APP-CHLD"));
