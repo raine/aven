@@ -210,11 +210,15 @@ fn detail_content_lines(
 }
 
 fn detail_body_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
-    let mut lines = quoted_block_lines(
+    let mut lines = detail_epic_child_lines(item, width);
+    if !lines.is_empty() {
+        lines.push(Line::from(""));
+    }
+    lines.extend(quoted_block_lines(
         &description_or_placeholder(&item.task.description),
         width,
         Style::new().fg(FG_MUTED),
-    );
+    ));
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
         Span::styled(
@@ -237,7 +241,6 @@ fn detail_body_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
             lines.extend(quoted_block_lines(&note.body, width, Style::new().fg(FG)));
         }
     }
-    lines.extend(detail_epic_child_lines(item, width));
     lines.extend(detail_dependency_lines(item, width));
     lines
 }
@@ -945,6 +948,10 @@ mod tests {
         assert!(rendered.contains("Build the first child task"));
         assert!(rendered.contains("└─ APP-DONE"));
         assert!(rendered.contains("Finished child task"));
+        assert!(
+            rendered.find("CHILD TASKS").unwrap()
+                < rendered.find("Two token refresh requests").unwrap()
+        );
     }
 
     #[test]
