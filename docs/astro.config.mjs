@@ -16,6 +16,13 @@ export default defineConfig({
       favicon: '/favicon-dark.svg',
       head: [
         {
+          tag: 'script',
+          attrs: {
+            src: '/image-zoom.js',
+            defer: true,
+          },
+        },
+        {
           tag: 'link',
           attrs: {
             rel: 'icon',
