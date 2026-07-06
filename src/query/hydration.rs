@@ -63,6 +63,7 @@ pub(crate) async fn build_task_list_items(
             &task,
             has_conflict,
             unresolved_blocker_count > 0,
+            dependent_count,
             now_seconds,
         );
 

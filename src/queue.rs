@@ -7,10 +7,10 @@ use crate::types::Task;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum QueueBand {
     NeedsAction,
-    Blocked,
     Focus,
     Soon,
     Triage,
+    Blocked,
     #[default]
     Later,
     Epics,
@@ -40,10 +40,10 @@ impl QueueBand {
     pub(crate) fn order(self) -> u8 {
         match self {
             Self::NeedsAction => 0,
-            Self::Blocked => 1,
-            Self::Focus => 2,
-            Self::Soon => 3,
-            Self::Triage => 4,
+            Self::Focus => 1,
+            Self::Soon => 2,
+            Self::Triage => 3,
+            Self::Blocked => 4,
             Self::Later => 5,
             Self::Epics => 6,
         }
@@ -54,6 +54,7 @@ pub(crate) fn queue_meta(
     task: &Task,
     has_conflict: bool,
     has_unresolved_blockers: bool,
+    dependent_count: i64,
     now_seconds: i64,
 ) -> QueueMeta {
     let idle_seconds = unix_seconds(&task.queue_activity_at)
@@ -63,6 +64,7 @@ pub(crate) fn queue_meta(
     let score = status_score(task.status)
         + priority_score(task.priority)
         + idle_score(task.status, idle)
+        + dependent_score(dependent_count)
         + if has_conflict { 50 } else { 0 };
     QueueMeta {
         band: queue_band(task, has_conflict, has_unresolved_blockers, idle),
@@ -144,6 +146,10 @@ fn priority_score(priority: TaskPriority) -> i32 {
     }
 }
 
+fn dependent_score(dependent_count: i64) -> i32 {
+    dependent_count.clamp(0, 5) as i32 * 6
+}
+
 fn status_score(status: TaskStatus) -> i32 {
     match status {
         TaskStatus::Active => 50,
@@ -209,7 +215,7 @@ mod tests {
     #[test]
     fn epic_tasks_have_epic_band() {
         assert_eq!(
-            queue_meta(&epic("active", "urgent", "0"), true, true, 8 * 86_400).band,
+            queue_meta(&epic("active", "urgent", "0"), true, true, 0, 8 * 86_400).band,
             QueueBand::Epics
         );
     }
@@ -220,11 +226,11 @@ mod tests {
         let conflicted = task("todo", "none", "1000");
 
         assert_eq!(
-            queue_meta(&urgent, false, false, 1000).band,
+            queue_meta(&urgent, false, false, 0, 1000).band,
             QueueBand::NeedsAction
         );
         assert_eq!(
-            queue_meta(&conflicted, true, false, 1000).band,
+            queue_meta(&conflicted, true, false, 0, 1000).band,
             QueueBand::NeedsAction
         );
     }
@@ -232,11 +238,11 @@ mod tests {
     #[test]
     fn active_and_high_todo_are_focus() {
         assert_eq!(
-            queue_meta(&task("active", "none", "1000"), false, false, 1000).band,
+            queue_meta(&task("active", "none", "1000"), false, false, 0, 1000).band,
             QueueBand::Focus
         );
         assert_eq!(
-            queue_meta(&task("todo", "high", "1000"), false, false, 1000).band,
+            queue_meta(&task("todo", "high", "1000"), false, false, 0, 1000).band,
             QueueBand::Focus
         );
     }
@@ -244,7 +250,7 @@ mod tests {
     #[test]
     fn medium_todo_tasks_are_soon() {
         assert_eq!(
-            queue_meta(&task("todo", "medium", "1000"), false, false, 1000).band,
+            queue_meta(&task("todo", "medium", "1000"), false, false, 0, 1000).band,
             QueueBand::Soon
         );
     }
@@ -252,15 +258,31 @@ mod tests {
     #[test]
     fn old_active_tasks_need_action() {
         assert_eq!(
-            queue_meta(&task("active", "none", "0"), false, false, 8 * 86_400).band,
+            queue_meta(&task("active", "none", "0"), false, false, 0, 8 * 86_400).band,
             QueueBand::NeedsAction
         );
     }
 
     #[test]
+    fn blocked_tasks_sort_below_actionable_groups() {
+        assert!(QueueBand::Triage.order() < QueueBand::Blocked.order());
+        assert!(QueueBand::Blocked.order() < QueueBand::Later.order());
+    }
+
+    #[test]
+    fn open_dependents_add_queue_weight() {
+        let plain = queue_meta(&task("todo", "medium", "1000"), false, false, 0, 1000);
+        let blocker = queue_meta(&task("todo", "medium", "1000"), false, false, 3, 1000);
+
+        assert_eq!(plain.band, QueueBand::Soon);
+        assert_eq!(blocker.band, QueueBand::Soon);
+        assert!(blocker.score > plain.score);
+    }
+
+    #[test]
     fn old_inbox_tasks_gain_triage_weight() {
-        let old = queue_meta(&task("inbox", "none", "0"), false, false, 14 * 86_400);
-        let fresh = queue_meta(&task("inbox", "none", "0"), false, false, 0);
+        let old = queue_meta(&task("inbox", "none", "0"), false, false, 0, 14 * 86_400);
+        let fresh = queue_meta(&task("inbox", "none", "0"), false, false, 0, 0);
 
         assert_eq!(old.band, QueueBand::Triage);
         assert!(old.score > fresh.score);
