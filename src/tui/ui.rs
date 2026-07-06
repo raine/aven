@@ -33,7 +33,10 @@ use self::sidebar::{render_sidebar, render_sidebar_overlay};
 use self::task_list::render_tasks;
 use self::toast::render_toast;
 
-pub(crate) use self::detail::{DetailMetadataTarget, detail_metadata_target_at, detail_scroll_cap};
+pub(crate) use self::detail::{
+    DetailMetadataTarget, detail_child_task_at_position, detail_metadata_target_at,
+    detail_scroll_cap,
+};
 pub(crate) use self::overlays::{database_stats_scroll_cap, text_panel_scroll_cap};
 pub(crate) use self::recent_actions::recent_action_at_position;
 pub(crate) use self::shortcuts::{detail_help_scroll_cap, help_scroll_cap, prefix_hint_scroll_cap};
@@ -65,6 +68,7 @@ pub(crate) struct ViewState {
     pub(crate) overlay: Option<OverlayView>,
     pub(crate) detail_underlay: bool,
     pub(crate) detail_underlay_scroll: u16,
+    pub(crate) hovered_detail_child_task_id: Option<String>,
     pub(crate) notification: Option<Toast>,
     pub(crate) pending_shortcut: Vec<String>,
     pub(crate) pending_shortcut_scroll: u16,
@@ -174,6 +178,7 @@ pub(crate) fn render(
             widgets,
             detail_underlay_scroll(view),
             inline_detail_title_editor,
+            view.hovered_detail_child_task_id.as_deref(),
         );
     }
     if let Some(overlay) = &view.overlay {
@@ -183,6 +188,7 @@ pub(crate) fn render(
             widgets,
             overlay,
             inline_title_editor.is_some() || inline_detail_title_editor.is_some(),
+            view.hovered_detail_child_task_id.as_deref(),
         );
     }
     if !view.pending_shortcut.is_empty() && !add_task_dialog_prefix_active(view) {
@@ -588,6 +594,7 @@ fn render_overlay(
     widgets: &mut WidgetState,
     overlay: &OverlayView,
     inline_title_editor: bool,
+    hovered_detail_child_task_id: Option<&str>,
 ) {
     if matches!(
         overlay,
@@ -598,7 +605,14 @@ fn render_overlay(
             OverlayView::DetailHelp { .. } => 0,
             _ => 0,
         };
-        render_detail_underlay(frame, store, widgets, scroll, None);
+        render_detail_underlay(
+            frame,
+            store,
+            widgets,
+            scroll,
+            None,
+            hovered_detail_child_task_id,
+        );
         if matches!(overlay, OverlayView::DetailHelp { .. }) {
             render_overlay_content(frame, overlay, inline_title_editor);
         }

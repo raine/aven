@@ -50,7 +50,12 @@ struct DetailContentRenderModel {
     sticky_lines: Vec<Line<'static>>,
     lines: Vec<Line<'static>>,
     content_height: usize,
+    body_start: usize,
     scrollbar_position: usize,
+}
+
+pub(crate) struct DetailChildHit {
+    pub(crate) task_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +69,7 @@ fn render_detail(
     item: &TaskListItem,
     scroll: u16,
     inline_title_editor: Option<&TextInputView>,
+    hovered_child_task_id: Option<&str>,
 ) {
     let layout = detail_content_layout(frame.area());
     frame.render_widget(Clear, layout.body_area);
@@ -72,7 +78,13 @@ fn render_detail(
         return;
     }
 
-    let model = build_detail_content_model(item, layout.content_area, scroll, inline_title_editor);
+    let model = build_detail_content_model(
+        item,
+        layout.content_area,
+        scroll,
+        inline_title_editor,
+        hovered_child_task_id,
+    );
     render_detail_content_from_model(frame, layout.content_area, &model);
     if layout.metadata_area.width > 0 {
         render_detail_metadata(frame, item, layout.metadata_area);
@@ -118,7 +130,7 @@ pub(crate) fn detail_scroll_cap(
     terminal_height: u16,
 ) -> u16 {
     let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    let model = build_detail_content_model(item, layout.content_area, 0, None);
+    let model = build_detail_content_model(item, layout.content_area, 0, None, None);
     let sticky_height = model
         .sticky_lines
         .len()
@@ -143,9 +155,10 @@ fn build_detail_content_model(
     area: Rect,
     scroll: u16,
     inline_title_editor: Option<&TextInputView>,
+    hovered_child_task_id: Option<&str>,
 ) -> DetailContentRenderModel {
     let sticky_lines = detail_header_options(item, area.width as usize, inline_title_editor);
-    let body_lines = detail_body_lines(item, area.width as usize);
+    let body_lines = detail_body_lines(item, area.width as usize, hovered_child_task_id);
     let content_height = body_lines.len().max(1);
     let sticky_height = sticky_lines.len().min(area.height as usize);
     let visible = (area.height as usize).saturating_sub(sticky_height);
@@ -160,6 +173,7 @@ fn build_detail_content_model(
         sticky_lines,
         lines,
         content_height,
+        body_start: start,
         scrollbar_position,
     }
 }
@@ -205,12 +219,16 @@ fn detail_content_lines(
     inline_title_editor: Option<&TextInputView>,
 ) -> Vec<Line<'static>> {
     let mut lines = detail_header_options(item, width, inline_title_editor);
-    lines.extend(detail_body_lines(item, width));
+    lines.extend(detail_body_lines(item, width, None));
     lines
 }
 
-fn detail_body_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
-    let mut lines = detail_epic_child_lines(item, width);
+fn detail_body_lines(
+    item: &TaskListItem,
+    width: usize,
+    hovered_child_task_id: Option<&str>,
+) -> Vec<Line<'static>> {
+    let mut lines = detail_epic_child_lines(item, width, hovered_child_task_id);
     if !lines.is_empty() {
         lines.push(Line::from(""));
     }
@@ -245,7 +263,11 @@ fn detail_body_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
     lines
 }
 
-fn detail_epic_child_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
+fn detail_epic_child_lines(
+    item: &TaskListItem,
+    width: usize,
+    hovered_child_task_id: Option<&str>,
+) -> Vec<Line<'static>> {
     if !item.task.is_epic {
         return Vec::new();
     }
@@ -279,7 +301,8 @@ fn detail_epic_child_lines(item: &TaskListItem, width: usize) -> Vec<Line<'stati
         .collect::<Vec<_>>();
     for (index, link) in links.iter().enumerate() {
         let is_last = index + 1 == links.len();
-        lines.extend(epic_child_tree_item_lines(link, is_last, width));
+        let hovered = hovered_child_task_id == Some(link.task_id.as_str());
+        lines.extend(epic_child_tree_item_lines(link, is_last, width, hovered));
     }
 
     lines
@@ -289,14 +312,45 @@ fn epic_child_tree_item_lines(
     link: &crate::query::TaskDependencyLink,
     is_last: bool,
     width: usize,
+    hovered: bool,
 ) -> Vec<Line<'static>> {
     let tree_glyph = if is_last { "└─ " } else { "├─ " };
+    let ref_style = if hovered {
+        Style::new()
+            .fg(ACCENT)
+            .bg(BG_PANEL)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(ACCENT)
+    };
+    let title_style = if hovered {
+        Style::new().fg(FG).bg(BG_PANEL)
+    } else {
+        Style::new().fg(FG)
+    };
+    let tree_style = if hovered {
+        Style::new().fg(BORDER).bg(BG_PANEL)
+    } else {
+        Style::new().fg(BORDER)
+    };
+    let gap_style = if hovered {
+        Style::new().fg(FG_DIM).bg(BG_PANEL)
+    } else {
+        Style::new().fg(FG_DIM)
+    };
     let prefix = vec![
-        Span::styled(tree_glyph, Style::new().fg(BORDER)),
-        Span::styled(link.display_ref.clone(), Style::new().fg(ACCENT)),
-        Span::styled("  ", Style::new().fg(FG_DIM)),
+        Span::styled(tree_glyph, tree_style),
+        Span::styled(link.display_ref.clone(), ref_style),
+        Span::styled("  ", gap_style),
     ];
-    dependency_node_lines(prefix, &link.title, &link.status, &link.priority, width)
+    dependency_node_lines_with_title_style(
+        prefix,
+        &link.title,
+        &link.status,
+        &link.priority,
+        width,
+        title_style,
+    )
 }
 
 fn detail_dependency_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
@@ -385,17 +439,35 @@ fn dependency_tree_item_lines(
 }
 
 fn dependency_node_lines(
-    mut spans: Vec<Span<'static>>,
+    spans: Vec<Span<'static>>,
     title: &str,
     status: &str,
     priority: &str,
     width: usize,
 ) -> Vec<Line<'static>> {
+    dependency_node_lines_with_title_style(
+        spans,
+        title,
+        status,
+        priority,
+        width,
+        Style::new().fg(FG),
+    )
+}
+
+fn dependency_node_lines_with_title_style(
+    mut spans: Vec<Span<'static>>,
+    title: &str,
+    status: &str,
+    priority: &str,
+    width: usize,
+    title_style: Style,
+) -> Vec<Line<'static>> {
     let title_width = dependency_title_width(&spans, status, priority, width);
     if title_width > 0 {
         spans.push(Span::styled(
             truncate_width(title, title_width),
-            Style::new().fg(FG),
+            title_style,
         ));
         spans.push(Span::styled("  ", Style::new().fg(FG_DIM)));
         spans.push(status_span(status));
@@ -413,7 +485,7 @@ fn dependency_node_lines(
         Span::styled(continuation_prefix.clone(), Style::new().fg(BORDER)),
         Span::styled(
             truncate_width(title, width.saturating_sub(continuation_prefix.width())),
-            Style::new().fg(FG),
+            title_style,
         ),
     ]));
     lines.push(Line::from(vec![
@@ -639,6 +711,75 @@ fn metadata_label(label: &'static str) -> Line<'static> {
     ))
 }
 
+pub(crate) fn detail_child_task_at_position(
+    item: &TaskListItem,
+    terminal_width: u16,
+    terminal_height: u16,
+    column: u16,
+    row: u16,
+    scroll: u16,
+) -> Option<DetailChildHit> {
+    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    if column < layout.content_area.x
+        || column
+            >= layout
+                .content_area
+                .x
+                .saturating_add(layout.content_area.width)
+        || row < layout.content_area.y
+        || row
+            >= layout
+                .content_area
+                .y
+                .saturating_add(layout.content_area.height)
+    {
+        return None;
+    }
+    let model = build_detail_content_model(item, layout.content_area, scroll, None, None);
+    let sticky_height = model
+        .sticky_lines
+        .len()
+        .min(layout.content_area.height as usize) as u16;
+    let body_y = layout.content_area.y.saturating_add(sticky_height);
+    if row < body_y {
+        return None;
+    }
+    let body_row = row.saturating_sub(body_y) as usize;
+    let body_index = model.body_start.saturating_add(body_row);
+    let task_id = detail_epic_child_task_id_at_body_line(
+        item,
+        layout.content_area.width as usize,
+        body_index,
+    )?;
+    Some(DetailChildHit { task_id })
+}
+
+fn detail_epic_child_task_id_at_body_line(
+    item: &TaskListItem,
+    width: usize,
+    body_line_index: usize,
+) -> Option<String> {
+    if !item.task.is_epic || body_line_index == 0 {
+        return None;
+    }
+    let links = item
+        .epic_children
+        .iter()
+        .filter(|link| link.unresolved)
+        .chain(item.epic_children.iter().filter(|link| !link.unresolved))
+        .collect::<Vec<_>>();
+    let mut line_index = 1;
+    for (index, link) in links.iter().enumerate() {
+        let is_last = index + 1 == links.len();
+        let line_count = epic_child_tree_item_lines(link, is_last, width, false).len();
+        if (line_index..line_index + line_count).contains(&body_line_index) {
+            return Some(link.task_id.clone());
+        }
+        line_index += line_count;
+    }
+    None
+}
+
 pub(crate) fn detail_metadata_target_at(
     terminal_width: u16,
     terminal_height: u16,
@@ -676,9 +817,16 @@ pub(super) fn render_detail_underlay(
     widgets: &mut WidgetState,
     scroll: u16,
     inline_title_editor: Option<&TextInputView>,
+    hovered_child_task_id: Option<&str>,
 ) {
     if let Some(task) = store.selected_task(widgets.table.selected()) {
-        render_detail(frame, task, scroll, inline_title_editor);
+        render_detail(
+            frame,
+            task,
+            scroll,
+            inline_title_editor,
+            hovered_child_task_id,
+        );
     }
 }
 
@@ -913,26 +1061,7 @@ mod tests {
 
     #[test]
     fn detail_content_lists_epic_children() {
-        let mut item = detail_test_item();
-        item.task.is_epic = true;
-        item.epic_children = vec![
-            crate::query::TaskDependencyLink {
-                task_id: "child-task-id".to_string(),
-                display_ref: "APP-CHLD".to_string(),
-                title: "Build the first child task".to_string(),
-                status: "todo".to_string(),
-                priority: "medium".to_string(),
-                unresolved: true,
-            },
-            crate::query::TaskDependencyLink {
-                task_id: "done-child-task-id".to_string(),
-                display_ref: "APP-DONE".to_string(),
-                title: "Finished child task".to_string(),
-                status: "done".to_string(),
-                priority: "none".to_string(),
-                unresolved: false,
-            },
-        ];
+        let item = detail_test_epic_item();
 
         let lines = detail_content_lines(&item, 80, None)
             .into_iter()
@@ -956,6 +1085,32 @@ mod tests {
             rendered.find("CHILD TASKS").unwrap()
                 < rendered.find("Two token refresh requests").unwrap()
         );
+    }
+
+    #[test]
+    fn detail_child_hit_maps_child_rows() {
+        let item = detail_test_epic_item();
+
+        let hit = detail_child_task_at_position(&item, 120, 30, 4, 8, 0).unwrap();
+
+        assert_eq!(hit.task_id, "child-task-id");
+    }
+
+    #[test]
+    fn hovered_detail_child_uses_link_style() {
+        let item = detail_test_epic_item();
+        let lines = detail_body_lines(&item, 80, Some("child-task-id"));
+        let line = lines
+            .iter()
+            .find(|line| line.to_string().contains("APP-CHLD"))
+            .unwrap();
+        let ref_span = line
+            .spans
+            .iter()
+            .find(|span| span.content.as_ref() == "APP-CHLD")
+            .unwrap();
+
+        assert_eq!(ref_span.style.bg, Some(BG_PANEL));
     }
 
     #[test]
@@ -1061,9 +1216,12 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let model = build_detail_content_model(&item, Rect::new(0, 0, 60, 5), 4, None);
+        let model = build_detail_content_model(&item, Rect::new(0, 0, 60, 5), 4, None, None);
 
-        assert_eq!(model.content_height, detail_body_lines(&item, 60).len());
+        assert_eq!(
+            model.content_height,
+            detail_body_lines(&item, 60, None).len()
+        );
         assert_eq!(
             model.sticky_lines.len(),
             detail_header_options(&item, 60, None).len()
@@ -1071,6 +1229,30 @@ mod tests {
         assert_eq!(model.sticky_lines[0].to_string(), "Fix token refresh race");
         assert_eq!(model.lines.len(), model.content_height.saturating_sub(4));
         assert!(model.scrollbar_position > 0);
+    }
+
+    fn detail_test_epic_item() -> TaskListItem {
+        let mut item = detail_test_item();
+        item.task.is_epic = true;
+        item.epic_children = vec![
+            crate::query::TaskDependencyLink {
+                task_id: "child-task-id".to_string(),
+                display_ref: "APP-CHLD".to_string(),
+                title: "Build the first child task".to_string(),
+                status: "todo".to_string(),
+                priority: "medium".to_string(),
+                unresolved: true,
+            },
+            crate::query::TaskDependencyLink {
+                task_id: "done-child-task-id".to_string(),
+                display_ref: "APP-DONE".to_string(),
+                title: "Finished child task".to_string(),
+                status: "done".to_string(),
+                priority: "none".to_string(),
+                unresolved: false,
+            },
+        ];
+        item
     }
 
     fn detail_test_item() -> TaskListItem {

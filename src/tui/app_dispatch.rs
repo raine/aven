@@ -19,8 +19,9 @@ use crate::tui::platform::is_editor_prefix_key;
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
 use crate::tui::store::TaskView;
 use crate::tui::ui::{
-    database_stats_scroll_cap, detail_help_scroll_cap, help_scroll_cap, prefix_hint_scroll_cap,
-    recent_action_at_position, task_at_position, task_status_at_position, text_panel_scroll_cap,
+    database_stats_scroll_cap, detail_child_task_at_position, detail_help_scroll_cap,
+    help_scroll_cap, prefix_hint_scroll_cap, recent_action_at_position, task_at_position,
+    task_status_at_position, text_panel_scroll_cap,
 };
 
 impl App {
@@ -159,6 +160,10 @@ impl App {
                 return self.handle_task_list_wheel(-1, terminal_size).await;
             }
             MouseEventKind::Down(MouseButton::Left) => {}
+            MouseEventKind::Moved => {
+                self.handle_detail_mouse_move(mouse, terminal_size);
+                return Ok(());
+            }
             MouseEventKind::Down(MouseButton::Right) => {
                 return self
                     .handle_task_status_right_click(mouse, terminal_size)
@@ -402,6 +407,37 @@ impl App {
         terminal_size: Size,
         scroll: u16,
     ) -> bool {
+        if let Some(item) = self.store.selected_task(self.widgets.table.selected())
+            && let Some(hit) = detail_child_task_at_position(
+                item,
+                terminal_size.width,
+                terminal_size.height,
+                mouse.column,
+                mouse.row,
+                scroll,
+            )
+        {
+            self.last_task_click = None;
+            self.detail_context = true;
+            self.detail_context_scroll = 0;
+            self.hovered_detail_child_task_id = Some(hit.task_id.clone());
+            if let Some(index) = self
+                .store
+                .tasks
+                .iter()
+                .position(|item| item.task.id == hit.task_id)
+            {
+                self.widgets.table.select(Some(index));
+                self.overlay = Some(OverlayState::Detail { scroll: 0 });
+            } else {
+                self.set_warning("child task is hidden by the current view");
+                if self.overlay.is_none() {
+                    self.overlay = Some(OverlayState::Detail { scroll });
+                }
+            }
+            return true;
+        }
+
         let Some((target, _column, _row)) = crate::tui::ui::detail_metadata_target_at(
             terminal_size.width,
             terminal_size.height,
@@ -425,6 +461,27 @@ impl App {
             self.overlay = Some(OverlayState::Detail { scroll });
         }
         true
+    }
+
+    fn handle_detail_mouse_move(&mut self, mouse: MouseEvent, terminal_size: Size) {
+        let Some(OverlayState::Detail { scroll }) = self.overlay else {
+            self.hovered_detail_child_task_id = None;
+            return;
+        };
+        self.hovered_detail_child_task_id = self
+            .store
+            .selected_task(self.widgets.table.selected())
+            .and_then(|item| {
+                detail_child_task_at_position(
+                    item,
+                    terminal_size.width,
+                    terminal_size.height,
+                    mouse.column,
+                    mouse.row,
+                    scroll,
+                )
+            })
+            .map(|hit| hit.task_id);
     }
 
     async fn handle_task_list_wheel(&mut self, delta: isize, terminal_size: Size) -> Result<()> {

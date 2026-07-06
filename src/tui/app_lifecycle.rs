@@ -132,6 +132,7 @@ impl App {
             overlay,
             detail_underlay: self.detail_underlay(),
             detail_underlay_scroll: self.detail_context_scroll,
+            hovered_detail_child_task_id: self.hovered_detail_child_task_id.clone(),
             notification: self
                 .notification
                 .as_ref()

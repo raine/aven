@@ -160,6 +160,7 @@ pub(crate) struct App {
     pub(super) live_search: LiveSearchPreview,
     pub(super) next_refresh_at: Instant,
     pub(crate) last_task_click: Option<TaskRowClick>,
+    pub(crate) hovered_detail_child_task_id: Option<String>,
     pub(super) navigation_history: Vec<TaskViewState>,
 }
 
@@ -212,6 +213,7 @@ impl App {
             live_search: LiveSearchPreview::default(),
             next_refresh_at,
             last_task_click: None,
+            hovered_detail_child_task_id: None,
             navigation_history: Vec::new(),
         };
         app.widgets.sidebar.select(app.store.sidebar_selection());
