@@ -3388,6 +3388,29 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn back_shortcut_closes_detail_overlay() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Detail target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Char('g')), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+
+        app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(!app.detail_context);
+        assert!(app.pending_shortcut.is_empty());
+    }
+
+    #[tokio::test]
     async fn help_key_opens_detail_help_from_detail_overlay() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Detail help target")).await;

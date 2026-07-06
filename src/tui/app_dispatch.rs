@@ -893,6 +893,12 @@ impl App {
         }
 
         match self.pending_shortcut.resolve_detail(key) {
+            DetailShortcutResolution::Action(Action::GoBack) => {
+                self.pending_shortcut_scroll = 0;
+                self.detail_context = false;
+                self.detail_context_scroll = 0;
+                Ok(Some(None))
+            }
             DetailShortcutResolution::Action(action) => {
                 self.pending_shortcut_scroll = 0;
                 self.detail_context = true;

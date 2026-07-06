@@ -503,6 +503,17 @@ mod tests {
             ShortcutLookup::Prefix
         );
         assert_eq!(
+            resolve_shortcut_for(CommandContext::Detail, &[KeyCode::Char('g')]),
+            ShortcutLookup::Prefix
+        );
+        assert_eq!(
+            resolve_shortcut_for(
+                CommandContext::Detail,
+                &[KeyCode::Char('g'), KeyCode::Char('[')]
+            ),
+            ShortcutLookup::Found(Action::GoBack)
+        );
+        assert_eq!(
             resolve_shortcut_for(
                 CommandContext::Detail,
                 &[KeyCode::Char('t'), KeyCode::Char('e')]

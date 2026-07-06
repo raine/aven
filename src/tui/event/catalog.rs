@@ -1174,6 +1174,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
 
 pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
+        "detail-back",
+        "return to the task list",
+        "General",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('[')],
+            label: "g [",
+        }],
+        Action::GoBack,
+    ),
+    CommandSpec::implemented(
         "detail-edit-title",
         "edit selected task title",
         "Tasks",
