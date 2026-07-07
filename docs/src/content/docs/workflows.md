@@ -17,15 +17,15 @@ Press `a` to open the task composer. Use [TUI](/tui/) for the full keyboard work
 
 ## LLM task intake
 
-LLM task intake is documented in [TUI LLM task intake](/tui/#llm-task-intake). In the composer, `Ctrl-n` turns rough input, pasted notes, or dictated rambling into a sensible task title and description while preserving the useful context.
+Use LLM task intake when your source material is messy: pasted notes, dictated rambling, meeting fragments, or a rough idea that still needs shaping. In the TUI composer, `Ctrl-n` turns that input into a sensible task title and description while preserving the useful context.
 
-The LLM command itself is configured through `agent.task_intake`; see [Configuration](/configuration/#agent-task-intake).
+Use [TUI LLM task intake](/tui/#llm-task-intake) for the composer workflow. The LLM command itself is configured through `agent.task_intake`; see [Configuration](/configuration/#agent-task-intake).
 
-## Capture from chat
+## Capture from an OpenClaw-style setup
 
 A synced aven setup can turn chat or voice input into project-scoped tasks without a repo checkout.
 
-For example, a Raspberry Pi can run a private Telegram agent with voice transcription. The agent uses aven guidance to map spoken project names to aven projects, then calls a small `aven-add` wrapper that syncs, creates the task, captures the ref, and syncs again.
+For example, a Raspberry Pi can run a private OpenClaw-style Telegram agent with voice transcription. The agent uses aven guidance to map spoken project names to aven projects, then calls a small `aven-add` wrapper that syncs, creates the task, captures the ref, and syncs again.
 
 An idea captured on the go is already in the right project when you get back to your laptop.
 
