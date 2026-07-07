@@ -230,24 +230,17 @@ agent:
 fn tmux_add_task_popup_prints_binding() {
     let env = TestEnv::new();
     let db = env.db("tmux.sqlite");
-    let output = ok(env.aven(
-        &db,
-        [
-            "tmux",
-            "add-task-popup",
-            "--project",
-            "app",
-            "--print-binding",
-        ],
-    ));
+    let output = ok(env.aven(&db, ["tmux", "add-task-popup", "--project", "app"]));
     contains_all(
         &output,
         &[
             "bind-key A tmux display-popup -E",
             "-d '#{pane_current_path}'",
+            "-w '80%' -h '80%'",
             "'aven tui --add-task-only --project app'",
         ],
     );
+    assert!(!output.contains(" -T "));
 }
 
 fn workspace_id(db: &std::path::Path, key: &str) -> String {

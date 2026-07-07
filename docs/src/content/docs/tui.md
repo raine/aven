@@ -76,6 +76,22 @@ Use `Tab` to move into the description field. Use `Ctrl-t` for status, `Ctrl-p` 
 
 `Ctrl-x Ctrl-e` opens an external editor from text entry flows that support it.
 
+### Capture from tmux
+
+When you live in tmux, bind the task composer to a key so it opens as a popup over the current pane.
+
+![aven tmux popup add task composer over terminal panes](/tmux-popup.webp)
+
+<p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The tmux popup opens the same composer over your current terminal session.</p>
+
+For example, this binds prefix + `t` to a 120 by 30 popup in the current pane's directory:
+
+```text
+bind t display-popup -E -d '#{pane_current_path}' -w 120 -h 30 'aven tui --add-task-only'
+```
+
+`aven tmux add-task-popup` prints a ready-made binding that you can copy into your tmux config.
+
 ## Triage and edit tasks
 
 Use direct shortcuts for common task changes:

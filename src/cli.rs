@@ -359,7 +359,7 @@ pub(crate) struct TmuxAddTaskPopupArgs {
     pub(crate) width: String,
     #[arg(long, default_value = "80%")]
     pub(crate) height: String,
-    #[arg(long)]
+    #[arg(long, hide = true)]
     pub(crate) print_binding: bool,
     #[arg(long)]
     pub(crate) natural: bool,

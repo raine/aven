@@ -37,20 +37,6 @@ Use [Configuration](/configuration/) later when you want a specific database pat
 4. Use `s` to change status, `d` to mark done, and `u` to undo a TUI change.
 5. Press `?` for help or `:` for the command palette.
 
-## Capture from tmux
-
-When you live in tmux, open the add task composer as a popup over the current pane:
-
-```sh
-aven tmux add-task-popup
-```
-
-![aven tmux popup add task composer over terminal panes](/tmux-popup.webp)
-
-<p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The tmux popup opens the same composer over your current terminal session.</p>
-
-Use `--print-binding` to print a tmux key binding command for your tmux config.
-
 ## Next steps
 
 - Read [Concepts](/concepts/) to learn the task model.

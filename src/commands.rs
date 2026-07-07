@@ -208,16 +208,12 @@ pub(crate) fn cmd_tmux_add_task_popup(args: TmuxAddTaskPopupArgs) -> Result<()> 
         }
     }
     let command = format!(
-        "tmux display-popup -E -d '#{{pane_current_path}}' -w {} -h {} -T 'Aven add task' {}",
+        "tmux display-popup -E -d '#{{pane_current_path}}' -w {} -h {} {}",
         shell_quote(&args.width),
         shell_quote(&args.height),
         shell_quote(&aven_args.join(" ")),
     );
-    if args.print_binding {
-        println!("bind-key A {command}");
-    } else {
-        println!("{command}");
-    }
+    println!("bind-key A {command}");
     Ok(())
 }
 
