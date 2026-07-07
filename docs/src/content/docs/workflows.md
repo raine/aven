@@ -25,7 +25,7 @@ Use [TUI LLM task intake](/tui/#llm-task-intake) for the composer workflow. The 
 
 A synced aven setup can turn chat or voice input into project-scoped tasks without a repo checkout.
 
-For example, a Raspberry Pi can run a private OpenClaw-style Telegram agent with voice transcription. The agent uses aven guidance to map spoken project names to aven projects, then calls a small `aven-add` wrapper that syncs, creates the task, captures the ref, and syncs again.
+For example, a Raspberry Pi can run a private OpenClaw-style Telegram agent with voice transcription. The agent uses aven guidance to map spoken project names to aven projects, then calls an [`aven-add` wrapper](https://gist.github.com/raine/f3e8f596d7a37e2bf6a52c58648a5c6c) that syncs, creates the task, captures the ref, and syncs again.
 
 An idea captured on the go is already in the right project when you get back to your laptop.
 
