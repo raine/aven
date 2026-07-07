@@ -17,7 +17,7 @@ Press `a` to open the task composer. Use [TUI](/tui/) for the full keyboard work
 
 ## LLM task intake
 
-LLM task intake is documented in [TUI capture tasks](/tui/#capture-tasks). In the composer, `Ctrl-n` turns rough input, pasted notes, or dictated rambling into a sensible task title and description while preserving the useful context.
+LLM task intake is documented in [TUI LLM task intake](/tui/#llm-task-intake). In the composer, `Ctrl-n` turns rough input, pasted notes, or dictated rambling into a sensible task title and description while preserving the useful context.
 
 The LLM command itself is configured through `agent.task_intake`; see [Configuration](/configuration/#agent-task-intake).
 

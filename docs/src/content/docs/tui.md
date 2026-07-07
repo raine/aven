@@ -70,11 +70,15 @@ Press `a` to open the task composer. The composer captures title, description, p
 
 <p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The composer captures structured fields without leaving the keyboard workflow.</p>
 
-The composer also supports LLM task intake. Use `Ctrl-n` when you have rough input, pasted notes, or dictated rambling. The configured LLM turns that input into a sensible task title and description while preserving the useful context.
-
 Use `Tab` to move into the description field. Use `Ctrl-t` for status, `Ctrl-p` for project, and `Ctrl-r` for priority. Press `Enter` to create the task, or `Esc` to cancel.
 
 `Ctrl-x Ctrl-e` opens an external editor from text entry flows that support it.
+
+### LLM task intake
+
+Use `Ctrl-n` in the composer when you have rough input, pasted notes, or dictated rambling. The configured LLM turns that input into a sensible task title and description while preserving the useful context.
+
+The LLM command itself is configured through `agent.task_intake`; see [Configuration](/configuration/#agent-task-intake).
 
 ### Capture from tmux
 
