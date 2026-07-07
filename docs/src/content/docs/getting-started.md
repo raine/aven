@@ -37,6 +37,18 @@ Use [Configuration](/configuration/) later when you want a specific database pat
 4. Use `s` to change status, `d` to mark done, and `u` to undo a TUI change.
 5. Press `?` for help or `:` for the command palette.
 
+## Agent setup
+
+Install the aven skill so coding agents can learn the task workflow on demand:
+
+```sh
+aven skill install
+```
+
+For repositories where agents should start with live task context, configure automatic priming so the agent session receives `aven prime` output at startup.
+
+See [Agents](/agents/) for automatic priming, Claude Code hook setup, example prompts, and handoff notes.
+
 ## Next steps
 
 - Read [Concepts](/concepts/) to learn the task model.
