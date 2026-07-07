@@ -205,4 +205,5 @@ Press the prefix to see available commands in that family.
 - [Getting started](/getting-started/) covers installation and first-run usage.
 - [Concepts](/concepts/) explains the task model behind the TUI.
 - [Configuration](/configuration/) covers workspace routes, project path mappings, sync defaults, and LLM task intake configuration.
+- [Workflows](/workflows/) covers capture, chat, sync, and agent workflows.
 - [Agents](/agents/) covers CLI and coding-agent workflows.

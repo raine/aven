@@ -142,14 +142,6 @@ Work on APP-7KQ9. Use aven for status and handoff notes.
 Pick a ready docs task and complete it.
 ```
 
-## Capture from chat
-
-A synced aven setup can turn chat or voice input into project-scoped tasks without a repo checkout.
-
-For example, a Raspberry Pi can run a private Telegram agent with voice transcription. The agent uses aven guidance to map spoken project names to aven projects, then calls a small `aven-add` wrapper that syncs, creates the task, captures the ref, and syncs again.
-
-An idea captured on the go is already in the right project when you get back to your laptop.
-
 ## Durable handoff
 
 Descriptions hold the main task context: problem statement, scope, acceptance criteria, and links.

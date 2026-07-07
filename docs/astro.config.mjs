@@ -41,6 +41,7 @@ export default defineConfig({
           label: 'Using aven',
           items: [
             { label: 'TUI', slug: 'tui' },
+            { label: 'Workflows', slug: 'workflows' },
             { label: 'Agents', slug: 'agents' },
             { label: 'Sync and backups', slug: 'sync' },
           ],

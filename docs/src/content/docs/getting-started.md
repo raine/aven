@@ -42,4 +42,5 @@ Use [Configuration](/configuration/) later when you want a specific database pat
 - Read [Concepts](/concepts/) to learn the task model.
 - Read [Configuration](/configuration/) when you want workspace routes, project path mappings, sync defaults, or a specific database path.
 - Read [TUI](/tui/) for navigation, views, filters, and shortcuts.
+- Read [Workflows](/workflows/) for capture, chat, sync, and agent workflows.
 - Read [Agents](/agents/) for CLI and coding-agent workflows.
