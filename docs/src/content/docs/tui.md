@@ -23,6 +23,8 @@ Project selection is scope. Select a project to focus the task list on that proj
 
 Press `a` to add a task. The composer can capture title, description, project, status, and priority. Natural-language task intake can create a task through the configured agent command.
 
+![aven TUI add task popup with title and description fields](/add-task.webp)
+
 Use task actions to edit status, priority, project, labels, descriptions, and notes. Press `n` to add a note, `s` to open the status picker, `d` to mark done, and `x` to mark canceled.
 
 `Ctrl-x Ctrl-e` opens an external editor from text entry flows that support it.
@@ -32,6 +34,8 @@ Press `u` to undo a completed TUI mutation.
 ## Open detail
 
 Press `Enter` on a task to open its detail view. Double-clicking a task row also opens detail when mouse support is active.
+
+![aven TUI task detail view with Markdown description and task metadata](/task-detail.webp)
 
 In detail view, use `j/k`, arrows, `Ctrl-d`, `Ctrl-u`, `PageDown`, `PageUp`, or the mouse wheel to scroll. Use `[` and `]` to switch tasks while staying in detail. Press `Esc`, `Enter`, or `q` to return to the list.
 
@@ -67,17 +71,17 @@ Task detail shows why a task is blocked and what it unlocks. Task actions includ
 
 Direct shortcuts cover common movement and actions:
 
-| Shortcut | Action |
-| --- | --- |
-| `j`, `k`, arrows | Move selection |
-| `Enter` | Open selected task detail |
-| `/` | Search |
-| `:` | Open command palette |
-| `?` | Open help |
-| `r` | Refresh |
-| `Tab` | Switch focus |
-| `u` | Undo |
-| `q` | Quit |
+| Shortcut         | Action                    |
+| ---------------- | ------------------------- |
+| `j`, `k`, arrows | Move selection            |
+| `Enter`          | Open selected task detail |
+| `/`              | Search                    |
+| `:`              | Open command palette      |
+| `?`              | Open help                 |
+| `r`              | Refresh                   |
+| `Tab`            | Switch focus              |
+| `u`              | Undo                      |
+| `q`              | Quit                      |
 
 Fast aliases include `a` for add task, `n` for add note, `s` for status picker, `d` for done, and `x` for canceled.
 
@@ -85,17 +89,17 @@ Fast aliases include `a` for add task, `n` for add note, `s` for status picker, 
 
 Intent shortcuts use mnemonic prefixes. Press a prefix to see hints, then press the next key.
 
-| Prefix | Family |
-| --- | --- |
-| `g` | Go to task list scope or switch workspace |
-| `v` | Views |
-| `f` | Filters |
-| `o` | Ordering |
-| `t` | Task fields and lifecycle actions |
-| `p` | Project administration |
-| `L` | Label administration |
-| `c` | Conflicts |
-| `C` | Config |
+| Prefix | Family                                    |
+| ------ | ----------------------------------------- |
+| `g`    | Go to task list scope or switch workspace |
+| `v`    | Views                                     |
+| `f`    | Filters                                   |
+| `o`    | Ordering                                  |
+| `t`    | Task fields and lifecycle actions         |
+| `p`    | Project administration                    |
+| `L`    | Label administration                      |
+| `c`    | Conflicts                                 |
+| `C`    | Config                                    |
 
 The help and command palette show the active command catalog. Some catalog entries can be disabled when the feature is unavailable.
 
