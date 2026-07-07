@@ -13,31 +13,13 @@ export default defineConfig({
         light: './src/assets/aven-logo-grape-violet-light.svg',
         alt: 'Aven logo',
       },
-      favicon: '/favicon-dark.svg',
+      favicon: '/favicon.svg',
       head: [
         {
           tag: 'script',
           attrs: {
             src: '/image-zoom.js',
             defer: true,
-          },
-        },
-        {
-          tag: 'link',
-          attrs: {
-            rel: 'icon',
-            href: '/favicon-dark.svg',
-            type: 'image/svg+xml',
-            media: '(prefers-color-scheme: dark)',
-          },
-        },
-        {
-          tag: 'link',
-          attrs: {
-            rel: 'icon',
-            href: '/favicon-light.svg',
-            type: 'image/svg+xml',
-            media: '(prefers-color-scheme: light)',
           },
         },
       ],
