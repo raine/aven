@@ -5,13 +5,81 @@ description: Make aven available inside AI coding agent sessions.
 
 aven gives AI coding agents access to the same local task system you use in the TUI. The TUI is the human surface. The CLI is the agent surface.
 
-For a human setting this up, the model is simple:
+## Install the aven skill
 
-1. `aven skill install` gives the agent an on-demand way to learn aven for task-management requests.
-2. `aven prime` gives the agent the aven instructions plus live open-task context at session start.
-3. Your agent environment can run `aven prime` automatically for repos where task context belongs in every session.
+```sh
+aven skill install
+```
 
-After that, you can ask an agent to work from aven tasks without explaining the task model or pasting command instructions into every prompt.
+`aven skill install` writes the bundled skill to every detected coding-agent skill directory. Detection checks Claude Code, OpenCode, and Codex user directories, plus matching agent config directories in the current workspace.
+
+Use `--agent` to choose explicit targets:
+
+```sh
+aven skill install --agent claude
+aven skill install --agent opencode
+aven skill install --agent codex
+```
+
+Explicit targets are installed even when the agent directory is absent. The command reports a clear error when no supported agent is detected and no target is provided.
+
+## Set up automatic priming
+
+Run `aven prime` automatically when an agent session starts. In Claude Code, add it to the `SessionStart` hook in `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "aven prime"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+With this hook, every new Claude Code session receives aven instructions and live project task context automatically. Other agent environments can use the same pattern: run `aven prime` at session start and include its output in the agent context.
+
+## Project context
+
+aven infers the active workspace and project from the current directory. Start an agent from a repository directory and automatic priming loads the matching project context.
+
+Use [Configuration](/configuration/) when directory names, workspace routes, or project path mappings need to be explicit. Use `aven doctor` from the same directory to inspect the active database, workspace, project, and routing decisions.
+
+## Work with agents
+
+A typical workflow looks like this:
+
+1. Capture or triage work in aven.
+2. Start your agent from the repository directory.
+3. Let the startup hook load aven context.
+4. Ask the agent to work on a specific ref, or to choose ready work.
+5. Review the code change and the task note the agent leaves behind.
+
+Example prompts:
+
+```txt
+Work on APP-7KQ9. Use aven for status and handoff notes.
+```
+
+```txt
+Pick a ready docs task and complete it.
+```
+
+## Durable handoff
+
+Descriptions hold the main task context: problem statement, scope, acceptance criteria, and links.
+
+Notes hold durable handoff context: implementation decisions, blockers, partial progress, and review findings. Agent notes survive chat sessions, branch switches, worktrees, and machine restarts.
+
+Keep secrets out of titles, descriptions, labels, projects, notes, and logs.
 
 ## Skill or prime?
 
@@ -27,7 +95,7 @@ Use the installed skill and priming for different levels of commitment:
 
 A common setup is to install the skill globally, then add a project-local prime hook only in repositories tracked in aven. That keeps agents aware of aven everywhere and gives them open-task context where it is useful.
 
-## Automatic priming
+## What prime includes
 
 `aven prime` is the agent bootstrap command. It prints the aven skill plus open work for the inferred project.
 
@@ -62,54 +130,6 @@ AVN-12YM status=inbox labels=keybindings,ux title="Resolve Ctrl+P keybinding con
 (none)
 ```
 
-## Install the aven skill
-
-```sh
-aven skill install
-```
-
-`aven skill install` writes the bundled skill to every detected coding-agent skill directory. Detection checks Claude Code, OpenCode, and Codex user directories, plus matching agent config directories in the current workspace.
-
-Use `--agent` to choose explicit targets:
-
-```sh
-aven skill install --agent claude
-aven skill install --agent opencode
-aven skill install --agent codex
-```
-
-Explicit targets are installed even when the agent directory is absent. The command reports a clear error when no supported agent is detected and no target is provided.
-
-## Agent session setup
-
-Run `aven prime` automatically when an agent session starts. In Claude Code, add it to the `SessionStart` hook in `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "aven prime"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-With this hook, every new Claude Code session receives aven instructions and live project task context automatically. Other agent environments can use the same pattern: run `aven prime` at session start and include its output in the agent context.
-
-## Project context
-
-aven infers the active workspace and project from the current directory. Start an agent from a repository directory and `aven prime` loads the matching project context.
-
-Use [Configuration](/configuration/) when directory names, workspace routes, or project path mappings need to be explicit. Use `aven doctor` from the same directory to inspect the active database, workspace, project, and routing decisions.
-
 ## The aven skill
 
 ```sh
@@ -121,31 +141,3 @@ aven skill
 `aven prime` includes this skill automatically, so humans usually do not need to run `aven skill` directly. The separate command is useful for debugging or custom agent integrations.
 
 The source guidance lives in [`src/skill.md`](https://github.com/raine/aven/blob/main/src/skill.md).
-
-## Human workflow
-
-A typical workflow looks like this:
-
-1. Capture or triage work in aven.
-2. Start your agent from the repository directory.
-3. Let the startup hook load aven context.
-4. Ask the agent to work on a specific ref, or to choose ready work.
-5. Review the code change and the task note the agent leaves behind.
-
-Example prompts:
-
-```txt
-Work on APP-7KQ9. Use aven for status and handoff notes.
-```
-
-```txt
-Pick a ready docs task and complete it.
-```
-
-## Durable handoff
-
-Descriptions hold the main task context: problem statement, scope, acceptance criteria, and links.
-
-Notes hold durable handoff context: implementation decisions, blockers, partial progress, and review findings. Agent notes survive chat sessions, branch switches, worktrees, and machine restarts.
-
-Keep secrets out of titles, descriptions, labels, projects, notes, and logs.
