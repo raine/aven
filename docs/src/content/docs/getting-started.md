@@ -47,6 +47,8 @@ aven tmux add-task-popup
 
 ![aven tmux popup add task composer over terminal panes](/tmux-popup.webp)
 
+<p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The tmux popup opens the same composer over your current terminal session.</p>
+
 Use `--print-binding` to print a tmux key binding command for your tmux config.
 
 ## Next steps

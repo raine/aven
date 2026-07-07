@@ -11,6 +11,8 @@ aven tui
 
 ![aven TUI showing the queue view across workspace projects](/tui.webp)
 
+<p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The queue view brings workspace scope, project groups, task metadata, and selected-task context into one screen.</p>
+
 ## Screen tour
 
 The TUI is organized around the current workspace, scope, view, task list, and selected task.
@@ -35,6 +37,8 @@ aven is keyboard-first. Common actions have direct shortcuts, broader command fa
 - **Escape** cancels overlays and prefix mode.
 
 ![aven TUI command palette filtering view commands](/command-palette.webp)
+
+<p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The command palette searches the same command catalog used by prefix hints and help.</p>
 
 ## Daily workflow
 
@@ -64,6 +68,8 @@ Press `a` to open the task composer. The composer captures title, description, p
 
 ![aven TUI add task popup with title and description fields](/add-task.webp)
 
+<p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The composer captures structured fields without leaving the keyboard workflow.</p>
+
 The composer also supports LLM task intake. Use `Ctrl-n` when you have rough input, pasted notes, or dictated rambling. The configured LLM turns that input into a sensible task title and description while preserving the useful context.
 
 Use `Tab` to move into the description field. Use `Ctrl-t` for status, `Ctrl-p` for project, and `Ctrl-r` for priority. Press `Enter` to create the task, or `Esc` to cancel.
@@ -87,6 +93,8 @@ Use the `t` prefix family for more task fields and lifecycle actions. Task actio
 Press `Enter` on a task to open its detail view. Double-clicking a task row also opens detail when mouse support is active.
 
 ![aven TUI task detail view with Markdown description and task metadata](/task-detail.webp)
+
+<p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The detail view keeps Markdown context, notes, relationships, and editable metadata together.</p>
 
 The detail view renders Markdown descriptions, notes, and task metadata. Use `j/k`, arrows, `Ctrl-d`, `Ctrl-u`, `PageDown`, `PageUp`, or the mouse wheel to scroll. Use `[` and `]` to switch tasks while staying in detail. Press `Esc`, `Enter`, or `q` to return to the list.
 
