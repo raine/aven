@@ -9,9 +9,10 @@ export default defineConfig({
       title: 'aven',
       description: 'A local-first task manager for power users and agents.',
       logo: {
-        dark: './src/assets/aven-logo-grape-violet.svg',
-        light: './src/assets/aven-logo-grape-violet-light.svg',
+        dark: './src/assets/aven-wordmark-grape-violet.svg',
+        light: './src/assets/aven-wordmark-grape-violet-light.svg',
         alt: 'Aven logo',
+        replacesTitle: true,
       },
       favicon: '/favicon.svg',
       head: [
