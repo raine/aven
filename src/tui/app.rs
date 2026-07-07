@@ -216,7 +216,7 @@ impl App {
             hovered_detail_child_task_id: None,
             navigation_history: Vec::new(),
         };
-        app.widgets.sidebar.select(app.store.sidebar_selection());
+        app.restore_sidebar_selection();
         app.widgets
             .table
             .select(Some(0).filter(|_| !app.store.tasks.is_empty()));

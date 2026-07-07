@@ -5,6 +5,22 @@ use crate::tui::navigation::{next_index, next_selectable_sidebar};
 use crate::tui::overlay::{OverlayRoute, OverlayState, PickerItem};
 
 impl App {
+    pub(super) fn restore_sidebar_selection(&mut self) {
+        self.widgets.sidebar.select(self.store.sidebar_selection());
+    }
+
+    pub(super) fn preserve_or_restore_sidebar_selection(&mut self) {
+        let selected = self.widgets.sidebar.selected().filter(|&index| {
+            self.store
+                .sidebar_entries
+                .get(index)
+                .is_some_and(|entry| entry.target.is_some())
+        });
+        self.widgets
+            .sidebar
+            .select(selected.or_else(|| self.store.sidebar_selection()));
+    }
+
     pub(super) async fn move_selection(&mut self, delta: isize) -> Result<()> {
         match self.focus {
             Focus::Tasks => {
@@ -63,16 +79,13 @@ impl App {
         if !self.sidebar_visible && self.focus == Focus::Tasks {
             self.sidebar_visible = true;
             self.focus = Focus::Sidebar;
-            self.widgets.sidebar.select(self.store.sidebar_selection());
+            self.preserve_or_restore_sidebar_selection();
             self.set_info("sidebar visible");
             return;
         }
 
         self.focus = match self.focus {
-            Focus::Sidebar => {
-                self.widgets.sidebar.select(self.store.sidebar_selection());
-                Focus::Tasks
-            }
+            Focus::Sidebar => Focus::Tasks,
             Focus::Tasks => Focus::Sidebar,
         };
     }
@@ -81,12 +94,12 @@ impl App {
         self.sidebar_visible = !self.sidebar_visible;
         if self.sidebar_visible {
             self.focus = Focus::Sidebar;
-            self.widgets.sidebar.select(self.store.sidebar_selection());
+            self.preserve_or_restore_sidebar_selection();
             self.set_info("sidebar visible");
         } else {
             self.focus = Focus::Tasks;
             self.overlay = None;
-            self.widgets.sidebar.select(self.store.sidebar_selection());
+            self.preserve_or_restore_sidebar_selection();
             self.set_info("task list expanded");
         }
     }
@@ -94,7 +107,7 @@ impl App {
     pub(super) fn move_left(&mut self) {
         self.sidebar_visible = true;
         self.focus = Focus::Sidebar;
-        self.widgets.sidebar.select(self.store.sidebar_selection());
+        self.preserve_or_restore_sidebar_selection();
         self.overlay = None;
     }
 
@@ -164,7 +177,7 @@ impl App {
         }
         self.focus = Focus::Tasks;
         self.overlay = None;
-        self.widgets.sidebar.select(self.store.sidebar_selection());
+        self.restore_sidebar_selection();
         self.prune_task_marks();
         self.widgets
             .table
@@ -200,13 +213,13 @@ impl App {
         self.detail_context = false;
         if !had_overlay && self.focus == Focus::Sidebar {
             self.focus = Focus::Tasks;
-            self.widgets.sidebar.select(self.store.sidebar_selection());
+            self.preserve_or_restore_sidebar_selection();
         }
     }
 
     pub(super) fn apply_mutation_result(&mut self, result: crate::tui::store::MutationMessage) {
         self.widgets.table.select(result.selected);
-        self.widgets.sidebar.select(self.store.sidebar_selection());
+        self.preserve_or_restore_sidebar_selection();
         self.prune_task_marks();
         self.set_success(result.message);
     }
@@ -236,7 +249,7 @@ impl App {
     }
 
     pub(super) fn restore_selection_after_mutation(&mut self) {
-        self.widgets.sidebar.select(self.store.sidebar_selection());
+        self.preserve_or_restore_sidebar_selection();
         self.prune_task_marks();
         let row_count = self.store.main_row_count();
         if row_count == 0 {

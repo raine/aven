@@ -634,6 +634,25 @@ mod keyboard_dispatch {
     }
 
     #[tokio::test]
+    async fn sidebar_selection_survives_focus_changes() {
+        let mut app = test_app().await;
+        app.focus = Focus::Tasks;
+
+        app.handle_normal_key(KeyCode::Char('h')).await.unwrap();
+        let initial = app.widgets.sidebar.selected();
+        app.handle_normal_key(KeyCode::Char('j')).await.unwrap();
+        let selected = app.widgets.sidebar.selected();
+        assert_ne!(selected, initial);
+
+        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+        assert_eq!(app.focus, Focus::Tasks);
+        app.handle_normal_key(KeyCode::Char('h')).await.unwrap();
+
+        assert_eq!(app.focus, Focus::Sidebar);
+        assert_eq!(app.widgets.sidebar.selected(), selected);
+    }
+
+    #[tokio::test]
     async fn sidebar_toggle_shortcut_expands_task_list_and_restores_sidebar_focus() {
         let mut app = test_app().await;
         app.focus = Focus::Sidebar;

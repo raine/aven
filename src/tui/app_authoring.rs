@@ -335,7 +335,7 @@ impl App {
         let current_selected = self.widgets.table.selected();
         let (message, selected) = self.store.create_task(draft, current_selected).await?;
         self.widgets.table.select(selected);
-        self.widgets.sidebar.select(self.store.sidebar_selection());
+        self.preserve_or_restore_sidebar_selection();
         self.prune_task_marks();
         if selected.is_none() {
             self.restore_selection_after_mutation();
