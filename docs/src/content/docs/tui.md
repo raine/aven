@@ -71,6 +71,8 @@ Task detail shows why a task is blocked and what it unlocks. Task actions includ
 
 Direct shortcuts cover common movement and actions:
 
+![aven TUI command palette filtering view commands](/command-palette.webp)
+
 | Shortcut         | Action                    |
 | ---------------- | ------------------------- |
 | `j`, `k`, arrows | Move selection            |
