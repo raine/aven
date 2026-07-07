@@ -120,7 +120,6 @@ impl Commands {
             Self::Server(_) => CommandMetadata::server(),
             Self::Daemon(_) => CommandMetadata::daemon(),
             Self::Tui(_) => CommandMetadata::tui(),
-            Self::Tmux(_) => CommandMetadata::cli(),
             Self::Internal(_) => CommandMetadata::cli(),
         }
     }

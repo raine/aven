@@ -51,7 +51,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
     },
     HelpSection {
         heading: "INTERACTIVE",
-        commands: &["tui", "tmux"],
+        commands: &["tui"],
     },
     HelpSection {
         heading: "AGENTS",
@@ -270,8 +270,6 @@ pub(crate) enum Commands {
     Server(ServerArgs),
     /// Sync with a remote server
     Sync(SyncArgs),
-    /// Spawn tmux task-entry popups
-    Tmux(TmuxCommand),
     /// Open the terminal UI
     Tui(TuiArgs),
     #[command(hide = true)]
@@ -317,12 +315,6 @@ pub(crate) struct TuiArgs {
 }
 
 #[derive(Args)]
-pub(crate) struct TmuxCommand {
-    #[command(subcommand)]
-    pub(crate) command: TmuxSubcommand,
-}
-
-#[derive(Args)]
 pub(crate) struct InternalCommand {
     #[command(subcommand)]
     pub(crate) command: InternalSubcommand,
@@ -344,25 +336,6 @@ pub(crate) struct InternalNaturalAddArgs {
     pub(crate) input: String,
     #[arg(long, hide = true)]
     pub(crate) tui_undo: bool,
-}
-
-#[derive(Subcommand)]
-pub(crate) enum TmuxSubcommand {
-    AddTaskPopup(TmuxAddTaskPopupArgs),
-}
-
-#[derive(Args)]
-pub(crate) struct TmuxAddTaskPopupArgs {
-    #[arg(short = 'p', long, num_args = 0..=1, default_missing_value = "")]
-    pub(crate) project: Option<String>,
-    #[arg(long, default_value = "80%")]
-    pub(crate) width: String,
-    #[arg(long, default_value = "80%")]
-    pub(crate) height: String,
-    #[arg(long, hide = true)]
-    pub(crate) print_binding: bool,
-    #[arg(long)]
-    pub(crate) natural: bool,
 }
 
 #[derive(Args)]

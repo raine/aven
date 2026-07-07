@@ -37,7 +37,7 @@ use crate::cli::{
     AddArgs, BulkUpdateArgs, DepCommand, DepSubcommand, EpicCommand, EpicSubcommand,
     InternalNaturalAddArgs, LabelCommand, LabelSubcommand, ListArgs, NoteArgs, NoteDeleteArgs,
     PrimeArgs, RefArgs, SearchArgs, ShowArgs, TaskSearchArgs, TextCommand, TextSubcommand,
-    TmuxAddTaskPopupArgs, UpdateArgs,
+    UpdateArgs,
 };
 use crate::config::{self as app_config, AppConfig};
 use crate::db::{conflict_exists, get_meta};
@@ -190,35 +190,6 @@ pub(crate) async fn cmd_internal_natural_add(
         crate::daemon::wake(addr);
     }
     Ok(())
-}
-
-pub(crate) fn cmd_tmux_add_task_popup(args: TmuxAddTaskPopupArgs) -> Result<()> {
-    let mut aven_args = vec![
-        "aven".to_string(),
-        "tui".to_string(),
-        "--add-task-only".to_string(),
-    ];
-    if args.natural {
-        aven_args.push("--natural".to_string());
-    }
-    if let Some(project) = args.project {
-        aven_args.push("--project".to_string());
-        if !project.is_empty() {
-            aven_args.push(project);
-        }
-    }
-    let command = format!(
-        "tmux display-popup -E -d '#{{pane_current_path}}' -w {} -h {} {}",
-        shell_quote(&args.width),
-        shell_quote(&args.height),
-        shell_quote(&aven_args.join(" ")),
-    );
-    println!("bind-key A {command}");
-    Ok(())
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 pub(crate) async fn cmd_show(conn: &mut SqliteConnection, args: ShowArgs) -> Result<()> {

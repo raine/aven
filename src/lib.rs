@@ -37,16 +37,13 @@ mod test_support;
 
 pub use cli::Cli;
 
-use cli::{
-    BackupSubcommand, Commands, DaemonSubcommand, InternalSubcommand, SkillSubcommand,
-    TmuxSubcommand,
-};
+use cli::{BackupSubcommand, Commands, DaemonSubcommand, InternalSubcommand, SkillSubcommand};
 use commands::{
     cmd_add, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
     cmd_delete_restore, cmd_dep, cmd_doctor, cmd_epic, cmd_export, cmd_import,
     cmd_internal_natural_add, cmd_label, cmd_list, cmd_note, cmd_note_delete, cmd_prime,
-    cmd_project, cmd_search, cmd_show, cmd_skill, cmd_skill_install, cmd_text,
-    cmd_tmux_add_task_popup, cmd_update, cmd_workspace,
+    cmd_project, cmd_search, cmd_show, cmd_skill, cmd_skill_install, cmd_text, cmd_update,
+    cmd_workspace,
 };
 use db::open_db;
 use sync::{run_server, sync_client};
@@ -109,9 +106,6 @@ pub async fn run_cli() -> Result<()> {
                 }),
             }
         }
-        Commands::Tmux(args) => match args.command {
-            TmuxSubcommand::AddTaskPopup(args) => cmd_tmux_add_task_popup(args),
-        },
         command => {
             let db_flag_set = cli.db.is_some();
             let workspace = cli.workspace;
@@ -192,7 +186,6 @@ pub async fn run_cli() -> Result<()> {
                 | Commands::Daemon(_)
                 | Commands::Server(_)
                 | Commands::Internal(_)
-                | Commands::Tmux(_)
                 | Commands::Skill(_) => unreachable!(),
             };
             if result.is_ok()

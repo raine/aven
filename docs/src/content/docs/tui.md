@@ -90,8 +90,6 @@ For example, this binds prefix + `t` to a 120 by 30 popup in the current pane's 
 bind t display-popup -E -d '#{pane_current_path}' -w 120 -h 30 'aven tui --add-task-only'
 ```
 
-`aven tmux add-task-popup` prints a ready-made binding that you can copy into your tmux config.
-
 ## Triage and edit tasks
 
 Use direct shortcuts for common task changes:
