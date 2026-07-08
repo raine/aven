@@ -24,6 +24,8 @@ pub(crate) mod op_type {
     pub(crate) const LABEL_DELETE: &str = "label_delete";
     pub(crate) const CREATE_WORKSPACE: &str = "create_workspace";
     pub(crate) const SET_WORKSPACE_FIELD: &str = "set_workspace_field";
+    pub(crate) const ATTACHMENT_ADD: &str = "attachment_add";
+    pub(crate) const ATTACHMENT_DELETE: &str = "attachment_delete";
 }
 
 pub(crate) enum ChangeEntity {

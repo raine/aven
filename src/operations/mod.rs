@@ -1,3 +1,4 @@
+mod attachments;
 mod config;
 mod conflicts;
 mod dependencies;
@@ -5,6 +6,10 @@ mod epics;
 mod projects;
 mod tasks;
 
+pub(crate) use attachments::{
+    AttachmentAddInput, add_task_attachment, attachment_by_id, attachments_by_task,
+    delete_task_attachment,
+};
 pub(crate) use config::{init_config, show_config, show_config_paths};
 pub(crate) use conflicts::{
     ConflictDetail, ConflictListItem, conflict_variant_value, list_conflicts, resolve_conflict,

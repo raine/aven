@@ -1,3 +1,4 @@
+mod attachments;
 mod bulk_update;
 mod config;
 mod conflicts;
@@ -16,6 +17,7 @@ mod text;
 mod validation;
 mod workspaces;
 
+pub(crate) use self::attachments::cmd_attachment;
 pub(crate) use self::bulk_update::cmd_bulk_update;
 pub(crate) use self::config::cmd_config;
 pub(crate) use self::conflicts::cmd_conflict;

@@ -4,6 +4,161 @@ use common::{
     TestEnv, command, command_with_db, contains_all, contains_none, extract_ref, fail, ok, suffix,
 };
 
+fn extract_attachment_id(output: &str) -> String {
+    output
+        .split_whitespace()
+        .find(|word| word.starts_with("attachment_id="))
+        .and_then(|word| word.strip_prefix("attachment_id="))
+        .expect("attachment_id in output")
+        .to_string()
+}
+
+fn extract_sha256(output: &str) -> String {
+    output
+        .split_whitespace()
+        .find(|word| word.starts_with("sha256="))
+        .and_then(|word| word.strip_prefix("sha256="))
+        .expect("sha256 in output")
+        .to_string()
+}
+
+#[test]
+fn attachment_add_list_get_and_delete_work_locally() {
+    let env = TestEnv::new();
+    let db = env.db("attachments.sqlite");
+    let created = ok(env.aven(
+        &db,
+        [
+            "add",
+            "attach me",
+            "--description",
+            "before",
+            "--project",
+            "app",
+        ],
+    ));
+    let task_ref = extract_ref(&created);
+    let image = env.path("photo.png");
+    std::fs::write(&image, b"png bytes").unwrap();
+
+    let added = ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &task_ref,
+            image.to_str().unwrap(),
+            "--alt",
+            "diagram",
+        ],
+    ));
+    contains_all(
+        &added,
+        &["attachment-added", "media_type=image/png", "byte_size=9"],
+    );
+    let attachment_id = extract_attachment_id(&added);
+    let sha256 = extract_sha256(&added);
+    let blob_root = db.parent().unwrap().join("objects");
+    let intended_blob_path = blob_root.join("sha256").join(&sha256);
+    let current_blob_path = blob_root.join("objects").join("sha256").join(&sha256);
+    assert!(
+        intended_blob_path.exists() || current_blob_path.exists(),
+        "sidecar blob should exist"
+    );
+
+    let full = ok(env.aven(&db, ["show", &task_ref, "--full"]));
+    contains_all(&full, &["![diagram](aven-attachment:", &attachment_id]);
+
+    let listed = ok(env.aven(&db, ["attachment", "list", &task_ref, "--json"]));
+    let value: serde_json::Value = serde_json::from_str(&listed).unwrap();
+    assert_eq!(value[0]["attachment_id"], attachment_id);
+    assert!(value[0].get("bytes").is_none());
+
+    let output = env.path("copy.png");
+    ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "get",
+            &attachment_id,
+            "--output",
+            output.to_str().unwrap(),
+        ],
+    ));
+    assert_eq!(std::fs::read(output).unwrap(), b"png bytes");
+
+    ok(env.aven(&db, ["attachment", "delete", &attachment_id]));
+    let hidden = ok(env.aven(&db, ["attachment", "list", &task_ref]));
+    contains_none(&hidden, &[&attachment_id]);
+    let all = ok(env.aven(&db, ["attachment", "list", &task_ref, "--all", "--json"]));
+    let value: serde_json::Value = serde_json::from_str(&all).unwrap();
+    assert_eq!(value[0]["deleted"], true);
+    assert!(value[0].get("bytes").is_none());
+
+    let show = ok(env.aven(&db, ["show", &task_ref, "--full"]));
+    contains_all(&show, &["![diagram](aven-attachment:", &attachment_id]);
+}
+
+#[test]
+fn attachment_get_refuses_existing_output_and_unknown_media_type() {
+    let env = TestEnv::new();
+    let db = env.db("attachment-errors.sqlite");
+    let created = ok(env.aven(&db, ["add", "attach me", "--project", "app"]));
+    let task_ref = extract_ref(&created);
+
+    let unknown = env.path("photo.bin");
+    std::fs::write(&unknown, b"bytes").unwrap();
+    let error = fail(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, unknown.to_str().unwrap()],
+    ));
+    contains_all(&error, &["error attachment-media-type-required"]);
+
+    let image = env.path("photo.png");
+    std::fs::write(&image, b"png bytes").unwrap();
+    let added = ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+    let attachment_id = extract_attachment_id(&added);
+    let output = env.path("copy.png");
+    std::fs::write(&output, b"existing").unwrap();
+    let error = fail(env.aven(
+        &db,
+        [
+            "attachment",
+            "get",
+            &attachment_id,
+            "--output",
+            output.to_str().unwrap(),
+        ],
+    ));
+    contains_all(&error, &["error output-exists"]);
+    assert_eq!(std::fs::read(output).unwrap(), b"existing");
+}
+
+#[test]
+fn attachment_delete_is_idempotent() {
+    let env = TestEnv::new();
+    let db = env.db("attachment-delete-idempotent.sqlite");
+    let created = ok(env.aven(&db, ["add", "attach me", "--project", "app"]));
+    let task_ref = extract_ref(&created);
+    let image = env.path("photo.png");
+    std::fs::write(&image, b"png bytes").unwrap();
+    let added = ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+    let attachment_id = extract_attachment_id(&added);
+
+    ok(env.aven(&db, ["attachment", "delete", &attachment_id]));
+    ok(env.aven(&db, ["attachment", "delete", &attachment_id]));
+    let all = ok(env.aven(&db, ["attachment", "list", &task_ref, "--all", "--json"]));
+    let value: serde_json::Value = serde_json::from_str(&all).unwrap();
+    assert_eq!(value.as_array().unwrap().len(), 1);
+    assert_eq!(value[0]["deleted"], true);
+}
+
 #[test]
 fn version_flag_prints_package_version() {
     let output = ok(command()

@@ -63,6 +63,10 @@ const HELP_SECTIONS: &[HelpSection] = &[
         commands: &["config", "doctor", "update"],
     },
     HelpSection {
+        heading: "ATTACHMENTS",
+        commands: &["attachment"],
+    },
+    HelpSection {
         heading: "DATA SAFETY",
         commands: &["backup", "export", "import"],
     },
@@ -267,6 +271,8 @@ pub(crate) enum Commands {
     Skill(SkillCommand),
     /// Diagnose configuration and workspace state
     Doctor(DoctorArgs),
+    /// Manage task attachments
+    Attachment(AttachmentCommand),
     /// Run or manage the background daemon
     Daemon(DaemonArgs),
     /// Run the sync server
@@ -768,6 +774,87 @@ pub(crate) enum ConflictSubcommand {
 pub(crate) struct ConfigCommand {
     #[command(subcommand)]
     pub(crate) command: ConfigSubcommand,
+}
+
+#[derive(Args)]
+pub(crate) struct AttachmentCommand {
+    #[command(subcommand)]
+    pub(crate) command: AttachmentSubcommand,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum AttachmentSubcommand {
+    /// Attach a file to a task
+    Add(AttachmentAddArgs),
+    /// List attachments for a task
+    List(AttachmentListArgs),
+    /// Get attachment metadata and optionally write bytes
+    Get(AttachmentGetArgs),
+    /// Delete (tombstone) an attachment
+    Delete(AttachmentDeleteArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct AttachmentAddArgs {
+    pub(crate) task_ref: String,
+    pub(crate) path: PathBuf,
+    /// Alternative text for the image reference
+    #[arg(long)]
+    pub(crate) alt: Option<String>,
+    /// Override the filename stored in metadata
+    #[arg(long)]
+    pub(crate) filename: Option<String>,
+    /// Media type (default: inferred from extension)
+    #[arg(long = "media-type")]
+    pub(crate) media_type: Option<String>,
+    /// Image width in pixels
+    #[arg(long)]
+    pub(crate) width: Option<i64>,
+    /// Image height in pixels
+    #[arg(long)]
+    pub(crate) height: Option<i64>,
+    /// Print machine-readable JSON
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct AttachmentListArgs {
+    pub(crate) task_ref: String,
+    /// Include deleted (tombstoned) attachments
+    #[arg(long)]
+    pub(crate) all: bool,
+    /// Print machine-readable JSON
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct AttachmentGetArgs {
+    pub(crate) attachment_id: String,
+    /// Write bytes to this path
+    #[arg(long)]
+    pub(crate) output: Option<PathBuf>,
+    /// Include deleted attachments
+    #[arg(long)]
+    pub(crate) all: bool,
+    /// Print machine-readable JSON
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct AttachmentDeleteArgs {
+    pub(crate) attachment_id: String,
+    /// Print machine-readable JSON
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+impl AttachmentSubcommand {
+    pub(crate) fn wakes_daemon(&self) -> bool {
+        matches!(self, Self::Add(_) | Self::Delete(_))
+    }
 }
 
 #[derive(Args)]

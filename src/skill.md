@@ -63,6 +63,10 @@ aven update
 aven project list --search app
 aven label list --search bug
 aven note APP-7KQ9 "durable handoff context"
+aven attachment add APP-7KQ9 ./diagram.png --alt "architecture diagram"
+aven attachment list APP-7KQ9
+aven attachment get 7KQ9A1X4MV2P8D6R --output diagram.png
+aven attachment delete 7KQ9A1X4MV2P8D6R
 aven delete APP-7KQ9
 aven restore APP-7KQ9
 ```
@@ -83,6 +87,13 @@ aven restore APP-7KQ9
   script, MCP server, bot, web UI, or other structured integration.
 - After `aven add`, capture and report the printed ref so future agents can use
   it.
+- Attachment commands keep bytes outside text and JSON output. Use
+  `attachment add <ref> <path>` to store image bytes, `attachment list <ref>` or
+  `attachment get <attachment-id>` to inspect metadata, and
+  `attachment get <attachment-id> --output <path>` to write bytes to a file.
+- Task descriptions remain scalar Markdown text. Attachment adds append an
+  `aven-attachment:<id>` image reference, and attachment deletes tombstone
+  metadata while leaving description text intact.
 - When creating follow-up tasks from a discussion, investigation, review, or
   plan, include enough detail in the task description for the task to stand
   alone. Capture rationale, scope, acceptance criteria, implementation notes,
@@ -137,7 +148,9 @@ aven restore APP-7KQ9
 ## Structured output
 
 - Human-readable output is the default and preferred for agent use.
-- `--json` is available on `context`, `search`, `list`, `show`, `dep list`,
+- `--json` is available on `context`, `search`, `list`, `show`,
+  `attachment list`, `attachment get`, `attachment add`, `attachment delete`,
+  `dep list`,
   `epic list`, `project list`, `label list`, `conflict list`, `conflict show`,
   `prime`, and `doctor`.
 - JSON task objects include `available_at`, `due_on`, `is_epic`, `epic_parent`,
