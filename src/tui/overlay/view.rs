@@ -70,6 +70,7 @@ pub(crate) struct AddTaskView {
     pub(crate) project: String,
     pub(crate) status: String,
     pub(crate) priority: String,
+    pub(crate) labels: Vec<String>,
     pub(crate) status_prefix_active: bool,
     pub(crate) priority_prefix_active: bool,
 }
@@ -200,6 +201,7 @@ impl From<&OverlayState> for OverlayView {
                 project: state.project.clone(),
                 status: state.status.clone(),
                 priority: state.priority.clone(),
+                labels: state.labels.clone(),
                 status_prefix_active: false,
                 priority_prefix_active: false,
             }),

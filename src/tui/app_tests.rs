@@ -111,6 +111,10 @@ fn ctrl_r() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)
 }
 
+fn ctrl_l() -> KeyEvent {
+    KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)
+}
+
 fn ctrl_t() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)
 }
@@ -2770,6 +2774,54 @@ mod authoring {
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].task.title, "Fix release");
         assert_eq!(app.store.tasks[selected].task.priority, TaskPriority::High);
+    }
+
+    #[tokio::test]
+    async fn add_task_labels_picker_sets_created_task_labels() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+
+        app.handle_overlay_key(ctrl_l()).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TagCombobox(state))
+                if state.route == OverlayRoute::AddTaskTitleLabels
+        ));
+        type_chars(&mut app, "feature").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.title.as_str() == "Write docs"
+                    && state.labels == vec!["feature".to_string()]
+        ));
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        let selected = app.widgets.table.selected().unwrap();
+        let task = &app.store.tasks[selected];
+        assert_eq!(task.task.title, "Write docs");
+        assert_eq!(task.labels, vec!["feature".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn add_task_labels_escape_returns_to_add_task_only_dialog() {
+        let mut app = test_app().await;
+        app.add_task_only = true;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(ctrl_l()).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(!app.should_quit);
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state)) if state.title.as_str() == "Write docs"
+        ));
     }
 
     #[tokio::test]

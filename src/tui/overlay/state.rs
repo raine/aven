@@ -328,6 +328,7 @@ pub(crate) enum OverlayRoute {
     AddTaskNatural,
     AddTaskTitleProject,
     AddTaskTitlePriority,
+    AddTaskTitleLabels,
     AddNote,
     AddProject,
     AddLabel,
@@ -380,6 +381,7 @@ pub(crate) enum MultilineSubmitRoute {
 pub(crate) enum PickerSubmitRoute {
     AddTaskTitleProject,
     AddTaskTitlePriority,
+    AddTaskTitleLabels,
     EditStatus,
     EditProject,
     EditPriority,
@@ -502,6 +504,10 @@ impl OverlayRoute {
             },
             Self::AddTaskTitlePriority => OverlayRouteDescriptor {
                 picker_submit: Some(PickerSubmitRoute::AddTaskTitlePriority),
+                ..OverlayRouteDescriptor::default()
+            },
+            Self::AddTaskTitleLabels => OverlayRouteDescriptor {
+                picker_submit: Some(PickerSubmitRoute::AddTaskTitleLabels),
                 ..OverlayRouteDescriptor::default()
             },
             Self::AddNote => OverlayRouteDescriptor {
@@ -645,13 +651,14 @@ impl OverlayRoute {
 
 #[cfg(test)]
 impl OverlayRoute {
-    pub(crate) const ALL: [Self; 32] = [
+    pub(crate) const ALL: [Self; 33] = [
         Self::MessageOnly,
         Self::AddTaskTitle,
         Self::AddTaskDescription,
         Self::AddTaskNatural,
         Self::AddTaskTitleProject,
         Self::AddTaskTitlePriority,
+        Self::AddTaskTitleLabels,
         Self::AddNote,
         Self::AddProject,
         Self::AddLabel,
@@ -703,6 +710,7 @@ pub(crate) struct AddTaskState {
     pub(crate) project: String,
     pub(crate) status: String,
     pub(crate) priority: String,
+    pub(crate) labels: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

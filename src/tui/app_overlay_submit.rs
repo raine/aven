@@ -129,6 +129,9 @@ impl App {
                     self.begin_add_task_step();
                 }
             }
+            Some(PickerSubmitRoute::AddTaskTitleLabels) => {
+                self.submit_add_task_title_labels(values).await?;
+            }
             Some(PickerSubmitRoute::EditStatus) => match values.first() {
                 Some(status) => self.submit_edit_status(status.clone()).await?,
                 None => {

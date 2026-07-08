@@ -29,6 +29,7 @@ pub(in crate::tui::ui) fn render_add_task(frame: &mut Frame, state: &AddTaskView
             &state.project,
             &state.status,
             &state.priority,
+            &state.labels,
             width,
         ))
         .render_block(frame);
@@ -42,6 +43,7 @@ pub(in crate::tui::ui) fn render_add_task_full_frame(frame: &mut Frame, state: &
             &state.project,
             &state.status,
             &state.priority,
+            &state.labels,
             area.width,
         ))
         .render_block_at(frame, area);
@@ -296,7 +298,8 @@ pub(in crate::tui::ui) fn add_task_hint_line(
             ("^N", "LLM"),
             ("^T", "status"),
             ("^P", "project"),
-            ("^R", "priority"),
+            ("^R", "prio"),
+            ("^L", "labels"),
             ("Esc", "cancel"),
         ]),
         AddTaskStep::Description => dialog_hint_line(&[
@@ -306,6 +309,7 @@ pub(in crate::tui::ui) fn add_task_hint_line(
             ("Tab", "title"),
             ("^P", "project"),
             ("^R", "priority"),
+            ("^L", "labels"),
             ("Esc", "cancel"),
         ]),
     }
@@ -315,10 +319,13 @@ pub(in crate::tui::ui) fn add_task_metadata_title(
     project: &str,
     status: &str,
     priority: &str,
+    labels: &[String],
     width: u16,
 ) -> Line<'static> {
     let status_style = theme::status_style(status);
     let priority_style = theme::priority_style(priority);
+    let labels = labels_display(labels);
+    let label_style = Style::new().fg(Color::Rgb(133, 222, 255));
     if width < 60 {
         return Line::from(vec![
             Span::styled(" status: ", Style::new().fg(FG_MUTED)),
@@ -328,7 +335,7 @@ pub(in crate::tui::ui) fn add_task_metadata_title(
             Span::styled(truncate_chars(priority, 6), priority_style),
         ]);
     }
-    let value_width = (width as usize).saturating_sub(34).max(6) / 3;
+    let value_width = (width as usize).saturating_sub(44).max(6) / 4;
     Line::from(vec![
         Span::styled(" project: ", Style::new().fg(FG_MUTED)),
         Span::styled(
@@ -341,5 +348,16 @@ pub(in crate::tui::ui) fn add_task_metadata_title(
         Span::styled(" · ", Style::new().fg(FG_DIM)),
         Span::styled("prio: ", Style::new().fg(FG_MUTED)),
         Span::styled(truncate_chars(priority, value_width), priority_style),
+        Span::styled(" · ", Style::new().fg(FG_DIM)),
+        Span::styled("labels: ", Style::new().fg(FG_MUTED)),
+        Span::styled(truncate_chars(&labels, value_width), label_style),
     ])
+}
+
+fn labels_display(labels: &[String]) -> String {
+    if labels.is_empty() {
+        "none".to_string()
+    } else {
+        labels.join(",")
+    }
 }

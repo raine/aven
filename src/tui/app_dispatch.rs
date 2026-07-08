@@ -681,6 +681,9 @@ impl App {
                     state.route,
                     OverlayRoute::AddTaskTitleProject | OverlayRoute::AddTaskTitlePriority
                 )
+        ) || matches!(
+            &overlay,
+            OverlayState::TagCombobox(state) if state.route == OverlayRoute::AddTaskTitleLabels
         );
         let outcome =
             crate::tui::overlay::handle_generic_overlay_mouse(overlay, mouse, terminal_size);
@@ -812,6 +815,12 @@ impl App {
                 }
                 return Ok(());
             }
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('l') {
+                if self.capture_add_task_state(state) {
+                    self.begin_add_task_title_labels();
+                }
+                return Ok(());
+            }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
                 self.pending_shortcut.begin_add_task_priority_prefix();
                 self.overlay = Some(overlay);
@@ -850,6 +859,9 @@ impl App {
                     state.route,
                     OverlayRoute::AddTaskTitleProject | OverlayRoute::AddTaskTitlePriority
                 )
+        ) || matches!(
+            &overlay,
+            OverlayState::TagCombobox(state) if state.route == OverlayRoute::AddTaskTitleLabels
         );
         let outcome = crate::tui::overlay::handle_generic_overlay_key(key, overlay, scroll_cap);
         self.apply_generic_overlay_outcome(

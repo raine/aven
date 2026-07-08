@@ -1,9 +1,11 @@
 use anyhow::Result;
 
+use crate::labels::normalize_label;
 use crate::operations::TaskDraft;
 use crate::tui::app::{App, NaturalRetry, Notification, PendingTaskIntake, ReadyTaskIntake};
 use crate::tui::authoring::{
-    ADD_NOTE_TITLE, ADD_TASK_TITLE_PROJECT_TITLE, AddNoteSubmit, AddTaskStep, AddTaskTitleSubmit,
+    ADD_NOTE_TITLE, ADD_TASK_LABELS_TITLE, ADD_TASK_TITLE_PROJECT_TITLE, AddNoteSubmit,
+    AddTaskStep, AddTaskTitleSubmit,
 };
 use crate::tui::natural_add_runtime::{spawn_add_task_only_natural, task_intake_log_path};
 use crate::tui::overlay::{
@@ -52,6 +54,7 @@ impl App {
             project: context.project,
             status: context.status,
             priority: context.priority,
+            labels: context.labels,
         }));
     }
 
@@ -160,6 +163,35 @@ impl App {
             items,
             false,
         );
+    }
+
+    pub(super) fn begin_add_task_title_labels(&mut self) {
+        let Some(context) = self.authoring.add_task_context() else {
+            return;
+        };
+        self.overlay = Some(OverlayState::tag_combobox(
+            OverlayRoute::AddTaskTitleLabels,
+            ADD_TASK_LABELS_TITLE,
+            self.store.labels.clone(),
+            context.labels,
+        ));
+    }
+
+    pub(super) async fn submit_add_task_title_labels(&mut self, labels: Vec<String>) -> Result<()> {
+        for label in &labels {
+            let label = normalize_label(label);
+            if !self.store.labels.contains(&label)
+                && let Err(error) = self.store.create_label(label).await
+            {
+                self.set_error(format!("{error:#}"));
+                self.begin_add_task_title_labels();
+                return Ok(());
+            }
+        }
+        if self.authoring.apply_add_task_labels(labels) {
+            self.begin_add_task_step();
+        }
+        Ok(())
     }
 
     pub(super) fn begin_add_task_natural(&mut self) {

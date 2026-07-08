@@ -2,6 +2,7 @@ use crate::operations::TaskDraft;
 
 pub(crate) const ADD_NOTE_TITLE: &str = "Add note";
 pub(crate) const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: project";
+pub(crate) const ADD_TASK_LABELS_TITLE: &str = "Add task: labels";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AddTaskStep {
@@ -17,6 +18,7 @@ struct AddTaskDraftState {
     inferred_project: Option<String>,
     status: String,
     priority: String,
+    labels: Vec<String>,
     step: AddTaskStep,
 }
 
@@ -29,6 +31,7 @@ impl Default for AddTaskDraftState {
             inferred_project: None,
             status: "inbox".to_string(),
             priority: "none".to_string(),
+            labels: Vec::new(),
             step: AddTaskStep::Title,
         }
     }
@@ -57,6 +60,7 @@ pub(crate) struct AddTaskContext {
     pub(crate) project: String,
     pub(crate) status: String,
     pub(crate) priority: String,
+    pub(crate) labels: Vec<String>,
 }
 
 pub(crate) enum AddTaskTitleSubmit {
@@ -123,6 +127,7 @@ impl AuthoringState {
             project: project.to_string(),
             status: draft.status.clone(),
             priority: draft.priority.clone(),
+            labels: draft.labels.clone(),
         })
     }
 
@@ -178,6 +183,14 @@ impl AuthoringState {
         true
     }
 
+    pub(crate) fn apply_add_task_labels(&mut self, values: Vec<String>) -> bool {
+        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
+            return false;
+        };
+        draft.labels = values;
+        true
+    }
+
     pub(crate) fn apply_add_task_priority_value(&mut self, priority: &str) -> Option<String> {
         let AuthoringFlow::AddTask(draft) = self.flow.as_mut()? else {
             return None;
@@ -198,6 +211,7 @@ impl AuthoringState {
         draft.project = task.project;
         draft.status = task.status;
         draft.priority = task.priority;
+        draft.labels = task.labels;
         draft.step = AddTaskStep::Title;
         true
     }
@@ -219,7 +233,7 @@ impl AuthoringState {
             project: draft.project,
             status: draft.status,
             priority: draft.priority,
-            labels: Vec::new(),
+            labels: draft.labels,
             is_epic: false,
         })
     }
@@ -326,6 +340,23 @@ mod tests {
             state.submit_add_task(),
             AddTaskTitleSubmit::Create(draft)
                 if draft.description == "Details\nfor handoff"
+        ));
+    }
+
+    #[test]
+    fn add_task_labels_are_stored_in_created_draft() {
+        let mut state = AuthoringState::default();
+        state.begin_add_task(None, None);
+        assert!(state.capture_add_task_fields(
+            "Write docs".to_string(),
+            String::new(),
+            AddTaskStep::Title,
+        ));
+        assert!(state.apply_add_task_labels(vec!["feature".to_string(), "ui".to_string()]));
+        assert!(matches!(
+            state.submit_add_task(),
+            AddTaskTitleSubmit::Create(draft)
+                if draft.labels == vec!["feature".to_string(), "ui".to_string()]
         ));
     }
 

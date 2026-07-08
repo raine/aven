@@ -132,6 +132,7 @@ fn add_task_view() -> AddTaskView {
         project: "aven".to_string(),
         status: "inbox".to_string(),
         priority: "none".to_string(),
+        labels: Vec::new(),
         status_prefix_active: false,
         priority_prefix_active: false,
     }
@@ -484,13 +485,15 @@ mod add_task_overlay {
         assert!(rendered.contains("project: aven"));
         assert!(rendered.contains("status: inbox"));
         assert!(rendered.contains("prio: high"));
+        assert!(rendered.contains("labels: none"));
         assert!(rendered.contains("Title"));
         assert!(rendered.contains("Description"));
         assert!(rendered.contains("ship dialogs"));
         assert!(rendered.contains("Optional details, links, or handoff context..."));
         assert!(rendered.contains("Tab description"));
         assert!(rendered.contains("^P project"));
-        assert!(rendered.contains("^R priority"));
+        assert!(rendered.contains("^R prio"));
+        assert!(rendered.contains("^L labels"));
     }
 
     #[test]
@@ -610,7 +613,7 @@ mod add_task_overlay {
             styled_key_contents(add_task_hint_line(AddTaskStep::Title, false, false));
         assert_eq!(
             add_task_keys,
-            vec!["Enter", "Tab", "^N", "^T", "^P", "^R", "Esc"]
+            vec!["Enter", "Tab", "^N", "^T", "^P", "^R", "^L", "Esc"]
         );
 
         let multiline_keys = styled_key_contents(multiline_hint_line());
@@ -620,7 +623,7 @@ mod add_task_overlay {
             styled_key_contents(add_task_hint_line(AddTaskStep::Description, false, false));
         assert_eq!(
             add_task_description_keys,
-            vec!["^S", "^N", "^T", "Tab", "^P", "^R", "Esc"]
+            vec!["^S", "^N", "^T", "Tab", "^P", "^R", "^L", "Esc"]
         );
 
         let add_task_description_editor_keys =
@@ -690,11 +693,18 @@ mod add_task_overlay {
 
     #[test]
     fn add_task_metadata_title_labels_values() {
-        let line = add_task_metadata_title("aven", "todo", "none", 60);
+        let line = add_task_metadata_title(
+            "aven",
+            "todo",
+            "none",
+            &["feature".to_string(), "ui".to_string()],
+            120,
+        );
         let rendered = line.to_string();
         assert!(rendered.contains("project: aven"));
         assert!(rendered.contains("status: todo"));
         assert!(rendered.contains("prio: none"));
+        assert!(rendered.contains("labels: feature,ui"));
         assert!(rendered.contains(" · "));
         assert!(!rendered.contains("Tab"));
         assert!(!rendered.contains("^P"));
