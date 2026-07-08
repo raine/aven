@@ -91,18 +91,24 @@ aven restore APP-7KQ9
   `attachment add <ref> <path>` to store image bytes, `attachment list <ref>` or
   `attachment get <attachment-id>` to inspect metadata, and
   `attachment get <attachment-id> --output <path>` to write bytes to a file.
-  File output requires a local available blob.
+  File output requires a local available blob and refuses to overwrite an
+  existing output path. `attachment add` accepts `--media-type`, `--filename`,
+  `--alt`, `--width`, and `--height`; extension inference covers png, jpg,
+  jpeg, gif, and webp. Local add and delete operations require sync to be
+  disabled in config.
 - Task detail read surfaces include attachment metadata and `has_blob` without
   embedding bytes. The TUI renders `aven-attachment:<id>` Markdown image refs as
   text placeholders for present, pending download, deleted, or missing metadata
-  states.
+  states. Search matches attachment filename and alt text, not hashes, sidecar
+  paths, bytes, or raw attachment refs.
 - `aven backup` writes one archive containing SQLite data and local attachment
   objects. `aven backup restore <path> --yes` restores that archive and keeps a
   SQLite safety copy. `aven export` writes attachment metadata and blob
   inventory without bytes, and `aven import --yes <path>` imports that metadata
   with blob inventory marked unavailable.
 - `aven doctor --integrity` checks SQLite relationships and attachment sidecar
-  consistency, including missing objects and orphan objects.
+  consistency, including missing objects, dangling metadata, unsupported media
+  types, and orphan objects.
 - Task descriptions remain scalar Markdown text. Attachment adds append an
   `aven-attachment:<id>` image reference, and attachment deletes tombstone
   metadata while leaving description text intact.
@@ -180,7 +186,11 @@ aven daemon
 aven daemon restart
 ```
 
-- Sync output reports pushed and pulled counts, a cursor, and completion state.
+- Sync output reports pushed and pulled counts, attachment blob upload and
+  download counts, a cursor, and completion state. Blob counts are separate from
+  metadata change counts.
+- Sync transfers attachment bytes through authenticated blob endpoints and keeps
+  bytes out of `/sync` JSON payloads.
 - `aven daemon restart` restarts the macOS LaunchAgent service.
 
 ## Long input and secrets

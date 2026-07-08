@@ -7,14 +7,15 @@
 | Layer | Owns | Start here | Rules |
 | --- | --- | --- | --- |
 | CLI entry and dispatch | argument parsing, command routing, config load, database open, daemon wake dispatch, coding-agent skill installation | `src/main.rs`, `src/lib.rs`, `src/cli.rs`, `src/commands.rs`, `src/commands/tasks.rs`, `src/commands/bulk_update.rs`, `src/commands/relations.rs`, `src/commands/doctor.rs`, `src/commands/context.rs`, `src/commands/prime.rs`, `src/commands/skill.rs` | `src/commands.rs` is the module and re-export facade. Command-family modules own command orchestration and command-local formatting. Business writes belong in operations or mutation helpers. |
-| Write model | transactional task, project, label, conflict, config, and workspace changes | `src/operations/`, `src/mutation.rs`, `src/task_fields.rs` | Synced scalar task writes must update tasks, `changes`, and `field_versions` together. |
-| Read model | task lists, task details, task search, project lists, sidebar counts, attachment metadata, filters, sorting, refs, and enrichment | `src/query.rs`, `src/query/`, `src/query/details.rs`, `src/task_enrichment.rs`, `src/refs.rs`, `src/queue.rs` | Use the task-detail model for enriched single-task reads. Keep list and search reads batch-oriented, and avoid per-row queries on list paths. Keep retrieval-style task search separate from scoped list filters. |
+| Write model | transactional task, project, label, conflict, config, and workspace changes | `src/operations/`, `src/mutation.rs`, `src/task_fields.rs` | Synced scalar task writes must update tasks, `changes`, and `field_versions` together. Attachment collection writes use operation-log entries and do not participate in scalar field versions. |
+| Read model | task lists, task details, task search, project lists, sidebar counts, attachment metadata, filters, sorting, refs, and enrichment | `src/query.rs`, `src/query/`, `src/query/details.rs`, `src/task_enrichment.rs`, `src/refs.rs`, `src/queue.rs` | Use the task-detail model for enriched single-task reads. Keep list and search reads batch-oriented, and avoid per-row queries on list paths. Keep retrieval-style task search separate from scoped list filters. Attachment search covers filename and alt text, not bytes, hashes, paths, or raw refs. |
 | Persistence | SQLite setup, migrations, sync metadata, conflict helpers, SQLx metadata | `src/db.rs`, `migrations/`, `.sqlx/` | Create migrations with `just migration-new <lower_snake_name>`. Refresh SQLx metadata after query or schema changes. |
+| Attachment storage | image metadata validation, content-addressed sidecar bytes, blob inventory, attachment id and Markdown ref helpers | `src/attachments/`, `src/operations/attachments.rs`, `src/config.rs` | Original bytes live under the resolved blob directory at `objects/sha256/<hash>`. `blob_inventory` records local byte availability. Task descriptions remain scalar Markdown with `aven-attachment:<id>` image refs. |
 | Config and routing | config files, managed config text edits, path mappings, workspace resolution, project inference | `src/config.rs`, `src/config_edit.rs`, `src/workspaces.rs`, `src/projects.rs` | `src/config.rs` owns durable config text writes. Managed entry text surgery belongs in `src/config_edit.rs`. Workspace-scoped commands must resolve an active workspace before domain lookup. |
-| Sync and daemon | HTTP sync client/server, wire DTOs, remote apply, launchd service management, wake-if-enabled policy, wake loop | `src/sync.rs`, `src/sync/`, `src/sync/apply/`, `src/daemon.rs`, `src/daemon/service.rs` | Wire shapes, protocol version, server validation, and remote apply semantics must evolve together. LaunchAgent ownership and plist rendering live in the daemon service module. |
+| Sync and daemon | HTTP sync client/server, wire DTOs, remote apply, launchd service management, wake-if-enabled policy, wake loop | `src/sync.rs`, `src/sync/`, `src/sync/apply/`, `src/daemon.rs`, `src/daemon/service.rs` | Wire shapes, protocol version, server validation, and remote apply semantics must evolve together. LaunchAgent ownership and plist rendering live in the daemon service module. Attachment metadata sync uses JSON change rows. Attachment bytes transfer through authenticated blob endpoints outside `/sync` payloads. |
 | TUI app | event loop, actions, overlays, store, rendering, undo, natural add runtime, platform helpers | `src/tui/` | Store modules own DB access. UI modules render view models. Overlay routes drive behavior, not titles. Natural add worker setup belongs in `src/tui/natural_add_runtime.rs`. |
 | Update delivery | cached GitHub release discovery, semantic version comparison, install ownership classification, verified direct replacement | `src/update.rs`, `src/update/` | Background checks are fail-silent and rate-limited. CLI and TUI flows own their presentation and confirmation behavior. Package-manager installations receive manager-specific guidance rather than binary replacement. |
-| Shared domain helpers | IDs, choices, labels, input loading, text rendering, CLI render output, logging, fuzzy matching | `src/ids.rs`, `src/choices.rs`, `src/labels.rs`, `src/input.rs`, `src/render.rs`, `src/task_render.rs`, `src/logging.rs`, `src/fuzzy.rs`, `src/types.rs` | Reuse canonical helpers instead of duplicating validation, display, diff, or parsing rules. |
+| Shared domain helpers | IDs, choices, labels, input loading, text rendering, CLI render output, logging, fuzzy matching | `src/ids.rs`, `src/choices.rs`, `src/labels.rs`, `src/input.rs`, `src/render.rs`, `src/task_render.rs`, `src/logging.rs`, `src/fuzzy.rs`, `src/types.rs` | Reuse canonical helpers instead of duplicating validation, display, diff, or parsing rules. Attachment placeholders for CLI and TUI read surfaces come from `src/task_render.rs`. |
 | Tests and tooling | CLI integration tests, TUI/store tests, overlay module tests, SQL index checks, just tasks | `tests/`, `src/tui/*tests.rs`, `src/tui/overlay/`, `justfile` | Add focused tests near the subsystem and rely on commit hooks for the full gate. |
 
 ## Runtime flows
@@ -25,6 +26,17 @@
 2. `src/cli.rs` parses `Cli` and `Commands`.
 3. `src/lib.rs` classifies every parsed command into the explicit standalone, database, or TUI dispatch class through an exhaustive `Commands` match. Each typed dispatch path performs its required setup, then routes through the `src/commands.rs` facade to focused command-family modules under `src/commands/`. `aven update` dispatches to `src/commands/self_update.rs` without opening the task database.
 4. Mutating commands call operations or mutation helpers, then dispatch through the daemon wake-if-enabled policy.
+
+### Attachment lifecycle
+
+1. `src/commands/attachments.rs` parses CLI attachment commands, resolves refs in the active workspace, infers or accepts image media type, and formats metadata-only text or JSON output.
+2. `src/operations/attachments.rs` validates metadata, stores original bytes through `src/attachments/storage.rs`, appends the Markdown image ref, and records `attachment_add` or `attachment_delete` change rows with `field = "attachments"`.
+3. `src/config.rs` resolves `local.blob_dir`: absolute paths are used directly, relative paths are rooted beside the active SQLite database, and omitted values use an `objects` directory beside the database.
+4. `src/task_enrichment.rs` and query hydration load attachment metadata with `has_blob`; show, context, JSON, search, and TUI surfaces consume that read model without reading bytes.
+5. `src/sync/client.rs` uploads missing local blobs before pushing attachment metadata, posts JSON metadata through `/sync`, downloads missing pulled blobs after page apply, and reports `blob_uploaded` and `blob_downloaded` counts separately from change counts.
+6. `src/sync/server.rs` serves `/sync/blobs/missing`, `PUT /sync/blobs/<sha256>`, and `GET /sync/blobs/<sha256>` behind the same auth path as sync metadata.
+7. `src/commands/data_safety/` packages the database and sidecar objects in backup archives, keeps JSON export metadata-only with `blobs_included: false`, marks imported blob inventory unavailable, and exposes attachment consistency checks for `doctor`.
+8. `src/tui/markdown.rs` parses `aven-attachment:<id>` image destinations into attachment image blocks, and `src/tui/ui/detail.rs` renders metadata-backed placeholders for present, pending download, deleted, and missing metadata states.
 
 ### TUI flow
 
@@ -55,8 +67,10 @@
 SQLite stores synced task data and local UI state. Config files store local routing and service settings.
 
 - Synced domain tables: `workspaces`, `tasks`, `projects`, `labels`, `task_labels`, `notes`, `task_dependencies`, `task_epic_links`, `task_attachments`.
+- Attachment metadata: `task_attachments` stores attachment ids, task ids, sha256, byte size, media type, filename, alt text, dimensions, create change id, and tombstone fields. Attachment metadata syncs as collection operations with `entity_type = "task"` and `field = "attachments"`.
 - Local attachment inventory: `blob_inventory` records sidecar byte availability. Read models expose metadata and `has_blob`; task descriptions remain scalar Markdown text with `aven-attachment:<id>` image refs.
-- Sync bookkeeping: `changes`, `field_versions`, `conflicts`, `meta`.
+- Local attachment bytes: original image bytes live outside SQLite under the resolved blob directory at `objects/sha256/<hash>`. The sidecar path is local config and is not serialized into sync JSON or task output.
+- Sync bookkeeping: `changes`, `field_versions`, `conflicts`, `meta`. Attachment collection operations use `changes`; scalar field conflict versions remain scoped to scalar task fields.
 - Local-only config: database path, sync settings, project path mappings, directory overrides, and TUI column grouping.
 - Local-only TUI state: view, filter, selection, overlay, sort state, and `tui_undo_entries`; pending undo entries are cleared when a TUI store starts.
 - Backup and portability workflows: `src/commands/data_safety.rs` for snapshot/restore flows and `src/db.rs` for backup file naming.
@@ -95,6 +109,11 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Keep TUI attachment placeholders metadata-backed. `src/task_enrichment.rs` loads attachment metadata, `src/tui/markdown.rs` parses attachment image blocks, and `src/tui/ui/detail.rs` applies the task detail quote rail.
 - Keep release discovery, cache policy, install ownership, archive verification, and executable replacement in `src/update/`. Keep CLI update presentation in `src/commands/self_update.rs` and TUI update flow state, cancellation, and overlay coordination in `src/tui/app_update.rs`. Never replace package-manager-owned executables or request elevated privileges.
 - Treat TUI column names as presentation. Column configuration must partition the six fixed semantic statuses exactly once so tasks remain visible without changing CLI, queue, readiness, dependency, or sync semantics.
+- Keep attachment bytes outside SQLite task descriptions, JSON sync change payloads, JSON export files, and default command output. Only `attachment get --output <path>` writes bytes to a caller-chosen file.
+- Keep attachment metadata and byte availability separate. `task_attachments` is synced domain metadata; `blob_inventory` and sidecar files describe local byte availability.
+- Keep attachment validation centralized in `src/attachments/validation.rs` and byte persistence centralized in `src/attachments/storage.rs`.
+- Keep sync attachment privacy-safe. Logs and stdout include counts such as `blob_uploaded` and `blob_downloaded`, not filenames, alt text, hashes, sidecar paths, raw payloads, or bytes.
+- Keep backup archives as the data-safety path for local bytes. JSON export/import remains metadata-only, with imported blob inventory unavailable until bytes arrive through backup restore or sync.
 - Derive TUI task list filters, query mode, and render mode from `TaskViewState`; do not keep parallel project, status, view, or queue-sort state.
 - Keep live search preview state transitions and worker ownership in `SearchController` in `src/tui/app_search.rs`; keep search overlay coordination in `App` helpers, search read-model behavior in `src/query/`, and overlay rendering in `src/tui/ui/overlays/search.rs`.
 - Keep natural-add mode, configuration, worker handles, pending and ready states, cancellation, and polling transitions in `IntakeController` in `src/tui/app_intake.rs`; keep authoring overlay effects in `src/tui/app_authoring.rs` and process construction in `src/tui/natural_add_runtime.rs`.
@@ -122,6 +141,11 @@ SQLite stores synced task data and local UI state. Config files store local rout
 | Add task dependency relations | `src/operations/dependencies.rs`, `src/query/dependencies.rs` | `src/commands.rs`, `src/task_render.rs`, `src/sync/apply/dependency.rs`, `src/sync/server.rs` | `tests/cli_dependencies.rs`, `tests/cli_sync.rs` |
 | Add or change epic membership | `src/operations/epics.rs`, `src/task_enrichment.rs`, `src/query/tasks.rs` | `src/commands.rs`, `src/tui/store/epics.rs`, `src/tui/ui/task_list/`, `src/sync/apply/epic.rs`, `src/skill.md` | `tests/cli_epics.rs`, TUI store tests, query tests, sync tests |
 | Change task list, filters, sorting, search read model, or refs | `src/query/`, `src/query.rs`, `src/refs.rs`, `src/queue.rs` | CLI list and search rendering, `src/tui/store/types.rs`, `src/tui/store/view.rs`, indexes | query unit tests, `tests/tui_query.rs`, `tests/sqlite_read_path_indexes.rs`, focused CLI tests |
+| Add or change attachment storage, validation, or sidecar paths | `src/attachments/`, `src/config.rs`, `src/db.rs`, migrations | `src/operations/attachments.rs`, `src/commands/attachments.rs`, `src/commands/data_safety/`, `.sqlx/` | `cargo check`, focused attachment operation tests, data-safety tests |
+| Add or change attachment CLI behavior | `src/cli.rs`, `src/lib.rs`, `src/commands/attachments.rs`, `src/operations/attachments.rs` | `src/attachments/`, `src/task_render.rs`, `src/skill.md`, `skills/aven/SKILL.md` | focused CLI attachment tests, `cargo check` |
+| Change attachment read surfaces or search matching | `src/task_enrichment.rs`, `src/query/`, `src/task_render.rs`, `src/commands/context.rs` | `src/commands/attachments.rs`, `src/tui/markdown.rs`, `src/tui/ui/detail.rs` | focused show, context, search, and query tests |
+| Change attachment data safety or doctor checks | `src/commands/data_safety/`, `src/commands/data_safety.rs`, `src/commands/doctor.rs` | `src/db.rs`, `src/attachments/`, backup archive helpers, export/import validation | `cargo test --test cli_data_safety`, `cargo test --test cli_doctor`, `cargo check` |
+| Change attachment sync metadata or blob transfer | `src/sync/wire.rs`, `src/sync/client.rs`, `src/sync/server.rs`, `src/sync/apply/`, `src/daemon.rs` | `src/change_log.rs`, `src/attachments/`, `src/operations/attachments.rs`, data-safety blob helpers | focused `tests/cli_sync.rs`, `tests/cli_daemon_sync.rs`, `cargo check` |
 | Change TUI task-list rendering or hit testing | `src/tui/ui/task_list.rs`, `src/tui/ui/task_list/view_model.rs`, `src/tui/ui/task_list/hit_test.rs` | `src/tui/store/view.rs`, `src/tui/store/types.rs`, task display helpers, mouse event dispatch | `src/tui/ui/task_list.rs` module tests, `src/tui/app_tests.rs`, focused TUI tests |
 | Change configurable TUI columns | `src/config.rs`, `src/tui/columns.rs`, `src/tui/ui/columns.rs` | `src/tui/store/types.rs`, `src/tui/app_navigation.rs`, view commands, sidebar, header, mouse dispatch | config tests, `src/tui/columns.rs` tests, column UI tests, focused app tests |
 | Change TUI attachment placeholder rendering | `src/tui/markdown.rs`, `src/tui/ui/detail.rs` | `src/task_enrichment.rs`, `src/query/hydration.rs`, `src/task_render.rs` placeholder helpers | `cargo test tui::markdown --lib`, focused detail rendering tests, query enrichment tests |
@@ -139,6 +163,17 @@ SQLite stores synced task data and local UI state. Config files store local rout
 | Change logging | `src/logging.rs` and call sites | safe field policy in guardrails | `tests/cli_logging.rs` |
 
 ## Common feature checklists
+
+### Add or change attachment behavior
+
+1. Put validation in `src/attachments/validation.rs` and byte persistence in `src/attachments/storage.rs`.
+2. Route local attachment mutations through `src/operations/attachments.rs` so task descriptions, metadata rows, sidecar bytes, and change rows stay aligned.
+3. Keep CLI orchestration and metadata-only output in `src/commands/attachments.rs`.
+4. Keep read-surface metadata loading in `src/task_enrichment.rs`, `src/query/`, and `src/task_render.rs`.
+5. Keep backup, restore, export, import, and doctor attachment checks in `src/commands/data_safety/` and `src/commands/doctor.rs`.
+6. Keep sync metadata validation, remote apply, blob endpoints, and client blob transfer aligned across `src/sync/wire.rs`, `src/sync/server.rs`, `src/sync/client.rs`, `src/sync/apply/`, and `src/daemon.rs`.
+7. Keep TUI rendering on metadata-backed placeholders through `src/tui/markdown.rs` and `src/tui/ui/detail.rs`.
+8. Update `src/skill.md` when command syntax, JSON availability, output fields, sync counts, or data-safety guidance changes.
 
 ### Add a CLI command
 
