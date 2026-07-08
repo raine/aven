@@ -153,21 +153,33 @@ pub(super) fn task_list_visible_rows(
 pub(super) fn task_list_scroll(
     current_scroll: usize,
     selected_row: usize,
-    row_count: usize,
+    view: &TaskListView,
     viewport_rows: usize,
 ) -> usize {
-    if viewport_rows == 0 || row_count <= viewport_rows {
+    if viewport_rows == 0 || view.rows.len() <= viewport_rows {
         return 0;
     }
-    let max_scroll = row_count - viewport_rows;
+    let max_scroll = view.rows.len().saturating_sub(viewport_rows);
+    let hard_max_scroll = view.rows.len().saturating_sub(1);
     let scroll = current_scroll.min(max_scroll);
-    if selected_row <= scroll {
-        selected_row
-    } else if selected_row >= scroll + viewport_rows {
-        selected_row.saturating_sub(viewport_rows.saturating_sub(1))
-    } else {
-        scroll
+    if task_list_visible_rows(view, scroll, viewport_rows)
+        .iter()
+        .any(|(row_index, _)| *row_index == selected_row)
+    {
+        return scroll;
     }
+    if selected_row < scroll {
+        return selected_row.min(hard_max_scroll);
+    }
+    for candidate in scroll.saturating_add(1)..=selected_row.min(hard_max_scroll) {
+        if task_list_visible_rows(view, candidate, viewport_rows)
+            .iter()
+            .any(|(row_index, _)| *row_index == selected_row)
+        {
+            return candidate;
+        }
+    }
+    selected_row.min(hard_max_scroll)
 }
 
 pub(super) fn task_list_top_scroll(view: &TaskListView) -> usize {
@@ -428,34 +440,68 @@ mod tests {
         assert_eq!(view.visual_row(0), 0);
     }
 
+    fn flat_view(row_count: usize) -> TaskListView {
+        let tasks = (0..row_count)
+            .map(|index| task_item(&format!("task {index}")))
+            .collect::<Vec<_>>();
+        TaskListView::from_tasks(TaskListRenderMode::Flat, &tasks, &BTreeSet::new())
+    }
+
     #[test]
     fn upward_selection_from_bottom_keeps_scroll_at_bottom_until_top_edge() {
-        assert_eq!(task_list_scroll(6, 9, 10, 4), 6);
-        assert_eq!(task_list_scroll(6, 8, 10, 4), 6);
-        assert_eq!(task_list_scroll(6, 7, 10, 4), 6);
-        assert_eq!(task_list_scroll(6, 6, 10, 4), 6);
-        assert_eq!(task_list_scroll(6, 5, 10, 4), 5);
+        let view = flat_view(10);
+
+        assert_eq!(task_list_scroll(6, 9, &view, 4), 6);
+        assert_eq!(task_list_scroll(6, 8, &view, 4), 6);
+        assert_eq!(task_list_scroll(6, 7, &view, 4), 6);
+        assert_eq!(task_list_scroll(6, 6, &view, 4), 6);
+        assert_eq!(task_list_scroll(6, 5, &view, 4), 5);
     }
 
     #[test]
     fn returning_to_first_row_resets_scroll_to_top() {
-        assert_eq!(task_list_scroll(1, 0, 10, 4), 0);
-        assert_eq!(task_list_scroll(6, 6, 10, 4), 6);
+        let view = flat_view(10);
+
+        assert_eq!(task_list_scroll(1, 0, &view, 4), 0);
+        assert_eq!(task_list_scroll(6, 6, &view, 4), 6);
     }
 
     #[test]
     fn downward_selection_scrolls_after_bottom_edge() {
-        assert_eq!(task_list_scroll(0, 0, 10, 4), 0);
-        assert_eq!(task_list_scroll(0, 1, 10, 4), 0);
-        assert_eq!(task_list_scroll(0, 2, 10, 4), 0);
-        assert_eq!(task_list_scroll(0, 3, 10, 4), 0);
-        assert_eq!(task_list_scroll(0, 4, 10, 4), 1);
+        let view = flat_view(10);
+
+        assert_eq!(task_list_scroll(0, 0, &view, 4), 0);
+        assert_eq!(task_list_scroll(0, 1, &view, 4), 0);
+        assert_eq!(task_list_scroll(0, 2, &view, 4), 0);
+        assert_eq!(task_list_scroll(0, 3, &view, 4), 0);
+        assert_eq!(task_list_scroll(0, 4, &view, 4), 1);
+    }
+
+    #[test]
+    fn queue_sticky_header_counts_toward_scroll_visibility() {
+        let tasks = vec![
+            task_item_with("backlog", "backlog", QueueBand::Later),
+            task_item_with("epic", "todo", QueueBand::Epics),
+        ];
+        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
+
+        let scroll = task_list_scroll(0, 3, &view, 3);
+
+        assert_eq!(scroll, 2);
+        assert!(
+            task_list_visible_rows(&view, scroll, 3)
+                .iter()
+                .any(|(row_index, _)| *row_index == 3)
+        );
     }
 
     #[test]
     fn task_list_scroll_clamps_to_valid_rows() {
-        assert_eq!(task_list_scroll(6, 2, 3, 4), 0);
-        assert_eq!(task_list_scroll(8, 9, 10, 4), 6);
+        let short_view = flat_view(3);
+        let view = flat_view(10);
+
+        assert_eq!(task_list_scroll(6, 2, &short_view, 4), 0);
+        assert_eq!(task_list_scroll(8, 9, &view, 4), 6);
     }
 
     #[test]

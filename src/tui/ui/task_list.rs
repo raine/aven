@@ -128,12 +128,7 @@ fn task_list_status_area(
         .selected()
         .map(|selected| view.visual_row(selected))
         .unwrap_or(0);
-    let scroll = task_list_scroll(
-        table_state.offset(),
-        selected_row,
-        view.rows.len(),
-        viewport_rows,
-    );
+    let scroll = task_list_scroll(table_state.offset(), selected_row, &view, viewport_rows);
     let visible_rows = task_list_visible_rows(&view, scroll, viewport_rows);
     let visible_tasks = visible_task_items(store, &visible_rows);
     let columns = task_list_columns_for_tasks(store, table_area.width < 90, &visible_tasks);
@@ -248,12 +243,7 @@ fn build_task_list_render_model(
     let selected_row = selected_task
         .map(|selected| view.visual_row(selected))
         .unwrap_or(0);
-    let scroll = task_list_scroll(
-        table_state.offset(),
-        selected_row,
-        view.rows.len(),
-        viewport_rows,
-    );
+    let scroll = task_list_scroll(table_state.offset(), selected_row, &view, viewport_rows);
     *table_state.offset_mut() = scroll;
     let visible_rows = task_list_visible_rows(&view, scroll, viewport_rows);
     let visible_tasks = visible_task_items(store, &visible_rows);

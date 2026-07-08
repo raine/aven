@@ -50,7 +50,7 @@ pub(super) fn task_list_hit_in_view(
             .selected()
             .map(|selected| view.visual_row(selected))
             .unwrap_or(0),
-        view.rows.len(),
+        view,
         viewport_rows,
     );
 
