@@ -230,6 +230,12 @@ pub(crate) async fn cmd_attachment_get(
         if output_path.exists() {
             bail!("error output-exists path={}", output_path.display());
         }
+        if !outcome.has_blob {
+            bail!(
+                "error attachment-blob-unavailable attachment_id={}",
+                outcome.attachment.attachment_id
+            );
+        }
         let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
         let obj_path = object_path(&blob_dir, &outcome.attachment.sha256)?;
         fs::copy(&obj_path, output_path)?;

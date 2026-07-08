@@ -185,6 +185,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-width",
+ "zstd",
 ]
 
 [[package]]

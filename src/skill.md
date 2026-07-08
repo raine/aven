@@ -91,10 +91,18 @@ aven restore APP-7KQ9
   `attachment add <ref> <path>` to store image bytes, `attachment list <ref>` or
   `attachment get <attachment-id>` to inspect metadata, and
   `attachment get <attachment-id> --output <path>` to write bytes to a file.
+  File output requires a local available blob.
 - Task detail read surfaces include attachment metadata and `has_blob` without
   embedding bytes. The TUI renders `aven-attachment:<id>` Markdown image refs as
   text placeholders for present, pending download, deleted, or missing metadata
   states.
+- `aven backup` writes one archive containing SQLite data and local attachment
+  objects. `aven backup restore <path> --yes` restores that archive and keeps a
+  SQLite safety copy. `aven export` writes attachment metadata and blob
+  inventory without bytes, and `aven import --yes <path>` imports that metadata
+  with blob inventory marked unavailable.
+- `aven doctor --integrity` checks SQLite relationships and attachment sidecar
+  consistency, including missing objects and orphan objects.
 - Task descriptions remain scalar Markdown text. Attachment adds append an
   `aven-attachment:<id>` image reference, and attachment deletes tombstone
   metadata while leaving description text intact.

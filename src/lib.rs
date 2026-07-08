@@ -172,7 +172,7 @@ async fn dispatch_standalone(
         StandaloneCommand::BackupRestore(args) => {
             let config = config::AppConfig::load()?;
             let db_path = config::resolve_db_path(db, &config)?;
-            commands::cmd_backup_restore(&db_path, args).await
+            commands::cmd_backup_restore(&config, &db_path, args).await
         }
         StandaloneCommand::Server(args) => {
             let config = config::AppConfig::load()?;
@@ -301,6 +301,7 @@ async fn dispatch_database(
         DatabaseCommand::Backup { output } => {
             cmd_backup(
                 &mut conn,
+                &config,
                 &db_path,
                 cli::BackupCommand {
                     command: None,

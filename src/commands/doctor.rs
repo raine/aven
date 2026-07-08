@@ -5,7 +5,9 @@ use anyhow::Result;
 use crossterm::style::{Color, Stylize};
 use sqlx::SqliteConnection;
 
-use super::data_safety::{database_integrity_report, ensure_integrity_ok};
+use super::data_safety::{
+    attachment_integrity_checks, database_integrity_report, ensure_integrity_ok,
+};
 use crate::config::{self as app_config, AppConfig};
 use crate::db::get_meta;
 use crate::query;
@@ -370,6 +372,8 @@ pub(crate) async fn cmd_doctor(
 
     if integrity {
         let integrity_report = database_integrity_report(conn).await?;
+        let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
+        let attachment_checks = attachment_integrity_checks(conn, &blob_dir).await?;
         let integrity_section = report.section("Integrity");
         integrity_section.check(
             "quick check",
@@ -379,7 +383,12 @@ pub(crate) async fn cmd_doctor(
         for check in &integrity_report.checks {
             integrity_section.check(check.label, check.ok, &check.value);
         }
-        if let Err(error) = ensure_integrity_ok(&integrity_report) {
+        for check in &attachment_checks {
+            integrity_section.check(check.label, check.ok, &check.value);
+        }
+        let mut combined_report = integrity_report.clone();
+        combined_report.checks.extend(attachment_checks);
+        if let Err(error) = ensure_integrity_ok(&combined_report) {
             integrity_section.check("result", false, format!("{error:#}"));
         }
     }

@@ -9,7 +9,10 @@ use sqlx::{SqliteConnection, query_scalar};
 
 use crate::cli::{BackupCommand, BackupRestoreArgs, ExportArgs, ImportArgs};
 
+mod archive;
+mod integrity;
 mod tables;
+use crate::config::{self as app_config, AppConfig};
 use crate::db;
 use crate::ids::now;
 use crate::render::quote;
@@ -34,6 +37,8 @@ struct AvenExport {
     version: i64,
     exported_at: String,
     schema_version: i64,
+    #[serde(default)]
+    blobs_included: bool,
     tables: ExportTables,
 }
 
@@ -49,6 +54,10 @@ struct ExportTables {
     notes: Vec<NoteRow>,
     task_dependencies: Vec<TaskDependencyRow>,
     task_epic_links: Vec<TaskEpicLinkRow>,
+    #[serde(default)]
+    task_attachments: Vec<TaskAttachmentRow>,
+    #[serde(default)]
+    blob_inventory: Vec<BlobInventoryExportRow>,
     changes: Vec<ChangeRow>,
     field_versions: Vec<FieldVersionRow>,
     conflicts: Vec<ConflictRow>,
@@ -152,6 +161,35 @@ struct TaskDependencyRow {
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+struct TaskAttachmentRow {
+    workspace_id: String,
+    attachment_id: String,
+    task_id: String,
+    sha256: String,
+    byte_size: i64,
+    media_type: String,
+    filename: Option<String>,
+    alt_text: Option<String>,
+    width: Option<i64>,
+    height: Option<i64>,
+    created_at: String,
+    created_by_change_id: Option<String>,
+    deleted: i64,
+    deleted_at: Option<String>,
+    deleted_by_change_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+struct BlobInventoryExportRow {
+    sha256: String,
+    byte_size: i64,
+    media_type: String,
+    available: i64,
+    first_seen_at: String,
+    last_verified_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct ChangeRow {
     change_id: String,
     client_id: String,
@@ -197,7 +235,8 @@ struct MetaRow {
 }
 
 pub(crate) async fn cmd_backup(
-    _conn: &mut SqliteConnection,
+    conn: &mut SqliteConnection,
+    config: &AppConfig,
     db_path: &Path,
     args: BackupCommand,
 ) -> Result<()> {
@@ -205,7 +244,8 @@ pub(crate) async fn cmd_backup(
         Some(path) => path,
         None => db::default_backup_path(db_path, "manual")?,
     };
-    db::backup_database(db_path, &output)?;
+    let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
+    archive::create_backup_archive(conn, db_path, &blob_dir, &output).await?;
     let bytes = fs::metadata(&output)
         .with_context(|| format!("could not stat {}", output.display()))?
         .len();
@@ -216,13 +256,22 @@ pub(crate) async fn cmd_backup(
     Ok(())
 }
 
-pub(crate) async fn cmd_backup_restore(db_path: &Path, args: BackupRestoreArgs) -> Result<()> {
+pub(crate) async fn cmd_backup_restore(
+    config: &AppConfig,
+    db_path: &Path,
+    args: BackupRestoreArgs,
+) -> Result<()> {
     if !args.yes {
         bail!(
             "error backup-restore-requires-confirmation hint=\"pass --yes to replace local data\""
         );
     }
-    let safety = db::restore_database_file(db_path, &args.path).await?;
+    let safety = if archive::is_archive_path(&args.path)? {
+        let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
+        archive::restore_backup_archive(db_path, &blob_dir, &args.path).await?
+    } else {
+        db::restore_database_file(db_path, &args.path).await?
+    };
     println!(
         "restored-backup path={} safety_backup={}",
         quote(&args.path.display().to_string()),
@@ -244,6 +293,8 @@ pub(crate) async fn cmd_export(conn: &mut SqliteConnection, args: ExportArgs) ->
         notes: scan_notes(conn).await?,
         task_dependencies: scan_task_dependencies(conn).await?,
         task_epic_links: scan_task_epic_links(conn).await?,
+        task_attachments: scan_task_attachments(conn).await?,
+        blob_inventory: scan_blob_inventory(conn).await?,
         changes: scan_changes(conn).await?,
         field_versions: scan_field_versions(conn).await?,
         conflicts: scan_conflicts(conn).await?,
@@ -258,6 +309,7 @@ pub(crate) async fn cmd_export(conn: &mut SqliteConnection, args: ExportArgs) ->
         version: 1,
         exported_at: now(),
         schema_version,
+        blobs_included: false,
         tables,
     };
     let text = serde_json::to_string(&export).context("could not serialize export")?;
@@ -292,7 +344,10 @@ pub(crate) async fn cmd_import(
     let target_client_id = db::get_meta(conn, "client_id")
         .await?
         .context("missing target client_id")?;
-    let safety = db::default_backup_path(db_path, "before-import")?;
+    if export.blobs_included {
+        bail!("error import-blobs-included-unsupported");
+    }
+    let safety = db::default_sqlite_backup_path(db_path, "before-import")?;
     db::backup_database(db_path, &safety)?;
     let mut tx = db::begin_immediate(conn).await?;
     replace_from_export(&mut tx, &export, &target_client_id).await?;
@@ -373,6 +428,22 @@ async fn scan_task_epic_links(conn: &mut SqliteConnection) -> Result<Vec<TaskEpi
     tables::scan_rows(
         conn,
         "SELECT workspace_id, child_task_id, epic_task_id, created_at FROM task_epic_links",
+    )
+    .await
+}
+
+async fn scan_task_attachments(conn: &mut SqliteConnection) -> Result<Vec<TaskAttachmentRow>> {
+    tables::scan_rows(
+        conn,
+        "SELECT workspace_id, attachment_id, task_id, sha256, byte_size, media_type, filename, alt_text, width, height, created_at, created_by_change_id, deleted, deleted_at, deleted_by_change_id FROM task_attachments",
+    )
+    .await
+}
+
+async fn scan_blob_inventory(conn: &mut SqliteConnection) -> Result<Vec<BlobInventoryExportRow>> {
+    tables::scan_rows(
+        conn,
+        "SELECT sha256, byte_size, media_type, available, first_seen_at, last_verified_at FROM blob_inventory",
     )
     .await
 }
@@ -560,6 +631,63 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
         }
     }
 
+    let mut inventory_hashes = HashSet::new();
+    for blob in &export.tables.blob_inventory {
+        crate::attachments::validation::validate_sha256(&blob.sha256)?;
+        crate::attachments::validation::validate_media_type(&blob.media_type)?;
+        crate::attachments::validation::validate_blob_size(
+            usize::try_from(blob.byte_size).unwrap_or(0),
+        )?;
+        if blob.available != 0 && blob.available != 1 {
+            bail!(
+                "error invalid-export-snapshot blob_inventory.available={} for sha256 {}",
+                blob.available,
+                blob.sha256
+            );
+        }
+        inventory_hashes.insert(blob.sha256.clone());
+    }
+
+    for attachment in &export.tables.task_attachments {
+        crate::attachments::validation::validate_attachment_id(&attachment.attachment_id)?;
+        crate::attachments::validation::validate_sha256(&attachment.sha256)?;
+        crate::attachments::validation::validate_media_type(&attachment.media_type)?;
+        crate::attachments::validation::validate_blob_size(
+            usize::try_from(attachment.byte_size).unwrap_or(0),
+        )?;
+        crate::attachments::validation::validate_filename(attachment.filename.as_deref())?;
+        crate::attachments::validation::validate_alt_text(attachment.alt_text.as_deref())?;
+        crate::attachments::validation::validate_dimensions(attachment.width, attachment.height)?;
+        let workspace_id: crate::ids::WorkspaceId = attachment.workspace_id.parse()?;
+        let task_id: crate::ids::TaskId = attachment.task_id.parse()?;
+        let tasks = task_ids.get(&workspace_id).ok_or_else(|| {
+            anyhow::Error::msg(format!(
+                "error invalid-export-snapshot attachment.workspace_id={} is missing",
+                attachment.workspace_id
+            ))
+        })?;
+        if !tasks.contains(&task_id) {
+            bail!(
+                "error invalid-export-snapshot attachment.task_id={} is missing in workspace {}",
+                attachment.task_id,
+                attachment.workspace_id
+            );
+        }
+        if !inventory_hashes.contains(&attachment.sha256) {
+            bail!(
+                "error invalid-export-snapshot attachment.sha256={} is missing from inventory",
+                attachment.sha256
+            );
+        }
+        if attachment.deleted != 0 && attachment.deleted != 1 {
+            bail!(
+                "error invalid-export-snapshot attachment.deleted={} for attachment {}",
+                attachment.deleted,
+                attachment.attachment_id
+            );
+        }
+    }
+
     for alias in &export.tables.project_id_aliases {
         let workspace_projects = project_ids.get(&alias.workspace_id).ok_or_else(|| {
             anyhow::Error::msg(format!(
@@ -585,6 +713,8 @@ async fn replace_from_export(
     target_client_id: &str,
 ) -> Result<()> {
     let delete_order = [
+        "DELETE FROM task_attachments",
+        "DELETE FROM blob_inventory",
         "DELETE FROM task_epic_links",
         "DELETE FROM task_dependencies",
         "DELETE FROM task_labels",
@@ -635,6 +765,8 @@ async fn replace_from_export(
     tables::import_notes(tx, &export.tables.notes).await?;
     tables::import_task_dependencies(tx, &export.tables.task_dependencies).await?;
     tables::import_task_epic_links(tx, &export.tables.task_epic_links).await?;
+    tables::import_blob_inventory(tx, &export.tables.blob_inventory).await?;
+    tables::import_task_attachments(tx, &export.tables.task_attachments).await?;
     tables::import_changes(tx, &export.tables.changes).await?;
     tables::import_field_versions(tx, &export.tables.field_versions).await?;
     tables::import_conflicts(tx, &export.tables.conflicts).await?;
@@ -768,6 +900,13 @@ pub(crate) fn ensure_integrity_ok(report: &IntegrityReport) -> Result<()> {
         return Ok(());
     }
     bail!("error data-integrity-failed checks={}", bad.join(", "))
+}
+
+pub(crate) async fn attachment_integrity_checks(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+) -> Result<Vec<IntegrityCheck>> {
+    integrity::attachment_integrity_checks(conn, blob_dir).await
 }
 
 async fn count_check(

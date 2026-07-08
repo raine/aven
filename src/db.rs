@@ -84,10 +84,18 @@ async fn has_pending_migrations(pool: &SqlitePool) -> Result<bool> {
 }
 
 fn migration_backup_path(path: &Path) -> Result<PathBuf> {
-    default_backup_path(path, "before-migrate")
+    default_sqlite_backup_path(path, "before-migrate")
 }
 
 pub(crate) fn default_backup_path(path: &Path, reason: &str) -> Result<PathBuf> {
+    backup_path_with_extension(path, reason, "aven-backup.tar.zst")
+}
+
+pub(crate) fn default_sqlite_backup_path(path: &Path, reason: &str) -> Result<PathBuf> {
+    backup_path_with_extension(path, reason, "sqlite")
+}
+
+fn backup_path_with_extension(path: &Path, reason: &str, extension: &str) -> Result<PathBuf> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let backup_dir = parent.join("backups");
     fs::create_dir_all(&backup_dir)
@@ -96,7 +104,11 @@ pub(crate) fn default_backup_path(path: &Path, reason: &str) -> Result<PathBuf> 
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("db.sqlite");
-    Ok(backup_dir.join(format!("{stem}.{reason}-{}.sqlite", backup_timestamp()?)))
+    Ok(backup_dir.join(format!(
+        "{stem}.{reason}-{}.{}",
+        backup_timestamp()?,
+        extension
+    )))
 }
 
 pub(crate) fn backup_database(source: &Path, backup: &Path) -> Result<()> {
@@ -117,7 +129,7 @@ pub(crate) fn shm_path(path: &Path) -> PathBuf {
 
 pub(crate) async fn restore_database_file(target: &Path, source: &Path) -> Result<PathBuf> {
     validate_sqlite_source(source).await?;
-    let safety = default_backup_path(target, "before-restore")?;
+    let safety = default_sqlite_backup_path(target, "before-restore")?;
     backup_database(target, &safety)?;
     let staging = target.with_extension("restore-staging");
     if staging.exists() {
