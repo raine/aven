@@ -180,9 +180,22 @@ fn database_stats_lines(stats: &TuiDatabaseStats) -> Vec<Line<'static>> {
             ],
         ),
         section(
-            "sync rows",
+            "sync history",
             vec![
-                count_row("pending all", stats.pending_changes),
+                count_row("change rows", stats.sync_history.total_change_rows),
+                count_row("pending", stats.sync_history.pending_change_rows),
+                count_row("synced", stats.sync_history.synced_change_rows),
+                value_row(
+                    "min server_seq",
+                    format_optional_i64(stats.sync_history.min_server_seq),
+                    Style::new().fg(FG_MUTED),
+                ),
+                value_row(
+                    "max server_seq",
+                    format_optional_i64(stats.sync_history.max_server_seq),
+                    Style::new().fg(FG_MUTED),
+                ),
+                count_row("payload bytes", stats.sync_history.payload_bytes),
                 count_row("conflicts", stats.conflicts),
             ],
         ),
@@ -300,6 +313,12 @@ fn count_row(label: &str, value: i64) -> Line<'static> {
 
 fn value_row(label: &str, value: impl Into<String>, value_style: Style) -> Line<'static> {
     super::shared::value_row(LABEL_WIDTH, label, value, value_style)
+}
+
+fn format_optional_i64(value: Option<i64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string())
 }
 
 fn scroll_title(scroll: u16, content_height: usize, visible_rows: usize) -> Option<String> {

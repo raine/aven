@@ -1561,6 +1561,12 @@ pub(crate) async fn cmd_skill() -> Result<()> {
     Ok(())
 }
 
+fn format_optional_i64(value: Option<i64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string())
+}
+
 pub(crate) async fn cmd_doctor(
     conn: &mut SqliteConnection,
     config: &AppConfig,
@@ -1590,10 +1596,7 @@ pub(crate) async fn cmd_doctor(
         Ok(workspace) => Some(workspace_counts(conn, &workspace.id).await?),
         Err(_) => None,
     };
-    let pending_changes: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM changes WHERE server_seq IS NULL")
-            .fetch_one(&mut *conn)
-            .await?;
+    let sync_history = query::sync_history_stats(conn).await?;
     let unresolved_conflicts: i64 =
         sqlx::query_scalar("SELECT count(*) FROM conflicts WHERE resolved = 0")
             .fetch_one(&mut *conn)
@@ -1630,7 +1633,24 @@ pub(crate) async fn cmd_doctor(
     database_section.info("sync cursor", sync_cursor.as_deref().unwrap_or("missing"));
     database_section.info("local sequence", local_seq.as_deref().unwrap_or("missing"));
     database_section.info("pinned server", pinned_server.as_deref().unwrap_or("none"));
-    database_section.info("pending changes", pending_changes.to_string());
+    database_section.info("change rows", sync_history.total_change_rows.to_string());
+    database_section.info(
+        "pending changes",
+        sync_history.pending_change_rows.to_string(),
+    );
+    database_section.info(
+        "synced changes",
+        sync_history.synced_change_rows.to_string(),
+    );
+    database_section.info(
+        "min server_seq",
+        format_optional_i64(sync_history.min_server_seq),
+    );
+    database_section.info(
+        "max server_seq",
+        format_optional_i64(sync_history.max_server_seq),
+    );
+    database_section.info("payload bytes", sync_history.payload_bytes.to_string());
     database_section.info("conflicts", unresolved_conflicts.to_string());
 
     let workspace_section = report.section("Workspace");

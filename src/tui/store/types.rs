@@ -26,7 +26,7 @@ pub(crate) struct ConflictTarget {
 
 use std::collections::BTreeSet;
 
-use crate::query::{SortDirection, TaskFilters, TaskQueryMode, TaskSort};
+use crate::query::{SortDirection, SyncHistoryStats, TaskFilters, TaskQueryMode, TaskSort};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TaskScope {
@@ -238,7 +238,7 @@ pub(crate) struct TuiDatabaseStats {
     pub(crate) labels: i64,
     pub(crate) notes: i64,
     pub(crate) task_labels: i64,
-    pub(crate) pending_changes: i64,
+    pub(crate) sync_history: SyncHistoryStats,
     pub(crate) conflicts: i64,
     pub(crate) sqlite_page_size: i64,
     pub(crate) sqlite_page_count: i64,

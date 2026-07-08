@@ -3,6 +3,7 @@ use sqlx::{Row, SqliteConnection};
 
 use super::TuiStore;
 use super::types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts, TuiDatabaseStats};
+use crate::query::sync_history_stats;
 use crate::workspaces::Workspace;
 
 impl TuiStore {
@@ -60,10 +61,7 @@ async fn load_database_stats(
         .bind(workspace_id)
         .fetch_one(&mut *conn)
         .await?;
-    let pending_changes: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM changes WHERE server_seq IS NULL")
-            .fetch_one(&mut *conn)
-            .await?;
+    let sync_history = sync_history_stats(conn).await?;
     let conflicts = sqlx::query_scalar(
         "SELECT count(*) FROM conflicts WHERE workspace_id = ? AND resolved = 0",
     )
@@ -99,7 +97,7 @@ async fn load_database_stats(
         labels,
         notes,
         task_labels,
-        pending_changes,
+        sync_history,
         conflicts,
         sqlite_page_size,
         sqlite_page_count,

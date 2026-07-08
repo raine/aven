@@ -311,6 +311,35 @@ fn doctor_workspace_flag_affects_active_workspace_and_task_counts() {
 }
 
 #[test]
+fn doctor_reports_sync_history_stats() {
+    let env = TestEnv::new();
+    let db = env.db("sync-history-doctor.sqlite");
+    ok(env.aven(&db, ["doctor"]));
+    run_sql(
+        &db,
+        "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field, op_type, payload, base_version, created_at, server_seq)
+         VALUES
+         ('change-pending-1', 'client', 1, 'task', 'task-1', 'title', 'update_task', 'abc', NULL, '2026-01-01T00:00:00Z', NULL),
+         ('change-synced-1', 'client', 2, 'task', 'task-1', 'title', 'update_task', 'abcdef', NULL, '2026-01-01T00:00:01Z', 42),
+         ('change-synced-2', 'client', 3, 'task', 'task-2', 'title', 'update_task', 'é', NULL, '2026-01-01T00:00:02Z', 44)",
+    );
+
+    let output = ok(env.aven(&db, ["doctor"]));
+
+    contains_all(
+        &output,
+        &[
+            "change rows        3",
+            "pending changes    1",
+            "synced changes     2",
+            "min server_seq     42",
+            "max server_seq     44",
+            "payload bytes      11",
+        ],
+    );
+}
+
+#[test]
 fn doctor_with_integrity_reports_passed_checks() {
     let env = TestEnv::new();
     let db = env.db("integrity-ok-doctor.sqlite");

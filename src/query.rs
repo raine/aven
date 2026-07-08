@@ -6,6 +6,7 @@ mod recent_actions;
 mod search;
 mod sidebar;
 mod sorting;
+mod sync_history;
 mod tasks;
 mod types;
 
@@ -27,6 +28,8 @@ pub(crate) use search::{
 pub(crate) use sidebar::{
     sidebar_counts, sidebar_counts_for_scope_in_workspace, sidebar_counts_in_workspace,
 };
+#[allow(unused_imports)]
+pub(crate) use sync_history::{SyncHistoryStats, sync_history_stats};
 #[allow(unused_imports)]
 pub(crate) use tasks::{list_task_items, list_task_items_in_workspace};
 #[allow(unused_imports)]
