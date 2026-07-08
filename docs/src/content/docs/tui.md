@@ -62,6 +62,20 @@ Use the sidebar or the `g` prefix family to switch scope. Workspace scope shows 
 
 Queue behavior, statuses, priorities, refs, dependencies, and epics are described in [Concepts](/concepts/).
 
+## Run the TUI in tmux
+
+When you live in tmux, bind the full TUI to a popup so you can open aven over the current pane without changing windows.
+
+![aven TUI running in a tmux popup over terminal panes](/tui-tmux-popup.webp)
+
+<p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">A tmux popup keeps the full queue and detail workflow available over the terminal session you are already using.</p>
+
+For example, this binds prefix + `Ctrl-a` to a large popup in the current pane's directory:
+
+```text
+bind C-a display-popup -E -d '#{pane_current_path}' -w 80% -h 80% 'aven tui'
+```
+
 ## Capture tasks
 
 Press `a` to open the task composer. The composer captures title, description, project, status, and priority.
