@@ -1009,11 +1009,11 @@ fn detail_body_blocks(
                 if !path.is_file() {
                     return vec![DetailBodyBlock::Line(block.placeholder)];
                 }
-                let height = image_preview_height(attachment, content_width);
+                let (width, height) = image_preview_size(attachment, content_width);
                 vec![DetailBodyBlock::Image {
                     placeholder: block.placeholder,
                     path,
-                    width: content_width.min(u16::MAX as usize) as u16,
+                    width,
                     height,
                 }]
             }
@@ -1034,14 +1034,29 @@ fn previewable_attachment<'a>(
     })
 }
 
-fn image_preview_height(attachment: &AttachmentMetadataJson, content_width: usize) -> u16 {
+fn image_preview_size(attachment: &AttachmentMetadataJson, content_width: usize) -> (u16, u16) {
+    const MAX_HEIGHT_ROWS: u16 = 12;
+    const DEFAULT_HEIGHT_ROWS: u16 = 6;
+    const CELL_HEIGHT_TO_WIDTH_RATIO: f64 = 2.0;
+
+    let max_width = content_width.clamp(1, u16::MAX as usize) as u16;
     match (attachment.width, attachment.height) {
         (Some(width), Some(height)) if width > 0 && height > 0 => {
-            ((content_width as f64 * height as f64 / width as f64) / 2.0)
-                .round()
-                .clamp(3.0, 12.0) as u16
+            let image_aspect = width as f64 / height as f64;
+            let width_at_max_height =
+                (MAX_HEIGHT_ROWS as f64 * image_aspect * CELL_HEIGHT_TO_WIDTH_RATIO)
+                    .round()
+                    .max(1.0) as u16;
+            if width_at_max_height <= max_width {
+                (width_at_max_height, MAX_HEIGHT_ROWS)
+            } else {
+                let height = ((max_width as f64 / image_aspect) / CELL_HEIGHT_TO_WIDTH_RATIO)
+                    .round()
+                    .clamp(3.0, MAX_HEIGHT_ROWS as f64) as u16;
+                (max_width, height)
+            }
         }
-        _ => 6,
+        _ => (max_width.min(80), DEFAULT_HEIGHT_ROWS),
     }
 }
 
@@ -2079,6 +2094,28 @@ mod tests {
             lines.iter().filter(|line| line.to_string() == "│ ").count(),
             6
         );
+    }
+
+    #[test]
+    fn detail_preview_preserves_image_aspect_within_max_rows() {
+        let mut item = detail_test_item();
+        item.task.description = "![Hotel](aven-attachment:ATTACHMENT000001)".to_string();
+        item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
+        item.attachments[0].width = Some(646);
+        item.attachments[0].height = Some(302);
+        let temp = tempfile::tempdir().unwrap();
+        let context = DetailInlineImageContext {
+            blob_dir: temp.path().to_path_buf(),
+        };
+        let object = object_path(&context.blob_dir, &item.attachments[0].sha256).unwrap();
+        std::fs::create_dir_all(object.parent().unwrap()).unwrap();
+        std::fs::write(&object, b"png bytes").unwrap();
+
+        let (_lines, placements) = detail_body_lines_with_images(&item, 200, None, Some(&context));
+
+        assert_eq!(placements.len(), 1);
+        assert_eq!(placements[0].height, 12);
+        assert_eq!(placements[0].width, 51);
     }
 
     #[test]

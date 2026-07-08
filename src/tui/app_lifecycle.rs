@@ -90,7 +90,6 @@ impl App {
             }
 
             if needs_redraw {
-                let _ = self.erase_previous_inline_images();
                 let view = self.view();
                 terminal.draw(|frame| ui::render(frame, &self.store, &mut self.widgets, &view))?;
                 let _ = self.render_inline_images_after_draw();
@@ -134,18 +133,30 @@ impl App {
     fn render_inline_images_after_draw(&mut self) -> Result<()> {
         let backend = active_backend_from_env(self.intake.config().local.inline_images);
         if backend == InlineImageBackend::None || self.widgets.inline_image_placements.is_empty() {
-            self.previous_inline_image_placements.clear();
+            self.erase_previous_inline_images()?;
             return Ok(());
         }
+        let current = self.widgets.inline_image_placements.clone();
+        let stale = self
+            .previous_inline_image_placements
+            .iter()
+            .filter(|placement| !current.contains(placement))
+            .cloned()
+            .collect::<Vec<_>>();
+        self.erase_inline_image_placements(&stale, backend)?;
+
         let mut stdout = std::io::stdout();
-        for placement in &self.widgets.inline_image_placements {
+        for placement in current
+            .iter()
+            .filter(|placement| !self.previous_inline_image_placements.contains(placement))
+        {
             queue!(stdout, MoveTo(placement.x, placement.y))?;
             let escape =
                 inline_image_escape(&placement.path, placement.width, placement.height, backend)?;
             write!(stdout, "{escape}")?;
         }
         stdout.flush()?;
-        self.previous_inline_image_placements = self.widgets.inline_image_placements.clone();
+        self.previous_inline_image_placements = current;
         Ok(())
     }
 
@@ -154,8 +165,20 @@ impl App {
             return Ok(());
         }
         let backend = active_backend_from_env(self.add_task_config.local.inline_images);
+        let placements = std::mem::take(&mut self.previous_inline_image_placements);
+        self.erase_inline_image_placements(&placements, backend)
+    }
+
+    fn erase_inline_image_placements(
+        &mut self,
+        placements: &[ui::DetailInlineImagePlacement],
+        backend: InlineImageBackend,
+    ) -> Result<()> {
+        if placements.is_empty() {
+            return Ok(());
+        }
         let mut stdout = std::io::stdout();
-        for placement in &self.previous_inline_image_placements {
+        for placement in placements {
             if let Some(escape) = inline_image_delete_escape(placement.x, placement.y, backend) {
                 write!(stdout, "{escape}")?;
             }
@@ -169,7 +192,6 @@ impl App {
             }
         }
         stdout.flush()?;
-        self.previous_inline_image_placements.clear();
         Ok(())
     }
 
