@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use crate::query::fragments;
 use crate::query::{TaskDependencyLink, TaskNote};
 use crate::refs::DisplayRefContext;
+use crate::task_render::AttachmentMetadataJson;
 use anyhow::Result;
 use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 
@@ -12,6 +13,7 @@ const SQLITE_BIND_CHUNK_SIZE: usize = 900;
 pub(crate) struct TaskEnrichment {
     pub(crate) labels_by_task: HashMap<TaskId, Vec<String>>,
     pub(crate) notes_by_task: HashMap<TaskId, Vec<TaskNote>>,
+    pub(crate) attachments_by_task: HashMap<TaskId, Vec<AttachmentMetadataJson>>,
     pub(crate) conflicted_task_ids: HashSet<TaskId>,
     pub(crate) unresolved_blocker_counts_by_task: HashMap<TaskId, i64>,
     pub(crate) dependent_counts_by_task: HashMap<TaskId, i64>,
@@ -30,6 +32,7 @@ pub(crate) async fn load_task_enrichment(
     Ok(TaskEnrichment {
         labels_by_task: labels_for_tasks(conn, workspace_id, task_ids).await?,
         notes_by_task: notes_for_tasks(conn, workspace_id, task_ids).await?,
+        attachments_by_task: attachments_for_tasks(conn, workspace_id, task_ids).await?,
         conflicted_task_ids: tasks_with_unresolved_conflicts(conn, workspace_id, task_ids).await?,
         unresolved_blocker_counts_by_task: unresolved_blocker_counts_for_tasks(
             conn,
@@ -59,6 +62,63 @@ pub(crate) async fn load_task_enrichment(
         epic_parent_by_task: epic_parents_for_tasks(conn, workspace_id, task_ids, display_refs)
             .await?,
     })
+}
+
+async fn attachments_for_tasks(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    task_ids: &[TaskId],
+) -> Result<HashMap<TaskId, Vec<AttachmentMetadataJson>>> {
+    let mut attachments_by_task = HashMap::new();
+    if task_ids.is_empty() {
+        return Ok(attachments_by_task);
+    }
+    for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT ta.attachment_id, ta.task_id, ta.media_type, ta.byte_size,
+                    ta.filename, ta.alt_text, ta.width, ta.height, ta.created_at,
+                    ta.deleted, ta.deleted_at,
+                    COALESCE(bi.available, 0) AS has_blob
+             FROM task_attachments ta
+             LEFT JOIN blob_inventory bi ON bi.sha256 = ta.sha256
+             WHERE ta.workspace_id = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(" AND ta.task_id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for task_id in chunk {
+                separated.push_bind(task_id);
+            }
+        }
+        query.push(") ORDER BY ta.task_id, ta.created_at");
+
+        for row in query.build().fetch_all(&mut *conn).await? {
+            let task_id: TaskId = row.get("task_id");
+            let attachment = AttachmentMetadataJson {
+                attachment_id: row.get("attachment_id"),
+                task_id: task_id.to_string(),
+                media_type: row.get("media_type"),
+                byte_size: row.get("byte_size"),
+                filename: row.get("filename"),
+                alt_text: row.get("alt_text"),
+                width: row.get("width"),
+                height: row.get("height"),
+                created_at: row.get("created_at"),
+                deleted: row.get::<i64, _>("deleted") != 0,
+                deleted_at: row.get("deleted_at"),
+                has_blob: row.get::<i64, _>("has_blob") != 0,
+            };
+            attachments_by_task
+                .entry(task_id)
+                .or_insert_with(Vec::new)
+                .push(attachment);
+        }
+    }
+    Ok(attachments_by_task)
 }
 
 async fn notes_for_tasks(

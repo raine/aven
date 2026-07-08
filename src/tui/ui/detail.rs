@@ -15,7 +15,9 @@ use super::truncate::truncate_width;
 use crate::query::TaskListItem;
 use crate::tui::app::WidgetState;
 use crate::tui::detail_selection::{DetailTextSelection, TextCell, text_cell_at_column};
-use crate::tui::markdown::render_markdown;
+use crate::tui::markdown::{
+    MarkdownRenderContext, flatten_markdown_blocks, render_markdown, render_markdown_with_context,
+};
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::TuiStore;
 use crate::tui::theme::{
@@ -463,10 +465,13 @@ fn detail_description_lines(
     if !lines.is_empty() {
         lines.push(Line::from(""));
     }
-    lines.extend(quoted_block_lines(
+    lines.extend(quoted_block_lines_with_context(
         &description_or_placeholder(&item.task.description),
         width,
         Style::new().fg(FG_MUTED),
+        MarkdownRenderContext {
+            attachments: &item.attachments,
+        },
     ));
     lines.push(Line::from(""));
     lines
@@ -807,6 +812,23 @@ fn detail_title_line(
 fn quoted_block_lines(body: &str, width: usize, style: Style) -> Vec<Line<'static>> {
     let content_width = width.saturating_sub(3).max(1);
     render_markdown(body, content_width)
+        .into_iter()
+        .map(|line| {
+            let mut spans = line_with_base_style(line, style).spans;
+            spans.insert(0, Span::styled("│ ", Style::new().fg(BORDER)));
+            Line::from(spans)
+        })
+        .collect()
+}
+
+fn quoted_block_lines_with_context(
+    body: &str,
+    width: usize,
+    style: Style,
+    context: MarkdownRenderContext<'_>,
+) -> Vec<Line<'static>> {
+    let content_width = width.saturating_sub(3).max(1);
+    flatten_markdown_blocks(render_markdown_with_context(body, content_width, context))
         .into_iter()
         .map(|line| {
             let mut spans = line_with_base_style(line, style).spans;

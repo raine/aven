@@ -91,6 +91,10 @@ aven restore APP-7KQ9
   `attachment add <ref> <path>` to store image bytes, `attachment list <ref>` or
   `attachment get <attachment-id>` to inspect metadata, and
   `attachment get <attachment-id> --output <path>` to write bytes to a file.
+- Task detail read surfaces include attachment metadata and `has_blob` without
+  embedding bytes. The TUI renders `aven-attachment:<id>` Markdown image refs as
+  text placeholders for present, pending download, deleted, or missing metadata
+  states.
 - Task descriptions remain scalar Markdown text. Attachment adds append an
   `aven-attachment:<id>` image reference, and attachment deletes tombstone
   metadata while leaving description text intact.

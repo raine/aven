@@ -96,6 +96,7 @@ pub(crate) struct TaskListItem {
     pub(crate) display_ref: String,
     pub(crate) labels: Vec<String>,
     pub(crate) notes: Vec<TaskNote>,
+    pub(crate) attachments: Vec<crate::task_render::AttachmentMetadataJson>,
     pub(crate) has_conflict: bool,
     pub(crate) unresolved_blocker_count: i64,
     pub(crate) dependent_count: i64,

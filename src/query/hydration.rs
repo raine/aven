@@ -37,6 +37,10 @@ pub(crate) async fn build_task_list_items(
             .notes_by_task
             .remove(&task_id)
             .unwrap_or_default();
+        let attachments = enrichment
+            .attachments_by_task
+            .remove(&task_id)
+            .unwrap_or_default();
         let has_conflict = enrichment.conflicted_task_ids.contains(&task_id);
         let unresolved_blocker_count = *enrichment
             .unresolved_blocker_counts_by_task
@@ -73,6 +77,7 @@ pub(crate) async fn build_task_list_items(
             display_ref,
             labels,
             notes,
+            attachments,
             has_conflict,
             unresolved_blocker_count,
             dependent_count,

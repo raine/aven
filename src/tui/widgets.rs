@@ -164,6 +164,7 @@ mod tests {
             display_ref: "APP-1".to_string(),
             labels: Vec::new(),
             notes: Vec::new(),
+            attachments: Vec::new(),
             has_conflict: false,
             unresolved_blocker_count: 0,
             dependent_count: 0,
