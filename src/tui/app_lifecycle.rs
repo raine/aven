@@ -17,7 +17,9 @@ use std::io::Write;
 
 use crate::config::{AppConfig, resolve_blob_dir};
 use crate::tui::app::App;
-use crate::tui::inline_images::{InlineImageBackend, active_backend_from_env, iterm2_escape};
+use crate::tui::inline_images::{
+    InlineImageBackend, active_backend_from_env, inline_image_delete_escape, inline_image_escape,
+};
 use crate::tui::overlay::OverlayView::AddTask;
 use crate::tui::overlay::{OverlayState, OverlayView};
 use crate::tui::store::TaskView;
@@ -138,12 +140,8 @@ impl App {
         let mut stdout = std::io::stdout();
         for placement in &self.widgets.inline_image_placements {
             queue!(stdout, MoveTo(placement.x, placement.y))?;
-            let escape = iterm2_escape(
-                &placement.path,
-                placement.width,
-                placement.height,
-                backend == InlineImageBackend::Iterm2Tmux,
-            )?;
+            let escape =
+                inline_image_escape(&placement.path, placement.width, placement.height, backend)?;
             write!(stdout, "{escape}")?;
         }
         stdout.flush()?;
@@ -155,8 +153,12 @@ impl App {
         if self.previous_inline_image_placements.is_empty() {
             return Ok(());
         }
+        let backend = active_backend_from_env(self.add_task_config.local.inline_images);
         let mut stdout = std::io::stdout();
         for placement in &self.previous_inline_image_placements {
+            if let Some(escape) = inline_image_delete_escape(placement.x, placement.y, backend) {
+                write!(stdout, "{escape}")?;
+            }
             let blank = " ".repeat(placement.width as usize);
             for row in 0..placement.height {
                 queue!(
