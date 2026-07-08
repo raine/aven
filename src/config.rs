@@ -350,7 +350,11 @@ pub fn resolve_blob_dir(db_path: &Path, config: &AppConfig) -> Result<PathBuf> {
     match &config.local.blob_dir {
         Some(path) if path.is_absolute() => Ok(path.clone()),
         Some(path) => Ok(base.join(path)),
-        None => Ok(base.join("objects")),
+        None => {
+            let mut blob_dir = db_path.as_os_str().to_os_string();
+            blob_dir.push(".blobs");
+            Ok(PathBuf::from(blob_dir))
+        }
     }
 }
 
@@ -544,7 +548,7 @@ mod tests {
         let config = AppConfig::default();
         assert_eq!(
             resolve_blob_dir(&db_path, &config).unwrap(),
-            PathBuf::from("/tmp/aven/objects")
+            PathBuf::from("/tmp/aven/db.sqlite.blobs")
         );
 
         let mut config = AppConfig::default();

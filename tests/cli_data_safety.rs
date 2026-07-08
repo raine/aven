@@ -580,9 +580,9 @@ fn query_string(db: &Path, sql: &'static str) -> String {
 }
 
 fn default_blob_dir(db: &Path) -> PathBuf {
-    db.parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("objects")
+    let mut blob_dir = db.as_os_str().to_os_string();
+    blob_dir.push(".blobs");
+    PathBuf::from(blob_dir)
 }
 
 fn sqlite_backup(source: &Path, target: &Path) {

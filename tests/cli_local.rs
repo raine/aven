@@ -1,7 +1,10 @@
 mod common;
 
+use std::path::PathBuf;
+
 use common::{
-    TestEnv, command, command_with_db, contains_all, contains_none, extract_ref, fail, ok, suffix,
+    TestEnv, command, command_with_db, contains_all, contains_none, extract_ref, fail, ok,
+    scalar_i64, suffix,
 };
 
 fn extract_attachment_id(output: &str) -> String {
@@ -58,13 +61,11 @@ fn attachment_add_list_get_and_delete_work_locally() {
     );
     let attachment_id = extract_attachment_id(&added);
     let sha256 = extract_sha256(&added);
-    let blob_root = db.parent().unwrap().join("objects");
-    let intended_blob_path = blob_root.join("sha256").join(&sha256);
-    let current_blob_path = blob_root.join("objects").join("sha256").join(&sha256);
-    assert!(
-        intended_blob_path.exists() || current_blob_path.exists(),
-        "sidecar blob should exist"
-    );
+    let mut blob_root = db.as_os_str().to_os_string();
+    blob_root.push(".blobs");
+    let blob_root = PathBuf::from(blob_root);
+    let blob_path = blob_root.join("objects").join("sha256").join(&sha256);
+    assert!(blob_path.exists(), "sidecar blob should exist");
 
     let full = ok(env.aven(&db, ["show", &task_ref, "--full"]));
     contains_all(
@@ -115,6 +116,50 @@ fn attachment_add_list_get_and_delete_work_locally() {
 
     let show = ok(env.aven(&db, ["show", &task_ref, "--full"]));
     contains_all(&show, &["![diagram](aven-attachment:", &attachment_id]);
+}
+
+#[test]
+fn attachment_add_and_delete_work_when_sync_enabled() {
+    let env = TestEnv::new();
+    let db = env.db("attachment-sync-enabled.sqlite");
+    env.write_config(&format!(
+        r#"
+sync:
+  enabled: true
+  server_url: "http://127.0.0.1:9"
+daemon:
+  wake_addr: "{}"
+"#,
+        env.free_loopback_addr()
+    ));
+    let created = ok(env.aven(&db, ["add", "sync attachment", "--project", "app"]));
+    let task_ref = extract_ref(&created);
+    let image = env.path("sync-photo.png");
+    std::fs::write(&image, b"sync png bytes").unwrap();
+
+    let added = ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+    contains_all(&added, &["attachment-added", "has_blob=true"]);
+    let attachment_id = extract_attachment_id(&added);
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM changes WHERE op_type = 'attachment_add'"
+        ),
+        1
+    );
+
+    let deleted = ok(env.aven(&db, ["attachment", "delete", &attachment_id]));
+    contains_all(&deleted, &["attachment-deleted", "deleted=yes"]);
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM changes WHERE op_type = 'attachment_delete'",
+        ),
+        1
+    );
 }
 
 #[test]

@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 use sqlx::SqliteConnection;
 
@@ -60,21 +60,32 @@ pub(crate) async fn upsert_inventory_available(
 ) -> Result<()> {
     validate_sha256(sha256)?;
     validate_media_type(media_type)?;
+    let existing = blob_inventory_row(conn, sha256).await?;
     let timestamp = now();
-    sqlx::query!(
+    if let Some(row) = existing {
+        if row.byte_size != byte_size || row.media_type != media_type {
+            bail!("error blob-inventory-metadata-mismatch");
+        }
+        sqlx::query(
+            "UPDATE blob_inventory
+             SET available = 1, last_verified_at = ?
+             WHERE sha256 = ?",
+        )
+        .bind(&timestamp)
+        .bind(sha256)
+        .execute(&mut *conn)
+        .await?;
+        return Ok(());
+    }
+    sqlx::query(
         "INSERT INTO blob_inventory(sha256, byte_size, media_type, available, first_seen_at, last_verified_at)
-         VALUES (?, ?, ?, 1, ?, ?)
-         ON CONFLICT(sha256) DO UPDATE SET
-             byte_size = excluded.byte_size,
-             media_type = excluded.media_type,
-             available = 1,
-             last_verified_at = excluded.last_verified_at",
-        sha256,
-        byte_size,
-        media_type,
-        timestamp,
-        timestamp,
+         VALUES (?, ?, ?, 1, ?, ?)",
     )
+    .bind(sha256)
+    .bind(byte_size)
+    .bind(media_type)
+    .bind(&timestamp)
+    .bind(&timestamp)
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -168,6 +179,31 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(row.available);
+    }
+
+    #[tokio::test]
+    async fn rejects_inventory_metadata_mismatch() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("test.sqlite");
+        let pool = open_db(&db_path).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+
+        let sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        upsert_inventory_available(&mut conn, sha256, 12, "image/png")
+            .await
+            .unwrap();
+
+        let error = upsert_inventory_available(&mut conn, sha256, 13, "image/png")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "error blob-inventory-metadata-mismatch");
+
+        let error = upsert_inventory_available(&mut conn, sha256, 12, "image/jpeg")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "error blob-inventory-metadata-mismatch");
     }
 
     #[test]

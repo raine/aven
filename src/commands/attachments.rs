@@ -86,15 +86,6 @@ fn attachment_json_item(att: &TaskAttachment, has_blob: bool) -> AttachmentJsonI
     }
 }
 
-fn ensure_sync_not_enabled(config: &AppConfig) -> Result<()> {
-    if config.sync.enabled {
-        bail!(
-            "error attachment-sync-enabled hint=\"sync must be disabled for local attachment operations\""
-        );
-    }
-    Ok(())
-}
-
 pub(crate) async fn cmd_attachment(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
@@ -123,8 +114,6 @@ pub(crate) async fn cmd_attachment_add(
     db_path: &Path,
     args: AttachmentAddArgs,
 ) -> Result<()> {
-    ensure_sync_not_enabled(config)?;
-
     let task = resolve_task_ref_in_workspace(conn, workspace, &args.task_ref).await?;
     let media_type = match args.media_type {
         Some(ref mt) => mt.clone(),
@@ -243,7 +232,6 @@ pub(crate) async fn cmd_attachment_get(
 
     if args.json {
         let item = attachment_json_item(&outcome.attachment, outcome.has_blob);
-        // Show output path in json if requested
         print_json_pretty(&item)?;
     } else if let Some(ref output_path) = args.output {
         let ref_str = DisplayRefContext::for_workspace(conn, &workspace.id)
@@ -289,11 +277,9 @@ pub(crate) async fn cmd_attachment_get(
 pub(crate) async fn cmd_attachment_delete(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    config: &AppConfig,
+    _config: &AppConfig,
     args: AttachmentDeleteArgs,
 ) -> Result<()> {
-    ensure_sync_not_enabled(config)?;
-
     let outcome = delete_task_attachment(conn, workspace, &args.attachment_id).await?;
 
     if args.json {

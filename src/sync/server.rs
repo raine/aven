@@ -227,6 +227,11 @@ async fn put_blob_handler(
     };
     match crate::attachments::store_blob(&mut conn, &state.blob_dir, media_type, &body).await {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) if err.to_string().contains("blob-inventory-metadata-mismatch") => (
+            StatusCode::BAD_REQUEST,
+            "error blob-inventory-metadata-mismatch".to_string(),
+        )
+            .into_response(),
         Err(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "error blob-store-failed".to_string(),
@@ -269,8 +274,11 @@ async fn get_blob_handler(
     }
 }
 
-fn internal_error(err: impl std::fmt::Display) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+fn internal_error(_err: impl std::fmt::Display) -> (StatusCode, String) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "error internal-server-error".to_string(),
+    )
 }
 
 fn invalid_sync_change(err: anyhow::Error) -> (StatusCode, String) {
@@ -449,9 +457,36 @@ async fn ensure_attachment_blobs_present(
             .get("sha256")
             .and_then(serde_json::Value::as_str)
             .context("error attachment-blob-missing")?;
-        if !blob_available(conn, blob_dir, sha256).await? {
-            bail!("error attachment-blob-missing");
-        }
+        let byte_size = change
+            .payload
+            .get("byte_size")
+            .and_then(serde_json::Value::as_i64)
+            .context("error attachment-blob-missing")?;
+        let media_type = change
+            .payload
+            .get("media_type")
+            .and_then(serde_json::Value::as_str)
+            .context("error attachment-blob-missing")?;
+        ensure_attachment_blob_matches(conn, blob_dir, sha256, byte_size, media_type).await?;
+    }
+    Ok(())
+}
+
+async fn ensure_attachment_blob_matches(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    sha256: &str,
+    byte_size: i64,
+    media_type: &str,
+) -> Result<()> {
+    let Some(row) = crate::attachments::blob_inventory_row(conn, sha256).await? else {
+        bail!("error attachment-blob-missing");
+    };
+    if !row.available || !crate::attachments::object_path(blob_dir, sha256)?.exists() {
+        bail!("error attachment-blob-missing");
+    }
+    if row.byte_size != byte_size || row.media_type != media_type {
+        bail!("error blob-inventory-metadata-mismatch");
     }
     Ok(())
 }

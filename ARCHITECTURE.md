@@ -31,7 +31,7 @@
 
 1. `src/commands/attachments.rs` parses CLI attachment commands, resolves refs in the active workspace, infers or accepts image media type, and formats metadata-only text or JSON output.
 2. `src/operations/attachments.rs` validates metadata, stores original bytes through `src/attachments/storage.rs`, appends the Markdown image ref, and records `attachment_add` or `attachment_delete` change rows with `field = "attachments"`.
-3. `src/config.rs` resolves `local.blob_dir`: absolute paths are used directly, relative paths are rooted beside the active SQLite database, and omitted values use an `objects` directory beside the database.
+3. `src/config.rs` resolves `local.blob_dir`: absolute paths are used directly, relative paths are rooted beside the active SQLite database, and omitted values use `<resolved-db-path>.blobs`.
 4. `src/task_enrichment.rs` and query hydration load attachment metadata with `has_blob`; show, context, JSON, search, and TUI surfaces consume that read model without reading bytes.
 5. `src/sync/client.rs` uploads missing local blobs before pushing attachment metadata, posts JSON metadata through `/sync`, downloads missing pulled blobs after page apply, and reports `blob_uploaded` and `blob_downloaded` counts separately from change counts.
 6. `src/sync/server.rs` serves `/sync/blobs/missing`, `PUT /sync/blobs/<sha256>`, and `GET /sync/blobs/<sha256>` behind the same auth path as sync metadata.

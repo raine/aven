@@ -320,10 +320,9 @@ fn insert_attachment_row(db: &std::path::Path, task_id: &str, sha256: &str, dele
 }
 
 fn seed_available_blob_for_hash(db: &std::path::Path, sha256: &str) {
-    let blob_path = db
-        .parent()
-        .expect("db parent")
-        .join("objects")
+    let mut blob_dir = db.as_os_str().to_os_string();
+    blob_dir.push(".blobs");
+    let blob_path = std::path::PathBuf::from(blob_dir)
         .join("objects")
         .join("sha256")
         .join(sha256);
@@ -343,10 +342,9 @@ fn seed_local_attachment_change(db: &std::path::Path, task_id: &str) {
 
     let bytes = b"attachment-bytes";
     let sha256 = hex::encode(Sha256::digest(bytes));
-    let blob_path = db
-        .parent()
-        .expect("db parent")
-        .join("objects")
+    let mut blob_dir = db.as_os_str().to_os_string();
+    blob_dir.push(".blobs");
+    let blob_path = std::path::PathBuf::from(blob_dir)
         .join("objects")
         .join("sha256")
         .join(&sha256);
@@ -3028,6 +3026,26 @@ async fn sync_server_rejects_attachment_metadata_when_blob_missing() {
     assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
     let body = response.text().await.expect("error body");
     contains_all(&body, &["error attachment-blob-missing"]);
+    assert_server_log_empty(&server).await;
+}
+
+#[tokio::test]
+async fn sync_server_rejects_attachment_metadata_when_blob_metadata_disagrees() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    seed_available_blob_for_hash(
+        &env.path("server.sqlite"),
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    );
+
+    let response = post_sync(
+        &server,
+        attachment_add_change(attachment_change_payload(json!({ "byte_size": 13 }))),
+    )
+    .await;
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body = response.text().await.expect("error body");
+    contains_all(&body, &["error blob-inventory-metadata-mismatch"]);
     assert_server_log_empty(&server).await;
 }
 

@@ -17,7 +17,11 @@ pub(crate) fn validate_attachment_id(value: &str) -> Result<()> {
 }
 
 pub(crate) fn validate_sha256(value: &str) -> Result<()> {
-    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
         bail!("error invalid-sha256 input={value}");
     }
     Ok(())
@@ -94,7 +98,7 @@ mod tests {
         assert!(validate_sha256(valid).is_ok());
         assert!(validate_sha256("short").is_err());
         assert!(validate_sha256(&format!("{valid}g")).is_err());
-        assert!(validate_sha256(&format!("x{valid}")).is_err());
+        assert!(validate_sha256(&valid.to_ascii_uppercase()).is_err());
     }
 
     #[test]

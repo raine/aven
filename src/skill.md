@@ -94,8 +94,7 @@ aven restore APP-7KQ9
   File output requires a local available blob and refuses to overwrite an
   existing output path. `attachment add` accepts `--media-type`, `--filename`,
   `--alt`, `--width`, and `--height`; extension inference covers png, jpg,
-  jpeg, gif, and webp. Local add and delete operations require sync to be
-  disabled in config.
+  jpeg, gif, and webp.
 - Task detail read surfaces include attachment metadata and `has_blob` without
   embedding bytes. The TUI renders `aven-attachment:<id>` Markdown image refs as
   text placeholders for present, pending download, deleted, or missing metadata
