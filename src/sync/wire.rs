@@ -4,11 +4,15 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::attachments::validation::{
+    MAX_BLOB_BYTES, validate_alt_text, validate_blob_size, validate_dimensions, validate_filename,
+    validate_media_type,
+};
 use crate::change_log::op_type;
 use crate::ids::{BASE32, ProjectId, WorkspaceId};
 use crate::task_fields::TaskField;
 
-pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 7;
+pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 8;
 pub(crate) fn sync_server_url_is_valid(server: &str) -> bool {
     let Ok(url) = reqwest::Url::parse(server) else {
         return false;
@@ -394,9 +398,79 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             ensure_sync_id("note_id", &note_id)?;
             required_timestamp_payload("deleted_at", &change.payload)?;
         }
+        op_type::ATTACHMENT_ADD => validate_attachment_add_change(change)?,
+        op_type::ATTACHMENT_DELETE => validate_attachment_delete_change(change)?,
         _ => bail!("error invalid-sync-change op_type={}", change.op_type),
     }
     Ok(())
+}
+
+fn validate_attachment_add_change(change: &ChangeWire) -> Result<()> {
+    ensure_entity_type(change, "task")?;
+    ensure_sync_id("entity_id", &change.entity_id)?;
+    ensure_attachment_field(change)?;
+    required_workspace_payload(&change.payload)?;
+    let attachment_id = required_string_payload("attachment_id", &change.payload)?;
+    ensure_sync_id("attachment_id", &attachment_id)?;
+    let sha256 = required_string_payload("sha256", &change.payload)?;
+    validate_sha256_for_sync(&sha256)?;
+    let byte_size = required_i64_payload("byte_size", &change.payload)?;
+    validate_blob_size_for_sync(byte_size)?;
+    let media_type = required_string_payload("media_type", &change.payload)?;
+    map_attachment_validation(validate_media_type(&media_type))?;
+    let filename = optional_string_payload("filename", &change.payload)?;
+    map_attachment_validation(validate_filename(filename.as_deref()))?;
+    let alt_text = optional_string_payload("alt_text", &change.payload)?;
+    map_attachment_validation(validate_alt_text(alt_text.as_deref()))?;
+    let width = optional_i64_payload("width", &change.payload)?;
+    let height = optional_i64_payload("height", &change.payload)?;
+    map_attachment_validation(validate_dimensions(width, height))?;
+    required_timestamp_payload("created_at", &change.payload)?;
+    Ok(())
+}
+
+fn validate_attachment_delete_change(change: &ChangeWire) -> Result<()> {
+    ensure_entity_type(change, "task")?;
+    ensure_sync_id("entity_id", &change.entity_id)?;
+    ensure_attachment_field(change)?;
+    required_workspace_payload(&change.payload)?;
+    let attachment_id = required_string_payload("attachment_id", &change.payload)?;
+    ensure_sync_id("attachment_id", &attachment_id)?;
+    required_timestamp_payload("deleted_at", &change.payload)?;
+    Ok(())
+}
+
+fn ensure_attachment_field(change: &ChangeWire) -> Result<()> {
+    if change.field.as_deref() != Some("attachments") {
+        bail!("error invalid-sync-change field=attachments");
+    }
+    Ok(())
+}
+
+fn validate_sha256_for_sync(value: &str) -> Result<()> {
+    if value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        Ok(())
+    } else {
+        bail!("error invalid-sync-change invalid-sha256");
+    }
+}
+
+fn validate_blob_size_for_sync(byte_size: i64) -> Result<()> {
+    let Ok(bytes) = usize::try_from(byte_size) else {
+        bail!("error invalid-sync-change error invalid-attachment-size bytes={byte_size}");
+    };
+    if bytes == 0 || bytes > MAX_BLOB_BYTES {
+        bail!("error invalid-sync-change error invalid-attachment-size bytes={byte_size}");
+    }
+    map_attachment_validation(validate_blob_size(bytes))
+}
+
+fn map_attachment_validation(result: Result<()>) -> Result<()> {
+    result.map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))
 }
 
 fn validate_change_server_seq(change: &ChangeWire, direction: ChangeDirection) -> Result<()> {
@@ -575,6 +649,16 @@ fn required_string_payload(key: &str, payload: &Value) -> Result<String> {
         .with_context(|| format!("error invalid-sync-change payload.{key} missing"))
 }
 
+fn required_i64_payload(key: &str, payload: &Value) -> Result<i64> {
+    match payload.get(key) {
+        Some(Value::Number(value)) => value
+            .as_i64()
+            .with_context(|| format!("error invalid-sync-change payload.{key} invalid")),
+        Some(Value::Null) | None => bail!("error invalid-sync-change payload.{key} missing"),
+        Some(_) => bail!("error invalid-sync-change payload.{key} invalid"),
+    }
+}
+
 fn required_timestamp_payload(key: &str, payload: &Value) -> Result<String> {
     let value = required_string_payload(key, payload)?;
     if value.len() == 20
@@ -614,6 +698,17 @@ fn optional_workspace_payload(payload: &Value) -> Result<()> {
 fn optional_string_payload(key: &str, payload: &Value) -> Result<Option<String>> {
     match payload.get(key) {
         Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(Value::Null) | None => Ok(None),
+        Some(_) => bail!("error invalid-sync-change payload.{key} invalid"),
+    }
+}
+
+fn optional_i64_payload(key: &str, payload: &Value) -> Result<Option<i64>> {
+    match payload.get(key) {
+        Some(Value::Number(value)) => value
+            .as_i64()
+            .map(Some)
+            .with_context(|| format!("error invalid-sync-change payload.{key} invalid")),
         Some(Value::Null) | None => Ok(None),
         Some(_) => bail!("error invalid-sync-change payload.{key} invalid"),
     }
