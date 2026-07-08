@@ -576,6 +576,46 @@ fn attachment_get_refuses_existing_output_and_unknown_media_type() {
 }
 
 #[test]
+fn attachment_get_refuses_unavailable_imported_blob() {
+    let env = TestEnv::new();
+    let source_db = env.db("attachment-import-source.sqlite");
+    let target_db = env.db("attachment-import-target.sqlite");
+    let task_ref = extract_ref(&ok(
+        env.aven(&source_db, ["add", "attach me", "--project", "app"])
+    ));
+    let image = env.path("photo.png");
+    std::fs::write(&image, b"png bytes").unwrap();
+    let added = ok(env.aven(
+        &source_db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+    let attachment_id = extract_attachment_id(&added);
+    let export_path = env.path("attachment-export.json");
+    ok(env.aven(
+        &source_db,
+        ["export", "--output", export_path.to_str().unwrap()],
+    ));
+    ok(env.aven(
+        &target_db,
+        ["import", "--yes", export_path.to_str().unwrap()],
+    ));
+
+    let output = env.path("copy.png");
+    let error = fail(env.aven(
+        &target_db,
+        [
+            "attachment",
+            "get",
+            &attachment_id,
+            "--output",
+            output.to_str().unwrap(),
+        ],
+    ));
+    contains_all(&error, &["error attachment-blob-unavailable"]);
+    assert!(!output.exists());
+}
+
+#[test]
 fn attachment_delete_is_idempotent() {
     let env = TestEnv::new();
     let db = env.db("attachment-delete-idempotent.sqlite");
