@@ -12,6 +12,7 @@ mod shortcuts;
 mod sidebar;
 mod task_display;
 mod task_list;
+mod timestamps;
 mod toast;
 mod truncate;
 

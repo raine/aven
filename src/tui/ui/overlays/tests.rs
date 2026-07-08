@@ -1223,7 +1223,7 @@ mod sync_status_overlay {
         assert!(rendered.contains("server reach"));
         assert!(rendered.contains("last sync reached server"));
         assert!(rendered.contains("last synced"));
-        assert!(rendered.contains("2026-06-25T10:20:00Z"));
+        assert!(!rendered.contains("2026-06-25T10:20:00Z"));
         assert!(rendered.contains("Enter/Esc close"));
         assert!(!rendered.contains('▲'));
         assert!(!rendered.contains('▼'));

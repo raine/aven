@@ -11,19 +11,9 @@ use self::view_model::{
 
 pub(crate) use self::hit_test::TaskListHit;
 
-use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{
-    Block, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-    TableState, Wrap,
-};
-use time::format_description::well_known::Rfc3339;
-use time::{OffsetDateTime, UtcOffset};
-
 use super::input::clipped_input_line;
 use super::task_display::{description_preview_text, labels_display};
+use super::timestamps::local_timestamp_display;
 use super::truncate::truncate_chars;
 use crate::query::TaskListItem;
 use crate::queue::{now_seconds, unix_seconds};
@@ -36,6 +26,14 @@ use crate::tui::theme::{
 };
 use crate::tui::widgets::{
     age_style, label_cell, priority_icon, priority_short, status_chip, status_span, title_cell,
+};
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span, Text};
+use ratatui::widgets::{
+    Block, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    TableState, Wrap,
 };
 
 const EPIC_MARKER: &str = "\u{f04ce}";
@@ -841,25 +839,6 @@ fn task_heading_line(item: &TaskListItem) -> Line<'_> {
     ])
 }
 
-fn local_timestamp_display(value: &str) -> String {
-    let Ok(datetime) = OffsetDateTime::parse(value, &Rfc3339) else {
-        return value.to_string();
-    };
-    let Ok(offset) = UtcOffset::local_offset_at(datetime) else {
-        return value.to_string();
-    };
-    timestamp_display_in_offset(datetime, offset).unwrap_or_else(|| value.to_string())
-}
-
-fn timestamp_display_in_offset(datetime: OffsetDateTime, offset: UtcOffset) -> Option<String> {
-    datetime
-        .to_offset(offset)
-        .format(&time::macros::format_description!(
-            "[year]-[month]-[day] [hour]:[minute]:[second]"
-        ))
-        .ok()
-}
-
 fn task_preview_fields_line(item: &TaskListItem) -> Line<'static> {
     let mut fields = vec![
         Span::styled("project ", Style::new().fg(FG_DIM)),
@@ -1533,25 +1512,6 @@ mod tests {
         let rendered = task_preview_fields_line(&item).to_string();
 
         assert!(rendered.contains("created "));
-    }
-
-    #[test]
-    fn timestamp_display_uses_given_offset() {
-        let datetime = OffsetDateTime::parse("2026-07-04T06:43:06Z", &Rfc3339).unwrap();
-        let offset = UtcOffset::from_hms(2, 0, 0).unwrap();
-
-        assert_eq!(
-            timestamp_display_in_offset(datetime, offset).unwrap(),
-            "2026-07-04 08:43:06"
-        );
-    }
-
-    #[test]
-    fn local_timestamp_display_keeps_unparsed_values() {
-        assert_eq!(
-            local_timestamp_display("not-a-timestamp"),
-            "not-a-timestamp"
-        );
     }
 
     #[test]

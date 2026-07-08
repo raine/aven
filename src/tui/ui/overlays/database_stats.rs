@@ -6,6 +6,7 @@ use ratatui::widgets::Paragraph;
 
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
+use super::super::timestamps::optional_local_timestamp_display;
 use crate::tui::config_overlay::DATABASE_STATS_TITLE;
 use crate::tui::store::TuiDatabaseStats;
 use crate::tui::theme::{BG_ALT, FG, FG_MUTED};
@@ -220,12 +221,12 @@ fn database_stats_lines(stats: &TuiDatabaseStats) -> Vec<Line<'static>> {
             vec![
                 value_row(
                     "created",
-                    stats.latest_created_at.as_deref().unwrap_or("none"),
+                    optional_local_timestamp_display(stats.latest_created_at.as_deref(), "none"),
                     Style::new().fg(FG_MUTED),
                 ),
                 value_row(
                     "updated",
-                    stats.latest_updated_at.as_deref().unwrap_or("none"),
+                    optional_local_timestamp_display(stats.latest_updated_at.as_deref(), "none"),
                     Style::new().fg(FG_MUTED),
                 ),
             ],

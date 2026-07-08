@@ -9,6 +9,7 @@ use ratatui::widgets::{
 use super::input::clipped_input_line;
 use super::scroll::{clamp_scroll_start, scrollbar_thumb_position};
 use super::task_display::{description_or_placeholder, labels_display};
+use super::timestamps::local_timestamp_display;
 use super::truncate::truncate_width;
 use crate::query::TaskListItem;
 use crate::tui::app::WidgetState;
@@ -253,7 +254,10 @@ fn detail_body_lines(
         for note in &item.notes {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled(note.created_at.clone(), Style::new().fg(FG_DIM)),
+                Span::styled(
+                    local_timestamp_display(&note.created_at),
+                    Style::new().fg(FG_DIM),
+                ),
                 Span::styled("  you", Style::new().fg(ACCENT)),
             ]));
             lines.extend(quoted_block_lines(&note.body, width, Style::new().fg(FG)));
@@ -638,13 +642,13 @@ fn detail_metadata_lines(item: &TaskListItem) -> Vec<Line<'static>> {
         Line::from(""),
         metadata_label("CREATED"),
         Line::from(Span::styled(
-            item.task.created_at.clone(),
+            local_timestamp_display(&item.task.created_at),
             Style::new().fg(FG_MUTED),
         )),
         Line::from(""),
         metadata_label("UPDATED"),
         Line::from(Span::styled(
-            item.task.updated_at.clone(),
+            local_timestamp_display(&item.task.updated_at),
             Style::new().fg(FG_MUTED),
         )),
     ];
@@ -846,7 +850,7 @@ mod tests {
 
         assert!(rendered.contains("Fix token refresh race"));
         assert!(rendered.contains("Confirmed race in useTokenRefresh.ts"));
-        assert!(rendered.contains("2026-06-20T12:00:00Z"));
+        assert!(!rendered.contains("2026-06-20T12:00:00Z"));
     }
 
     #[test]

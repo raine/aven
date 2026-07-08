@@ -4,6 +4,7 @@ use ratatui::text::{Line, Text};
 use ratatui::widgets::Paragraph;
 
 use super::super::dialog::{Dialog, dialog_hint_line};
+use super::super::timestamps::optional_local_timestamp_display;
 use crate::tui::config_overlay::CONFIG_STATUS_TITLE;
 use crate::tui::store::{SyncStatusCheck, TuiSyncStatus};
 use crate::tui::theme::{BG_ALT, FG, FG_MUTED, GREEN, RED};
@@ -102,12 +103,12 @@ fn sync_status_lines(status: &TuiSyncStatus) -> Vec<Line<'static>> {
         section_line("last sync"),
         value_row(
             "last attempt",
-            status.last_attempt.as_deref().unwrap_or("never"),
+            optional_local_timestamp_display(status.last_attempt.as_deref(), "never"),
             Style::new().fg(FG_MUTED),
         ),
         value_row(
             "last synced",
-            status.last_success.as_deref().unwrap_or("never"),
+            optional_local_timestamp_display(status.last_success.as_deref(), "never"),
             if status.last_success.is_some() {
                 Style::new().fg(GREEN)
             } else {

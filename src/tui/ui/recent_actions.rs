@@ -6,6 +6,7 @@ use ratatui::widgets::{
     Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, TableState, Wrap,
 };
 
+use super::timestamps::local_timestamp_display;
 use super::truncate::truncate_chars;
 use crate::change_log::op_type;
 use crate::query::RecentActionItem;
@@ -302,7 +303,10 @@ fn render_action_detail(frame: &mut Frame, store: &TuiStore, selected: Option<us
         ]),
         Line::from(vec![
             Span::styled("at ", Style::new().fg(FG_DIM)),
-            Span::styled(action.created_at.clone(), Style::new().fg(FG_MUTED)),
+            Span::styled(
+                local_timestamp_display(&action.created_at),
+                Style::new().fg(FG_MUTED),
+            ),
             Span::styled("  kind ", Style::new().fg(FG_DIM)),
             Span::styled(action.entity_type.clone(), Style::new().fg(FG_MUTED)),
             Span::styled("  id ", Style::new().fg(FG_DIM)),
