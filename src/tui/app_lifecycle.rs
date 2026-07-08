@@ -181,6 +181,7 @@ impl App {
         for placement in placements {
             if let Some(escape) = inline_image_delete_escape(placement.x, placement.y, backend) {
                 write!(stdout, "{escape}")?;
+                continue;
             }
             let blank = " ".repeat(placement.width as usize);
             for row in 0..placement.height {
