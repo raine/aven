@@ -80,11 +80,15 @@ fn active_protocol(terminal: InlineImageTerminal<'_>) -> Option<InlineImageProto
     if terminal.term_program == Some("iTerm.app") {
         return Some(InlineImageProtocol::Iterm2);
     }
+    let kitty_term_program = terminal.term_program.is_some_and(|term_program| {
+        term_program.eq_ignore_ascii_case("kitty")
+            || term_program.eq_ignore_ascii_case("WezTerm")
+            || term_program.eq_ignore_ascii_case("ghostty")
+    });
     if matches!(terminal.term, Some("xterm-kitty" | "xterm-ghostty"))
         || terminal.kitty_window_id.is_some()
-        || terminal.term_program == Some("WezTerm")
+        || kitty_term_program
         || terminal.wezterm_pane.is_some()
-        || terminal.term_program == Some("ghostty")
         || terminal.ghostty_resources_dir.is_some()
     {
         return Some(InlineImageProtocol::Kitty);
@@ -247,8 +251,11 @@ mod tests {
         for terminal in [
             terminal().term(Some("xterm-kitty")),
             terminal().term(Some("xterm-ghostty")),
+            terminal().term_program(Some("kitty")),
             terminal().term_program(Some("WezTerm")),
+            terminal().term_program(Some("wezterm")),
             terminal().wezterm_pane(Some("1")),
+            terminal().term_program(Some("Ghostty")),
             terminal().term_program(Some("ghostty")),
             terminal().ghostty_resources_dir(Some("/Applications/Ghostty.app/Contents/Resources")),
             terminal().kitty_window_id(Some("3")),
