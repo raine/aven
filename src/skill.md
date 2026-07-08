@@ -73,8 +73,9 @@ aven restore APP-7KQ9
 - When creating follow-up tasks from a discussion, investigation, review, or
   plan, include enough detail in the task description for the task to stand
   alone. Capture rationale, scope, acceptance criteria, implementation notes,
-  and related tasks when useful. Use `--description-file` or
-  `--description-stdin` for multi-paragraph descriptions.
+  and related tasks when useful. Prefer `--description-stdin` for
+  multi-paragraph descriptions. Use `--description-file` when the file already
+  exists with the intended content.
 - Add dependencies between related tasks when one task must finish before another
   can start. Use `dep add <blocked> <blocker>`.
 - Use epics when one task is part of a larger body of work. Create an empty epic
@@ -131,8 +132,13 @@ aven daemon restart
 
 ## Long input and secrets
 
-- Use `--description-file`, `--description-stdin`, `note --file`, or
-  `note --stdin` for long Markdown instead of shell-escaping large text.
+- Use `--description-stdin`, `note --stdin`, or an existing file with
+  `--description-file` or `note --file` for long Markdown instead of
+  shell-escaping large text.
+- Avoid `tmpfile=$(mktemp); cat > "$tmpfile"` in shell snippets. Some agent
+  shells enable `noclobber`, which makes `>` fail because `mktemp` creates the
+  file before the redirect runs. Use a heredoc directly into
+  `--description-stdin`, or write a new path inside `mktemp -d`.
 - Notes are append-style and better for durable handoff context than scratch
   work.
 - Avoid writing secrets into titles, descriptions, labels, projects, notes, or
