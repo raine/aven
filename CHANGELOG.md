@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.1.3 (2026-07-07)
+
+- Epic detail views list child tasks inline, with mouse hover and click targets
+  for jumping to visible child tasks.
+- The queue keeps blocked tasks below actionable groups and gives more weight to
+  tasks that unblock other work.
+- The TUI preserves sidebar selection more consistently when switching focus,
+  toggling the sidebar, or applying task changes.
+- Crashes are written to the aven log file with panic details for easier
+  troubleshooting.
+
 ## v0.1.2 (2026-07-05)
 
 - Added `aven skill install` so Claude Code, OpenCode, and Codex can install the
