@@ -1,7 +1,8 @@
 use serde::Serialize;
 
+use crate::operations::AttachmentReadItem;
 use crate::query::{TaskDependencyLink, TaskDependencySummary, TaskListItem};
-use crate::render::{KvLine, print_multiline_block, quote};
+use crate::render::{KvLine, print_multiline_block, quote, yes_no};
 
 pub(crate) fn print_task_line_item(item: &TaskListItem) {
     let labels = item.labels.join(",");
@@ -30,6 +31,7 @@ pub(crate) fn print_task_line_item(item: &TaskListItem) {
 pub(crate) struct TaskFullReport {
     pub(crate) detail: crate::query::TaskDetail,
     pub(crate) conflicts: Vec<TaskConflictReport>,
+    pub(crate) attachments: Vec<AttachmentMetadataJson>,
 }
 
 pub(crate) fn print_full_task_report(report: &TaskFullReport) {
@@ -49,6 +51,9 @@ pub(crate) fn print_full_task_report(report: &TaskFullReport) {
             println!();
         }
         println!("EOF");
+    }
+    for attachment in &report.attachments {
+        print_attachment_metadata_line(attachment);
     }
     print_task_dependency_summary(&detail.dependencies);
     for note in &detail.notes {
@@ -84,6 +89,7 @@ pub(crate) fn task_full_json(report: &TaskFullReport) -> TaskFullJson {
             })
             .collect(),
         conflicts: report.conflicts.clone(),
+        attachments: report.attachments.clone(),
     }
 }
 
@@ -103,6 +109,72 @@ fn print_dependency_section(label: &str, items: &[crate::query::TaskDependencyIt
             quote(&item.task.title)
         );
     }
+}
+
+pub(crate) fn attachment_metadata_json(item: AttachmentReadItem) -> AttachmentMetadataJson {
+    AttachmentMetadataJson {
+        attachment_id: item.attachment.attachment_id,
+        task_id: item.attachment.task_id,
+        media_type: item.attachment.media_type,
+        byte_size: item.attachment.byte_size,
+        filename: item.attachment.filename,
+        alt_text: item.attachment.alt_text,
+        width: item.attachment.width,
+        height: item.attachment.height,
+        created_at: item.attachment.created_at,
+        deleted: item.attachment.deleted,
+        deleted_at: item.attachment.deleted_at,
+        has_blob: item.has_blob,
+    }
+}
+
+pub(crate) fn print_attachment_metadata_line(attachment: &AttachmentMetadataJson) {
+    let mut line = KvLine::new("attachment")
+        .field("attachment_id", &attachment.attachment_id)
+        .field("media_type", &attachment.media_type)
+        .field("byte_size", attachment.byte_size)
+        .field("deleted", yes_no(attachment.deleted))
+        .field("has_blob", yes_no(attachment.has_blob));
+    if let Some(filename) = &attachment.filename {
+        line = line.quoted("filename", filename);
+    }
+    if let Some(alt_text) = &attachment.alt_text {
+        line = line.quoted("alt_text", alt_text);
+    }
+    println!("{}", line.finish());
+}
+
+#[allow(dead_code)]
+pub(crate) fn attachment_placeholder(attachment: &AttachmentMetadataJson) -> String {
+    let label = attachment
+        .alt_text
+        .as_deref()
+        .or(attachment.filename.as_deref())
+        .unwrap_or("attachment");
+    if attachment.deleted {
+        format!("[image: deleted attachment {label}]")
+    } else if attachment.has_blob {
+        format!("[image: {label}]")
+    } else {
+        format!("[image: pending download {label}]")
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn attachment_placeholder_for_ref(
+    attachment_ref: &str,
+    attachments: &[AttachmentMetadataJson],
+) -> String {
+    let Some(attachment_id) = crate::attachments::parse_attachment_ref(attachment_ref) else {
+        return "[image: unsupported attachment reference]".to_string();
+    };
+    let Some(attachment) = attachments
+        .iter()
+        .find(|attachment| attachment.attachment_id == attachment_id)
+    else {
+        return "[image: missing attachment metadata]".to_string();
+    };
+    attachment_placeholder(attachment)
 }
 
 // --- JSON DTOs ---
@@ -173,6 +245,22 @@ pub(crate) fn task_epic_link_json(link: &TaskDependencyLink) -> TaskEpicLinkJson
     }
 }
 
+#[derive(Serialize, Debug, Clone)]
+pub(crate) struct AttachmentMetadataJson {
+    pub(crate) attachment_id: String,
+    pub(crate) task_id: String,
+    pub(crate) media_type: String,
+    pub(crate) byte_size: i64,
+    pub(crate) filename: Option<String>,
+    pub(crate) alt_text: Option<String>,
+    pub(crate) width: Option<i64>,
+    pub(crate) height: Option<i64>,
+    pub(crate) created_at: String,
+    pub(crate) deleted: bool,
+    pub(crate) deleted_at: Option<String>,
+    pub(crate) has_blob: bool,
+}
+
 #[derive(Serialize)]
 pub(crate) struct TaskFullJson {
     pub(crate) task: TaskLineJson,
@@ -181,6 +269,7 @@ pub(crate) struct TaskFullJson {
     pub(crate) dependencies: TaskDependencySummaryJson,
     pub(crate) notes: Vec<TaskNoteJson>,
     pub(crate) conflicts: Vec<TaskConflictReport>,
+    pub(crate) attachments: Vec<AttachmentMetadataJson>,
 }
 
 #[derive(Serialize)]
@@ -256,5 +345,70 @@ pub(crate) fn task_dependency_summary_json(
                 created_at: d.task.created_at.clone(),
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_attachment_metadata(
+        attachment_id: &str,
+        has_blob: bool,
+        deleted: bool,
+        filename: Option<&str>,
+        alt_text: Option<&str>,
+    ) -> AttachmentMetadataJson {
+        AttachmentMetadataJson {
+            attachment_id: attachment_id.to_string(),
+            task_id: "TASK000000000000".to_string(),
+            media_type: "image/png".to_string(),
+            byte_size: 9,
+            filename: filename.map(str::to_string),
+            alt_text: alt_text.map(str::to_string),
+            width: None,
+            height: None,
+            created_at: "001".to_string(),
+            deleted,
+            deleted_at: deleted.then(|| "002".to_string()),
+            has_blob,
+        }
+    }
+
+    #[test]
+    fn attachment_placeholders_describe_attachment_states() {
+        let present = test_attachment_metadata(
+            "7KQ9A1X4MV2P8D6R",
+            true,
+            false,
+            Some("diagram.png"),
+            Some("diagram"),
+        );
+        let pending =
+            test_attachment_metadata("8KQ9A1X4MV2P8D6R", false, false, Some("photo.png"), None);
+        let deleted =
+            test_attachment_metadata("9KQ9A1X4MV2P8D6R", true, true, None, Some("old screenshot"));
+
+        assert_eq!(attachment_placeholder(&present), "[image: diagram]");
+        assert_eq!(
+            attachment_placeholder(&pending),
+            "[image: pending download photo.png]"
+        );
+        assert_eq!(
+            attachment_placeholder(&deleted),
+            "[image: deleted attachment old screenshot]"
+        );
+        assert_eq!(
+            attachment_placeholder_for_ref("aven-attachment:7KQ9A1X4MV2P8D6R", &[present]),
+            "[image: diagram]"
+        );
+        assert_eq!(
+            attachment_placeholder_for_ref("aven-attachment:AAAAAAAAAAAAAAAA", &[]),
+            "[image: missing attachment metadata]"
+        );
+        assert_eq!(
+            attachment_placeholder_for_ref("not-a-ref", &[]),
+            "[image: unsupported attachment reference]"
+        );
     }
 }

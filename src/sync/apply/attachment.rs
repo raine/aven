@@ -8,9 +8,11 @@ use super::shared::task_field_workspace_id_payload;
 
 pub(super) async fn add_attachment(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     let workspace_id = task_field_workspace_id_payload(conn, change).await?;
-    ensure_attachment_task_exists(conn, &workspace_id, &change.entity_id).await?;
+    ensure_attachment_task_exists(conn, workspace_id.as_str(), &change.entity_id).await?;
     let payload = AttachmentAddPayload::from_change(change)?;
-    if let Some(row) = existing_attachment(conn, &workspace_id, &payload.attachment_id).await? {
+    if let Some(row) =
+        existing_attachment(conn, workspace_id.as_str(), &payload.attachment_id).await?
+    {
         return ensure_same_attachment(&row, &change.entity_id, &payload);
     }
 
@@ -57,7 +59,9 @@ pub(super) async fn delete_attachment(
     .await?
     .rows_affected();
 
-    if updated == 0 && attachment_exists(conn, &workspace_id, &payload.attachment_id).await? {
+    if updated == 0
+        && attachment_exists(conn, workspace_id.as_str(), &payload.attachment_id).await?
+    {
         bail!(
             "error attachment-identity-conflict attachment_id={} task_id={}",
             payload.attachment_id,

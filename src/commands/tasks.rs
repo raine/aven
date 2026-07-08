@@ -16,8 +16,8 @@ use crate::query::{
 use crate::refs::{DisplayRefContext, resolve_task_ref_in_workspace};
 use crate::render::{KvLine, changed_text, print_json_pretty, quote};
 use crate::task_render::{
-    TaskConflictReport, TaskFullReport, print_full_task_report, print_task_line_item,
-    task_full_json, task_line_json_item,
+    TaskConflictReport, TaskFullReport, attachment_metadata_json, print_full_task_report,
+    print_task_line_item, task_full_json, task_line_json_item,
 };
 use crate::types::Task;
 use crate::workspaces::{Workspace, workspace_for_id};
@@ -199,7 +199,21 @@ async fn build_full_task_report(
             remote_value,
         });
     }
-    Ok(TaskFullReport { detail, conflicts })
+    let attachments = crate::operations::attachment_read_items_by_task(
+        conn,
+        task.workspace_id.as_str(),
+        task.id.as_str(),
+        true,
+    )
+    .await?
+    .into_iter()
+    .map(attachment_metadata_json)
+    .collect();
+    Ok(TaskFullReport {
+        detail,
+        conflicts,
+        attachments,
+    })
 }
 
 pub(crate) async fn cmd_show(

@@ -24,6 +24,7 @@ const PROJECT_WEIGHT: i64 = 220;
 const STATUS_WEIGHT: i64 = 160;
 const PRIORITY_WEIGHT: i64 = 150;
 const DESCRIPTION_WEIGHT: i64 = 100;
+const ATTACHMENT_WEIGHT: i64 = 90;
 const NOTE_WEIGHT: i64 = 80;
 const FIELD_MATCH_BONUS: i64 = 35_000;
 const EXTRA_FIELD_BONUS: i64 = 18_000;
@@ -48,6 +49,7 @@ pub(crate) enum SearchMatchedField {
     Status,
     Priority,
     Description,
+    Attachment,
     Note,
 }
 
@@ -61,6 +63,7 @@ impl SearchMatchedField {
             Self::Status => "status",
             Self::Priority => "priority",
             Self::Description => "description",
+            Self::Attachment => "attachment",
             Self::Note => "note",
         }
     }
@@ -113,6 +116,7 @@ struct SearchDocument {
     project_name: String,
     labels_text: String,
     notes_text: String,
+    attachments_text: String,
 }
 
 struct ScoredDocument {
@@ -318,6 +322,126 @@ async fn labels_for_search_preview(
     Ok(labels_by_task)
 }
 
+async fn attachment_search_text_by_task(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_ids: &[String],
+) -> Result<HashMap<String, String>> {
+    let mut by_task: HashMap<String, Vec<String>> = HashMap::new();
+    if task_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT task_id, filename, alt_text FROM task_attachments WHERE workspace_id = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(" AND deleted = 0 AND task_id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for task_id in chunk {
+                separated.push_bind(task_id);
+            }
+        }
+        query.push(") ORDER BY task_id, created_at, attachment_id");
+
+        for row in query.build().fetch_all(&mut *conn).await? {
+            let task_id: String = row.get("task_id");
+            if let Some(filename) = row.get::<Option<String>, _>("filename") {
+                by_task.entry(task_id.clone()).or_default().push(filename);
+            }
+            if let Some(alt_text) = row.get::<Option<String>, _>("alt_text") {
+                by_task.entry(task_id).or_default().push(alt_text);
+            }
+        }
+    }
+    Ok(by_task
+        .into_iter()
+        .map(|(task_id, parts)| (task_id, parts.join(" ")))
+        .collect())
+}
+
+async fn attach_attachment_search_text(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    documents: &mut [SearchDocument],
+) -> Result<()> {
+    let task_ids = documents
+        .iter()
+        .map(|document| document.task.id.to_string())
+        .collect::<Vec<_>>();
+    let mut attachments_by_task =
+        attachment_search_text_by_task(conn, workspace_id, &task_ids).await?;
+    for document in documents {
+        document.attachments_text = attachments_by_task
+            .remove(document.task.id.as_str())
+            .unwrap_or_default();
+    }
+    Ok(())
+}
+
+fn attachment_query_terms(parsed: &parser::ParsedTaskSearchQuery) -> Vec<String> {
+    let mut terms = Vec::new();
+    let trimmed = parsed.trimmed.trim().to_ascii_lowercase();
+    if !trimmed.is_empty() {
+        terms.push(trimmed);
+    }
+    for term in search_terms(parsed) {
+        let term = term.trim().to_ascii_lowercase();
+        if !term.is_empty() && !terms.iter().any(|existing| existing == &term) {
+            terms.push(term);
+        }
+    }
+    terms
+}
+
+async fn load_attachment_text_search_documents(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    include_deleted: bool,
+    parsed: &parser::ParsedTaskSearchQuery,
+    display_refs: &DisplayRefContext,
+) -> Result<Vec<SearchDocument>> {
+    let terms = attachment_query_terms(parsed);
+    if terms.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut query = QueryBuilder::<Sqlite>::new(
+        "SELECT DISTINCT t.id, t.workspace_id, t.title, t.description, t.project_id,
+         p.key AS project_key, p.name AS project_name, p.prefix AS project_prefix,
+         t.status, t.priority, t.created_at, t.updated_at, t.queue_activity_at, t.deleted, t.is_epic,
+         '' AS fts_labels, '' AS fts_notes
+         FROM task_attachments ta
+         JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
+         JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
+         WHERE ta.workspace_id = ",
+    );
+    query.push_bind(workspace_id);
+    query.push(" AND ta.deleted = 0 AND (");
+    let mut first = true;
+    for term in terms {
+        if !first {
+            query.push(" OR ");
+        }
+        first = false;
+        let pattern = format!("%{term}%");
+        query.push("(lower(COALESCE(ta.filename, '')) LIKE ");
+        query.push_bind(pattern.clone());
+        query.push(" OR lower(COALESCE(ta.alt_text, '')) LIKE ");
+        query.push_bind(pattern);
+        query.push(")");
+    }
+    query.push(") AND (");
+    query.push_bind(include_deleted);
+    query.push(" OR t.deleted = 0) ORDER BY t.updated_at DESC, t.id");
+
+    let rows = query.build().fetch_all(&mut *conn).await?;
+    search_documents_from_rows(rows, display_refs)
+}
+
 async fn load_candidate_search_documents(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
@@ -337,6 +461,16 @@ async fn load_candidate_search_documents(
                 .await?;
         merge_search_documents(&mut documents, ref_documents);
     }
+    let attachment_documents = load_attachment_text_search_documents(
+        conn,
+        workspace_id.as_str(),
+        include_deleted,
+        parsed,
+        display_refs,
+    )
+    .await?;
+    merge_search_documents(&mut documents, attachment_documents);
+    attach_attachment_search_text(conn, workspace_id.as_str(), &mut documents).await?;
     Ok(documents)
 }
 
@@ -427,6 +561,7 @@ fn search_documents_from_rows(
             SearchDocument {
                 labels_text,
                 notes_text,
+                attachments_text: String::new(),
                 task,
                 display_ref,
                 project_name,
@@ -445,6 +580,28 @@ fn workspace_scoped_fts_match(workspace_id: &WorkspaceId, fts_match: &str) -> St
         fts_phrase(workspace_id.as_str()),
         fts_match
     )
+}
+
+fn attachment_refs_removed(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("](aven-attachment:") {
+        let prefix_start = rest[..start].rfind("![");
+        let Some(prefix_start) = prefix_start else {
+            output.push_str(&rest[..start + 2]);
+            rest = &rest[start + 2..];
+            continue;
+        };
+        let after_destination = &rest[start + 2..];
+        let Some(close_offset) = after_destination.find(')') else {
+            output.push_str(rest);
+            return output;
+        };
+        output.push_str(&rest[..prefix_start]);
+        rest = &after_destination[close_offset + 1..];
+    }
+    output.push_str(rest);
+    output
 }
 
 fn score_document(
@@ -466,6 +623,7 @@ fn score_document(
             snippet: None,
         });
     }
+    let description_search_text = attachment_refs_removed(&document.task.description);
     for (field, text, weight) in [
         (
             SearchMatchedField::Title,
@@ -494,8 +652,13 @@ fn score_document(
         ),
         (
             SearchMatchedField::Description,
-            document.task.description.as_str(),
+            description_search_text.as_str(),
             DESCRIPTION_WEIGHT,
+        ),
+        (
+            SearchMatchedField::Attachment,
+            document.attachments_text.as_str(),
+            ATTACHMENT_WEIGHT,
         ),
         (
             SearchMatchedField::Note,

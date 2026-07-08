@@ -263,6 +263,14 @@ pub fn extract_ref(output: &str) -> String {
         .to_string()
 }
 
+pub fn extract_attachment_id(output: &str) -> String {
+    output
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("attachment_id="))
+        .expect("attachment id in output")
+        .to_string()
+}
+
 pub fn suffix(task_ref: &str) -> String {
     task_ref
         .split_once('-')

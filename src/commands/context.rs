@@ -7,7 +7,10 @@ use crate::cli::ContextArgs;
 use crate::query::{self, TaskDependencyItem, conflict_display_value};
 use crate::refs::{DisplayRefContext, resolve_task_ref_in_workspace};
 use crate::render::{print_json_pretty, print_multiline_block, quote};
-use crate::task_render::{TaskEpicLinkJson, task_epic_link_json};
+use crate::task_render::{
+    AttachmentMetadataJson, TaskEpicLinkJson, attachment_metadata_json,
+    print_attachment_metadata_line, task_epic_link_json,
+};
 use crate::types::Task;
 use crate::workspaces::Workspace;
 
@@ -40,6 +43,7 @@ struct TaskContextSnapshot {
     has_open_dependents: bool,
     epic_parent: Option<TaskEpicLinkJson>,
     epic_children: Vec<TaskEpicLinkJson>,
+    attachments: Vec<AttachmentMetadataJson>,
 }
 
 #[derive(Serialize)]
@@ -134,6 +138,16 @@ async fn task_context_snapshot(
         .collect();
     let summary = detail.dependencies;
     let details = detail.conflicts;
+    let attachments = crate::operations::attachment_read_items_by_task(
+        conn,
+        task.workspace_id.as_str(),
+        task.id.as_str(),
+        true,
+    )
+    .await?
+    .into_iter()
+    .map(attachment_metadata_json)
+    .collect();
 
     let depends_on_open = summary
         .depends_on
@@ -206,6 +220,7 @@ async fn task_context_snapshot(
         has_open_dependents,
         epic_parent,
         epic_children,
+        attachments,
     })
 }
 
@@ -283,6 +298,9 @@ fn print_task_context(snapshot: &TaskContextSnapshot) {
     );
     if !snapshot.task.description.is_empty() {
         print_multiline_block("description", &snapshot.task.description);
+    }
+    for attachment in &snapshot.attachments {
+        print_attachment_metadata_line(attachment);
     }
     let deps = &snapshot.dependencies;
     println!(

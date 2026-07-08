@@ -11,7 +11,7 @@ use crate::attachments::validation::{
 };
 use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
 use crate::db::begin_immediate;
-use crate::ids::{new_id, now};
+use crate::ids::{TaskId, new_id, now};
 use crate::refs::get_task_in_workspace;
 use crate::types::{Task, TaskAttachment};
 use crate::workspaces::Workspace;
@@ -27,6 +27,12 @@ pub(crate) struct AttachmentAddInput {
 
 pub(crate) struct AttachmentOutcome {
     pub(crate) task: Task,
+    pub(crate) attachment: TaskAttachment,
+    pub(crate) has_blob: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AttachmentReadItem {
     pub(crate) attachment: TaskAttachment,
     pub(crate) has_blob: bool,
 }
@@ -81,7 +87,7 @@ pub(crate) async fn add_task_attachment(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     blob_dir: &Path,
-    task_id: &str,
+    task_id: &TaskId,
     input: AttachmentAddInput,
 ) -> Result<AttachmentOutcome> {
     validate_media_type(&input.media_type)?;
@@ -166,7 +172,8 @@ pub(crate) async fn attachment_by_id(
 
     let attachment = attachment_from_row(&row);
     let has_blob = attachment_has_blob(conn, &attachment.sha256).await?;
-    let task = get_task_in_workspace(conn, workspace, &attachment.task_id).await?;
+    let task_id = attachment.task_id.parse()?;
+    let task = get_task_in_workspace(conn, workspace, &task_id).await?;
 
     Ok(AttachmentOutcome {
         task,
@@ -200,7 +207,8 @@ pub(crate) async fn delete_task_attachment(
     if deleted {
         let attachment = attachment_from_row(&row);
         let has_blob = attachment_has_blob(conn, &attachment.sha256).await?;
-        let task = get_task_in_workspace(conn, workspace, &attachment.task_id).await?;
+        let task_id = attachment.task_id.parse()?;
+        let task = get_task_in_workspace(conn, workspace, &task_id).await?;
         return Ok(AttachmentOutcome {
             task,
             attachment,
@@ -238,6 +246,24 @@ pub(crate) async fn delete_task_attachment(
     tx.commit().await?;
 
     attachment_by_id(conn, workspace, attachment_id).await
+}
+
+pub(crate) async fn attachment_read_items_by_task(
+    conn: &mut SqliteConnection,
+    workspace_id: &str,
+    task_id: &str,
+    include_deleted: bool,
+) -> Result<Vec<AttachmentReadItem>> {
+    let attachments = attachments_by_task(conn, workspace_id, task_id, include_deleted).await?;
+    let mut items = Vec::with_capacity(attachments.len());
+    for attachment in attachments {
+        let has_blob = attachment_has_blob(conn, &attachment.sha256).await?;
+        items.push(AttachmentReadItem {
+            attachment,
+            has_blob,
+        });
+    }
+    Ok(items)
 }
 
 pub(crate) async fn attachments_by_task(
