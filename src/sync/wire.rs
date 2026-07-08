@@ -26,6 +26,7 @@ pub(crate) fn sync_server_url_is_valid(server: &str) -> bool {
 }
 pub(crate) const MAX_PUSH_BATCH: usize = 256;
 pub(crate) const MAX_PULL_BATCH: u32 = 512;
+pub(crate) const MAX_BLOB_TRANSFER_BATCH: usize = 32;
 pub(crate) const DAEMON_SYNC_PAGE_BUDGET: usize = 8;
 pub(crate) const DAEMON_INCOMPLETE_RESCHEDULE_MS: u64 = 100;
 
@@ -102,6 +103,34 @@ pub(super) struct SyncResponse {
     #[serde(default)]
     pub(super) push_acks: Vec<PushAck>,
     pub(super) changes: Vec<ChangeWire>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct MissingBlobsRequest {
+    pub(crate) hashes: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct MissingBlobsResponse {
+    pub(crate) missing: Vec<String>,
+}
+
+pub(crate) fn validate_blob_hashes(hashes: &[String]) -> Result<()> {
+    if hashes.len() > MAX_BLOB_TRANSFER_BATCH {
+        bail!(
+            "error blob-batch-too-large limit={} got={}",
+            MAX_BLOB_TRANSFER_BATCH,
+            hashes.len()
+        );
+    }
+    let mut seen = HashSet::with_capacity(hashes.len());
+    for hash in hashes {
+        validate_sha256_for_sync(hash)?;
+        if !seen.insert(hash.as_str()) {
+            bail!("error duplicate-blob-hash");
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug)]

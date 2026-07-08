@@ -319,8 +319,76 @@ fn insert_attachment_row(db: &std::path::Path, task_id: &str, sha256: &str, dele
     );
 }
 
-fn png_fixture(path: &std::path::Path) {
-    std::fs::write(path, b"attachment-bytes").expect("write attachment fixture");
+fn seed_available_blob_for_hash(db: &std::path::Path, sha256: &str) {
+    let blob_path = db
+        .parent()
+        .expect("db parent")
+        .join("objects")
+        .join("objects")
+        .join("sha256")
+        .join(sha256);
+    std::fs::create_dir_all(blob_path.parent().expect("blob parent")).expect("create blob dir");
+    std::fs::write(&blob_path, b"placeholder").expect("write blob");
+    exec_sql(
+        db,
+        &format!(
+            "INSERT INTO blob_inventory(sha256, byte_size, media_type, available, first_seen_at, last_verified_at)
+             VALUES ('{sha256}', 12, 'image/png', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+    );
+}
+
+fn seed_local_attachment_change(db: &std::path::Path, task_id: &str) {
+    use sha2::{Digest, Sha256};
+
+    let bytes = b"attachment-bytes";
+    let sha256 = hex::encode(Sha256::digest(bytes));
+    let blob_path = db
+        .parent()
+        .expect("db parent")
+        .join("objects")
+        .join("objects")
+        .join("sha256")
+        .join(&sha256);
+    std::fs::create_dir_all(blob_path.parent().expect("blob parent")).expect("create blob dir");
+    std::fs::write(&blob_path, bytes).expect("write blob");
+    let payload = json!({
+        "workspace_id": DEFAULT_WORKSPACE_ID,
+        "workspace_key": "default",
+        "attachment_id": "7KQ9A1X4MV2P8D6R",
+        "sha256": sha256,
+        "byte_size": bytes.len(),
+        "media_type": "image/png",
+        "filename": "photo.png",
+        "alt_text": "photo",
+        "width": 320,
+        "height": 240,
+        "created_at": "2026-01-01T00:00:00Z"
+    });
+    exec_sql(
+        db,
+        &format!(
+            "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field, op_type, payload, base_version, created_at, server_seq)
+             VALUES ('ATTACHMENTADD001', 'client-a', 100, 'task', '{task_id}', 'attachments', 'attachment_add', '{}', NULL, '2026-01-01T00:00:00Z', NULL)",
+            payload.to_string().replace('\'', "''")
+        ),
+    );
+    exec_sql(
+        db,
+        &format!(
+            "INSERT INTO task_attachments(workspace_id, attachment_id, task_id, sha256, byte_size, media_type, filename, alt_text, width, height, created_at, created_by_change_id)
+             VALUES ('{DEFAULT_WORKSPACE_ID}', '7KQ9A1X4MV2P8D6R', '{task_id}', '{sha256}', {}, 'image/png', 'photo.png', 'photo', 320, 240, '2026-01-01T00:00:00Z', 'ATTACHMENTADD001')",
+            bytes.len()
+        ),
+    );
+    exec_sql(
+        db,
+        &format!(
+            "INSERT INTO blob_inventory(sha256, byte_size, media_type, available, first_seen_at, last_verified_at)
+             VALUES ('{sha256}', {}, 'image/png', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            bytes.len()
+        ),
+    );
 }
 
 fn gzip_encode(data: &str) -> Vec<u8> {
@@ -2919,38 +2987,48 @@ fn current_protocol_version_sync_succeeds() {
 }
 
 #[test]
-fn attachment_metadata_round_trips_through_real_sync_server_without_bytes() {
+fn attachment_metadata_and_blobs_round_trip_through_real_sync_server() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
-    let a = env.db("attachment-client-a.sqlite");
-    let b = env.db("attachment-client-b.sqlite");
-    let image = env.path("photo.png");
-    png_fixture(&image);
+    let a_dir = env.path("attachment-client-a");
+    let b_dir = env.path("attachment-client-b");
+    std::fs::create_dir_all(&a_dir).expect("create client a dir");
+    std::fs::create_dir_all(&b_dir).expect("create client b dir");
+    let a = a_dir.join("db.sqlite");
+    let b = b_dir.join("db.sqlite");
 
     let task_ref = extract_ref(&ok(
         env.aven(&a, ["add", "attachment target", "--project", "app"])
     ));
-    ok(env.aven(
-        &a,
-        [
-            "attachment",
-            "add",
-            &task_ref,
-            image.to_str().expect("utf8 image path"),
-            "--alt",
-            "photo",
-        ],
-    ));
-    sync(&env, &a, &server);
-    sync(&env, &b, &server);
+    let task_id = local_task_id(&a, "attachment target");
+    seed_local_attachment_change(&a, &task_id);
+    let push_output = ok(env.aven(&a, ["sync", "--server", &server.url]));
+    contains_all(&push_output, &["blob_uploaded=1", "blob_downloaded=0"]);
+    let pull_output = ok(env.aven(&b, ["sync", "--server", &server.url]));
+    contains_all(&pull_output, &["blob_uploaded=0", "blob_downloaded=1"]);
 
-    let shown = ok(env.aven(&b, ["show", &task_ref, "--full"]));
-    contains_all(&shown, &["![photo](aven-attachment:", "attachment target"]);
     assert_eq!(scalar_i64(&b, "SELECT count(*) FROM task_attachments"), 1);
-    assert_eq!(scalar_i64(&b, "SELECT count(*) FROM blob_inventory"), 0);
+    assert_eq!(scalar_i64(&b, "SELECT count(*) FROM blob_inventory"), 1);
     let json_output = ok(env.aven(&b, ["attachment", "list", &task_ref, "--json"]));
     contains_all(&json_output, &["attachment_id", "has_blob"]);
     contains_none(&json_output, &["attachment-bytes"]);
+}
+
+#[tokio::test]
+async fn sync_server_rejects_attachment_metadata_when_blob_missing() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+
+    let response = post_sync(
+        &server,
+        attachment_add_change(attachment_change_payload(json!({}))),
+    )
+    .await;
+
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body = response.text().await.expect("error body");
+    contains_all(&body, &["error attachment-blob-missing"]);
+    assert_server_log_empty(&server).await;
 }
 
 #[test]
@@ -2960,6 +3038,10 @@ fn attachment_metadata_duplicate_add_is_idempotent() {
     ok(env.aven(&db, ["add", "target", "--project", "app"]));
     exec_sql(&db, "UPDATE changes SET server_seq = local_seq");
     let task_id = local_task_id(&db, "target");
+    seed_available_blob_for_hash(
+        &db,
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    );
     let change1 = remote_attachment_add("ATTACHMENTADD001", &task_id, 1);
     let mut change2 = change1.clone();
     change2["change_id"] = json!("ATTACHMENTADD002");

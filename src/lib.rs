@@ -332,7 +332,7 @@ async fn dispatch_database(
             cmd_delete_restore(&mut conn, command_workspace(), args, false).await
         }
         DatabaseCommand::Conflict(args) => cmd_conflict(&mut conn, command_workspace(), args).await,
-        DatabaseCommand::Sync(args) => sync_client(&mut conn, args, &config).await,
+        DatabaseCommand::Sync(args) => sync_client(&mut conn, &db_path, args, &config).await,
         DatabaseCommand::Workspace(args) => cmd_workspace(&mut conn, args).await,
         DatabaseCommand::Text(args) => cmd_text(&mut conn, command_workspace(), args).await,
         DatabaseCommand::Doctor(args) => {

@@ -53,6 +53,7 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         .context("error sync-server-required hint=\"set sync.server_url in config.yaml\"")?;
     let wake_addr = args.config.wake_addr()?;
     let interval_seconds = args.config.sync_interval_seconds();
+    let blob_dir = crate::config::resolve_blob_dir(&args.db_path, &args.config)?;
     let pool = open_db(&args.db_path).await?;
     let socket = UdpSocket::bind(wake_addr).await.with_context(|| {
         format!("could not bind daemon wake address {wake_addr}; is another daemon running?")
@@ -74,27 +75,41 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
     let binary_fingerprint = current_binary_fingerprint()?;
     let client = SyncHttpClient::new().context("build daemon sync HTTP client")?;
     info!(server = %server, http_client_id = %client.id(), "daemon sync client ready");
-    run_loop(
+    run_loop(DaemonLoop {
         pool,
+        blob_dir,
         server,
         socket,
         interval_seconds,
-        args.config.sync_auth_token().map(str::to_string),
+        auth_token: args.config.sync_auth_token().map(str::to_string),
         client,
         binary_fingerprint,
-    )
+    })
     .await
 }
 
-async fn run_loop(
+struct DaemonLoop {
     pool: SqlitePool,
+    blob_dir: PathBuf,
     server: String,
     socket: UdpSocket,
     interval_seconds: u64,
     auth_token: Option<String>,
     client: SyncHttpClient,
     binary_fingerprint: BinaryFingerprint,
-) -> Result<()> {
+}
+
+async fn run_loop(args: DaemonLoop) -> Result<()> {
+    let DaemonLoop {
+        pool,
+        blob_dir,
+        server,
+        socket,
+        interval_seconds,
+        auth_token,
+        client,
+        binary_fingerprint,
+    } = args;
     let mut wake_buf = [0_u8; 16];
     let mut backoff_seconds = 1_u64;
     let mut next_sync = Instant::now();
@@ -126,7 +141,7 @@ async fn run_loop(
             _ = sleep_until(next_sync) => {
                 match timeout(
                     Duration::from_secs(35),
-                    sync_once(&pool, &server, auth_token.as_deref(), &client),
+                    sync_once(&pool, &blob_dir, &server, auth_token.as_deref(), &client),
                 )
                 .await
                 {
@@ -192,6 +207,7 @@ fn drain_wakes(socket: &UdpSocket, wake_buf: &mut [u8]) {
 
 async fn sync_once(
     pool: &SqlitePool,
+    blob_dir: &Path,
     server: &str,
     auth_token: Option<&str>,
     client: &SyncHttpClient,
@@ -199,6 +215,7 @@ async fn sync_once(
     let mut conn = pool.acquire().await?;
     let summary = crate::sync::run_sync_with_page_budget_using_client(
         &mut conn,
+        blob_dir,
         server,
         auth_token,
         Some(DAEMON_SYNC_PAGE_BUDGET),
@@ -208,6 +225,8 @@ async fn sync_once(
     info!(
         pushed = summary.pushed,
         pulled = summary.pulled,
+        blob_uploaded = summary.blob_uploaded,
+        blob_downloaded = summary.blob_downloaded,
         cursor = summary.cursor,
         complete = summary.complete,
         pages = summary.pages,
@@ -219,8 +238,14 @@ async fn sync_once(
         "daemon sync completed"
     );
     println!(
-        "daemon-synced pushed={} pulled={} cursor={} complete={} pages={}",
-        summary.pushed, summary.pulled, summary.cursor, summary.complete, summary.pages
+        "daemon-synced pushed={} pulled={} blob_uploaded={} blob_downloaded={} cursor={} complete={} pages={}",
+        summary.pushed,
+        summary.pulled,
+        summary.blob_uploaded,
+        summary.blob_downloaded,
+        summary.cursor,
+        summary.complete,
+        summary.pages
     );
     Ok(summary)
 }

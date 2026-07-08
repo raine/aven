@@ -1,17 +1,20 @@
 use std::collections::HashSet;
 use std::io::Write;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use flate2::write::GzEncoder;
-use sqlx::{QueryBuilder, Sqlite, SqliteConnection};
+use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 use tracing::info;
 
 use super::apply::apply_remote_change;
 use super::wire::{
-    ChangeRow, ChangeWire, MAX_PULL_BATCH, MAX_PUSH_BATCH, SYNC_PROTOCOL_VERSION, SyncRequest,
-    SyncResponse, validate_sync_response_for_request,
+    ChangeRow, ChangeWire, MAX_BLOB_TRANSFER_BATCH, MAX_PULL_BATCH, MAX_PUSH_BATCH,
+    MissingBlobsRequest, MissingBlobsResponse, SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse,
+    validate_blob_hashes, validate_sync_response_for_request,
 };
+use crate::change_log::op_type;
 use crate::cli::SyncArgs;
 use crate::config;
 use crate::db::{begin_immediate, get_meta, set_meta};
@@ -45,6 +48,8 @@ impl SyncHttpClient {
 pub(crate) struct SyncSummary {
     pub(crate) pushed: i64,
     pub(crate) pulled: usize,
+    pub(crate) blob_uploaded: usize,
+    pub(crate) blob_downloaded: usize,
     pub(crate) cursor: i64,
     pub(crate) complete: bool,
     pub(crate) pages: usize,
@@ -65,28 +70,36 @@ fn gzip_encode(body: &[u8]) -> Result<Vec<u8>> {
 
 pub(crate) async fn sync_client(
     conn: &mut SqliteConnection,
+    db_path: &Path,
     args: SyncArgs,
     config: &config::AppConfig,
 ) -> Result<()> {
     let server = config::resolve_sync_server(args.server.as_deref(), config)?;
-    let summary = run_sync_once(conn, &server, config.sync_auth_token()).await?;
+    let blob_dir = config::resolve_blob_dir(db_path, config)?;
+    let summary = run_sync_once(conn, &blob_dir, &server, config.sync_auth_token()).await?;
     println!(
-        "synced pushed={} pulled={} cursor={}",
-        summary.pushed, summary.pulled, summary.cursor
+        "synced pushed={} pulled={} blob_uploaded={} blob_downloaded={} cursor={}",
+        summary.pushed,
+        summary.pulled,
+        summary.blob_uploaded,
+        summary.blob_downloaded,
+        summary.cursor
     );
     Ok(())
 }
 
 pub(crate) async fn run_sync_once(
     conn: &mut SqliteConnection,
+    blob_dir: &Path,
     server: &str,
     auth_token: Option<&str>,
 ) -> Result<SyncSummary> {
-    run_sync_with_page_budget(conn, server, auth_token, None).await
+    run_sync_with_page_budget(conn, blob_dir, server, auth_token, None).await
 }
 
 pub(crate) async fn run_sync_with_page_budget_using_client(
     conn: &mut SqliteConnection,
+    blob_dir: &Path,
     server: &str,
     auth_token: Option<&str>,
     page_budget: Option<usize>,
@@ -94,7 +107,17 @@ pub(crate) async fn run_sync_with_page_budget_using_client(
 ) -> Result<SyncSummary> {
     let attempted_at = now();
     set_meta(conn, "sync_last_attempt_at", &attempted_at).await?;
-    match run_sync_once_inner(conn, server, auth_token, &attempted_at, page_budget, client).await {
+    match run_sync_once_inner(
+        conn,
+        blob_dir,
+        server,
+        auth_token,
+        &attempted_at,
+        page_budget,
+        client,
+    )
+    .await
+    {
         Ok(summary) => Ok(summary),
         Err(error) => {
             let error_text = format!("{error:#}");
@@ -106,16 +129,19 @@ pub(crate) async fn run_sync_with_page_budget_using_client(
 
 pub(crate) async fn run_sync_with_page_budget(
     conn: &mut SqliteConnection,
+    blob_dir: &Path,
     server: &str,
     auth_token: Option<&str>,
     page_budget: Option<usize>,
 ) -> Result<SyncSummary> {
     let client = SyncHttpClient::new()?;
-    run_sync_with_page_budget_using_client(conn, server, auth_token, page_budget, &client).await
+    run_sync_with_page_budget_using_client(conn, blob_dir, server, auth_token, page_budget, &client)
+        .await
 }
 
 async fn run_sync_once_inner(
     conn: &mut SqliteConnection,
+    blob_dir: &Path,
     server: &str,
     auth_token: Option<&str>,
     attempted_at: &str,
@@ -130,6 +156,8 @@ async fn run_sync_once_inner(
     let url = format!("{}/sync", server.trim_end_matches('/'));
     let mut total_pushed = 0_i64;
     let mut total_pulled = 0_usize;
+    let mut total_blob_uploaded = 0_usize;
+    let mut total_blob_downloaded = 0_usize;
     let mut cursor = sync_cursor(conn).await?;
     let mut pages = 0_usize;
     let complete;
@@ -141,6 +169,9 @@ async fn run_sync_once_inner(
 
     loop {
         let changes = load_unsynced_changes(conn, MAX_PUSH_BATCH).await?;
+        let uploaded =
+            upload_missing_blobs_for_changes(conn, blob_dir, client, server, auth_token, &changes)
+                .await?;
         let request_change_ids = changes
             .iter()
             .map(|change| change.change_id.clone())
@@ -192,9 +223,13 @@ async fn run_sync_once_inner(
         let apply_started = Instant::now();
         let applied =
             apply_sync_response(conn, &response, attempted_at, total_pushed, total_pulled).await?;
+        let downloaded =
+            download_missing_local_blobs(conn, blob_dir, client, server, auth_token).await?;
         let apply_ms = apply_started.elapsed().as_millis();
         total_pushed += pending as i64;
         total_pulled += applied;
+        total_blob_uploaded += uploaded;
+        total_blob_downloaded += downloaded;
         cursor = response.cursor;
         pages += 1;
         total_request_bytes += request_bytes;
@@ -203,13 +238,16 @@ async fn run_sync_once_inner(
         total_apply_ms += apply_ms;
 
         let local_more = pending == MAX_PUSH_BATCH;
-        let page_complete = !local_more && !response.has_more;
+        let blob_more = downloaded == MAX_BLOB_TRANSFER_BATCH;
+        let page_complete = !local_more && !response.has_more && !blob_more;
         let budget_exhausted = page_budget.is_some_and(|budget| pages >= budget);
         info!(
             server = %server,
             page = pages,
             pushed = pending,
             pulled = applied,
+            blob_uploaded = uploaded,
+            blob_downloaded = downloaded,
             cursor,
             complete = page_complete,
             request_bytes,
@@ -232,6 +270,8 @@ async fn run_sync_once_inner(
         server = %server,
         pushed = total_pushed,
         pulled = total_pulled,
+        blob_uploaded = total_blob_uploaded,
+        blob_downloaded = total_blob_downloaded,
         cursor,
         complete,
         pages,
@@ -245,6 +285,8 @@ async fn run_sync_once_inner(
     Ok(SyncSummary {
         pushed: total_pushed,
         pulled: total_pulled,
+        blob_uploaded: total_blob_uploaded,
+        blob_downloaded: total_blob_downloaded,
         cursor,
         complete,
         pages,
@@ -254,6 +296,221 @@ async fn run_sync_once_inner(
         response_compression: last_response_compression.unwrap_or_else(|| "none".to_string()),
         apply_ms: total_apply_ms,
     })
+}
+
+async fn upload_missing_blobs_for_changes(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    client: &SyncHttpClient,
+    server: &str,
+    auth_token: Option<&str>,
+    changes: &[ChangeWire],
+) -> Result<usize> {
+    let hashes = attachment_add_hashes(changes)?;
+    let mut uploaded = 0_usize;
+    for chunk in hashes.chunks(MAX_BLOB_TRANSFER_BATCH) {
+        let missing = request_missing_blobs(client, server, auth_token, chunk.to_vec()).await?;
+        for sha256 in missing {
+            upload_blob(conn, blob_dir, client, server, auth_token, &sha256).await?;
+            uploaded += 1;
+        }
+    }
+    Ok(uploaded)
+}
+
+fn attachment_add_hashes(changes: &[ChangeWire]) -> Result<Vec<String>> {
+    let mut seen = HashSet::new();
+    let mut hashes = Vec::new();
+    for change in changes {
+        if change.op_type != op_type::ATTACHMENT_ADD {
+            continue;
+        }
+        let sha256 = change
+            .payload
+            .get("sha256")
+            .and_then(serde_json::Value::as_str)
+            .context("payload missing sha256")?
+            .to_string();
+        if seen.insert(sha256.clone()) {
+            hashes.push(sha256);
+        }
+    }
+    Ok(hashes)
+}
+
+async fn request_missing_blobs(
+    client: &SyncHttpClient,
+    server: &str,
+    auth_token: Option<&str>,
+    hashes: Vec<String>,
+) -> Result<Vec<String>> {
+    if hashes.is_empty() {
+        return Ok(Vec::new());
+    }
+    validate_blob_hashes(&hashes)?;
+    let requested = hashes.iter().cloned().collect::<HashSet<_>>();
+    let mut request = client
+        .inner
+        .post(format!(
+            "{}/sync/blobs/missing",
+            server.trim_end_matches('/')
+        ))
+        .json(&MissingBlobsRequest { hashes });
+    if let Some(token) = auth_token {
+        request = request.bearer_auth(token);
+    }
+    let response: MissingBlobsResponse = request.send().await?.error_for_status()?.json().await?;
+    validate_blob_hashes(&response.missing)?;
+    for hash in &response.missing {
+        if !requested.contains(hash) {
+            bail!("error invalid-blob-missing-response");
+        }
+    }
+    Ok(response.missing)
+}
+
+async fn upload_blob(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    client: &SyncHttpClient,
+    server: &str,
+    auth_token: Option<&str>,
+    sha256: &str,
+) -> Result<()> {
+    let row = crate::attachments::blob_inventory_row(conn, sha256)
+        .await?
+        .filter(|row| row.available)
+        .context("error attachment-blob-local-missing")?;
+    let path = crate::attachments::object_path(blob_dir, sha256)?;
+    let bytes = tokio::fs::read(path)
+        .await
+        .context("error attachment-blob-local-missing")?;
+    if crate::attachments::sha256_hex(&bytes) != sha256 {
+        bail!("error attachment-blob-local-invalid");
+    }
+    if row.byte_size != i64::try_from(bytes.len()).context("attachment bytes exceed i64")? {
+        bail!("error attachment-blob-local-invalid");
+    }
+    let mut request = client
+        .inner
+        .put(format!(
+            "{}/sync/blobs/{}",
+            server.trim_end_matches('/'),
+            sha256
+        ))
+        .header(reqwest::header::CONTENT_TYPE, row.media_type.as_str())
+        .body(bytes);
+    if let Some(token) = auth_token {
+        request = request.bearer_auth(token);
+    }
+    request.send().await?.error_for_status()?;
+    Ok(())
+}
+
+#[derive(Debug)]
+struct MissingLocalBlob {
+    sha256: String,
+    byte_size: i64,
+    media_type: String,
+}
+
+async fn download_missing_local_blobs(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    client: &SyncHttpClient,
+    server: &str,
+    auth_token: Option<&str>,
+) -> Result<usize> {
+    let missing = missing_local_blobs(conn, blob_dir).await?;
+    let mut downloaded = 0_usize;
+    for blob in missing {
+        download_blob(conn, blob_dir, client, server, auth_token, blob).await?;
+        downloaded += 1;
+    }
+    Ok(downloaded)
+}
+
+async fn missing_local_blobs(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+) -> Result<Vec<MissingLocalBlob>> {
+    let mut missing = Vec::new();
+    let rows = sqlx::query(
+        "SELECT DISTINCT ta.sha256, ta.byte_size, ta.media_type
+         FROM task_attachments ta
+         LEFT JOIN blob_inventory bi ON bi.sha256 = ta.sha256
+         WHERE ta.deleted = 0 AND COALESCE(bi.available, 0) = 0
+         LIMIT ?",
+    )
+    .bind(MAX_BLOB_TRANSFER_BATCH as i64)
+    .fetch_all(&mut *conn)
+    .await?;
+    for row in rows {
+        let sha256: String = row.get("sha256");
+        let path = crate::attachments::object_path(blob_dir, &sha256)?;
+        if !path.exists() {
+            missing.push(MissingLocalBlob {
+                sha256,
+                byte_size: row.get("byte_size"),
+                media_type: row.get("media_type"),
+            });
+        }
+    }
+    if missing.len() < MAX_BLOB_TRANSFER_BATCH {
+        let remaining = MAX_BLOB_TRANSFER_BATCH - missing.len();
+        let rows = sqlx::query(
+            "SELECT DISTINCT ta.sha256, ta.byte_size, ta.media_type
+             FROM task_attachments ta
+             JOIN blob_inventory bi ON bi.sha256 = ta.sha256
+             WHERE ta.deleted = 0 AND bi.available = 1
+             LIMIT ?",
+        )
+        .bind(remaining as i64)
+        .fetch_all(&mut *conn)
+        .await?;
+        for row in rows {
+            let sha256: String = row.get("sha256");
+            if missing.iter().any(|blob| blob.sha256 == sha256) {
+                continue;
+            }
+            let path = crate::attachments::object_path(blob_dir, &sha256)?;
+            if !path.exists() {
+                missing.push(MissingLocalBlob {
+                    sha256,
+                    byte_size: row.get("byte_size"),
+                    media_type: row.get("media_type"),
+                });
+            }
+        }
+    }
+    Ok(missing)
+}
+
+async fn download_blob(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    client: &SyncHttpClient,
+    server: &str,
+    auth_token: Option<&str>,
+    blob: MissingLocalBlob,
+) -> Result<()> {
+    let mut request = client.inner.get(format!(
+        "{}/sync/blobs/{}",
+        server.trim_end_matches('/'),
+        blob.sha256
+    ));
+    if let Some(token) = auth_token {
+        request = request.bearer_auth(token);
+    }
+    let bytes = request.send().await?.error_for_status()?.bytes().await?;
+    if crate::attachments::sha256_hex(&bytes) != blob.sha256 {
+        bail!("error attachment-blob-remote-invalid");
+    }
+    if blob.byte_size != i64::try_from(bytes.len()).context("attachment bytes exceed i64")? {
+        bail!("error attachment-blob-remote-invalid");
+    }
+    crate::attachments::store_blob(conn, blob_dir, &blob.media_type, &bytes).await?;
+    Ok(())
 }
 
 async fn sync_cursor(conn: &mut SqliteConnection) -> Result<i64> {

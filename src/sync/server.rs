@@ -1,14 +1,15 @@
 use std::fmt;
 use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use anyhow::{Result, bail};
-use axum::body::Body;
-use axum::extract::State;
+use anyhow::{Context, Result, bail};
+use axum::body::{Body, Bytes};
+use axum::extract::{DefaultBodyLimit, Path as AxumPath, State};
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{post, put};
 use axum::{Json, Router};
 use sqlx::{SqliteConnection, SqlitePool};
 use tokio::net::TcpListener;
@@ -17,9 +18,11 @@ use tower_http::decompression::RequestDecompressionLayer;
 use tracing::{error, info, warn};
 
 use super::wire::{
-    ChangeRow, ChangeWire, PushAck, SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse,
-    validate_pushed_change, validate_sync_request_envelope,
+    ChangeRow, ChangeWire, MissingBlobsRequest, MissingBlobsResponse, PushAck,
+    SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse, validate_blob_hashes, validate_pushed_change,
+    validate_sync_request_envelope,
 };
+use crate::change_log::op_type;
 use crate::cli::ServerArgs;
 use crate::config;
 use crate::db::{begin_immediate, open_db};
@@ -29,6 +32,7 @@ use crate::signals::shutdown_signal;
 struct ServerState {
     pool: SqlitePool,
     auth_token: Option<String>,
+    blob_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,7 +109,12 @@ pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> R
     let auth_enabled = auth_token.is_some();
     validate_bind_policy(scope, args.unsafe_public_bind, auth_token.as_deref())?;
     let pool = open_db(&args.data).await?;
-    let state = ServerState { pool, auth_token };
+    let blob_dir = config::resolve_blob_dir(&args.data, &config)?;
+    let state = ServerState {
+        pool,
+        auth_token,
+        blob_dir,
+    };
     info!(
         bind = %args.bind,
         scope = %scope,
@@ -114,6 +123,13 @@ pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> R
     );
     let app = Router::new()
         .route("/sync", post(sync_handler))
+        .route("/sync/blobs/missing", post(missing_blobs_handler))
+        .route(
+            "/sync/blobs/{sha256}",
+            put(put_blob_handler)
+                .get(get_blob_handler)
+                .layer(DefaultBodyLimit::max(crate::attachments::MAX_BLOB_BYTES)),
+        )
         .layer(RequestDecompressionLayer::new())
         .layer(middleware::from_fn_with_state(state.clone(), verify_auth))
         .layer(CompressionLayer::new())
@@ -165,6 +181,94 @@ async fn sync_handler(
     }
 }
 
+async fn missing_blobs_handler(
+    State(state): State<ServerState>,
+    Json(request): Json<MissingBlobsRequest>,
+) -> Response {
+    if let Err(err) = validate_blob_hashes(&request.hashes) {
+        return (StatusCode::BAD_REQUEST, err.to_string()).into_response();
+    }
+    match missing_blob_hashes(&state.pool, &state.blob_dir, &request.hashes).await {
+        Ok(missing) => Json(MissingBlobsResponse { missing }).into_response(),
+        Err(err) => internal_error(err).into_response(),
+    }
+}
+
+async fn put_blob_handler(
+    State(state): State<ServerState>,
+    AxumPath(sha256): AxumPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if let Err(err) = validate_blob_hashes(std::slice::from_ref(&sha256)) {
+        return (StatusCode::BAD_REQUEST, err.to_string()).into_response();
+    }
+    if crate::attachments::sha256_hex(&body) != sha256 {
+        return (
+            StatusCode::BAD_REQUEST,
+            "error blob-hash-mismatch".to_string(),
+        )
+            .into_response();
+    }
+    let media_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    if crate::attachments::validate_media_type(media_type).is_err() {
+        return (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "error unsupported-attachment-media-type".to_string(),
+        )
+            .into_response();
+    }
+    let mut conn = match state.pool.acquire().await {
+        Ok(conn) => conn,
+        Err(err) => return internal_error(err).into_response(),
+    };
+    match crate::attachments::store_blob(&mut conn, &state.blob_dir, media_type, &body).await {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "error blob-store-failed".to_string(),
+        )
+            .into_response(),
+    }
+}
+
+async fn get_blob_handler(
+    State(state): State<ServerState>,
+    AxumPath(sha256): AxumPath<String>,
+) -> Response {
+    if let Err(err) = validate_blob_hashes(std::slice::from_ref(&sha256)) {
+        return (StatusCode::BAD_REQUEST, err.to_string()).into_response();
+    }
+    let mut conn = match state.pool.acquire().await {
+        Ok(conn) => conn,
+        Err(err) => return internal_error(err).into_response(),
+    };
+    match blob_available(&mut conn, &state.blob_dir, &sha256).await {
+        Ok(true) => {}
+        Ok(false) => return StatusCode::NOT_FOUND.into_response(),
+        Err(err) => return internal_error(err).into_response(),
+    }
+    let path = match crate::attachments::object_path(&state.blob_dir, &sha256) {
+        Ok(path) => path,
+        Err(err) => return (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
+    };
+    match tokio::fs::read(path).await {
+        Ok(bytes) => (
+            [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "error blob-read-failed".to_string(),
+        )
+            .into_response(),
+    }
+}
+
 fn internal_error(err: impl std::fmt::Display) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
@@ -210,6 +314,9 @@ async fn handle_sync(
         (0_i64, Vec::new())
     } else {
         let mut tx = begin_immediate(&mut conn).await.map_err(internal_error)?;
+        ensure_attachment_blobs_present(&mut tx, &state.blob_dir, &request.changes)
+            .await
+            .map_err(invalid_sync_change)?;
         let mut next_server_seq = next_available_server_seq(&mut tx)
             .await
             .map_err(internal_error)?;
@@ -297,6 +404,56 @@ async fn next_available_server_seq(conn: &mut SqliteConnection) -> Result<i64> {
     )
     .fetch_one(&mut *conn)
     .await?)
+}
+
+async fn missing_blob_hashes(
+    pool: &SqlitePool,
+    blob_dir: &Path,
+    hashes: &[String],
+) -> Result<Vec<String>> {
+    let mut conn = pool.acquire().await?;
+    let mut missing = Vec::new();
+    for hash in hashes {
+        if !blob_available(&mut conn, blob_dir, hash).await? {
+            missing.push(hash.clone());
+        }
+    }
+    Ok(missing)
+}
+
+async fn blob_available(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    sha256: &str,
+) -> Result<bool> {
+    let Some(row) = crate::attachments::blob_inventory_row(conn, sha256).await? else {
+        return Ok(false);
+    };
+    if !row.available {
+        return Ok(false);
+    }
+    Ok(crate::attachments::object_path(blob_dir, sha256)?.exists())
+}
+
+async fn ensure_attachment_blobs_present(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    changes: &[ChangeWire],
+) -> Result<()> {
+    for change in changes {
+        if change.op_type != op_type::ATTACHMENT_ADD {
+            continue;
+        }
+        let sha256 = change
+            .payload
+            .get("sha256")
+            .and_then(serde_json::Value::as_str)
+            .context("error attachment-blob-missing")?;
+        if !blob_available(conn, blob_dir, sha256).await? {
+            bail!("error attachment-blob-missing");
+        }
+    }
+    Ok(())
 }
 
 async fn load_server_changes_after(
