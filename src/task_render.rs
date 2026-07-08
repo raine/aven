@@ -115,6 +115,7 @@ pub(crate) fn attachment_metadata_json(item: AttachmentReadItem) -> AttachmentMe
     AttachmentMetadataJson {
         attachment_id: item.attachment.attachment_id,
         task_id: item.attachment.task_id,
+        sha256: item.attachment.sha256,
         media_type: item.attachment.media_type,
         byte_size: item.attachment.byte_size,
         filename: item.attachment.filename,
@@ -249,6 +250,8 @@ pub(crate) fn task_epic_link_json(link: &TaskDependencyLink) -> TaskEpicLinkJson
 pub(crate) struct AttachmentMetadataJson {
     pub(crate) attachment_id: String,
     pub(crate) task_id: String,
+    #[serde(skip)]
+    pub(crate) sha256: String,
     pub(crate) media_type: String,
     pub(crate) byte_size: i64,
     pub(crate) filename: Option<String>,
@@ -362,6 +365,7 @@ mod tests {
         AttachmentMetadataJson {
             attachment_id: attachment_id.to_string(),
             task_id: "TASK000000000000".to_string(),
+            sha256: "0".repeat(64),
             media_type: "image/png".to_string(),
             byte_size: 9,
             filename: filename.map(str::to_string),

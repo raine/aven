@@ -78,13 +78,13 @@ async fn attachments_for_tasks(
             continue;
         }
         let mut query = QueryBuilder::<Sqlite>::new(
-            "SELECT ta.attachment_id, ta.task_id, ta.media_type, ta.byte_size,
+            "SELECT ta.attachment_id, ta.task_id, ta.sha256, ta.media_type, ta.byte_size,
                     ta.filename, ta.alt_text, ta.width, ta.height, ta.created_at,
                     ta.deleted, ta.deleted_at,
                     COALESCE(bi.available, 0) AS has_blob
              FROM task_attachments ta
              LEFT JOIN blob_inventory bi ON bi.sha256 = ta.sha256
-             WHERE ta.workspace_id = ",
+             WHERE ta.workspace_id =",
         );
         query.push_bind(workspace_id);
         query.push(" AND ta.task_id IN (");
@@ -101,6 +101,7 @@ async fn attachments_for_tasks(
             let attachment = AttachmentMetadataJson {
                 attachment_id: row.get("attachment_id"),
                 task_id: task_id.to_string(),
+                sha256: row.get("sha256"),
                 media_type: row.get("media_type"),
                 byte_size: row.get("byte_size"),
                 filename: row.get("filename"),

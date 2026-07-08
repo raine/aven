@@ -970,6 +970,7 @@ mod tests {
         AttachmentMetadataJson {
             attachment_id: attachment_id.to_string(),
             task_id: "task".to_string(),
+            sha256: "0".repeat(64),
             media_type: "image/png".to_string(),
             byte_size: 4,
             filename: Some("chart.png".to_string()),

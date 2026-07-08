@@ -23,6 +23,7 @@ mod config_overlay;
 mod conflict_flow;
 mod detail_selection;
 mod event;
+mod inline_images;
 mod markdown;
 mod natural_add_runtime;
 mod navigation;

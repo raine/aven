@@ -38,9 +38,9 @@ use self::task_list::render_tasks;
 use self::toast::render_toast;
 
 pub(crate) use self::detail::{
-    DetailMetadataTarget, detail_child_task_at_position, detail_metadata_target_at,
-    detail_scroll_cap, detail_section_scroll_target, detail_selected_text,
-    detail_text_cell_at_position,
+    DetailInlineImageContext, DetailInlineImagePlacement, DetailMetadataTarget,
+    detail_child_task_at_position, detail_metadata_target_at, detail_scroll_cap,
+    detail_section_scroll_target, detail_selected_text, detail_text_cell_at_position,
 };
 pub(crate) use self::overlays::{
     add_task_field_at, composer_help_scroll_cap, database_stats_scroll_cap, text_panel_scroll_cap,
@@ -87,6 +87,7 @@ pub(crate) struct ViewState {
     pub(crate) sidebar_visible: bool,
     pub(crate) update_badge: Option<crate::tui::app_update::UpdateBadgeView>,
     pub(crate) surface: ViewSurface,
+    pub(crate) inline_images: Option<DetailInlineImageContext>,
 }
 
 impl ViewState {
@@ -131,6 +132,7 @@ pub(crate) fn render(
     widgets: &mut WidgetState,
     view: &ViewState,
 ) {
+    widgets.inline_image_placements.clear();
     frame.render_widget(Block::new().style(Style::new().bg(BG)), frame.area());
 
     if view.surface == ViewSurface::AddTask {
@@ -213,6 +215,7 @@ pub(crate) fn render(
             inline_detail_title_editor,
             active_detail_child_task_id,
             view.detail_text_selection.as_ref(),
+            view.inline_images.as_ref(),
         );
     }
     if let Some(overlay) = &view.overlay {
@@ -224,6 +227,7 @@ pub(crate) fn render(
             inline_title_editor.is_some() || inline_detail_title_editor.is_some(),
             active_detail_child_task_id,
             view.detail_text_selection.as_ref(),
+            view.inline_images.as_ref(),
         );
     }
     if !view.pending_shortcut.is_empty() && !add_task_dialog_prefix_active(view) {
@@ -641,8 +645,9 @@ fn render_overlay(
     widgets: &mut WidgetState,
     overlay: &OverlayView,
     inline_title_editor: bool,
-    hovered_detail_child_task_id: Option<&str>,
+    active_detail_child_task_id: Option<&str>,
     detail_text_selection: Option<&crate::tui::detail_selection::DetailTextSelection>,
+    inline_images: Option<&DetailInlineImageContext>,
 ) {
     if matches!(
         overlay,
@@ -659,8 +664,9 @@ fn render_overlay(
             widgets,
             scroll,
             None,
-            hovered_detail_child_task_id,
+            active_detail_child_task_id,
             detail_text_selection,
+            inline_images.filter(|_| matches!(overlay, OverlayView::Detail { .. })),
         );
         if matches!(overlay, OverlayView::DetailHelp { .. }) {
             render_overlay_content(frame, overlay, inline_title_editor);

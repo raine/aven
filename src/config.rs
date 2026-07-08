@@ -75,6 +75,17 @@ pub struct LocalConfig {
     pub db_path: Option<PathBuf>,
     #[serde(default)]
     pub blob_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub inline_images: InlineImagesConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum InlineImagesConfig {
+    Off,
+    #[default]
+    Auto,
+    On,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -563,5 +574,12 @@ mod tests {
             resolve_blob_dir(&db_path, &config).unwrap(),
             PathBuf::from("/var/aven/blobs")
         );
+    }
+
+    #[test]
+    fn local_inline_images_defaults_to_auto() {
+        let config = AppConfig::default();
+
+        assert_eq!(config.local.inline_images, InlineImagesConfig::Auto);
     }
 }

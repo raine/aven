@@ -5,15 +5,19 @@ pub(super) const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const TOAST_TTL: Duration = Duration::from_secs(4);
 
 use anyhow::Result;
+use crossterm::cursor::MoveTo;
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
     Event,
 };
-use crossterm::execute;
+use crossterm::style::Print;
+use crossterm::{execute, queue};
 use ratatui::DefaultTerminal;
+use std::io::Write;
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, resolve_blob_dir};
 use crate::tui::app::App;
+use crate::tui::inline_images::{InlineImageBackend, active_backend_from_env, iterm2_escape};
 use crate::tui::overlay::OverlayView::AddTask;
 use crate::tui::overlay::{OverlayState, OverlayView};
 use crate::tui::store::TaskView;
@@ -23,6 +27,7 @@ impl App {
     pub(crate) async fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
         let result = self.run_loop(terminal).await;
+        let _ = self.erase_previous_inline_images();
         execute!(
             std::io::stdout(),
             DisableBracketedPaste,
@@ -41,6 +46,7 @@ impl App {
         self.open_add_task_on_start(natural).await?;
         execute!(std::io::stdout(), EnableBracketedPaste)?;
         let result = self.run_loop(terminal).await;
+        let _ = self.erase_previous_inline_images();
         execute!(std::io::stdout(), DisableBracketedPaste)?;
         result.map(|()| self.intake.take_message())
     }
@@ -82,8 +88,10 @@ impl App {
             }
 
             if needs_redraw {
+                let _ = self.erase_previous_inline_images();
                 let view = self.view();
                 terminal.draw(|frame| ui::render(frame, &self.store, &mut self.widgets, &view))?;
+                let _ = self.render_inline_images_after_draw();
                 needs_redraw = false;
             }
 
@@ -118,6 +126,48 @@ impl App {
                 needs_redraw = true;
             }
         }
+        Ok(())
+    }
+
+    fn render_inline_images_after_draw(&mut self) -> Result<()> {
+        let backend = active_backend_from_env(self.intake.config().local.inline_images);
+        if backend == InlineImageBackend::None || self.widgets.inline_image_placements.is_empty() {
+            self.previous_inline_image_placements.clear();
+            return Ok(());
+        }
+        let mut stdout = std::io::stdout();
+        for placement in &self.widgets.inline_image_placements {
+            queue!(stdout, MoveTo(placement.x, placement.y))?;
+            let escape = iterm2_escape(
+                &placement.path,
+                placement.width,
+                placement.height,
+                backend == InlineImageBackend::Iterm2Tmux,
+            )?;
+            write!(stdout, "{escape}")?;
+        }
+        stdout.flush()?;
+        self.previous_inline_image_placements = self.widgets.inline_image_placements.clone();
+        Ok(())
+    }
+
+    fn erase_previous_inline_images(&mut self) -> Result<()> {
+        if self.previous_inline_image_placements.is_empty() {
+            return Ok(());
+        }
+        let mut stdout = std::io::stdout();
+        for placement in &self.previous_inline_image_placements {
+            let blank = " ".repeat(placement.width as usize);
+            for row in 0..placement.height {
+                queue!(
+                    stdout,
+                    MoveTo(placement.x, placement.y.saturating_add(row)),
+                    Print(&blank)
+                )?;
+            }
+        }
+        stdout.flush()?;
+        self.previous_inline_image_placements.clear();
         Ok(())
     }
 
@@ -170,7 +220,29 @@ impl App {
             } else {
                 ViewSurface::Main
             },
+            inline_images: self.inline_image_context(),
         }
+    }
+
+    fn inline_image_context(&self) -> Option<ui::DetailInlineImageContext> {
+        if self.intake.view().add_task_only
+            || self.notification.is_some()
+            || !self.pending_shortcut.is_empty()
+            || !self.detail_surface_accepts_inline_images()
+        {
+            return None;
+        }
+        let backend = active_backend_from_env(self.intake.config().local.inline_images);
+        if backend == InlineImageBackend::None {
+            return None;
+        }
+        let db_path = self.intake.db_path()?;
+        let blob_dir = resolve_blob_dir(db_path, self.intake.config()).ok()?;
+        Some(ui::DetailInlineImageContext { blob_dir })
+    }
+
+    fn detail_surface_accepts_inline_images(&self) -> bool {
+        matches!(self.overlay, None | Some(OverlayState::Detail { .. }))
     }
 
     pub(super) fn detail_underlay(&self) -> bool {

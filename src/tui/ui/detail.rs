@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
     Block, Borders, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
+use std::path::PathBuf;
 
 use super::input::clipped_input_line;
 use super::scroll::{clamp_scroll_start, scrollbar_thumb_position};
@@ -12,11 +13,14 @@ use super::task_display::{description_or_placeholder, labels_display};
 use super::task_list::EPIC_MARKER;
 use super::timestamps::local_timestamp_display;
 use super::truncate::truncate_width;
+use crate::attachments::storage::object_path;
 use crate::query::TaskListItem;
+use crate::task_render::AttachmentMetadataJson;
 use crate::tui::app::WidgetState;
 use crate::tui::detail_selection::{DetailTextSelection, TextCell, text_cell_at_column};
 use crate::tui::markdown::{
-    MarkdownRenderContext, flatten_markdown_blocks, render_markdown, render_markdown_with_context,
+    MarkdownBlock, MarkdownRenderContext, flatten_markdown_blocks, render_markdown,
+    render_markdown_with_context,
 };
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::TuiStore;
@@ -57,6 +61,40 @@ struct DetailContentRenderModel {
     content_height: usize,
     body_start: usize,
     scrollbar_position: usize,
+    image_placements: Vec<DetailBodyImagePlacement>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DetailInlineImageContext {
+    pub(crate) blob_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DetailInlineImagePlacement {
+    pub(crate) path: PathBuf,
+    pub(crate) x: u16,
+    pub(crate) y: u16,
+    pub(crate) width: u16,
+    pub(crate) height: u16,
+}
+
+#[derive(Debug, Clone)]
+struct DetailBodyImagePlacement {
+    path: PathBuf,
+    line_index: usize,
+    width: u16,
+    height: u16,
+}
+
+#[derive(Debug, Clone)]
+enum DetailBodyBlock {
+    Line(Line<'static>),
+    Image {
+        placeholder: Line<'static>,
+        path: PathBuf,
+        width: u16,
+        height: u16,
+    },
 }
 
 #[derive(Debug)]
@@ -90,6 +128,8 @@ fn render_detail(
     inline_title_editor: Option<&TextInputView>,
     hovered_child_task_id: Option<&str>,
     selection: Option<&DetailTextSelection>,
+    widgets: &mut WidgetState,
+    inline_images: Option<&DetailInlineImageContext>,
 ) {
     let layout = detail_content_layout(frame.area());
     frame.render_widget(Clear, layout.body_area);
@@ -106,8 +146,9 @@ fn render_detail(
         inline_title_editor,
         hovered_child_task_id,
         selection,
+        inline_images,
     );
-    render_detail_content_from_model(frame, layout.content_area, &model);
+    render_detail_content_from_model(frame, layout.content_area, &model, widgets);
     if layout.metadata_area.width > 0 {
         render_detail_metadata(frame, item, layout.metadata_area);
     }
@@ -152,7 +193,7 @@ pub(crate) fn detail_scroll_cap(
     terminal_height: u16,
 ) -> u16 {
     let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    let model = build_detail_content_model(item, layout.content_area, 0, None, None, None);
+    let model = build_detail_content_model(item, layout.content_area, 0, None, None, None, None);
     let sticky_height = model
         .sticky_lines
         .len()
@@ -173,7 +214,7 @@ pub(crate) fn detail_section_scroll_target(
     reverse: bool,
 ) -> u16 {
     let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    let model = build_detail_content_model(item, layout.content_area, scroll, None, None, None);
+    let model = build_detail_content_model(item, layout.content_area, scroll, None, None, None, None);
     let sticky_height = model
         .sticky_lines
         .len()
@@ -218,9 +259,15 @@ fn build_detail_content_model(
     inline_title_editor: Option<&TextInputView>,
     hovered_child_task_id: Option<&str>,
     selection: Option<&DetailTextSelection>,
+    inline_images: Option<&DetailInlineImageContext>,
 ) -> DetailContentRenderModel {
     let mut sticky_lines = detail_header_options(item, area.width as usize, inline_title_editor);
-    let mut body_lines = detail_body_lines(item, area.width as usize, hovered_child_task_id);
+    let (mut body_lines, image_placements) = detail_body_lines_with_images(
+        item,
+        area.width as usize,
+        hovered_child_task_id,
+        inline_images,
+    );
     if inline_title_editor.is_none()
         && let Some(selection) = selection.filter(|selection| selection.task_id == item.task.id)
     {
@@ -228,6 +275,7 @@ fn build_detail_content_model(
             item,
             area.width as usize,
             selection,
+            inline_images,
             &mut sticky_lines,
             &mut body_lines,
         );
@@ -248,6 +296,7 @@ fn build_detail_content_model(
         content_height,
         body_start: start,
         scrollbar_position,
+        image_placements,
     }
 }
 
@@ -255,6 +304,7 @@ fn render_detail_content_from_model(
     frame: &mut Frame,
     area: Rect,
     model: &DetailContentRenderModel,
+    widgets: &mut WidgetState,
 ) {
     let visible = area.height as usize;
     let sticky_height = model.sticky_lines.len().min(visible);
@@ -283,6 +333,21 @@ fn render_detail_content_from_model(
                 .viewport_content_length(body_visible.max(1)),
         );
     }
+    widgets
+        .inline_image_placements
+        .extend(model.image_placements.iter().filter_map(|placement| {
+            let row = placement.line_index.checked_sub(model.body_start)?;
+            if row >= body_visible {
+                return None;
+            }
+            Some(DetailInlineImagePlacement {
+                path: placement.path.clone(),
+                x: body_area.x.saturating_add(2),
+                y: body_area.y.saturating_add(row as u16),
+                width: placement.width,
+                height: placement.height,
+            })
+        }));
 }
 
 #[cfg(test)]
@@ -296,18 +361,48 @@ fn detail_content_lines(
     lines
 }
 
+#[cfg(test)]
 fn detail_body_lines(
     item: &TaskListItem,
     width: usize,
     hovered_child_task_id: Option<&str>,
 ) -> Vec<Line<'static>> {
-    let mut lines = detail_description_lines(item, width, hovered_child_task_id);
-    lines.extend(detail_note_lines(item, width));
-    lines.extend(detail_dependency_lines(item, width));
-    lines
+    detail_body_lines_with_images(item, width, hovered_child_task_id, None).0
 }
 
-fn detail_selectable_document(item: &TaskListItem, width: usize) -> DetailSelectableDocument {
+fn detail_body_lines_with_images(
+    item: &TaskListItem,
+    width: usize,
+    hovered_child_task_id: Option<&str>,
+    inline_images: Option<&DetailInlineImageContext>,
+) -> (Vec<Line<'static>>, Vec<DetailBodyImagePlacement>) {
+    let mut lines = detail_epic_child_lines(item, width, hovered_child_task_id);
+    if !lines.is_empty() {
+        lines.push(Line::from(""));
+    }
+    let mut image_placements = Vec::new();
+    extend_detail_body_blocks(
+        &mut lines,
+        &mut image_placements,
+        &description_or_placeholder(&item.task.description),
+        width,
+        Style::new().fg(FG_MUTED),
+        MarkdownRenderContext {
+            attachments: &item.attachments,
+        },
+        inline_images,
+    );
+    lines.push(Line::from(""));
+    lines.extend(detail_note_lines(item, width));
+    lines.extend(detail_dependency_lines(item, width));
+    (lines, image_placements)
+}
+
+fn detail_selectable_document(
+    item: &TaskListItem,
+    width: usize,
+    inline_images: Option<&DetailInlineImageContext>,
+) -> DetailSelectableDocument {
     let title = SelectableLine {
         text: item.task.title.clone(),
         document_start: 0,
@@ -318,21 +413,37 @@ fn detail_selectable_document(item: &TaskListItem, width: usize) -> DetailSelect
     if !item.task.description.is_empty() {
         text.push('\n');
         let epic_lines = detail_epic_child_lines(item, width, None);
-        let description_body_start = epic_lines.len() + usize::from(!epic_lines.is_empty());
+        let mut body_index = epic_lines.len() + usize::from(!epic_lines.is_empty());
         let content_width = width.saturating_sub(3).max(1);
-        let rendered = render_markdown(&item.task.description, content_width);
-        for (index, line) in rendered.into_iter().enumerate() {
+        let blocks = detail_body_blocks(
+            &item.task.description,
+            content_width,
+            MarkdownRenderContext {
+                attachments: &item.attachments,
+            },
+            inline_images,
+        );
+        for (index, block) in blocks.into_iter().enumerate() {
             if index > 0 {
                 text.push('\n');
             }
+            let (line, rendered_height) = match block {
+                DetailBodyBlock::Line(line) => (line, 1),
+                DetailBodyBlock::Image {
+                    placeholder,
+                    height,
+                    ..
+                } => (placeholder, 1 + height as usize),
+            };
             let line_text = line.to_string();
             let document_start = text.len();
             text.push_str(&line_text);
             description.push(SelectableLine {
                 text: line_text,
                 document_start,
-                body_index: Some(description_body_start + index),
+                body_index: Some(body_index),
             });
+            body_index += rendered_height;
         }
     }
     DetailSelectableDocument {
@@ -346,10 +457,11 @@ fn apply_detail_selection(
     item: &TaskListItem,
     width: usize,
     selection: &DetailTextSelection,
+    inline_images: Option<&DetailInlineImageContext>,
     sticky_lines: &mut [Line<'static>],
     body_lines: &mut [Line<'static>],
 ) {
-    let document = detail_selectable_document(item, width);
+    let document = detail_selectable_document(item, width, inline_images);
     let range = selection.range();
     if let Some(line) = sticky_lines.first_mut() {
         highlight_selectable_line(line, &document.title, &range, 0);
@@ -830,12 +942,113 @@ fn quoted_block_lines_with_context(
     let content_width = width.saturating_sub(3).max(1);
     flatten_markdown_blocks(render_markdown_with_context(body, content_width, context))
         .into_iter()
-        .map(|line| {
-            let mut spans = line_with_base_style(line, style).spans;
-            spans.insert(0, Span::styled("│ ", Style::new().fg(BORDER)));
-            Line::from(spans)
+        .map(|line| quoted_line(line, style))
+        .collect()
+}
+
+fn extend_detail_body_blocks(
+    lines: &mut Vec<Line<'static>>,
+    placements: &mut Vec<DetailBodyImagePlacement>,
+    body: &str,
+    width: usize,
+    style: Style,
+    context: MarkdownRenderContext<'_>,
+    inline_images: Option<&DetailInlineImageContext>,
+) {
+    let content_width = width.saturating_sub(3).max(1);
+    for block in detail_body_blocks(body, content_width, context, inline_images) {
+        match block {
+            DetailBodyBlock::Line(line) => lines.push(quoted_line(line, style)),
+            DetailBodyBlock::Image {
+                placeholder,
+                path,
+                width,
+                height,
+            } => {
+                let line_index = lines.len().saturating_add(1);
+                lines.push(quoted_line(placeholder, style));
+                let blank_count = height as usize;
+                for _ in 0..blank_count {
+                    lines.push(Line::from(vec![Span::styled(
+                        "│ ",
+                        Style::new().fg(BORDER),
+                    )]));
+                }
+                placements.push(DetailBodyImagePlacement {
+                    path,
+                    line_index,
+                    width,
+                    height,
+                });
+            }
+        }
+    }
+}
+
+fn detail_body_blocks(
+    body: &str,
+    content_width: usize,
+    context: MarkdownRenderContext<'_>,
+    inline_images: Option<&DetailInlineImageContext>,
+) -> Vec<DetailBodyBlock> {
+    render_markdown_with_context(body, content_width, context)
+        .into_iter()
+        .flat_map(|block| match block {
+            MarkdownBlock::Text(line) => vec![DetailBodyBlock::Line(line)],
+            MarkdownBlock::AttachmentImage(block) => {
+                let Some(inline_images) = inline_images else {
+                    return vec![DetailBodyBlock::Line(block.placeholder)];
+                };
+                let Some(attachment) = previewable_attachment(&block.attachment_ref, context)
+                else {
+                    return vec![DetailBodyBlock::Line(block.placeholder)];
+                };
+                let Ok(path) = object_path(&inline_images.blob_dir, &attachment.sha256) else {
+                    return vec![DetailBodyBlock::Line(block.placeholder)];
+                };
+                if !path.is_file() {
+                    return vec![DetailBodyBlock::Line(block.placeholder)];
+                }
+                let height = image_preview_height(attachment, content_width);
+                vec![DetailBodyBlock::Image {
+                    placeholder: block.placeholder,
+                    path,
+                    width: content_width.min(u16::MAX as usize) as u16,
+                    height,
+                }]
+            }
         })
         .collect()
+}
+
+fn previewable_attachment<'a>(
+    attachment_ref: &str,
+    context: MarkdownRenderContext<'a>,
+) -> Option<&'a AttachmentMetadataJson> {
+    let attachment_id = crate::attachments::parse_attachment_ref(attachment_ref)?;
+    context.attachments.iter().find(|attachment| {
+        attachment.attachment_id == attachment_id
+            && attachment.has_blob
+            && !attachment.deleted
+            && attachment.media_type.starts_with("image/")
+    })
+}
+
+fn image_preview_height(attachment: &AttachmentMetadataJson, content_width: usize) -> u16 {
+    match (attachment.width, attachment.height) {
+        (Some(width), Some(height)) if width > 0 && height > 0 => {
+            ((content_width as f64 * height as f64 / width as f64) / 2.0)
+                .round()
+                .clamp(3.0, 12.0) as u16
+        }
+        _ => 6,
+    }
+}
+
+fn quoted_line(line: Line<'static>, style: Style) -> Line<'static> {
+    let mut spans = line_with_base_style(line, style).spans;
+    spans.insert(0, Span::styled("│ ", Style::new().fg(BORDER)));
+    Line::from(spans)
 }
 
 fn line_with_base_style(mut line: Line<'static>, base: Style) -> Line<'static> {
@@ -1044,8 +1257,8 @@ pub(crate) fn detail_text_cell_at_position(
     {
         return None;
     }
-    let model = build_detail_content_model(item, layout.content_area, scroll, None, None, None);
-    let document = detail_selectable_document(item, layout.content_area.width as usize);
+    let model = build_detail_content_model(item, layout.content_area, scroll, None, None, None, None);
+    let document = detail_selectable_document(item, layout.content_area.width as usize, None);
 
     let selectable = if row == layout.content_area.y {
         &document.title
@@ -1094,7 +1307,7 @@ pub(crate) fn detail_selected_text(
         return None;
     }
     let layout = detail_content_layout(Rect::new(0, 0, selection.terminal_width, 24));
-    let document = detail_selectable_document(item, layout.content_area.width as usize);
+    let document = detail_selectable_document(item, layout.content_area.width as usize, None);
     document.text.get(selection.range()).map(str::to_string)
 }
 
@@ -1122,7 +1335,7 @@ pub(crate) fn detail_child_task_at_position(
     {
         return None;
     }
-    let model = build_detail_content_model(item, layout.content_area, scroll, None, None, None);
+    let model = build_detail_content_model(item, layout.content_area, scroll, None, None, None, None);
     let sticky_height = model
         .sticky_lines
         .len()
@@ -1206,6 +1419,7 @@ pub(super) fn render_detail_underlay(
     inline_title_editor: Option<&TextInputView>,
     hovered_child_task_id: Option<&str>,
     selection: Option<&DetailTextSelection>,
+    inline_images: Option<&DetailInlineImageContext>,
 ) {
     if let Some(task) = store.selected_task(widgets.table.selected()) {
         render_detail(
@@ -1215,6 +1429,8 @@ pub(super) fn render_detail_underlay(
             inline_title_editor,
             hovered_child_task_id,
             selection,
+            widgets,
+            inline_images,
         );
     }
 }
@@ -1458,7 +1674,7 @@ mod tests {
         let mut item = detail_test_item();
         item.task.description = "first paragraph with enough words to wrap across terminal lines and keep going for another line".to_string();
         let layout = detail_content_layout(Rect::new(0, 0, 70, 12));
-        let document = detail_selectable_document(&item, layout.content_area.width as usize);
+        let document = detail_selectable_document(&item, layout.content_area.width as usize, None);
         assert!(document.description.len() > 1);
         let expected = document.description[1]
             .text
@@ -1484,7 +1700,7 @@ mod tests {
         let mut item = detail_test_item();
         item.task.description = "**bold** and `code`".to_string();
         let layout = detail_content_layout(Rect::new(0, 0, 80, 24));
-        let document = detail_selectable_document(&item, layout.content_area.width as usize);
+        let document = detail_selectable_document(&item, layout.content_area.width as usize, None);
         let description = document.description.first().unwrap();
         let selection = DetailTextSelection {
             task_id: item.task.id.clone(),
@@ -1519,6 +1735,7 @@ mod tests {
             None,
             None,
             Some(&selection),
+            None,
         );
         let selected = model.sticky_lines[0]
             .spans
@@ -1806,7 +2023,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let model = build_detail_content_model(&item, Rect::new(0, 0, 60, 5), 4, None, None, None);
+        let model = build_detail_content_model(&item, Rect::new(0, 0, 60, 5), 4, None, None, None, None);
 
         assert_eq!(
             model.content_height,
@@ -1819,6 +2036,120 @@ mod tests {
         assert_eq!(model.sticky_lines[0].to_string(), "Fix token refresh race");
         assert_eq!(model.lines.len(), model.content_height.saturating_sub(4));
         assert!(model.scrollbar_position > 0);
+    }
+
+    #[test]
+    fn detail_description_renders_attachment_placeholders() {
+        let mut item = detail_test_item();
+        item.task.description = "![Chart](aven-attachment:ATTACHMENT000001)".to_string();
+        item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
+
+        let rendered = detail_content_lines(&item, 80, None)
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("│ [image: Chart]"));
+    }
+
+    #[test]
+    fn detail_reserves_rows_for_previewable_attachment() {
+        let mut item = detail_test_item();
+        item.task.description = "![Chart](aven-attachment:ATTACHMENT000001)".to_string();
+        item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
+        let temp = tempfile::tempdir().unwrap();
+        let context = DetailInlineImageContext {
+            blob_dir: temp.path().to_path_buf(),
+        };
+        let object = object_path(&context.blob_dir, &item.attachments[0].sha256).unwrap();
+        std::fs::create_dir_all(object.parent().unwrap()).unwrap();
+        std::fs::write(&object, b"png bytes").unwrap();
+
+        let (lines, placements) = detail_body_lines_with_images(&item, 80, None, Some(&context));
+
+        assert_eq!(placements.len(), 1);
+        assert_eq!(placements[0].height, 6);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.to_string() == "│ [image: Chart]")
+        );
+        assert_eq!(
+            lines.iter().filter(|line| line.to_string() == "│ ").count(),
+            6
+        );
+    }
+
+    #[test]
+    fn detail_falls_back_to_single_placeholder_when_previews_disabled() {
+        let mut item = detail_test_item();
+        item.task.description = "![Chart](aven-attachment:ATTACHMENT000001)".to_string();
+        item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
+
+        let (lines, placements) = detail_body_lines_with_images(&item, 80, None, None);
+
+        assert!(placements.is_empty());
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.to_string().contains("[image: Chart]"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            lines.iter().filter(|line| line.to_string() == "│ ").count(),
+            0
+        );
+    }
+
+    #[test]
+    fn detail_placements_only_include_visible_preview_rows() {
+        let mut item = detail_test_item();
+        item.task.description = "intro\n![Chart](aven-attachment:ATTACHMENT000001)".to_string();
+        item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
+        let temp = tempfile::tempdir().unwrap();
+        let context = DetailInlineImageContext {
+            blob_dir: temp.path().to_path_buf(),
+        };
+        let object = object_path(&context.blob_dir, &item.attachments[0].sha256).unwrap();
+        std::fs::create_dir_all(object.parent().unwrap()).unwrap();
+        std::fs::write(&object, b"png bytes").unwrap();
+
+        let model = build_detail_content_model(
+            &item,
+            Rect::new(0, 0, 80, 10),
+            0,
+            None,
+            None,
+            None,
+            Some(&context),
+        );
+
+        assert_eq!(model.image_placements.len(), 1);
+        assert!(model.image_placements[0].line_index < model.content_height);
+    }
+
+    fn attachment_metadata(
+        attachment_id: &str,
+        deleted: bool,
+        has_blob: bool,
+    ) -> crate::task_render::AttachmentMetadataJson {
+        crate::task_render::AttachmentMetadataJson {
+            attachment_id: attachment_id.to_string(),
+            task_id: "7KQ9A1X".to_string(),
+            sha256: "0".repeat(64),
+            media_type: "image/png".to_string(),
+            byte_size: 4,
+            filename: Some("chart.png".to_string()),
+            alt_text: Some("Chart".to_string()),
+            width: None,
+            height: None,
+            created_at: "2026-06-20T12:00:00Z".to_string(),
+            deleted,
+            deleted_at: deleted.then(|| "2026-06-20T12:00:00Z".to_string()),
+            has_blob,
+        }
     }
 
     fn detail_test_epic_item() -> TaskListItem {
