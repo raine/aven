@@ -487,7 +487,25 @@ fn attachment_add_list_get_and_delete_work_locally() {
     );
 
     let full = ok(env.aven(&db, ["show", &task_ref, "--full"]));
-    contains_all(&full, &["![diagram](aven-attachment:", &attachment_id]);
+    contains_all(
+        &full,
+        &[
+            "![diagram](aven-attachment:",
+            &attachment_id,
+            "attachment attachment_id=",
+            "has_blob=yes",
+            "filename=\"photo.png\"",
+            "alt_text=\"diagram\"",
+        ],
+    );
+    contains_none(&full, &["sha256=", "png bytes"]);
+
+    let full_json = ok(env.aven(&db, ["show", &task_ref, "--full", "--json"]));
+    let full_json: serde_json::Value = serde_json::from_str(&full_json).unwrap();
+    assert_eq!(full_json["attachments"][0]["attachment_id"], attachment_id);
+    assert_eq!(full_json["attachments"][0]["has_blob"], true);
+    assert!(full_json["attachments"][0].get("sha256").is_none());
+    assert!(full_json["attachments"][0].get("bytes").is_none());
 
     let listed = ok(env.aven(&db, ["attachment", "list", &task_ref, "--json"]));
     let value: serde_json::Value = serde_json::from_str(&listed).unwrap();
