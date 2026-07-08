@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT sha256, byte_size, media_type, available, first_seen_at, last_verified_at\n         FROM blob_inventory WHERE sha256 = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "sha256",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blob_inventory",
+            "name": "sha256"
+          }
+        }
+      },
+      {
+        "name": "byte_size",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blob_inventory",
+            "name": "byte_size"
+          }
+        }
+      },
+      {
+        "name": "media_type",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blob_inventory",
+            "name": "media_type"
+          }
+        }
+      },
+      {
+        "name": "available",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blob_inventory",
+            "name": "available"
+          }
+        }
+      },
+      {
+        "name": "first_seen_at",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blob_inventory",
+            "name": "first_seen_at"
+          }
+        }
+      },
+      {
+        "name": "last_verified_at",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blob_inventory",
+            "name": "last_verified_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "5b8ba361eeee3c24e2cdce57b5a027b2afcdcbd0f779d8bfdc6405b1c1cdf409"
+}

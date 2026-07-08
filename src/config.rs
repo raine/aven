@@ -73,6 +73,8 @@ fn default_task_columns() -> Vec<TaskColumnConfig> {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LocalConfig {
     pub db_path: Option<PathBuf>,
+    #[serde(default)]
+    pub blob_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -339,6 +341,19 @@ pub fn resolve_db_path(flag: Option<PathBuf>, config: &AppConfig) -> Result<Path
     default_db_path()
 }
 
+#[allow(dead_code)]
+pub fn resolve_blob_dir(db_path: &Path, config: &AppConfig) -> Result<PathBuf> {
+    let base = db_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    match &config.local.blob_dir {
+        Some(path) if path.is_absolute() => Ok(path.clone()),
+        Some(path) => Ok(base.join(path)),
+        None => Ok(base.join("objects")),
+    }
+}
+
 pub fn resolve_sync_server(flag: Option<&str>, config: &AppConfig) -> Result<String> {
     if let Some(server) = flag {
         return Ok(server.to_string());
@@ -521,5 +536,28 @@ mod tests {
 
         loaded.validate().unwrap();
         assert_eq!(loaded.tui.columns, config.tui.columns);
+    }
+
+    #[test]
+    fn resolves_blob_dir_from_db_path_and_config() {
+        let db_path = PathBuf::from("/tmp/aven/db.sqlite");
+        let config = AppConfig::default();
+        assert_eq!(
+            resolve_blob_dir(&db_path, &config).unwrap(),
+            PathBuf::from("/tmp/aven/objects")
+        );
+
+        let mut config = AppConfig::default();
+        config.local.blob_dir = Some(PathBuf::from("blobs"));
+        assert_eq!(
+            resolve_blob_dir(&db_path, &config).unwrap(),
+            PathBuf::from("/tmp/aven/blobs")
+        );
+
+        config.local.blob_dir = Some(PathBuf::from("/var/aven/blobs"));
+        assert_eq!(
+            resolve_blob_dir(&db_path, &config).unwrap(),
+            PathBuf::from("/var/aven/blobs")
+        );
     }
 }

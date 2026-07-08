@@ -35,6 +35,8 @@ mod undo;
 mod update;
 mod workspaces;
 
+mod attachments;
+
 #[cfg(test)]
 mod test_support;
 

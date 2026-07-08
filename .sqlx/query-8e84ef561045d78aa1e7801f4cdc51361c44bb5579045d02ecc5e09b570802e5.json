@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO blob_inventory(sha256, byte_size, media_type, available, first_seen_at, last_verified_at)\n         VALUES (?, ?, ?, 1, ?, ?)\n         ON CONFLICT(sha256) DO UPDATE SET\n             byte_size = excluded.byte_size,\n             media_type = excluded.media_type,\n             available = 1,\n             last_verified_at = excluded.last_verified_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "8e84ef561045d78aa1e7801f4cdc51361c44bb5579045d02ecc5e09b570802e5"
+}
