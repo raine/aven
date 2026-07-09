@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.1.4 (2026-07-09)
+
+- Task composer labels can be set while creating a task
+- TUI timestamps display in local time across task details, notes, recent
+  actions, and database stats.
+- Database diagnostics show sync history size, synced and pending change counts,
+  server sequence range, and payload bytes.
+- Task list selection stays visible when queue group headers remain pinned.
+- Back navigation from an epic child detail returns to the parent detail view
+  and scroll position.
+
 ## v0.1.3 (2026-07-07)
 
 - Epic detail views list child tasks inline, with mouse hover and click targets
