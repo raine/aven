@@ -1,5 +1,6 @@
 mod common;
 
+use std::io::Write;
 use std::path::PathBuf;
 
 use common::{
@@ -23,6 +24,72 @@ fn extract_sha256(output: &str) -> String {
         .and_then(|word| word.strip_prefix("sha256="))
         .expect("sha256 in output")
         .to_string()
+}
+
+fn extract_byte_size(output: &str) -> i64 {
+    output
+        .split_whitespace()
+        .find(|word| word.starts_with("byte_size="))
+        .and_then(|word| word.strip_prefix("byte_size="))
+        .expect("byte_size in output")
+        .parse()
+        .unwrap()
+}
+
+fn compressible_png_bytes() -> Vec<u8> {
+    let width = 16u32;
+    let height = 16u32;
+    let mut raw = Vec::new();
+    for _ in 0..height {
+        raw.push(0);
+        raw.extend(std::iter::repeat_n(255, width as usize * 4));
+    }
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(&raw).unwrap();
+    let idat = encoder.finish().unwrap();
+
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut ihdr = Vec::new();
+    ihdr.extend(width.to_be_bytes());
+    ihdr.extend(height.to_be_bytes());
+    ihdr.extend([8, 6, 0, 0, 0]);
+    append_png_chunk(&mut png, b"IHDR", &ihdr);
+    append_png_chunk(&mut png, b"tEXt", &vec![b'a'; 4096]);
+    append_png_chunk(&mut png, b"IDAT", &idat);
+    append_png_chunk(&mut png, b"IEND", &[]);
+    png
+}
+
+fn append_png_chunk(png: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
+    png.extend((data.len() as u32).to_be_bytes());
+    png.extend(name);
+    png.extend(data);
+    let mut crc_data = Vec::with_capacity(name.len() + data.len());
+    crc_data.extend(name);
+    crc_data.extend(data);
+    png.extend(crc32(&crc_data).to_be_bytes());
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffffu32;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            let mask = 0u32.wrapping_sub(crc & 1);
+            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+#[test]
+fn generated_png_fixture_is_compressible() {
+    let png = compressible_png_bytes();
+    let mut options = oxipng::Options::from_preset(4);
+    options.strip = oxipng::StripChunks::Safe;
+    let optimized = oxipng::optimize_from_memory(&png, &options).unwrap();
+
+    assert!(optimized.len() < png.len());
 }
 
 #[test]
@@ -116,6 +183,101 @@ fn attachment_add_list_get_and_delete_work_locally() {
 
     let show = ok(env.aven(&db, ["show", &task_ref, "--full"]));
     contains_all(&show, &["![diagram](aven-attachment:", &attachment_id]);
+}
+
+#[test]
+fn attachment_add_preserves_png_by_default_and_optimizes_when_requested() {
+    let env = TestEnv::new();
+    let db = env.db("attachment-optimize.sqlite");
+    let task_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "optimize attachment", "--project", "app"])
+    ));
+    let image = env.path("compressible.png");
+    let bytes = compressible_png_bytes();
+    std::fs::write(&image, &bytes).unwrap();
+
+    let preserved = ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+    contains_all(&preserved, &["attachment-added", "optimized=false"]);
+    assert_eq!(extract_byte_size(&preserved), bytes.len() as i64);
+    let preserved_id = extract_attachment_id(&preserved);
+    let preserved_output = env.path("preserved.png");
+    ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "get",
+            &preserved_id,
+            "--output",
+            preserved_output.to_str().unwrap(),
+        ],
+    ));
+    assert_eq!(std::fs::read(preserved_output).unwrap(), bytes);
+
+    let optimized = ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &task_ref,
+            image.to_str().unwrap(),
+            "--optimize",
+        ],
+    ));
+    contains_all(&optimized, &["attachment-added", "optimized=true"]);
+    assert!(extract_byte_size(&optimized) < bytes.len() as i64);
+
+    let conflict = fail(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &task_ref,
+            image.to_str().unwrap(),
+            "--optimize",
+            "--no-optimize",
+        ],
+    ));
+    contains_all(&conflict, &["cannot be used with"]);
+}
+#[test]
+fn attachment_add_obeys_image_optimization_config() {
+    let env = TestEnv::new();
+    env.write_config(
+        r#"
+local:
+  image_optimization: on
+"#,
+    );
+    let db = env.db("attachment-config-optimize.sqlite");
+    let task_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "configured attachment", "--project", "app"])
+    ));
+    let image = env.path("configured-compressible.png");
+    let bytes = compressible_png_bytes();
+    std::fs::write(&image, &bytes).unwrap();
+
+    let optimized = ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+    contains_all(&optimized, &["attachment-added", "optimized=true"]);
+    assert!(extract_byte_size(&optimized) < bytes.len() as i64);
+
+    let preserved = ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &task_ref,
+            image.to_str().unwrap(),
+            "--no-optimize",
+        ],
+    ));
+    contains_all(&preserved, &["attachment-added", "optimized=false"]);
+    assert_eq!(extract_byte_size(&preserved), bytes.len() as i64);
 }
 
 #[test]

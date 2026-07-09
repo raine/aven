@@ -919,6 +919,52 @@ mod keyboard_dispatch {
 mod attachment_paste {
     use super::*;
 
+    fn compressible_png_bytes() -> Vec<u8> {
+        let width = 16u32;
+        let height = 16u32;
+        let mut raw = Vec::new();
+        for _ in 0..height {
+            raw.push(0);
+            raw.extend(std::iter::repeat_n(255, width as usize * 4));
+        }
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut encoder, &raw).unwrap();
+        let idat = encoder.finish().unwrap();
+
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        let mut ihdr = Vec::new();
+        ihdr.extend(width.to_be_bytes());
+        ihdr.extend(height.to_be_bytes());
+        ihdr.extend([8, 6, 0, 0, 0]);
+        append_png_chunk(&mut png, b"IHDR", &ihdr);
+        append_png_chunk(&mut png, b"tEXt", &vec![b'a'; 4096]);
+        append_png_chunk(&mut png, b"IDAT", &idat);
+        append_png_chunk(&mut png, b"IEND", &[]);
+        png
+    }
+
+    fn append_png_chunk(png: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
+        png.extend((data.len() as u32).to_be_bytes());
+        png.extend(name);
+        png.extend(data);
+        let mut crc_data = Vec::with_capacity(name.len() + data.len());
+        crc_data.extend(name);
+        crc_data.extend(data);
+        png.extend(crc32(&crc_data).to_be_bytes());
+    }
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = 0xffff_ffffu32;
+        for byte in bytes {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                let mask = 0u32.wrapping_sub(crc & 1);
+                crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+            }
+        }
+        !crc
+    }
+
     #[tokio::test]
     async fn detail_paste_image_path_attaches_to_selected_task() {
         let (dir, pool, mut app) = test_app_with_pool().await;
@@ -926,12 +972,16 @@ mod attachment_paste {
         let selected = create_and_select_task(&mut app, test_task_draft("image target")).await;
         let task_id = app.store.tasks[selected].task.id.clone();
         let image = dir.path().join("photo.png");
-        std::fs::write(&image, b"png bytes").unwrap();
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
 
-        assert_eq!(toast_message(&app).as_deref(), Some("attached image"));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("image already attached")
+        );
         let item = app
             .store
             .tasks
@@ -959,6 +1009,41 @@ mod attachment_paste {
         );
         assert_eq!(attachments[0].attachment.media_type, "image/png");
         assert!(attachments[0].has_blob);
+        assert_eq!(item.task.description.matches("aven-attachment:").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn detail_paste_image_path_obeys_optimization_config() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        let mut config = crate::config::AppConfig::default();
+        config.local.image_optimization = crate::config::ImageOptimizationConfig::Off;
+        app.set_config(config);
+        let selected = create_and_select_task(&mut app, test_task_draft("image target")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        let image = dir.path().join("photo.png");
+        let bytes = compressible_png_bytes();
+        std::fs::write(&image, &bytes).unwrap();
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("image already attached")
+        );
+        let mut conn = pool.acquire().await.unwrap();
+        let attachments = crate::operations::attachment_read_items_by_task(
+            &mut conn,
+            &crate::workspaces::active_workspace_id(),
+            &task_id,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].attachment.byte_size, bytes.len() as i64);
     }
 
     #[tokio::test]

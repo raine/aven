@@ -1,10 +1,10 @@
+pub(crate) mod optimization;
 pub(crate) mod storage;
 pub(crate) mod validation;
 
 #[allow(unused_imports)]
-pub(crate) use storage::{
-    StoredBlob, blob_inventory_row, object_path, sha256_hex, store_blob, upsert_inventory_available,
-};
+pub(crate) use optimization::{ImageOptimizationPolicy, OptimizedBytes, optimize_image_bytes};
+pub(crate) use storage::{blob_inventory_row, object_path, sha256_hex, store_blob};
 #[allow(unused_imports)]
 pub(crate) use validation::{
     ATTACHMENT_REF_PREFIX, MAX_ALT_TEXT_LEN, MAX_BLOB_BYTES, MAX_FILENAME_LEN,

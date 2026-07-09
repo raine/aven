@@ -813,6 +813,12 @@ pub(crate) struct AttachmentAddArgs {
     /// Image height in pixels
     #[arg(long)]
     pub(crate) height: Option<i64>,
+    /// Optimize supported image formats before storing bytes
+    #[arg(long, conflicts_with = "no_optimize")]
+    pub(crate) optimize: bool,
+    /// Preserve attachment bytes exactly
+    #[arg(long)]
+    pub(crate) no_optimize: bool,
     /// Print machine-readable JSON
     #[arg(long)]
     pub(crate) json: bool,

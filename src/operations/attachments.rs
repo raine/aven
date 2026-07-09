@@ -4,6 +4,7 @@ use anyhow::{Result, bail};
 use sqlx::Row;
 use sqlx::SqliteConnection;
 
+use crate::attachments::optimization::{ImageOptimizationPolicy, optimize_image_bytes};
 use crate::attachments::storage::{blob_inventory_row, store_blob};
 use crate::attachments::validation::{
     validate_alt_text, validate_blob_size, validate_dimensions, validate_filename,
@@ -23,6 +24,14 @@ pub(crate) struct AttachmentAddInput {
     pub(crate) width: Option<i64>,
     pub(crate) height: Option<i64>,
     pub(crate) bytes: Vec<u8>,
+    pub(crate) optimization_policy: ImageOptimizationPolicy,
+    pub(crate) dedupe_existing: bool,
+}
+
+pub(crate) struct AttachmentAddOutcome {
+    pub(crate) outcome: AttachmentOutcome,
+    pub(crate) description_changed: bool,
+    pub(crate) optimized: bool,
 }
 
 pub(crate) struct AttachmentOutcome {
@@ -83,24 +92,100 @@ async fn attachment_has_blob(conn: &mut SqliteConnection, sha256: &str) -> Resul
         .unwrap_or(false))
 }
 
+async fn existing_live_attachments_by_sha(
+    conn: &mut SqliteConnection,
+    workspace_id: &crate::ids::WorkspaceId,
+    task_id: &TaskId,
+    sha256: &str,
+) -> Result<Vec<TaskAttachment>> {
+    let rows = sqlx::query(
+        "SELECT ta.workspace_id, ta.attachment_id, ta.task_id, ta.sha256, ta.byte_size,
+                ta.media_type, ta.filename, ta.alt_text, ta.width, ta.height,
+                ta.created_at, ta.created_by_change_id, ta.deleted, ta.deleted_at, ta.deleted_by_change_id
+         FROM task_attachments ta
+         WHERE ta.workspace_id = ? AND ta.task_id = ? AND ta.sha256 = ? AND ta.deleted = 0
+         ORDER BY ta.created_at, ta.attachment_id",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .bind(sha256)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    Ok(rows.iter().map(attachment_from_row).collect())
+}
+
+fn description_references_attachment(description: &str, attachment_id: &str) -> bool {
+    description.contains(&format!("](aven-attachment:{attachment_id})"))
+}
+
 pub(crate) async fn add_task_attachment(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     blob_dir: &Path,
     task_id: &TaskId,
     input: AttachmentAddInput,
-) -> Result<AttachmentOutcome> {
+) -> Result<AttachmentAddOutcome> {
     validate_media_type(&input.media_type)?;
     validate_blob_size(input.bytes.len())?;
     validate_filename(input.filename.as_deref())?;
     validate_alt_text(input.alt_text.as_deref())?;
     validate_dimensions(input.width, input.height)?;
 
-    let attachment_id = new_id();
-    let created_at = now();
-    let stored = store_blob(conn, blob_dir, &input.media_type, &input.bytes).await?;
+    let optimized =
+        optimize_image_bytes(&input.media_type, input.bytes, input.optimization_policy).await?;
+    validate_blob_size(optimized.bytes.len())?;
+
+    let stored = store_blob(conn, blob_dir, &input.media_type, &optimized.bytes).await?;
     let mut tx = begin_immediate(conn).await?;
     let task = get_task_in_workspace(&mut tx, workspace, task_id).await?;
+
+    if input.dedupe_existing {
+        let existing_attachments =
+            existing_live_attachments_by_sha(&mut tx, &workspace.id, task_id, &stored.sha256)
+                .await?;
+        let referenced_existing = existing_attachments
+            .iter()
+            .find(|attachment| {
+                description_references_attachment(&task.description, &attachment.attachment_id)
+            })
+            .or_else(|| existing_attachments.first());
+
+        if let Some(existing) = referenced_existing {
+            if description_references_attachment(&task.description, &existing.attachment_id) {
+                tx.commit().await?;
+                let outcome =
+                    attachment_by_id(conn, workspace, &existing.attachment_id).await?;
+                return Ok(AttachmentAddOutcome {
+                    outcome,
+                    description_changed: false,
+                    optimized: optimized.optimized,
+                });
+            }
+
+            let markdown_ref =
+                markdown_attachment_ref(&existing.attachment_id, existing.alt_text.as_deref());
+            let description = append_attachment_ref(&task.description, &markdown_ref);
+            crate::mutation::set_task_field(
+                &mut tx,
+                workspace,
+                task_id,
+                "description",
+                &description,
+            )
+            .await?;
+            tx.commit().await?;
+            let outcome = attachment_by_id(conn, workspace, &existing.attachment_id).await?;
+            return Ok(AttachmentAddOutcome {
+                outcome,
+                description_changed: true,
+                optimized: optimized.optimized,
+            });
+        }
+    }
+
+    let attachment_id = new_id();
+    let created_at = now();
     let markdown_ref = markdown_attachment_ref(&attachment_id, input.alt_text.as_deref());
     let description = append_attachment_ref(&task.description, &markdown_ref);
 
@@ -146,7 +231,12 @@ pub(crate) async fn add_task_attachment(
     .await?;
 
     tx.commit().await?;
-    attachment_by_id(conn, workspace, &attachment_id).await
+    let outcome = attachment_by_id(conn, workspace, &attachment_id).await?;
+    Ok(AttachmentAddOutcome {
+        outcome,
+        description_changed: true,
+        optimized: optimized.optimized,
+    })
 }
 
 pub(crate) async fn attachment_by_id(

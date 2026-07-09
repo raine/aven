@@ -77,6 +77,8 @@ pub struct LocalConfig {
     pub blob_dir: Option<PathBuf>,
     #[serde(default)]
     pub inline_images: InlineImagesConfig,
+    #[serde(default)]
+    pub image_optimization: ImageOptimizationConfig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -86,6 +88,25 @@ pub enum InlineImagesConfig {
     #[default]
     Auto,
     On,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageOptimizationConfig {
+    Off,
+    #[default]
+    Paste,
+    On,
+}
+
+impl ImageOptimizationConfig {
+    pub(crate) fn optimizes_pasted_images(self) -> bool {
+        matches!(self, Self::Paste | Self::On)
+    }
+
+    pub(crate) fn optimizes_file_attachments(self) -> bool {
+        matches!(self, Self::On)
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -581,5 +602,17 @@ mod tests {
         let config = AppConfig::default();
 
         assert_eq!(config.local.inline_images, InlineImagesConfig::Auto);
+    }
+
+    #[test]
+    fn local_image_optimization_defaults_to_paste() {
+        let config = AppConfig::default();
+
+        assert_eq!(
+            config.local.image_optimization,
+            ImageOptimizationConfig::Paste
+        );
+        assert!(config.local.image_optimization.optimizes_pasted_images());
+        assert!(!config.local.image_optimization.optimizes_file_attachments());
     }
 }

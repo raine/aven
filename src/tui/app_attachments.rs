@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 
+use crate::attachments::optimization::ImageOptimizationPolicy;
 use crate::config::resolve_blob_dir;
 use crate::operations::AttachmentAddInput;
 use crate::tui::app::App;
@@ -76,6 +77,17 @@ impl App {
             .db_path()
             .ok_or_else(|| anyhow::anyhow!("database path is not available"))?;
         let blob_dir = resolve_blob_dir(db_path, self.intake.config())?;
+        let optimization_policy = if self
+            .intake
+            .config()
+            .local
+            .image_optimization
+            .optimizes_pasted_images()
+        {
+            ImageOptimizationPolicy::Optimize
+        } else {
+            ImageOptimizationPolicy::Preserve
+        };
         let result = self
             .store
             .add_attachment(
@@ -88,6 +100,8 @@ impl App {
                     width: None,
                     height: None,
                     bytes,
+                    optimization_policy,
+                    dedupe_existing: true,
                 },
             )
             .await?;

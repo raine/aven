@@ -5,6 +5,7 @@ use anyhow::{Result, bail};
 use serde::Serialize;
 use sqlx::SqliteConnection;
 
+use crate::attachments::optimization::ImageOptimizationPolicy;
 use crate::attachments::storage::object_path;
 use crate::cli::{
     AttachmentAddArgs, AttachmentCommand, AttachmentDeleteArgs, AttachmentGetArgs,
@@ -66,9 +67,15 @@ struct AttachmentJsonItem {
     deleted: bool,
     deleted_at: Option<String>,
     has_blob: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    optimized: Option<bool>,
 }
 
-fn attachment_json_item(att: &TaskAttachment, has_blob: bool) -> AttachmentJsonItem {
+fn attachment_json_item(
+    att: &TaskAttachment,
+    has_blob: bool,
+    optimized: Option<bool>,
+) -> AttachmentJsonItem {
     AttachmentJsonItem {
         attachment_id: att.attachment_id.clone(),
         task_id: att.task_id.clone(),
@@ -83,6 +90,7 @@ fn attachment_json_item(att: &TaskAttachment, has_blob: bool) -> AttachmentJsonI
         deleted: att.deleted,
         deleted_at: att.deleted_at.clone(),
         has_blob,
+        optimized,
     }
 }
 
@@ -124,8 +132,15 @@ pub(crate) async fn cmd_attachment_add(
         .or_else(|| Some(default_attachment_filename(&args.path)));
     let bytes = fs::read(&args.path)?;
     let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
+    let optimization_policy = if args.optimize {
+        ImageOptimizationPolicy::Optimize
+    } else if args.no_optimize || !config.local.image_optimization.optimizes_file_attachments() {
+        ImageOptimizationPolicy::Preserve
+    } else {
+        ImageOptimizationPolicy::Optimize
+    };
 
-    let outcome = add_task_attachment(
+    let add_outcome = add_task_attachment(
         conn,
         workspace,
         &blob_dir,
@@ -137,25 +152,33 @@ pub(crate) async fn cmd_attachment_add(
             width: args.width,
             height: args.height,
             bytes,
+            optimization_policy,
+            dedupe_existing: false,
         },
     )
     .await?;
+    let outcome = &add_outcome.outcome;
 
     if args.json {
-        let item = attachment_json_item(&outcome.attachment, outcome.has_blob);
+        let item = attachment_json_item(
+            &outcome.attachment,
+            outcome.has_blob,
+            Some(add_outcome.optimized),
+        );
         print_json_pretty(&item)?;
     } else {
         let ref_str = DisplayRefContext::for_workspace(conn, &workspace.id)
             .await?
             .display_ref(&outcome.task);
         println!(
-            "attachment-added {} attachment_id={} media_type={} byte_size={} sha256={} has_blob={}",
+            "attachment-added {} attachment_id={} media_type={} byte_size={} sha256={} has_blob={} optimized={}",
             ref_str,
             outcome.attachment.attachment_id,
             outcome.attachment.media_type,
             outcome.attachment.byte_size,
             outcome.attachment.sha256,
             outcome.has_blob,
+            add_outcome.optimized,
         );
     }
     Ok(())
@@ -177,7 +200,7 @@ pub(crate) async fn cmd_attachment_list(
                 .await?
                 .map(|row| row.available)
                 .unwrap_or(false);
-            items.push(attachment_json_item(att, has_blob));
+            items.push(attachment_json_item(att, has_blob, None));
         }
         print_json_pretty(&items)?;
     } else {
@@ -231,7 +254,7 @@ pub(crate) async fn cmd_attachment_get(
     }
 
     if args.json {
-        let item = attachment_json_item(&outcome.attachment, outcome.has_blob);
+        let item = attachment_json_item(&outcome.attachment, outcome.has_blob, None);
         print_json_pretty(&item)?;
     } else if let Some(ref output_path) = args.output {
         let ref_str = DisplayRefContext::for_workspace(conn, &workspace.id)
@@ -283,7 +306,7 @@ pub(crate) async fn cmd_attachment_delete(
     let outcome = delete_task_attachment(conn, workspace, &args.attachment_id).await?;
 
     if args.json {
-        let item = attachment_json_item(&outcome.attachment, outcome.has_blob);
+        let item = attachment_json_item(&outcome.attachment, outcome.has_blob, None);
         print_json_pretty(&item)?;
     } else {
         let ref_str = DisplayRefContext::for_workspace(conn, &workspace.id)

@@ -34,6 +34,7 @@ base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 crossterm = "0.29"
 pulldown-cmark = "0.13"
+oxipng = { version = "10.1", default-features = false }
 ratatui = "0.30"
 sha2 = "0.11"
 similar = "3.1"
