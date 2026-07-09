@@ -1,7 +1,5 @@
-#[cfg(not(test))]
 use std::fs;
 use std::io::{self, Write};
-#[cfg(not(test))]
 use std::process::Command as ProcessCommand;
 use std::sync::Mutex;
 #[cfg(not(test))]
@@ -14,6 +12,12 @@ use crossterm::event::{
     PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::supports_keyboard_enhancement;
+
+pub(crate) struct ClipboardImage {
+    pub(crate) filename: String,
+    pub(crate) media_type: String,
+    pub(crate) bytes: Vec<u8>,
+}
 #[cfg(not(test))]
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -200,6 +204,75 @@ fn suspend_terminal() -> Result<impl FnOnce() -> Result<()>> {
         }
         Ok(())
     })
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn read_clipboard_image() -> Result<Option<ClipboardImage>> {
+    let temp = tempfile::Builder::new()
+        .prefix("aven-clipboard-image-")
+        .suffix(".png")
+        .tempfile()?;
+    let path = temp.path().to_path_buf();
+    let script = r#"
+set outPath to POSIX file (system attribute "AVEN_CLIPBOARD_IMAGE_PATH")
+try
+    set imageData to the clipboard as «class PNGf»
+on error
+    return "no-image"
+end try
+set fileRef to open for access outPath with write permission
+try
+    set eof of fileRef to 0
+    write imageData to fileRef
+    close access fileRef
+on error errText
+    try
+        close access fileRef
+    end try
+    error errText
+end try
+return "ok"
+"#;
+    let output = ProcessCommand::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .env("AVEN_CLIPBOARD_IMAGE_PATH", &path)
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("osascript exited with {}", output.status);
+    }
+    if String::from_utf8_lossy(&output.stdout).trim() == "no-image" {
+        return Ok(None);
+    }
+    let bytes = fs::read(path)?;
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(ClipboardImage {
+        filename: "pasted-image.png".to_string(),
+        media_type: "image/png".to_string(),
+        bytes,
+    }))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn read_clipboard_image() -> Result<Option<ClipboardImage>> {
+    Ok(None)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn read_clipboard_text() -> Result<Option<String>> {
+    let output = ProcessCommand::new("pbpaste").output()?;
+    if !output.status.success() {
+        anyhow::bail!("pbpaste exited with {}", output.status);
+    }
+    let text = String::from_utf8_lossy(&output.stdout).to_string();
+    Ok((!text.trim().is_empty()).then_some(text))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn read_clipboard_text() -> Result<Option<String>> {
+    Ok(None)
 }
 
 #[cfg(not(test))]

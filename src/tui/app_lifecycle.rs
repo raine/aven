@@ -164,7 +164,7 @@ impl App {
         if self.previous_inline_image_placements.is_empty() {
             return Ok(());
         }
-        let backend = active_backend_from_env(self.add_task_config.local.inline_images);
+        let backend = active_backend_from_env(self.intake.config().local.inline_images);
         let placements = std::mem::take(&mut self.previous_inline_image_placements);
         self.erase_inline_image_placements(&placements, backend)
     }

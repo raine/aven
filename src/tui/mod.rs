@@ -3,6 +3,7 @@ use ratatui::DefaultTerminal;
 use sqlx::SqlitePool;
 
 mod app;
+mod app_attachments;
 mod app_authoring;
 mod app_config;
 mod app_conflicts;

@@ -1,4 +1,5 @@
 use crate::ids::WorkspaceId;
+mod attachments;
 mod config;
 mod conflicts;
 mod domain;
