@@ -1,14 +1,24 @@
+use std::path::Path;
+
 use anyhow::Result;
 use tokio::task::JoinHandle;
 
 use crate::config::TaskIntakeConfig;
 use crate::operations::{
-    TaskDraft, add_note as add_note_operation, create_task as create_task_operation,
+    TaskDraft, add_note as add_note_operation, add_task_attachment_for_ref,
+    create_task as create_task_operation,
 };
 use crate::refs::DisplayRefContext;
+use crate::tui::authoring::PendingTaskAttachment;
 use crate::undo::{UndoCommand, task_snapshot};
 
 use super::TuiStore;
+
+struct CreatedTaskMessage {
+    message: String,
+    selected: Option<usize>,
+    task_id: crate::ids::TaskId,
+}
 
 impl TuiStore {
     pub(crate) fn spawn_task_intake(
@@ -41,6 +51,47 @@ impl TuiStore {
         draft: TaskDraft,
         current_selected_index: Option<usize>,
     ) -> Result<(String, Option<usize>)> {
+        let created = self
+            .create_task_inner(draft, current_selected_index)
+            .await?;
+        Ok((created.message, created.selected))
+    }
+
+    pub(crate) async fn create_task_with_attachments(
+        &mut self,
+        draft: TaskDraft,
+        current_selected_index: Option<usize>,
+        blob_dir: &Path,
+        attachments: Vec<PendingTaskAttachment>,
+    ) -> Result<(String, Option<usize>)> {
+        let created = self
+            .create_task_inner(draft, current_selected_index)
+            .await?;
+        if !attachments.is_empty() {
+            let workspace = self.active_workspace.clone();
+            let mut conn = self.pool.acquire().await?;
+            for attachment in attachments {
+                add_task_attachment_for_ref(
+                    &mut conn,
+                    &workspace,
+                    blob_dir,
+                    &created.task_id,
+                    attachment.attachment_id,
+                    attachment.input,
+                )
+                .await?;
+            }
+            drop(conn);
+            self.refresh(Some(&created.task_id)).await?;
+        }
+        Ok((created.message, created.selected))
+    }
+
+    async fn create_task_inner(
+        &mut self,
+        draft: TaskDraft,
+        current_selected_index: Option<usize>,
+    ) -> Result<CreatedTaskMessage> {
         let previous_id = self
             .selected_task(current_selected_index)
             .map(|item| item.task.id.clone());
@@ -66,14 +117,19 @@ impl TuiStore {
         self.refresh(None).await?;
         let created_index = self.tasks.iter().position(|item| item.task.id == task_id);
         if created_index.is_some() {
-            return Ok((format!("created task {message_ref}"), created_index));
+            return Ok(CreatedTaskMessage {
+                message: format!("created task {message_ref}"),
+                selected: created_index,
+                task_id,
+            });
         }
 
         let restored = self.restored_task_selection(previous_id.as_ref());
-        Ok((
-            format!("created task {message_ref} hidden by current filters"),
-            restored,
-        ))
+        Ok(CreatedTaskMessage {
+            message: format!("created task {message_ref} hidden by current filters"),
+            selected: restored,
+            task_id,
+        })
     }
 
     pub(crate) async fn add_note_to_task(

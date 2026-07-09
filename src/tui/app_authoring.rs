@@ -1,7 +1,8 @@
 use anyhow::Result;
 
+use crate::config::resolve_blob_dir;
 use crate::labels::normalize_label;
-use crate::operations::TaskDraft;
+use crate::operations::{TaskDraft, append_attachment_ref};
 use crate::tui::app::{App, Notification};
 use crate::tui::app_intake::{IntakeCompletion, IntakePoll, NaturalRetry};
 use crate::tui::authoring::{
@@ -259,7 +260,9 @@ impl App {
         description: String,
     ) -> Result<()> {
         let value = add_task_natural_intake(&title, &description);
-        if self.intake.view().add_task_only {
+        if self.intake.view().add_task_only
+            && !self.authoring.add_task_has_pending_attachments()
+        {
             self.submit_add_task_only_natural(value, NaturalRetry::AddTask)
                 .await
         } else {
@@ -292,7 +295,9 @@ impl App {
     }
 
     pub(super) async fn submit_add_task_natural(&mut self, value: String) -> Result<()> {
-        if self.intake.view().add_task_only {
+        if self.intake.view().add_task_only
+            && !self.authoring.add_task_has_pending_attachments()
+        {
             self.submit_add_task_only_natural(value, NaturalRetry::Dialog)
                 .await
         } else {
@@ -314,7 +319,7 @@ impl App {
             return Ok(());
         }
         let project = self.add_task_project_context();
-        if create_on_success {
+        if create_on_success && !self.authoring.add_task_has_pending_attachments() {
             self.intake.start_detached(
                 raw,
                 &self.store.active_workspace.id,
@@ -357,7 +362,9 @@ impl App {
     async fn finish_ready_task_intake(&mut self, ready: IntakeCompletion) -> Result<()> {
         match ready.outcome {
             Ok(draft) if ready.create_on_success => {
-                self.submit_created_task(draft).await?;
+                let attachments = self.authoring.take_add_task_attachments();
+                self.authoring.clear_add_task();
+                self.submit_created_task(draft, attachments).await?;
             }
             Ok(draft) => {
                 if self.authoring.apply_add_task_draft(draft) {
@@ -395,9 +402,35 @@ impl App {
             })
     }
 
-    pub(super) async fn submit_created_task(&mut self, draft: TaskDraft) -> Result<()> {
+    pub(super) async fn submit_created_task(
+        &mut self,
+        mut draft: TaskDraft,
+        attachments: Vec<crate::tui::authoring::PendingTaskAttachment>,
+    ) -> Result<()> {
         let current_selected = self.widgets.table.selected();
-        let (message, selected) = self.store.create_task(draft, current_selected).await?;
+        for ref_text in attachments
+            .iter()
+            .map(|attachment| attachment.markdown_ref())
+        {
+            if !draft.description.contains(&ref_text) {
+                draft.description = append_attachment_ref(&draft.description, &ref_text);
+            }
+        }
+        draft.description = self
+            .authoring
+            .append_missing_add_task_attachment_refs(&draft.description);
+        let (message, selected) = if attachments.is_empty() {
+            self.store.create_task(draft, current_selected).await?
+        } else {
+            let db_path = self
+                .intake
+                .db_path()
+                .ok_or_else(|| anyhow::anyhow!("database path is not available"))?;
+            let blob_dir = resolve_blob_dir(db_path, self.intake.config())?;
+            self.store
+                .create_task_with_attachments(draft, current_selected, &blob_dir, attachments)
+                .await?
+        };
         self.widgets.table.select(selected);
         self.preserve_or_restore_sidebar_selection();
         self.prune_task_marks();

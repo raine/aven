@@ -107,7 +107,8 @@ impl App {
             due_on,
             is_epic: false,
         };
-        if let Err(error) = self.submit_created_task(draft).await {
+        let attachments = self.authoring.take_add_task_attachments();
+        if let Err(error) = self.submit_created_task(draft, attachments).await {
             self.overlay = Some(OverlayState::AddTask(Box::new(state)));
             return Err(error);
         }

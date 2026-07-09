@@ -17,6 +17,7 @@ use crate::refs::get_task_in_workspace;
 use crate::types::{Task, TaskAttachment};
 use crate::workspaces::Workspace;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AttachmentAddInput {
     pub(crate) filename: Option<String>,
     pub(crate) alt_text: Option<String>,
@@ -235,6 +236,81 @@ pub(crate) async fn add_task_attachment(
     Ok(AttachmentAddOutcome {
         outcome,
         description_changed: true,
+        optimized: optimized.optimized,
+    })
+}
+
+pub(crate) async fn add_task_attachment_for_ref(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    blob_dir: &Path,
+    task_id: &TaskId,
+    attachment_id: String,
+    input: AttachmentAddInput,
+) -> Result<AttachmentAddOutcome> {
+    validate_media_type(&input.media_type)?;
+    validate_blob_size(input.bytes.len())?;
+    validate_filename(input.filename.as_deref())?;
+    validate_alt_text(input.alt_text.as_deref())?;
+    validate_dimensions(input.width, input.height)?;
+
+    let optimized =
+        optimize_image_bytes(&input.media_type, input.bytes, input.optimization_policy).await?;
+    validate_blob_size(optimized.bytes.len())?;
+
+    let stored = store_blob(conn, blob_dir, &input.media_type, &optimized.bytes).await?;
+    let mut tx = begin_immediate(conn).await?;
+    let task = get_task_in_workspace(&mut tx, workspace, task_id).await?;
+    let created_at = now();
+    let change_id = append_change(
+        &mut tx,
+        ChangeEntity::Task,
+        task_id,
+        Some("attachments"),
+        op_type::ATTACHMENT_ADD,
+        ChangePayload::workspace(workspace)
+            .set("attachment_id", &attachment_id)
+            .set("sha256", &stored.sha256)
+            .set("byte_size", stored.byte_size)
+            .set("media_type", &input.media_type)
+            .set("filename", &input.filename)
+            .set("alt_text", &input.alt_text)
+            .set("width", input.width)
+            .set("height", input.height)
+            .set("created_at", &created_at),
+    )
+    .await?;
+
+    sqlx::query(
+        "INSERT INTO task_attachments(workspace_id, attachment_id, task_id, sha256, byte_size, media_type, filename, alt_text, width, height, created_at, created_by_change_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&workspace.id)
+    .bind(&attachment_id)
+    .bind(task_id)
+    .bind(&stored.sha256)
+    .bind(stored.byte_size)
+    .bind(&input.media_type)
+    .bind(&input.filename)
+    .bind(&input.alt_text)
+    .bind(input.width)
+    .bind(input.height)
+    .bind(&created_at)
+    .bind(&change_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    let outcome = AttachmentOutcome {
+        task,
+        attachment: attachment_by_id(conn, workspace, &attachment_id)
+            .await?
+            .attachment,
+        has_blob: true,
+    };
+    Ok(AttachmentAddOutcome {
+        outcome,
+        description_changed: false,
         optimized: optimized.optimized,
     })
 }

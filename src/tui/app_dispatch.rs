@@ -33,6 +33,9 @@ impl App {
         if self.paste_detail_image_from_text(text).await? {
             return Ok(());
         }
+        if self.paste_add_task_image_from_text(text)? {
+            return Ok(());
+        }
         let Some(overlay) = self.overlay.take() else {
             return Ok(());
         };
@@ -52,6 +55,20 @@ impl App {
             && matches!(self.overlay, Some(OverlayState::Detail { .. }))
         {
             self.paste_detail_image_from_clipboard().await
+        } else if key.code == KeyCode::Char('v')
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(
+                self.overlay,
+                Some(OverlayState::AddTask(_))
+                    | Some(OverlayState::MultilineInput(
+                        crate::tui::overlay::MultilineInputState {
+                            route: OverlayRoute::AddTaskNatural,
+                            ..
+                        }
+                    ))
+            )
+        {
+            self.paste_add_task_image_from_clipboard().await
         } else if self.footer_choice_mode.is_some() {
             self.handle_footer_choice_key(key).await
         } else if key.code == KeyCode::Esc && self.pending_shortcut.cancel() {

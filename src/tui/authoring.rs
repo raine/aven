@@ -1,4 +1,7 @@
-use crate::operations::TaskDraft;
+use crate::attachments::storage::sha256_hex;
+use crate::operations::{
+    AttachmentAddInput, TaskDraft, append_attachment_ref, markdown_attachment_ref,
+};
 
 pub(crate) const ADD_NOTE_TITLE: &str = "Add note";
 pub(crate) const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: project";
@@ -55,6 +58,28 @@ impl AddTaskStep {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingTaskAttachment {
+    pub(crate) attachment_id: String,
+    pub(crate) sha256: String,
+    pub(crate) input: AttachmentAddInput,
+}
+
+impl PendingTaskAttachment {
+    pub(crate) fn new(attachment_id: String, input: AttachmentAddInput) -> Self {
+        let sha256 = sha256_hex(&input.bytes);
+        Self {
+            attachment_id,
+            sha256,
+            input,
+        }
+    }
+
+    pub(crate) fn markdown_ref(&self) -> String {
+        markdown_attachment_ref(&self.attachment_id, self.input.alt_text.as_deref())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct AddTaskDraftState {
     title: String,
     description: String,
@@ -65,6 +90,7 @@ struct AddTaskDraftState {
     labels: Vec<String>,
     available_at: String,
     due_on: String,
+    attachments: Vec<PendingTaskAttachment>,
     step: AddTaskStep,
 }
 
@@ -80,6 +106,7 @@ impl Default for AddTaskDraftState {
             labels: Vec::new(),
             available_at: String::new(),
             due_on: String::new(),
+            attachments: Vec::new(),
             step: AddTaskStep::Title,
         }
     }
@@ -114,8 +141,14 @@ pub(crate) struct AddTaskContext {
 }
 
 #[cfg(test)]
+pub(crate) struct AddTaskCreate {
+    pub(crate) draft: TaskDraft,
+    pub(crate) attachments: Vec<PendingTaskAttachment>,
+}
+
+#[cfg(test)]
 pub(crate) enum AddTaskTitleSubmit {
-    Create(TaskDraft),
+    Create(AddTaskCreate),
     ReopenTitle { message: &'static str },
     Inactive,
 }
@@ -202,6 +235,57 @@ impl AuthoringState {
         Some(draft.status.clone())
     }
 
+    pub(crate) fn add_pending_add_task_attachment(
+        &mut self,
+        attachment: PendingTaskAttachment,
+    ) -> Option<(String, bool)> {
+        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
+            return None;
+        };
+        if let Some(existing) = draft
+            .attachments
+            .iter()
+            .find(|existing| existing.sha256 == attachment.sha256)
+        {
+            return Some((existing.markdown_ref(), false));
+        }
+        let ref_text = attachment.markdown_ref();
+        draft.attachments.push(attachment);
+        Some((ref_text, true))
+    }
+
+    pub(crate) fn add_task_attachment_refs(&self) -> Vec<String> {
+        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_ref() else {
+            return Vec::new();
+        };
+        draft
+            .attachments
+            .iter()
+            .map(PendingTaskAttachment::markdown_ref)
+            .collect()
+    }
+
+    pub(crate) fn add_task_has_pending_attachments(&self) -> bool {
+        matches!(self.flow.as_ref(), Some(AuthoringFlow::AddTask(draft)) if !draft.attachments.is_empty())
+    }
+
+    pub(crate) fn take_add_task_attachments(&mut self) -> Vec<PendingTaskAttachment> {
+        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
+            return Vec::new();
+        };
+        std::mem::take(&mut draft.attachments)
+    }
+
+    pub(crate) fn clear_add_task(&mut self) {
+        if matches!(self.flow, Some(AuthoringFlow::AddTask(_))) {
+            self.flow = None;
+        }
+    }
+
+    pub(crate) fn append_missing_add_task_attachment_refs(&self, description: &str) -> String {
+        append_missing_refs(description, self.add_task_attachment_refs())
+    }
+
     pub(crate) fn capture_add_task_fields(
         &mut self,
         title: String,
@@ -276,7 +360,13 @@ impl AuthoringState {
             return false;
         };
         draft.title = task.title;
-        draft.description = task.description;
+        draft.description = append_missing_refs(
+            &task.description,
+            draft
+                .attachments
+                .iter()
+                .map(PendingTaskAttachment::markdown_ref),
+        );
         draft.project = task.project;
         draft.status = task.status;
         draft.priority = task.priority;
@@ -299,16 +389,26 @@ impl AuthoringState {
                 message: "task title is required",
             };
         }
-        AddTaskTitleSubmit::Create(TaskDraft {
-            title: trimmed.to_string(),
-            description: draft.description.trim().to_string(),
-            project: draft.project,
-            status: draft.status,
-            priority: draft.priority,
-            labels: draft.labels,
-            available_at: (!draft.available_at.is_empty()).then_some(draft.available_at),
-            due_on: (!draft.due_on.is_empty()).then_some(draft.due_on),
-            is_epic: false,
+        let description = append_missing_refs(
+            draft.description.trim(),
+            draft
+                .attachments
+                .iter()
+                .map(PendingTaskAttachment::markdown_ref),
+        );
+        AddTaskTitleSubmit::Create(AddTaskCreate {
+            draft: TaskDraft {
+                title: trimmed.to_string(),
+                description,
+                project: draft.project,
+                status: draft.status,
+                priority: draft.priority,
+                labels: draft.labels,
+                available_at: (!draft.available_at.is_empty()).then_some(draft.available_at),
+                due_on: (!draft.due_on.is_empty()).then_some(draft.due_on),
+                is_epic: false,
+            },
+            attachments: draft.attachments,
         })
     }
 
@@ -370,6 +470,20 @@ impl AuthoringState {
     }
 }
 
+fn append_missing_refs<I>(description: &str, refs: I) -> String
+where
+    I: IntoIterator<Item = String>,
+{
+    refs.into_iter()
+        .fold(description.to_string(), |description, ref_text| {
+            if description.contains(&ref_text) {
+                description
+            } else {
+                append_attachment_ref(&description, &ref_text)
+            }
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -412,8 +526,8 @@ mod tests {
         ));
         assert!(matches!(
             state.submit_add_task(),
-            AddTaskTitleSubmit::Create(draft)
-                if draft.description == "Details\nfor handoff"
+            AddTaskTitleSubmit::Create(create)
+                if create.draft.description == "Details\nfor handoff"
         ));
     }
 
@@ -429,8 +543,8 @@ mod tests {
         assert!(state.apply_add_task_labels(vec!["feature".to_string(), "ui".to_string()]));
         assert!(matches!(
             state.submit_add_task(),
-            AddTaskTitleSubmit::Create(draft)
-                if draft.labels == vec!["feature".to_string(), "ui".to_string()]
+            AddTaskTitleSubmit::Create(create)
+                if create.draft.labels == vec!["feature".to_string(), "ui".to_string()]
         ));
     }
 
@@ -474,7 +588,7 @@ mod tests {
         assert!(state.apply_add_task_project(vec![String::new()]));
         assert!(matches!(
             state.submit_add_task(),
-            AddTaskTitleSubmit::Create(draft) if draft.project.is_none()
+            AddTaskTitleSubmit::Create(create) if create.draft.project.is_none()
         ));
     }
 
