@@ -151,6 +151,7 @@ impl App {
         if self.focus == Focus::Sidebar {
             self.apply_sidebar_selection().await?;
         } else if matches!(self.overlay, Some(OverlayState::Detail { .. })) {
+            self.detail_navigation_history.clear();
             self.overlay = None;
         } else if self.store.view_state.view == crate::tui::store::TaskView::RecentActions {
             self.set_info("recent actions are read-only");
@@ -209,6 +210,7 @@ impl App {
         self.pending_rename_project = None;
         self.pending_delete_project = None;
         self.clear_live_search_preview();
+        self.detail_navigation_history.clear();
         let had_overlay = self.overlay.take().is_some();
         self.detail_context = false;
         if !had_overlay && self.focus == Focus::Sidebar {

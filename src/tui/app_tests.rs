@@ -3834,6 +3834,71 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn detail_back_returns_from_epic_child_to_parent_detail() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
+        let child_id = app.store.tasks[child_index].task.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        crate::operations::add_task_to_epic(&mut conn, &child_id, &parent_id)
+            .await
+            .unwrap();
+        drop(conn);
+        app.store.refresh(Some(&parent_id)).await.unwrap();
+        let parent_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == parent_id)
+            .unwrap();
+        app.widgets.table.select(Some(parent_index));
+        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+
+        let parent_item = app
+            .store
+            .selected_task(app.widgets.table.selected())
+            .unwrap();
+        let click = (0..24)
+            .flat_map(|row| (0..80).map(move |column| (column, row)))
+            .find(|(column, row)| {
+                crate::tui::ui::detail_child_task_at_position(parent_item, 80, 24, *column, *row, 3)
+                    .is_some_and(|hit| hit.task_id == child_id)
+            })
+            .map(|(column, row)| left_click(column, row))
+            .expect("expected child task hit target");
+
+        app.dispatch_mouse(click, (80, 24).into()).await.unwrap();
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.id, child_id);
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+
+        app.dispatch_key(key(KeyCode::Char('g')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('[')), (80, 24).into())
+            .await
+            .unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.id, parent_id);
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 3 })
+        ));
+    }
+
+    #[tokio::test]
     async fn add_note_from_detail_returns_to_detail() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Note target")).await;

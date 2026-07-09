@@ -133,6 +133,12 @@ pub(crate) enum FooterChoiceMode {
     Priority,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct DetailNavigationState {
+    pub(super) task_id: String,
+    pub(super) scroll: u16,
+}
+
 pub(crate) struct App {
     pub(crate) store: TuiStore,
     pub(crate) should_quit: bool,
@@ -162,6 +168,7 @@ pub(crate) struct App {
     pub(crate) last_task_click: Option<TaskRowClick>,
     pub(crate) hovered_detail_child_task_id: Option<String>,
     pub(super) navigation_history: Vec<TaskViewState>,
+    pub(super) detail_navigation_history: Vec<DetailNavigationState>,
 }
 
 impl App {
@@ -215,6 +222,7 @@ impl App {
             last_task_click: None,
             hovered_detail_child_task_id: None,
             navigation_history: Vec::new(),
+            detail_navigation_history: Vec::new(),
         };
         app.restore_sidebar_selection();
         app.widgets
@@ -253,6 +261,39 @@ impl App {
 
     pub(super) fn clear_navigation_history(&mut self) {
         self.navigation_history.clear();
+    }
+
+    pub(super) fn push_detail_navigation_state(&mut self, previous: DetailNavigationState) {
+        if self.detail_navigation_history.last() == Some(&previous) {
+            return;
+        }
+        if self.detail_navigation_history.len() >= NAVIGATION_HISTORY_LIMIT {
+            self.detail_navigation_history.remove(0);
+        }
+        self.detail_navigation_history.push(previous);
+    }
+
+    pub(super) fn go_back_in_detail(&mut self) -> bool {
+        let Some(previous) = self.detail_navigation_history.pop() else {
+            return false;
+        };
+        let Some(index) = self
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == previous.task_id)
+        else {
+            self.set_warning("previous task is hidden by the current view");
+            return false;
+        };
+        self.widgets.table.select(Some(index));
+        self.focus = Focus::Tasks;
+        self.detail_context = false;
+        self.detail_context_scroll = previous.scroll;
+        self.overlay = Some(crate::tui::overlay::OverlayState::Detail {
+            scroll: previous.scroll,
+        });
+        true
     }
 
     pub(super) async fn go_back(&mut self) -> Result<()> {
