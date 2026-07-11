@@ -1127,6 +1127,42 @@ mod attachment_paste {
         assert_eq!(attachments[0].attachment.media_type, "image/png");
         assert!(attachments[0].has_blob);
     }
+
+    #[tokio::test]
+    async fn detail_paste_image_path_ignores_existing_image() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        let selected = create_and_select_task(&mut app, test_task_draft("image target")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        let image = dir.path().join("photo.png");
+        std::fs::write(&image, b"png bytes").unwrap();
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("image already attached")
+        );
+        let item = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == task_id)
+            .unwrap();
+        assert_eq!(item.task.description.matches("aven-attachment:").count(), 1);
+        let mut conn = pool.acquire().await.unwrap();
+        let attachments = crate::operations::attachment_read_items_by_task(
+            &mut conn,
+            &crate::workspaces::active_workspace_id(),
+            &task_id,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(attachments.len(), 1);
+    }
 }
 
 mod command_and_config_overlays {
