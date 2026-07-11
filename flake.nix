@@ -23,9 +23,7 @@
 
             src = ./.;
 
-            cargoLock = {
-              lockFile = ./Cargo.lock;
-            };
+            cargoHash = pkgs.lib.fakeHash;
 
             nativeBuildInputs = [ pkgs.pkg-config ];
             buildInputs = [ pkgs.sqlite ];
