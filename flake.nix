@@ -30,6 +30,7 @@
             nativeBuildInputs = [ pkgs.pkg-config ];
             buildInputs = [ pkgs.sqlite ];
 
+            cargoBuildFlags = [ "--ignore-rust-version" ];
             doCheck = false;
 
             meta = with pkgs.lib; {
