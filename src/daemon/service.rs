@@ -1,7 +1,9 @@
 #[cfg(target_os = "macos")]
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::{Command, Output};
+#[cfg(target_os = "macos")]
+use std::process::Command;
+use std::process::Output;
 
 #[cfg(target_os = "macos")]
 use anyhow::Context;
@@ -65,12 +67,20 @@ trait LaunchctlRunner {
 
 struct SystemRunner;
 
+#[cfg(target_os = "macos")]
 impl LaunchctlRunner for SystemRunner {
     fn run(&self, args: &[&str]) -> Result<Output> {
         Command::new("/bin/launchctl")
             .args(args)
             .output()
             .with_context(|| format!("run launchctl {}", args.join(" ")))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+impl LaunchctlRunner for SystemRunner {
+    fn run(&self, _args: &[&str]) -> Result<Output> {
+        unreachable!("launchctl is only available on macOS")
     }
 }
 
