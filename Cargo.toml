@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.96"
 authors = ["Raine"]
 description = "Local-first task manager CLI and sync server"
+repository = "https://github.com/raine/aven"
 license = "MIT"
 
 [dependencies]
