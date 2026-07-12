@@ -17,31 +17,21 @@
           pkgs = nixpkgs.legacyPackages.${system};
         in
         {
-          default = pkgs.stdenv.mkDerivation {
+          default = pkgs.rustPlatform.buildRustPackage {
             pname = cargoToml.package.name;
             version = cargoToml.package.version;
 
             src = ./.;
 
-            nativeBuildInputs = with pkgs; [
-              cargo
-              rustc
-              pkg-config
-            ];
+            cargoLock = {
+              lockFile = ./Cargo.lock;
+            };
+            cargoBuildFlags = [ "--ignore-rust-version" ];
+
+            nativeBuildInputs = [ pkgs.pkg-config ];
             buildInputs = [ pkgs.sqlite ];
 
-            buildPhase = ''
-              runHook preBuild
-              export CARGO_HOME="$TMPDIR/cargo-home"
-              cargo build --release --locked --ignore-rust-version
-              runHook postBuild
-            '';
-
-            installPhase = ''
-              runHook preInstall
-              install -Dm755 target/release/aven "$out/bin/aven"
-              runHook postInstall
-            '';
+            doCheck = false;
 
             meta = with pkgs.lib; {
               description = "Local-first task manager CLI and sync server";
