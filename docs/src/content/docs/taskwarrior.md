@@ -51,7 +51,7 @@ The prompt below uses a two-phase process. The agent first performs read-only di
 A migration through aven's existing CLI is not transactional. It cannot preserve Taskwarrior's original timestamps, and an interrupted migration may require careful cleanup or resumption. Back up both systems, review every unsupported field, and keep aven sync paused until you approve the verification report.
 :::
 
-Copy this prompt into a coding agent that can access both `task` and `aven`:
+Copy this prompt into a coding agent that can access your Taskwarrior installation and run shell commands:
 
 ```text
 Migrate my Taskwarrior tasks into aven.
@@ -76,12 +76,9 @@ Safety constraints:
 
 Discovery:
 
-1. Read `https://aven.raine.dev/llms-full.txt` for aven's system model and CLI
-   guidance. Use `aven doctor` to inspect the installed database, workspace,
-   routing, sync, daemon, and pending-change state. Read
-   `aven <command> --help` for every command considered in the migration so the
-   proposal reflects the installed version. Inspect existing workspaces, tasks,
-   projects, labels, conflicts, and likely duplicates.
+1. Read `https://aven.raine.dev/llms-full.txt` for aven's system model, CLI
+   guidance, installation options, and configuration. Do not initialize, install,
+   or change aven during discovery.
 2. Resolve the exact `task` command I use, including aliases, shell functions,
    wrappers, executable path, environment variables, and command-line `rc`
    overrides.
@@ -101,12 +98,20 @@ Discovery:
    status, project, priority, and tag. Inspect annotations, dependencies,
    recurrence, dates, and every observed UDA. Use UUIDs, never numeric task ids,
    as source identity.
+7. Determine whether aven is installed. If it is absent, include installation
+   and initial configuration in the proposal. If it is present, read
+   `aven <command> --help` before using each command and run `aven doctor` to
+   inspect any existing database, workspace, routing, sync, daemon, and
+   pending-change state. Inspect existing workspaces, tasks, projects, labels,
+   conflicts, and likely duplicates. Do not create a database just to inspect
+   it.
 
 Proposal and approval gate:
 
 Present a concise migration proposal containing:
 
-- Source and target versions and resolved locations.
+- Source and target versions and resolved locations. If aven is absent, include
+  the documented installation method and proposed initial configuration.
 - Export counts and evidence that the export is complete.
 - The target aven workspace and whether this is an isolated import or a merge.
 - A mapping for every observed Taskwarrior field and UDA.
@@ -126,22 +131,26 @@ Do not make any aven change until I explicitly approve this proposal.
 
 Execution after approval:
 
-1. Confirm that the source snapshot and aven target still match the approved
-   state. Stop if either changed.
-2. Pause aven synchronization as approved and create a verified aven backup.
-3. Use an explicit workspace on every command instead of relying on directory
-   routing or the active workspace.
-4. Create prerequisite projects and labels, then tasks and notes. Create
+1. If aven is absent, install it using the approved documented method. Confirm
+   the installed version and read help for each command before using it.
+2. Confirm that the source snapshot and any existing aven target still match the
+   approved state. Stop if either changed.
+3. Pause aven synchronization as approved and create a verified aven backup
+   when a target database already exists.
+4. Initialize or select the approved target workspace and use an explicit
+   workspace on every command instead of relying on directory routing or the
+   active workspace.
+5. Create prerequisite projects and labels, then tasks and notes. Create
    dependencies in a second pass after every Taskwarrior UUID has an aven ref.
-5. Maintain a durable UUID-to-aven-ref mapping file. Use it to detect completed
+6. Maintain a durable UUID-to-aven-ref mapping file. Use it to detect completed
    work and prevent duplicates when resuming.
-6. Stop on the first unexpected error. Do not continue from an uncertain
+7. Stop on the first unexpected error. Do not continue from an uncertain
    partial state.
-7. Verify exact counts and mappings, representative records from every mapping
+8. Verify exact counts and mappings, representative records from every mapping
    class, all dependency edges, annotation order, terminal states, duplicate
    absence, and aven database integrity. Confirm that the live Taskwarrior
    configuration and data remain unchanged.
-8. Report every deviation from the approved proposal and all remaining manual
+9. Report every deviation from the approved proposal and all remaining manual
    work. Keep aven synchronization paused until I approve the report.
 ```
 
