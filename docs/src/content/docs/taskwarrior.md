@@ -76,31 +76,31 @@ Safety constraints:
 
 Discovery:
 
-1. Resolve the exact `task` command I use, including aliases, shell functions,
-   wrappers, executable path, environment variables, and command-line `rc`
-   overrides.
-2. Determine the installed Taskwarrior version and its effective configuration
-   and data locations. Consider `TASKRC`, `TASKDATA`, `~/.taskrc`,
-   `$XDG_CONFIG_HOME/task/taskrc`, `data.location`, `~/.task`, and recursively
-   included configuration files. Follow the precedence of the installed
-   version rather than assuming one fixed layout.
-3. Inspect UDA definitions, hooks, contexts, reports, urgency coefficients,
-   recurrence settings, and conventions that affect task meaning. Do not
-   execute hooks.
-4. Create and validate a complete source snapshot. Export every stored task
-   from the snapshot with the installed `task` executable. Account for JSON
-   arrays and JSON-object streams, and ensure limits, reports, contexts, or
-   filters do not truncate the export.
-5. Validate the export and report unique UUID counts and counts grouped by
-   status, project, priority, and tag. Inspect annotations, dependencies,
-   recurrence, dates, and every observed UDA. Use UUIDs, never numeric task ids,
-   as source identity.
-6. Read `https://aven.raine.dev/llms-full.txt` for aven's system model and CLI
+1. Read `https://aven.raine.dev/llms-full.txt` for aven's system model and CLI
    guidance. Use `aven doctor` to inspect the installed database, workspace,
    routing, sync, daemon, and pending-change state. Read
    `aven <command> --help` for every command considered in the migration so the
    proposal reflects the installed version. Inspect existing workspaces, tasks,
    projects, labels, conflicts, and likely duplicates.
+2. Resolve the exact `task` command I use, including aliases, shell functions,
+   wrappers, executable path, environment variables, and command-line `rc`
+   overrides.
+3. Determine the installed Taskwarrior version and its effective configuration
+   and data locations. Consider `TASKRC`, `TASKDATA`, `~/.taskrc`,
+   `$XDG_CONFIG_HOME/task/taskrc`, `data.location`, `~/.task`, and recursively
+   included configuration files. Follow the precedence of the installed
+   version rather than assuming one fixed layout.
+4. Inspect UDA definitions, hooks, contexts, reports, urgency coefficients,
+   recurrence settings, and conventions that affect task meaning. Do not
+   execute hooks.
+5. Create and validate a complete source snapshot. Export every stored task
+   from the snapshot with the installed `task` executable. Account for JSON
+   arrays and JSON-object streams, and ensure limits, reports, contexts, or
+   filters do not truncate the export.
+6. Validate the export and report unique UUID counts and counts grouped by
+   status, project, priority, and tag. Inspect annotations, dependencies,
+   recurrence, dates, and every observed UDA. Use UUIDs, never numeric task ids,
+   as source identity.
 
 Proposal and approval gate:
 
