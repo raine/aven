@@ -95,9 +95,11 @@ Discovery:
    status, project, priority, and tag. Inspect annotations, dependencies,
    recurrence, dates, and every observed UDA. Use UUIDs, never numeric task ids,
    as source identity.
-6. Inspect the installed aven version and use `aven doctor`, `aven skill`, and
-   relevant command help to learn its actual capabilities. Inspect existing
-   workspaces, tasks, projects, labels, conflicts, sync state, pending changes,
+6. Run `aven skill` to load aven's agent-facing model and CLI guidance. Use
+   `aven doctor` to inspect the installed database, workspace, routing, sync,
+   daemon, and pending-change state. Read `aven <command> --help` for every
+   command considered in the migration so the proposal reflects the installed
+   version. Inspect existing workspaces, tasks, projects, labels, conflicts,
    and likely duplicates.
 
 Proposal and approval gate:
