@@ -95,7 +95,8 @@ Discovery:
    status, project, priority, and tag. Inspect annotations, dependencies,
    recurrence, dates, and every observed UDA. Use UUIDs, never numeric task ids,
    as source identity.
-6. Run `aven skill` to load aven's agent-facing model and CLI guidance. Use
+6. Read `https://aven.raine.dev/llms.txt`, then follow its complete
+   documentation link for aven's system model and CLI guidance. Use
    `aven doctor` to inspect the installed database, workspace, routing, sync,
    daemon, and pending-change state. Read `aven <command> --help` for every
    command considered in the migration so the proposal reflects the installed

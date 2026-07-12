@@ -1,6 +1,7 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import starlightLlmsTxt from 'starlight-llms-txt';
 
 export default defineConfig({
   site: 'https://aven.raine.dev',
@@ -8,6 +9,7 @@ export default defineConfig({
     starlight({
       title: 'aven',
       description: 'A local-first task manager for power users and agents.',
+      plugins: [starlightLlmsTxt()],
       logo: {
         dark: './src/assets/aven-wordmark-grape-violet.svg',
         light: './src/assets/aven-wordmark-grape-violet-light.svg',
