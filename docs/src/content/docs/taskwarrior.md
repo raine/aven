@@ -35,6 +35,12 @@ aven has first-class workspaces. Personal and work tasks can use the same tool w
 
 Workspace routes can select a workspace based on the current directory, so working under `~/work` can use the work workspace automatically. In Taskwarrior, this kind of directory-aware isolation requires shell wrappers, filters, and custom config around `task` and `taskwarrior-tui`.
 
+## Why build a separate tool?
+
+The gaps above can be worked around with Taskwarrior configuration, UDAs, shell wrappers, filters, sidecar files, and separate TUI tools. aven aims to turn those hacks into a coherent system.
+
+Rather than adding more hacks on top of Taskwarrior, I want to own the full stack and make my own task manager. Before AI coding, building a task manager with aven's scope would perhaps have been an unrealistic side project, but now it is a reasonable one.
+
 ## Migrate from Taskwarrior
 
 Taskwarrior installations can differ substantially through custom data locations, included configuration files, user-defined attributes, hooks, and conventions for projects and tags. A coding agent can inspect those choices and propose a migration that fits your setup.
@@ -138,9 +144,3 @@ Execution after approval:
 ```
 
 Expect the agent to stop after presenting its proposal. Review how it handles unsupported dates and recurrence, custom UDAs, project and label normalization, existing aven tasks, and synchronization before approving the migration.
-
-## Why build a separate tool?
-
-The gaps above can be worked around with Taskwarrior configuration, UDAs, shell wrappers, filters, sidecar files, and separate TUI tools. aven aims to turn those hacks into a coherent system.
-
-Rather than adding more hacks on top of Taskwarrior, I want to own the full stack and make my own task manager. Before AI coding, building a task manager with aven's scope would perhaps have been an unrealistic side project, but now it is a reasonable one.
