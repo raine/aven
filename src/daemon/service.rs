@@ -1,11 +1,19 @@
-use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::{Command, Output};
 
-use anyhow::{Context, Result, bail};
+#[cfg(target_os = "macos")]
+use anyhow::Context;
+use anyhow::{Result, bail};
 
-use crate::config::{self, AppConfig};
+#[cfg(target_os = "macos")]
+use crate::config;
+use crate::config::AppConfig;
 
+#[cfg(target_os = "macos")]
 const LABEL: &str = "com.raine.aven.daemon";
+#[cfg(target_os = "macos")]
 const DEFAULT_PATH: &str = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 
 pub struct ServiceInstallArgs {
@@ -50,6 +58,7 @@ pub fn status_snapshot() -> Result<ServiceStatus> {
     status_with_runner(&SystemRunner)
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 trait LaunchctlRunner {
     fn run(&self, args: &[&str]) -> Result<Output>;
 }
@@ -82,7 +91,13 @@ fn install_with_runner(args: ServiceInstallArgs, runner: &impl LaunchctlRunner) 
 }
 
 #[cfg(not(target_os = "macos"))]
-fn install_with_runner(_args: ServiceInstallArgs, _runner: &impl LaunchctlRunner) -> Result<()> {
+fn install_with_runner(args: ServiceInstallArgs, _runner: &impl LaunchctlRunner) -> Result<()> {
+    let ServiceInstallArgs {
+        db_path,
+        config,
+        program,
+    } = args;
+    drop((db_path, config, program));
     bail!(
         "error unsupported-platform command=daemon-install platform={}",
         std::env::consts::OS
@@ -158,7 +173,14 @@ fn repair_with_runner(args: ServiceRepairArgs, runner: &impl LaunchctlRunner) ->
 }
 
 #[cfg(not(target_os = "macos"))]
-fn repair_with_runner(_args: ServiceRepairArgs, _runner: &impl LaunchctlRunner) -> Result<()> {
+fn repair_with_runner(args: ServiceRepairArgs, _runner: &impl LaunchctlRunner) -> Result<()> {
+    let ServiceRepairArgs {
+        db_path,
+        config,
+        program,
+        if_installed,
+    } = args;
+    drop((db_path, config, program, if_installed));
     bail!(
         "error unsupported-platform command=daemon-repair platform={}",
         std::env::consts::OS
