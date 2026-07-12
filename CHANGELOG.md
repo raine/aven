@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.5 (2026-07-12)
+
+- Selecting an epic in the task list highlights its child tasks for easier
+  scanning.
+
 ## v0.1.4 (2026-07-09)
 
 - Task composer labels can be set while creating a task
