@@ -489,10 +489,10 @@ mod add_task_overlay {
             ..add_task_view()
         }));
         assert!(rendered.contains("Add task"));
-        assert!(rendered.contains("Project: [aven]"));
-        assert!(rendered.contains("Status: [inbox]"));
-        assert!(rendered.contains("Priority: [high]"));
-        assert!(rendered.contains("Labels: [none]"));
+        assert!(rendered.contains("Project: ● aven"));
+        assert!(rendered.contains("Status: ▣ inbox"));
+        assert!(rendered.contains("Priority: ● high"));
+        assert!(rendered.contains("Labels: none"));
         assert!(rendered.contains("Title"));
         assert!(rendered.contains("Description"));
         assert!(rendered.contains("  ship dialogs"));
@@ -500,6 +500,33 @@ mod add_task_overlay {
         assert!(rendered.contains("Tab next"));
         assert!(rendered.contains("^N create with AI"));
         assert!(rendered.contains("F1 help"));
+    }
+
+    #[test]
+    fn add_task_metadata_values_use_shared_styles() {
+        let project = metadata_field(AddTaskStep::Project, "Project", "aven", AddTaskStep::Title);
+        assert_eq!(project.to_string(), "  ^P Project: ● aven");
+        assert_eq!(
+            project.spans[3].style.fg,
+            Some(theme::project_color("aven"))
+        );
+
+        let status = metadata_field(AddTaskStep::Status, "Status", "active", AddTaskStep::Title);
+        assert_eq!(status.to_string(), "  ^T Status: ● active");
+        assert_eq!(status.spans[3].style.fg, theme::status_style("active").fg);
+
+        let priority = metadata_field(
+            AddTaskStep::Priority,
+            "Priority",
+            "medium",
+            AddTaskStep::Title,
+        );
+        assert_eq!(priority.to_string(), "  ^R Priority: ◐ med");
+        assert_eq!(
+            priority.spans[3].style.fg,
+            theme::priority_style("medium").fg
+        );
+        assert!(!priority.to_string().contains('['));
     }
 
     #[test]

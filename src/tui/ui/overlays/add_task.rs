@@ -19,6 +19,7 @@ use crate::tui::overlay::{
 };
 use crate::tui::text::cell_width_ranges;
 use crate::tui::theme::{self, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, SELECTED};
+use crate::tui::widgets::{label_cell, priority_short, status_span};
 
 pub(crate) fn add_task_field_at(
     terminal: Rect,
@@ -224,7 +225,7 @@ fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>
     owned
 }
 
-fn metadata_field(
+pub(in crate::tui::ui) fn metadata_field(
     field: AddTaskStep,
     label: &str,
     value: &str,
@@ -238,7 +239,7 @@ fn metadata_field(
         AddTaskStep::Labels => "^L ",
         _ => "",
     };
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(marker, Style::new().fg(FG)),
         Span::styled(shortcut, Style::new().fg(FG).add_modifier(Modifier::BOLD)),
         Span::styled(
@@ -249,8 +250,37 @@ fn metadata_field(
                 Style::new().fg(FG_DIM)
             },
         ),
-        Span::styled(format!("[{value}]"), Style::new().fg(FG)),
-    ])
+    ];
+    spans.extend(metadata_value_spans(field, value));
+    Line::from(spans)
+}
+
+fn metadata_value_spans(field: AddTaskStep, value: &str) -> Vec<Span<'static>> {
+    match field {
+        AddTaskStep::Project => vec![
+            Span::styled("● ", Style::new().fg(theme::project_color(value))),
+            Span::styled(
+                value.to_string(),
+                Style::new().fg(FG).add_modifier(Modifier::BOLD),
+            ),
+        ],
+        AddTaskStep::Status => vec![status_span(value)],
+        AddTaskStep::Priority => vec![Span::styled(
+            priority_short(value).to_string(),
+            theme::priority_style(value).add_modifier(Modifier::BOLD),
+        )],
+        AddTaskStep::Labels if value == "none" => {
+            vec![Span::styled("none", Style::new().fg(FG_DIM))]
+        }
+        AddTaskStep::Labels => {
+            label_cell(
+                &value.split(',').map(str::to_string).collect::<Vec<_>>(),
+                value.len(),
+            )
+            .spans
+        }
+        _ => vec![Span::raw(value.to_string())],
+    }
 }
 
 fn join_lines(lines: Vec<Line<'static>>, separator: &'static str) -> Line<'static> {
