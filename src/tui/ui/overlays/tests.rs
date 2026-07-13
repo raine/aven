@@ -572,7 +572,7 @@ mod add_task_overlay {
             OverlayView::AddTask(AddTaskView {
                 project: "telegram-tori-bot-with-a-long-name".to_string(),
                 status: "canceled".to_string(),
-                labels: vec!["feature".to_string()],
+                labels: vec!["feature".to_string(), "urgent".to_string()],
                 ..add_task_view()
             }),
             160,
@@ -586,7 +586,7 @@ mod add_task_overlay {
         assert!(rendered.contains('…'));
         assert!(rendered.contains("^T Status:"));
         assert!(rendered.contains("^R Priority:"));
-        assert!(rendered.contains("^L Labels: feature"));
+        assert!(rendered.contains("^L Labels: featu"));
     }
 
     #[test]

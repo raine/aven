@@ -22,7 +22,7 @@ use crate::tui::overlay::{
 };
 use crate::tui::text::cell_width_ranges;
 use crate::tui::theme::{self, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, SELECTED};
-use crate::tui::widgets::{label_cell, priority_short, status_span};
+use crate::tui::widgets::{priority_short, status_span};
 
 pub(crate) fn add_task_field_at(
     terminal: Rect,
@@ -278,14 +278,19 @@ fn metadata_value_spans(field: AddTaskStep, value: &str) -> Vec<Span<'static>> {
         AddTaskStep::Labels if value == "none" => {
             vec![Span::styled("none", Style::new().fg(FG_DIM))]
         }
-        AddTaskStep::Labels => {
-            label_cell(
-                &value.split(',').map(str::to_string).collect::<Vec<_>>(),
-                value.len(),
-            )
-            .spans
-        }
+        AddTaskStep::Labels => vec![Span::styled(label_summary(value), Style::new().fg(FG_DIM))],
         _ => vec![Span::raw(value.to_string())],
+    }
+}
+
+fn label_summary(value: &str) -> String {
+    let mut labels = value.split(',');
+    let first = labels.next().unwrap_or_default();
+    let more = labels.count();
+    if more == 0 {
+        first.to_string()
+    } else {
+        format!("{first} +{more}")
     }
 }
 
