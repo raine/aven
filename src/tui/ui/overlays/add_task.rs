@@ -231,8 +231,16 @@ fn metadata_field(
     focus: AddTaskStep,
 ) -> Line<'static> {
     let marker = if field == focus { "▶ " } else { "  " };
+    let shortcut = match field {
+        AddTaskStep::Project => "^P ",
+        AddTaskStep::Status => "^T ",
+        AddTaskStep::Priority => "^R ",
+        AddTaskStep::Labels => "^L ",
+        _ => "",
+    };
     Line::from(vec![
         Span::styled(marker, Style::new().fg(FG)),
+        Span::styled(shortcut, Style::new().fg(FG).add_modifier(Modifier::BOLD)),
         Span::styled(
             format!("{label}: "),
             if field == focus {
@@ -312,6 +320,7 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
                 "Arrows            move between visible fields",
                 "Enter             open metadata or create from title",
                 "Enter             newline in description",
+                "Ctrl-p/t/r/l      edit project/status/priority/labels",
                 "Ctrl-s            create from any field",
                 "Ctrl-n            create with AI",
                 "F1                open this help",

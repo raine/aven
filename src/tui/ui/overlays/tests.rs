@@ -527,9 +527,15 @@ mod add_task_overlay {
                 );
             }
             assert!(
-                rendered.contains("▶ Labels"),
+                rendered.contains("▶ ^L Labels"),
                 "missing focus cue at {width}x{height}"
             );
+            for shortcut in ["^P", "^T", "^R", "^L"] {
+                assert!(
+                    rendered.contains(shortcut),
+                    "missing {shortcut} at {width}x{height}"
+                );
+            }
         }
     }
 
