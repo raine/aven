@@ -2798,9 +2798,13 @@ mod authoring {
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::TagCombobox(state))
-                if state.input.as_str().is_empty()
-                    && state.selected == vec!["feature".to_string()]
+            Some(OverlayState::AddTask(state))
+                if matches!(
+                    &state.mode,
+                    crate::tui::overlay::AddTaskMode::Labels(labels)
+                        if labels.input.as_str().is_empty()
+                            && labels.selected == vec!["feature".to_string()]
+                )
         ));
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 

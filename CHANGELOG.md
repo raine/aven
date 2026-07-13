@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.1.6 (2026-07-14)
+
+- Added a configurable Columns view for navigating tasks in named status lanes.
+- Redesigned the task composer so project, status, priority, labels, title, and
+  description stay visible and are accessible by keyboard or mouse.
+- Added task copy shortcuts for refs, titles, descriptions, notes, and combined
+  task text.
+- Improved task detail navigation with a shortcut that jumps directly to notes.
+- Added a guided Taskwarrior migration workflow to the documentation.
+- Improved daemon and server startup in Linux services, containers, and other
+  environments without writable state directories.
+
 ## v0.1.5 (2026-07-12)
 
 - Selecting an epic in the task list highlights its child tasks for easier

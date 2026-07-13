@@ -654,7 +654,7 @@ mod add_task_overlay {
         }));
         assert!(rendered.contains("╭─ Add task: labels"));
         assert!(rendered.contains("feature"));
-        assert!(rendered.contains("Enter save"));
+        assert!(rendered.contains("Enter add/save"));
 
         let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
             mode: AddTaskMode::ConfirmDiscard,
