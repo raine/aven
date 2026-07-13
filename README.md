@@ -1,8 +1,17 @@
 # aven
 
-`aven` is a local-first task manager for power users and agents. It gives you one overview across projects, task capture from wherever work appears, first-class agent workflows, workspace isolation, and a polished terminal UI.
+`aven` is a local-first task manager for power users and agents. It gives you
+one overview across projects, task capture from wherever work appears,
+first-class agent workflows, workspace isolation, and a polished terminal UI.
 
-It is currently under active development, but already works really well and I use it as my daily driver.
+It is currently under active development, but already works really well and I
+use it as my daily driver.
+
+If you've tried aven, feedback is welcome! Please
+[open an issue](https://github.com/raine/aven/issues) to share it.
+
+If you find aven useful, consider sharing it with others who might benefit from
+it.
 
 Docs: <https://aven.raine.dev>
 
@@ -10,23 +19,37 @@ Docs: <https://aven.raine.dev>
 
 ## Why aven?
 
-- **Offline-first, repo-independent storage.** Tasks live in a local SQLite database, not in tracked files inside each repo. Task capture and agent updates stay independent from git state, branches, worktrees, and checkouts.
+- **Offline-first, repo-independent storage.** Tasks live in a local SQLite
+  database, not in tracked files inside each repo. Task capture and agent
+  updates stay independent from git state, branches, worktrees, and checkouts.
 
-- **Optional self-hosted sync.** Keep the local-first workflow and make the same tasks available across laptops, agents, and other devices through a server you control.
+- **Optional self-hosted sync.** Keep the local-first workflow and make the same
+  tasks available across laptops, agents, and other devices through a server you
+  control.
 
-- **Projects map to repos.** Each repository becomes a project by default, created on demand when you add its first task.
+- **Projects map to repos.** Each repository becomes a project by default,
+  created on demand when you add its first task.
 
-- **Agent-first CLI, human-first TUI.** Agents get token-efficient output, stable refs, and commands for capturing follow-up work, updating tasks, and preserving context from AI coding agents. Humans get a polished, keyboard-first TUI with project views, filters, sorting, task detail, undo, mouse support, and command palette.
+- **Agent-first CLI, human-first TUI.** Agents get token-efficient output,
+  stable refs, and commands for capturing follow-up work, updating tasks, and
+  preserving context from AI coding agents. Humans get a polished,
+  keyboard-first TUI with project views, filters, sorting, task detail, undo,
+  mouse support, and command palette.
 
-- **Stable task refs.** Stable, unique Jira-style refs like `APP-7KQ9` work offline and show the task's project at a glance.
+- **Stable task refs.** Stable, unique Jira-style refs like `APP-7KQ9` work
+  offline and show the task's project at a glance.
 
-- **Workspaces are first class.** Personal and work tasks can share the same tool without sharing the same visible task universe.
+- **Workspaces are first class.** Personal and work tasks can share the same
+  tool without sharing the same visible task universe.
 
-- **Markdown-native tasks.** Tasks carry Markdown descriptions and append-style notes, so context stays with the task.
+- **Markdown-native tasks.** Tasks carry Markdown descriptions and append-style
+  notes, so context stays with the task.
 
-- **Fast capture from anywhere.** Natural-language task intake, tmux popup capture, and agent-friendly commands make it easy to add tasks.
+- **Fast capture from anywhere.** Natural-language task intake, tmux popup
+  capture, and agent-friendly commands make it easy to add tasks.
 
-Inspired by Taskwarrior. See [aven and Taskwarrior](https://aven.raine.dev/taskwarrior/).
+Inspired by Taskwarrior. See
+[aven and Taskwarrior](https://aven.raine.dev/taskwarrior/).
 
 ## Quick start
 
@@ -48,7 +71,8 @@ Open the TUI:
 aven tui
 ```
 
-See [Getting started](https://aven.raine.dev/getting-started/) for first-run usage.
+See [Getting started](https://aven.raine.dev/getting-started/) for first-run
+usage.
 
 ## Documentation
 
