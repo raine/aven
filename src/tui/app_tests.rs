@@ -4928,6 +4928,140 @@ mod task_editing {
     }
 
     #[tokio::test]
+    async fn detail_copy_hotkeys_copy_task_text_and_show_feedback() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                description: "First paragraph.\n\n- item".to_string(),
+                ..test_task_draft("Copy target")
+            },
+        )
+        .await;
+        app.store.tasks[selected]
+            .notes
+            .push(crate::query::TaskNote {
+                body: "Note body".to_string(),
+                created_at: crate::ids::now(),
+            });
+        assert!(app.view().copy_description_available);
+        assert!(app.view().copy_notes_available);
+
+        for (key_code, expected_message) in [
+            ('t', "copied task title"),
+            ('d', "copied task description"),
+            ('a', "copied task title and description"),
+            ('n', "copied task notes"),
+        ] {
+            app.overlay = Some(OverlayState::Detail { scroll: 3 });
+            app.dispatch_key(key(KeyCode::Char('y')), (80, 24).into())
+                .await
+                .unwrap();
+            app.dispatch_key(key(KeyCode::Char(key_code)), (80, 24).into())
+                .await
+                .unwrap();
+
+            assert_eq!(toast_message(&app).as_deref(), Some(expected_message));
+            assert_eq!(toast_severity(&app), Some(ToastSeverity::Success));
+            assert!(matches!(
+                app.overlay,
+                Some(OverlayState::Detail { scroll: 3 })
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn copying_empty_task_description_shows_info() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Title only")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        assert!(!app.view().copy_description_available);
+
+        app.dispatch_key(key(KeyCode::Char('y')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('d')), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("task description is empty")
+        );
+        assert_eq!(toast_severity(&app), Some(ToastSeverity::Info));
+    }
+
+    #[tokio::test]
+    async fn copying_task_without_notes_shows_info() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("No notes")).await;
+        assert!(!app.view().copy_notes_available);
+
+        app.handle_normal_key(KeyCode::Char('y')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('n')).await.unwrap();
+
+        assert_eq!(toast_message(&app).as_deref(), Some("task has no notes"));
+        assert_eq!(toast_severity(&app), Some(ToastSeverity::Info));
+    }
+
+    #[tokio::test]
+    async fn table_copy_hotkeys_copy_task_text_and_show_feedback() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                description: "First paragraph.\n\n- item".to_string(),
+                ..test_task_draft("Copy target")
+            },
+        )
+        .await;
+        app.store.tasks[selected]
+            .notes
+            .push(crate::query::TaskNote {
+                body: "Note body".to_string(),
+                created_at: crate::ids::now(),
+            });
+        assert!(app.view().copy_description_available);
+        assert!(app.view().copy_notes_available);
+
+        for (key_code, expected_message) in [
+            ('t', "copied task title"),
+            ('d', "copied task description"),
+            ('a', "copied task title and description"),
+            ('n', "copied task notes"),
+        ] {
+            app.handle_normal_key(KeyCode::Char('y')).await.unwrap();
+            app.handle_normal_key(KeyCode::Char(key_code))
+                .await
+                .unwrap();
+
+            assert_eq!(toast_message(&app).as_deref(), Some(expected_message));
+            assert_eq!(toast_severity(&app), Some(ToastSeverity::Success));
+            assert!(app.overlay.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn table_copy_menu_copies_display_ref_and_id() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Copy target")).await;
+        let display_ref = app.store.tasks[selected].display_ref.clone();
+
+        for key_code in ['r', 'i'] {
+            app.handle_normal_key(KeyCode::Char('y')).await.unwrap();
+            app.handle_normal_key(KeyCode::Char(key_code))
+                .await
+                .unwrap();
+
+            assert_eq!(
+                toast_message(&app).as_deref(),
+                Some(format!("copied {display_ref}").as_str())
+            );
+            assert_eq!(toast_severity(&app), Some(ToastSeverity::Success));
+        }
+    }
+
+    #[tokio::test]
     async fn copy_requires_selected_task() {
         let mut app = test_app().await;
         app.widgets.table.select(None);

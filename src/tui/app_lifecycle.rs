@@ -127,6 +127,7 @@ impl App {
             state.priority_prefix_active = self.pending_shortcut.has_add_task_priority_prefix();
         }
 
+        let selected_task = self.store.selected_task(self.widgets.table.selected());
         ViewState {
             focus: self.focus,
             overlay,
@@ -139,6 +140,9 @@ impl App {
                 .map(|notification| notification.toast_view()),
             pending_shortcut: self.pending_shortcut.labels(),
             pending_shortcut_scroll: self.pending_shortcut_scroll,
+            copy_description_available: selected_task
+                .is_some_and(|task| !task.task.description.is_empty()),
+            copy_notes_available: selected_task.is_some_and(|task| !task.notes.is_empty()),
             footer_choice_mode: self.footer_choice_mode,
             sidebar_visible: self.sidebar_visible,
             surface: if self.add_task_only {

@@ -406,6 +406,15 @@ pub(super) fn render_command(
 }
 
 fn prefix_hint_lines(context: CommandContext, pending: &[String]) -> Vec<Line<'static>> {
+    prefix_hint_lines_with_availability(context, pending, true, true)
+}
+
+fn prefix_hint_lines_with_availability(
+    context: CommandContext,
+    pending: &[String],
+    copy_description_available: bool,
+    copy_notes_available: bool,
+) -> Vec<Line<'static>> {
     let matches = prefix_hint_commands(context, pending);
     let command_name_width = command_name_width(
         &matches
@@ -416,14 +425,26 @@ fn prefix_hint_lines(context: CommandContext, pending: &[String]) -> Vec<Line<'s
     matches
         .into_iter()
         .map(|(command, _, key_hint)| {
-            command_hint_line(
+            let unavailable = matches!(
+                command.action,
+                crate::tui::event::Action::CopyTaskDescription
+            ) && !copy_description_available
+                || matches!(command.action, crate::tui::event::Action::CopyTaskNotes)
+                    && !copy_notes_available;
+            let mut line = command_hint_line(
                 Span::styled(
                     format!(" {:<6} ", key_hint),
                     Style::new().fg(FG_MUTED).bg(BG_PANEL),
                 ),
                 command,
                 command_name_width,
-            )
+            );
+            if unavailable {
+                for span in &mut line.spans {
+                    span.style = span.style.fg(FG_DIM);
+                }
+            }
+            line
         })
         .collect()
 }
@@ -434,7 +455,12 @@ pub(super) fn render_prefix_hints(frame: &mut Frame, view: &ViewState) {
     } else {
         CommandContext::Normal
     };
-    let lines = prefix_hint_lines(context, &view.pending_shortcut);
+    let lines = prefix_hint_lines_with_availability(
+        context,
+        &view.pending_shortcut,
+        view.copy_description_available,
+        view.copy_notes_available,
+    );
     if lines.is_empty() {
         return;
     }
@@ -610,6 +636,69 @@ mod tests {
     }
 
     #[test]
+    fn copy_prefix_groups_every_copy_action() {
+        for (context, command_prefix) in [
+            (CommandContext::Normal, ":copy-"),
+            (CommandContext::Detail, ":detail-copy-"),
+        ] {
+            let rendered = prefix_hint_lines(context, &["y".to_string()])
+                .iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            for name in ["ref", "id", "title", "description", "text", "notes"] {
+                assert!(
+                    rendered.contains(&format!("{command_prefix}{name}")),
+                    "{context:?} copy menu missing {name}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unavailable_description_and_note_copy_hints_are_dimmed() {
+        let lines = prefix_hint_lines_with_availability(
+            CommandContext::Normal,
+            &["y".to_string()],
+            false,
+            false,
+        );
+
+        for command_name in [":copy-description", ":copy-notes"] {
+            let line = lines
+                .iter()
+                .find(|line| line.to_string().contains(command_name))
+                .unwrap();
+            assert!(line.spans.iter().all(|span| span.style.fg == Some(FG_DIM)));
+        }
+
+        let title = lines
+            .iter()
+            .find(|line| line.to_string().contains(":copy-title"))
+            .unwrap();
+        assert!(title.spans.iter().any(|span| span.style.fg != Some(FG_DIM)));
+    }
+
+    #[test]
+    fn available_description_and_note_copy_hints_keep_normal_styles() {
+        let lines = prefix_hint_lines_with_availability(
+            CommandContext::Detail,
+            &["y".to_string()],
+            true,
+            true,
+        );
+
+        for command_name in [":detail-copy-description", ":detail-copy-notes"] {
+            let line = lines
+                .iter()
+                .find(|line| line.to_string().contains(command_name))
+                .unwrap();
+            assert!(line.spans.iter().any(|span| span.style.fg != Some(FG_DIM)));
+        }
+    }
+
+    #[test]
     fn prefix_hint_visible_rows_uses_available_terminal_height() {
         assert_eq!(prefix_hint_visible_rows(30, 20), 20);
         assert_eq!(prefix_hint_visible_rows(10, 20), 6);
@@ -759,6 +848,10 @@ mod tests {
         assert!(rendered.contains("return to the task list"));
         assert!(rendered.contains("scroll one page"));
         assert!(rendered.contains("select previous or next task"));
+        assert!(rendered.contains("copy task title"));
+        assert!(rendered.contains("copy task description"));
+        assert!(rendered.contains("copy task title and description"));
+        assert!(rendered.contains("copy task notes"));
 
         for command in CommandContext::Detail.commands() {
             let keys = command

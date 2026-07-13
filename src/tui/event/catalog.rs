@@ -788,8 +788,8 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "copy selected task display ref",
         "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('y')],
-            label: "t y",
+            codes: &[KeyCode::Char('y'), KeyCode::Char('r')],
+            label: "y r",
         }],
         Action::CopyShortRef,
     ),
@@ -798,10 +798,50 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         "copy selected task id",
         "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('Y')],
-            label: "t Y",
+            codes: &[KeyCode::Char('y'), KeyCode::Char('i')],
+            label: "y i",
         }],
         Action::CopyDurableRef,
+    ),
+    CommandSpec::implemented(
+        "copy-title",
+        "copy selected task title",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('y'), KeyCode::Char('t')],
+            label: "y t",
+        }],
+        Action::CopyTaskTitle,
+    ),
+    CommandSpec::implemented(
+        "copy-description",
+        "copy selected task description",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('y'), KeyCode::Char('d')],
+            label: "y d",
+        }],
+        Action::CopyTaskDescription,
+    ),
+    CommandSpec::implemented(
+        "copy-text",
+        "copy selected task title and description",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('y'), KeyCode::Char('a')],
+            label: "y a",
+        }],
+        Action::CopyTaskText,
+    ),
+    CommandSpec::implemented(
+        "copy-notes",
+        "copy selected task notes",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('y'), KeyCode::Char('n')],
+            label: "y n",
+        }],
+        Action::CopyTaskNotes,
     ),
     // Priority
     CommandSpec::implemented(
@@ -1314,8 +1354,8 @@ pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
         "copy selected task display ref",
         "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('y')],
-            label: "t y",
+            codes: &[KeyCode::Char('y'), KeyCode::Char('r')],
+            label: "y r",
         }],
         Action::CopyShortRef,
     ),
@@ -1324,10 +1364,50 @@ pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
         "copy selected task id",
         "Tasks",
         &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('Y')],
-            label: "t Y",
+            codes: &[KeyCode::Char('y'), KeyCode::Char('i')],
+            label: "y i",
         }],
         Action::CopyDurableRef,
+    ),
+    CommandSpec::implemented(
+        "detail-copy-title",
+        "copy task title",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('y'), KeyCode::Char('t')],
+            label: "y t",
+        }],
+        Action::CopyTaskTitle,
+    ),
+    CommandSpec::implemented(
+        "detail-copy-description",
+        "copy task description",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('y'), KeyCode::Char('d')],
+            label: "y d",
+        }],
+        Action::CopyTaskDescription,
+    ),
+    CommandSpec::implemented(
+        "detail-copy-text",
+        "copy task title and description",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('y'), KeyCode::Char('a')],
+            label: "y a",
+        }],
+        Action::CopyTaskText,
+    ),
+    CommandSpec::implemented(
+        "detail-copy-notes",
+        "copy task notes",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('y'), KeyCode::Char('n')],
+            label: "y n",
+        }],
+        Action::CopyTaskNotes,
     ),
     CommandSpec::implemented(
         "detail-undo",

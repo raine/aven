@@ -2,6 +2,7 @@
 use std::fs;
 #[cfg(not(test))]
 use std::io;
+#[cfg(not(test))]
 use std::process::Command;
 #[cfg(not(test))]
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -81,6 +82,7 @@ fn suspend_terminal() -> Result<impl FnOnce() -> Result<()>> {
     })
 }
 
+#[cfg(not(test))]
 pub(crate) fn copy_to_clipboard(value: &str) -> Result<()> {
     let mut child = Command::new("pbcopy")
         .stdin(std::process::Stdio::piped())
@@ -93,5 +95,10 @@ pub(crate) fn copy_to_clipboard(value: &str) -> Result<()> {
     if !status.success() {
         anyhow::bail!("pbcopy exited with {status}");
     }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn copy_to_clipboard(_value: &str) -> Result<()> {
     Ok(())
 }

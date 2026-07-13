@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::tui::app::{App, Focus, TaskRefKind};
+use crate::tui::app::{App, Focus, TaskCopyKind, TaskRefKind};
 use crate::tui::overlay::{OverlayRoute, OverlayState};
 use crate::tui::platform::copy_to_clipboard;
 
@@ -9,6 +9,23 @@ pub(crate) const RENAME_PROJECT_TITLE: &str = "Rename project";
 pub(crate) const DELETE_PROJECT_TITLE: &str = "Delete project";
 pub(crate) const DELETE_TASK_TITLE: &str = "Delete task";
 pub(crate) const ADD_LABEL_TITLE: &str = "Add label";
+
+fn task_text_for_copy(title: &str, description: &str, kind: TaskCopyKind) -> String {
+    match kind {
+        TaskCopyKind::Title => title.to_string(),
+        TaskCopyKind::Description => description.to_string(),
+        TaskCopyKind::TitleAndDescription if description.is_empty() => title.to_string(),
+        TaskCopyKind::TitleAndDescription => format!("{title}\n\n{description}"),
+    }
+}
+
+fn task_notes_for_copy(notes: &[crate::query::TaskNote]) -> String {
+    notes
+        .iter()
+        .map(|note| note.body.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
 
 impl App {
     pub(super) fn begin_add_project(&mut self) {
@@ -121,6 +138,42 @@ impl App {
         }
     }
 
+    pub(super) fn copy_selected_task_text(&mut self, kind: TaskCopyKind) {
+        let Some(task) = self.store.selected_task(self.widgets.table.selected()) else {
+            self.set_info("no selected task to copy");
+            return;
+        };
+        if kind == TaskCopyKind::Description && task.task.description.is_empty() {
+            self.set_info("task description is empty");
+            return;
+        }
+        let value = task_text_for_copy(&task.task.title, &task.task.description, kind);
+        let copied = match kind {
+            TaskCopyKind::Title => "task title",
+            TaskCopyKind::Description => "task description",
+            TaskCopyKind::TitleAndDescription => "task title and description",
+        };
+        match copy_to_clipboard(&value) {
+            Ok(()) => self.set_success(format!("copied {copied}")),
+            Err(error) => self.set_error(format!("copy failed: {error}")),
+        }
+    }
+
+    pub(super) fn copy_selected_task_notes(&mut self) {
+        let Some(task) = self.store.selected_task(self.widgets.table.selected()) else {
+            self.set_info("no selected task to copy");
+            return;
+        };
+        if task.notes.is_empty() {
+            self.set_info("task has no notes");
+            return;
+        }
+        match copy_to_clipboard(&task_notes_for_copy(&task.notes)) {
+            Ok(()) => self.set_success("copied task notes"),
+            Err(error) => self.set_error(format!("copy failed: {error}")),
+        }
+    }
+
     pub(super) fn submit_rename_project_picker(&mut self, values: Vec<String>) {
         let Some(project) = self.require_picker_value(values, "no matching project") else {
             self.begin_rename_project();
@@ -205,5 +258,51 @@ impl App {
             Err(error) => self.set_error(format!("{error:#}")),
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_copy_text_preserves_description_formatting() {
+        let description = "First paragraph.\n\n- one\n  - nested\n\n```rust\nfn main() {}\n```\n";
+
+        assert_eq!(
+            task_text_for_copy("Copy me", description, TaskCopyKind::Description),
+            description
+        );
+        assert_eq!(
+            task_text_for_copy("Copy me", description, TaskCopyKind::TitleAndDescription),
+            format!("Copy me\n\n{description}")
+        );
+    }
+
+    #[test]
+    fn combined_task_copy_omits_separator_for_empty_description() {
+        assert_eq!(
+            task_text_for_copy("Title only", "", TaskCopyKind::TitleAndDescription),
+            "Title only"
+        );
+    }
+
+    #[test]
+    fn task_notes_copy_preserves_bodies_and_separates_notes() {
+        let notes = vec![
+            crate::query::TaskNote {
+                body: "First note\n- item".to_string(),
+                created_at: "2026-07-13T10:00:00Z".to_string(),
+            },
+            crate::query::TaskNote {
+                body: "Second note\n\nParagraph".to_string(),
+                created_at: "2026-07-13T11:00:00Z".to_string(),
+            },
+        ];
+
+        assert_eq!(
+            task_notes_for_copy(&notes),
+            "First note\n- item\n\nSecond note\n\nParagraph"
+        );
     }
 }

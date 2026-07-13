@@ -4,7 +4,8 @@ use ratatui::layout::{Rect, Size};
 use std::time::Instant;
 
 use crate::tui::app::{
-    App, DetailNavigationState, Focus, FooterChoiceMode, TASK_ROW_DOUBLE_CLICK, TaskRefKind,
+    App, DetailNavigationState, Focus, FooterChoiceMode, TASK_ROW_DOUBLE_CLICK, TaskCopyKind,
+    TaskRefKind,
 };
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::conflict_flow::ConflictResolutionChoice;
@@ -997,6 +998,10 @@ impl App {
             Action::CyclePriority(reverse) => self.update_priority(reverse).await?,
             Action::CopyShortRef => self.copy_selected_ref(TaskRefKind::Short),
             Action::CopyDurableRef => self.copy_selected_ref(TaskRefKind::Durable),
+            Action::CopyTaskTitle => self.copy_selected_task_text(TaskCopyKind::Title),
+            Action::CopyTaskDescription => self.copy_selected_task_text(TaskCopyKind::Description),
+            Action::CopyTaskText => self.copy_selected_task_text(TaskCopyKind::TitleAndDescription),
+            Action::CopyTaskNotes => self.copy_selected_task_notes(),
             Action::BeginEditTitle => self.begin_edit_title(),
             Action::BeginEditDescription => self.begin_edit_description(),
             Action::BeginEditProject => self.begin_edit_project(),

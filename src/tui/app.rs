@@ -33,6 +33,13 @@ pub(super) enum TaskRefKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TaskCopyKind {
+    Title,
+    Description,
+    TitleAndDescription,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum NaturalRetry {
     AddTask,
     Dialog,

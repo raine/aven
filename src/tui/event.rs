@@ -45,6 +45,10 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::CyclePriority(_)
             | Action::CopyShortRef
             | Action::CopyDurableRef
+            | Action::CopyTaskTitle
+            | Action::CopyTaskDescription
+            | Action::CopyTaskText
+            | Action::CopyTaskNotes
             | Action::BeginEditTitle
             | Action::BeginEditDescription
             | Action::BeginEditProject
@@ -745,11 +749,11 @@ mod tests {
             ShortcutLookup::Found(Action::PromoteEpicChild)
         ));
         assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('y')]),
+            resolve_shortcut(&[KeyCode::Char('y'), KeyCode::Char('r')]),
             ShortcutLookup::Found(Action::CopyShortRef)
         ));
         assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('Y')]),
+            resolve_shortcut(&[KeyCode::Char('y'), KeyCode::Char('i')]),
             ShortcutLookup::Found(Action::CopyDurableRef)
         ));
         assert!(matches!(

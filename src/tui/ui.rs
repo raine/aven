@@ -73,6 +73,8 @@ pub(crate) struct ViewState {
     pub(crate) notification: Option<Toast>,
     pub(crate) pending_shortcut: Vec<String>,
     pub(crate) pending_shortcut_scroll: u16,
+    pub(crate) copy_description_available: bool,
+    pub(crate) copy_notes_available: bool,
     pub(crate) footer_choice_mode: Option<FooterChoiceMode>,
     pub(crate) sidebar_visible: bool,
     pub(crate) surface: ViewSurface,
