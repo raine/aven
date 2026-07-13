@@ -37,6 +37,7 @@ pub(crate) enum TaskScope {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TaskView {
     Queue,
+    Columns,
     Open,
     Inbox,
     Active,
@@ -72,6 +73,7 @@ pub(crate) enum TaskOrder {
 pub(crate) enum TaskListRenderMode {
     Flat,
     Queue,
+    Columns,
     Epics,
 }
 
@@ -118,6 +120,7 @@ impl TaskViewState {
             TaskView::Queue => {
                 filters.hide_done = true;
             }
+            TaskView::Columns => {}
             TaskView::Open => filters.hide_done = true,
             TaskView::Inbox => filters.status = Some("inbox".to_string()),
             TaskView::Active => filters.status = Some("active".to_string()),
@@ -140,7 +143,7 @@ impl TaskViewState {
     pub(crate) fn query_mode(&self) -> TaskQueryMode {
         match self.view {
             TaskView::Queue => TaskQueryMode::RankedQueue,
-            TaskView::RecentActions => TaskQueryMode::Flat,
+            TaskView::Columns | TaskView::RecentActions => TaskQueryMode::Flat,
             _ => TaskQueryMode::Flat,
         }
     }
@@ -152,6 +155,7 @@ impl TaskViewState {
     pub(crate) fn render_mode(&self) -> TaskListRenderMode {
         match self.view {
             TaskView::Queue => TaskListRenderMode::Queue,
+            TaskView::Columns => TaskListRenderMode::Columns,
             TaskView::Epics => TaskListRenderMode::Epics,
             TaskView::RecentActions => TaskListRenderMode::Flat,
             _ => TaskListRenderMode::Flat,

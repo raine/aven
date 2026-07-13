@@ -355,6 +355,7 @@ fn view_badge(store: &TuiStore) -> Vec<Span<'static>> {
 fn active_view_label(store: &TuiStore) -> &'static str {
     match store.view_state.view {
         TaskView::Queue => "queue",
+        TaskView::Columns => "columns",
         TaskView::Open => "open",
         TaskView::Inbox => "inbox",
         TaskView::Active => "active",

@@ -6135,4 +6135,99 @@ mod task_dependencies {
             Some("no selected task to edit")
         );
     }
+
+    #[tokio::test]
+    async fn column_view_installs_custom_configuration() {
+        let mut app = test_app().await;
+        let mut config = crate::config::AppConfig::default();
+        config.tui.columns.reverse();
+
+        app.set_config(config);
+
+        assert_eq!(app.store.task_columns[0].name, "Closed");
+    }
+
+    #[tokio::test]
+    async fn column_view_shortcut_selects_columns() {
+        let mut app = test_app().await;
+
+        app.handle_normal_key(KeyCode::Char('v')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
+
+        assert_eq!(app.store.view_state.view, TaskView::Columns);
+    }
+
+    #[tokio::test]
+    async fn column_view_navigates_within_and_between_lanes() {
+        let mut app = test_app().await;
+        for (title, status) in [
+            ("active one", "active"),
+            ("active two", "active"),
+            ("todo", "todo"),
+        ] {
+            let mut draft = test_task_draft(title);
+            draft.status = status.to_string();
+            app.store.create_task(draft, None).await.unwrap();
+        }
+        app.store.show_view(TaskView::Columns).await.unwrap();
+        let active = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.title == "active one")
+            .unwrap();
+        let todo = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.title == "todo")
+            .unwrap();
+        app.widgets.table.select(Some(active));
+
+        app.move_selection(1).await.unwrap();
+        assert_eq!(
+            app.store
+                .selected_task(app.widgets.table.selected())
+                .unwrap()
+                .task
+                .status,
+            TaskStatus::Active
+        );
+        app.move_right();
+        assert_eq!(app.widgets.table.selected(), Some(todo));
+        app.move_left();
+        assert_eq!(
+            app.store
+                .selected_task(app.widgets.table.selected())
+                .unwrap()
+                .task
+                .status,
+            TaskStatus::Active
+        );
+    }
+
+    #[tokio::test]
+    async fn column_view_keeps_task_selected_when_status_becomes_done() {
+        let mut app = test_app().await;
+        let mut draft = test_task_draft("finish me");
+        draft.status = "active".to_string();
+        create_and_select_task(&mut app, draft).await;
+        app.show_view(TaskView::Columns).await.unwrap();
+        let selected_id = app
+            .store
+            .selected_task(app.widgets.table.selected())
+            .unwrap()
+            .task
+            .id
+            .clone();
+
+        app.update_status("done").await.unwrap();
+
+        let selected = app
+            .store
+            .selected_task(app.widgets.table.selected())
+            .unwrap();
+        assert_eq!(selected.task.id, selected_id);
+        assert_eq!(selected.task.status, TaskStatus::Done);
+    }
 }

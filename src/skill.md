@@ -23,7 +23,8 @@ inspect tasks, update status, and leave durable handoff context.
 - Typed suffix refs must be at least 3 characters.
 - If `aven` reports `ambiguous-ref`, retry with a longer suffix.
 - Status values are `inbox`, `backlog`, `todo`, `active`, `done`, and
-  `canceled`.
+  `canceled`. TUI column names group these values for presentation and are not
+  valid status values for CLI or agent updates.
 - Priority values are `none`, `low`, `medium`, `high`, and `urgent`.
 - Add `--workspace <name-or-key>` when a command must target a specific
   workspace.

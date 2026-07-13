@@ -1,3 +1,4 @@
+mod columns;
 mod detail;
 mod dialog;
 mod footer;
@@ -20,6 +21,7 @@ mod truncate;
 pub(crate) use self::sidebar::sidebar_layout;
 pub(crate) use self::sidebar::{sidebar_click_at_for, sidebar_layout_for};
 
+use self::columns::render_columns;
 use self::detail::render_detail_underlay;
 use self::footer::{FooterMode, footer_bar};
 use self::header::render_header;
@@ -214,6 +216,16 @@ fn render_main_surface(
 ) {
     if store.view_state.view == TaskView::RecentActions {
         render_recent_actions(frame, store, widgets, focus, area);
+    } else if store.view_state.view == TaskView::Columns {
+        render_columns(
+            frame,
+            store,
+            &mut widgets.table,
+            focus,
+            area,
+            inline_title_editor,
+            &widgets.marked_task_ids,
+        );
     } else {
         render_tasks(frame, store, widgets, focus, area, inline_title_editor);
     }

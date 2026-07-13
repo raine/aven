@@ -25,6 +25,47 @@ pub struct AppConfig {
     pub project: ProjectConfig,
     #[serde(default)]
     pub agent: AgentConfig,
+    #[serde(default)]
+    pub tui: TuiConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TuiConfig {
+    #[serde(default = "default_task_columns")]
+    pub columns: Vec<TaskColumnConfig>,
+}
+
+impl Default for TuiConfig {
+    fn default() -> Self {
+        Self {
+            columns: default_task_columns(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskColumnConfig {
+    pub name: String,
+    pub statuses: Vec<String>,
+}
+
+impl TaskColumnConfig {
+    fn new(name: &str, statuses: &[&str]) -> Self {
+        Self {
+            name: name.to_string(),
+            statuses: statuses.iter().map(|status| status.to_string()).collect(),
+        }
+    }
+}
+
+fn default_task_columns() -> Vec<TaskColumnConfig> {
+    vec![
+        TaskColumnConfig::new("Triage", &["inbox"]),
+        TaskColumnConfig::new("Current", &["active"]),
+        TaskColumnConfig::new("Todo", &["todo"]),
+        TaskColumnConfig::new("Backlog", &["backlog"]),
+        TaskColumnConfig::new("Closed", &["done", "canceled"]),
+    ]
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -165,7 +206,46 @@ impl AppConfig {
         }
         let text = fs::read_to_string(path)
             .with_context(|| format!("could not read {}", path.display()))?;
-        serde_yaml::from_str(&text).with_context(|| format!("could not parse {}", path.display()))
+        let config: Self = serde_yaml::from_str(&text)
+            .with_context(|| format!("could not parse {}", path.display()))?;
+        config
+            .validate()
+            .with_context(|| format!("invalid config {}", path.display()))?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        use std::collections::BTreeSet;
+
+        if self.tui.columns.is_empty() {
+            bail!("column view requires at least one column");
+        }
+        let valid = crate::choices::STATUSES
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let mut assigned = BTreeSet::new();
+        for column in &self.tui.columns {
+            if column.name.trim().is_empty() {
+                bail!("column name must not be blank");
+            }
+            if column.statuses.is_empty() {
+                bail!("column {} must include at least one status", column.name);
+            }
+            for status in &column.statuses {
+                if !valid.contains(status.as_str()) {
+                    bail!("unknown column status {status}");
+                }
+                if !assigned.insert(status.as_str()) {
+                    bail!("duplicate column status {status}");
+                }
+            }
+        }
+        let missing = valid.difference(&assigned).copied().collect::<Vec<_>>();
+        if !missing.is_empty() {
+            bail!("missing column statuses {}", missing.join(","));
+        }
+        Ok(())
     }
 
     pub fn has_project_override(
@@ -262,6 +342,7 @@ pub fn resolve_sync_server(flag: Option<&str>, config: &AppConfig) -> Result<Str
 }
 
 pub fn write_config(path: &Path, config: &AppConfig) -> Result<()> {
+    config.validate()?;
     let text = serde_yaml::to_string(config)?;
     write_config_text(path, text)
 }
@@ -291,4 +372,103 @@ pub fn write_default_config(path: &Path) -> Result<()> {
     let mut config = AppConfig::default();
     config.sync.auth_token = Some(String::new());
     write_config(path, &config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn load_config(text: &str) -> Result<AppConfig> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, text)?;
+        AppConfig::load_from_path(&path)
+    }
+
+    #[test]
+    fn default_columns_cover_every_status_once() {
+        let config = AppConfig::default();
+
+        config.validate().unwrap();
+        assert_eq!(
+            config
+                .tui
+                .columns
+                .iter()
+                .map(|column| column.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Triage", "Current", "Todo", "Backlog", "Closed"]
+        );
+    }
+
+    #[test]
+    fn custom_columns_load_in_configured_order() {
+        let config = load_config(
+            "tui:\n  columns:\n    - name: Work\n      statuses: [active, todo]\n    - name: Later\n      statuses: [inbox, backlog]\n    - name: Closed\n      statuses: [done, canceled]\n",
+        )
+        .unwrap();
+
+        assert_eq!(config.tui.columns[0].name, "Work");
+        assert_eq!(config.tui.columns[0].statuses, ["active", "todo"]);
+    }
+
+    #[test]
+    fn empty_config_uses_default_columns() {
+        assert_eq!(load_config("{}\n").unwrap().tui.columns.len(), 5);
+    }
+
+    #[test]
+    fn column_config_rejects_missing_statuses() {
+        let error =
+            load_config("tui:\n  columns:\n    - name: Current\n      statuses: [active, todo]\n")
+                .unwrap_err();
+
+        assert!(format!("{error:#}").contains("missing column statuses"));
+    }
+
+    #[test]
+    fn column_config_rejects_duplicate_statuses() {
+        let error = load_config(
+            "tui:\n  columns:\n    - name: One\n      statuses: [inbox, backlog, todo, active, done, canceled]\n    - name: Two\n      statuses: [active]\n",
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("duplicate column status active"));
+    }
+
+    #[test]
+    fn column_config_rejects_unknown_statuses() {
+        let error = load_config(
+            "tui:\n  columns:\n    - name: One\n      statuses: [inbox, backlog, todo, active, done, canceled, parked]\n",
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("unknown column status parked"));
+    }
+
+    #[test]
+    fn column_config_rejects_empty_columns_and_names() {
+        let empty = load_config("tui:\n  columns: []\n").unwrap_err();
+        assert!(format!("{empty:#}").contains("requires at least one column"));
+
+        let unnamed = load_config(
+            "tui:\n  columns:\n    - name: '  '\n      statuses: [inbox, backlog, todo, active, done, canceled]\n",
+        )
+        .unwrap_err();
+        assert!(format!("{unnamed:#}").contains("column name must not be blank"));
+
+        let no_statuses =
+            load_config("tui:\n  columns:\n    - name: Empty\n      statuses: []\n").unwrap_err();
+        assert!(format!("{no_statuses:#}").contains("must include at least one status"));
+    }
+
+    #[test]
+    fn default_columns_round_trip() {
+        let config = AppConfig::default();
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let loaded: AppConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        loaded.validate().unwrap();
+        assert_eq!(loaded.tui.columns, config.tui.columns);
+    }
 }

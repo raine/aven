@@ -53,6 +53,7 @@ pub(crate) struct TuiStore {
     pub(crate) counts: SidebarCounts,
     pub(crate) sidebar_entries: Vec<SidebarEntry>,
     pub(crate) view_state: TaskViewState,
+    pub(crate) task_columns: Vec<crate::config::TaskColumnConfig>,
     pub(crate) sync_status: TuiSyncStatus,
     pub(crate) db_stats: TuiDatabaseStats,
     pub(crate) last_refresh: Instant,
@@ -106,6 +107,7 @@ impl TuiStore {
             counts: SidebarCounts::default(),
             sidebar_entries: Vec::new(),
             view_state,
+            task_columns: crate::config::TuiConfig::default().columns,
             sync_status: TuiSyncStatus::default(),
             db_stats: TuiDatabaseStats::default(),
             last_refresh: Instant::now(),
@@ -221,6 +223,9 @@ impl TuiStore {
         conn: &mut sqlx::SqliteConnection,
         workspace_id: &str,
     ) -> Result<()> {
+        if self.view_state.render_mode() != TaskListRenderMode::Epics {
+            return Ok(());
+        }
         let expanded = &self.view_state.expanded_epic_ids;
         if expanded.is_empty() {
             return Ok(());

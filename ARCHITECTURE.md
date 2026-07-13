@@ -30,7 +30,7 @@
 1. `src/tui/mod.rs` initializes Ratatui and constructs `App`.
 2. Input resolves through the command catalog in `src/tui/event/` unless a capturing overlay handles it first.
 3. `App` holds TUI flow state. Focused `src/tui/app_*.rs` modules coordinate feature flows, including search flow in `src/tui/app_search.rs`, then call `TuiStore` facade methods in `src/tui/store.rs`.
-4. `TaskViewState` is the source of truth for TUI task lists. It carries scope, view, filter modifiers, flat order, and direction, then derives query filters, query mode, and render mode. `src/tui/ui/task_list/` owns task-list view models and hit testing. Spotlight search renders live overlay results from the task search read model and stores matched task IDs in the submitted search view. The recent actions view reads the synced change log through `src/query/recent_actions.rs` and renders through `src/tui/ui/recent_actions.rs` without modeling actions as task rows.
+4. `TaskViewState` is the source of truth for TUI task lists. It carries scope, view, filter modifiers, flat order, and direction, then derives query filters, query mode, and render mode. `src/tui/columns.rs` derives column grouping and navigation from the configured fixed-status partition while retaining global task indexes. `src/tui/ui/task_list/` owns tabular task-list view models and hit testing, and `src/tui/ui/columns.rs` owns shared column layout, rendering, and hit testing. Spotlight search renders live overlay results from the task search read model and stores matched task IDs in the submitted search view. The recent actions view reads the synced change log through `src/query/recent_actions.rs` and renders through `src/tui/ui/recent_actions.rs` without modeling actions as task rows.
 5. Store modules call the same operations, mutation, and query helpers as the CLI.
 6. Natural-language add flow coordination lives in `src/tui/app_authoring.rs`; background worker command construction, environment propagation, process setup, and log path selection live in `src/tui/natural_add_runtime.rs`. The add-task overlay state owns the visible draft, six-field focus, validation, and integrated metadata, help, and discard-confirmation child modes, so child controls preserve text cursor state.
 7. `src/tui/ui.rs` and `src/tui/ui/` render state. Rendering code should not touch the database.
@@ -54,7 +54,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 
 - Synced domain tables: `workspaces`, `tasks`, `projects`, `labels`, `task_labels`, `notes`, `task_dependencies`, `task_epic_links`.
 - Sync bookkeeping: `changes`, `field_versions`, `conflicts`, `meta`.
-- Local-only config: database path, sync settings, project path mappings, directory overrides.
+- Local-only config: database path, sync settings, project path mappings, directory overrides, and TUI column grouping.
 - Local-only TUI state: view, filter, selection, overlay, sort state, and `tui_undo_entries`; pending undo entries are cleared when a TUI store starts.
 - Backup and portability workflows: `src/commands/data_safety.rs` for snapshot/restore flows and `src/db.rs` for backup file naming.
 
@@ -83,7 +83,8 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Keep workspace scope explicit on queries and mutations that operate on user data.
 - Keep config serialization and durable text writes in `src/config.rs`; keep managed-entry text transforms in `src/config_edit.rs`.
 - Keep CLI output formatting in command or render modules, not in persistence helpers. Use `src/render.rs` for shared quoting, changed flag text, multiline blocks, near-match errors, and text diffs. Use focused command-family modules such as `src/commands/context.rs` for command-local snapshots and formatting.
-- Keep TUI database access in `src/tui/store/`; keep `src/tui/ui/` rendering-only. Keep task-list view modeling and hit testing in `src/tui/ui/task_list/`.
+- Keep TUI database access in `src/tui/store/`; keep `src/tui/ui/` rendering-only. Keep tabular task-list view modeling and hit testing in `src/tui/ui/task_list/`. Keep column grouping and navigation in `src/tui/columns.rs`, and use one shared layout from `src/tui/ui/columns.rs` for column rendering and hit testing.
+- Treat TUI column names as presentation. Column configuration must partition the six fixed semantic statuses exactly once so tasks remain visible without changing CLI, queue, readiness, dependency, or sync semantics.
 - Derive TUI task list filters, query mode, and render mode from `TaskViewState`; do not keep parallel project, status, view, or queue-sort state.
 - Keep TUI search flow state transitions in `src/tui/app_search.rs`; keep search read-model behavior in `src/query/` and overlay rendering in `src/tui/ui/overlays/search.rs`.
 - Treat project selection in the TUI as scope. Project scope must not be modeled as a filter modifier or view.
@@ -110,6 +111,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 | Add or change epic membership | `src/operations/epics.rs`, `src/task_enrichment.rs`, `src/query/tasks.rs` | `src/commands.rs`, `src/tui/store/epics.rs`, `src/tui/ui/task_list/`, `src/sync/apply/epic.rs`, `src/skill.md` | `tests/cli_epics.rs`, TUI store tests, query tests, sync tests |
 | Change task list, filters, sorting, search read model, or refs | `src/query/`, `src/query.rs`, `src/refs.rs`, `src/queue.rs` | CLI list and search rendering, `src/tui/store/types.rs`, `src/tui/store/view.rs`, indexes | query unit tests, `tests/tui_query.rs`, `tests/sqlite_read_path_indexes.rs`, focused CLI tests |
 | Change TUI task-list rendering or hit testing | `src/tui/ui/task_list.rs`, `src/tui/ui/task_list/view_model.rs`, `src/tui/ui/task_list/hit_test.rs` | `src/tui/store/view.rs`, `src/tui/store/types.rs`, task display helpers, mouse event dispatch | `src/tui/ui/task_list.rs` module tests, `src/tui/app_tests.rs`, focused TUI tests |
+| Change configurable TUI columns | `src/config.rs`, `src/tui/columns.rs`, `src/tui/ui/columns.rs` | `src/tui/store/types.rs`, `src/tui/app_navigation.rs`, view commands, sidebar, header, mouse dispatch | config tests, `src/tui/columns.rs` tests, column UI tests, focused app tests |
 | Add or change the TUI recent actions view | `src/query/recent_actions.rs`, `src/tui/ui/recent_actions.rs` | `src/change_log.rs` operation names, `src/tui/store.rs`, `src/tui/store/sidebar.rs`, view commands in `src/tui/event/catalog.rs` | `cargo check`, focused TUI store or app tests |
 | Change TUI search flow | `src/tui/app_search.rs` | `src/tui/app_dispatch.rs`, `src/tui/overlay/`, `src/tui/ui/overlays/search.rs`, `src/query/` search helpers | `src/tui/app_tests.rs`, focused search and query tests |
 | Add or change the TUI add-task composer | `src/tui/overlay/state.rs`, `src/tui/overlay/handlers.rs`, `src/tui/ui/overlays/add_task.rs` | `src/tui/app_authoring.rs`, `src/tui/app_dispatch.rs`, picker and label child controls, `src/tui/natural_add_runtime.rs` | `cargo test add_task` |

@@ -158,6 +158,7 @@ impl App {
             ("r", "recent", TaskView::RecentActions),
             ("c", "conflicts", TaskView::Conflicts),
             ("s", "search", TaskView::Search),
+            ("l", "columns", TaskView::Columns),
         ]
         .into_iter()
         .map(|(key, label, view)| HeaderMenuItem {

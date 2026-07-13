@@ -15,6 +15,7 @@ mod app_overlay_submit;
 mod app_projects;
 mod app_search;
 mod authoring;
+mod columns;
 mod config_overlay;
 mod conflict_flow;
 mod event;

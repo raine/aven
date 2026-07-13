@@ -24,12 +24,20 @@ impl App {
     pub(super) async fn move_selection(&mut self, delta: isize) -> Result<()> {
         match self.focus {
             Focus::Tasks => {
-                let next = next_index(
-                    self.widgets.table.selected(),
-                    self.store.main_row_count(),
-                    delta,
-                    true,
-                );
+                let next = if self.store.view_state.view == crate::tui::store::TaskView::Columns {
+                    crate::tui::columns::ColumnBoard::new(
+                        &self.store.task_columns,
+                        &self.store.tasks,
+                    )
+                    .move_vertical(self.widgets.table.selected(), delta)
+                } else {
+                    next_index(
+                        self.widgets.table.selected(),
+                        self.store.main_row_count(),
+                        delta,
+                        true,
+                    )
+                };
                 self.widgets.table.select(next);
             }
             Focus::Sidebar => {
@@ -48,13 +56,22 @@ impl App {
     pub(super) async fn select_edge(&mut self, last: bool) -> Result<()> {
         match self.focus {
             Focus::Tasks => {
-                let row_count = self.store.main_row_count();
-                if row_count == 0 {
-                    self.widgets.table.select(None);
+                if self.store.view_state.view == crate::tui::store::TaskView::Columns {
+                    let next = crate::tui::columns::ColumnBoard::new(
+                        &self.store.task_columns,
+                        &self.store.tasks,
+                    )
+                    .edge(self.widgets.table.selected(), last);
+                    self.widgets.table.select(next);
                 } else {
-                    self.widgets
-                        .table
-                        .select(Some(if last { row_count - 1 } else { 0 }));
+                    let row_count = self.store.main_row_count();
+                    if row_count == 0 {
+                        self.widgets.table.select(None);
+                    } else {
+                        self.widgets
+                            .table
+                            .select(Some(if last { row_count - 1 } else { 0 }));
+                    }
                 }
             }
             Focus::Sidebar => {
@@ -105,6 +122,17 @@ impl App {
     }
 
     pub(super) fn move_left(&mut self) {
+        if self.focus == Focus::Tasks
+            && self.store.view_state.view == crate::tui::store::TaskView::Columns
+        {
+            let next =
+                crate::tui::columns::ColumnBoard::new(&self.store.task_columns, &self.store.tasks)
+                    .move_horizontal(self.widgets.table.selected(), -1);
+            if next.is_some() {
+                self.widgets.table.select(next);
+                return;
+            }
+        }
         self.sidebar_visible = true;
         self.focus = Focus::Sidebar;
         self.preserve_or_restore_sidebar_selection();
@@ -112,7 +140,26 @@ impl App {
     }
 
     pub(super) fn move_right(&mut self) {
+        if self.focus == Focus::Tasks
+            && self.store.view_state.view == crate::tui::store::TaskView::Columns
+        {
+            let next =
+                crate::tui::columns::ColumnBoard::new(&self.store.task_columns, &self.store.tasks)
+                    .move_horizontal(self.widgets.table.selected(), 1);
+            if next.is_some() {
+                self.widgets.table.select(next);
+            }
+            return;
+        }
         self.focus = Focus::Tasks;
+        if self.store.view_state.view == crate::tui::store::TaskView::Columns
+            && self.widgets.table.selected().is_none()
+        {
+            self.widgets.table.select(
+                crate::tui::columns::ColumnBoard::new(&self.store.task_columns, &self.store.tasks)
+                    .first(),
+            );
+        }
         self.overlay = None;
     }
 

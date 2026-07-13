@@ -239,6 +239,7 @@ impl App {
     }
 
     pub(crate) fn set_config(&mut self, config: AppConfig) {
+        self.store.task_columns = config.tui.columns.clone();
         self.add_task_config = config;
     }
 

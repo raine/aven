@@ -56,7 +56,9 @@ A typical TUI session is simple:
 
 The queue is the default attention view. It groups work into needs action, blocked, focus, triage, and later. The queue gives you one place to decide what needs attention across projects.
 
-Use the sidebar or the `v` prefix family to switch views. Views include queue, open, inbox, backlog, todo, active, done, conflicts, epics, recent actions, and search results.
+Use the sidebar or the `v` prefix family to switch views. Views include queue, columns, open, inbox, backlog, todo, active, done, conflicts, epics, recent actions, and search results.
+
+The Columns view presents the same tasks as configurable lanes. Its default lanes are Triage for inbox, Current for active, Todo for todo, Backlog for backlog, and Closed for done or canceled. Use `v l` to open it. Up and down move within a lane, while left and right move between lanes. Project scope, filters, ordering, details, editing, and task mutations continue to use the existing task model. Configure lane names and status grouping under [`tui.columns`](/configuration/#tui-columns).
 
 Use the sidebar or the `g` prefix family to switch scope. Workspace scope shows projects in the active workspace. Project scope narrows the task list to one project.
 
@@ -181,8 +183,9 @@ The TUI supports mouse actions in addition to keyboard shortcuts:
 
 | Shortcut         | Action                        |
 | ---------------- | ----------------------------- |
-| `j`, `k`, arrows | Move selection                |
-| `Tab`            | Switch focus                  |
+| `j`, `k`, up/down | Move within the list or column |
+| Left/Right        | Move between column lanes     |
+| `Tab`             | Switch focus                  |
 | `Enter`          | Open selected task detail     |
 | `[`, `]`         | Switch tasks while in detail  |
 | `/`              | Open search                   |

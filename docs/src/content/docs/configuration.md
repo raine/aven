@@ -1,6 +1,6 @@
 ---
 title: Configuration
-description: Configure storage, routing, sync, daemon wakeups, and agent intake.
+description: Configure storage, routing, sync, daemon wakeups, TUI columns, and agent intake.
 ---
 
 aven works without a config file. Add one when defaults are not enough.
@@ -38,6 +38,19 @@ sync:
 
 daemon:
   wake_addr: "127.0.0.1:47631"
+
+tui:
+  columns:
+    - name: "Triage"
+      statuses: [inbox]
+    - name: "Current"
+      statuses: [active]
+    - name: "Todo"
+      statuses: [todo]
+    - name: "Backlog"
+      statuses: [backlog]
+    - name: "Closed"
+      statuses: [done, canceled]
 
 agent:
   task_intake:
@@ -100,6 +113,29 @@ daemon:
 ```
 
 Daemon wake addresses must be loopback.
+
+## TUI columns
+
+The Columns view groups Aven's semantic statuses into named lanes. Names and order are presentation settings. Task status values remain `inbox`, `backlog`, `todo`, `active`, `done`, and `canceled` across the CLI, sync, queue, dependencies, and agent workflows.
+
+The default board keeps every status visible:
+
+```yaml
+tui:
+  columns:
+    - name: "Triage"
+      statuses: [inbox]
+    - name: "Current"
+      statuses: [active]
+    - name: "Todo"
+      statuses: [todo]
+    - name: "Backlog"
+      statuses: [backlog]
+    - name: "Closed"
+      statuses: [done, canceled]
+```
+
+Customize lane names, order, and grouping by editing this list. Each fixed status must appear exactly once. Aven rejects empty columns, unknown statuses, duplicates, and incomplete mappings so the board cannot hide tasks accidentally.
 
 ## Agent task intake
 

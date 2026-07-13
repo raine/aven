@@ -36,7 +36,7 @@ use ratatui::widgets::{
     TableState, Wrap,
 };
 
-const EPIC_MARKER: &str = "\u{f04ce}";
+pub(super) const EPIC_MARKER: &str = "\u{f04ce}";
 const EPIC_CHILD_MARKER: &str = "↳";
 
 #[derive(Debug)]
@@ -94,6 +94,9 @@ pub(crate) fn task_at_position(
     column: u16,
     row: u16,
 ) -> Option<TaskListHit> {
+    if store.view_state.render_mode() == TaskListRenderMode::Columns {
+        return super::columns::column_task_at_position(store, table_state, area, column, row);
+    }
     let table_area = task_list_areas(area).table_area;
     let view = TaskListView::new(store);
     let candidate = task_list_hit_in_view(&view, table_state, table_area, column, row)?;
@@ -107,6 +110,9 @@ pub(crate) fn task_status_at_position(
     column: u16,
     row: u16,
 ) -> Option<TaskListHit> {
+    if store.view_state.render_mode() == TaskListRenderMode::Columns {
+        return None;
+    }
     let table_area = task_list_areas(area).table_area;
     let view = TaskListView::new(store);
     let candidate = task_list_hit_in_view(&view, table_state, table_area, column, row)?;
@@ -939,7 +945,12 @@ fn dependency_links_summary(links: &[crate::query::TaskDependencyLink]) -> Span<
     Span::styled(summary, Style::new().fg(FG_MUTED))
 }
 
-fn render_task_preview(frame: &mut Frame, store: &TuiStore, selected: Option<usize>, area: Rect) {
+pub(super) fn render_task_preview(
+    frame: &mut Frame,
+    store: &TuiStore,
+    selected: Option<usize>,
+    area: Rect,
+) {
     let Some(item) = store.selected_task(selected) else {
         return;
     };

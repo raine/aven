@@ -522,12 +522,17 @@ impl App {
             return Ok(());
         }
 
-        let next = next_index(
-            self.widgets.table.selected(),
-            self.store.main_row_count(),
-            delta,
-            false,
-        );
+        let next = if self.store.view_state.view == TaskView::Columns {
+            crate::tui::columns::ColumnBoard::new(&self.store.task_columns, &self.store.tasks)
+                .move_vertical_bounded(self.widgets.table.selected(), delta)
+        } else {
+            next_index(
+                self.widgets.table.selected(),
+                self.store.main_row_count(),
+                delta,
+                false,
+            )
+        };
         self.widgets.table.select(next);
         Ok(())
     }

@@ -479,6 +479,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ShowView(TaskView::Queue),
     ),
     CommandSpec::implemented(
+        "view-columns",
+        "show configurable column view",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('v'), KeyCode::Char('l')],
+            label: "v l",
+        }],
+        Action::ShowView(TaskView::Columns),
+    ),
+    CommandSpec::implemented(
         "view-open",
         "show open task view",
         "Views",

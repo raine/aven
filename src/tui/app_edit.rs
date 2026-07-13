@@ -20,7 +20,8 @@ impl App {
         let task_ids = self.marked_task_ids_in_view();
         let result = if task_ids.is_empty() {
             let preserve_done_detail = status == "done"
-                && (self.detail_context
+                && (self.store.view_state.view == crate::tui::store::TaskView::Columns
+                    || self.detail_context
                     || matches!(self.overlay, Some(OverlayState::Detail { .. })));
             if preserve_done_detail {
                 self.store
@@ -312,7 +313,8 @@ impl App {
         let task_ids = self.marked_task_ids_in_view();
         let result = if task_ids.is_empty() {
             let preserve_done_detail = status == "done"
-                && (self.detail_context
+                && (self.store.view_state.view == crate::tui::store::TaskView::Columns
+                    || self.detail_context
                     || matches!(self.overlay, Some(OverlayState::Detail { .. })));
             if preserve_done_detail {
                 self.store

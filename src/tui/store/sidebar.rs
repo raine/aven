@@ -10,6 +10,11 @@ impl TuiStore {
                 section: true,
             },
             view_entry("Queue", self.counts.open, TaskView::Queue),
+            view_entry(
+                "Columns",
+                self.counts.open + self.counts.done,
+                TaskView::Columns,
+            ),
             view_entry("Open", self.counts.open, TaskView::Open),
             view_entry("Inbox", self.counts.inbox, TaskView::Inbox),
             view_entry("Active", self.counts.active, TaskView::Active),

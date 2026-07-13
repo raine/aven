@@ -17,6 +17,7 @@ use crate::tui::theme::{
 };
 
 const QUEUE_MARKER: &str = "\u{f03a}";
+const COLUMNS_MARKER: &str = "\u{f0db}";
 const INBOX_MARKER: &str = "\u{f01c}";
 const TODO_MARKER: &str = "\u{f0ae}";
 const ACTIVE_MARKER: &str = "\u{f111}";
@@ -279,6 +280,7 @@ fn sidebar_entry_active(entry: &SidebarEntry, store: &TuiStore) -> bool {
 fn sidebar_icon(entry: &SidebarEntry) -> &'static str {
     match entry.target {
         Some(SidebarEntryTarget::View(TaskView::Queue)) => QUEUE_MARKER,
+        Some(SidebarEntryTarget::View(TaskView::Columns)) => COLUMNS_MARKER,
         Some(SidebarEntryTarget::View(TaskView::Inbox)) => INBOX_MARKER,
         Some(SidebarEntryTarget::View(TaskView::Todo)) => TODO_MARKER,
         Some(SidebarEntryTarget::View(TaskView::Active)) => ACTIVE_MARKER,
@@ -298,6 +300,7 @@ fn sidebar_icon(entry: &SidebarEntry) -> &'static str {
 fn sidebar_label(entry: &SidebarEntry) -> String {
     match entry.target {
         Some(SidebarEntryTarget::View(TaskView::Queue)) => "Queue".to_string(),
+        Some(SidebarEntryTarget::View(TaskView::Columns)) => "Columns".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Inbox)) => "Inbox".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Active)) => "All active".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Backlog)) => "Backlog".to_string(),
