@@ -87,6 +87,10 @@ fn shift_key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::SHIFT)
 }
 
+fn alt(character: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(character), KeyModifiers::ALT)
+}
+
 fn ctrl_s() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)
 }
@@ -3429,6 +3433,38 @@ mod authoring {
                 &app.overlay,
                 Some(OverlayState::AddTask(state))
                     if !matches!(state.mode, crate::tui::overlay::AddTaskMode::Compose)
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn add_task_alt_shortcuts_open_or_focus_every_field() {
+        for (character, expected) in [
+            ('p', AddTaskStep::Project),
+            ('s', AddTaskStep::Status),
+            ('r', AddTaskStep::Priority),
+            ('l', AddTaskStep::Labels),
+        ] {
+            let mut app = test_app().await;
+            app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+            app.handle_overlay_key(alt(character)).await.unwrap();
+            assert!(matches!(
+                &app.overlay,
+                Some(OverlayState::AddTask(state))
+                    if state.focus == expected
+                        && !matches!(state.mode, crate::tui::overlay::AddTaskMode::Compose)
+            ));
+        }
+
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        for (character, expected) in [('d', AddTaskStep::Description), ('t', AddTaskStep::Title)] {
+            app.handle_overlay_key(alt(character)).await.unwrap();
+            assert!(matches!(
+                &app.overlay,
+                Some(OverlayState::AddTask(state))
+                    if state.focus == expected
+                        && matches!(state.mode, crate::tui::overlay::AddTaskMode::Compose)
             ));
         }
     }

@@ -311,6 +311,8 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
                 "Tab / Shift+Tab   next / previous field",
                 "Enter             open metadata or create from title",
                 "Enter             newline in description",
+                "Alt-p/s/r/l      open project/status/priority/labels",
+                "Alt-t/d          focus title/description",
                 "Ctrl-s            create from any field",
                 "Ctrl-n            create with AI",
                 "F1                open this help",
