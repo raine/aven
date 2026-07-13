@@ -724,7 +724,10 @@ mod add_task_overlay {
     fn hint_lines_style_keys() {
         let add_task_keys =
             styled_key_contents(add_task_hint_line(AddTaskStep::Title, false, false));
-        assert_eq!(add_task_keys, vec!["Enter", "Tab", "^N", "F1", "Esc"]);
+        assert_eq!(
+            add_task_keys,
+            vec!["Enter", "↑/↓", "Tab", "^N", "F1", "Esc"]
+        );
 
         let multiline_keys = styled_key_contents(multiline_hint_line());
         assert_eq!(multiline_keys, vec!["Ctrl+S", "Esc"]);

@@ -309,10 +309,9 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
         AddTaskMode::Help { scroll } => {
             let all = [
                 "Tab / Shift+Tab   next / previous field",
+                "Arrows            move between visible fields",
                 "Enter             open metadata or create from title",
                 "Enter             newline in description",
-                "Alt-p/s/r/l      open project/status/priority/labels",
-                "Alt-t/d          focus title/description",
                 "Ctrl-s            create from any field",
                 "Ctrl-n            create with AI",
                 "F1                open this help",
@@ -604,6 +603,7 @@ pub(in crate::tui::ui) fn add_task_hint_line(
         | AddTaskStep::Priority
         | AddTaskStep::Labels => dialog_hint_line(&[
             ("Enter", "choose"),
+            ("←/→", "field"),
             ("Tab", "next"),
             ("^S", "create"),
             ("^N", "create with AI"),
@@ -612,6 +612,7 @@ pub(in crate::tui::ui) fn add_task_hint_line(
         ]),
         AddTaskStep::Title => dialog_hint_line(&[
             ("Enter", "create"),
+            ("↑/↓", "field"),
             ("Tab", "next"),
             ("^N", "create with AI"),
             ("F1", "help"),

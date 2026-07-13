@@ -179,6 +179,44 @@ pub(crate) fn handle_generic_overlay_key(
                     state.focus_next(key.code == KeyCode::BackTab);
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
+                KeyCode::Left if state.focus.is_metadata() => {
+                    state.focus = match state.focus {
+                        AddTaskStep::Project => AddTaskStep::Labels,
+                        AddTaskStep::Status => AddTaskStep::Project,
+                        AddTaskStep::Priority => AddTaskStep::Status,
+                        AddTaskStep::Labels => AddTaskStep::Priority,
+                        _ => state.focus,
+                    };
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
+                KeyCode::Right if state.focus.is_metadata() => {
+                    state.focus = match state.focus {
+                        AddTaskStep::Project => AddTaskStep::Status,
+                        AddTaskStep::Status => AddTaskStep::Priority,
+                        AddTaskStep::Priority => AddTaskStep::Labels,
+                        AddTaskStep::Labels => AddTaskStep::Project,
+                        _ => state.focus,
+                    };
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
+                KeyCode::Down if state.focus.is_metadata() => {
+                    state.focus = AddTaskStep::Title;
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
+                KeyCode::Up if state.focus == AddTaskStep::Title => {
+                    state.focus = AddTaskStep::Project;
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
+                KeyCode::Down if state.focus == AddTaskStep::Title => {
+                    state.focus = AddTaskStep::Description;
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
+                KeyCode::Up
+                    if state.focus == AddTaskStep::Description && state.description.row == 0 =>
+                {
+                    state.focus = AddTaskStep::Title;
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
                 KeyCode::F(1) => {
                     state.mode = AddTaskMode::Help { scroll: 0 };
                     OverlayOutcome::None(OverlayState::AddTask(state))

@@ -864,28 +864,6 @@ impl App {
         }
 
         if let OverlayState::AddTask(state) = &overlay {
-            if key.modifiers.contains(KeyModifiers::ALT)
-                && let KeyCode::Char(character) = key.code
-                && let Some(field) = match character.to_ascii_lowercase() {
-                    'p' => Some(AddTaskStep::Project),
-                    's' => Some(AddTaskStep::Status),
-                    'r' => Some(AddTaskStep::Priority),
-                    'l' => Some(AddTaskStep::Labels),
-                    't' => Some(AddTaskStep::Title),
-                    'd' => Some(AddTaskStep::Description),
-                    _ => None,
-                }
-            {
-                self.overlay = Some(overlay);
-                if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
-                    state.mode = AddTaskMode::Compose;
-                    state.focus = field;
-                }
-                if field.is_metadata() {
-                    self.open_focused_add_task_control();
-                }
-                return Ok(());
-            }
             if is_editor_prefix_key(key) {
                 if state.focus == AddTaskStep::Description {
                     self.pending_shortcut.begin_editor_prefix();
