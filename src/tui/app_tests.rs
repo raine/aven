@@ -3434,23 +3434,39 @@ mod authoring {
     }
 
     #[tokio::test]
-    async fn add_task_mouse_focuses_every_field() {
-        let mut app = test_app().await;
-        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    async fn add_task_mouse_opens_metadata_and_focuses_text_fields() {
         for (column, row, expected) in [
             (3, 2, AddTaskStep::Project),
             (55, 2, AddTaskStep::Status),
             (3, 3, AddTaskStep::Priority),
             (55, 3, AddTaskStep::Labels),
-            (3, 5, AddTaskStep::Title),
-            (3, 8, AddTaskStep::Description),
         ] {
+            let mut app = test_app().await;
+            app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
             app.dispatch_mouse(task_row_click(column, row), (80, 24).into())
                 .await
                 .unwrap();
             assert!(matches!(
                 &app.overlay,
-                Some(OverlayState::AddTask(state)) if state.focus == expected
+                Some(OverlayState::AddTask(state))
+                    if state.focus == expected
+                        && !matches!(state.mode, crate::tui::overlay::AddTaskMode::Compose)
+            ));
+        }
+
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        for (column, row, expected) in
+            [(3, 5, AddTaskStep::Title), (3, 8, AddTaskStep::Description)]
+        {
+            app.dispatch_mouse(task_row_click(column, row), (80, 24).into())
+                .await
+                .unwrap();
+            assert!(matches!(
+                &app.overlay,
+                Some(OverlayState::AddTask(state))
+                    if state.focus == expected
+                        && matches!(state.mode, crate::tui::overlay::AddTaskMode::Compose)
             ));
         }
     }

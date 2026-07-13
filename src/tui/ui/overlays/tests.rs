@@ -596,6 +596,17 @@ mod add_task_overlay {
         assert!(rendered.contains("╭─ Add task: labels"));
         assert!(rendered.contains("feature"));
         assert!(rendered.contains("Enter save"));
+
+        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            mode: AddTaskMode::ConfirmDiscard,
+            ..add_task_view()
+        }));
+        assert!(rendered.contains("╭─ Discard draft?"));
+        assert!(rendered.contains("Discard this task draft?"));
+        assert!(rendered.contains("y yes"));
+        assert!(rendered.contains("n no"));
+        assert!(rendered.contains("Esc cancel"));
+        assert!(!rendered.contains("This draft has content"));
     }
 
     #[test]

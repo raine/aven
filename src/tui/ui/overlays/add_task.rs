@@ -7,15 +7,15 @@ use ratatui::widgets::{Paragraph, Wrap};
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::input::{clipped_input_line, cursor_cell, input_line};
 use super::super::truncate::truncate_chars;
-use super::confirm::confirm_hint_line;
+use super::confirm::render_confirm;
 use super::multiline::add_task_description_input_line;
 use super::picker::{picker_hint_line, priority_picker_line, project_picker_line};
 use super::shared::viewport_start_for_cursor;
 use super::tag_combobox::tag_combobox_lines;
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::{
-    AddTaskMode, AddTaskView, PickerView, TAG_COMBOBOX_VIEWPORT_ROWS, TagComboboxView,
-    tag_combobox_completion, tag_combobox_matches, visible_picker_indices,
+    AddTaskMode, AddTaskView, ConfirmView, OverlayRoute, PickerView, TAG_COMBOBOX_VIEWPORT_ROWS,
+    TagComboboxView, tag_combobox_completion, tag_combobox_matches, visible_picker_indices,
 };
 use crate::tui::text::cell_width_ranges;
 use crate::tui::theme::{self, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, SELECTED};
@@ -257,6 +257,18 @@ fn join_lines(lines: Vec<Line<'static>>, separator: &'static str) -> Line<'stati
 }
 
 fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) {
+    if matches!(&state.mode, AddTaskMode::ConfirmDiscard) {
+        render_confirm(
+            frame,
+            &ConfirmView {
+                route: OverlayRoute::MessageOnly,
+                title: "Discard draft?".to_string(),
+                prompt: "Discard this task draft?".to_string(),
+            },
+        );
+        return;
+    }
+
     let (title, lines, width, background) = match &state.mode {
         AddTaskMode::Compose => return,
         AddTaskMode::Picker { state, .. } => {
@@ -314,16 +326,7 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
             lines.push(dialog_hint_line(&[("j/k", "scroll"), ("Esc", "close")]));
             ("Composer help".to_string(), lines, 66, BG_ALT)
         }
-        AddTaskMode::ConfirmDiscard => (
-            "Discard draft?".to_string(),
-            vec![
-                Line::from("This draft has content."),
-                Line::from(""),
-                confirm_hint_line(),
-            ],
-            42,
-            BG_ALT,
-        ),
+        AddTaskMode::ConfirmDiscard => unreachable!("discard confirmation renders above"),
     };
     let width = width.min(content.width.saturating_sub(2)).max(1);
     let desired_height = (lines.len() as u16).saturating_add(2);

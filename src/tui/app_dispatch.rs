@@ -227,16 +227,24 @@ impl App {
         {
             return Ok(());
         }
-        if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut()
-            && state.mode == AddTaskMode::Compose
-            && let Some(field) = crate::tui::ui::add_task_field_at(
-                Rect::new(0, 0, terminal_size.width, terminal_size.height),
-                self.add_task_only,
-                mouse.column,
-                mouse.row,
-            )
-        {
-            state.focus = field;
+        let add_task_field = self.overlay.as_ref().and_then(|overlay| match overlay {
+            OverlayState::AddTask(state) if state.mode == AddTaskMode::Compose => {
+                crate::tui::ui::add_task_field_at(
+                    Rect::new(0, 0, terminal_size.width, terminal_size.height),
+                    self.add_task_only,
+                    mouse.column,
+                    mouse.row,
+                )
+            }
+            _ => None,
+        });
+        if let Some(field) = add_task_field {
+            if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
+                state.focus = field;
+            }
+            if field.is_metadata() {
+                self.open_focused_add_task_control();
+            }
             return Ok(());
         }
         if matches!(

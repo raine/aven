@@ -84,7 +84,7 @@ Press `a` to open the task composer. Project, status, priority, labels, title, a
 
 <p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The composer captures structured fields without leaving the keyboard workflow.</p>
 
-Use `Tab` and `Shift-Tab` to move through every field. Press `Enter` on project, status, priority, or labels to open its control. `Enter` creates from the title field and inserts a newline in the description. `Ctrl-s` creates from any field. Press `F1` for complete composer help.
+Use `Tab` and `Shift-Tab` to move through every field. Press `Enter` on project, status, priority, or labels to open its control. With mouse support, click a metadata field to open it directly, or click title and description to place focus there. `Enter` creates from the title field and inserts a newline in the description. `Ctrl-s` creates from any field. Press `F1` for complete composer help.
 
 `Esc` closes an empty composer. A draft with entered or changed values asks for confirmation before it is discarded. Opening metadata controls and help preserves the title and description cursors and viewport.
 
