@@ -3,7 +3,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 
 use super::super::dialog::{Dialog, dialog_hint_line};
-use super::super::input::{input_line, prefixed_input_line};
+use super::super::input::prefixed_input_line;
 use crate::tui::overlay::{
     GENERIC_PICKER_VIEWPORT_ROWS, GENERIC_PICKER_WIDTH, OverlayRoute, PROJECT_PICKER_VIEWPORT_ROWS,
     PROJECT_PICKER_WIDTH, PickerItem, PickerMode, PickerView, picker_viewport_start,
@@ -17,14 +17,17 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, state: &PickerView) {
         return;
     }
 
-    let visible_count = state.visible_indices.len().max(1);
     let viewport_rows = GENERIC_PICKER_VIEWPORT_ROWS;
-    let height = (visible_count.min(viewport_rows) as u16).saturating_add(5);
     let selected_position = picker_visible_start(state, viewport_rows);
-    let mut lines = vec![
-        input_line("/", &state.filter, state.filter_cursor),
-        Line::from(""),
-    ];
+    let mut lines = Vec::new();
+    if matches!(state.mode, PickerMode::Filter) {
+        lines.push(picker_filter_line(
+            Span::raw("/"),
+            &state.filter,
+            state.filter_cursor,
+        ));
+        lines.push(Line::from(""));
+    }
     for index in state
         .visible_indices
         .iter()
@@ -54,8 +57,8 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, state: &PickerView) {
         state.multi,
         priority_picker_submit_label(state.route).unwrap_or("submit"),
     ));
-    Dialog::new(&state.title, GENERIC_PICKER_WIDTH, height.saturating_add(1))
-        .render_text(frame, Text::from(lines));
+    let height = (lines.len() as u16).saturating_add(2);
+    Dialog::new(&state.title, GENERIC_PICKER_WIDTH, height).render_text(frame, Text::from(lines));
 }
 
 fn picker_visible_start(state: &PickerView, viewport_rows: usize) -> usize {
@@ -84,6 +87,14 @@ pub(in crate::tui::ui) fn priority_picker_line(item: &PickerItem, selected: bool
     ])
 }
 
+pub(in crate::tui::ui) fn picker_filter_line(
+    prefix: Span<'static>,
+    filter: &str,
+    cursor: usize,
+) -> Line<'static> {
+    prefixed_input_line(prefix, filter, cursor)
+}
+
 pub(in crate::tui::ui) fn picker_hint_line(
     mode: PickerMode,
     multi: bool,
@@ -105,19 +116,25 @@ pub(in crate::tui::ui) fn picker_hint_line(
 
 fn render_project_picker(frame: &mut Frame, state: &PickerView, submit_label: &'static str) {
     let viewport_rows = PROJECT_PICKER_VIEWPORT_ROWS;
-    let height = (viewport_rows as u16).saturating_add(6);
+    let height =
+        (viewport_rows as u16).saturating_add(if matches!(state.mode, PickerMode::Filter) {
+            6
+        } else {
+            5
+        });
     let selected_position = picker_visible_start(state, viewport_rows);
-    let mut lines = vec![
-        prefixed_input_line(
+    let mut lines = Vec::new();
+    if matches!(state.mode, PickerMode::Filter) {
+        lines.push(picker_filter_line(
             Span::styled("/", Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
             &state.filter,
             state.filter_cursor,
-        ),
-        Line::from(vec![
-            Span::styled("  PREFIX ", Style::new().fg(FG_DIM).bg(BG_PANEL)),
-            Span::styled("PROJECT", Style::new().fg(FG_DIM).bg(BG_PANEL)),
-        ]),
-    ];
+        ));
+    }
+    lines.push(Line::from(vec![
+        Span::styled("  PREFIX ", Style::new().fg(FG_DIM).bg(BG_PANEL)),
+        Span::styled("PROJECT", Style::new().fg(FG_DIM).bg(BG_PANEL)),
+    ]));
     let list_start = lines.len();
     for index in state
         .visible_indices

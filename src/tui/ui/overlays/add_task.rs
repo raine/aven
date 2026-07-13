@@ -5,11 +5,13 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Wrap};
 
 use super::super::dialog::{Dialog, dialog_hint_line};
-use super::super::input::{clipped_input_line, cursor_cell, input_line};
+use super::super::input::{clipped_input_line, cursor_cell};
 use super::super::truncate::truncate_chars;
 use super::confirm::render_confirm;
 use super::multiline::add_task_description_input_line;
-use super::picker::{picker_hint_line, priority_picker_line, project_picker_line};
+use super::picker::{
+    picker_filter_line, picker_hint_line, priority_picker_line, project_picker_line,
+};
 use super::shared::viewport_start_for_cursor;
 use super::tag_combobox::tag_combobox_lines;
 use crate::tui::authoring::AddTaskStep;
@@ -387,10 +389,15 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
 }
 
 fn add_task_picker_lines(state: &PickerView) -> Vec<Line<'static>> {
-    let mut lines = vec![
-        input_line("/", &state.filter, state.filter_cursor),
-        Line::from(""),
-    ];
+    let mut lines = Vec::new();
+    if matches!(state.mode, crate::tui::overlay::PickerMode::Filter) {
+        lines.push(picker_filter_line(
+            Span::raw("/"),
+            &state.filter,
+            state.filter_cursor,
+        ));
+        lines.push(Line::from(""));
+    }
     let visible = state
         .visible_indices
         .iter()

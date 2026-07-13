@@ -586,7 +586,7 @@ mod add_task_overlay {
 
     #[test]
     fn add_task_child_modes_use_shared_dialog_and_control_styles() {
-        let picker = PickerState::new(
+        let mut picker = PickerState::new(
             OverlayRoute::AddTaskTitlePriority,
             "Add task: priority",
             vec![
@@ -603,6 +603,8 @@ mod add_task_overlay {
             ],
             false,
         );
+        picker.filter.text = "hi".to_string();
+        picker.filter.cursor = 2;
         let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
             mode: AddTaskMode::Picker {
                 field: AddTaskStep::Priority,
@@ -613,6 +615,7 @@ mod add_task_overlay {
         assert!(rendered.contains("╭─ Add task: priority"));
         assert!(rendered.contains("▸"));
         assert!(rendered.contains("Enter submit"));
+        assert!(!rendered.contains("/hi"));
 
         let OverlayState::TagCombobox(labels) = OverlayState::tag_combobox(
             OverlayRoute::AddTaskTitleLabels,
@@ -1165,18 +1168,18 @@ mod picker_overlays {
     use super::*;
 
     #[test]
-    fn overlay_render_includes_picker_filter_and_hints() {
+    fn picker_navigation_mode_hides_filter_input() {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
             title: "Project".to_string(),
-            filter: "app".to_string(),
-            filter_cursor: 3,
+            filter: "needle".to_string(),
+            filter_cursor: 6,
             items: vec![picker_item("APP app", "app")],
             multi: true,
             visible_indices: vec![0],
             ..picker_view()
         }));
         assert!(rendered.contains("Project"));
-        assert!(rendered.contains("/app"));
+        assert!(!rendered.contains("needle"));
         assert!(rendered.contains("j/k"));
         assert!(rendered.contains("/ filter"));
         assert!(rendered.contains("Space"));
@@ -1194,6 +1197,7 @@ mod picker_overlays {
             visible_indices: vec![0],
             ..picker_view()
         }));
+        assert!(rendered.contains("/app"));
         assert!(rendered.contains("type filter"));
         assert!(rendered.contains("Esc normal"));
     }
@@ -1251,6 +1255,7 @@ mod picker_overlays {
         assert!(rendered.contains("PROJECT"));
         assert!(rendered.contains("CC"));
         assert!(rendered.contains("claude-code"));
+        assert!(!rendered.contains("/claude"));
         assert!(rendered.contains("Enter scope"));
     }
 
