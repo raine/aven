@@ -2,17 +2,23 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 
 use super::super::dialog::{Dialog, dialog_hint_line};
-use super::super::input::{clipped_input_line, cursor_cell};
+use super::super::input::{clipped_input_line, cursor_cell, input_line};
 use super::super::truncate::truncate_chars;
+use super::confirm::confirm_hint_line;
 use super::multiline::add_task_description_input_line;
+use super::picker::{picker_hint_line, priority_picker_line, project_picker_line};
 use super::shared::viewport_start_for_cursor;
+use super::tag_combobox::tag_combobox_lines;
 use crate::tui::authoring::AddTaskStep;
-use crate::tui::overlay::{AddTaskMode, AddTaskView};
+use crate::tui::overlay::{
+    AddTaskMode, AddTaskView, PickerView, TAG_COMBOBOX_VIEWPORT_ROWS, TagComboboxView,
+    tag_combobox_completion, tag_combobox_matches, visible_picker_indices,
+};
 use crate::tui::text::cell_width_ranges;
-use crate::tui::theme::{self, FG, FG_DIM, FG_MUTED};
+use crate::tui::theme::{self, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, SELECTED};
 
 pub(crate) fn add_task_field_at(
     terminal: Rect,
@@ -251,106 +257,135 @@ fn join_lines(lines: Vec<Line<'static>>, separator: &'static str) -> Line<'stati
 }
 
 fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) {
-    let (title, lines) = match &state.mode {
+    let (title, lines, width, background) = match &state.mode {
         AddTaskMode::Compose => return,
         AddTaskMode::Picker { state, .. } => {
-            let mut lines = vec![format!("Filter: {}", state.filter.text)];
-            lines.extend(
-                state
-                    .items
-                    .iter()
-                    .enumerate()
-                    .skip(state.scroll)
-                    .take(8)
-                    .map(|(index, item)| {
-                        format!(
-                            "{} {}",
-                            if index == state.selected { "▶" } else { " " },
-                            item.label
-                        )
-                    }),
-            );
-            (state.title.clone(), lines)
+            let view = PickerView {
+                route: state.route,
+                title: state.title.clone(),
+                filter: state.filter.text.clone(),
+                filter_cursor: state.filter.cursor,
+                items: state.items.clone(),
+                selected: state.selected,
+                scroll: state.scroll,
+                multi: state.multi,
+                mode: state.mode,
+                visible_indices: visible_picker_indices(state),
+            };
+            (view.title.clone(), add_task_picker_lines(&view), 54, BG_ALT)
         }
         AddTaskMode::Labels(state) => {
-            let mut lines = vec![
-                format!("Filter: {}", state.input.text),
-                format!("Selected: {}", labels_display(&state.selected)),
-            ];
-            lines.extend(
-                crate::tui::overlay::tag_combobox_matches(state)
-                    .into_iter()
-                    .take(6)
-                    .filter_map(|index| state.options.get(index).map(|label| (index, label)))
-                    .map(|(index, label)| {
-                        format!(
-                            "{} {}{}",
-                            if index == state.highlighted {
-                                "▶"
-                            } else {
-                                " "
-                            },
-                            if state.selected.contains(label) {
-                                "[x]"
-                            } else {
-                                "[ ]"
-                            },
-                            label
-                        )
-                    }),
-            );
-            lines.push("Enter accepts, Esc returns".to_string());
-            (state.title.clone(), lines)
+            let visible_indices = tag_combobox_matches(state);
+            let view = TagComboboxView {
+                route: state.route,
+                title: state.title.clone(),
+                input: state.input.text.clone(),
+                input_cursor: state.input.cursor,
+                completion: tag_combobox_completion(state),
+                options: state.options.clone(),
+                selected: state.selected.clone(),
+                highlighted: state.highlighted,
+                visible_start: visible_indices
+                    .iter()
+                    .position(|index| *index == state.highlighted)
+                    .unwrap_or(0)
+                    .saturating_sub(TAG_COMBOBOX_VIEWPORT_ROWS.saturating_sub(1)),
+                visible_indices,
+            };
+            (view.title.clone(), tag_combobox_lines(&view), 64, BG_PANEL)
         }
         AddTaskMode::Help { scroll } => {
-            let all = vec![
-                "Tab / Shift+Tab   next / previous field".to_string(),
-                "Enter             open metadata or create from title".to_string(),
-                "Enter             newline in description".to_string(),
-                "Ctrl-s            create from any field".to_string(),
-                "Ctrl-n            create with AI".to_string(),
-                "F1                open this help".to_string(),
-                "Ctrl-x Ctrl-e     edit description externally".to_string(),
-                "Esc               cancel or confirm discard".to_string(),
+            let all = [
+                "Tab / Shift+Tab   next / previous field",
+                "Enter             open metadata or create from title",
+                "Enter             newline in description",
+                "Ctrl-s            create from any field",
+                "Ctrl-n            create with AI",
+                "F1                open this help",
+                "Ctrl-x Ctrl-e     edit description externally",
+                "Esc               cancel or confirm discard",
             ];
-            (
-                "Composer help".to_string(),
-                all.into_iter().skip(*scroll as usize).collect(),
-            )
+            let mut lines = all
+                .into_iter()
+                .skip(*scroll as usize)
+                .map(Line::from)
+                .collect::<Vec<_>>();
+            lines.push(Line::from(""));
+            lines.push(dialog_hint_line(&[("j/k", "scroll"), ("Esc", "close")]));
+            ("Composer help".to_string(), lines, 66, BG_ALT)
         }
         AddTaskMode::ConfirmDiscard => (
             "Discard draft?".to_string(),
             vec![
-                "This draft has content.".to_string(),
-                "y discard   n/Esc keep editing".to_string(),
+                Line::from("This draft has content."),
+                Line::from(""),
+                confirm_hint_line(),
             ],
+            42,
+            BG_ALT,
         ),
     };
-    let width = if content.width < 20 {
-        content.width
-    } else {
-        content.width.saturating_sub(4).clamp(20, 62)
-    };
+    let width = width.min(content.width.saturating_sub(2)).max(1);
     let desired_height = (lines.len() as u16).saturating_add(2);
-    let height = if content.height < 4 {
-        content.height
-    } else {
-        desired_height.clamp(4, content.height)
-    };
+    let height = desired_height.min(content.height).max(1);
     let area = Rect {
         x: content.x + content.width.saturating_sub(width) / 2,
         y: content.y + content.height.saturating_sub(height) / 2,
         width,
         height,
     };
-    frame.render_widget(Clear, area);
+    let inner = Dialog::new(&title, width, height).render_block_at(frame, area);
     frame.render_widget(
-        Paragraph::new(lines.join("\n"))
+        Paragraph::new(Text::from(lines))
             .wrap(Wrap { trim: false })
-            .block(Block::default().borders(Borders::ALL).title(title))
-            .style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),
-        area,
+            .style(Style::new().fg(FG).bg(background)),
+        inner,
     );
+}
+
+fn add_task_picker_lines(state: &PickerView) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        input_line("/", &state.filter, state.filter_cursor),
+        Line::from(""),
+    ];
+    let visible = state
+        .visible_indices
+        .iter()
+        .skip(state.scroll)
+        .take(8)
+        .copied()
+        .collect::<Vec<_>>();
+    for index in visible {
+        let item = &state.items[index];
+        let selected = index == state.selected;
+        let line = match state.route {
+            crate::tui::overlay::OverlayRoute::AddTaskTitleProject => {
+                project_picker_line(item, selected)
+            }
+            crate::tui::overlay::OverlayRoute::AddTaskTitlePriority => {
+                priority_picker_line(item, selected)
+            }
+            _ => {
+                let marker = if selected { "▸ " } else { "  " };
+                let style = if selected {
+                    SELECTED
+                } else {
+                    Style::new().bg(BG_ALT)
+                };
+                Line::from(Span::styled(format!("{marker}{}", item.label), style))
+            }
+        };
+        lines.push(line);
+    }
+    if state.visible_indices.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  no matching options",
+            Style::new().fg(FG_DIM),
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(picker_hint_line(state.mode, state.multi, "submit"));
+    lines
 }
 
 pub(in crate::tui::ui) fn add_task_title_metadata(title: &str) -> Option<(&str, &str)> {

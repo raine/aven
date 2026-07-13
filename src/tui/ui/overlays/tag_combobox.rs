@@ -24,7 +24,7 @@ pub(in crate::tui::ui) fn render_tag_combobox(frame: &mut Frame, state: &TagComb
     );
 }
 
-fn tag_combobox_lines(state: &TagComboboxView) -> Vec<Line<'static>> {
+pub(in crate::tui::ui) fn tag_combobox_lines(state: &TagComboboxView) -> Vec<Line<'static>> {
     let mut lines = vec![tag_combobox_input_line(state)];
     lines.push(Line::from(""));
     lines.extend(option_lines(state));

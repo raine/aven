@@ -3,9 +3,9 @@ use crate::query::SyncHistoryStats;
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::config_overlay::{CONFIG_STATUS_TITLE, DATABASE_STATS_TITLE};
 use crate::tui::overlay::{
-    AddTaskView, ConfirmView, MultilineInputView, OverlayRoute, OverlayView, PickerItem,
-    PickerMode, PickerView, SearchPurpose, SearchResultItem, TagComboboxView, TextInputView,
-    TextPanelView,
+    AddTaskMode, AddTaskView, ConfirmView, MultilineInputView, OverlayRoute, OverlayState,
+    OverlayView, PickerItem, PickerMode, PickerState, PickerView, SearchPurpose, SearchResultItem,
+    TagComboboxView, TextInputView, TextPanelView,
 };
 use crate::tui::store::{
     DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts, SyncStatusCheck, TuiDatabaseStats,
@@ -549,6 +549,53 @@ mod add_task_overlay {
         assert!(help.contains("Shift+Tab"));
         assert!(help.contains("create with AI"));
         assert!(help.contains("confirm discard"));
+    }
+
+    #[test]
+    fn add_task_child_modes_use_shared_dialog_and_control_styles() {
+        let picker = PickerState::new(
+            OverlayRoute::AddTaskTitlePriority,
+            "Add task: priority",
+            vec![
+                PickerItem {
+                    label: "none".to_string(),
+                    value: "none".to_string(),
+                    selected: false,
+                },
+                PickerItem {
+                    label: "high".to_string(),
+                    value: "high".to_string(),
+                    selected: true,
+                },
+            ],
+            false,
+        );
+        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            mode: AddTaskMode::Picker {
+                field: AddTaskStep::Priority,
+                state: picker,
+            },
+            ..add_task_view()
+        }));
+        assert!(rendered.contains("╭─ Add task: priority"));
+        assert!(rendered.contains("▸"));
+        assert!(rendered.contains("Enter submit"));
+
+        let OverlayState::TagCombobox(labels) = OverlayState::tag_combobox(
+            OverlayRoute::AddTaskTitleLabels,
+            "Add task: labels",
+            vec!["feature".to_string()],
+            vec!["feature".to_string()],
+        ) else {
+            panic!("expected labels control");
+        };
+        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            mode: AddTaskMode::Labels(labels),
+            ..add_task_view()
+        }));
+        assert!(rendered.contains("╭─ Add task: labels"));
+        assert!(rendered.contains("feature"));
+        assert!(rendered.contains("Enter save"));
     }
 
     #[test]

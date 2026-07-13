@@ -18,7 +18,7 @@ pub(crate) use layout::{
     TEXT_PANEL_WIDTH, confirm_layout, confirm_width, dialog_area, picker_layout,
     tag_combobox_layout, text_panel_layout, text_panel_scroll_cap,
 };
-pub(crate) use picker::picker_viewport_start;
+pub(crate) use picker::{picker_viewport_start, visible_picker_indices};
 pub(crate) use state::{
     AddTaskMode, AddTaskState, CommandState, ConfirmSubmitRoute, HeaderMenuAction, HeaderMenuItem,
     HeaderMenuKind, HeaderMenuState, MultilineInputState, MultilineSubmitRoute, OrderMenuState,
@@ -28,7 +28,7 @@ pub(crate) use state::{
 };
 #[cfg(test)]
 pub(crate) use state::{ConfirmState, TextInputState};
-pub(crate) use tag_combobox::tag_combobox_matches;
+pub(crate) use tag_combobox::{tag_combobox_completion, tag_combobox_matches};
 pub(crate) use text_input::LineEdit;
 pub(crate) use view::{
     AddTaskView, ConfirmView, HeaderMenuView, MultilineInputView, OrderMenuView, OverlayView,
