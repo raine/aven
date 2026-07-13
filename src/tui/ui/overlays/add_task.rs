@@ -134,11 +134,11 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
         "Title",
         state.focus == AddTaskStep::Title,
     ));
-    lines.push(add_task_title_input_line(
+    lines.push(indent_add_task_input(add_task_title_input_line(
         &state.title,
         (state.focus == AddTaskStep::Title).then_some(state.title_cursor),
-        content.width as usize,
-    ));
+        (content.width as usize).saturating_sub(2),
+    )));
     if state.title_error {
         lines.push(Line::from(Span::styled(
             "  Title is required",
@@ -171,6 +171,13 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
         content,
     );
     render_add_task_child(frame, state, content);
+}
+
+fn indent_add_task_input(line: Line<'static>) -> Line<'static> {
+    let mut spans = Vec::with_capacity(line.spans.len() + 1);
+    spans.push(Span::raw("  "));
+    spans.extend(line.spans);
+    Line::from(spans)
 }
 
 fn compact_text_field(label: &str, value: &str, active: bool) -> Line<'static> {

@@ -495,7 +495,7 @@ mod add_task_overlay {
         assert!(rendered.contains("Labels: [none]"));
         assert!(rendered.contains("Title"));
         assert!(rendered.contains("Description"));
-        assert!(rendered.contains("ship dialogs"));
+        assert!(rendered.contains("  ship dialogs"));
         assert!(rendered.contains("Optional details, links, or handoff context..."));
         assert!(rendered.contains("Tab next"));
         assert!(rendered.contains("^N create with AI"));
