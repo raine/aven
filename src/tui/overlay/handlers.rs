@@ -12,8 +12,8 @@ use super::picker::{
     visible_picker_indices,
 };
 use super::state::{
-    ConfirmState, HeaderMenuState, OrderMenuState, OverlayOutcome, OverlayState, OverlaySubmit,
-    PickerMode, PickerState, TagComboboxState, TextPanelState,
+    AddTaskMode, ConfirmState, HeaderMenuState, OrderMenuState, OverlayOutcome, OverlayState,
+    OverlaySubmit, PickerMode, PickerState, TagComboboxState, TextPanelState,
 };
 use super::tag_combobox::{
     handle_tag_combobox_key, normalize_tag_combobox_highlight, tag_combobox_matches,
@@ -38,6 +38,7 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
             match state.focus {
                 AddTaskStep::Title => state.title.insert_paste(text),
                 AddTaskStep::Description => state.description.insert_paste(text),
+                _ => {}
             }
             OverlayState::AddTask(state)
         }
@@ -87,35 +88,126 @@ pub(crate) fn handle_generic_overlay_key(
     help_scroll_cap: u16,
 ) -> OverlayOutcome {
     match overlay {
-        OverlayState::AddTask(mut state) => match key.code {
-            KeyCode::Esc => OverlayOutcome::Cancelled,
-            KeyCode::Tab => {
-                state.focus = match state.focus {
-                    AddTaskStep::Title => AddTaskStep::Description,
-                    AddTaskStep::Description => AddTaskStep::Title,
-                };
-                OverlayOutcome::None(OverlayState::AddTask(state))
-            }
-            KeyCode::Enter if state.focus == AddTaskStep::Title => {
-                OverlayOutcome::Submitted(OverlaySubmit::AddTask {
-                    title: state.title.text.clone(),
-                    description: state.description.lines.join("\n"),
-                })
-            }
-            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                OverlayOutcome::Submitted(OverlaySubmit::AddTask {
-                    title: state.title.text.clone(),
-                    description: state.description.lines.join("\n"),
-                })
-            }
-            _ => {
-                match state.focus {
-                    AddTaskStep::Title => state.title.handle_key(key),
-                    AddTaskStep::Description => edit_multiline_input(&mut state.description, key),
+        OverlayState::AddTask(mut state) => {
+            match std::mem::replace(&mut state.mode, AddTaskMode::Compose) {
+                AddTaskMode::Picker {
+                    field,
+                    state: picker,
+                } => {
+                    match handle_picker_key(picker, key) {
+                        OverlayOutcome::None(OverlayState::Picker(picker)) => {
+                            state.mode = AddTaskMode::Picker {
+                                field,
+                                state: picker,
+                            };
+                        }
+                        OverlayOutcome::Cancelled => {}
+                        OverlayOutcome::Submitted(OverlaySubmit::Picker { values, .. }) => {
+                            let value = values.first().cloned().unwrap_or_default();
+                            match field {
+                                AddTaskStep::Project => {
+                                    state.selected_project =
+                                        (!value.is_empty()).then_some(value.clone());
+                                    state.project = if value.is_empty() {
+                                        state
+                                            .inferred_project
+                                            .clone()
+                                            .unwrap_or_else(|| "no project".to_string())
+                                    } else {
+                                        value
+                                    };
+                                }
+                                AddTaskStep::Status => state.status = value,
+                                AddTaskStep::Priority => state.priority = value,
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                    return OverlayOutcome::None(OverlayState::AddTask(state));
                 }
-                OverlayOutcome::None(OverlayState::AddTask(state))
+                AddTaskMode::Labels(labels) => {
+                    match handle_tag_combobox_key(labels, key) {
+                        OverlayOutcome::None(OverlayState::TagCombobox(labels)) => {
+                            state.mode = AddTaskMode::Labels(labels);
+                        }
+                        OverlayOutcome::Cancelled => {}
+                        OverlayOutcome::Submitted(OverlaySubmit::Picker { values, .. }) => {
+                            state.labels = values;
+                        }
+                        _ => {}
+                    }
+                    return OverlayOutcome::None(OverlayState::AddTask(state));
+                }
+                AddTaskMode::Help { mut scroll } => {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') => {}
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            scroll = scroll.saturating_add(1);
+                            state.mode = AddTaskMode::Help { scroll };
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            scroll = scroll.saturating_sub(1);
+                            state.mode = AddTaskMode::Help { scroll };
+                        }
+                        _ => state.mode = AddTaskMode::Help { scroll },
+                    }
+                    return OverlayOutcome::None(OverlayState::AddTask(state));
+                }
+                AddTaskMode::ConfirmDiscard => {
+                    return match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') => OverlayOutcome::Cancelled,
+                        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                            OverlayOutcome::None(OverlayState::AddTask(state))
+                        }
+                        _ => {
+                            state.mode = AddTaskMode::ConfirmDiscard;
+                            OverlayOutcome::None(OverlayState::AddTask(state))
+                        }
+                    };
+                }
+                AddTaskMode::Compose => {}
             }
-        },
+
+            match key.code {
+                KeyCode::Esc if state.is_populated() => {
+                    state.mode = AddTaskMode::ConfirmDiscard;
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
+                KeyCode::Esc => OverlayOutcome::Cancelled,
+                KeyCode::Tab | KeyCode::BackTab => {
+                    state.focus_next(key.code == KeyCode::BackTab);
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
+                KeyCode::F(1) => {
+                    state.mode = AddTaskMode::Help { scroll: 0 };
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
+                KeyCode::Char('?') if state.focus.is_metadata() => {
+                    state.mode = AddTaskMode::Help { scroll: 0 };
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
+                KeyCode::Enter if state.focus == AddTaskStep::Title => {
+                    OverlayOutcome::Submitted(OverlaySubmit::AddTask(state))
+                }
+                KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    OverlayOutcome::Submitted(OverlaySubmit::AddTask(state))
+                }
+                _ => {
+                    match state.focus {
+                        AddTaskStep::Title => {
+                            state.title.handle_key(key);
+                            state.title_error = false;
+                        }
+                        AddTaskStep::Description => {
+                            edit_multiline_input(&mut state.description, key)
+                        }
+                        _ => {}
+                    }
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
+            }
+        }
         OverlayState::TextInput(mut state) => match key.code {
             KeyCode::Esc => OverlayOutcome::Cancelled,
             KeyCode::Enter => OverlayOutcome::Submitted(OverlaySubmit::Text {
@@ -637,8 +729,8 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::CONTROL)
     }
 
-    fn add_task_state(focus: AddTaskStep) -> crate::tui::overlay::AddTaskState {
-        crate::tui::overlay::AddTaskState {
+    fn add_task_state(focus: AddTaskStep) -> Box<crate::tui::overlay::AddTaskState> {
+        Box::new(crate::tui::overlay::AddTaskState {
             title: LineEdit::blank(),
             description: MultilineInputState::blank(
                 OverlayRoute::AddTaskDescription,
@@ -647,10 +739,15 @@ mod tests {
             ),
             focus,
             project: "aven".to_string(),
+            inferred_project: None,
+            selected_project: Some("aven".to_string()),
+            initial_project: Some("aven".to_string()),
             status: "inbox".to_string(),
             priority: "none".to_string(),
             labels: Vec::new(),
-        }
+            mode: crate::tui::overlay::AddTaskMode::Compose,
+            title_error: false,
+        })
     }
 
     fn handle(key: KeyEvent, overlay: OverlayState) -> OverlayOutcome {
@@ -685,6 +782,87 @@ mod tests {
         };
         assert_eq!(state.title.text, "one two");
         assert_eq!(state.title.cursor, 7);
+    }
+
+    #[test]
+    fn add_task_tab_and_backtab_traverse_all_fields() {
+        let mut overlay = OverlayState::AddTask(add_task_state(AddTaskStep::Project));
+        for expected in AddTaskStep::ALL.into_iter().skip(1) {
+            let OverlayOutcome::None(next) = handle(key(KeyCode::Tab), overlay) else {
+                panic!("expected composer");
+            };
+            let OverlayState::AddTask(state) = &next else {
+                panic!("expected add task");
+            };
+            assert_eq!(state.focus, expected);
+            overlay = next;
+        }
+        let OverlayOutcome::None(OverlayState::AddTask(state)) = handle(key(KeyCode::Tab), overlay)
+        else {
+            panic!("expected wrapped composer");
+        };
+        assert_eq!(state.focus, AddTaskStep::Project);
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::BackTab), OverlayState::AddTask(state))
+        else {
+            panic!("expected reverse composer");
+        };
+        assert_eq!(state.focus, AddTaskStep::Description);
+    }
+
+    #[test]
+    fn populated_add_task_requires_discard_confirmation() {
+        let mut state = add_task_state(AddTaskStep::Title);
+        state.title = LineEdit::new("Keep this".to_string());
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::Esc), OverlayState::AddTask(state))
+        else {
+            panic!("expected discard confirmation");
+        };
+        assert_eq!(state.mode, AddTaskMode::ConfirmDiscard);
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::Char('n')), OverlayState::AddTask(state))
+        else {
+            panic!("expected composer");
+        };
+        assert_eq!(state.mode, AddTaskMode::Compose);
+    }
+
+    #[test]
+    fn empty_add_task_escape_cancels_immediately() {
+        assert!(matches!(
+            handle(
+                key(KeyCode::Esc),
+                OverlayState::AddTask(add_task_state(AddTaskStep::Title))
+            ),
+            OverlayOutcome::Cancelled
+        ));
+    }
+
+    #[test]
+    fn add_task_help_returns_without_changing_text_cursors() {
+        let mut state = add_task_state(AddTaskStep::Description);
+        state.title = LineEdit::new("Draft".to_string());
+        state.description.lines = vec!["first".to_string(), "second".to_string()];
+        state.description.row = 1;
+        state.description.column = 3;
+        let title_cursor = state.title.cursor;
+        let description_cursor = (state.description.row, state.description.column);
+        let OverlayOutcome::None(OverlayState::AddTask(help)) =
+            handle(key(KeyCode::F(1)), OverlayState::AddTask(state))
+        else {
+            panic!("expected help");
+        };
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::Esc), OverlayState::AddTask(help))
+        else {
+            panic!("expected composer");
+        };
+        assert_eq!(state.title.cursor, title_cursor);
+        assert_eq!(
+            (state.description.row, state.description.column),
+            description_cursor
+        );
     }
 
     #[test]

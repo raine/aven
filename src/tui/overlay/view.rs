@@ -4,8 +4,8 @@ use crate::tui::store::{TaskOrder, TuiDatabaseStats, TuiSyncStatus};
 use super::layout::TAG_COMBOBOX_VIEWPORT_ROWS;
 use super::picker::visible_picker_indices;
 use super::state::{
-    HeaderMenuItem, HeaderMenuKind, HeaderMenuState, OrderMenuState, OverlayRoute, OverlayState,
-    OverlayState::*, PickerItem, PickerMode, SearchPurpose, SearchResultItem,
+    AddTaskMode, HeaderMenuItem, HeaderMenuKind, HeaderMenuState, OrderMenuState, OverlayRoute,
+    OverlayState, OverlayState::*, PickerItem, PickerMode, SearchPurpose, SearchResultItem,
 };
 use super::tag_combobox::{tag_combobox_completion, tag_combobox_matches};
 
@@ -71,6 +71,8 @@ pub(crate) struct AddTaskView {
     pub(crate) status: String,
     pub(crate) priority: String,
     pub(crate) labels: Vec<String>,
+    pub(crate) mode: AddTaskMode,
+    pub(crate) title_error: bool,
     pub(crate) status_prefix_active: bool,
     pub(crate) priority_prefix_active: bool,
 }
@@ -202,6 +204,8 @@ impl From<&OverlayState> for OverlayView {
                 status: state.status.clone(),
                 priority: state.priority.clone(),
                 labels: state.labels.clone(),
+                mode: state.mode.clone(),
+                title_error: state.title_error,
                 status_prefix_active: false,
                 priority_prefix_active: false,
             }),

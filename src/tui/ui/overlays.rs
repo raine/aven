@@ -10,6 +10,7 @@ mod tag_combobox;
 mod text_input;
 mod text_panel;
 
+pub(crate) use add_task::add_task_field_at;
 pub(super) use add_task::{render_add_task, render_add_task_full_frame};
 pub(super) use confirm::render_confirm;
 pub(crate) use database_stats::database_stats_scroll_cap;

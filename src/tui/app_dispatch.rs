@@ -17,7 +17,7 @@ use crate::tui::navigation::{
     detail_scroll_with_delta, detail_task_delta, handle_detail_overlay_key, next_index,
     scroll_with_delta,
 };
-use crate::tui::overlay::{CommandState, OverlayOutcome, OverlayRoute, OverlayState};
+use crate::tui::overlay::{AddTaskMode, CommandState, OverlayOutcome, OverlayRoute, OverlayState};
 use crate::tui::platform::is_editor_prefix_key;
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
 use crate::tui::store::TaskView;
@@ -225,6 +225,18 @@ impl App {
         if let Some(OverlayState::Detail { scroll }) = self.overlay
             && self.handle_detail_mouse_click(mouse, terminal_size, scroll)
         {
+            return Ok(());
+        }
+        if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut()
+            && state.mode == AddTaskMode::Compose
+            && let Some(field) = crate::tui::ui::add_task_field_at(
+                Rect::new(0, 0, terminal_size.width, terminal_size.height),
+                self.add_task_only,
+                mouse.column,
+                mouse.row,
+            )
+        {
+            state.focus = field;
             return Ok(());
         }
         if matches!(
@@ -760,6 +772,18 @@ impl App {
             return Ok(());
         }
 
+        if matches!(
+            &overlay,
+            OverlayState::AddTask(state)
+                if state.mode == AddTaskMode::Compose
+                    && state.focus.is_metadata()
+                    && key.code == KeyCode::Enter
+        ) {
+            self.overlay = Some(overlay);
+            self.open_focused_add_task_control();
+            return Ok(());
+        }
+
         let had_add_task_status_prefix = self.pending_shortcut.has_add_task_status_prefix();
         if let Some(status) = self.pending_shortcut.take_add_task_status_request(key) {
             if let OverlayState::AddTask(state) = &overlay {
@@ -840,14 +864,26 @@ impl App {
                 return Ok(());
             }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
-                if self.capture_add_task_state(state) {
-                    self.begin_add_task_title_project();
+                let return_focus = state.focus;
+                self.overlay = Some(overlay);
+                if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
+                    state.focus = AddTaskStep::Project;
+                }
+                self.open_focused_add_task_control();
+                if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
+                    state.focus = return_focus;
                 }
                 return Ok(());
             }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('l') {
-                if self.capture_add_task_state(state) {
-                    self.begin_add_task_title_labels();
+                let return_focus = state.focus;
+                self.overlay = Some(overlay);
+                if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
+                    state.focus = AddTaskStep::Labels;
+                }
+                self.open_focused_add_task_control();
+                if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
+                    state.focus = return_focus;
                 }
                 return Ok(());
             }

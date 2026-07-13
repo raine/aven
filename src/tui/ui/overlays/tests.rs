@@ -69,13 +69,17 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
     }
 }
 
-fn render_overlay_view(overlay: OverlayView) -> String {
-    let backend = TestBackend::new(100, 30);
+fn render_overlay_view_at(overlay: OverlayView, width: u16, height: u16) -> String {
+    let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
         .draw(|frame| render_non_help_overlay_content(frame, &overlay))
         .unwrap();
     buffer_text(terminal.backend())
+}
+
+fn render_overlay_view(overlay: OverlayView) -> String {
+    render_overlay_view_at(overlay, 100, 30)
 }
 
 fn overlay_buffer(overlay: OverlayView) -> ratatui::buffer::Buffer {
@@ -134,6 +138,8 @@ fn add_task_view() -> AddTaskView {
         status: "inbox".to_string(),
         priority: "none".to_string(),
         labels: Vec::new(),
+        mode: crate::tui::overlay::AddTaskMode::Compose,
+        title_error: false,
         status_prefix_active: false,
         priority_prefix_active: false,
     }
@@ -483,18 +489,66 @@ mod add_task_overlay {
             ..add_task_view()
         }));
         assert!(rendered.contains("Add task"));
-        assert!(rendered.contains("project: aven"));
-        assert!(rendered.contains("status: inbox"));
-        assert!(rendered.contains("prio: high"));
-        assert!(rendered.contains("labels: none"));
+        assert!(rendered.contains("Project: [aven]"));
+        assert!(rendered.contains("Status: [inbox]"));
+        assert!(rendered.contains("Priority: [high]"));
+        assert!(rendered.contains("Labels: [none]"));
         assert!(rendered.contains("Title"));
         assert!(rendered.contains("Description"));
         assert!(rendered.contains("ship dialogs"));
         assert!(rendered.contains("Optional details, links, or handoff context..."));
-        assert!(rendered.contains("Tab description"));
-        assert!(rendered.contains("^P project"));
-        assert!(rendered.contains("^R prio"));
-        assert!(rendered.contains("^L labels"));
+        assert!(rendered.contains("Tab next"));
+        assert!(rendered.contains("^N create with AI"));
+        assert!(rendered.contains("F1 help"));
+    }
+
+    #[test]
+    fn add_task_wide_medium_and_narrow_layouts_keep_every_field() {
+        for (width, height) in [(120, 30), (80, 24), (42, 24), (50, 12)] {
+            let rendered = render_overlay_view_at(
+                OverlayView::AddTask(AddTaskView {
+                    focus: AddTaskStep::Labels,
+                    ..add_task_view()
+                }),
+                width,
+                height,
+            );
+            for label in [
+                "Project",
+                "Status",
+                "Priority",
+                "Labels",
+                "Title",
+                "Description",
+            ] {
+                assert!(
+                    rendered.contains(label),
+                    "missing {label} at {width}x{height}"
+                );
+            }
+            assert!(
+                rendered.contains("▶ Labels"),
+                "missing focus cue at {width}x{height}"
+            );
+        }
+    }
+
+    #[test]
+    fn add_task_validation_and_help_are_visible() {
+        let validation = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            title_error: true,
+            ..add_task_view()
+        }));
+        assert!(validation.contains("Title is required"));
+
+        let help = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            mode: crate::tui::overlay::AddTaskMode::Help { scroll: 0 },
+            ..add_task_view()
+        }));
+        assert!(help.contains("Composer help"));
+        assert!(help.contains("Shift+Tab"));
+        assert!(help.contains("create with AI"));
+        assert!(help.contains("confirm discard"));
     }
 
     #[test]
@@ -612,10 +666,7 @@ mod add_task_overlay {
     fn hint_lines_style_keys() {
         let add_task_keys =
             styled_key_contents(add_task_hint_line(AddTaskStep::Title, false, false));
-        assert_eq!(
-            add_task_keys,
-            vec!["Enter", "Tab", "^N", "^T", "^P", "^R", "^L", "Esc"]
-        );
+        assert_eq!(add_task_keys, vec!["Enter", "Tab", "^N", "F1", "Esc"]);
 
         let multiline_keys = styled_key_contents(multiline_hint_line());
         assert_eq!(multiline_keys, vec!["Ctrl+S", "Esc"]);
@@ -624,7 +675,7 @@ mod add_task_overlay {
             styled_key_contents(add_task_hint_line(AddTaskStep::Description, false, false));
         assert_eq!(
             add_task_description_keys,
-            vec!["^S", "^N", "^T", "Tab", "^P", "^R", "^L", "Esc"]
+            vec!["^S", "Tab", "^N", "F1", "Esc"]
         );
 
         let add_task_description_editor_keys =

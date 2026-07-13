@@ -2786,8 +2786,12 @@ mod authoring {
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::TagCombobox(state))
-                if state.route == OverlayRoute::AddTaskTitleLabels
+            Some(OverlayState::AddTask(state))
+                if matches!(
+                    &state.mode,
+                    crate::tui::overlay::AddTaskMode::Labels(labels)
+                        if labels.route == OverlayRoute::AddTaskTitleLabels
+                )
         ));
         type_chars(&mut app, "feature").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
@@ -2926,7 +2930,12 @@ mod authoring {
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::Picker(state)) if state.route == OverlayRoute::AddTaskTitleProject
+            Some(OverlayState::AddTask(state))
+                if matches!(
+                    &state.mode,
+                    crate::tui::overlay::AddTaskMode::Picker { state: picker, .. }
+                        if picker.route == OverlayRoute::AddTaskTitleProject
+                )
         ));
         type_chars(&mut app, "mobile").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
@@ -3396,8 +3405,71 @@ mod authoring {
         assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Title
+            Some(OverlayState::AddTask(state))
+                if state.focus == AddTaskStep::Title && state.title_error
         ));
+    }
+
+    #[tokio::test]
+    async fn add_task_enter_opens_each_metadata_control() {
+        for field in [
+            AddTaskStep::Project,
+            AddTaskStep::Status,
+            AddTaskStep::Priority,
+            AddTaskStep::Labels,
+        ] {
+            let mut app = test_app().await;
+            app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+            let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+                panic!("expected composer");
+            };
+            state.focus = field;
+            app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+            assert!(matches!(
+                &app.overlay,
+                Some(OverlayState::AddTask(state))
+                    if !matches!(state.mode, crate::tui::overlay::AddTaskMode::Compose)
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn add_task_mouse_focuses_every_field() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        for (column, row, expected) in [
+            (3, 2, AddTaskStep::Project),
+            (55, 2, AddTaskStep::Status),
+            (3, 3, AddTaskStep::Priority),
+            (55, 3, AddTaskStep::Labels),
+            (3, 5, AddTaskStep::Title),
+            (3, 8, AddTaskStep::Description),
+        ] {
+            app.dispatch_mouse(task_row_click(column, row), (80, 24).into())
+                .await
+                .unwrap();
+            assert!(matches!(
+                &app.overlay,
+                Some(OverlayState::AddTask(state)) if state.focus == expected
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn add_task_ctrl_s_creates_from_every_field() {
+        for field in AddTaskStep::ALL {
+            let mut app = test_app().await;
+            app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+            type_chars(&mut app, "Write docs").await;
+            let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+                panic!("expected composer");
+            };
+            state.focus = field;
+            app.handle_overlay_key(ctrl_s()).await.unwrap();
+            assert!(app.overlay.is_none(), "failed from {field:?}");
+            let selected = app.widgets.table.selected().unwrap();
+            assert_eq!(app.store.tasks[selected].task.title, "Write docs");
+        }
     }
 
     #[tokio::test]
@@ -5662,8 +5734,12 @@ mod overlay_submit_routes {
 
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::Picker(state))
-                if state.route == OverlayRoute::AddTaskTitleProject
+            Some(OverlayState::AddTask(state))
+                if matches!(
+                    &state.mode,
+                    crate::tui::overlay::AddTaskMode::Picker { state: picker, .. }
+                        if picker.route == OverlayRoute::AddTaskTitleProject
+                )
         ));
     }
 

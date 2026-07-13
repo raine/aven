@@ -20,14 +20,15 @@ pub(crate) use layout::{
 };
 pub(crate) use picker::picker_viewport_start;
 pub(crate) use state::{
-    AddTaskState, CommandState, ConfirmSubmitRoute, HeaderMenuAction, HeaderMenuItem,
+    AddTaskMode, AddTaskState, CommandState, ConfirmSubmitRoute, HeaderMenuAction, HeaderMenuItem,
     HeaderMenuKind, HeaderMenuState, MultilineInputState, MultilineSubmitRoute, OrderMenuState,
     OverlayOutcome, OverlayRoute, OverlayState, OverlaySubmit, OverlaySubmitKind, PickerItem,
-    PickerMode, PickerSubmitRoute, SearchPurpose, SearchResultItem, SearchState, TextPanelState,
-    TextSubmitRoute,
+    PickerMode, PickerState, PickerSubmitRoute, SearchPurpose, SearchResultItem, SearchState,
+    TextPanelState, TextSubmitRoute,
 };
 #[cfg(test)]
-pub(crate) use state::{ConfirmState, PickerState, TextInputState};
+pub(crate) use state::{ConfirmState, TextInputState};
+pub(crate) use tag_combobox::tag_combobox_matches;
 pub(crate) use text_input::LineEdit;
 pub(crate) use view::{
     AddTaskView, ConfirmView, HeaderMenuView, MultilineInputView, OrderMenuView, OverlayView,

@@ -6,8 +6,43 @@ pub(crate) const ADD_TASK_LABELS_TITLE: &str = "Add task: labels";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AddTaskStep {
+    Project,
+    Status,
+    Priority,
+    Labels,
     Title,
     Description,
+}
+
+impl AddTaskStep {
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Project,
+        Self::Status,
+        Self::Priority,
+        Self::Labels,
+        Self::Title,
+        Self::Description,
+    ];
+
+    pub(crate) fn next(self, reverse: bool) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|field| *field == self)
+            .unwrap_or(0);
+        let next = if reverse {
+            index.checked_sub(1).unwrap_or(Self::ALL.len() - 1)
+        } else {
+            (index + 1) % Self::ALL.len()
+        };
+        Self::ALL[next]
+    }
+
+    pub(crate) fn is_metadata(self) -> bool {
+        matches!(
+            self,
+            Self::Project | Self::Status | Self::Priority | Self::Labels
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,6 +98,7 @@ pub(crate) struct AddTaskContext {
     pub(crate) labels: Vec<String>,
 }
 
+#[cfg(test)]
 pub(crate) enum AddTaskTitleSubmit {
     Create(TaskDraft),
     ReopenTitle { message: &'static str },
@@ -216,6 +252,7 @@ impl AuthoringState {
         true
     }
 
+    #[cfg(test)]
     pub(crate) fn submit_add_task(&mut self) -> AddTaskTitleSubmit {
         let Some(AuthoringFlow::AddTask(draft)) = self.flow.take() else {
             return AddTaskTitleSubmit::Inactive;

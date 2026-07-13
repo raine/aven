@@ -1,10 +1,11 @@
 use anyhow::Result;
 
+use crate::operations::TaskDraft;
 use crate::tui::app::App;
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::{
-    ConfirmSubmitRoute, MultilineSubmitRoute, OverlayRoute, OverlaySubmit, OverlaySubmitKind,
-    PickerSubmitRoute, TextSubmitRoute,
+    AddTaskMode, AddTaskState, ConfirmSubmitRoute, MultilineSubmitRoute, OverlayRoute,
+    OverlayState, OverlaySubmit, OverlaySubmitKind, PickerSubmitRoute, TextSubmitRoute,
 };
 
 #[cfg(test)]
@@ -20,8 +21,8 @@ pub(crate) fn handles_submit_kind(route: OverlayRoute, kind: OverlaySubmitKind) 
 impl App {
     pub(super) async fn handle_overlay_submit(&mut self, submit: OverlaySubmit) -> Result<()> {
         match submit {
-            OverlaySubmit::AddTask { title, description } => {
-                self.handle_add_task_submit(title, description).await?;
+            OverlaySubmit::AddTask(state) => {
+                self.handle_add_task_submit(*state).await?;
             }
             OverlaySubmit::Picker { route, values } => {
                 self.handle_picker_submit(route, values).await?;
@@ -45,10 +46,43 @@ impl App {
         Ok(())
     }
 
-    async fn handle_add_task_submit(&mut self, title: String, description: String) -> Result<()> {
-        self.authoring
-            .capture_add_task_fields(title, description, AddTaskStep::Title);
-        self.submit_add_task_from_authoring().await
+    async fn handle_add_task_submit(&mut self, mut state: AddTaskState) -> Result<()> {
+        let title = state.title.text.trim();
+        if title.is_empty() {
+            state.focus = AddTaskStep::Title;
+            state.mode = AddTaskMode::Compose;
+            state.title_error = true;
+            self.overlay = Some(OverlayState::AddTask(Box::new(state)));
+            self.set_warning("task title is required");
+            return Ok(());
+        }
+
+        for label in state.labels.clone() {
+            let label = crate::labels::normalize_label(&label);
+            if !self.store.labels.contains(&label)
+                && let Err(error) = self.store.create_label(label).await
+            {
+                state.mode = AddTaskMode::Compose;
+                self.overlay = Some(OverlayState::AddTask(Box::new(state)));
+                return Err(error);
+            }
+        }
+
+        let draft = TaskDraft {
+            title: title.to_string(),
+            description: state.description.lines.join("\n").trim().to_string(),
+            project: state.selected_project.clone(),
+            status: state.status.clone(),
+            priority: state.priority.clone(),
+            labels: state.labels.clone(),
+            is_epic: false,
+        };
+        if let Err(error) = self.submit_created_task(draft).await {
+            self.overlay = Some(OverlayState::AddTask(Box::new(state)));
+            return Err(error);
+        }
+        self.authoring.clear();
+        Ok(())
     }
 
     async fn handle_text_submit(&mut self, route: OverlayRoute, value: String) -> Result<()> {

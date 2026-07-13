@@ -78,19 +78,21 @@ bind C-a display-popup -E -d '#{pane_current_path}' -w 80% -h 80% 'aven tui'
 
 ## Capture tasks
 
-Press `a` to open the task composer. The composer captures title, description, project, status, and priority.
+Press `a` to open the task composer. Project, status, priority, labels, title, and description stay visible as one form. The active field has a `▶` marker, so focus remains clear without relying on color.
 
 ![aven TUI add task popup with title and description fields](/add-task.webp)
 
 <p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The composer captures structured fields without leaving the keyboard workflow.</p>
 
-Use `Tab` to move into the description field. Use `Ctrl-t` for status, `Ctrl-p` for project, and `Ctrl-r` for priority. Press `Enter` to create the task, or `Esc` to cancel.
+Use `Tab` and `Shift-Tab` to move through every field. Press `Enter` on project, status, priority, or labels to open its control. `Enter` creates from the title field and inserts a newline in the description. `Ctrl-s` creates from any field. Press `F1` for complete composer help.
 
-`Ctrl-x Ctrl-e` opens an external editor from text entry flows that support it.
+`Esc` closes an empty composer. A draft with entered or changed values asks for confirmation before it is discarded. Opening metadata controls and help preserves the title and description cursors and viewport.
+
+`Ctrl-x Ctrl-e` opens an external editor while the description is focused. Optional accelerators such as `Ctrl-p`, `Ctrl-t`, `Ctrl-r`, and `Ctrl-l` remain available, but all metadata is accessible with Tab and Enter.
 
 ### LLM task intake
 
-Use `Ctrl-n` in the composer when you have rough input, pasted notes, or dictated rambling. The configured LLM turns that input into a sensible task title and description while preserving the useful context.
+Use `Ctrl-n` in the composer to **Create with AI** when you have rough input, pasted notes, or dictated rambling. The configured LLM turns the visible title and description into a sensible task while preserving useful context and the selected project.
 
 The LLM command itself is configured through `agent.task_intake`; see [Configuration](/configuration/#agent-task-intake).
 

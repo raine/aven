@@ -4,12 +4,12 @@ use crate::labels::normalize_label;
 use crate::operations::TaskDraft;
 use crate::tui::app::{App, NaturalRetry, Notification, PendingTaskIntake, ReadyTaskIntake};
 use crate::tui::authoring::{
-    ADD_NOTE_TITLE, ADD_TASK_LABELS_TITLE, ADD_TASK_TITLE_PROJECT_TITLE, AddNoteSubmit,
-    AddTaskStep, AddTaskTitleSubmit,
+    ADD_NOTE_TITLE, ADD_TASK_LABELS_TITLE, ADD_TASK_TITLE_PROJECT_TITLE, AddNoteSubmit, AddTaskStep,
 };
 use crate::tui::natural_add_runtime::{spawn_add_task_only_natural, task_intake_log_path};
 use crate::tui::overlay::{
-    AddTaskState, LineEdit, MultilineInputState, OverlayRoute, OverlayState,
+    AddTaskMode, AddTaskState, LineEdit, MultilineInputState, OverlayRoute, OverlayState,
+    PickerState,
 };
 use crate::tui::platform::edit_text_externally;
 use crate::tui::store::TaskScope;
@@ -42,7 +42,10 @@ impl App {
         let Some(context) = self.authoring.add_task_context() else {
             return;
         };
-        self.overlay = Some(OverlayState::AddTask(AddTaskState {
+        let selected_project = self.authoring.selected_add_task_project().flatten();
+        let inferred_project = (selected_project.is_none() && context.project != "no project")
+            .then(|| context.project.clone());
+        self.overlay = Some(OverlayState::AddTask(Box::new(AddTaskState {
             title: LineEdit::new(context.title),
             description: MultilineInputState::from_value(
                 OverlayRoute::AddTaskDescription,
@@ -52,10 +55,15 @@ impl App {
             ),
             focus: context.step,
             project: context.project,
+            inferred_project,
+            selected_project: selected_project.clone(),
+            initial_project: selected_project,
             status: context.status,
             priority: context.priority,
             labels: context.labels,
-        }));
+            mode: crate::tui::overlay::AddTaskMode::Compose,
+            title_error: false,
+        })));
     }
 
     pub(super) fn begin_add_task_step(&mut self) {
@@ -84,11 +92,20 @@ impl App {
     }
 
     pub(super) fn capture_add_task_state(&mut self, state: &AddTaskState) -> bool {
-        self.authoring.capture_add_task_fields(
+        let captured = self.authoring.capture_add_task_fields(
             state.title.text.clone(),
             state.description.lines.join("\n"),
             state.focus,
-        )
+        );
+        if captured {
+            self.authoring
+                .apply_add_task_project(state.selected_project.clone().into_iter().collect());
+            self.authoring.apply_add_task_status(&state.status);
+            self.authoring
+                .apply_add_task_priority_value(&state.priority);
+            self.authoring.apply_add_task_labels(state.labels.clone());
+        }
+        captured
     }
 
     pub(super) fn set_add_task_status(&mut self, status: &str) {
@@ -113,18 +130,53 @@ impl App {
         }
     }
 
-    pub(super) async fn submit_add_task_from_authoring(&mut self) -> Result<()> {
-        match self.authoring.submit_add_task() {
-            AddTaskTitleSubmit::ReopenTitle { message } => {
-                self.set_warning(message);
-                self.begin_add_task_title();
+    pub(super) fn open_focused_add_task_control(&mut self) {
+        let Some(OverlayState::AddTask(mut state)) = self.overlay.take() else {
+            return;
+        };
+        state.mode = match state.focus {
+            AddTaskStep::Project => AddTaskMode::Picker {
+                field: state.focus,
+                state: PickerState::new(
+                    OverlayRoute::AddTaskTitleProject,
+                    ADD_TASK_TITLE_PROJECT_TITLE,
+                    self.store
+                        .project_picker_items(state.selected_project.as_deref()),
+                    false,
+                ),
+            },
+            AddTaskStep::Status => AddTaskMode::Picker {
+                field: state.focus,
+                state: PickerState::new(
+                    OverlayRoute::EditStatus,
+                    "Add task: status",
+                    self.store.status_picker_items(Some(&state.status)),
+                    false,
+                ),
+            },
+            AddTaskStep::Priority => AddTaskMode::Picker {
+                field: state.focus,
+                state: PickerState::new(
+                    OverlayRoute::AddTaskTitlePriority,
+                    "Add task: priority",
+                    self.store.priority_picker_items(&state.priority),
+                    false,
+                ),
+            },
+            AddTaskStep::Labels => {
+                let OverlayState::TagCombobox(labels) = OverlayState::tag_combobox(
+                    OverlayRoute::AddTaskTitleLabels,
+                    ADD_TASK_LABELS_TITLE,
+                    self.store.labels.clone(),
+                    state.labels.clone(),
+                ) else {
+                    unreachable!();
+                };
+                AddTaskMode::Labels(labels)
             }
-            AddTaskTitleSubmit::Create(draft) => {
-                self.submit_created_task(draft).await?;
-            }
-            AddTaskTitleSubmit::Inactive => {}
-        }
-        Ok(())
+            _ => AddTaskMode::Compose,
+        };
+        self.overlay = Some(OverlayState::AddTask(state));
     }
 
     pub(super) fn begin_add_note(&mut self) {
@@ -150,19 +202,6 @@ impl App {
             ADD_NOTE_TITLE,
             "note body:",
         ));
-    }
-
-    pub(super) fn begin_add_task_title_project(&mut self) {
-        let Some(selected) = self.authoring.selected_add_task_project() else {
-            return;
-        };
-        let items = self.store.project_picker_items(selected.as_deref());
-        self.open_picker_overlay(
-            OverlayRoute::AddTaskTitleProject,
-            ADD_TASK_TITLE_PROJECT_TITLE,
-            items,
-            false,
-        );
     }
 
     pub(super) fn begin_add_task_title_labels(&mut self) {
@@ -363,7 +402,7 @@ impl App {
             })
     }
 
-    async fn submit_created_task(&mut self, draft: TaskDraft) -> Result<()> {
+    pub(super) async fn submit_created_task(&mut self, draft: TaskDraft) -> Result<()> {
         let current_selected = self.widgets.table.selected();
         let (message, selected) = self.store.create_task(draft, current_selected).await?;
         self.widgets.table.select(selected);

@@ -21,7 +21,7 @@ pub(crate) enum OverlayState {
     Command {
         state: CommandState,
     },
-    AddTask(AddTaskState),
+    AddTask(Box<AddTaskState>),
     TextInput(TextInputState),
     MultilineInput(MultilineInputState),
     Picker(PickerState),
@@ -703,14 +703,52 @@ impl OverlayRoute {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AddTaskMode {
+    Compose,
+    Picker {
+        field: AddTaskStep,
+        state: PickerState,
+    },
+    Labels(TagComboboxState),
+    Help {
+        scroll: u16,
+    },
+    ConfirmDiscard,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AddTaskState {
     pub(crate) title: LineEdit,
     pub(crate) description: MultilineInputState,
     pub(crate) focus: AddTaskStep,
     pub(crate) project: String,
+    pub(crate) inferred_project: Option<String>,
+    pub(crate) selected_project: Option<String>,
+    pub(crate) initial_project: Option<String>,
     pub(crate) status: String,
     pub(crate) priority: String,
     pub(crate) labels: Vec<String>,
+    pub(crate) mode: AddTaskMode,
+    pub(crate) title_error: bool,
+}
+
+impl AddTaskState {
+    pub(crate) fn is_populated(&self) -> bool {
+        !self.title.text.trim().is_empty()
+            || self
+                .description
+                .lines
+                .iter()
+                .any(|line| !line.trim().is_empty())
+            || self.selected_project != self.initial_project
+            || self.status != "inbox"
+            || self.priority != "none"
+            || !self.labels.is_empty()
+    }
+
+    pub(crate) fn focus_next(&mut self, reverse: bool) {
+        self.focus = self.focus.next(reverse);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -902,10 +940,7 @@ pub(crate) struct ConfirmState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlaySubmit {
-    AddTask {
-        title: String,
-        description: String,
-    },
+    AddTask(Box<AddTaskState>),
     Text {
         route: OverlayRoute,
         value: String,
