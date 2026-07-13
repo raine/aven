@@ -50,8 +50,10 @@ pub(crate) fn handle_tag_combobox_key(
         KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             tag_combobox_submit(state)
         }
+        KeyCode::Enter if has_pending_label(&state) => activate_highlighted(&mut state),
         KeyCode::Enter => tag_combobox_submit(state),
-        KeyCode::Char(' ') if state.input.as_str().is_empty() => {
+        KeyCode::Char(' ') if has_pending_label(&state) => activate_highlighted(&mut state),
+        KeyCode::Char(' ') => {
             toggle_highlighted_label(&mut state, false);
             OverlayOutcome::None(OverlayState::TagCombobox(state))
         }
@@ -91,6 +93,10 @@ pub(crate) fn handle_tag_combobox_key(
             OverlayOutcome::None(OverlayState::TagCombobox(state))
         }
     }
+}
+
+fn has_pending_label(state: &TagComboboxState) -> bool {
+    !normalize_label(state.input.as_str()).is_empty()
 }
 
 fn activate_highlighted(state: &mut TagComboboxState) -> OverlayOutcome {
@@ -215,6 +221,56 @@ mod tests {
             selected: Vec::new(),
             highlighted: 0,
         }
+    }
+
+    #[test]
+    fn enter_accepts_pending_highlighted_label() {
+        let mut state = tag_combobox_state();
+        state.route = OverlayRoute::AddTaskTitleLabels;
+        state.input = LineEdit::new("bu".to_string());
+
+        let OverlayOutcome::None(OverlayState::TagCombobox(state)) =
+            handle_tag_combobox_key(state, key(KeyCode::Enter))
+        else {
+            panic!("expected label combobox state");
+        };
+
+        assert_eq!(state.selected, vec!["bug".to_string()]);
+        assert_eq!(state.input.as_str(), "");
+    }
+
+    #[test]
+    fn space_accepts_pending_label() {
+        let mut state = tag_combobox_state();
+        state.route = OverlayRoute::AddTaskTitleLabels;
+        state.input = LineEdit::new("bug".to_string());
+
+        let OverlayOutcome::None(OverlayState::TagCombobox(state)) =
+            handle_tag_combobox_key(state, key(KeyCode::Char(' ')))
+        else {
+            panic!("expected label combobox state");
+        };
+
+        assert_eq!(state.selected, vec!["bug".to_string()]);
+        assert_eq!(state.input.as_str(), "");
+    }
+
+    #[test]
+    fn enter_without_pending_label_submits_selected_labels() {
+        let mut state = tag_combobox_state();
+        state.route = OverlayRoute::AddTaskTitleLabels;
+        state.selected.push("feature".to_string());
+
+        let outcome = handle_tag_combobox_key(state, key(KeyCode::Enter));
+
+        assert!(matches!(
+            outcome,
+            OverlayOutcome::Submitted(OverlaySubmit::Picker {
+                route: OverlayRoute::AddTaskTitleLabels,
+                values,
+                ..
+            }) if values == vec!["feature".to_string()]
+        ));
     }
 
     #[test]

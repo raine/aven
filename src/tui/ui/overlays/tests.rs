@@ -1128,6 +1128,9 @@ mod picker_overlays {
         assert!(rendered.contains("feature"));
         assert!(rendered.contains("bu"));
         assert!(rendered.contains("bug"));
+        assert!(rendered.contains("Tab/Space add"));
+        assert!(rendered.contains("Enter add/save"));
+        assert!(rendered.contains("^S save"));
     }
 
     #[test]

@@ -2790,8 +2790,15 @@ mod authoring {
                 if state.route == OverlayRoute::AddTaskTitleLabels
         ));
         type_chars(&mut app, "feature").await;
-        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
-        app.handle_overlay_key(ctrl_s()).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TagCombobox(state))
+                if state.input.as_str().is_empty()
+                    && state.selected == vec!["feature".to_string()]
+        ));
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
         assert!(matches!(
             &app.overlay,

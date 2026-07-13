@@ -30,10 +30,10 @@ fn tag_combobox_lines(state: &TagComboboxView) -> Vec<Line<'static>> {
     lines.extend(option_lines(state));
     lines.push(Line::from(""));
     lines.push(dialog_hint_line(&[
-        ("type", "search"),
-        ("Tab", "add"),
+        ("Tab/Space", "add"),
+        ("Enter", "add/save"),
+        ("^S", "save"),
         ("BS", "remove"),
-        ("Enter", "save"),
         ("Esc", "clear"),
     ]));
     lines
