@@ -567,6 +567,29 @@ mod add_task_overlay {
     }
 
     #[test]
+    fn add_task_wide_layout_bounds_long_metadata_values() {
+        let rendered = render_overlay_view_at(
+            OverlayView::AddTask(AddTaskView {
+                project: "telegram-tori-bot-with-a-long-name".to_string(),
+                status: "canceled".to_string(),
+                labels: vec!["feature".to_string()],
+                ..add_task_view()
+            }),
+            160,
+            30,
+        );
+
+        assert!(
+            rendered.contains("Project: ● tele"),
+            "missing bounded project value:\n{rendered}"
+        );
+        assert!(rendered.contains('…'));
+        assert!(rendered.contains("^T Status:"));
+        assert!(rendered.contains("^R Priority:"));
+        assert!(rendered.contains("^L Labels: feature"));
+    }
+
+    #[test]
     fn add_task_validation_and_help_are_visible() {
         let validation = render_overlay_view(OverlayView::AddTask(AddTaskView {
             title_error: true,

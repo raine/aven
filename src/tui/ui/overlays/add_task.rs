@@ -3,6 +3,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Wrap};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::input::{clipped_input_line, cursor_cell};
@@ -216,15 +217,18 @@ fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>
         .map(|(field, label, value)| metadata_field(field, label, &value, state.focus))
         .collect::<Vec<_>>();
     if width >= 96 {
-        return vec![join_lines(owned, "   ")];
+        return vec![metadata_row(owned, width as usize)];
     }
     if width >= 60 {
         return vec![
-            join_lines(owned[..2].to_vec(), "   "),
-            join_lines(owned[2..].to_vec(), "   "),
+            metadata_row(owned[..2].to_vec(), width as usize),
+            metadata_row(owned[2..].to_vec(), width as usize),
         ];
     }
     owned
+        .into_iter()
+        .map(|line| fit_line_to_width(line, width as usize))
+        .collect()
 }
 
 pub(in crate::tui::ui) fn metadata_field(
@@ -283,6 +287,60 @@ fn metadata_value_spans(field: AddTaskStep, value: &str) -> Vec<Span<'static>> {
         }
         _ => vec![Span::raw(value.to_string())],
     }
+}
+
+const METADATA_SEPARATOR: &str = "   ";
+
+fn metadata_row(lines: Vec<Line<'static>>, width: usize) -> Line<'static> {
+    let separator_width = METADATA_SEPARATOR.width();
+    let fields_width = width.saturating_sub(separator_width * lines.len().saturating_sub(1));
+    let base_width = fields_width / lines.len().max(1);
+    let remainder = fields_width % lines.len().max(1);
+    let fitted = lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, line)| fit_line_to_width(line, base_width + usize::from(index < remainder)))
+        .collect();
+    join_lines(fitted, METADATA_SEPARATOR)
+}
+
+fn fit_line_to_width(line: Line<'static>, width: usize) -> Line<'static> {
+    if line.width() <= width {
+        let padding = width.saturating_sub(line.width());
+        let mut spans = line.spans;
+        spans.push(Span::raw(" ".repeat(padding)));
+        return Line::from(spans);
+    }
+    if width == 0 {
+        return Line::default();
+    }
+
+    let content_width = width.saturating_sub(1);
+    let mut remaining = content_width;
+    let mut spans = Vec::new();
+    let mut ellipsis_style = Style::new().fg(FG_DIM);
+    for span in line.spans {
+        ellipsis_style = span.style;
+        let mut content = String::new();
+        let mut truncated = false;
+        for ch in span.content.chars() {
+            let char_width = ch.width().unwrap_or(0);
+            if char_width > remaining {
+                truncated = true;
+                break;
+            }
+            content.push(ch);
+            remaining = remaining.saturating_sub(char_width);
+        }
+        if !content.is_empty() {
+            spans.push(Span::styled(content, span.style));
+        }
+        if truncated || remaining == 0 {
+            break;
+        }
+    }
+    spans.push(Span::styled("…", ellipsis_style));
+    Line::from(spans)
 }
 
 fn join_lines(lines: Vec<Line<'static>>, separator: &'static str) -> Line<'static> {
