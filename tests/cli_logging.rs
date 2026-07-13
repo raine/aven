@@ -13,6 +13,39 @@ fn assert_log_event_contains(logs: &str, marker: &str, fields: &[&str]) {
 }
 
 #[test]
+fn server_logging_does_not_require_writable_state() {
+    let env = TestEnv::new();
+    let unusable_state = env.path("state-file");
+    std::fs::write(&unusable_state, "not a directory").expect("write state file");
+
+    let server = TestServer::start_configured_with_env(
+        &env,
+        "server.sqlite",
+        [("XDG_STATE_HOME", unusable_state.to_str().unwrap())],
+    );
+
+    contains_all(&server.output(), &["sync server starting", "bind="]);
+}
+
+#[test]
+fn daemon_logging_does_not_require_writable_state() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let db = env.db("client.sqlite");
+    let wake_addr = env.free_loopback_addr();
+    let unusable_state = env.path("state-file");
+    std::fs::write(&unusable_state, "not a directory").expect("write state file");
+    env.write_daemon_config(&db, &server, &wake_addr, 3600);
+
+    let daemon = TestProcess::start_daemon_with_env(
+        &env,
+        [("XDG_STATE_HOME", unusable_state.to_str().unwrap())],
+    );
+
+    contains_all(&daemon.output(), &["daemon starting", "daemon db="]);
+}
+
+#[test]
 fn logging_writes_to_default_state_file_without_affecting_output() {
     let env = TestEnv::new();
     let db = env.db("tasks.sqlite");
@@ -75,7 +108,6 @@ fn file_logging_records_local_action_without_user_content() {
 #[test]
 fn sync_logging_does_not_print_auth_token() {
     let server_env = TestEnv::new();
-    let server_log = server_env.path("server.log");
     server_env.write_config(
         r#"
 sync:
@@ -85,10 +117,7 @@ sync:
     let server = TestServer::start_configured_with_env(
         &server_env,
         "server.sqlite",
-        [
-            ("AVEN_LOG", "aven=debug"),
-            ("AVEN_LOG_FILE", server_log.to_str().unwrap()),
-        ],
+        [("AVEN_LOG", "aven=debug")],
     );
 
     let client_env = TestEnv::new();
@@ -128,7 +157,7 @@ sync:
 
     let logs = format!(
         "{}\n{}",
-        std::fs::read_to_string(server_log).expect("read server logs"),
+        server.output(),
         std::fs::read_to_string(client_log).expect("read client logs"),
     );
     contains_all(&logs, &["auth_enabled=true", "sync request", "sync client"]);
@@ -180,16 +209,8 @@ fn daemon_sync_logging_redacts_task_content() {
     let server = TestServer::start(&env);
     let db = env.db("client.sqlite");
     let wake_addr = env.free_loopback_addr();
-    let log = env.path("daemon.log");
     env.write_daemon_config(&db, &server, &wake_addr, 3600);
-
-    let daemon = TestProcess::start_daemon_with_env(
-        &env,
-        [
-            ("AVEN_LOG", "aven=debug"),
-            ("AVEN_LOG_FILE", log.to_str().unwrap()),
-        ],
-    );
+    let daemon = TestProcess::start_daemon_with_env(&env, [("AVEN_LOG", "aven=debug")]);
     daemon.wait_for_log("daemon-synced", Duration::from_secs(5));
 
     let mark = daemon.log_mark();
@@ -213,7 +234,7 @@ fn daemon_sync_logging_redacts_task_content() {
     ok(env.aven_config(["label", "delete", "secret-daemon-label"]));
     daemon.wait_for_log_after(after_delete, "daemon-synced", Duration::from_secs(5));
 
-    let logs = std::fs::read_to_string(log).expect("read daemon logs");
+    let logs = daemon.output();
     contains_all(
         &logs,
         &[

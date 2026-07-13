@@ -245,20 +245,13 @@ fn daemon_syncs_large_backlog_across_budgeted_rounds() {
     let client_a = env.db("client-a.sqlite");
     let client_b = env.db("client-b.sqlite");
     let wake_addr = env.free_loopback_addr();
-    let daemon_log = env.path("daemon-client-reuse.log");
     env.write_daemon_config(&client_a, &server, &wake_addr, 3600);
 
     ok(env.aven_config(["list", "--all"]));
     let task_count = MAX_PUSH_BATCH * DAEMON_SYNC_PAGE_BUDGET + 1;
     seed_budgeted_local_backlog(&client_a, task_count);
 
-    let daemon = TestProcess::start_daemon_with_env(
-        &env,
-        [
-            ("AVEN_LOG", "aven=debug"),
-            ("AVEN_LOG_FILE", daemon_log.to_str().unwrap()),
-        ],
-    );
+    let daemon = TestProcess::start_daemon_with_env(&env, [("AVEN_LOG", "aven=debug")]);
     let first_pushed = MAX_PUSH_BATCH * DAEMON_SYNC_PAGE_BUDGET;
     let incomplete = format!(
         "daemon-synced pushed={first_pushed} pulled=0 cursor={first_pushed} complete=false pages={DAEMON_SYNC_PAGE_BUDGET}"
@@ -294,8 +287,7 @@ fn daemon_syncs_large_backlog_across_budgeted_rounds() {
     );
 
     // Assert the daemon reused the same HTTP client across wake rounds
-    let logs = std::fs::read_to_string(&daemon_log).expect("read daemon log for client reuse");
-    let client_ids: Vec<&str> = logs
+    let client_ids: Vec<&str> = output
         .lines()
         .filter(|line| line.contains("sync client starting") && line.contains("http_client_id="))
         .filter_map(|line| line.split("http_client_id=").nth(1))

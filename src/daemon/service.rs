@@ -253,7 +253,6 @@ struct ServiceSpec {
     log_dir: PathBuf,
     stdout_path: PathBuf,
     stderr_path: PathBuf,
-    log_file: PathBuf,
     plist_path: PathBuf,
     domain: String,
     service_target: String,
@@ -290,7 +289,6 @@ impl ServiceSpec {
             path_env: std::env::var("PATH").unwrap_or_else(|_| DEFAULT_PATH.to_string()),
             stdout_path: log_dir.join("daemon.out.log"),
             stderr_path: log_dir.join("daemon.err.log"),
-            log_file: log_dir.join("daemon.log"),
             log_dir,
             plist_path: launch_agents_dir.join(format!("{label}.plist")),
             domain,
@@ -424,10 +422,7 @@ fn write_plist(spec: &ServiceSpec, plist: &str) -> Result<()> {
 
 #[cfg(target_os = "macos")]
 fn render_plist(spec: &ServiceSpec) -> String {
-    let mut env = vec![
-        ("PATH", spec.path_env.as_str()),
-        ("AVEN_LOG_FILE", path_str(&spec.log_file)),
-    ];
+    let mut env = vec![("PATH", spec.path_env.as_str())];
     if let Some(path) = &spec.config_dir {
         env.push(("AVEN_CONFIG_DIR", path_str(path)));
     }
@@ -536,7 +531,6 @@ mod tests {
             log_dir: PathBuf::from("/tmp/logs"),
             stdout_path: PathBuf::from("/tmp/logs/out.log"),
             stderr_path: PathBuf::from("/tmp/logs/err.log"),
-            log_file: PathBuf::from("/tmp/logs/daemon.log"),
             plist_path: PathBuf::from("/tmp/com.raine.aven.daemon.plist"),
             domain: "gui/501".to_string(),
             service_target: "gui/501/com.raine.aven.daemon".to_string(),
@@ -548,7 +542,7 @@ mod tests {
         assert!(plist.contains("<string>/tmp/db.sqlite</string>"));
         assert!(plist.contains("<string>daemon</string>"));
         assert!(plist.contains("<key>AVEN_CONFIG_DIR</key>"));
-        assert!(plist.contains("<key>AVEN_LOG_FILE</key>"));
+        assert!(plist.contains("<key>StandardErrorPath</key>"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
         assert!(plist.contains("<key>KeepAlive</key>"));
         assert!(plist.contains("<true/>"));
@@ -636,7 +630,6 @@ mod tests {
             log_dir: dir.join("logs"),
             stdout_path: dir.join("logs/out.log"),
             stderr_path: dir.join("logs/err.log"),
-            log_file: dir.join("logs/daemon.log"),
             plist_path: dir.join("LaunchAgents/com.raine.aven.daemon.plist"),
             domain: "gui/501".to_string(),
             service_target: "gui/501/com.raine.aven.daemon".to_string(),

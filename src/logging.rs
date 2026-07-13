@@ -18,15 +18,25 @@ pub(crate) enum LogMode {
     Server,
 }
 
-pub(crate) fn init(_mode: LogMode) -> Result<()> {
+pub(crate) fn init(mode: LogMode) -> Result<()> {
     let filter = std::env::var("AVEN_LOG").unwrap_or_else(|_| "aven=info".to_string());
     let filter = EnvFilter::try_new(filter).context("invalid AVEN_LOG filter")?;
-    let path = std::env::var_os("AVEN_LOG_FILE")
-        .map(PathBuf::from)
-        .unwrap_or(default_log_path()?);
-    init_file(&path, filter)?;
+    if mode.uses_stderr() {
+        init_stderr(filter)?;
+    } else {
+        let path = std::env::var_os("AVEN_LOG_FILE")
+            .map(PathBuf::from)
+            .unwrap_or(default_log_path()?);
+        init_file(&path, filter)?;
+    }
     install_panic_hook();
     Ok(())
+}
+
+impl LogMode {
+    fn uses_stderr(self) -> bool {
+        matches!(self, Self::Daemon | Self::Server)
+    }
 }
 
 fn default_log_path() -> Result<PathBuf> {
@@ -37,6 +47,17 @@ fn default_log_path() -> Result<PathBuf> {
         .context("could not find state directory")?;
     dir.push(APP_DIR);
     Ok(dir.join(LOG_FILE))
+}
+
+fn init_stderr(filter: EnvFilter) -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_ansi(false)
+        .with_target(true)
+        .compact()
+        .with_writer(std::io::stderr)
+        .try_init()
+        .map_err(|err| anyhow::anyhow!("initialize tracing subscriber: {err}"))
 }
 
 fn init_file(path: &Path, filter: EnvFilter) -> Result<()> {
@@ -102,7 +123,15 @@ fn panic_message(info: &PanicHookInfo<'_>) -> String {
 mod tests {
     use std::panic::Location;
 
-    use super::format_panic_location;
+    use super::{LogMode, format_panic_location};
+
+    #[test]
+    fn long_running_modes_use_stderr() {
+        assert!(LogMode::Server.uses_stderr());
+        assert!(LogMode::Daemon.uses_stderr());
+        assert!(!LogMode::Cli.uses_stderr());
+        assert!(!LogMode::Tui.uses_stderr());
+    }
 
     #[test]
     fn formats_panic_location_with_line_and_column() {
