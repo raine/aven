@@ -22,8 +22,8 @@ use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolu
 use crate::tui::store::TaskView;
 use crate::tui::ui::{
     database_stats_scroll_cap, detail_child_task_at_position, detail_help_scroll_cap,
-    help_scroll_cap, prefix_hint_scroll_cap, recent_action_at_position, task_at_position,
-    task_status_at_position, text_panel_scroll_cap,
+    detail_section_scroll_target, help_scroll_cap, prefix_hint_scroll_cap,
+    recent_action_at_position, task_at_position, task_status_at_position, text_panel_scroll_cap,
 };
 
 impl App {
@@ -709,6 +709,28 @@ impl App {
         terminal_size: Size,
     ) -> Result<()> {
         if let OverlayState::Detail { scroll } = overlay {
+            let section_direction = match (key.code, key.modifiers) {
+                (KeyCode::Tab, KeyModifiers::NONE) => Some(false),
+                (KeyCode::BackTab, KeyModifiers::NONE | KeyModifiers::SHIFT)
+                | (KeyCode::Tab, KeyModifiers::SHIFT) => Some(true),
+                _ => None,
+            };
+            if let (Some(reverse), Some(task)) = (
+                section_direction,
+                self.store.selected_task(self.widgets.table.selected()),
+            ) {
+                self.overlay = Some(OverlayState::Detail {
+                    scroll: detail_section_scroll_target(
+                        task,
+                        scroll,
+                        terminal_size.width,
+                        terminal_size.height,
+                        reverse,
+                    ),
+                });
+                return Ok(());
+            }
+
             if let Some(outcome) = self.handle_detail_shortcut(key, scroll).await? {
                 self.overlay = outcome;
                 return Ok(());

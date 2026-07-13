@@ -3532,6 +3532,79 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn detail_tab_jumps_to_notes_below_viewport() {
+        let mut app = test_app().await;
+        let mut draft = test_task_draft("Hidden notes target");
+        draft.description = (0..40)
+            .map(|index| format!("line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let selected = create_and_select_task(&mut app, draft).await;
+        let expected = crate::tui::ui::detail_section_scroll_target(
+            &app.store.tasks[selected],
+            0,
+            80,
+            24,
+            false,
+        );
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll }) if scroll == expected
+        ));
+        assert_eq!(app.focus, Focus::Tasks);
+
+        app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+
+        app.dispatch_key(key(KeyCode::BackTab), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll }) if scroll == expected
+        ));
+    }
+
+    #[tokio::test]
+    async fn detail_tab_remains_unchanged_when_notes_are_visible() {
+        let mut app = test_app().await;
+        let selected =
+            create_and_select_task(&mut app, test_task_draft("Visible notes target")).await;
+        assert_eq!(
+            crate::tui::ui::detail_section_scroll_target(
+                &app.store.tasks[selected],
+                0,
+                80,
+                24,
+                false,
+            ),
+            0
+        );
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert_eq!(app.focus, Focus::Tasks);
+    }
+
+    #[tokio::test]
     async fn detail_scroll_keys_update_detail_offset() {
         let mut app = test_app().await;
         let mut draft = test_task_draft("Scroll target");

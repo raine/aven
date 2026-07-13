@@ -31,6 +31,11 @@ const DETAIL_HELP_TOPICS: &[HelpTopic] = &[
         section: "General",
     },
     HelpTopic {
+        keys: "Tab/Shift+Tab",
+        description: "jump to next or previous section",
+        section: "Task detail",
+    },
+    HelpTopic {
         keys: "C-d C-u",
         description: "scroll one page",
         section: "Task detail",
@@ -174,7 +179,7 @@ fn render_scrollable_help_lines(
 }
 
 pub(super) fn render_detail_help(frame: &mut Frame, scroll: u16) {
-    let mut dialog = Dialog::new("Task detail shortcuts", 72, 18);
+    let mut dialog = Dialog::new("Task detail shortcuts", 72, 19);
     let visible_rows = dialog.area(frame).height.saturating_sub(2);
     if let Some(title) = detail_help_scroll_title(scroll, visible_rows) {
         dialog = dialog.right_title(Line::from(Span::styled(title, Style::new().fg(FG_MUTED))));
@@ -736,6 +741,7 @@ mod tests {
         let rendered = render_detail_help_overlay(0);
         assert!(rendered.contains("Task detail shortcuts"));
         assert!(rendered.contains("return to the task list"));
+        assert!(rendered.contains("jump to next or previous section"));
         assert!(rendered.contains("scroll one page"));
         assert!(rendered.contains("select previous or next task"));
         assert!(rendered.contains("edit selected task priority"));

@@ -144,6 +144,45 @@ pub(crate) fn detail_scroll_cap(
     ) as u16
 }
 
+pub(crate) fn detail_section_scroll_target(
+    item: &TaskListItem,
+    scroll: u16,
+    terminal_width: u16,
+    terminal_height: u16,
+    reverse: bool,
+) -> u16 {
+    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    let model = build_detail_content_model(item, layout.content_area, scroll, None, None);
+    let sticky_height = model
+        .sticky_lines
+        .len()
+        .min(layout.content_area.height as usize);
+    let visible = (layout.content_area.height as usize).saturating_sub(sticky_height);
+    let scroll_cap = model.content_height.saturating_sub(visible);
+    let mut targets = detail_section_body_indices(item, layout.content_area.width as usize)
+        .into_iter()
+        .map(|index| index.min(scroll_cap) as u16)
+        .collect::<Vec<_>>();
+    targets.dedup();
+
+    if reverse {
+        targets
+            .iter()
+            .rev()
+            .find(|&&target| target < model.body_start as u16)
+            .copied()
+            .or_else(|| targets.last().copied())
+            .unwrap_or(0)
+    } else {
+        targets
+            .iter()
+            .find(|&&target| target > model.body_start as u16)
+            .copied()
+            .or_else(|| targets.first().copied())
+            .unwrap_or(0)
+    }
+}
+
 fn detail_content_margin() -> Margin {
     Margin {
         horizontal: 2,
@@ -229,17 +268,29 @@ fn detail_body_lines(
     width: usize,
     hovered_child_task_id: Option<&str>,
 ) -> Vec<Line<'static>> {
-    let mut lines = detail_epic_child_lines(item, width, hovered_child_task_id);
-    if !lines.is_empty() {
-        lines.push(Line::from(""));
+    let mut lines = detail_description_lines(item, width, hovered_child_task_id);
+    lines.extend(detail_note_lines(item, width));
+    lines.extend(detail_dependency_lines(item, width));
+    lines
+}
+
+fn detail_section_body_indices(item: &TaskListItem, width: usize) -> Vec<usize> {
+    let epic_lines = detail_epic_child_lines(item, width, None);
+    let description_index = epic_lines.len() + usize::from(!epic_lines.is_empty());
+    let notes_index = detail_description_lines(item, width, None).len();
+    let mut indices = if item.task.is_epic {
+        vec![0, description_index, notes_index]
+    } else {
+        vec![description_index, notes_index]
+    };
+    if !item.depends_on.is_empty() || !item.blocks.is_empty() {
+        indices.push(notes_index + detail_note_lines(item, width).len() + 1);
     }
-    lines.extend(quoted_block_lines(
-        &description_or_placeholder(&item.task.description),
-        width,
-        Style::new().fg(FG_MUTED),
-    ));
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
+    indices
+}
+
+fn detail_note_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(vec![
         Span::styled(
             "NOTES",
             Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
@@ -247,7 +298,7 @@ fn detail_body_lines(
         Span::styled(" (", Style::new().fg(FG_DIM)),
         Span::styled("n", keycap_style()),
         Span::styled(" add)", Style::new().fg(FG_DIM)),
-    ]));
+    ])];
     if item.notes.is_empty() {
         lines.push(Line::from(Span::styled("none", Style::new().fg(FG_MUTED))));
     } else {
@@ -263,7 +314,24 @@ fn detail_body_lines(
             lines.extend(quoted_block_lines(&note.body, width, Style::new().fg(FG)));
         }
     }
-    lines.extend(detail_dependency_lines(item, width));
+    lines
+}
+
+fn detail_description_lines(
+    item: &TaskListItem,
+    width: usize,
+    hovered_child_task_id: Option<&str>,
+) -> Vec<Line<'static>> {
+    let mut lines = detail_epic_child_lines(item, width, hovered_child_task_id);
+    if !lines.is_empty() {
+        lines.push(Line::from(""));
+    }
+    lines.extend(quoted_block_lines(
+        &description_or_placeholder(&item.task.description),
+        width,
+        Style::new().fg(FG_MUTED),
+    ));
+    lines.push(Line::from(""));
     lines
 }
 
@@ -1210,6 +1278,31 @@ mod tests {
         );
         assert_eq!(detail_metadata_target_at(120, 30, 88, 7), None);
         assert_eq!(detail_metadata_target_at(80, 30, 70, 9), None);
+    }
+
+    #[test]
+    fn detail_section_targets_cycle_through_notes_and_dependencies() {
+        let mut item = detail_test_item();
+        item.task.description = (0..20)
+            .map(|index| format!("line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let layout = detail_content_layout(Rect::new(0, 0, 80, 10));
+        let indices = detail_section_body_indices(&item, layout.content_area.width as usize);
+
+        let notes = detail_section_scroll_target(&item, 0, 80, 10, false);
+        let dependencies = detail_section_scroll_target(&item, notes, 80, 10, false);
+
+        assert_eq!(notes, indices[1] as u16);
+        assert_eq!(dependencies, indices[2] as u16);
+        assert_eq!(
+            detail_section_scroll_target(&item, dependencies, 80, 10, false),
+            0
+        );
+        assert_eq!(
+            detail_section_scroll_target(&item, 0, 80, 10, true),
+            dependencies
+        );
     }
 
     #[test]
