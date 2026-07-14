@@ -139,6 +139,8 @@ Lanes use workflow-specific ordering. Inbox shows the oldest tasks first, Backlo
 
 Customize lane names, order, and grouping by editing this list. Each fixed status must appear exactly once. Aven rejects empty columns, unknown statuses, duplicates, and incomplete mappings so the board cannot hide tasks accidentally.
 
+The first status in each lane is its movement destination. For example, moving a task into the default Closed lane sets its status to `done`. Choosing the lane a task already occupies preserves its existing status, including `canceled` within Closed.
+
 ## Agent task intake
 
 Natural-language task intake can call an external agent command. The configured command receives a prompt through the `{prompt}` argument placeholder.

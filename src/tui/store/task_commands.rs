@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
 
@@ -555,6 +555,58 @@ impl TuiStore {
             format!("status unchanged on {} tasks", targets.len())
         } else {
             format!("set status on {changed} tasks")
+        };
+        Ok(Some(
+            self.refresh_after_task_batch(current_selected_index, &targets, message)
+                .await?,
+        ))
+    }
+
+    pub(crate) async fn update_status_changes_for_tasks(
+        &mut self,
+        current_selected_index: Option<usize>,
+        changes: &[(String, String)],
+    ) -> Result<Option<MutationMessage>> {
+        let status_by_id = changes.iter().cloned().collect::<BTreeMap<_, _>>();
+        let task_ids = status_by_id.keys().cloned().collect::<Vec<_>>();
+        let targets = self.tasks_matching_ids(&task_ids);
+        if targets.is_empty() {
+            return Ok(None);
+        }
+
+        self.activate_workspace();
+        let mut undo_commands = Vec::new();
+        let mut conn = self.pool.acquire().await?;
+        for item in &targets {
+            let Some(status) = status_by_id.get(&item.task.id) else {
+                continue;
+            };
+            let before = item.task.status.as_str().to_string();
+            if before == *status {
+                continue;
+            }
+            set_status(&mut conn, &item.task, status).await?;
+            undo_commands.push(UndoCommand::SetTaskField {
+                task_id: item.task.id.clone(),
+                field: "status".to_string(),
+                before,
+                after: status.clone(),
+            });
+        }
+        drop(conn);
+
+        let changed = undo_commands.len();
+        if changed > 0 {
+            self.record_undo_commands(
+                &format!("move {changed} tasks between columns"),
+                undo_commands,
+            )
+            .await?;
+        }
+        let message = if changed == 0 {
+            format!("column unchanged on {} tasks", targets.len())
+        } else {
+            format!("moved {changed} tasks between columns")
         };
         Ok(Some(
             self.refresh_after_task_batch(current_selected_index, &targets, message)

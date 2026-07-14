@@ -6177,6 +6177,200 @@ mod task_dependencies {
     }
 
     #[tokio::test]
+    async fn column_move_shortcut_updates_status_and_undo_restores_it() {
+        let mut app = test_app().await;
+        let index = create_and_select_task(&mut app, test_task_draft("move me")).await;
+        let task_id = app.store.tasks[index].task.id.clone();
+        app.store.show_view(TaskView::Columns).await.unwrap();
+        app.widgets.table.select(
+            app.store
+                .tasks
+                .iter()
+                .position(|item| item.task.id == task_id),
+        );
+
+        app.handle_normal_key(KeyCode::Char('>')).await.unwrap();
+
+        let moved = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == task_id)
+            .unwrap();
+        assert_eq!(moved.task.status, TaskStatus::Backlog);
+        assert_eq!(
+            app.store
+                .selected_task(app.widgets.table.selected())
+                .unwrap()
+                .task
+                .id,
+            task_id
+        );
+
+        app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
+        assert_eq!(
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == task_id)
+                .unwrap()
+                .task
+                .status,
+            TaskStatus::Inbox
+        );
+    }
+
+    #[tokio::test]
+    async fn column_move_shortcut_advances_marked_tasks_from_their_own_lanes() {
+        let mut app = test_app().await;
+        let inbox = create_and_select_task(&mut app, test_task_draft("inbox task")).await;
+        let inbox_id = app.store.tasks[inbox].task.id.clone();
+        let mut todo_draft = test_task_draft("ready task");
+        todo_draft.status = "todo".to_string();
+        let todo = create_and_select_task(&mut app, todo_draft).await;
+        let todo_id = app.store.tasks[todo].task.id.clone();
+        app.widgets.marked_task_ids.insert(inbox_id.clone());
+        app.widgets.marked_task_ids.insert(todo_id.clone());
+        app.store.show_view(TaskView::Columns).await.unwrap();
+
+        app.handle_normal_key(KeyCode::Char('>')).await.unwrap();
+
+        let status_for = |task_id: &str| {
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == task_id)
+                .unwrap()
+                .task
+                .status
+        };
+        assert_eq!(status_for(&inbox_id), TaskStatus::Backlog);
+        assert_eq!(status_for(&todo_id), TaskStatus::Active);
+
+        app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
+        let status_for = |task_id: &str| {
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == task_id)
+                .unwrap()
+                .task
+                .status
+        };
+        assert_eq!(status_for(&inbox_id), TaskStatus::Inbox);
+        assert_eq!(status_for(&todo_id), TaskStatus::Todo);
+    }
+
+    #[tokio::test]
+    async fn column_move_picker_uses_lane_names_and_first_statuses() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("move with picker")).await;
+        app.store.show_view(TaskView::Columns).await.unwrap();
+
+        app.handle_normal_key(KeyCode::Char('m')).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::Picker(PickerState { route: OverlayRoute::MoveToColumn, title, items, .. }))
+                if title == "Move to column"
+                    && items.iter().any(|item| item.label == "Closed → done" && item.value == "done")
+        ));
+    }
+
+    #[tokio::test]
+    async fn column_relative_move_keeps_marked_batch_unchanged_at_edge() {
+        let mut app = test_app().await;
+        let inbox = create_and_select_task(&mut app, test_task_draft("inbox edge")).await;
+        let inbox_id = app.store.tasks[inbox].task.id.clone();
+        let mut backlog_draft = test_task_draft("backlog beside edge");
+        backlog_draft.status = "backlog".to_string();
+        let backlog = create_and_select_task(&mut app, backlog_draft).await;
+        let backlog_id = app.store.tasks[backlog].task.id.clone();
+        app.widgets.marked_task_ids.insert(inbox_id.clone());
+        app.widgets.marked_task_ids.insert(backlog_id.clone());
+        app.store.show_view(TaskView::Columns).await.unwrap();
+
+        app.handle_normal_key(KeyCode::Char('<')).await.unwrap();
+
+        let status_for = |task_id: &str| {
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == task_id)
+                .unwrap()
+                .task
+                .status
+        };
+        assert_eq!(status_for(&inbox_id), TaskStatus::Inbox);
+        assert_eq!(status_for(&backlog_id), TaskStatus::Backlog);
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("already at first column")
+        );
+    }
+
+    #[tokio::test]
+    async fn choosing_current_column_preserves_grouped_status() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("stay canceled")).await;
+        app.store.show_view(TaskView::Columns).await.unwrap();
+        app.update_status("canceled").await.unwrap();
+
+        app.move_tasks_to_column("done".to_string()).await.unwrap();
+
+        assert_eq!(
+            app.store
+                .selected_task(app.widgets.table.selected())
+                .unwrap()
+                .task
+                .status,
+            TaskStatus::Canceled
+        );
+    }
+
+    #[tokio::test]
+    async fn column_lane_header_click_moves_selected_task() {
+        let mut app = test_app().await;
+        let index = create_and_select_task(&mut app, test_task_draft("mouse move")).await;
+        let task_id = app.store.tasks[index].task.id.clone();
+        app.store.show_view(TaskView::Columns).await.unwrap();
+        app.widgets.table.select(
+            app.store
+                .tasks
+                .iter()
+                .position(|item| item.task.id == task_id),
+        );
+
+        app.dispatch_mouse(left_click(16, 2), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            app.store
+                .tasks
+                .iter()
+                .find(|item| item.task.id == task_id)
+                .unwrap()
+                .task
+                .status,
+            TaskStatus::Backlog
+        );
+    }
+
+    #[tokio::test]
+    async fn column_card_right_click_opens_status_choices() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("mouse status")).await;
+        app.store.show_view(TaskView::Columns).await.unwrap();
+
+        app.dispatch_mouse(right_click(1, 4), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Status));
+    }
+
+    #[tokio::test]
     async fn column_view_navigates_within_and_between_lanes() {
         let mut app = test_app().await;
         for (title, status) in [
@@ -6212,9 +6406,9 @@ mod task_dependencies {
                 .status,
             TaskStatus::Active
         );
-        app.move_right();
-        assert_eq!(app.widgets.table.selected(), Some(todo));
         app.move_left();
+        assert_eq!(app.widgets.table.selected(), Some(todo));
+        app.move_right();
         assert_eq!(
             app.store
                 .selected_task(app.widgets.table.selected())

@@ -261,6 +261,36 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::MoveRight,
     ),
     CommandSpec::implemented(
+        "move-column-left",
+        "move selected or marked tasks to the previous column",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('<')],
+            label: "<",
+        }],
+        Action::MoveColumnLeft,
+    ),
+    CommandSpec::implemented(
+        "move-column-right",
+        "move selected or marked tasks to the next column",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('>')],
+            label: ">",
+        }],
+        Action::MoveColumnRight,
+    ),
+    CommandSpec::implemented(
+        "move-to-column",
+        "move selected or marked tasks to a column",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('m')],
+            label: "m",
+        }],
+        Action::BeginMoveToColumn,
+    ),
+    CommandSpec::implemented(
         "previous-item",
         "select previous item in flow",
         "Navigation",

@@ -290,6 +290,22 @@ impl App {
         }
 
         if !self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row)
+            && self.store.view_state.view == TaskView::Columns
+            && let Some(lane_index) = crate::tui::ui::column_lane_at_position(
+                &self.store,
+                &self.widgets.table,
+                self.task_area_for_mouse(terminal_size),
+                mouse.column,
+                mouse.row,
+            )
+            && let Some(status) =
+                crate::tui::columns::lane_entry_status(&self.store.task_columns, lane_index)
+        {
+            self.last_task_click = None;
+            return self.move_tasks_to_column(status.as_str().to_string()).await;
+        }
+
+        if !self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row)
             && self.store.view_state.view == TaskView::RecentActions
             && let Some(hit) = recent_action_at_position(
                 &self.store,
@@ -396,13 +412,24 @@ impl App {
         if self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row) {
             return Ok(());
         }
-        let Some(hit) = task_status_at_position(
-            &self.store,
-            &self.widgets.table,
-            self.task_area_for_mouse(terminal_size),
-            mouse.column,
-            mouse.row,
-        ) else {
+        let hit = if self.store.view_state.view == TaskView::Columns {
+            task_at_position(
+                &self.store,
+                &self.widgets.table,
+                self.task_area_for_mouse(terminal_size),
+                mouse.column,
+                mouse.row,
+            )
+        } else {
+            task_status_at_position(
+                &self.store,
+                &self.widgets.table,
+                self.task_area_for_mouse(terminal_size),
+                mouse.column,
+                mouse.row,
+            )
+        };
+        let Some(hit) = hit else {
             return Ok(());
         };
 
@@ -1028,6 +1055,9 @@ impl App {
             Action::MoveUp => self.move_selection(-1).await?,
             Action::MoveLeft => self.move_left(),
             Action::MoveRight => self.move_right(),
+            Action::MoveColumnLeft => self.move_tasks_by_column(-1).await?,
+            Action::MoveColumnRight => self.move_tasks_by_column(1).await?,
+            Action::BeginMoveToColumn => self.begin_move_to_column(),
             Action::PreviousItem => self.previous_item(),
             Action::NextItem => self.next_item(),
             Action::First => self.select_edge(false).await?,

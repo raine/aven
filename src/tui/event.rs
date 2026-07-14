@@ -26,6 +26,9 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::MoveUp
             | Action::MoveLeft
             | Action::MoveRight
+            | Action::MoveColumnLeft
+            | Action::MoveColumnRight
+            | Action::BeginMoveToColumn
             | Action::PreviousItem
             | Action::NextItem
             | Action::First
@@ -222,6 +225,7 @@ mod tests {
                 "remove-project-path",
                 "remove-dependency",
                 "move-right",
+                "move-column-right",
                 "view-recent",
                 "copy-ref",
                 "order-reverse",

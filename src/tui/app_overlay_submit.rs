@@ -173,6 +173,13 @@ impl App {
                     self.begin_status_picker();
                 }
             },
+            Some(PickerSubmitRoute::MoveToColumn) => match values.first() {
+                Some(status) => self.move_tasks_to_column(status.clone()).await?,
+                None => {
+                    self.set_warning("no matching column");
+                    self.begin_move_to_column();
+                }
+            },
             Some(PickerSubmitRoute::EditProject) => match values.first() {
                 Some(project) => self.submit_edit_project(project.clone()).await?,
                 None => {

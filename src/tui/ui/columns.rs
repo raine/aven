@@ -101,6 +101,20 @@ impl ColumnLayout {
         }
     }
 
+    fn lane_at(&self, column: u16, row: u16) -> Option<usize> {
+        self.lanes.iter().position(|lane| {
+            column >= lane.area.x
+                && column
+                    < lane
+                        .area
+                        .x
+                        .saturating_add(lane.area.width)
+                        .saturating_sub(1)
+                && row >= lane.area.y
+                && row < lane.area.y.saturating_add(HEADER_HEIGHT)
+        })
+    }
+
     fn task_at(&self, board: &ColumnBoard<'_>, column: u16, row: u16) -> Option<(usize, u16)> {
         self.lanes
             .iter()
@@ -468,6 +482,23 @@ fn card_metadata_line(labels: &str, markers: &[Span<'static>], max_width: usize)
     Line::from(spans)
 }
 
+pub(crate) fn column_lane_at_position(
+    store: &TuiStore,
+    table_state: &TableState,
+    area: Rect,
+    column: u16,
+    row: u16,
+) -> Option<usize> {
+    let board = ColumnBoard::new(&store.task_columns, &store.tasks);
+    let layout = ColumnLayout::new(
+        area,
+        &board,
+        table_state.selected(),
+        store.columns_preview_visible,
+    );
+    layout.lane_at(column, row)
+}
+
 pub(super) fn column_task_at_position(
     store: &TuiStore,
     table_state: &TableState,
@@ -611,6 +642,27 @@ mod tests {
             " × canceled"
         );
         assert_eq!(canceled[1].style.fg, theme::status_style("canceled").fg);
+    }
+
+    #[test]
+    fn lane_hit_testing_uses_header_geometry() {
+        let config = vec![
+            crate::config::TaskColumnConfig {
+                name: "Inbox".into(),
+                statuses: vec!["inbox".into()],
+            },
+            crate::config::TaskColumnConfig {
+                name: "Ready".into(),
+                statuses: vec!["todo".into()],
+            },
+        ];
+        let tasks = vec![item(0)];
+        let board = ColumnBoard::new(&config, &tasks);
+        let layout = ColumnLayout::new(Rect::new(10, 2, 80, 20), &board, None, true);
+
+        assert_eq!(layout.lane_at(10, 2), Some(0));
+        assert_eq!(layout.lane_at(50, 3), Some(1));
+        assert_eq!(layout.lane_at(10, 4), None);
     }
 
     #[test]

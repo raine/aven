@@ -66,7 +66,11 @@ The Columns view arranges tasks into configurable lifecycle lanes. Its defaults 
 
 <p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The columns view keeps the complete task lifecycle visible while preserving task metadata and selected-task context.</p>
 
-Use `v l` to open the view. Up and down move within a lane, while left and right move between lanes. Press `g d` to toggle the selected-task preview and give the board more vertical space. Project scope, filters, details, editing, and task mutations continue to use the existing task model. Configure lane names and status grouping under [`tui.columns`](/configuration/#tui-columns).
+Use `v l` to open the view. Up and down move within a lane, while left and right move the selection between lanes. Press `<` or `>` to move the selected task one lane, or press `m` to choose a destination lane. Marked tasks move together and create one undo step. Relative moves use each task's current lane, and the batch remains unchanged when any marked task is already at the requested edge.
+
+Moving into a lane assigns its first configured status. Choosing the lane a task already occupies preserves its exact status, so a canceled task remains canceled when Closed contains `[done, canceled]`. Click a lane header to move the selected or marked tasks there, or right-click a card to open the status choices.
+
+Press `g d` to toggle the selected-task preview and give the board more vertical space. Project scope, filters, details, editing, and task mutations continue to use the existing task model. Configure lane names and status grouping under [`tui.columns`](/configuration/#tui-columns).
 
 Use the sidebar or the `g` prefix family to switch scope. Workspace scope shows projects in the active workspace. Project scope narrows the task list to one project.
 
@@ -181,8 +185,9 @@ The TUI supports mouse actions in addition to keyboard shortcuts:
 - Click header menus for workspace, scope, view, ordering, and sync status.
 - Click header metrics to jump to related views.
 - Click sidebar entries to switch views, scope, projects, and filters.
-- Right-click a task status cell to open the status menu.
-- Double-click a task row to open detail.
+- Right-click a task status cell, or any card in Columns view, to open the status menu.
+- Click a lane header in Columns view to move the selected or marked tasks into that lane.
+- Double-click a task row or card to open detail.
 - Scroll detail content with the mouse wheel.
 
 ## Keyboard reference
@@ -211,6 +216,9 @@ The TUI supports mouse actions in addition to keyboard shortcuts:
 | `a`             | Add task                                         |
 | `n`             | Add note                                         |
 | `s`             | Open status picker                               |
+| `<`, `>`        | Move selected or marked tasks between lanes     |
+| `m`             | Choose a destination lane in Columns view       |
+| `Space`         | Mark or unmark a task for batch actions          |
 | `d`             | Mark done                                        |
 | `x`             | Mark canceled                                    |
 | `Ctrl-x Ctrl-e` | Open external editor during supported text input |

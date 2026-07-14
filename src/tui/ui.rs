@@ -21,6 +21,7 @@ mod truncate;
 pub(crate) use self::sidebar::sidebar_layout;
 pub(crate) use self::sidebar::{sidebar_click_at_for, sidebar_layout_for};
 
+pub(crate) use self::columns::column_lane_at_position;
 use self::columns::render_columns;
 use self::detail::render_detail_underlay;
 use self::footer::{FooterMode, footer_bar};
@@ -176,7 +177,11 @@ pub(crate) fn render(
             render_main_surface(frame, store, widgets, view.focus, body, inline_title_editor);
         }
     }
-    frame.render_widget(footer_bar(view.footer_mode(), footer.width), footer);
+    let footer_mode = match view.footer_mode() {
+        FooterMode::List if store.view_state.view == TaskView::Columns => FooterMode::Columns,
+        mode => mode,
+    };
+    frame.render_widget(footer_bar(footer_mode, footer.width), footer);
 
     if view.detail_underlay {
         render_detail_underlay(

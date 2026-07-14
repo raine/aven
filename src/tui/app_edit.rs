@@ -2,10 +2,12 @@ use std::collections::BTreeSet;
 
 use anyhow::Result;
 
+use crate::choices::TaskStatus;
 use crate::labels::normalize_label;
+use crate::query::TaskListItem;
 use crate::tui::app::{App, FooterChoiceMode};
 use crate::tui::overlay::{
-    MultilineInputState, OverlayRoute, OverlayState, SearchPurpose, SearchState,
+    MultilineInputState, OverlayRoute, OverlayState, PickerItem, SearchPurpose, SearchState,
 };
 use crate::tui::platform::edit_text_externally;
 
@@ -41,6 +43,134 @@ impl App {
             self.apply_mutation_result(result);
         } else {
             self.set_info("no selected task to edit");
+        }
+        Ok(())
+    }
+
+    pub(super) async fn move_tasks_by_column(&mut self, delta: isize) -> Result<()> {
+        if self.store.view_state.view != crate::tui::store::TaskView::Columns {
+            self.set_info("column moves are available in Columns view");
+            return Ok(());
+        }
+        let targets = self.column_move_targets();
+        if targets.is_empty() {
+            self.set_info("no selected task to move");
+            return Ok(());
+        }
+        let mut changes = Vec::with_capacity(targets.len());
+        for item in &targets {
+            let Some(status) = crate::tui::columns::adjacent_lane_entry_status(
+                &self.store.task_columns,
+                item.task.status,
+                delta,
+            ) else {
+                self.set_info(if delta < 0 {
+                    "already at first column"
+                } else {
+                    "already at last column"
+                });
+                return Ok(());
+            };
+            changes.push((item.task.id.clone(), status.as_str().to_string()));
+        }
+        self.apply_column_moves(changes).await
+    }
+
+    pub(super) fn begin_move_to_column(&mut self) {
+        if self.store.view_state.view != crate::tui::store::TaskView::Columns {
+            self.set_info("column moves are available in Columns view");
+            return;
+        }
+        let targets = self.column_move_targets();
+        if targets.is_empty() {
+            self.set_info("no selected task to move");
+            return;
+        }
+        let selected_lane = if targets.len() == 1 {
+            crate::tui::columns::lane_index_for_status(
+                &self.store.task_columns,
+                targets[0].task.status,
+            )
+        } else {
+            None
+        };
+        let items = self
+            .store
+            .task_columns
+            .iter()
+            .enumerate()
+            .filter_map(|(index, column)| {
+                let status =
+                    crate::tui::columns::lane_entry_status(&self.store.task_columns, index)?;
+                Some(PickerItem {
+                    label: format!("{} → {}", column.name, status.as_str()),
+                    value: status.as_str().to_string(),
+                    selected: selected_lane == Some(index),
+                })
+            })
+            .collect();
+        let title = if targets.len() == 1 {
+            "Move to column".to_string()
+        } else {
+            format!("Move to column: {} marked tasks", targets.len())
+        };
+        self.open_picker_overlay(OverlayRoute::MoveToColumn, title, items, false);
+    }
+
+    pub(super) async fn move_tasks_to_column(&mut self, status: String) -> Result<()> {
+        let target_status = TaskStatus::parse(&status)?;
+        let Some(target_lane) =
+            crate::tui::columns::lane_index_for_status(&self.store.task_columns, target_status)
+        else {
+            self.set_warning("column is unavailable");
+            return Ok(());
+        };
+        let changes = self
+            .column_move_targets()
+            .into_iter()
+            .filter_map(|item| {
+                let source_lane = crate::tui::columns::lane_index_for_status(
+                    &self.store.task_columns,
+                    item.task.status,
+                )?;
+                (source_lane != target_lane).then(|| (item.task.id, status.clone()))
+            })
+            .collect::<Vec<_>>();
+        if changes.is_empty() {
+            self.set_info("tasks are already in that column");
+            return Ok(());
+        }
+        self.apply_column_moves(changes).await
+    }
+
+    fn column_move_targets(&self) -> Vec<TaskListItem> {
+        let task_ids = self.marked_task_ids_in_view();
+        if task_ids.is_empty() {
+            return self
+                .store
+                .selected_task(self.widgets.table.selected())
+                .cloned()
+                .into_iter()
+                .collect();
+        }
+        let task_ids = task_ids.iter().collect::<BTreeSet<_>>();
+        self.store
+            .tasks
+            .iter()
+            .filter(|item| task_ids.contains(&item.task.id))
+            .cloned()
+            .collect()
+    }
+
+    async fn apply_column_moves(&mut self, changes: Vec<(String, String)>) -> Result<()> {
+        let result = self
+            .store
+            .update_status_changes_for_tasks(self.widgets.table.selected(), &changes)
+            .await?;
+        if let Some(result) = result {
+            self.apply_mutation_result(result);
+        } else {
+            self.set_info("no selected task to move");
         }
         Ok(())
     }

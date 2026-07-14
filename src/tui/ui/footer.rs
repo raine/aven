@@ -7,6 +7,7 @@ use crate::tui::theme::{self, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum FooterMode {
     List,
+    Columns,
     Detail,
     StatusChoice,
     PriorityChoice,
@@ -64,6 +65,29 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("a", "add"),
             ("?", "more"),
             ("q", "quit"),
+        ],
+        FooterMode::Columns if width >= 120 => &[
+            ("h/j/k/l", "select"),
+            ("</>", "move"),
+            ("m", "lane"),
+            ("Space", "mark"),
+            ("u", "undo"),
+            ("Enter", "detail"),
+            ("?", "more"),
+            ("q", "quit"),
+        ],
+        FooterMode::Columns if width >= 80 => &[
+            ("h/j/k/l", "select"),
+            ("</>", "move"),
+            ("m", "lane"),
+            ("Space", "mark"),
+            ("?", "more"),
+        ],
+        FooterMode::Columns => &[
+            ("h/l", "select"),
+            ("</>", "move"),
+            ("m", "lane"),
+            ("?", "more"),
         ],
         FooterMode::Detail if width >= 128 => &[
             ("j/k Pg", "scroll"),
@@ -135,7 +159,7 @@ fn cmd(mode: FooterMode, label: &str) -> Span<'static> {
     let style = match mode {
         FooterMode::StatusChoice => theme::status_style(label),
         FooterMode::PriorityChoice => theme::priority_style(label),
-        FooterMode::List | FooterMode::Detail => Style::new().fg(FG_DIM),
+        FooterMode::List | FooterMode::Columns | FooterMode::Detail => Style::new().fg(FG_DIM),
     };
     Span::styled(format!(" {label}  "), style)
 }
@@ -189,6 +213,17 @@ mod tests {
         assert!(!hints.contains(&("p", "priority")));
         assert!(!hints.contains(&("g", "views")));
         assert!(!hints.iter().any(|(_, label)| *label == "prefixes"));
+    }
+
+    #[test]
+    fn columns_footer_prioritizes_selection_and_move_keys() {
+        let hints = footer_hints(FooterMode::Columns, 120);
+
+        assert!(hints.contains(&("h/j/k/l", "select")));
+        assert!(hints.contains(&("</>", "move")));
+        assert!(hints.contains(&("m", "lane")));
+        assert!(hints.contains(&("Space", "mark")));
+        assert!(hints.contains(&("u", "undo")));
     }
 
     #[test]

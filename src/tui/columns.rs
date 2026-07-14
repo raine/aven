@@ -86,6 +86,42 @@ fn priority_rank(priority: TaskPriority) -> u8 {
     }
 }
 
+pub(crate) fn lane_index_for_status(
+    columns: &[TaskColumnConfig],
+    status: TaskStatus,
+) -> Option<usize> {
+    columns.iter().position(|column| {
+        column
+            .statuses
+            .iter()
+            .any(|candidate| candidate == status.as_str())
+    })
+}
+
+pub(crate) fn lane_entry_status(
+    columns: &[TaskColumnConfig],
+    column_index: usize,
+) -> Option<TaskStatus> {
+    columns
+        .get(column_index)?
+        .statuses
+        .first()
+        .and_then(|status| TaskStatus::parse(status).ok())
+}
+
+pub(crate) fn adjacent_lane_entry_status(
+    columns: &[TaskColumnConfig],
+    status: TaskStatus,
+    delta: isize,
+) -> Option<TaskStatus> {
+    if delta == 0 {
+        return None;
+    }
+    let source = lane_index_for_status(columns, status)?;
+    let target = source.checked_add_signed(delta.signum())?;
+    lane_entry_status(columns, target)
+}
+
 impl<'a> ColumnBoard<'a> {
     pub(crate) fn new(columns: &'a [TaskColumnConfig], tasks: &[TaskListItem]) -> Self {
         let columns = columns
@@ -338,6 +374,51 @@ mod tests {
         let board = ColumnBoard::new(&config, &tasks);
 
         assert_eq!(board.columns[0].task_indices, [0, 1, 2]);
+    }
+
+    #[test]
+    fn lane_moves_follow_config_order_and_first_status() {
+        let config = vec![
+            TaskColumnConfig {
+                name: "Closed".into(),
+                statuses: vec!["done".into(), "canceled".into()],
+            },
+            TaskColumnConfig {
+                name: "Work".into(),
+                statuses: vec!["todo".into(), "active".into()],
+            },
+            TaskColumnConfig {
+                name: "Inbox".into(),
+                statuses: vec!["inbox".into()],
+            },
+        ];
+
+        assert_eq!(
+            lane_index_for_status(&config, TaskStatus::Canceled),
+            Some(0)
+        );
+        assert_eq!(lane_entry_status(&config, 0), Some(TaskStatus::Done));
+        assert_eq!(lane_entry_status(&config, 1), Some(TaskStatus::Todo));
+        assert_eq!(
+            adjacent_lane_entry_status(&config, TaskStatus::Active, -1),
+            Some(TaskStatus::Done)
+        );
+        assert_eq!(
+            adjacent_lane_entry_status(&config, TaskStatus::Active, 1),
+            Some(TaskStatus::Inbox)
+        );
+        assert_eq!(
+            adjacent_lane_entry_status(&config, TaskStatus::Done, -1),
+            None
+        );
+        assert_eq!(
+            adjacent_lane_entry_status(&config, TaskStatus::Inbox, 1),
+            None
+        );
+        assert_eq!(
+            adjacent_lane_entry_status(&config, TaskStatus::Todo, 0),
+            None
+        );
     }
 
     #[test]
