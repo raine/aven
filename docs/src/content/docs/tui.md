@@ -58,7 +58,15 @@ The queue is the default attention view. It groups work into needs action, block
 
 Use the sidebar or the `v` prefix family to switch views. Views include queue, columns, open, inbox, backlog, todo, active, done, conflicts, epics, recent actions, and search results.
 
-The Columns view presents the same tasks as configurable lanes. Its default lanes follow the task lifecycle: Inbox, Backlog, Ready, In progress, and Closed. Inbox shows the oldest captures first, Backlog and Ready prioritize important older work, In progress surfaces stale work, and Closed shows the most recently closed tasks first. Use `v l` to open it. Up and down move within a lane, while left and right move between lanes. Press `g d` to toggle the selected-task preview and give the board more vertical space. Project scope, filters, details, editing, and task mutations continue to use the existing task model. Configure lane names and status grouping under [`tui.columns`](/configuration/#tui-columns).
+### Columns view
+
+The Columns view arranges tasks into configurable lifecycle lanes. Its defaults are Inbox, Backlog, Ready, In progress, and Closed. Inbox shows the oldest captures first, Backlog and Ready prioritize important older work, In progress surfaces stale work, and Closed shows the most recently closed tasks first.
+
+![aven TUI showing tasks organized across lifecycle columns](/columns.webp)
+
+<p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The columns view keeps the complete task lifecycle visible while preserving task metadata and selected-task context.</p>
+
+Use `v l` to open the view. Up and down move within a lane, while left and right move between lanes. Press `g d` to toggle the selected-task preview and give the board more vertical space. Project scope, filters, details, editing, and task mutations continue to use the existing task model. Configure lane names and status grouping under [`tui.columns`](/configuration/#tui-columns).
 
 Use the sidebar or the `g` prefix family to switch scope. Workspace scope shows projects in the active workspace. Project scope narrows the task list to one project.
 
