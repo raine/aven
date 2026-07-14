@@ -20,6 +20,7 @@ pub(crate) enum Action {
     ToggleFocus,
     ToggleSidebar,
     ToggleDetail,
+    ToggleColumnsPreview,
     GoBack,
     ToggleHelp,
     BeginSearch,

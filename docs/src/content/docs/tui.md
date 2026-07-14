@@ -58,7 +58,7 @@ The queue is the default attention view. It groups work into needs action, block
 
 Use the sidebar or the `v` prefix family to switch views. Views include queue, columns, open, inbox, backlog, todo, active, done, conflicts, epics, recent actions, and search results.
 
-The Columns view presents the same tasks as configurable lanes. Its default lanes are Triage for inbox, Current for active, Todo for todo, Backlog for backlog, and Closed for done or canceled. Use `v l` to open it. Up and down move within a lane, while left and right move between lanes. Project scope, filters, ordering, details, editing, and task mutations continue to use the existing task model. Configure lane names and status grouping under [`tui.columns`](/configuration/#tui-columns).
+The Columns view presents the same tasks as configurable lanes. Its default lanes follow the task lifecycle: Inbox, Backlog, Ready, In progress, and Closed. Inbox shows the oldest captures first, Backlog and Ready prioritize important older work, In progress surfaces stale work, and Closed shows the most recently closed tasks first. Use `v l` to open it. Up and down move within a lane, while left and right move between lanes. Press `g d` to toggle the selected-task preview and give the board more vertical space. Project scope, filters, details, editing, and task mutations continue to use the existing task model. Configure lane names and status grouping under [`tui.columns`](/configuration/#tui-columns).
 
 Use the sidebar or the `g` prefix family to switch scope. Workspace scope shows projects in the active workspace. Project scope narrows the task list to one project.
 

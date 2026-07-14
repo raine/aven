@@ -60,10 +60,10 @@ impl TaskColumnConfig {
 
 fn default_task_columns() -> Vec<TaskColumnConfig> {
     vec![
-        TaskColumnConfig::new("Triage", &["inbox"]),
-        TaskColumnConfig::new("Current", &["active"]),
-        TaskColumnConfig::new("Todo", &["todo"]),
+        TaskColumnConfig::new("Inbox", &["inbox"]),
         TaskColumnConfig::new("Backlog", &["backlog"]),
+        TaskColumnConfig::new("Ready", &["todo"]),
+        TaskColumnConfig::new("In progress", &["active"]),
         TaskColumnConfig::new("Closed", &["done", "canceled"]),
     ]
 }
@@ -424,7 +424,7 @@ mod tests {
                 .iter()
                 .map(|column| column.name.as_str())
                 .collect::<Vec<_>>(),
-            ["Triage", "Current", "Todo", "Backlog", "Closed"]
+            ["Inbox", "Backlog", "Ready", "In progress", "Closed"]
         );
     }
 

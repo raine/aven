@@ -6162,6 +6162,21 @@ mod task_dependencies {
     }
 
     #[tokio::test]
+    async fn column_view_preview_shortcut_toggles_session_visibility() {
+        let mut app = test_app().await;
+        app.store.show_view(TaskView::Columns).await.unwrap();
+        assert!(app.store.columns_preview_visible);
+
+        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+        assert!(!app.store.columns_preview_visible);
+
+        app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+        assert!(app.store.columns_preview_visible);
+    }
+
+    #[tokio::test]
     async fn column_view_navigates_within_and_between_lanes() {
         let mut app = test_app().await;
         for (title, status) in [

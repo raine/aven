@@ -359,6 +359,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ToggleDetail,
     ),
     CommandSpec::implemented(
+        "toggle-columns-preview",
+        "toggle the selected-task preview in columns view",
+        "Navigation",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('d')],
+            label: "g d",
+        }],
+        Action::ToggleColumnsPreview,
+    ),
+    CommandSpec::implemented(
         "delete",
         "confirm deleting selected task",
         "Tasks",

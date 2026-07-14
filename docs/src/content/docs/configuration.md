@@ -41,14 +41,14 @@ daemon:
 
 tui:
   columns:
-    - name: "Triage"
+    - name: "Inbox"
       statuses: [inbox]
-    - name: "Current"
-      statuses: [active]
-    - name: "Todo"
-      statuses: [todo]
     - name: "Backlog"
       statuses: [backlog]
+    - name: "Ready"
+      statuses: [todo]
+    - name: "In progress"
+      statuses: [active]
     - name: "Closed"
       statuses: [done, canceled]
 
@@ -123,17 +123,19 @@ The default board keeps every status visible:
 ```yaml
 tui:
   columns:
-    - name: "Triage"
+    - name: "Inbox"
       statuses: [inbox]
-    - name: "Current"
-      statuses: [active]
-    - name: "Todo"
-      statuses: [todo]
     - name: "Backlog"
       statuses: [backlog]
+    - name: "Ready"
+      statuses: [todo]
+    - name: "In progress"
+      statuses: [active]
     - name: "Closed"
       statuses: [done, canceled]
 ```
+
+Lanes use workflow-specific ordering. Inbox shows the oldest tasks first, Backlog and Ready sort by priority and then age, In progress shows the stalest activity first, and Closed shows the most recently closed tasks first. Custom lanes that combine statuses from different workflow stages preserve the active task-list order.
 
 Customize lane names, order, and grouping by editing this list. Each fixed status must appear exactly once. Aven rejects empty columns, unknown statuses, duplicates, and incomplete mappings so the board cannot hide tasks accidentally.
 

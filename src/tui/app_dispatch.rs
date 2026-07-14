@@ -1035,6 +1035,11 @@ impl App {
             Action::ToggleFocus => self.toggle_focus(),
             Action::ToggleSidebar => self.toggle_sidebar(),
             Action::ToggleDetail => self.activate_or_toggle_detail().await?,
+            Action::ToggleColumnsPreview => {
+                if self.store.view_state.view == crate::tui::store::TaskView::Columns {
+                    self.store.columns_preview_visible = !self.store.columns_preview_visible;
+                }
+            }
             Action::GoBack => self.go_back().await?,
             Action::ToggleHelp => self.toggle_help_at_height(24),
             Action::BeginSearch => self.begin_search(),

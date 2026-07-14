@@ -1,3 +1,6 @@
+use std::cmp::Ordering;
+
+use crate::choices::{TaskPriority, TaskStatus};
 use crate::config::TaskColumnConfig;
 use crate::query::TaskListItem;
 
@@ -12,13 +15,83 @@ pub(crate) struct ColumnBoard<'a> {
     pub(crate) columns: Vec<TaskColumn<'a>>,
 }
 
+#[derive(Clone, Copy)]
+enum LaneSort {
+    Oldest,
+    PriorityThenOldest,
+    StaleThenPriority,
+    RecentTerminal,
+    Preserve,
+}
+
+fn sort_lane(config: &TaskColumnConfig, tasks: &[TaskListItem], task_indices: &mut [usize]) {
+    let sort = lane_sort(config);
+    task_indices.sort_by(|left, right| {
+        if matches!(sort, LaneSort::Preserve) {
+            return Ordering::Equal;
+        }
+        let left = &tasks[*left].task;
+        let right = &tasks[*right].task;
+        let ordering = match sort {
+            LaneSort::Oldest => left.created_at.cmp(&right.created_at),
+            LaneSort::PriorityThenOldest => priority_cmp(left.priority, right.priority)
+                .then_with(|| left.created_at.cmp(&right.created_at)),
+            LaneSort::StaleThenPriority => left
+                .queue_activity_at
+                .cmp(&right.queue_activity_at)
+                .then_with(|| priority_cmp(left.priority, right.priority)),
+            LaneSort::RecentTerminal => right
+                .queue_activity_at
+                .cmp(&left.queue_activity_at)
+                .then_with(|| right.updated_at.cmp(&left.updated_at)),
+            LaneSort::Preserve => Ordering::Equal,
+        };
+        ordering.then_with(|| left.id.cmp(&right.id))
+    });
+}
+
+fn lane_sort(config: &TaskColumnConfig) -> LaneSort {
+    let statuses = config
+        .statuses
+        .iter()
+        .filter_map(|status| TaskStatus::parse(status).ok())
+        .collect::<Vec<_>>();
+    if statuses.iter().all(|status| *status == TaskStatus::Inbox) {
+        LaneSort::Oldest
+    } else if statuses
+        .iter()
+        .all(|status| matches!(status, TaskStatus::Backlog | TaskStatus::Todo))
+    {
+        LaneSort::PriorityThenOldest
+    } else if statuses.iter().all(|status| *status == TaskStatus::Active) {
+        LaneSort::StaleThenPriority
+    } else if statuses.iter().all(|status| status.is_terminal()) {
+        LaneSort::RecentTerminal
+    } else {
+        LaneSort::Preserve
+    }
+}
+
+fn priority_cmp(left: TaskPriority, right: TaskPriority) -> Ordering {
+    priority_rank(right).cmp(&priority_rank(left))
+}
+
+fn priority_rank(priority: TaskPriority) -> u8 {
+    match priority {
+        TaskPriority::None => 0,
+        TaskPriority::Low => 1,
+        TaskPriority::Medium => 2,
+        TaskPriority::High => 3,
+        TaskPriority::Urgent => 4,
+    }
+}
+
 impl<'a> ColumnBoard<'a> {
     pub(crate) fn new(columns: &'a [TaskColumnConfig], tasks: &[TaskListItem]) -> Self {
         let columns = columns
             .iter()
-            .map(|config| TaskColumn {
-                config,
-                task_indices: tasks
+            .map(|config| {
+                let mut task_indices = tasks
                     .iter()
                     .enumerate()
                     .filter(|(_, item)| {
@@ -28,7 +101,12 @@ impl<'a> ColumnBoard<'a> {
                             .any(|status| status == item.task.status.as_str())
                     })
                     .map(|(index, _)| index)
-                    .collect(),
+                    .collect::<Vec<_>>();
+                sort_lane(config, tasks, &mut task_indices);
+                TaskColumn {
+                    config,
+                    task_indices,
+                }
             })
             .collect();
         Self { columns }
@@ -155,6 +233,21 @@ mod tests {
         }
     }
 
+    fn item_with_sort(
+        id: usize,
+        status: &str,
+        priority: TaskPriority,
+        created_at: &str,
+        activity_at: &str,
+    ) -> TaskListItem {
+        let mut item = item(id, status);
+        item.task.priority = priority;
+        item.task.created_at = created_at.into();
+        item.task.updated_at = activity_at.into();
+        item.task.queue_activity_at = activity_at.into();
+        item
+    }
+
     fn columns() -> Vec<TaskColumnConfig> {
         vec![
             TaskColumnConfig {
@@ -181,6 +274,70 @@ mod tests {
         assert_eq!(board.columns[0].task_indices, [1]);
         assert!(board.columns[1].task_indices.is_empty());
         assert_eq!(board.columns[2].task_indices, [0, 2]);
+    }
+
+    #[test]
+    fn semantic_lanes_use_workflow_specific_sorting() {
+        let tasks = vec![
+            item_with_sort(0, "inbox", TaskPriority::Urgent, "2026-02-01", "2026-02-01"),
+            item_with_sort(1, "inbox", TaskPriority::Low, "2026-01-01", "2026-01-01"),
+            item_with_sort(2, "todo", TaskPriority::Low, "2026-01-01", "2026-01-01"),
+            item_with_sort(3, "todo", TaskPriority::Urgent, "2026-02-01", "2026-02-01"),
+            item_with_sort(4, "active", TaskPriority::Low, "2026-01-01", "2026-02-01"),
+            item_with_sort(
+                5,
+                "active",
+                TaskPriority::Urgent,
+                "2026-02-01",
+                "2026-01-01",
+            ),
+            item_with_sort(6, "done", TaskPriority::None, "2026-01-01", "2026-01-01"),
+            item_with_sort(
+                7,
+                "canceled",
+                TaskPriority::None,
+                "2026-01-01",
+                "2026-02-01",
+            ),
+        ];
+        let config = vec![
+            TaskColumnConfig {
+                name: "Inbox".into(),
+                statuses: vec!["inbox".into()],
+            },
+            TaskColumnConfig {
+                name: "Ready".into(),
+                statuses: vec!["backlog".into(), "todo".into()],
+            },
+            TaskColumnConfig {
+                name: "In progress".into(),
+                statuses: vec!["active".into()],
+            },
+            TaskColumnConfig {
+                name: "Closed".into(),
+                statuses: vec!["done".into(), "canceled".into()],
+            },
+        ];
+
+        let board = ColumnBoard::new(&config, &tasks);
+
+        assert_eq!(board.columns[0].task_indices, [1, 0]);
+        assert_eq!(board.columns[1].task_indices, [3, 2]);
+        assert_eq!(board.columns[2].task_indices, [5, 4]);
+        assert_eq!(board.columns[3].task_indices, [7, 6]);
+    }
+
+    #[test]
+    fn mixed_policy_custom_lane_preserves_query_order() {
+        let tasks = vec![item(0, "todo"), item(1, "active"), item(2, "todo")];
+        let config = vec![TaskColumnConfig {
+            name: "Work".into(),
+            statuses: vec!["todo".into(), "active".into()],
+        }];
+
+        let board = ColumnBoard::new(&config, &tasks);
+
+        assert_eq!(board.columns[0].task_indices, [0, 1, 2]);
     }
 
     #[test]

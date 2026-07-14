@@ -40,8 +40,15 @@ struct ColumnLayout {
 }
 
 impl ColumnLayout {
-    fn new(area: Rect, board: &ColumnBoard<'_>, selected: Option<usize>) -> Self {
-        let preview_height = if area.height >= 32 {
+    fn new(
+        area: Rect,
+        board: &ColumnBoard<'_>,
+        selected: Option<usize>,
+        preview_visible: bool,
+    ) -> Self {
+        let preview_height = if !preview_visible {
+            0
+        } else if area.height >= 32 {
             12
         } else if area.height >= 24 {
             8
@@ -144,7 +151,12 @@ pub(super) fn render_columns(
 ) {
     frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
     let board = ColumnBoard::new(&store.task_columns, &store.tasks);
-    let layout = ColumnLayout::new(area, &board, table_state.selected());
+    let layout = ColumnLayout::new(
+        area,
+        &board,
+        table_state.selected(),
+        store.columns_preview_visible,
+    );
     let active_column = table_state
         .selected()
         .and_then(|selected| board.position(selected).map(|(column, _)| column));
@@ -189,7 +201,10 @@ pub(super) fn render_columns(
             } else {
                 BG_ALT
             };
-            let style = Style::new().bg(card_bg);
+            let mut style = Style::new().bg(card_bg);
+            if item.task.status.is_terminal() && !selected {
+                style = style.add_modifier(Modifier::DIM);
+            }
             let card = Rect::new(
                 lane.cards.x,
                 lane.cards.y + visible_row as u16 * CARD_HEIGHT,
@@ -213,7 +228,11 @@ pub(super) fn render_columns(
             } else {
                 label.to_string()
             };
-            let marker_spans = card_marker_spans(item, marked_task_ids.contains(&item.task.id));
+            let mut marker_spans = terminal_status_spans(item);
+            marker_spans.extend(card_marker_spans(
+                item,
+                marked_task_ids.contains(&item.task.id),
+            ));
             let mut text = vec![card_heading_line(item, &[], width)];
             text.extend(title_lines);
             text.push(card_metadata_line(&labels, &marker_spans, width));
@@ -396,6 +415,21 @@ fn card_heading_line(
     Line::from(spans)
 }
 
+fn terminal_status_spans(item: &crate::query::TaskListItem) -> Vec<Span<'static>> {
+    let label = match item.task.status.as_str() {
+        "done" => "✓ done",
+        "canceled" => "× canceled",
+        _ => return Vec::new(),
+    };
+    vec![
+        Span::raw(" "),
+        Span::styled(
+            label,
+            theme::status_style(item.task.status.as_str()).add_modifier(Modifier::BOLD),
+        ),
+    ]
+}
+
 fn card_marker_spans(item: &crate::query::TaskListItem, marked: bool) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     if marked {
@@ -442,7 +476,12 @@ pub(super) fn column_task_at_position(
     row: u16,
 ) -> Option<TaskListHit> {
     let board = ColumnBoard::new(&store.task_columns, &store.tasks);
-    let layout = ColumnLayout::new(area, &board, table_state.selected());
+    let layout = ColumnLayout::new(
+        area,
+        &board,
+        table_state.selected(),
+        store.columns_preview_visible,
+    );
     let (task_index, viewport_row) = layout.task_at(&board, column, row)?;
     Some(TaskListHit {
         task_index,
@@ -497,11 +536,27 @@ mod tests {
         }];
         let tasks = (0..10).map(item).collect::<Vec<_>>();
         let board = ColumnBoard::new(&config, &tasks);
-        let layout = ColumnLayout::new(Rect::new(0, 0, 80, 32), &board, Some(9));
+        let layout = ColumnLayout::new(Rect::new(0, 0, 80, 32), &board, Some(9), true);
 
         assert_eq!(layout.preview.height, 12);
         assert!(layout.lanes[0].start > 0);
         assert!(layout.lanes[0].start + layout.lanes[0].visible > 9);
+    }
+
+    #[test]
+    fn layout_gives_preview_space_back_to_board_when_hidden() {
+        let config = vec![crate::config::TaskColumnConfig {
+            name: "Work".into(),
+            statuses: vec!["todo".into()],
+        }];
+        let tasks = (0..10).map(item).collect::<Vec<_>>();
+        let board = ColumnBoard::new(&config, &tasks);
+
+        let layout = ColumnLayout::new(Rect::new(0, 0, 80, 32), &board, Some(0), false);
+
+        assert_eq!(layout.preview.height, 0);
+        assert_eq!(layout.board.height, 32);
+        assert_eq!(layout.lanes[0].visible, 6);
     }
 
     #[test]
@@ -534,6 +589,31 @@ mod tests {
     }
 
     #[test]
+    fn terminal_cards_show_status_markers() {
+        let mut task = item(0);
+        task.task.status = TaskStatus::Done;
+        let done = terminal_status_spans(&task);
+        assert_eq!(
+            done.iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            " ✓ done"
+        );
+        assert_eq!(done[1].style.fg, theme::status_style("done").fg);
+
+        task.task.status = TaskStatus::Canceled;
+        let canceled = terminal_status_spans(&task);
+        assert_eq!(
+            canceled
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            " × canceled"
+        );
+        assert_eq!(canceled[1].style.fg, theme::status_style("canceled").fg);
+    }
+
+    #[test]
     fn hit_testing_uses_rendered_card_geometry() {
         let config = vec![crate::config::TaskColumnConfig {
             name: "Work".into(),
@@ -541,7 +621,7 @@ mod tests {
         }];
         let tasks = vec![item(0), item(1)];
         let board = ColumnBoard::new(&config, &tasks);
-        let layout = ColumnLayout::new(Rect::new(10, 2, 80, 20), &board, Some(0));
+        let layout = ColumnLayout::new(Rect::new(10, 2, 80, 20), &board, Some(0), true);
         let cards = layout.lanes[0].cards;
 
         assert_eq!(layout.task_at(&board, cards.x, cards.y), Some((0, 2)));
