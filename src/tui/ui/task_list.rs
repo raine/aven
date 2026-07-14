@@ -12,12 +12,13 @@ use self::view_model::{
 pub(crate) use self::hit_test::TaskListHit;
 
 use super::input::clipped_input_line;
-use super::task_display::{description_preview_text, labels_display};
+use super::task_display::{description_or_placeholder, labels_display};
 use super::timestamps::local_timestamp_display;
 use super::truncate::truncate_chars;
 use crate::query::TaskListItem;
 use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::app::{Focus, WidgetState};
+use crate::tui::markdown::render_markdown_preview;
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::{TaskListRenderMode, TuiStore};
 use crate::tui::theme::{
@@ -32,8 +33,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
-    Block, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-    TableState, Wrap,
+    Block, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, TableState,
 };
 
 pub(super) const EPIC_MARKER: &str = "\u{f04ce}";
@@ -863,7 +863,7 @@ fn project_cell(item: &TaskListItem, max_width: usize) -> Line<'static> {
     ])
 }
 
-fn task_heading_line(item: &TaskListItem) -> Line<'_> {
+fn task_heading_line(item: &TaskListItem) -> Line<'static> {
     let title_style = if item.task.deleted {
         Style::new()
             .fg(FG_MUTED)
@@ -873,11 +873,11 @@ fn task_heading_line(item: &TaskListItem) -> Line<'_> {
     };
     Line::from(vec![
         Span::styled(
-            &item.display_ref,
+            item.display_ref.clone(),
             Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
         ),
         Span::raw("  "),
-        Span::styled(&item.task.title, title_style),
+        Span::styled(item.task.title.clone(), title_style),
     ])
 }
 
@@ -954,6 +954,23 @@ pub(super) fn render_task_preview(
     let Some(item) = store.selected_task(selected) else {
         return;
     };
+    let block = Block::new()
+        .title(" SELECTED ")
+        .borders(Borders::TOP)
+        .border_style(Style::new().fg(BORDER))
+        .padding(Padding::horizontal(1))
+        .style(Style::new().bg(BG));
+    let inner = block.inner(area);
+    let lines = task_preview_lines(item, inner.width as usize, inner.height as usize);
+
+    frame.render_widget(block, area);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG)),
+        inner,
+    );
+}
+
+fn task_preview_lines(item: &TaskListItem, width: usize, height: usize) -> Vec<Line<'static>> {
     let labels = labels_display(&item.labels, ", ");
     let mut lines = vec![
         task_heading_line(item),
@@ -996,7 +1013,7 @@ pub(super) fn render_task_preview(
                     format!("{} ", link.display_ref),
                     Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(&link.title, Style::new().fg(FG_MUTED)),
+                Span::styled(link.title.clone(), Style::new().fg(FG_MUTED)),
                 Span::styled(format!(" {}", link.status), Style::new().fg(FG_DIM)),
             ]));
         }
@@ -1007,24 +1024,20 @@ pub(super) fn render_task_preview(
             )]));
         }
     }
-    lines.extend([
-        Line::from(""),
-        Line::from(description_preview_text(&item.task.description)),
-    ]);
-    let text = Text::from(lines);
-    frame.render_widget(
-        Paragraph::new(text)
-            .block(
-                Block::new()
-                    .title(" SELECTED ")
-                    .borders(Borders::TOP)
-                    .border_style(Style::new().fg(BORDER))
-                    .padding(Padding::horizontal(1)),
-            )
-            .wrap(Wrap { trim: false })
-            .style(Style::new().fg(FG).bg(BG)),
-        area,
-    );
+
+    if lines.len() < height {
+        if height - lines.len() > 1 {
+            lines.push(Line::from(""));
+        }
+        let description_height = height.saturating_sub(lines.len());
+        lines.extend(render_markdown_preview(
+            &description_or_placeholder(&item.task.description),
+            width,
+            description_height,
+        ));
+    }
+    lines.truncate(height);
+    lines
 }
 
 fn epic_parent_preview_line(parent: &crate::query::TaskDependencyLink) -> Line<'static> {
@@ -1679,6 +1692,55 @@ mod tests {
             line.to_string(),
             format!("part of {EPIC_MARKER} APP-EPIC Build the epic container")
         );
+    }
+
+    #[test]
+    fn preview_renders_markdown_blocks_and_inline_styles() {
+        let mut item = task_item("documented");
+        item.task.description =
+            "### Context\n\nFirst **bold** paragraph.\n\n- one\n- `two`".to_string();
+
+        let lines = task_preview_lines(&item, 40, 12);
+        let description = &lines[4..];
+        let rendered = description
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(rendered, "Context\n\nFirst bold paragraph.\n\n- one\n- two");
+        assert!(!rendered.contains("###"));
+        assert!(
+            description[2]
+                .spans
+                .iter()
+                .any(|span| span.content == "bold"
+                    && span.style.add_modifier.contains(Modifier::BOLD))
+        );
+    }
+
+    #[test]
+    fn preview_bounds_wrapped_markdown_to_available_height() {
+        let mut item = task_item("documented");
+        item.task.description = "A description with enough words to wrap across many lines in the selected task preview.".to_string();
+
+        let lines = task_preview_lines(&item, 20, 7);
+
+        assert_eq!(lines.len(), 7);
+        assert_eq!(lines[3].to_string(), "");
+        assert!(lines[6].to_string().ends_with('…'));
+        assert!(lines[4..].iter().all(|line| line.width() <= 20));
+    }
+
+    #[test]
+    fn preview_uses_single_remaining_line_for_description() {
+        let mut item = task_item("documented");
+        item.task.description = "small body".to_string();
+
+        let lines = task_preview_lines(&item, 20, 4);
+
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[3].to_string(), "small body");
     }
 
     #[test]

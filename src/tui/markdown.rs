@@ -579,6 +579,52 @@ pub(crate) fn render_markdown(input: &str, max_width: usize) -> Vec<Line<'static
     renderer.finish()
 }
 
+pub(crate) fn render_markdown_preview(
+    input: &str,
+    max_width: usize,
+    max_height: usize,
+) -> Vec<Line<'static>> {
+    if max_height == 0 {
+        return Vec::new();
+    }
+
+    let max_width = max_width.max(1);
+    let mut lines = render_markdown(input, max_width);
+    if lines.len() <= max_height {
+        return lines;
+    }
+
+    lines.truncate(max_height);
+    lines[max_height - 1] = line_with_ellipsis(&lines[max_height - 1], max_width);
+    lines
+}
+
+fn line_with_ellipsis(line: &Line<'_>, max_width: usize) -> Line<'static> {
+    let content_width = max_width.saturating_sub(1);
+    let mut width = 0;
+    let mut spans = Vec::new();
+
+    'spans: for span in &line.spans {
+        let mut content = String::new();
+        for ch in span.content.chars() {
+            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if width + ch_width > content_width {
+                if !content.is_empty() {
+                    spans.push(Span::styled(content, span.style));
+                }
+                break 'spans;
+            }
+            content.push(ch);
+            width += ch_width;
+        }
+        if !content.is_empty() {
+            spans.push(Span::styled(content, span.style));
+        }
+    }
+    spans.push(Span::styled("…", Style::new().fg(FG_DIM)));
+    Line::from(spans)
+}
+
 fn layout_lines_to_ratatui(lines: Vec<LayoutLine>) -> Vec<Line<'static>> {
     lines
         .into_iter()
@@ -858,5 +904,65 @@ mod tests {
     fn bold_list_item_renders_styled_text() {
         let rendered = render_to_text("- **One** item", 40);
         assert!(rendered.contains("- One item"));
+    }
+
+    #[test]
+    fn preview_preserves_block_boundaries_and_styles_inline_content() {
+        let lines = render_markdown_preview(
+            "## Context\n\nFirst **bold** paragraph.\n\n- one\n- `two`",
+            40,
+            10,
+        );
+        let rendered = lines
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(rendered, "Context\n\nFirst bold paragraph.\n\n- one\n- two");
+        assert!(!rendered.contains("##"));
+        assert!(
+            lines[0].spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+        assert!(
+            lines[2]
+                .spans
+                .iter()
+                .any(|span| span.content == "bold"
+                    && span.style.add_modifier.contains(Modifier::BOLD))
+        );
+        assert!(
+            lines[5]
+                .spans
+                .iter()
+                .any(|span| span.content == "two" && span.style.fg == Some(BLUE))
+        );
+    }
+
+    #[test]
+    fn preview_wraps_to_width_and_marks_truncation() {
+        let lines = render_markdown_preview(
+            "A paragraph with enough words to wrap across several compact preview lines.",
+            16,
+            2,
+        );
+
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].to_string().ends_with('…'));
+        for line in lines {
+            assert!(line.width() <= 16, "line too wide: {line:?}");
+        }
+    }
+
+    #[test]
+    fn preview_handles_zero_and_single_line_heights() {
+        assert!(render_markdown_preview("one two three", 8, 0).is_empty());
+
+        let lines = render_markdown_preview("one two three", 8, 1);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].to_string(), "one two…");
     }
 }
