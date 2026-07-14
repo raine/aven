@@ -200,7 +200,8 @@ fn longest_matching_route(
     let mut best: Option<(usize, WorkspaceRouteConfig)> = None;
     for route in routes {
         for path in &route.paths {
-            let path = std::fs::canonicalize(path).with_context(|| {
+            let path = crate::config::expand_tilde(path)?;
+            let path = std::fs::canonicalize(&path).with_context(|| {
                 format!("could not resolve workspace route path {}", path.display())
             })?;
             if cwd.starts_with(&path) {

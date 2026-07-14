@@ -1,5 +1,6 @@
 mod common;
 
+use std::path::Path;
 use std::process::Command;
 
 use common::{TestEnv, TestServer, command, contains_all, contains_none, extract_ref, fail, ok};
@@ -141,6 +142,52 @@ workspace:
         .expect("run aven in routed cwd"));
     contains_all(&alpha, &["routed alpha task"]);
     contains_none(&alpha, &["default beta task"]);
+}
+
+#[test]
+fn tilde_paths_route_workspaces_and_override_projects() {
+    let env = TestEnv::new();
+    let db = env.db("tilde-routes.sqlite");
+    let home = dirs::home_dir().expect("home directory");
+    let mapped = tempfile::Builder::new()
+        .prefix("aven-tilde-route-")
+        .tempdir_in(&home)
+        .expect("create mapped directory under home");
+    let relative = mapped.path().strip_prefix(&home).expect("path under home");
+    let tilde_path = Path::new("~").join(relative);
+
+    ok(env.aven(&db, ["workspace", "create", "alpha"]));
+    env.write_config(&format!(
+        r#"local:
+  db_path: "{}"
+
+workspace:
+  default: "default"
+  routes:
+    - workspace: "alpha"
+      paths: ["{}"]
+
+project:
+  overrides:
+    - workspace: "alpha"
+      project: "routed"
+      paths: ["{}"]
+"#,
+        db.display(),
+        tilde_path.display(),
+        tilde_path.display()
+    ));
+
+    let task_ref = extract_ref(&ok(aven_config_in(
+        &env,
+        mapped.path(),
+        ["add", "tilde routed task"],
+    )));
+    let task = ok(env.aven_config(["--workspace", "alpha", "show", &task_ref, "--full"]));
+    contains_all(&task, &["tilde routed task", "project=routed"]);
+
+    let default = ok(env.aven_config(["--workspace", "default", "list"]));
+    contains_none(&default, &["tilde routed task"]);
 }
 
 #[test]

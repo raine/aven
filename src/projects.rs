@@ -543,7 +543,10 @@ fn matching_project_override(
             continue;
         }
         for path in &project_override.paths {
-            let Ok(path) = fs::canonicalize(path) else {
+            let Ok(path) = crate::config::expand_tilde(path).and_then(|path| {
+                fs::canonicalize(&path)
+                    .with_context(|| format!("could not resolve project path {}", path.display()))
+            }) else {
                 continue;
             };
             if let Some(path_match) = matching_path(&cwd, &root, &path)

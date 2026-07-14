@@ -1,7 +1,7 @@
 use std::env;
 use std::fs;
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::{Context, Result, bail};
@@ -290,6 +290,15 @@ impl AppConfig {
     }
 }
 
+pub(crate) fn expand_tilde(path: &Path) -> Result<PathBuf> {
+    let mut components = path.components();
+    if !matches!(components.next(), Some(Component::Normal(component)) if component == "~") {
+        return Ok(path.to_path_buf());
+    }
+    let home = dirs::home_dir().context("could not find home directory")?;
+    Ok(home.join(components.as_path()))
+}
+
 pub fn config_dir_path() -> Result<PathBuf> {
     if let Ok(path) = env::var("AVEN_CONFIG_DIR") {
         return Ok(PathBuf::from(path));
@@ -323,7 +332,7 @@ pub fn resolve_db_path(flag: Option<PathBuf>, config: &AppConfig) -> Result<Path
         return Ok(PathBuf::from(path));
     }
     if let Some(path) = &config.local.db_path {
-        return Ok(path.clone());
+        return expand_tilde(path);
     }
     default_db_path()
 }
@@ -383,6 +392,24 @@ mod tests {
         let path = dir.path().join("config.yaml");
         fs::write(&path, text)?;
         AppConfig::load_from_path(&path)
+    }
+
+    #[test]
+    fn tilde_paths_expand_from_home() {
+        let home = dirs::home_dir().expect("home directory");
+
+        assert_eq!(
+            expand_tilde(Path::new("~/work")).unwrap(),
+            home.join("work")
+        );
+        assert_eq!(
+            expand_tilde(Path::new("~someone/work")).unwrap(),
+            PathBuf::from("~someone/work")
+        );
+        assert_eq!(
+            expand_tilde(Path::new("relative/work")).unwrap(),
+            PathBuf::from("relative/work")
+        );
     }
 
     #[test]
