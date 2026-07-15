@@ -45,11 +45,11 @@ tui:
       statuses: [inbox]
     - name: "Backlog"
       statuses: [backlog]
-    - name: "Ready"
+    - name: "Todo"
       statuses: [todo]
-    - name: "In progress"
+    - name: "Active"
       statuses: [active]
-    - name: "Closed"
+    - name: "Done"
       statuses: [done, canceled]
 
 agent:
@@ -129,19 +129,19 @@ tui:
       statuses: [inbox]
     - name: "Backlog"
       statuses: [backlog]
-    - name: "Ready"
+    - name: "Todo"
       statuses: [todo]
-    - name: "In progress"
+    - name: "Active"
       statuses: [active]
-    - name: "Closed"
+    - name: "Done"
       statuses: [done, canceled]
 ```
 
-Lanes use workflow-specific ordering. Inbox shows the oldest tasks first, Backlog and Ready sort by priority and then age, In progress shows the stalest activity first, and Closed shows the most recently closed tasks first. Custom lanes that combine statuses from different workflow stages preserve the active task-list order.
+Lanes use workflow-specific ordering. Inbox shows the oldest tasks first, Backlog and Todo sort by priority and then age, Active shows the stalest activity first, and Done shows the most recently completed or canceled tasks first. Custom lanes that combine statuses from different workflow stages preserve the active task-list order.
 
 Customize lane names, order, and grouping by editing this list. Each fixed status must appear exactly once. Aven rejects empty columns, unknown statuses, duplicates, and incomplete mappings so the board cannot hide tasks accidentally.
 
-The first status in each lane is its movement destination. For example, moving a task into the default Closed lane sets its status to `done`. Choosing the lane a task already occupies preserves its existing status, including `canceled` within Closed.
+The first status in each lane is its movement destination. For example, moving a task into the default Done lane sets its status to `done`. Choosing the lane a task already occupies preserves its existing status, including `canceled` within Done.
 
 ## Agent task intake
 

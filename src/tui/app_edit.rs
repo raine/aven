@@ -102,8 +102,13 @@ impl App {
             .filter_map(|(index, column)| {
                 let status =
                     crate::tui::columns::lane_entry_status(&self.store.task_columns, index)?;
+                let label = if column.name.eq_ignore_ascii_case(status.as_str()) {
+                    column.name.clone()
+                } else {
+                    format!("{} → {}", column.name, status.as_str())
+                };
                 Some(PickerItem {
-                    label: format!("{} → {}", column.name, status.as_str()),
+                    label,
                     value: status.as_str().to_string(),
                     selected: selected_lane == Some(index),
                 })

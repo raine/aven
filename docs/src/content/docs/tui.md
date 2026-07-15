@@ -60,7 +60,7 @@ Use the sidebar or the `v` prefix family to switch views. Views include queue, c
 
 ### Columns view
 
-The Columns view arranges tasks into configurable lifecycle lanes. Its defaults are Inbox, Backlog, Ready, In progress, and Closed. Inbox shows the oldest captures first, Backlog and Ready prioritize important older work, In progress surfaces stale work, and Closed shows the most recently closed tasks first.
+The Columns view arranges tasks into configurable lifecycle lanes. Its defaults use Aven's status names directly: Inbox, Backlog, Todo, Active, and Done. Inbox shows the oldest captures first, Backlog and Todo prioritize important older work, Active surfaces stale work, and Done shows the most recently completed or canceled tasks first.
 
 ![aven TUI showing tasks organized across lifecycle columns](/columns.webp)
 
@@ -68,7 +68,7 @@ The Columns view arranges tasks into configurable lifecycle lanes. Its defaults 
 
 Use `v l` to open the view. Up and down move within a lane, while left and right move the selection between lanes. Press `<` or `>` to move the selected task one lane, or press `m` to choose a destination lane. Marked tasks move together and create one undo step. Relative moves use each task's current lane, and the batch remains unchanged when any marked task is already at the requested edge.
 
-Moving into a lane assigns its first configured status. Choosing the lane a task already occupies preserves its exact status, so a canceled task remains canceled when Closed contains `[done, canceled]`. Click a lane header to move the selected or marked tasks there, or right-click a card to open the status choices.
+Moving into a lane assigns its first configured status. Choosing the lane a task already occupies preserves its exact status, so a canceled task remains canceled when Done contains `[done, canceled]`. Click a lane header to move the selected or marked tasks there, or right-click a card to open the status choices.
 
 Press `g d` to toggle the selected-task preview and give the board more vertical space. Project scope, filters, details, editing, and task mutations continue to use the existing task model. Configure lane names and status grouping under [`tui.columns`](/configuration/#tui-columns).
 

@@ -6247,7 +6247,7 @@ mod task_dependencies {
 
         app.set_config(config);
 
-        assert_eq!(app.store.task_columns[0].name, "Closed");
+        assert_eq!(app.store.task_columns[0].name, "Done");
     }
 
     #[tokio::test]
@@ -6372,7 +6372,8 @@ mod task_dependencies {
             &app.overlay,
             Some(OverlayState::Picker(PickerState { route: OverlayRoute::MoveToColumn, title, items, .. }))
                 if title == "Move to column"
-                    && items.iter().any(|item| item.label == "Closed → done" && item.value == "done")
+                    && items.iter().any(|item| item.label == "Done" && item.value == "done")
+                    && items.iter().all(|item| !item.label.contains('→'))
         ));
     }
 
