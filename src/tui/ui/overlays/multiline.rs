@@ -259,7 +259,10 @@ pub(in crate::tui::ui) fn add_task_natural_hint_line() -> Line<'static> {
 }
 
 pub(in crate::tui::ui) fn render_add_note_input(frame: &mut Frame, state: &MultilineInputView) {
-    render_tail_viewport_multiline(frame, state, 60, multiline_hint_line(), add_note_input_line);
+    let show_placeholder = state.lines.len() == 1 && state.lines[0].is_empty();
+    render_tail_viewport_multiline(frame, state, 60, multiline_hint_line(), |line, cursor| {
+        add_note_input_line(line, cursor, show_placeholder)
+    });
 }
 
 fn render_tail_viewport_multiline(
@@ -326,8 +329,12 @@ fn render_tail_viewport_multiline(
     frame.render_widget(Paragraph::new(hint_line), hints);
 }
 
-pub(in crate::tui::ui) fn add_note_input_line(line: &str, cursor: Option<usize>) -> Line<'static> {
-    if line.is_empty() && cursor.is_some() {
+pub(in crate::tui::ui) fn add_note_input_line(
+    line: &str,
+    cursor: Option<usize>,
+    show_placeholder: bool,
+) -> Line<'static> {
+    if show_placeholder && line.is_empty() && cursor.is_some() {
         return Line::from(vec![
             super::super::input::cursor_cell("n"),
             Span::styled("ote body", Style::new().fg(FG_DIM)),

@@ -1060,7 +1060,7 @@ mod multiline_overlays {
 
     #[test]
     fn add_note_empty_input_shows_placeholder() {
-        let line = add_note_input_line("", Some(0));
+        let line = add_note_input_line("", Some(0), true);
         assert_eq!(line.spans[0].content.as_ref(), "n");
         assert_eq!(line.spans[0].style.fg, Some(BG_ALT));
         assert_eq!(line.spans[0].style.bg, Some(FG));
@@ -1144,6 +1144,22 @@ mod multiline_overlays {
                 .is_empty(),
             "expected blank row above key hints: {blank_row:?}"
         );
+    }
+
+    #[test]
+    fn add_note_overlay_hides_placeholder_on_later_empty_lines() {
+        let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+            route: OverlayRoute::AddNote,
+            title: "Add note".to_string(),
+            prompt: "note body:".to_string(),
+            lines: vec!["existing note text".to_string(), String::new()],
+            row: 1,
+            column: 0,
+        }));
+
+        assert!(rendered.contains("existing note text"));
+        assert!(!rendered.contains("note body"));
+        assert!(rendered.contains("Ctrl+S submit"));
     }
 
     #[test]
