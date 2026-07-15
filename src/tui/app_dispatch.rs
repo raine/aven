@@ -23,8 +23,9 @@ use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolu
 use crate::tui::store::TaskView;
 use crate::tui::ui::{
     database_stats_scroll_cap, detail_child_task_at_position, detail_help_scroll_cap,
-    detail_section_scroll_target, help_scroll_cap, prefix_hint_scroll_cap,
-    recent_action_at_position, task_at_position, task_status_at_position, text_panel_scroll_cap,
+    detail_section_scroll_target, detail_selected_text, detail_text_cell_at_position,
+    help_scroll_cap, prefix_hint_scroll_cap, recent_action_at_position, task_at_position,
+    task_status_at_position, text_panel_scroll_cap,
 };
 
 impl App {
@@ -162,7 +163,21 @@ impl App {
                 }
                 return self.handle_task_list_wheel(-1, terminal_size).await;
             }
-            MouseEventKind::Down(MouseButton::Left) => {}
+            MouseEventKind::Down(MouseButton::Left) => {
+                if self.begin_detail_text_selection(mouse, terminal_size) {
+                    return Ok(());
+                }
+                self.detail_text_selection = None;
+                self.detail_text_dragging = false;
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                self.update_detail_text_selection(mouse, terminal_size);
+                return Ok(());
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.detail_text_dragging = false;
+                return Ok(());
+            }
             MouseEventKind::Moved => {
                 self.handle_detail_mouse_move(mouse, terminal_size);
                 return Ok(());
@@ -449,6 +464,77 @@ impl App {
                     && row < layout.sidebar.y.saturating_add(layout.sidebar.height)
             },
         )
+    }
+
+    fn begin_detail_text_selection(&mut self, mouse: MouseEvent, terminal_size: Size) -> bool {
+        let Some(OverlayState::Detail { scroll }) = self.overlay else {
+            return false;
+        };
+        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
+            return false;
+        };
+        let Some(cell) = detail_text_cell_at_position(
+            item,
+            terminal_size.width,
+            terminal_size.height,
+            mouse.column,
+            mouse.row,
+            scroll,
+        ) else {
+            return false;
+        };
+        self.detail_text_selection = Some(crate::tui::detail_selection::DetailTextSelection::new(
+            item.task.id.clone(),
+            terminal_size.width,
+            cell,
+        ));
+        self.detail_text_dragging = true;
+        self.last_task_click = None;
+        true
+    }
+
+    fn update_detail_text_selection(&mut self, mouse: MouseEvent, terminal_size: Size) {
+        if !self.detail_text_dragging {
+            return;
+        }
+        let Some(OverlayState::Detail { scroll }) = self.overlay else {
+            return;
+        };
+        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
+            return;
+        };
+        let Some(cell) = detail_text_cell_at_position(
+            item,
+            terminal_size.width,
+            terminal_size.height,
+            mouse.column,
+            mouse.row,
+            scroll,
+        ) else {
+            return;
+        };
+        if let Some(selection) = self.detail_text_selection.as_mut()
+            && selection.task_id == item.task.id
+            && selection.terminal_width == terminal_size.width
+        {
+            selection.focus = cell;
+        }
+    }
+
+    fn copy_detail_text_selection(&mut self) {
+        let value = self.detail_text_selection.as_ref().and_then(|selection| {
+            self.store
+                .selected_task(self.widgets.table.selected())
+                .and_then(|item| detail_selected_text(item, selection))
+        });
+        let Some(value) = value.filter(|value| !value.is_empty()) else {
+            self.set_info("no detail text selected");
+            return;
+        };
+        match crate::tui::platform::copy_to_clipboard(&value) {
+            Ok(()) => self.set_success("copied selected text"),
+            Err(error) => self.set_error(format!("copy failed: {error}")),
+        }
     }
 
     fn handle_detail_mouse_click(
@@ -762,6 +848,21 @@ impl App {
         terminal_size: Size,
     ) -> Result<()> {
         if let OverlayState::Detail { scroll } = overlay {
+            if key.code == KeyCode::Esc && self.detail_text_selection.take().is_some() {
+                self.detail_text_dragging = false;
+                self.overlay = Some(OverlayState::Detail { scroll });
+                return Ok(());
+            }
+            if key.code == KeyCode::Char('y')
+                && key.modifiers.is_empty()
+                && self.detail_text_selection.is_some()
+            {
+                self.pending_shortcut.clear();
+                self.pending_shortcut_scroll = 0;
+                self.copy_detail_text_selection();
+                self.overlay = Some(OverlayState::Detail { scroll });
+                return Ok(());
+            }
             let section_direction = match (key.code, key.modifiers) {
                 (KeyCode::Tab, KeyModifiers::NONE) => Some(false),
                 (KeyCode::BackTab, KeyModifiers::NONE | KeyModifiers::SHIFT)

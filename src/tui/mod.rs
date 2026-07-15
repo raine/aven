@@ -18,6 +18,7 @@ mod authoring;
 mod columns;
 mod config_overlay;
 mod conflict_flow;
+mod detail_selection;
 mod event;
 mod markdown;
 mod natural_add_runtime;

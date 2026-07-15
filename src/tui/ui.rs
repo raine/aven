@@ -39,7 +39,8 @@ use self::toast::render_toast;
 
 pub(crate) use self::detail::{
     DetailMetadataTarget, detail_child_task_at_position, detail_metadata_target_at,
-    detail_scroll_cap, detail_section_scroll_target,
+    detail_scroll_cap, detail_section_scroll_target, detail_selected_text,
+    detail_text_cell_at_position,
 };
 pub(crate) use self::overlays::{
     add_task_field_at, database_stats_scroll_cap, text_panel_scroll_cap,
@@ -75,6 +76,7 @@ pub(crate) struct ViewState {
     pub(crate) detail_underlay: bool,
     pub(crate) detail_underlay_scroll: u16,
     pub(crate) hovered_detail_child_task_id: Option<String>,
+    pub(crate) detail_text_selection: Option<crate::tui::detail_selection::DetailTextSelection>,
     pub(crate) notification: Option<Toast>,
     pub(crate) pending_shortcut: Vec<String>,
     pub(crate) pending_shortcut_scroll: u16,
@@ -194,6 +196,7 @@ pub(crate) fn render(
             detail_underlay_scroll(view),
             inline_detail_title_editor,
             view.hovered_detail_child_task_id.as_deref(),
+            view.detail_text_selection.as_ref(),
         );
     }
     if let Some(overlay) = &view.overlay {
@@ -204,6 +207,7 @@ pub(crate) fn render(
             overlay,
             inline_title_editor.is_some() || inline_detail_title_editor.is_some(),
             view.hovered_detail_child_task_id.as_deref(),
+            view.detail_text_selection.as_ref(),
         );
     }
     if !view.pending_shortcut.is_empty() && !add_task_dialog_prefix_active(view) {
@@ -620,6 +624,7 @@ fn render_overlay(
     overlay: &OverlayView,
     inline_title_editor: bool,
     hovered_detail_child_task_id: Option<&str>,
+    detail_text_selection: Option<&crate::tui::detail_selection::DetailTextSelection>,
 ) {
     if matches!(
         overlay,
@@ -637,6 +642,7 @@ fn render_overlay(
             scroll,
             None,
             hovered_detail_child_task_id,
+            detail_text_selection,
         );
         if matches!(overlay, OverlayView::DetailHelp { .. }) {
             render_overlay_content(frame, overlay, inline_title_editor);

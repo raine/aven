@@ -161,6 +161,24 @@ fn left_click(column: u16, row: u16) -> MouseEvent {
     click_at(column, row)
 }
 
+fn left_drag(column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind: MouseEventKind::Drag(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+fn left_release(column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind: MouseEventKind::Up(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
 fn right_click(column: u16, row: u16) -> MouseEvent {
     MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Right),
@@ -3919,6 +3937,57 @@ mod detail_mode {
         assert!(matches!(
             app.overlay,
             Some(OverlayState::DetailHelp { scroll: 1 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn detail_drag_selects_rendered_text_and_coexists_with_scrolling() {
+        let mut app = test_app().await;
+        let mut draft = test_task_draft("Select this title");
+        draft.description = (0..40)
+            .map(|index| format!("description line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        create_and_select_task(&mut app, draft).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        let size = (80, 24).into();
+
+        app.dispatch_mouse(left_click(2, 3), size).await.unwrap();
+        app.dispatch_mouse(left_drag(7, 3), size).await.unwrap();
+        app.dispatch_mouse(left_release(7, 3), size).await.unwrap();
+
+        let selection = app.detail_text_selection.clone().unwrap();
+        let selected_text = {
+            let item = app
+                .store
+                .selected_task(app.widgets.table.selected())
+                .unwrap();
+            crate::tui::ui::detail_selected_text(item, &selection)
+        };
+        assert_eq!(selected_text.as_deref(), Some("Select"));
+        assert!(!app.detail_text_dragging);
+
+        app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), size)
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 1 })
+        ));
+        let item = app
+            .store
+            .selected_task(app.widgets.table.selected())
+            .unwrap();
+        assert_eq!(
+            crate::tui::ui::detail_selected_text(item, &selection).as_deref(),
+            Some("Select")
+        );
+
+        app.dispatch_key(key(KeyCode::Esc), size).await.unwrap();
+        assert!(app.detail_text_selection.is_none());
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 1 })
         ));
     }
 

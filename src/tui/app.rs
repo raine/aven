@@ -174,6 +174,8 @@ pub(crate) struct App {
     pub(super) next_refresh_at: Instant,
     pub(crate) last_task_click: Option<TaskRowClick>,
     pub(crate) hovered_detail_child_task_id: Option<String>,
+    pub(crate) detail_text_selection: Option<crate::tui::detail_selection::DetailTextSelection>,
+    pub(crate) detail_text_dragging: bool,
     pub(super) navigation_history: Vec<TaskViewState>,
     pub(super) detail_navigation_history: Vec<DetailNavigationState>,
 }
@@ -228,6 +230,8 @@ impl App {
             next_refresh_at,
             last_task_click: None,
             hovered_detail_child_task_id: None,
+            detail_text_selection: None,
+            detail_text_dragging: false,
             navigation_history: Vec::new(),
             detail_navigation_history: Vec::new(),
         };

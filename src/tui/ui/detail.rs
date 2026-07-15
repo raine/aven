@@ -13,6 +13,7 @@ use super::timestamps::local_timestamp_display;
 use super::truncate::truncate_width;
 use crate::query::TaskListItem;
 use crate::tui::app::WidgetState;
+use crate::tui::detail_selection::{DetailTextSelection, TextCell, text_cell_at_column};
 use crate::tui::markdown::render_markdown;
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::TuiStore;
@@ -55,6 +56,20 @@ struct DetailContentRenderModel {
     scrollbar_position: usize,
 }
 
+#[derive(Debug)]
+struct SelectableLine {
+    text: String,
+    document_start: usize,
+    body_index: Option<usize>,
+}
+
+#[derive(Debug)]
+struct DetailSelectableDocument {
+    text: String,
+    title: SelectableLine,
+    description: Vec<SelectableLine>,
+}
+
 pub(crate) struct DetailChildHit {
     pub(crate) task_id: String,
 }
@@ -71,6 +86,7 @@ fn render_detail(
     scroll: u16,
     inline_title_editor: Option<&TextInputView>,
     hovered_child_task_id: Option<&str>,
+    selection: Option<&DetailTextSelection>,
 ) {
     let layout = detail_content_layout(frame.area());
     frame.render_widget(Clear, layout.body_area);
@@ -79,12 +95,14 @@ fn render_detail(
         return;
     }
 
+    let selection = selection.filter(|selection| selection.terminal_width == frame.area().width);
     let model = build_detail_content_model(
         item,
         layout.content_area,
         scroll,
         inline_title_editor,
         hovered_child_task_id,
+        selection,
     );
     render_detail_content_from_model(frame, layout.content_area, &model);
     if layout.metadata_area.width > 0 {
@@ -131,7 +149,7 @@ pub(crate) fn detail_scroll_cap(
     terminal_height: u16,
 ) -> u16 {
     let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    let model = build_detail_content_model(item, layout.content_area, 0, None, None);
+    let model = build_detail_content_model(item, layout.content_area, 0, None, None, None);
     let sticky_height = model
         .sticky_lines
         .len()
@@ -152,7 +170,7 @@ pub(crate) fn detail_section_scroll_target(
     reverse: bool,
 ) -> u16 {
     let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    let model = build_detail_content_model(item, layout.content_area, scroll, None, None);
+    let model = build_detail_content_model(item, layout.content_area, scroll, None, None, None);
     let sticky_height = model
         .sticky_lines
         .len()
@@ -196,9 +214,21 @@ fn build_detail_content_model(
     scroll: u16,
     inline_title_editor: Option<&TextInputView>,
     hovered_child_task_id: Option<&str>,
+    selection: Option<&DetailTextSelection>,
 ) -> DetailContentRenderModel {
-    let sticky_lines = detail_header_options(item, area.width as usize, inline_title_editor);
-    let body_lines = detail_body_lines(item, area.width as usize, hovered_child_task_id);
+    let mut sticky_lines = detail_header_options(item, area.width as usize, inline_title_editor);
+    let mut body_lines = detail_body_lines(item, area.width as usize, hovered_child_task_id);
+    if inline_title_editor.is_none()
+        && let Some(selection) = selection.filter(|selection| selection.task_id == item.task.id)
+    {
+        apply_detail_selection(
+            item,
+            area.width as usize,
+            selection,
+            &mut sticky_lines,
+            &mut body_lines,
+        );
+    }
     let content_height = body_lines.len().max(1);
     let sticky_height = sticky_lines.len().min(area.height as usize);
     let visible = (area.height as usize).saturating_sub(sticky_height);
@@ -272,6 +302,112 @@ fn detail_body_lines(
     lines.extend(detail_note_lines(item, width));
     lines.extend(detail_dependency_lines(item, width));
     lines
+}
+
+fn detail_selectable_document(item: &TaskListItem, width: usize) -> DetailSelectableDocument {
+    let title = SelectableLine {
+        text: item.task.title.clone(),
+        document_start: 0,
+        body_index: None,
+    };
+    let mut text = item.task.title.clone();
+    let mut description = Vec::new();
+    if !item.task.description.is_empty() {
+        text.push('\n');
+        let epic_lines = detail_epic_child_lines(item, width, None);
+        let description_body_start = epic_lines.len() + usize::from(!epic_lines.is_empty());
+        let content_width = width.saturating_sub(3).max(1);
+        let rendered = render_markdown(&item.task.description, content_width);
+        for (index, line) in rendered.into_iter().enumerate() {
+            if index > 0 {
+                text.push('\n');
+            }
+            let line_text = line.to_string();
+            let document_start = text.len();
+            text.push_str(&line_text);
+            description.push(SelectableLine {
+                text: line_text,
+                document_start,
+                body_index: Some(description_body_start + index),
+            });
+        }
+    }
+    DetailSelectableDocument {
+        text,
+        title,
+        description,
+    }
+}
+
+fn apply_detail_selection(
+    item: &TaskListItem,
+    width: usize,
+    selection: &DetailTextSelection,
+    sticky_lines: &mut [Line<'static>],
+    body_lines: &mut [Line<'static>],
+) {
+    let document = detail_selectable_document(item, width);
+    let range = selection.range();
+    if let Some(line) = sticky_lines.first_mut() {
+        highlight_selectable_line(line, &document.title, &range, 0);
+    }
+    for selectable in &document.description {
+        if let Some(line) = selectable
+            .body_index
+            .and_then(|index| body_lines.get_mut(index))
+        {
+            highlight_selectable_line(line, selectable, &range, 1);
+        }
+    }
+}
+
+fn highlight_selectable_line(
+    line: &mut Line<'static>,
+    selectable: &SelectableLine,
+    selection: &std::ops::Range<usize>,
+    skipped_spans: usize,
+) {
+    let line_start = selectable.document_start;
+    let line_end = line_start + selectable.text.len();
+    let start = selection.start.max(line_start).min(line_end) - line_start;
+    let end = selection.end.max(line_start).min(line_end) - line_start;
+    if start >= end {
+        return;
+    }
+
+    let mut rebuilt = Vec::new();
+    let mut offset = 0;
+    for (index, span) in std::mem::take(&mut line.spans).into_iter().enumerate() {
+        if index < skipped_spans {
+            rebuilt.push(span);
+            continue;
+        }
+        let content = span.content.as_ref();
+        let span_start = offset;
+        let span_end = offset + content.len();
+        let selected_start = start.max(span_start).min(span_end) - span_start;
+        let selected_end = end.max(span_start).min(span_end) - span_start;
+        if selected_start > 0 {
+            rebuilt.push(Span::styled(
+                content[..selected_start].to_string(),
+                span.style,
+            ));
+        }
+        if selected_start < selected_end {
+            rebuilt.push(Span::styled(
+                content[selected_start..selected_end].to_string(),
+                span.style.fg(INVERSE_FG).bg(ACCENT),
+            ));
+        }
+        if selected_end < content.len() {
+            rebuilt.push(Span::styled(
+                content[selected_end..].to_string(),
+                span.style,
+            ));
+        }
+        offset = span_end;
+    }
+    line.spans = rebuilt;
 }
 
 fn detail_section_body_indices(item: &TaskListItem, width: usize) -> Vec<usize> {
@@ -783,6 +919,77 @@ fn metadata_label(label: &'static str) -> Line<'static> {
     ))
 }
 
+pub(crate) fn detail_text_cell_at_position(
+    item: &TaskListItem,
+    terminal_width: u16,
+    terminal_height: u16,
+    column: u16,
+    row: u16,
+    scroll: u16,
+) -> Option<TextCell> {
+    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    if column < layout.content_area.x
+        || column
+            >= layout
+                .content_area
+                .x
+                .saturating_add(layout.content_area.width)
+        || row < layout.content_area.y
+        || row
+            >= layout
+                .content_area
+                .y
+                .saturating_add(layout.content_area.height)
+    {
+        return None;
+    }
+    let model = build_detail_content_model(item, layout.content_area, scroll, None, None, None);
+    let document = detail_selectable_document(item, layout.content_area.width as usize);
+
+    let selectable = if row == layout.content_area.y {
+        &document.title
+    } else {
+        let sticky_height = model
+            .sticky_lines
+            .len()
+            .min(layout.content_area.height as usize) as u16;
+        let body_y = layout.content_area.y.saturating_add(sticky_height);
+        if row < body_y || row >= body_y.saturating_add(layout.content_area.height) {
+            return None;
+        }
+        let body_index = model
+            .body_start
+            .saturating_add(row.saturating_sub(body_y) as usize);
+        document
+            .description
+            .iter()
+            .find(|line| line.body_index == Some(body_index))?
+    };
+
+    let text_x = layout
+        .content_area
+        .x
+        .saturating_add(u16::from(selectable.body_index.is_some()) * 2);
+    let cell_column = column.checked_sub(text_x)? as usize;
+    let local = text_cell_at_column(&selectable.text, cell_column)?;
+    Some(TextCell {
+        start: selectable.document_start + local.start,
+        end: selectable.document_start + local.end,
+    })
+}
+
+pub(crate) fn detail_selected_text(
+    item: &TaskListItem,
+    selection: &DetailTextSelection,
+) -> Option<String> {
+    if selection.task_id != item.task.id {
+        return None;
+    }
+    let layout = detail_content_layout(Rect::new(0, 0, selection.terminal_width, 24));
+    let document = detail_selectable_document(item, layout.content_area.width as usize);
+    document.text.get(selection.range()).map(str::to_string)
+}
+
 pub(crate) fn detail_child_task_at_position(
     item: &TaskListItem,
     terminal_width: u16,
@@ -807,7 +1014,7 @@ pub(crate) fn detail_child_task_at_position(
     {
         return None;
     }
-    let model = build_detail_content_model(item, layout.content_area, scroll, None, None);
+    let model = build_detail_content_model(item, layout.content_area, scroll, None, None, None);
     let sticky_height = model
         .sticky_lines
         .len()
@@ -890,6 +1097,7 @@ pub(super) fn render_detail_underlay(
     scroll: u16,
     inline_title_editor: Option<&TextInputView>,
     hovered_child_task_id: Option<&str>,
+    selection: Option<&DetailTextSelection>,
 ) {
     if let Some(task) = store.selected_task(widgets.table.selected()) {
         render_detail(
@@ -898,6 +1106,7 @@ pub(super) fn render_detail_underlay(
             scroll,
             inline_title_editor,
             hovered_child_task_id,
+            selection,
         );
     }
 }
@@ -1055,6 +1264,102 @@ mod tests {
 
         assert!(!rendered.contains("WHY BLOCKED"));
         assert!(!rendered.contains("WHAT THIS UNLOCKS"));
+    }
+
+    #[test]
+    fn detail_text_mapping_handles_wide_title_characters() {
+        let mut item = detail_test_item();
+        item.task.title = "A界B".to_string();
+
+        let first_wide_cell = detail_text_cell_at_position(&item, 80, 24, 3, 3, 0).unwrap();
+        let second_wide_cell = detail_text_cell_at_position(&item, 80, 24, 4, 3, 0).unwrap();
+        let selection = DetailTextSelection::new(item.task.id.clone(), 80, first_wide_cell);
+
+        assert_eq!(first_wide_cell, second_wide_cell);
+        assert_eq!(
+            detail_selected_text(&item, &selection).as_deref(),
+            Some("界")
+        );
+
+        item.task.title = "x".repeat(200);
+        assert_eq!(detail_text_cell_at_position(&item, 120, 30, 88, 3, 0), None);
+    }
+
+    #[test]
+    fn detail_text_mapping_uses_scrolled_wrapped_description_lines() {
+        let mut item = detail_test_item();
+        item.task.description = "first paragraph with enough words to wrap across terminal lines and keep going for another line".to_string();
+        let layout = detail_content_layout(Rect::new(0, 0, 70, 12));
+        let document = detail_selectable_document(&item, layout.content_area.width as usize);
+        assert!(document.description.len() > 1);
+        let expected = document.description[1]
+            .text
+            .chars()
+            .next()
+            .unwrap()
+            .to_string();
+        let body_y = layout.content_area.y + 4;
+
+        let cell =
+            detail_text_cell_at_position(&item, 70, 12, layout.content_area.x + 2, body_y, 1)
+                .unwrap();
+        let selection = DetailTextSelection::new(item.task.id.clone(), 70, cell);
+
+        assert_eq!(
+            detail_selected_text(&item, &selection).as_deref(),
+            Some(expected.as_str())
+        );
+    }
+
+    #[test]
+    fn detail_selection_copies_rendered_markdown_text() {
+        let mut item = detail_test_item();
+        item.task.description = "**bold** and `code`".to_string();
+        let layout = detail_content_layout(Rect::new(0, 0, 80, 24));
+        let document = detail_selectable_document(&item, layout.content_area.width as usize);
+        let description = document.description.first().unwrap();
+        let selection = DetailTextSelection {
+            task_id: item.task.id.clone(),
+            terminal_width: 80,
+            anchor: TextCell {
+                start: description.document_start,
+                end: description.document_start + 1,
+            },
+            focus: TextCell {
+                start: description.document_start + description.text.len() - 1,
+                end: description.document_start + description.text.len(),
+            },
+        };
+
+        assert_eq!(description.text, "bold and code");
+        assert_eq!(
+            detail_selected_text(&item, &selection).as_deref(),
+            Some("bold and code")
+        );
+    }
+
+    #[test]
+    fn detail_selection_highlights_the_selected_range() {
+        let item = detail_test_item();
+        let selection =
+            DetailTextSelection::new(item.task.id.clone(), 80, TextCell { start: 0, end: 3 });
+
+        let model = build_detail_content_model(
+            &item,
+            Rect::new(2, 3, 76, 18),
+            0,
+            None,
+            None,
+            Some(&selection),
+        );
+        let selected = model.sticky_lines[0]
+            .spans
+            .iter()
+            .find(|span| span.content.as_ref() == "Fix")
+            .unwrap();
+
+        assert_eq!(selected.style.bg, Some(ACCENT));
+        assert_eq!(selected.style.fg, Some(INVERSE_FG));
     }
 
     #[test]
@@ -1313,7 +1618,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let model = build_detail_content_model(&item, Rect::new(0, 0, 60, 5), 4, None, None);
+        let model = build_detail_content_model(&item, Rect::new(0, 0, 60, 5), 4, None, None, None);
 
         assert_eq!(
             model.content_height,
