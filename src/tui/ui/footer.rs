@@ -42,16 +42,10 @@ fn marked_task_indicator(count: usize) -> Vec<Span<'static>> {
     if count == 0 {
         return Vec::new();
     }
-    let mut spans = vec![
-        Span::styled(
-            format!(" ● {count} marked "),
-            Style::new().fg(YELLOW).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "· task actions target marked set  ",
-            Style::new().fg(FG_DIM),
-        ),
-    ];
+    let mut spans = vec![Span::styled(
+        format!(" ● {count} marked  "),
+        Style::new().fg(YELLOW).add_modifier(Modifier::BOLD),
+    )];
     spans.extend(key("t C"));
     spans.push(Span::styled(" clear all  ", Style::new().fg(FG_DIM)));
     spans
@@ -243,7 +237,6 @@ mod tests {
         let rendered = buffer_text(terminal.backend());
 
         assert!(rendered.contains("● 3 marked"));
-        assert!(rendered.contains("task actions target marked set"));
         assert!(rendered.contains("t C"));
         assert!(rendered.contains("clear all"));
     }
@@ -258,7 +251,6 @@ mod tests {
         let rendered = buffer_text(terminal.backend());
 
         assert!(!rendered.contains("marked"));
-        assert!(!rendered.contains("task actions target marked set"));
     }
 
     #[test]
