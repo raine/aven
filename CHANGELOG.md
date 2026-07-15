@@ -3,11 +3,12 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## Unreleased
+## v0.1.9 (2026-07-15)
 
-- Added automatic update checks and guided installation from the TUI.
-- Added `aven update` for checking and installing application updates. Task field
-  changes use `aven edit <ref>` instead of `aven update <ref>`.
+- The TUI automatically checks for new releases and offers guided installation,
+  with tailored instructions for package-managed installations.
+- `aven update` checks for and installs application updates. Task field changes
+  use `aven edit <ref>`, a breaking command rename for scripts and agents.
 
 ## v0.1.8 (2026-07-15)
 
@@ -23,8 +24,8 @@ description: Release notes for aven.
 ## v0.1.7 (2026-07-15)
 
 - Move selected or marked tasks directly between
-  [Columns lanes](/tui/#columns-view) with keyboard or mouse controls, with batch
-  moves grouped into one undo step.
+  [Columns lanes](/tui/#columns-view) with keyboard or mouse controls, with
+  batch moves grouped into one undo step.
 - Improved the default [Columns workflow](/tui/#columns-view) with
   lifecycle-based lanes, ordering tailored to each lane, and a toggle for the
   selected-task preview.
@@ -44,8 +45,8 @@ description: Release notes for aven.
 - Improved [task detail navigation](/tui/#open-detail) with a shortcut that
   jumps directly to notes.
 - Added a guided
-  [Taskwarrior migration workflow](/taskwarrior/#migrate-from-taskwarrior) to the
-  documentation.
+  [Taskwarrior migration workflow](/taskwarrior/#migrate-from-taskwarrior) to
+  the documentation.
 - Improved [daemon and server startup](/sync/) in Linux services, containers,
   and other environments without writable state directories.
 
@@ -61,11 +62,11 @@ description: Release notes for aven.
   actions, and database stats.
 - [Database diagnostics](/sync/#diagnose-sync-state) show sync history size,
   synced and pending change counts, server sequence range, and payload bytes.
-- [Task list](/tui/#screen-tour) selection stays visible when queue group headers
-  remain pinned.
+- [Task list](/tui/#screen-tour) selection stays visible when queue group
+  headers remain pinned.
 - Back navigation from an
-  [epic child detail](/tui/#projects-labels-dependencies-and-epics) returns to the
-  parent detail view and scroll position.
+  [epic child detail](/tui/#projects-labels-dependencies-and-epics) returns to
+  the parent detail view and scroll position.
 
 ## v0.1.3 (2026-07-07)
 
@@ -74,8 +75,8 @@ description: Release notes for aven.
   tasks.
 - The [queue](/concepts/#queue) keeps blocked tasks below actionable groups and
   gives more weight to tasks that unblock other work.
-- The [TUI sidebar](/tui/#screen-tour) preserves selection more consistently when
-  switching focus, toggling the sidebar, or applying task changes.
+- The [TUI sidebar](/tui/#screen-tour) preserves selection more consistently
+  when switching focus, toggling the sidebar, or applying task changes.
 - Crashes are written to the aven log file with panic details for easier
   troubleshooting.
 
@@ -95,8 +96,8 @@ description: Release notes for aven.
 - Improved [TUI navigation and controls](/tui/#keyboard-reference) with back
   navigation, footer status hotkeys, mouse-scrolled help overlays, and clearer
   terminal startup errors.
-- Improved [task detail and preview panels](/tui/#open-detail) with epic metadata
-  and parent markers.
+- Improved [task detail and preview panels](/tui/#open-detail) with epic
+  metadata and parent markers.
 
 ## v0.1.1 (2026-07-03)
 
