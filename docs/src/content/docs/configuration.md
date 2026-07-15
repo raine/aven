@@ -112,7 +112,9 @@ daemon:
   wake_addr: "127.0.0.1:47631"
 ```
 
+:::note[Loopback wake address]
 Daemon wake addresses must be loopback.
+:::
 
 ## TUI columns
 

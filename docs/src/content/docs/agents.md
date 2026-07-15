@@ -79,7 +79,9 @@ Descriptions hold the main task context: problem statement, scope, acceptance cr
 
 Notes hold durable handoff context: implementation decisions, blockers, partial progress, and review findings. Agent notes survive chat sessions, branch switches, worktrees, and machine restarts.
 
+:::caution[Protect durable context]
 Keep secrets out of titles, descriptions, labels, projects, notes, and logs.
+:::
 
 ## Skill or prime?
 

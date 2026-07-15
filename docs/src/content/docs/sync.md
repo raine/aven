@@ -29,9 +29,9 @@ Network requirements depend on the bind address:
 | Private address | LAN, VPN, or another private network | `sync.auth_token` on the server and matching client tokens |
 | Public address | Internet-facing service | `--unsafe-public-bind`, `sync.auth_token`, and TLS or a reverse proxy |
 
-Plain HTTP is intended for loopback, trusted VPNs, private networks, or external TLS termination.
-
-Sync server URLs must use `http` or `https`, include a host, and omit username, password, query, and fragment parts.
+:::caution[Network security]
+Plain HTTP is intended for loopback, trusted VPNs, private networks, or external TLS termination. Sync server URLs must use `http` or `https`, include a host, and omit username, password, query, and fragment parts.
+:::
 
 ## Sync a client
 
@@ -45,7 +45,9 @@ When `sync.server_url` is configured, `aven sync` can omit `--server`:
 aven sync
 ```
 
+:::note[Server pinning]
 A local database pins the sync server it has used. Use a fresh database for a different server.
+:::
 
 ## Automate sync with the daemon
 
@@ -91,7 +93,11 @@ aven import tasks.json --yes
 
 - **Backups:** `aven backup` creates a SQLite backup.
 - **Export and import:** JSON exports include tasks, workspaces, projects, labels, notes, dependencies, epics, changes, field versions, conflicts, and metadata.
-- **Replacement:** Import and restore replace local data and require `--yes`. Both create a safety backup before replacement.
+
+:::caution[Local data replacement]
+Restore and import replace local data, require confirmation with `--yes`, and create a safety backup before replacement.
+:::
+
 - **Sync metadata:** Import preserves the target client id, resets the sync cursor, and skips imported pinned server metadata.
 
 ## Resolve conflicts
