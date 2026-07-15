@@ -63,6 +63,7 @@ export default defineConfig({
         {
           label: 'Reference',
           items: [
+            { label: 'Command reference', slug: 'command-reference' },
             { label: 'Configuration', slug: 'configuration' },
             { label: 'Changelog', slug: 'changelog' },
           ],
