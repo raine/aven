@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.1.8 (2026-07-15)
+
+- Task detail views support dragging across rendered titles and descriptions and
+  copying the selected text with `y`.
+- `Ctrl-Enter` submits task composers and multiline editors, with `Ctrl-s` as a
+  portable fallback.
+- Batch actions clearly indicate when they target marked tasks, and status
+  changes use the status picker.
+- Multiline editor controls remain visible as content grows, and note prompts
+  appear only on empty drafts.
+
 ## v0.1.7 (2026-07-15)
 
 - Move selected or marked tasks directly between Columns lanes with keyboard or
