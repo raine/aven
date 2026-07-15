@@ -33,6 +33,52 @@ Network requirements depend on the bind address:
 Plain HTTP is intended for loopback, trusted VPNs, private networks, or external TLS termination. Sync server URLs must use `http` or `https`, include a host, and omit username, password, query, and fragment parts.
 :::
 
+## Set up sync over a VPN
+
+Aven does not create or manage the VPN. The server and every client must already be connected to the same private network. This example uses `10.0.0.1` as the server's VPN address.
+
+First, generate a shared authentication token:
+
+```sh
+openssl rand -hex 32
+```
+
+Store the generated value in `~/.config/aven/config.yaml` on the server:
+
+```yaml
+sync:
+  auth_token: "<generated-token>"
+```
+
+Start the server on its VPN address, not its loopback address:
+
+```sh
+mkdir -p ~/.local/state/aven
+aven server \
+  --bind 10.0.0.1:3746 \
+  --data ~/.local/state/aven/sync-server.sqlite
+```
+
+Run this command under your operating system's service manager after confirming that sync works. The service must start after the VPN interface is available.
+
+On each client, store the same token and use the server's VPN address:
+
+```yaml
+sync:
+  enabled: true
+  server_url: "http://10.0.0.1:3746"
+  auth_token: "<generated-token>"
+  interval_seconds: 30
+```
+
+Verify the network path before testing Aven:
+
+```sh
+ping 10.0.0.1
+nc -vz 10.0.0.1 3746
+aven sync
+```
+
 ## Sync a client
 
 ```sh
