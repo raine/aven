@@ -1,4 +1,7 @@
-# Changelog
+---
+title: Changelog
+description: Release notes for aven.
+---
 
 ## v0.1.8 (2026-07-15)
 

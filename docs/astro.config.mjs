@@ -61,6 +61,7 @@ export default defineConfig({
           label: 'Reference',
           items: [
             { label: 'Configuration', slug: 'configuration' },
+            { label: 'Changelog', slug: 'changelog' },
           ],
         },
       ],

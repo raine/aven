@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'CHANGELOG.md'
       - 'docs/**'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
