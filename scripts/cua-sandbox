@@ -10,6 +10,7 @@ default_session="${CUA_SANDBOX_SESSION:-}"
 custom_image="aven-cuabot:latest"
 cuabot_image="trycua/cuabot:latest"
 cuabot_version="1.0.14"
+default_db="${AVEN_SANDBOX_DB:-$HOME/.local/state/aven/marketing-screenshot.sqlite}"
 
 usage() {
   cat <<'USAGE'
@@ -21,12 +22,15 @@ Commands:
   stop <session>           Stop a named CuaBot server
   status <session>         Show a named CuaBot server's status
   list                     List discoverable CuaBot sessions
+  db-bootstrap <session> [source] [--force]
+                           Snapshot a host aven database into a session
   cua <session> [args...]  Pass arguments to a named CuaBot server
   container <session>      Print the Docker container name
 
 Environment:
   CUA_SANDBOX_SESSION    Session fallback when an argument is omitted
   CUA_SANDBOX_STATE_DIR  Host CLI state (default: target/cua-sandbox)
+  AVEN_SANDBOX_DB        Database source for db-bootstrap
 USAGE
 }
 
@@ -98,6 +102,62 @@ list_sessions() {
     echo "(none)"
   fi
 }
+
+bootstrap_database() (
+  local session="$1"
+  local source="$2"
+  local force="$3"
+  local container="cuabot-xpra-$session"
+  local destination="/home/user/aven-run/aven.db"
+
+  require_command docker
+  require_command sqlite3
+  if [[ ! -f "$source" ]]; then
+    echo "database source does not exist: $source" >&2
+    exit 1
+  fi
+  if [[ "$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || true)" != "running" ]]; then
+    echo "sandbox container is not running: $container" >&2
+    exit 1
+  fi
+  if docker exec "$container" pgrep -f 'aven tui' >/dev/null 2>&1; then
+    echo "aven is running in session '$session'; stop it before replacing its database" >&2
+    exit 1
+  fi
+  if [[ "$force" != "true" ]] \
+    && docker exec -u user "$container" test -e "$destination"
+  then
+    echo "sandbox database already exists: $destination"
+    echo "Pass --force to replace it."
+    exit 0
+  fi
+
+  local temp_dir snapshot remote
+  temp_dir="$(mktemp -d)"
+  trap 'rm -rf "$temp_dir"' EXIT
+  snapshot="$temp_dir/aven.sqlite"
+  remote="/home/user/aven-run/.aven-bootstrap-$session-$$.sqlite"
+
+  sqlite3 "$source" ".backup '$snapshot'"
+  if [[ "$(sqlite3 "$snapshot" 'PRAGMA quick_check;')" != "ok" ]]; then
+    echo "database snapshot failed its integrity check" >&2
+    exit 1
+  fi
+  chmod 0644 "$snapshot"
+  docker exec -u user "$container" mkdir -p /home/user/aven-run
+  docker cp "$snapshot" "$container:$remote"
+  docker exec -u user "$container" sh -lc "
+    set -eu
+    mkdir -p /home/user/aven-run
+    cp '$remote' '$destination.bootstrap'
+    mv '$destination.bootstrap' '$destination'
+  "
+  docker exec "$container" rm -f "$remote"
+
+  echo "Bootstrapped $destination"
+  echo "Source: $source"
+  echo "Session: $session"
+)
 
 configure_cuabot() {
   local settings="$HOME/.cuabot/settings.json"
@@ -192,6 +252,21 @@ case "$command" in
   list)
     require_command docker
     list_sessions
+    ;;
+  db-bootstrap)
+    session="$(resolve_session "${2:-}")"
+    source="${3:-$default_db}"
+    force="false"
+    if [[ "$source" == "--force" ]]; then
+      source="$default_db"
+      force="true"
+    elif [[ "${4:-}" == "--force" ]]; then
+      force="true"
+    elif [[ -n "${4:-}" ]]; then
+      echo "unexpected argument: ${4}" >&2
+      exit 1
+    fi
+    bootstrap_database "$session" "$source" "$force"
     ;;
   cua)
     require_cli

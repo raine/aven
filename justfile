@@ -44,6 +44,10 @@ install-quality-tools:
 cua-sandbox-setup:
     scripts/cua-sandbox setup
 
+# Snapshot a host database into an isolated CuaBot session
+cua-sandbox-db session *ARGS:
+    scripts/cua-sandbox db-bootstrap {{session}} {{ARGS}}
+
 # Start an isolated CuaBot verification session
 cua-sandbox-start session:
     scripts/cua-sandbox start {{session}}
