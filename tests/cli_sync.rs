@@ -500,7 +500,7 @@ fn project_ids_survive_key_drift_across_sync() {
     let drift_ref = extract_ref(&ok(
         env.aven(&a, ["add", "after drift", "--project", "renamed-ops"])
     ));
-    ok(env.aven(&a, ["update", &seed_ref, "--project", "renamed-ops"]));
+    ok(env.aven(&a, ["edit", &seed_ref, "--project", "renamed-ops"]));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
 
@@ -805,8 +805,8 @@ fn independent_field_edits_converge() {
     sync(&env, &a, &server);
     sync(&env, &b, &server);
 
-    ok(env.aven(&a, ["update", &task_ref, "--status", "active"]));
-    ok(env.aven(&b, ["update", &task_ref, "--priority", "high"]));
+    ok(env.aven(&a, ["edit", &task_ref, "--status", "active"]));
+    ok(env.aven(&b, ["edit", &task_ref, "--priority", "high"]));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
     sync(&env, &a, &server);
@@ -834,8 +834,8 @@ fn notes_and_labels_converge() {
 
     ok(env.aven_stdin(&a, ["note", &task_ref, "--stdin"], "note a\n"));
     ok(env.aven_stdin(&b, ["note", &task_ref, "--stdin"], "note b\n"));
-    ok(env.aven(&a, ["update", &task_ref, "--label", "docs"]));
-    ok(env.aven(&b, ["update", &task_ref, "--label", "sync"]));
+    ok(env.aven(&a, ["edit", &task_ref, "--label", "docs"]));
+    ok(env.aven(&b, ["edit", &task_ref, "--label", "sync"]));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
     sync(&env, &a, &server);
@@ -843,8 +843,8 @@ fn notes_and_labels_converge() {
     let full = ok(env.aven(&a, ["show", &task_ref, "--full"]));
     contains_all(&full, &["note a", "note b", "labels=docs,sync"]);
 
-    ok(env.aven(&a, ["update", &task_ref, "--remove-label", "docs"]));
-    ok(env.aven(&b, ["update", &task_ref, "--label", "bug"]));
+    ok(env.aven(&a, ["edit", &task_ref, "--remove-label", "docs"]));
+    ok(env.aven(&b, ["edit", &task_ref, "--label", "bug"]));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
     sync(&env, &a, &server);
@@ -1387,7 +1387,7 @@ fn valid_offline_batch_with_related_operations_still_syncs() {
     let task_ref = extract_ref(&ok(
         env.aven(&a, ["add", "offline batch", "--project", "app"])
     ));
-    ok(env.aven(&a, ["update", &task_ref, "--label", "offline"]));
+    ok(env.aven(&a, ["edit", &task_ref, "--label", "offline"]));
     ok(env.aven_stdin(&a, ["note", &task_ref, "--stdin"], "batch note\n"));
 
     sync(&env, &a, &server);
@@ -2226,7 +2226,7 @@ fn sync_deletes_converge_idempotently() {
     let task_ref = extract_ref(&ok(
         env.aven(&a, ["add", "delete sync seed", "--project", "app"])
     ));
-    ok(env.aven(&a, ["update", &task_ref, "--label", "obsolete"]));
+    ok(env.aven(&a, ["edit", &task_ref, "--label", "obsolete"]));
     ok(env.aven_stdin(&a, ["note", &task_ref, "--stdin"], "remove this note\n"));
     sync(&env, &a, &server);
     sync(&env, &b, &server);

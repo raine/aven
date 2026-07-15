@@ -200,7 +200,7 @@ fn daemon_wake_syncs_representative_mutations() {
     daemon.wait_for_log_after(mark, "daemon-synced", Duration::from_secs(5));
 
     let mark = daemon.log_mark();
-    ok(env.aven_config(["update", &task_ref, "--status", "active"]));
+    ok(env.aven_config(["edit", &task_ref, "--status", "active"]));
     ok(env.aven_config_stdin(["note", &task_ref, "--stdin"], "wake note\n"));
     ok(env.aven_config(["delete", &task_ref]));
     ok(env.aven_config(["restore", &task_ref]));

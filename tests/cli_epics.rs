@@ -34,7 +34,7 @@ fn epic_add_list_ready_and_remove_workflow() {
     contains_all(&ready_after_dep, &[&blocker]);
     contains_none(&ready_after_dep, &[&child, &epic]);
 
-    let demote_error = fail(env.aven(&db, ["update", &epic, "--epic", "off"]));
+    let demote_error = fail(env.aven(&db, ["edit", &epic, "--epic", "off"]));
     contains_all(&demote_error, &["error epic-has-children"]);
 
     let removed = ok(env.aven(&db, ["epic", "remove", &child, &epic]));
@@ -43,7 +43,7 @@ fn epic_add_list_ready_and_remove_workflow() {
     let children_after_remove = ok(env.aven(&db, ["epic", "list", &epic]));
     contains_all(&children_after_remove, &["children=0"]);
 
-    let demoted = ok(env.aven(&db, ["update", &epic, "--epic", "off"]));
+    let demoted = ok(env.aven(&db, ["edit", &epic, "--epic", "off"]));
     contains_all(&demoted, &["updated", "changed=yes"]);
 
     let epics_after_demote = ok(env.aven(&db, ["list", "--epics"]));

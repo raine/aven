@@ -89,8 +89,8 @@ fn context_includes_unresolved_conflicts() {
     sync(&env, &a, &server);
     sync(&env, &b, &server);
 
-    ok(env.aven(&a, ["update", &task_ref, "--title", "title from a"]));
-    ok(env.aven(&b, ["update", &task_ref, "--title", "title from b"]));
+    ok(env.aven(&a, ["edit", &task_ref, "--title", "title from a"]));
+    ok(env.aven(&b, ["edit", &task_ref, "--title", "title from b"]));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
     sync(&env, &a, &server);

@@ -55,7 +55,7 @@ fn qualified_ref_prefix_is_a_hint() {
     ));
     let stale_ref = original.clone();
     let moved = extract_ref(&ok(
-        env.aven(&db, ["update", &original, "--project", "homelab"])
+        env.aven(&db, ["edit", &original, "--project", "homelab"])
     ));
 
     let shown = ok(env.aven(&db, ["show", &stale_ref]));

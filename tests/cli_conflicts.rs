@@ -24,8 +24,8 @@ fn title_conflict(
     server: &TestServer,
 ) -> (std::path::PathBuf, std::path::PathBuf, String) {
     let (a, b, task_ref) = synced_task(env, server, "conflict base");
-    ok(env.aven(&a, ["update", &task_ref, "--title", "title from a"]));
-    ok(env.aven(&b, ["update", &task_ref, "--title", "title from b"]));
+    ok(env.aven(&a, ["edit", &task_ref, "--title", "title from a"]));
+    ok(env.aven(&b, ["edit", &task_ref, "--title", "title from b"]));
     sync(env, &a, server);
     sync(env, &b, server);
     sync(env, &a, server);
@@ -63,10 +63,10 @@ fn conflicted_field_is_protected_but_other_fields_work() {
     let server = TestServer::start(&env);
     let (a, _, task_ref) = title_conflict(&env, &server);
 
-    let error = fail(env.aven(&a, ["update", &task_ref, "--title", "should fail"]));
+    let error = fail(env.aven(&a, ["edit", &task_ref, "--title", "should fail"]));
     contains_all(&error, &["error conflicted-field", "field=title"]);
 
-    ok(env.aven(&a, ["update", &task_ref, "--priority", "urgent"]));
+    ok(env.aven(&a, ["edit", &task_ref, "--priority", "urgent"]));
     let shown = ok(env.aven(&a, ["show", &task_ref]));
     contains_all(&shown, &["priority=urgent", "conflicts=yes"]);
 }
@@ -105,11 +105,11 @@ fn conflict_export_and_diff_write_variant_files() {
     let (a, b, task_ref) = synced_task(&env, &server, "description conflict export");
     ok(env.aven(
         &a,
-        ["update", &task_ref, "--description", "description from a\n"],
+        ["edit", &task_ref, "--description", "description from a\n"],
     ));
     ok(env.aven(
         &b,
-        ["update", &task_ref, "--description", "description from b\n"],
+        ["edit", &task_ref, "--description", "description from b\n"],
     ));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
@@ -154,11 +154,11 @@ fn resolve_conflict_by_stdin_syncs() {
 
     ok(env.aven(
         &a,
-        ["update", &task_ref, "--description", "description from a"],
+        ["edit", &task_ref, "--description", "description from a"],
     ));
     ok(env.aven(
         &b,
-        ["update", &task_ref, "--description", "description from b"],
+        ["edit", &task_ref, "--description", "description from b"],
     ));
     sync(&env, &a, &server);
     sync(&env, &b, &server);
@@ -223,7 +223,7 @@ fn remote_epic_demotion_conflict_displays_on_off() {
     sync(&env, &b, &server);
     let child = extract_ref(&ok(env.aven(&b, ["add", "sync child", "--project", "app"])));
     ok(env.aven(&b, ["epic", "add", &child, &epic]));
-    ok(env.aven(&a, ["update", &epic, "--epic", "off"]));
+    ok(env.aven(&a, ["edit", &epic, "--epic", "off"]));
     sync(&env, &b, &server);
     sync(&env, &a, &server);
     sync(&env, &b, &server);

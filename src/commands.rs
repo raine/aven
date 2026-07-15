@@ -4,6 +4,7 @@ mod context;
 mod data_safety;
 mod doctor;
 mod projects;
+mod self_update;
 mod skill;
 mod workspaces;
 
@@ -30,14 +31,15 @@ pub(crate) use self::data_safety::{
     ensure_integrity_ok,
 };
 pub(crate) use self::projects::cmd_project;
+pub(crate) use self::self_update::run as cmd_self_update;
 pub(crate) use self::skill::install as cmd_skill_install;
 pub(crate) use self::workspaces::cmd_workspace;
 use crate::choices::{TaskPriority, TaskStatus};
 use crate::cli::{
     AddArgs, BulkUpdateArgs, DepCommand, DepSubcommand, EpicCommand, EpicSubcommand,
     InternalNaturalAddArgs, LabelCommand, LabelSubcommand, ListArgs, NoteArgs, NoteDeleteArgs,
-    PrimeArgs, RefArgs, SearchArgs, ShowArgs, TaskSearchArgs, TextCommand, TextSubcommand,
-    UpdateArgs,
+    PrimeArgs, RefArgs, SearchArgs, ShowArgs, TaskEditArgs, TaskSearchArgs, TextCommand,
+    TextSubcommand,
 };
 use crate::config::{self as app_config, AppConfig};
 use crate::db::{conflict_exists, get_meta};
@@ -863,15 +865,13 @@ pub(crate) async fn cmd_prime(conn: &mut SqliteConnection, args: PrimeArgs) -> R
     println!("## Issue Workflow");
     println!();
     println!("- Inspect an issue with `aven show <ref> --full` before changing it.");
-    println!(
-        "- Mark picked-up work with `aven update <ref> --status active` before making changes."
-    );
+    println!("- Mark picked-up work with `aven edit <ref> --status active` before making changes.");
     println!(
         "- Add durable handoff context with `aven note <ref> ...` for blockers, decisions, or partial progress."
     );
     println!("- Leave blocked or unfinished work open and report the current state.");
     println!(
-        "- Mark complete with `aven update <ref> --status done` only after the requested work is complete and required code changes are committed."
+        "- Mark complete with `aven edit <ref> --status done` only after the requested work is complete and required code changes are committed."
     );
     println!("- Use `canceled` only when the user says the issue is no longer needed.");
     println!();
@@ -1366,7 +1366,7 @@ fn parse_epic_switch(value: Option<String>) -> Result<Option<bool>> {
         .transpose()
 }
 
-pub(crate) async fn cmd_update(conn: &mut SqliteConnection, args: UpdateArgs) -> Result<()> {
+pub(crate) async fn cmd_edit(conn: &mut SqliteConnection, args: TaskEditArgs) -> Result<()> {
     let task = resolve_task_ref(conn, &args.task_ref).await?;
     let description = read_optional_text(
         args.description,

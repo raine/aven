@@ -462,7 +462,7 @@ fn rejects_invalid_status_and_priority() {
 
     let task_ref =
         common::extract_ref(&ok(env.aven(&db, ["add", "valid task", "--project", "app"])));
-    let error = fail(env.aven(&db, ["update", &task_ref, "--status", "blocked"]));
+    let error = fail(env.aven(&db, ["edit", &task_ref, "--status", "blocked"]));
     contains_all(
         &error,
         &[

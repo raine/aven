@@ -438,7 +438,7 @@ fn active_workspace_payloads_pair_id_and_key_for_writes() {
         [
             "--workspace",
             "client",
-            "update",
+            "edit",
             &task_ref,
             "--title",
             "renamed",

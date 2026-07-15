@@ -48,7 +48,7 @@ fn prime_prints_skill_primer_and_inferred_project_open_issues() {
         &env,
         &db,
         &repo,
-        ["update", active_ref, "--status", "active"],
+        ["edit", active_ref, "--status", "active"],
     ));
     let done = ok(aven_in_clean_git(
         &env,
@@ -61,7 +61,7 @@ fn prime_prints_skill_primer_and_inferred_project_open_issues() {
         &env,
         &db,
         &repo,
-        ["update", done_ref, "--status", "done"],
+        ["edit", done_ref, "--status", "done"],
     ));
     let canceled = ok(aven_in_clean_git(
         &env,
@@ -74,7 +74,7 @@ fn prime_prints_skill_primer_and_inferred_project_open_issues() {
         &env,
         &db,
         &repo,
-        ["update", canceled_ref, "--status", "canceled"],
+        ["edit", canceled_ref, "--status", "canceled"],
     ));
 
     let output = ok(aven_in_clean_git(&env, &db, &repo, ["prime"]));
@@ -83,9 +83,9 @@ fn prime_prints_skill_primer_and_inferred_project_open_issues() {
         &[
             "# Aven CLI Primer",
             "## Issue Workflow",
-            "aven update <ref> --status active",
+            "aven edit <ref> --status active",
             "aven note <ref> ...",
-            "aven update <ref> --status done",
+            "aven edit <ref> --status done",
             "## Local Conventions",
             "Project: prime-app",
             "Open issue sample: 2",
@@ -242,7 +242,7 @@ fn prime_json_returns_structured_output_with_explicit_project() {
             "bug",
         ],
     )));
-    ok(env.aven(&db, ["update", &active_ref, "--status", "active"]));
+    ok(env.aven(&db, ["edit", &active_ref, "--status", "active"]));
     let inbox_ref = extract_ref(&ok(env.aven(&db, ["add", "inbox task", "--project", "app"])));
     let epic_ref = extract_ref(&ok(
         env.aven(&db, ["add", "parent epic", "--project", "app", "--epic"])

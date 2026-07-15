@@ -41,9 +41,9 @@ pub use cli::Cli;
 use cli::{BackupSubcommand, Commands, DaemonSubcommand, InternalSubcommand, SkillSubcommand};
 use commands::{
     cmd_add, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
-    cmd_delete_restore, cmd_dep, cmd_doctor, cmd_epic, cmd_export, cmd_import,
+    cmd_delete_restore, cmd_dep, cmd_doctor, cmd_edit, cmd_epic, cmd_export, cmd_import,
     cmd_internal_natural_add, cmd_label, cmd_list, cmd_note, cmd_note_delete, cmd_prime,
-    cmd_project, cmd_search, cmd_show, cmd_skill, cmd_skill_install, cmd_text, cmd_update,
+    cmd_project, cmd_search, cmd_self_update, cmd_show, cmd_skill, cmd_skill_install, cmd_text,
     cmd_workspace,
 };
 use db::open_db;
@@ -74,6 +74,7 @@ pub async fn run_cli() -> Result<()> {
             Some(SkillSubcommand::Install(args)) => cmd_skill_install(args),
         },
         Commands::Config(args) => cmd_config(args).await,
+        Commands::Update(args) => cmd_self_update(args).await,
         Commands::Internal(args) => {
             let config = config::AppConfig::load()?;
             let db_path = config::resolve_db_path(cli.db, &config)?;
@@ -157,7 +158,7 @@ pub async fn run_cli() -> Result<()> {
                 Commands::Epic(args) => cmd_epic(&mut conn, args).await,
                 Commands::BulkUpdate(args) => cmd_bulk_update(&mut conn, args).await,
                 Commands::Prime(args) => cmd_prime(&mut conn, args).await,
-                Commands::Update(args) => cmd_update(&mut conn, args).await,
+                Commands::Edit(args) => cmd_edit(&mut conn, args).await,
                 Commands::Note(args) => cmd_note(&mut conn, args).await,
                 Commands::NoteDelete(args) => cmd_note_delete(&mut conn, args).await,
                 Commands::Export(args) => cmd_export(&mut conn, args).await,
@@ -187,7 +188,8 @@ pub async fn run_cli() -> Result<()> {
                 | Commands::Daemon(_)
                 | Commands::Server(_)
                 | Commands::Internal(_)
-                | Commands::Skill(_) => unreachable!(),
+                | Commands::Skill(_)
+                | Commands::Update(_) => unreachable!(),
             };
             if result.is_ok()
                 && should_wake

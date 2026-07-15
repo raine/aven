@@ -49,8 +49,9 @@ aven epic list APP-7KQ0
 aven dep add APP-7KQ9 APP-7KQ0
 aven dep remove APP-7KQ9 APP-7KQ0
 aven dep list APP-7KQ9
-aven update APP-7KQ9 --status active
-aven update APP-7KQ9 --title "clearer title" --priority medium
+aven edit APP-7KQ9 --status active
+aven edit APP-7KQ9 --title "clearer title" --priority medium
+aven update
 aven project list --search app
 aven label list --search bug
 aven note APP-7KQ9 "durable handoff context"
@@ -61,6 +62,9 @@ aven restore APP-7KQ9
 - Use `aven <command> --help` to find maintenance commands for renaming,
   deletion, backup, export, import, and integrity checks.
 
+- `aven update` checks for a newer release. Direct installations require
+  `aven update --yes` before replacing the executable. Package-managed
+  installations print the appropriate update guidance.
 - Use `show --full` before decisions that depend on description, labels, notes,
   deletion state, or conflicts.
 - Use `context <ref>` when one task snapshot is needed before acting. It gathers
@@ -80,7 +84,7 @@ aven restore APP-7KQ9
 - Add dependencies between related tasks when one task must finish before another
   can start. Use `dep add <blocked> <blocker>`.
 - Use epics when one task is part of a larger body of work. Create an empty epic
-  with `add --epic`, convert a task with `update <ref> --epic on`, and link
+  with `add --epic`, convert a task with `edit <ref> --epic on`, and link
   children with `epic add <child> <epic>`.
 - Epic membership does not make a child blocked. Do not use dependencies to model
   epic membership, and do not use epics to model ordering.

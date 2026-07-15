@@ -110,8 +110,8 @@ fn dependency_filter_ignores_done_canceled_and_deleted_blockers() {
         env.aven(&db, ["add", "blocked by deleted", "--project", "app"])
     ));
 
-    ok(env.aven(&db, ["update", &done_blocker, "--status", "done"]));
-    ok(env.aven(&db, ["update", &canceled_blocker, "--status", "canceled"]));
+    ok(env.aven(&db, ["edit", &done_blocker, "--status", "done"]));
+    ok(env.aven(&db, ["edit", &canceled_blocker, "--status", "canceled"]));
     ok(env.aven(&db, ["delete", &deleted_blocker]));
 
     ok(env.aven(&db, ["dep", "add", &done_blocked, &done_blocker]));

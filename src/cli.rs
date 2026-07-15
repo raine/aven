@@ -30,7 +30,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
             "search",
             "context",
             "show",
-            "update",
+            "edit",
             "note",
             "note-delete",
             "dep",
@@ -59,7 +59,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
     },
     HelpSection {
         heading: "SETUP",
-        commands: &["config", "doctor"],
+        commands: &["config", "doctor", "update"],
     },
     HelpSection {
         heading: "DATA SAFETY",
@@ -232,8 +232,10 @@ pub(crate) enum Commands {
     BulkUpdate(BulkUpdateArgs),
     /// Emit workspace context for AI agents
     Prime(PrimeArgs),
-    /// Update task fields
-    Update(UpdateArgs),
+    /// Edit task fields
+    Edit(TaskEditArgs),
+    /// Check for and install an aven update
+    Update(SelfUpdateArgs),
     /// Append a note to a task
     Note(NoteArgs),
     /// Delete a note from a task
@@ -515,7 +517,7 @@ pub(crate) struct PrimeArgs {
 }
 
 #[derive(Args)]
-pub(crate) struct UpdateArgs {
+pub(crate) struct TaskEditArgs {
     pub(crate) task_ref: String,
     #[arg(long)]
     pub(crate) title: Option<String>,
@@ -537,6 +539,12 @@ pub(crate) struct UpdateArgs {
     pub(crate) label: Vec<String>,
     #[arg(long)]
     pub(crate) remove_label: Vec<String>,
+}
+
+#[derive(Args)]
+pub(crate) struct SelfUpdateArgs {
+    #[arg(long, help = "Install an available direct update")]
+    pub(crate) yes: bool,
 }
 
 #[derive(Args)]
@@ -833,4 +841,23 @@ pub(crate) struct ServerArgs {
 pub(crate) struct SyncArgs {
     #[arg(long)]
     pub(crate) server: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn application_update_and_task_edit_are_distinct_commands() {
+        let update = Cli::try_parse_from(["aven", "update"]).unwrap();
+        assert!(matches!(
+            update.command,
+            Commands::Update(SelfUpdateArgs { yes: false })
+        ));
+
+        let edit = Cli::try_parse_from(["aven", "edit", "APP-1234", "--status", "active"]).unwrap();
+        assert!(matches!(edit.command, Commands::Edit(_)));
+        assert!(Cli::try_parse_from(["aven", "edit"]).is_err());
+        assert!(Cli::try_parse_from(["aven", "update", "APP-1234"]).is_err());
+    }
 }

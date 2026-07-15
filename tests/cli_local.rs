@@ -183,7 +183,7 @@ fn updates_task_and_preserves_suffix_on_project_move() {
     let updated = ok(env.aven(
         &db,
         [
-            "update",
+            "edit",
             &original,
             "--title",
             "fix conflict display",
@@ -409,8 +409,8 @@ fn delete_restore_and_filters_work() {
             "urgent",
         ],
     )));
-    ok(env.aven(&db, ["update", &app_docs, "--status", "active"]));
-    ok(env.aven(&db, ["update", &ops_sync, "--status", "done"]));
+    ok(env.aven(&db, ["edit", &app_docs, "--status", "active"]));
+    ok(env.aven(&db, ["edit", &ops_sync, "--status", "done"]));
 
     let by_project = ok(env.aven(&db, ["list", "--project", "app"]));
     contains_all(&by_project, &["app bug", "app docs"]);
@@ -565,8 +565,8 @@ fn bulk_update_sets_status_by_project_and_status() {
     let app_todo = extract_ref(&ok(env.aven(&db, ["add", "app todo", "--project", "app"])));
     let app_inbox = extract_ref(&ok(env.aven(&db, ["add", "app inbox", "--project", "app"])));
     let ops_todo = extract_ref(&ok(env.aven(&db, ["add", "ops todo", "--project", "ops"])));
-    ok(env.aven(&db, ["update", &app_todo, "--status", "todo"]));
-    ok(env.aven(&db, ["update", &ops_todo, "--status", "todo"]));
+    ok(env.aven(&db, ["edit", &app_todo, "--status", "todo"]));
+    ok(env.aven(&db, ["edit", &ops_todo, "--status", "todo"]));
 
     let updated = ok(env.aven(
         &db,
