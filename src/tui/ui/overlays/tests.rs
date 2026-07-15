@@ -789,7 +789,7 @@ mod add_task_overlay {
         );
 
         let multiline_keys = styled_key_contents(multiline_hint_line());
-        assert_eq!(multiline_keys, vec!["Ctrl-Enter", "^S", "Esc"]);
+        assert_eq!(multiline_keys, vec!["Ctrl-Enter / ^S", "Esc"]);
 
         let add_task_description_keys =
             styled_key_contents(add_task_hint_line(AddTaskStep::Description, false, false));
@@ -802,13 +802,13 @@ mod add_task_overlay {
             styled_key_contents(add_task_description_hint_line());
         assert_eq!(
             add_task_description_editor_keys,
-            vec!["Ctrl-Enter", "^S", "Enter", "^P", "^R", "Esc"]
+            vec!["Ctrl-Enter / ^S", "Enter", "^P", "^R", "Esc"]
         );
 
         let add_task_natural_keys = styled_key_contents(add_task_natural_hint_line());
         assert_eq!(
             add_task_natural_keys,
-            vec!["Ctrl-Enter", "^S", "Enter", "Esc"]
+            vec!["Ctrl-Enter / ^S", "Enter", "Esc"]
         );
 
         let status_keys = styled_key_contents(add_task_status_hint_line());
@@ -949,8 +949,7 @@ mod multiline_overlays {
         }));
         assert!(rendered.contains("Description"));
         assert!(rendered.contains("Body"));
-        assert!(rendered.contains("Ctrl-Enter submit"));
-        assert!(rendered.contains("^S submit"));
+        assert!(rendered.contains("Ctrl-Enter / ^S submit"));
     }
 
     #[test]
@@ -994,7 +993,7 @@ mod multiline_overlays {
         });
         let rendered = render_overlay_view(overlay);
         assert!(rendered.contains("Edit description"));
-        assert!(rendered.contains("Ctrl-Enter submit"));
+        assert!(rendered.contains("Ctrl-Enter / ^S submit"));
         assert!(rendered.contains("Ctrl+X Ctrl+E editor"));
         assert!(rendered.contains("line 1/1"));
         assert!(!rendered.contains(&"a".repeat(160)));
@@ -1059,7 +1058,7 @@ mod multiline_overlays {
         assert!(rendered.contains("Edit description"));
         assert!(rendered.contains("line one"));
         assert!(!rendered.contains("description:"));
-        assert!(rendered.contains("Ctrl-Enter submit"));
+        assert!(rendered.contains("Ctrl-Enter / ^S submit"));
     }
 
     #[test]
@@ -1084,7 +1083,7 @@ mod multiline_overlays {
         }));
         assert!(rendered.contains("Anything"));
         assert!(rendered.contains("Describe the task in natural language..."));
-        assert!(rendered.contains("Ctrl-Enter parse"));
+        assert!(rendered.contains("Ctrl-Enter / ^S parse"));
         assert!(rendered.contains("Enter newline"));
         assert!(!rendered.contains("wrong prompt"));
     }
@@ -1101,8 +1100,8 @@ mod multiline_overlays {
         }));
         assert!(rendered.contains("Add task: natural language"));
         assert!(rendered.contains("body:"));
-        assert!(rendered.contains("Ctrl-Enter submit"));
-        assert!(!rendered.contains("Ctrl-Enter parse"));
+        assert!(rendered.contains("Ctrl-Enter / ^S submit"));
+        assert!(!rendered.contains("Ctrl-Enter / ^S parse"));
         assert!(!rendered.contains("Describe the task in natural language..."));
     }
 
@@ -1119,7 +1118,7 @@ mod multiline_overlays {
         assert!(rendered.contains("Resolve manually"));
         assert!(rendered.contains(CONFLICT_MANUAL_BODY_PLACEHOLDER));
         assert!(!rendered.contains("manual value for field=description:"));
-        assert!(rendered.contains("Ctrl-Enter submit"));
+        assert!(rendered.contains("Ctrl-Enter / ^S submit"));
     }
 
     #[test]
@@ -1135,11 +1134,11 @@ mod multiline_overlays {
         let rendered = render_overlay_view(overlay.clone());
         assert!(rendered.contains("Add note"));
         assert!(rendered.contains("note body"));
-        assert!(rendered.contains("Ctrl-Enter submit"));
+        assert!(rendered.contains("Ctrl-Enter / ^S submit"));
 
         let buffer = overlay_buffer(overlay);
         let hint_row = (0..buffer.area.height)
-            .find(|row| buffer_row(&buffer, *row).contains("Ctrl-Enter submit"))
+            .find(|row| buffer_row(&buffer, *row).contains("Ctrl-Enter / ^S submit"))
             .unwrap();
         let blank_row = buffer_row(&buffer, hint_row.saturating_sub(1));
         assert!(
@@ -1163,7 +1162,7 @@ mod multiline_overlays {
 
         assert!(rendered.contains("existing note text"));
         assert!(!rendered.contains("note body"));
-        assert!(rendered.contains("Ctrl-Enter submit"));
+        assert!(rendered.contains("Ctrl-Enter / ^S submit"));
     }
 
     #[test]
@@ -1179,7 +1178,7 @@ mod multiline_overlays {
         }));
 
         assert!(rendered.contains("wrapped note text"));
-        assert!(rendered.contains("Ctrl-Enter submit"));
+        assert!(rendered.contains("Ctrl-Enter / ^S submit"));
         assert!(rendered.contains("Esc cancel"));
     }
 
@@ -1611,7 +1610,7 @@ mod route_specific_rendering {
         }));
         assert!(rendered.contains("Changed note title"));
         assert!(rendered.contains("note body"));
-        assert!(rendered.contains("Ctrl-Enter submit"));
+        assert!(rendered.contains("Ctrl-Enter / ^S submit"));
         assert!(rendered.contains("ote body"));
     }
 
