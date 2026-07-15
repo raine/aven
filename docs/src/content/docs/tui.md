@@ -98,7 +98,9 @@ Press `a` to open the task composer. Project, status, priority, labels, title, a
 
 <p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The composer captures structured fields without leaving the keyboard workflow.</p>
 
-Use `Tab` and `Shift-Tab` to move through every field. Press `Enter` to edit the focused metadata field. `Enter` creates from the title field and inserts a newline in the description. `Ctrl-s` creates from any field. Press `F1` for complete composer help.
+Use `Tab` and `Shift-Tab` to move through every field. Press `Enter` to edit the focused metadata field. `Enter` creates from the title field and inserts a newline in the description. `Ctrl-Enter` creates from any field when the terminal reports modified Enter keys. `Ctrl-s` is the portable create fallback. Press `F1` for complete composer help.
+
+Aven negotiates progressive keyboard enhancement with compatible terminals and uses the xterm modified-key protocol as a fallback. In tmux, enable forwarding with `set -s extended-keys on`. The outer terminal must also support tmux's extended-key mode. Use `Ctrl-s` when that path does not distinguish `Ctrl-Enter` from `Enter`. See [Tips](/tips/#use-ctrl-enter-in-alacritty-and-tmux) for the complete Alacritty and tmux configuration.
 
 `Esc` closes an empty composer. A draft with entered or changed values asks for confirmation before it is discarded. Opening metadata controls and help preserves the title and description cursors and viewport.
 

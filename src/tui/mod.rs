@@ -32,6 +32,52 @@ mod toast;
 mod ui;
 mod widgets;
 
+struct TerminalSession {
+    terminal: DefaultTerminal,
+    keyboard_enhancement: platform::KeyboardEnhancementGuard,
+    restored: bool,
+}
+
+impl TerminalSession {
+    fn init() -> Result<Self> {
+        let terminal = init_terminal()?;
+        let keyboard_enhancement = match platform::KeyboardEnhancementGuard::enable() {
+            Ok(guard) => guard,
+            Err(error) => {
+                ratatui::restore();
+                return Err(error);
+            }
+        };
+        Ok(Self {
+            terminal,
+            keyboard_enhancement,
+            restored: false,
+        })
+    }
+
+    fn terminal_mut(&mut self) -> &mut DefaultTerminal {
+        &mut self.terminal
+    }
+
+    fn restore(&mut self) -> Result<()> {
+        let result = self.keyboard_enhancement.disable();
+        ratatui::restore();
+        if result.is_ok() {
+            self.restored = true;
+        }
+        result
+    }
+}
+
+impl Drop for TerminalSession {
+    fn drop(&mut self) {
+        if !self.restored {
+            let _ = self.keyboard_enhancement.disable();
+            ratatui::restore();
+        }
+    }
+}
+
 pub(crate) async fn run(
     pool: SqlitePool,
     project: Option<&str>,
@@ -46,10 +92,10 @@ pub(crate) async fn run(
     if add_task {
         app.open_add_task_on_start(natural).await?;
     }
-    let mut terminal = init_terminal()?;
-    let result = app.run(&mut terminal).await;
-    ratatui::restore();
-    result
+    let mut terminal = TerminalSession::init()?;
+    let result = app.run(terminal.terminal_mut()).await;
+    let restore_result = terminal.restore();
+    result.and(restore_result)
 }
 
 pub(crate) async fn run_add_task(
@@ -61,9 +107,15 @@ pub(crate) async fn run_add_task(
 ) -> Result<()> {
     let mut app = app::App::new(pool, project).await?;
     app.set_add_task_db_path(db_path);
-    let mut terminal = init_terminal()?;
-    let result = app.run_add_task_only(&mut terminal, natural, config).await;
-    ratatui::restore();
+    let mut terminal = TerminalSession::init()?;
+    let result = app
+        .run_add_task_only(terminal.terminal_mut(), natural, config)
+        .await;
+    let restore_result = terminal.restore();
+    let result = match (result, restore_result) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+    };
     if let Ok(Some(message)) = &result {
         println!("{message}");
     }

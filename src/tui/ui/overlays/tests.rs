@@ -675,7 +675,7 @@ mod add_task_overlay {
             ..add_task_view()
         }));
         let hint_row = (0..buffer.area.height)
-            .find(|row| buffer_row(&buffer, *row).contains("^S create"))
+            .find(|row| buffer_row(&buffer, *row).contains("Ctrl-Enter / ^S create"))
             .unwrap();
         let bottom_border_row = (0..buffer.area.height)
             .rev()
@@ -795,7 +795,7 @@ mod add_task_overlay {
             styled_key_contents(add_task_hint_line(AddTaskStep::Description, false, false));
         assert_eq!(
             add_task_description_keys,
-            vec!["^S", "Tab", "^N", "F1", "Esc"]
+            vec!["Ctrl-Enter / ^S", "Tab", "^N", "F1", "Esc"]
         );
 
         let add_task_description_editor_keys =

@@ -416,7 +416,8 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
                 "Enter             open metadata or create from title",
                 "Enter             newline in description",
                 "Ctrl-p/t/r/l      edit project/status/priority/labels",
-                "Ctrl-s            create from any field",
+                "Ctrl-Enter        create from any field",
+                "Ctrl-s            portable create fallback",
                 "Ctrl-n            create with AI",
                 "F1                open this help",
                 "Ctrl-x Ctrl-e     edit description externally",
@@ -728,7 +729,7 @@ pub(in crate::tui::ui) fn add_task_hint_line(
             ("Esc", "cancel"),
         ]),
         AddTaskStep::Description => dialog_hint_line(&[
-            ("^S", "create"),
+            ("Ctrl-Enter / ^S", "create"),
             ("Tab", "next"),
             ("^N", "create with AI"),
             ("F1", "help"),

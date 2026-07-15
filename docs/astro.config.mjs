@@ -47,6 +47,7 @@ export default defineConfig({
             { label: 'Workflows', slug: 'workflows' },
             { label: 'Agents', slug: 'agents' },
             { label: 'Sync and backups', slug: 'sync' },
+            { label: 'Tips', slug: 'tips' },
           ],
         },
         {

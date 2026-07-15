@@ -225,6 +225,9 @@ pub(crate) fn handle_generic_overlay_key(
                     state.mode = AddTaskMode::Help { scroll: 0 };
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
+                KeyCode::Enter if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    OverlayOutcome::Submitted(OverlaySubmit::AddTask(state))
+                }
                 KeyCode::Enter if state.focus == AddTaskStep::Title => {
                     OverlayOutcome::Submitted(OverlaySubmit::AddTask(state))
                 }
@@ -846,6 +849,54 @@ mod tests {
             panic!("expected reverse composer");
         };
         assert_eq!(state.focus, AddTaskStep::Description);
+    }
+
+    #[test]
+    fn add_task_modified_enter_submits_from_every_field() {
+        for focus in AddTaskStep::ALL {
+            assert!(matches!(
+                handle(
+                    ctrl(KeyCode::Enter),
+                    OverlayState::AddTask(add_task_state(focus))
+                ),
+                OverlayOutcome::Submitted(OverlaySubmit::AddTask(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn add_task_plain_enter_preserves_field_behavior() {
+        assert!(matches!(
+            handle(
+                key(KeyCode::Enter),
+                OverlayState::AddTask(add_task_state(AddTaskStep::Title))
+            ),
+            OverlayOutcome::Submitted(OverlaySubmit::AddTask(_))
+        ));
+
+        let OverlayOutcome::None(OverlayState::AddTask(state)) = handle(
+            key(KeyCode::Enter),
+            OverlayState::AddTask(add_task_state(AddTaskStep::Description)),
+        ) else {
+            panic!("expected composer");
+        };
+        assert_eq!(
+            state.description.lines,
+            vec!["".to_string(), "".to_string()]
+        );
+    }
+
+    #[test]
+    fn add_task_ctrl_s_submits_from_every_field() {
+        for focus in AddTaskStep::ALL {
+            assert!(matches!(
+                handle(
+                    ctrl(KeyCode::Char('s')),
+                    OverlayState::AddTask(add_task_state(focus))
+                ),
+                OverlayOutcome::Submitted(OverlaySubmit::AddTask(_))
+            ));
+        }
     }
 
     #[test]
