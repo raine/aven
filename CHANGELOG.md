@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.1.7 (2026-07-15)
+
+- Move selected or marked tasks directly between Columns lanes with keyboard or
+  mouse controls, with batch moves grouped into one undo step.
+- Improved the default Columns workflow with lifecycle-based lanes, ordering
+  tailored to each lane, and a toggle for the selected-task preview.
+- Task previews render Markdown formatting and clearly indicate truncated text.
+- Configured database, workspace, and project paths support `~` for the home
+  directory.
+
 ## v0.1.6 (2026-07-14)
 
 - Added a configurable Columns view for navigating tasks in named status lanes.
