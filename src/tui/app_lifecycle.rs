@@ -134,7 +134,13 @@ impl App {
             detail_underlay: self.detail_underlay(),
             detail_underlay_scroll: self.detail_context_scroll,
             hovered_detail_child_task_id: self.hovered_detail_child_task_id.clone(),
-            detail_text_selection: self.detail_text_selection.clone(),
+            detail_text_selection: self
+                .detail_text_selection
+                .as_ref()
+                .filter(|selection| {
+                    selected_task.is_some_and(|task| task.task.id == selection.task_id)
+                })
+                .cloned(),
             notification: self
                 .notification
                 .as_ref()

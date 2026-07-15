@@ -9,6 +9,7 @@ pub(super) enum FooterMode {
     List,
     Columns,
     Detail,
+    DetailSelection,
     StatusChoice,
     PriorityChoice,
 }
@@ -116,13 +117,19 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("m", "lane"),
             ("?", "more"),
         ],
+        FooterMode::DetailSelection if width >= 72 => &[
+            ("y", "copy selection"),
+            ("Esc", "clear selection"),
+            ("j/k Pg", "scroll"),
+        ],
+        FooterMode::DetailSelection => &[("y", "copy"), ("Esc", "clear")],
         FooterMode::Detail if width >= 128 => &[
             ("j/k Pg", "scroll"),
             ("[/]", "task"),
             ("e", "edit"),
             ("s", "status"),
             ("e p", "priority"),
-            ("t N", "note"),
+            ("n", "note"),
             ("t d", "done"),
             ("t y/Y", "copy"),
             ("?", "more"),
@@ -133,7 +140,7 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("[/]", "task"),
             ("e", "edit"),
             ("s/e p", "status/priority"),
-            ("t N", "note"),
+            ("n", "note"),
             ("?", "more"),
             ("Esc", "back"),
         ],
@@ -186,7 +193,10 @@ fn cmd(mode: FooterMode, label: &str) -> Span<'static> {
     let style = match mode {
         FooterMode::StatusChoice => theme::status_style(label),
         FooterMode::PriorityChoice => theme::priority_style(label),
-        FooterMode::List | FooterMode::Columns | FooterMode::Detail => Style::new().fg(FG_DIM),
+        FooterMode::List
+        | FooterMode::Columns
+        | FooterMode::Detail
+        | FooterMode::DetailSelection => Style::new().fg(FG_DIM),
     };
     Span::styled(format!(" {label}  "), style)
 }
@@ -249,6 +259,20 @@ mod tests {
 
         assert!(!rendered.contains("marked"));
         assert!(!rendered.contains("task actions target marked set"));
+    }
+
+    #[test]
+    fn detail_selection_footer_advertises_copy_and_clear() {
+        let hints = footer_hints(FooterMode::DetailSelection, 80);
+
+        assert_eq!(
+            hints,
+            &[
+                ("y", "copy selection"),
+                ("Esc", "clear selection"),
+                ("j/k Pg", "scroll"),
+            ]
+        );
     }
 
     #[test]

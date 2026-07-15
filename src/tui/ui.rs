@@ -88,7 +88,7 @@ pub(crate) struct ViewState {
 }
 
 impl ViewState {
-    fn footer_mode(&self) -> FooterMode {
+    fn footer_mode(&self, width: u16) -> FooterMode {
         match self.footer_choice_mode {
             Some(FooterChoiceMode::Status) => return FooterMode::StatusChoice,
             Some(FooterChoiceMode::Priority) => return FooterMode::PriorityChoice,
@@ -98,7 +98,15 @@ impl ViewState {
             self.overlay,
             Some(OverlayView::Detail { .. } | OverlayView::DetailHelp { .. })
         ) {
-            FooterMode::Detail
+            if self
+                .detail_text_selection
+                .as_ref()
+                .is_some_and(|selection| selection.terminal_width == width)
+            {
+                FooterMode::DetailSelection
+            } else {
+                FooterMode::Detail
+            }
         } else {
             FooterMode::List
         }
@@ -179,7 +187,7 @@ pub(crate) fn render(
             render_main_surface(frame, store, widgets, view.focus, body, inline_title_editor);
         }
     }
-    let footer_mode = match view.footer_mode() {
+    let footer_mode = match view.footer_mode(footer.width) {
         FooterMode::List if store.view_state.view == TaskView::Columns => FooterMode::Columns,
         mode => mode,
     };

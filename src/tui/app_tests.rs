@@ -3952,7 +3952,7 @@ mod detail_mode {
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
         let size = (80, 24).into();
 
-        app.dispatch_mouse(left_click(2, 3), size).await.unwrap();
+        app.dispatch_mouse(left_click(0, 3), size).await.unwrap();
         app.dispatch_mouse(left_drag(7, 3), size).await.unwrap();
         app.dispatch_mouse(left_release(7, 3), size).await.unwrap();
 
@@ -3966,6 +3966,7 @@ mod detail_mode {
         };
         assert_eq!(selected_text.as_deref(), Some("Select"));
         assert!(!app.detail_text_dragging);
+        assert!(render_app_text(&mut app, 80, 24).contains("copy selection"));
 
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), size)
             .await
@@ -3985,6 +3986,7 @@ mod detail_mode {
 
         app.dispatch_key(key(KeyCode::Esc), size).await.unwrap();
         assert!(app.detail_text_selection.is_none());
+        assert!(!render_app_text(&mut app, 80, 24).contains("copy selection"));
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Detail { scroll: 1 })

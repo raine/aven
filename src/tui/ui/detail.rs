@@ -928,7 +928,7 @@ pub(crate) fn detail_text_cell_at_position(
     scroll: u16,
 ) -> Option<TextCell> {
     let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    if column < layout.content_area.x
+    if column < layout.body_area.x
         || column
             >= layout
                 .content_area
@@ -970,8 +970,15 @@ pub(crate) fn detail_text_cell_at_position(
         .content_area
         .x
         .saturating_add(u16::from(selectable.body_index.is_some()) * 2);
-    let cell_column = column.checked_sub(text_x)? as usize;
-    let local = text_cell_at_column(&selectable.text, cell_column)?;
+    let cell_column = column.saturating_sub(text_x) as usize;
+    let local = text_cell_at_column(&selectable.text, cell_column).or_else(|| {
+        let edge_column = if column <= text_x {
+            0
+        } else {
+            selectable.text.width().checked_sub(1)?
+        };
+        text_cell_at_column(&selectable.text, edge_column)
+    })?;
     Some(TextCell {
         start: selectable.document_start + local.start,
         end: selectable.document_start + local.end,
@@ -1279,6 +1286,12 @@ mod tests {
         assert_eq!(
             detail_selected_text(&item, &selection).as_deref(),
             Some("界")
+        );
+        let trailing_space = detail_text_cell_at_position(&item, 80, 24, 70, 3, 0).unwrap();
+        let trailing_selection = DetailTextSelection::new(item.task.id.clone(), 80, trailing_space);
+        assert_eq!(
+            detail_selected_text(&item, &trailing_selection).as_deref(),
+            Some("B")
         );
 
         item.task.title = "x".repeat(200);
