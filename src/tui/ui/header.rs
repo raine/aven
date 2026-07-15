@@ -454,12 +454,13 @@ fn join_filter_parts(parts: Vec<Vec<Span<'static>>>) -> Vec<Span<'static>> {
 
 fn header_status_width(store: &TuiStore) -> u16 {
     let (_, label) = sync_status_label(store);
-    label.len() as u16 + 2
+    label.len() as u16 + 3
 }
 
 fn header_status(store: &TuiStore) -> Paragraph<'static> {
     let (dot_color, label) = sync_status_label(store);
     let spans = vec![
+        Span::raw(" "),
         Span::styled("●", Style::new().fg(dot_color)),
         Span::styled(format!(" {label}"), Style::new().fg(FG_DIM)),
     ];
@@ -486,6 +487,8 @@ fn sync_status_label(store: &TuiStore) -> (Color, String) {
 mod tests {
     use super::*;
     use crate::tui::store::{TaskFilterModifiers, TaskOrder, TaskViewState};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     async fn test_store() -> TuiStore {
         let dir = tempfile::tempdir().unwrap();
@@ -576,6 +579,25 @@ mod tests {
         assert!(!header_segment_fits(10, 5, 15));
         assert!(!header_segment_fits(10, 5, 16));
         assert!(header_segment_fits(10, 5, 17));
+    }
+
+    #[tokio::test]
+    async fn sync_indicator_keeps_space_after_selected_status_label() {
+        let mut store = test_store().await;
+        store.view_state.view = TaskView::Todo;
+        let width = 89;
+        let backend = TestBackend::new(width, 2);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| render_header(frame, &store, frame.area()))
+            .unwrap();
+
+        let first_row = terminal.backend().buffer().content[..width as usize]
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(first_row.contains("todo 2 ● sync"), "{first_row:?}");
     }
 
     #[tokio::test]
