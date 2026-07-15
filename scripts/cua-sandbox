@@ -109,6 +109,7 @@ bootstrap_database() (
   local force="$3"
   local container="cuabot-xpra-$session"
   local destination="/home/user/aven-run/aven.db"
+  local binary="/home/user/aven-run/aven"
 
   require_command docker
   require_command sqlite3
@@ -122,6 +123,11 @@ bootstrap_database() (
   fi
   if docker exec "$container" pgrep -f 'aven tui' >/dev/null 2>&1; then
     echo "aven is running in session '$session'; stop it before replacing its database" >&2
+    exit 1
+  fi
+  if ! docker exec -u user "$container" test -x "$binary"; then
+    echo "sandbox aven binary is missing: $binary" >&2
+    echo "Deploy the branch build before bootstrapping its database." >&2
     exit 1
   fi
   if [[ "$force" != "true" ]] \
@@ -139,6 +145,21 @@ bootstrap_database() (
   remote="/home/user/aven-run/.aven-bootstrap-$session-$$.sqlite"
 
   sqlite3 "$source" ".backup '$snapshot'"
+
+  local version migration
+  local -a normalized=()
+  while IFS= read -r version; do
+    if [[ ! "$version" =~ ^[0-9]+$ ]]; then
+      echo "database contains an invalid migration version: $version" >&2
+      exit 1
+    fi
+    migration="$(compgen -G "$repo_root/migrations/${version}_*.sql" || true)"
+    if [[ -z "$migration" ]]; then
+      sqlite3 "$snapshot" "DELETE FROM _sqlx_migrations WHERE version = $version;"
+      normalized+=("$version")
+    fi
+  done < <(sqlite3 "$snapshot" 'SELECT version FROM _sqlx_migrations ORDER BY version;')
+
   if [[ "$(sqlite3 "$snapshot" 'PRAGMA quick_check;')" != "ok" ]]; then
     echo "database snapshot failed its integrity check" >&2
     exit 1
@@ -148,15 +169,29 @@ bootstrap_database() (
   docker cp "$snapshot" "$container:$remote"
   docker exec -u user "$container" sh -lc "
     set -eu
-    mkdir -p /home/user/aven-run
     cp '$remote' '$destination.bootstrap'
-    mv '$destination.bootstrap' '$destination'
   "
   docker exec "$container" rm -f "$remote"
+
+  if ! docker exec -u user -e AVEN_DB="$destination.bootstrap" \
+    "$container" "$binary" list --all --limit 1 >/dev/null
+  then
+    docker exec -u user "$container" rm -f "$destination.bootstrap"
+    echo "sandbox aven could not open the database snapshot" >&2
+    exit 1
+  fi
+  docker exec -u user "$container" \
+    rm -f "$destination-wal" "$destination-shm"
+  docker exec -u user "$container" mv "$destination.bootstrap" "$destination"
 
   echo "Bootstrapped $destination"
   echo "Source: $source"
   echo "Session: $session"
+  if [[ "${#normalized[@]}" -gt 0 ]]; then
+    printf 'Ignored source-only migrations:'
+    printf ' %s' "${normalized[@]}"
+    printf '\n'
+  fi
 )
 
 configure_cuabot() {

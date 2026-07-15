@@ -139,43 +139,6 @@ docker ps --filter "name=$container"
 docker exec "$container" uname -m
 ```
 
-## Bootstrap representative data
-
-Populate a new session from the marketing screenshot database before launching
-aven:
-
-```sh
-just cua-sandbox-db aven-auto-update-a1
-```
-
-The default source is:
-
-```text
-~/.local/state/aven/marketing-screenshot.sqlite
-```
-
-The bootstrap command uses SQLite's online backup operation to create a
-consistent host snapshot, runs `PRAGMA quick_check`, copies the snapshot into
-the container, and atomically installs it as
-`/home/user/aven-run/aven.db`. The source database remains unchanged.
-
-An existing sandbox database is preserved by default. Replace it explicitly
-when a fresh snapshot is required:
-
-```sh
-scripts/cua-sandbox db-bootstrap aven-auto-update-a1 --force
-```
-
-Use another source path when needed:
-
-```sh
-scripts/cua-sandbox db-bootstrap aven-auto-update-a1 \
-  "$HOME/.local/state/aven/db.sqlite" --force
-```
-
-`AVEN_SANDBOX_DB` changes the default source. Database replacement is refused
-while an `aven tui` process is running in the session.
-
 ## Build aven for the sandbox
 
 The sandbox is ARM64 Linux. Build in a matching Rust container rather than
@@ -211,6 +174,45 @@ docker exec -u user "$container" sh -lc '
   chmod 755 /home/user/aven-run/aven
 '
 ```
+
+## Bootstrap representative data
+
+Populate a session from the marketing screenshot database after deploying the
+branch's aven binary and before launching the TUI:
+
+```sh
+just cua-sandbox-db aven-auto-update-a1
+```
+
+The default source is:
+
+```text
+~/.local/state/aven/marketing-screenshot.sqlite
+```
+
+The bootstrap command uses SQLite's online backup operation to create a
+consistent host snapshot and runs `PRAGMA quick_check`. Migration records that
+do not exist in the branch are omitted from the disposable snapshot. The
+branch binary must successfully open the result before it is atomically
+installed as `/home/user/aven-run/aven.db`. The source database remains
+unchanged.
+
+An existing sandbox database is preserved by default. Replace it explicitly
+when a fresh snapshot is required:
+
+```sh
+scripts/cua-sandbox db-bootstrap aven-auto-update-a1 --force
+```
+
+Use another source path when needed:
+
+```sh
+scripts/cua-sandbox db-bootstrap aven-auto-update-a1 \
+  "$HOME/.local/state/aven/db.sqlite" --force
+```
+
+`AVEN_SANDBOX_DB` changes the default source. Database replacement is refused
+while an `aven tui` process is running in the session.
 
 ## Use the provisioned terminal
 
