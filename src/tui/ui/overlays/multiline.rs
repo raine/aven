@@ -247,7 +247,7 @@ pub(in crate::tui::ui) const CONFLICT_MANUAL_BODY_PLACEHOLDER: &str = "Enter man
 pub(in crate::tui::ui) fn add_task_description_hint_line() -> Line<'static> {
     dialog_hint_line(&[
         ("Ctrl-Enter", "create"),
-        ("^S", "fallback"),
+        ("^S", "create"),
         ("Enter", "newline"),
         ("^P", "project"),
         ("^R", "priority"),
@@ -258,7 +258,7 @@ pub(in crate::tui::ui) fn add_task_description_hint_line() -> Line<'static> {
 pub(in crate::tui::ui) fn add_task_natural_hint_line() -> Line<'static> {
     dialog_hint_line(&[
         ("Ctrl-Enter", "parse"),
-        ("^S", "fallback"),
+        ("^S", "parse"),
         ("Enter", "newline"),
         ("Esc", "cancel"),
     ])
@@ -355,7 +355,7 @@ pub(in crate::tui::ui) fn add_note_input_line(
 pub(in crate::tui::ui) fn multiline_hint_line() -> Line<'static> {
     dialog_hint_line(&[
         ("Ctrl-Enter", "submit"),
-        ("^S", "fallback"),
+        ("^S", "submit"),
         ("Esc", "cancel"),
     ])
 }
@@ -368,7 +368,7 @@ pub(in crate::tui::ui) fn description_hint_line(state: &MultilineInputView) -> L
     );
     let mut line = dialog_hint_line(&[
         ("Ctrl-Enter", "submit"),
-        ("^S", "fallback"),
+        ("^S", "submit"),
         ("Ctrl+X Ctrl+E", "editor"),
         ("Esc", "cancel"),
     ]);

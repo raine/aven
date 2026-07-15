@@ -950,7 +950,7 @@ mod multiline_overlays {
         assert!(rendered.contains("Description"));
         assert!(rendered.contains("Body"));
         assert!(rendered.contains("Ctrl-Enter submit"));
-        assert!(rendered.contains("^S fallback"));
+        assert!(rendered.contains("^S submit"));
     }
 
     #[test]
