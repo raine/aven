@@ -3,6 +3,12 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- Added automatic update checks and guided installation from the TUI.
+- Added `aven update` for checking and installing application updates. Task field
+  changes use `aven edit <ref>` instead of `aven update <ref>`.
+
 ## v0.1.8 (2026-07-15)
 
 - [Task detail views](/tui/#select-and-copy-text) support dragging across
