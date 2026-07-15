@@ -1524,24 +1524,25 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
-    async fn edit_status_shortcut_opens_marked_overlay_when_tasks_are_marked() {
+    async fn status_shortcut_uses_footer_chooser_for_unmarked_task() {
         let mut app = test_app().await;
-        let index = create_and_select_task(&mut app, test_task_draft("marked")).await;
-        let id = app.store.tasks[index].task.id.clone();
-        app.widgets.marked_task_ids.insert(id);
+        create_and_select_task(&mut app, test_task_draft("unmarked")).await;
 
-        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
 
-        assert!(matches!(
-            &app.overlay,
-            Some(OverlayState::Picker(PickerState { title, .. }))
-                if title == "Edit status: 1 marked tasks"
-        ));
+        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Status));
+        assert!(app.overlay.is_none());
+
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Todo);
     }
 
     #[tokio::test]
-    async fn submit_edit_status_updates_only_marked_tasks() {
+    async fn status_shortcut_uses_footer_chooser_for_marked_tasks_with_undo() {
         let mut app = test_app().await;
         let first = create_and_select_task(&mut app, test_task_draft("first")).await;
         let first_id = app.store.tasks[first].task.id.clone();
@@ -1552,7 +1553,13 @@ mod command_and_config_overlays {
         app.widgets.marked_task_ids.insert(first_id.clone());
         app.widgets.marked_task_ids.insert(second_id.clone());
 
-        app.submit_edit_status("todo".to_string()).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
+        assert_eq!(app.footer_choice_mode, Some(FooterChoiceMode::Status));
+        assert!(app.overlay.is_none());
+
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
 
         let status_for = |app: &App, task_id: &str| {
             app.store
@@ -1565,6 +1572,12 @@ mod command_and_config_overlays {
         };
         assert_eq!(status_for(&app, &first_id), TaskStatus::Todo);
         assert_eq!(status_for(&app, &second_id), TaskStatus::Todo);
+        assert_eq!(status_for(&app, &third_id), TaskStatus::Inbox);
+
+        app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
+
+        assert_eq!(status_for(&app, &first_id), TaskStatus::Inbox);
+        assert_eq!(status_for(&app, &second_id), TaskStatus::Inbox);
         assert_eq!(status_for(&app, &third_id), TaskStatus::Inbox);
     }
 

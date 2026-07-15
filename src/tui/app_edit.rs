@@ -275,19 +275,7 @@ impl App {
     }
 
     pub(super) fn begin_status_picker(&mut self) {
-        let task_ids = self.marked_task_ids_in_view();
-        if !task_ids.is_empty() {
-            let items = self.store.status_picker_items(None);
-            let count = task_ids.len();
-            self.open_picker_overlay(
-                OverlayRoute::EditStatus,
-                format!("Edit status: {count} marked tasks"),
-                items,
-                false,
-            );
-            return;
-        }
-        if self.guard_selected_task().is_none() {
+        if self.marked_task_ids_in_view().is_empty() && self.guard_selected_task().is_none() {
             return;
         }
         self.footer_choice_mode = Some(FooterChoiceMode::Status);
