@@ -1357,10 +1357,16 @@ pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
         "detail-add-note",
         "add a note to selected task",
         "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('N')],
-            label: "t N",
-        }],
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('n')],
+                label: "n",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('N')],
+                label: "t N",
+            },
+        ],
         Action::BeginAddNote,
     ),
     CommandSpec::implemented(

@@ -4212,10 +4212,7 @@ mod detail_mode {
         create_and_select_task(&mut app, test_task_draft("Note target")).await;
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
-        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
-            .await
-            .unwrap();
-        app.dispatch_key(key(KeyCode::Char('N')), (80, 24).into())
+        app.dispatch_key(key(KeyCode::Char('n')), (80, 24).into())
             .await
             .unwrap();
         assert!(matches!(
