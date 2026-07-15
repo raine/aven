@@ -2933,7 +2933,7 @@ mod authoring {
 
         assert!(rendered.contains("Add task: natural language"));
         assert!(rendered.contains("Describe the task in natural language"));
-        assert!(rendered.contains("^S parse"));
+        assert!(rendered.contains("Ctrl-Enter parse"));
         assert!(!rendered.contains("terminal too small for aven tui"));
     }
 
@@ -4224,7 +4224,9 @@ mod detail_mode {
         assert!(app.view().detail_underlay);
 
         type_chars(&mut app, "Important detail").await;
-        app.handle_overlay_key(ctrl_s()).await.unwrap();
+        app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL))
+            .await
+            .unwrap();
 
         assert!(matches!(
             app.overlay,

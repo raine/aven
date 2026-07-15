@@ -261,7 +261,9 @@ pub(crate) fn handle_generic_overlay_key(
             }
         },
         OverlayState::MultilineInput(mut state) => {
-            if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            if (key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL))
+                || (key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::CONTROL))
+            {
                 let value = state.lines.join("\n");
                 return OverlayOutcome::Submitted(OverlaySubmit::Multiline {
                     route: state.route,
@@ -968,6 +970,23 @@ mod tests {
             ctrl(KeyCode::Char('s')),
             OverlayState::MultilineInput(state),
         );
+        assert!(matches!(
+            outcome,
+            OverlayOutcome::Submitted(OverlaySubmit::Multiline { .. })
+        ));
+    }
+
+    #[test]
+    fn multiline_ctrl_enter_submits() {
+        let state = MultilineInputState {
+            route: OverlayRoute::AddNote,
+            title: "Add note".to_string(),
+            prompt: "note body:".to_string(),
+            lines: vec!["line".to_string()],
+            row: 0,
+            column: 4,
+        };
+        let outcome = handle(ctrl(KeyCode::Enter), OverlayState::MultilineInput(state));
         assert!(matches!(
             outcome,
             OverlayOutcome::Submitted(OverlaySubmit::Multiline { .. })
