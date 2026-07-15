@@ -237,6 +237,9 @@ case "$command" in
       fi
     fi
     activate_image
+    export XPRA_USER_CONF_DIRS="$repo_root/sandbox/cua/xpra"
+    export XPRA_OSX_SHOW_MENU_DEFAULT=0
+    export XPRA_OSX_USE_WINDOW_MENU=0
     exec "$cuabot" -n "$session" --serve
     ;;
   stop)

@@ -105,6 +105,12 @@ The setup command stores host-side CLI packages under `target/cua-sandbox`,
 which is ignored by Git. It merges the required CuaBot settings without
 replacing existing preferences.
 
+The wrapper gives Xpra a sandbox-specific configuration from
+`sandbox/cua/xpra`. Host tray and global window menus are disabled because the
+sandbox is controlled through its streamed application windows. This also
+avoids GTK's macOS menu integration in Xpra 6.5.1, which can abort while
+constructing native submenus on recent macOS releases.
+
 Avoid invoking CuaBot repeatedly through `npx`. Each invocation performs package
 resolution and is noticeably slower. `bunx cuabot` can produce an incomplete
 Sharp installation on Darwin ARM64 and fail before reaching the server.
