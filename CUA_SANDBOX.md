@@ -22,6 +22,62 @@ The sandbox session name determines its server state and container name. A
 session named `aven-update` uses the container
 `cuabot-xpra-aven-update`.
 
+## Persistence model
+
+CuaBot recreates its named container when a server starts. Installing packages
+interactively inside a running container therefore lasts only until that
+container is recreated.
+
+Aven uses a derived image, `aven-cuabot:latest`, to persist Kitty, terminal
+fonts, and other desktop dependencies. `scripts/cua-sandbox start` tags that
+image as CuaBot's expected `trycua/cuabot:latest` before every launch. CuaBot can
+then recreate the container without losing the provisioned tools.
+
+State has three lifetimes:
+
+- Xpra, OrbStack, Playwright browsers, and npm caches persist on the host.
+- Kitty, fonts, and apt packages persist in `aven-cuabot:latest`.
+- Test binaries, databases, caches, and fixtures live in the named container and
+  are disposable.
+
+Rebuild the derived image only when `sandbox/cua/Dockerfile` changes or the image
+is removed. Recreate test data after a CuaBot container replacement.
+
+## Multi-agent coordination
+
+The derived image is shared, but every agent gets a distinct named session. A
+session owns its server process, port files, Docker container, Xpra window, test
+data, and input stream. Two agents must not send input to the same session at
+the same time.
+
+Choose a descriptive unique name such as `aven-auto-update-a1` or
+`aven-header-review-b2`. The wrapper requires a session name and refuses to
+start a second server when that name is active.
+
+Discover existing sessions before starting work:
+
+```sh
+scripts/cua-sandbox list
+```
+
+The listing reports the session name, whether its server PID is active, its host
+port, and container state. An active session belongs to its creator. Treat it as
+unavailable unless the creator or user explicitly hands it off. Starting a fresh
+session is cheap because all sessions share `aven-cuabot:latest` and the host
+Playwright cache.
+
+For an explicit handoff, the receiving agent uses the existing name with
+`status`, `cua`, and `container`. It does not call `start` again:
+
+```sh
+scripts/cua-sandbox status aven-auto-update-a1
+scripts/cua-sandbox cua aven-auto-update-a1 --screenshot /tmp/handoff.jpg
+scripts/cua-sandbox container aven-auto-update-a1
+```
+
+Stop a session when its owner finishes. This removes ambiguity for later agents
+and releases its container resources.
+
 ## One-time host setup
 
 Install Xpra:
@@ -38,37 +94,16 @@ cua-driver launch_app '{"bundle_id":"dev.kdrag0n.MacVirt","name":"OrbStack"}'
 until docker info >/dev/null 2>&1; do sleep 2; done
 ```
 
-CuaBot uses Playwright on the host. Its loose Playwright dependency can resolve
-to a newer version than the package minimum, so inspect the resolved version and
-install its matching browser build:
+Provision the host CLI, matching Playwright browser, CuaBot settings, and derived
+image:
 
 ```sh
-rm -rf /tmp/cuabot-cli /tmp/cuabot-playwright
-npm install --prefix /tmp/cuabot-cli cuabot@1.0.14
-PLAYWRIGHT_VERSION="$(
-  node -p "require('/tmp/cuabot-cli/node_modules/playwright/package.json').version"
-)"
-npm install --prefix /tmp/cuabot-playwright "playwright@$PLAYWRIGHT_VERSION"
-/tmp/cuabot-playwright/node_modules/.bin/playwright install chromium
+just cua-sandbox-setup
 ```
 
-Configure telemetry explicitly so dependency checks do not launch onboarding:
-
-```sh
-mkdir -p ~/.cuabot
-cat > ~/.cuabot/settings.json <<'JSON'
-{
-  "telemetryEnabled": false,
-  "aliasIgnored": true
-}
-JSON
-```
-
-Use the installed CLI directly for the rest of the session:
-
-```sh
-CUABOT=/tmp/cuabot-cli/node_modules/.bin/cuabot
-```
+The setup command stores host-side CLI packages under `target/cua-sandbox`,
+which is ignored by Git. It merges the required CuaBot settings without
+replacing existing preferences.
 
 Avoid invoking CuaBot repeatedly through `npx`. Each invocation performs package
 resolution and is noticeably slower. `bunx cuabot` can produce an incomplete
@@ -79,21 +114,23 @@ Sharp installation on Darwin ARM64 and fail before reaching the server.
 Run the server in a long-lived terminal or background process:
 
 ```sh
-"$CUABOT" -n aven-update --serve
+just cua-sandbox-start aven-auto-update-a1
 ```
 
 The first run downloads the desktop image. Verify readiness from another shell:
 
 ```sh
-"$CUABOT" -n aven-update --status
-"$CUABOT" -n aven-update --screenshot /tmp/cuabot-ready.jpg
+scripts/cua-sandbox status aven-auto-update-a1
+scripts/cua-sandbox cua aven-auto-update-a1 \
+  --screenshot /tmp/cuabot-ready.jpg
 ```
 
 Useful container checks:
 
 ```sh
-docker ps --filter name=cuabot-xpra-aven-update
-docker exec cuabot-xpra-aven-update uname -m
+container="$(scripts/cua-sandbox container aven-auto-update-a1)"
+docker ps --filter "name=$container"
+docker exec "$container" uname -m
 ```
 
 ## Build aven for the sandbox
@@ -121,43 +158,28 @@ ownership may not be writable by the sandbox user, so copy it once more inside
 the container:
 
 ```sh
+container="$(scripts/cua-sandbox container aven-auto-update-a1)"
 docker cp /tmp/aven-linux-build/target/debug/aven \
-  cuabot-xpra-aven-update:/tmp/aven-built
+  "$container:/tmp/aven-built"
 
-docker exec -u user cuabot-xpra-aven-update sh -lc '
+docker exec -u user "$container" sh -lc '
   mkdir -p /home/user/aven-run
   cp /tmp/aven-built /home/user/aven-run/aven
   chmod 755 /home/user/aven-run/aven
 '
 ```
 
-## Use a readable terminal
+## Use the provisioned terminal
 
-The image includes xterm, but its default font and color support make the aven
-TUI difficult to inspect. Install Kitty and fonts inside the disposable
-container:
-
-```sh
-docker exec -u 0 cuabot-xpra-aven-update sh -lc '
-  mkdir -p /var/lib/apt/lists/partial
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    kitty fonts-jetbrains-mono fonts-powerline
-'
-
-docker exec -u user cuabot-xpra-aven-update sh -lc '
-  mkdir -p /home/user/.local/share/fonts/JetBrainsMonoNerd
-  curl -fsSL \
-    https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.tar.xz \
-    | tar -xJ -C /home/user/.local/share/fonts/JetBrainsMonoNerd
-  fc-cache -f /home/user/.local/share/fonts
-'
-```
+The derived image includes Kitty, JetBrains Mono, Powerline symbols, and the
+JetBrains Mono Nerd Font. The base image's xterm remains available for
+diagnostics, but it does not render aven's colors and glyphs reliably.
 
 Launch aven with isolated database and cache paths:
 
 ```sh
-docker exec -d -u user -e DISPLAY=:100 cuabot-xpra-aven-update \
+container="$(scripts/cua-sandbox container aven-auto-update-a1)"
+docker exec -d -u user -e DISPLAY=:100 "$container" \
   kitty \
   --title 'Aven Verification' \
   --override 'font_family=JetBrainsMono Nerd Font Mono' \
@@ -187,17 +209,20 @@ CuaBot key names follow Playwright naming. Use `Enter` and `Escape`, not upperca
 `ENTER` or `ESC`.
 
 ```sh
-"$CUABOT" -n aven-update --type ':update'
-"$CUABOT" -n aven-update --key Enter
-"$CUABOT" -n aven-update --screenshot /tmp/01-checking.jpg
+scripts/cua-sandbox cua aven-auto-update-a1 --type ':update'
+scripts/cua-sandbox cua aven-auto-update-a1 --key Enter
+scripts/cua-sandbox cua aven-auto-update-a1 \
+  --screenshot /tmp/01-checking.jpg
 
 # Confirmation dialogs use y and n.
-"$CUABOT" -n aven-update --type 'y'
-"$CUABOT" -n aven-update --screenshot /tmp/02-progress.jpg
+scripts/cua-sandbox cua aven-auto-update-a1 --type 'y'
+scripts/cua-sandbox cua aven-auto-update-a1 \
+  --screenshot /tmp/02-progress.jpg
 
 # Cancellation during a cancellable phase.
-"$CUABOT" -n aven-update --key Escape
-"$CUABOT" -n aven-update --screenshot /tmp/03-cancelled.jpg
+scripts/cua-sandbox cua aven-auto-update-a1 --key Escape
+scripts/cua-sandbox cua aven-auto-update-a1 \
+  --screenshot /tmp/03-cancelled.jpg
 ```
 
 Allow enough time for each asynchronous state before sending the next key. A
@@ -237,8 +262,10 @@ NO_PROXY=127.0.0.1
 Capture the application state before changing the fixture:
 
 ```sh
-"$CUABOT" -n aven-update --screenshot /tmp/aven-failure.jpg
-docker exec cuabot-xpra-aven-update sh -lc '
+scripts/cua-sandbox cua aven-auto-update-a1 \
+  --screenshot /tmp/aven-failure.jpg
+container="$(scripts/cua-sandbox container aven-auto-update-a1)"
+docker exec "$container" sh -lc '
   grep GET /tmp/aven-http.log || true
   /home/user/aven-run/aven --version
 '
@@ -251,13 +278,21 @@ changes.
 
 ## Cleanup
 
-Stop the named CuaBot server and remove its container when the VM should not
-remain available for inspection:
+Stop the named CuaBot server when the desktop is idle:
 
 ```sh
-"$CUABOT" -n aven-update --stop
-docker rm -f cuabot-xpra-aven-update 2>/dev/null || true
+just cua-sandbox-stop aven-auto-update-a1
 ```
 
-OrbStack and Xpra are host dependencies and can remain installed for later
+The derived image remains available, so the next container has Kitty and fonts
+without another apt or font installation. Remove disposable container state when
+needed:
+
+```sh
+container="$(scripts/cua-sandbox container aven-auto-update-a1)"
+docker rm -f "$container" 2>/dev/null || true
+```
+
+Remove `aven-cuabot:latest` only when a full image rebuild is desired. OrbStack,
+Xpra, Playwright browsers, and npm caches can remain installed for later
 verification sessions.

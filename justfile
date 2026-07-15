@@ -40,6 +40,18 @@ install-hooks:
 install-quality-tools:
     cargo install checkle cargo-deny cargo-machete cargo-nextest sqlx-cli
 
+# Provision the persistent CuaBot verification image
+cua-sandbox-setup:
+    scripts/cua-sandbox setup
+
+# Start an isolated CuaBot verification session
+cua-sandbox-start session:
+    scripts/cua-sandbox start {{session}}
+
+# Stop an isolated CuaBot verification session
+cua-sandbox-stop session:
+    scripts/cua-sandbox stop {{session}}
+
 # Run the full gate and fail if there are uncommitted changes
 check-ci: check-full
     #!/usr/bin/env bash
