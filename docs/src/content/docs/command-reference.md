@@ -625,13 +625,15 @@ Create or inspect the config file.
 ```sh
 aven config init
 aven config show
+aven config get sync.enabled
 ```
 
-`config init` creates the default `config.yaml` and fails rather than overwriting an existing file. `config show` prints the resolved config path followed by its stored text. The config directory comes from `AVEN_CONFIG_DIR` or the platform default.
+`config init` creates the default `config.yaml` and fails rather than overwriting an existing file. `config show` prints the resolved config path followed by its stored text. `config get sync.enabled` prints the resolved Boolean value. The config directory comes from `AVEN_CONFIG_DIR` or the platform default.
 
 ```sh
 aven config init
 aven config show
+aven config get sync.enabled
 ```
 
 ### `aven doctor`

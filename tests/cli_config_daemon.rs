@@ -3,6 +3,26 @@ mod common;
 use common::{TestEnv, TestServer, contains_all, extract_ref, ok};
 
 #[test]
+fn config_get_reports_resolved_sync_enabled_value() {
+    let env = TestEnv::new();
+    assert_eq!(
+        ok(env.aven_config(["config", "get", "sync.enabled"])).trim(),
+        "false"
+    );
+
+    env.write_config(
+        r#"
+sync:
+  enabled: true
+"#,
+    );
+    assert_eq!(
+        ok(env.aven_config(["config", "get", "sync.enabled"])).trim(),
+        "true"
+    );
+}
+
+#[test]
 fn config_db_path_and_sync_server_are_used() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);

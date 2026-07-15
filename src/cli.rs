@@ -790,6 +790,18 @@ pub(crate) struct TextSetArgs {
 pub(crate) enum ConfigSubcommand {
     Init,
     Show,
+    Get(ConfigGetArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct ConfigGetArgs {
+    pub(crate) key: ConfigKey,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy)]
+pub(crate) enum ConfigKey {
+    #[value(name = "sync.enabled")]
+    SyncEnabled,
 }
 
 #[derive(Args)]

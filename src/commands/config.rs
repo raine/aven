@@ -1,6 +1,7 @@
 use anyhow::Result;
 
-use crate::cli::{ConfigCommand, ConfigSubcommand};
+use crate::cli::{ConfigCommand, ConfigKey, ConfigSubcommand};
+use crate::config::AppConfig;
 use crate::operations::{init_config, show_config};
 use crate::render::quote;
 
@@ -17,6 +18,12 @@ pub(crate) async fn cmd_config(args: ConfigCommand) -> Result<()> {
             let outcome = show_config()?;
             println!("config path={}", quote(&outcome.path.display().to_string()));
             println!("{}", outcome.text);
+        }
+        ConfigSubcommand::Get(args) => {
+            let config = AppConfig::load()?;
+            match args.key {
+                ConfigKey::SyncEnabled => println!("{}", config.sync.enabled),
+            }
         }
     }
     Ok(())
