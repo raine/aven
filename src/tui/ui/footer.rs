@@ -2,7 +2,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::tui::theme::{self, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED};
+use crate::tui::theme::{self, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, YELLOW};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum FooterMode {
@@ -13,9 +13,17 @@ pub(super) enum FooterMode {
     PriorityChoice,
 }
 
-pub(super) fn footer_bar(mode: FooterMode, width: u16) -> Paragraph<'static> {
-    let mut spans = Vec::new();
-    for (keys, label) in footer_hints(mode, width) {
+pub(super) fn footer_bar(
+    mode: FooterMode,
+    width: u16,
+    marked_task_count: usize,
+) -> Paragraph<'static> {
+    let mut spans = marked_task_indicator(marked_task_count);
+    let indicator_width = spans
+        .iter()
+        .map(|span| span.content.chars().count() as u16)
+        .sum::<u16>();
+    for (keys, label) in footer_hints(mode, width.saturating_sub(indicator_width)) {
         spans.extend(key(keys));
         spans.push(cmd(mode, label));
     }
@@ -27,6 +35,25 @@ pub(super) fn footer_bar(mode: FooterMode, width: u16) -> Paragraph<'static> {
                 .border_style(Style::new().fg(BORDER)),
         )
         .style(Style::new().fg(FG).bg(BG))
+}
+
+fn marked_task_indicator(count: usize) -> Vec<Span<'static>> {
+    if count == 0 {
+        return Vec::new();
+    }
+    let mut spans = vec![
+        Span::styled(
+            format!(" ● {count} marked "),
+            Style::new().fg(YELLOW).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "· task actions target marked set  ",
+            Style::new().fg(FG_DIM),
+        ),
+    ];
+    spans.extend(key("t C"));
+    spans.push(Span::styled(" clear all  ", Style::new().fg(FG_DIM)));
+    spans
 }
 
 fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'static str)] {
@@ -184,7 +211,7 @@ mod tests {
         let backend = TestBackend::new(128, 3);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| frame.render_widget(footer_bar(FooterMode::Detail, 128), frame.area()))
+            .draw(|frame| frame.render_widget(footer_bar(FooterMode::Detail, 128, 0), frame.area()))
             .unwrap();
         let rendered = buffer_text(terminal.backend());
 
@@ -194,6 +221,34 @@ mod tests {
         assert!(rendered.contains("s"));
         assert!(rendered.contains("e p"));
         assert!(rendered.contains("more"));
+    }
+
+    #[test]
+    fn footer_shows_marked_task_scope() {
+        let backend = TestBackend::new(100, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| frame.render_widget(footer_bar(FooterMode::List, 100, 3), frame.area()))
+            .unwrap();
+        let rendered = buffer_text(terminal.backend());
+
+        assert!(rendered.contains("● 3 marked"));
+        assert!(rendered.contains("task actions target marked set"));
+        assert!(rendered.contains("t C"));
+        assert!(rendered.contains("clear all"));
+    }
+
+    #[test]
+    fn footer_hides_marked_task_scope_when_marks_are_empty() {
+        let backend = TestBackend::new(100, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| frame.render_widget(footer_bar(FooterMode::List, 100, 0), frame.area()))
+            .unwrap();
+        let rendered = buffer_text(terminal.backend());
+
+        assert!(!rendered.contains("marked"));
+        assert!(!rendered.contains("task actions target marked set"));
     }
 
     #[test]

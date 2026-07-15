@@ -181,7 +181,10 @@ pub(crate) fn render(
         FooterMode::List if store.view_state.view == TaskView::Columns => FooterMode::Columns,
         mode => mode,
     };
-    frame.render_widget(footer_bar(footer_mode, footer.width), footer);
+    frame.render_widget(
+        footer_bar(footer_mode, footer.width, widgets.marked_task_ids.len()),
+        footer,
+    );
 
     if view.detail_underlay {
         render_detail_underlay(

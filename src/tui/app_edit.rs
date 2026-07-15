@@ -570,19 +570,16 @@ impl App {
             self.set_info("no selected task to mark");
             return;
         };
-        let Some((id, display_ref)) = self
+        let Some(id) = self
             .store
             .selected_task(Some(index))
-            .map(|item| (item.task.id.clone(), item.display_ref.clone()))
+            .map(|item| item.task.id.clone())
         else {
             self.set_info("no selected task to mark");
             return;
         };
-        if self.widgets.marked_task_ids.insert(id.clone()) {
-            self.set_info(format!("marked {display_ref}"));
-        } else {
+        if !self.widgets.marked_task_ids.insert(id.clone()) {
             self.widgets.marked_task_ids.remove(&id);
-            self.set_info(format!("unmarked {display_ref}"));
         }
     }
 
@@ -602,23 +599,17 @@ impl App {
             .iter()
             .all(|id| self.widgets.marked_task_ids.contains(id))
         {
-            let count = visible.len();
             self.widgets
                 .marked_task_ids
                 .retain(|id| !visible.contains(id));
-            self.set_info(format!("unmarked {count} tasks"));
         } else {
-            let count = visible.len();
             self.widgets.marked_task_ids.extend(visible);
-            self.set_info(format!("marked {count} tasks"));
         }
     }
 
     pub(super) fn clear_marks(&mut self) {
         self.pending_shortcut.clear();
-        let count = self.widgets.marked_task_ids.len();
         self.widgets.marked_task_ids.clear();
-        self.set_info(format!("cleared {count} task marks"));
     }
 
     pub(super) fn marked_task_ids_in_view(&self) -> Vec<String> {

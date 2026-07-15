@@ -863,17 +863,32 @@ mod keyboard_dispatch {
         create_and_select_task(&mut app, test_task_draft("second")).await;
         app.widgets.table.select(Some(first));
         let first_id = app.store.tasks[first].task.id.clone();
+        app.notification = None;
 
         app.handle_normal_key(KeyCode::Char(' ')).await.unwrap();
         assert!(app.widgets.marked_task_ids.contains(&first_id));
+        assert!(toast_message(&app).is_none());
+
+        app.handle_normal_key(KeyCode::Char(' ')).await.unwrap();
+        assert!(!app.widgets.marked_task_ids.contains(&first_id));
+        assert!(toast_message(&app).is_none());
 
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('V')).await.unwrap();
         assert_eq!(app.widgets.marked_task_ids.len(), 2);
+        assert!(toast_message(&app).is_none());
 
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('V')).await.unwrap();
+        assert!(app.widgets.marked_task_ids.is_empty());
+        assert!(toast_message(&app).is_none());
+
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('V')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
         assert!(app.widgets.marked_task_ids.is_empty());
+        assert!(toast_message(&app).is_none());
     }
 }
 
