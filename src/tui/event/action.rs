@@ -85,6 +85,7 @@ pub(crate) enum Action {
     ShowConfigInfo,
     ShowConfigPaths,
     ShowDatabaseStats,
+    BeginUpdate,
     BeginConfigInit,
     BeginAddDependency,
     BeginRemoveDependency,

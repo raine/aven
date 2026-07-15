@@ -26,6 +26,9 @@ sqlx = { version = "0.9", default-features = false, features = [
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
+semver = { version = "1.0", features = ["serde"] }
+tar = "0.4"
+tempfile = "3.14"
 anyhow = "1.0"
 crossterm = "0.29"
 pulldown-cmark = "0.13"
@@ -33,10 +36,9 @@ ratatui = "0.30"
 sha2 = "0.11"
 similar = "3.1"
 time = { version = "0.3", features = ["formatting", "local-offset", "macros", "parsing"] }
-tokio = { version = "1.45", features = ["io-util", "macros", "process", "rt-multi-thread", "signal", "net", "time"] }
+tokio = { version = "1.45", features = ["io-util", "macros", "process", "rt-multi-thread", "signal", "net", "sync", "time"] }
 unicode-width = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
-tempfile = "3.14"

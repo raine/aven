@@ -30,6 +30,7 @@ mod task_render;
 mod tui;
 mod types;
 mod undo;
+mod update;
 mod workspaces;
 
 #[cfg(test)]

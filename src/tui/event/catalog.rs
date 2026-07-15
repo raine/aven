@@ -177,6 +177,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::Refresh,
     ),
     CommandSpec::implemented(
+        "update",
+        "check for and install an aven update",
+        "General",
+        &[],
+        Action::BeginUpdate,
+    ),
+    CommandSpec::implemented(
         "undo",
         "undo last TUI mutation",
         "General",

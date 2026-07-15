@@ -206,7 +206,13 @@ impl App {
             && terminal_size.height >= 18
             && self.detail_underlay()
             && matches!(
-                crate::tui::ui::header_target_at(&self.store, header, mouse.column, mouse.row),
+                crate::tui::ui::header_target_at(
+                    &self.store,
+                    self.update.badge().as_ref(),
+                    header,
+                    mouse.column,
+                    mouse.row,
+                ),
                 Some(crate::tui::ui::HeaderTarget::Home)
             )
         {
@@ -277,9 +283,13 @@ impl App {
         if self.overlay.is_some() || terminal_size.width < 70 || terminal_size.height < 18 {
             return Ok(());
         }
-        if let Some(target) =
-            crate::tui::ui::header_target_at(&self.store, header, mouse.column, mouse.row)
-        {
+        if let Some(target) = crate::tui::ui::header_target_at(
+            &self.store,
+            self.update.badge().as_ref(),
+            header,
+            mouse.column,
+            mouse.row,
+        ) {
             self.last_task_click = None;
             return match target {
                 crate::tui::ui::HeaderTarget::Home => Ok(()),
@@ -298,6 +308,10 @@ impl App {
                 crate::tui::ui::HeaderTarget::MetricView(view) => self.show_view(view).await,
                 crate::tui::ui::HeaderTarget::Order { column } => {
                     self.show_order_menu(column, mouse.row);
+                    Ok(())
+                }
+                crate::tui::ui::HeaderTarget::Update => {
+                    self.begin_update();
                     Ok(())
                 }
                 crate::tui::ui::HeaderTarget::SyncStatus => self.show_config_status(),
@@ -782,6 +796,7 @@ impl App {
 
         match overlay {
             OverlayState::Search(state) => self.handle_search_key(state, key).await?,
+            OverlayState::Update(state) => self.handle_update_overlay_key(state, key).await,
             OverlayState::Command { mut state } => match key.code {
                 KeyCode::Esc => {}
                 KeyCode::Enter => {
@@ -1229,6 +1244,7 @@ impl App {
             Action::ShowConfigInfo => self.show_config_info()?,
             Action::ShowConfigPaths => self.show_config_paths()?,
             Action::ShowDatabaseStats => self.show_database_stats().await?,
+            Action::BeginUpdate => self.begin_update(),
             Action::BeginConfigInit => self.begin_config_init()?,
             Action::BeginAddDependency => self.begin_add_dependency().await?,
             Action::BeginRemoveDependency => self.begin_remove_dependency(),

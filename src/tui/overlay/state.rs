@@ -35,6 +35,7 @@ pub(crate) enum OverlayState {
         stats: Box<TuiDatabaseStats>,
         scroll: u16,
     },
+    Update(UpdateOverlayState),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,6 +194,32 @@ pub(crate) struct TextPanelState {
     pub(crate) title: String,
     pub(crate) lines: Vec<String>,
     pub(crate) scroll: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum UpdateOverlayState {
+    Checking,
+    Progress {
+        version: String,
+        phase: crate::update::UpdatePhase,
+        cancelling: bool,
+    },
+    Current {
+        version: String,
+        cached: bool,
+    },
+    Guidance {
+        version: String,
+        lines: Vec<String>,
+        cached: bool,
+    },
+    Success {
+        version: String,
+    },
+    Failed {
+        message: String,
+    },
+    Cancelled,
 }
 
 pub(crate) const ORDER_MENU_WIDTH: u16 = 20;
@@ -356,6 +383,7 @@ pub(crate) enum OverlayRoute {
     ConfigInit,
     AddDependency,
     RemoveDependency,
+    UpdateConfirm,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -407,6 +435,7 @@ pub(crate) enum ConfirmSubmitRoute {
     ConfigInit,
     DeleteProjectConfirm,
     DeleteTaskConfirm,
+    UpdateConfirm,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -627,6 +656,10 @@ impl OverlayRoute {
                 picker_submit: Some(PickerSubmitRoute::RemoveDependency),
                 ..OverlayRouteDescriptor::default()
             },
+            Self::UpdateConfirm => OverlayRouteDescriptor {
+                confirm_submit: Some(ConfirmSubmitRoute::UpdateConfirm),
+                ..OverlayRouteDescriptor::default()
+            },
         }
     }
 
@@ -657,7 +690,7 @@ impl OverlayRoute {
 
 #[cfg(test)]
 impl OverlayRoute {
-    pub(crate) const ALL: [Self; 34] = [
+    pub(crate) const ALL: [Self; 35] = [
         Self::MessageOnly,
         Self::AddTaskTitle,
         Self::AddTaskDescription,
@@ -692,6 +725,7 @@ impl OverlayRoute {
         Self::ConfigInit,
         Self::AddDependency,
         Self::RemoveDependency,
+        Self::UpdateConfirm,
     ];
 
     pub(crate) fn submit_kinds(self) -> Vec<OverlaySubmitKind> {
@@ -1202,6 +1236,14 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn update_confirmation_uses_the_update_submit_route() {
+        assert_eq!(
+            OverlayRoute::UpdateConfirm.confirm_submit_route(),
+            Some(ConfirmSubmitRoute::UpdateConfirm)
+        );
     }
 
     #[test]

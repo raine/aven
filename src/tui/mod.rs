@@ -14,6 +14,7 @@ mod app_navigation;
 mod app_overlay_submit;
 mod app_projects;
 mod app_search;
+mod app_update;
 mod authoring;
 mod columns;
 mod config_overlay;
@@ -90,6 +91,7 @@ pub(crate) async fn run(
     let mut app = app::App::new(pool, project).await?;
     app.set_add_task_db_path(db_path);
     app.set_config(config);
+    app.start_update_check();
     if add_task {
         app.open_add_task_on_start(natural).await?;
     }

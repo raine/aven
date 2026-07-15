@@ -50,6 +50,7 @@ pub(crate) enum OverlayView {
         stats: Box<TuiDatabaseStats>,
         scroll: u16,
     },
+    Update(super::state::UpdateOverlayState),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -272,6 +273,7 @@ impl From<&OverlayState> for OverlayView {
                 stats: stats.clone(),
                 scroll: *scroll,
             },
+            Update(state) => Self::Update(state.clone()),
         }
     }
 }

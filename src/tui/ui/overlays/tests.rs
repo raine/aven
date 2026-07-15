@@ -64,6 +64,7 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
         OverlayView::DatabaseStats { stats, scroll } => {
             render_database_stats(frame, stats, *scroll)
         }
+        OverlayView::Update(state) => render_update(frame, state),
         OverlayView::Detail { .. } => {}
         _ => unreachable!("test helper only renders non-help overlays"),
     }
@@ -1739,6 +1740,29 @@ mod confirm_overlays {
             assert!(!buffer_row(&buffer, row).contains(&prompt));
         }
         assert!(buffer_text_from_rows(&buffer).contains("y yes"));
+    }
+
+    #[test]
+    fn update_overlay_explains_restart_and_cancellation() {
+        let success = render_overlay_view(OverlayView::Update(
+            crate::tui::overlay::UpdateOverlayState::Success {
+                version: "1.2.3".to_string(),
+            },
+        ));
+        assert!(success.contains("Installed aven v1.2.3"));
+        assert!(success.contains("Restart aven"));
+        assert!(success.contains("q quit"));
+
+        let lines = update_lines_for_test(&crate::tui::overlay::UpdateOverlayState::Cancelled);
+        assert!(lines[0].to_string().contains("cancelled"));
+
+        let current = update_lines_for_test(&crate::tui::overlay::UpdateOverlayState::Current {
+            version: "1.2.3".to_string(),
+            cached: false,
+        });
+        assert_eq!(current.len(), 3);
+        assert!(current[1].to_string().is_empty());
+        assert!(current[2].to_string().contains("Esc close"));
     }
 
     fn buffer_text_from_rows(buffer: &ratatui::buffer::Buffer) -> String {

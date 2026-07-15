@@ -2188,6 +2188,7 @@ mod filters_and_workspaces {
                 matches!(
                     crate::tui::ui::header_target_at(
                         &app.store,
+                        None,
                         ratatui::layout::Rect::new(0, 0, 140, 2),
                         *column,
                         0,

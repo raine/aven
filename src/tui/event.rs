@@ -89,6 +89,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::ShowConfigInfo
             | Action::ShowConfigPaths
             | Action::ShowDatabaseStats
+            | Action::BeginUpdate
             | Action::BeginConfigInit
             | Action::BeginAddDependency
             | Action::BeginRemoveDependency
@@ -373,6 +374,19 @@ mod tests {
             ShortcutLookup::Found(Action::Undo)
         );
         assert_eq!(lookup_command("undo"), CommandLookup::Found(Action::Undo));
+    }
+
+    #[test]
+    fn resolves_update_command_without_a_global_shortcut() {
+        assert_eq!(
+            lookup_command("update"),
+            CommandLookup::Found(Action::BeginUpdate)
+        );
+        let update = COMMANDS
+            .iter()
+            .find(|command| command.name == "update")
+            .unwrap();
+        assert!(update.keys.is_empty());
     }
 
     #[test]

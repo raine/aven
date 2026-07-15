@@ -65,6 +65,10 @@ impl App {
                 needs_redraw = true;
             }
 
+            if self.poll_update().await {
+                needs_redraw = true;
+            }
+
             if self.refresh_is_due() {
                 match self.refresh().await {
                     Ok(()) => needs_redraw = true,
@@ -152,6 +156,7 @@ impl App {
             copy_notes_available: selected_task.is_some_and(|task| !task.notes.is_empty()),
             footer_choice_mode: self.footer_choice_mode,
             sidebar_visible: self.sidebar_visible,
+            update_badge: self.update.badge(),
             surface: if self.add_task_only {
                 ViewSurface::AddTask
             } else {
@@ -259,6 +264,7 @@ impl App {
         if self.pending_task_intake.is_some()
             || self.ready_task_intake.is_some()
             || self.search_preview_work_pending()
+            || self.update.work_pending()
         {
             timeout = timeout.min(INPUT_POLL_INTERVAL);
         }

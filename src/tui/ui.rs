@@ -29,7 +29,7 @@ use self::header::render_header;
 use self::overlays::{
     SearchRenderStatus, SearchRenderView, render_confirm, render_database_stats,
     render_multiline_input, render_picker, render_search, render_sync_status, render_tag_combobox,
-    render_text_input, render_text_panel,
+    render_text_input, render_text_panel, render_update,
 };
 use self::recent_actions::render_recent_actions;
 use self::shortcuts::{render_command, render_detail_help, render_help, render_prefix_hints};
@@ -84,6 +84,7 @@ pub(crate) struct ViewState {
     pub(crate) copy_notes_available: bool,
     pub(crate) footer_choice_mode: Option<FooterChoiceMode>,
     pub(crate) sidebar_visible: bool,
+    pub(crate) update_badge: Option<crate::tui::app_update::UpdateBadgeView>,
     pub(crate) surface: ViewSurface,
 }
 
@@ -153,7 +154,7 @@ pub(crate) fn render(
     ])
     .areas(inner);
 
-    render_header(frame, store, header);
+    render_header(frame, store, view.update_badge.as_ref(), header);
     let inline_title_editor = inline_title_editor(view);
     let inline_detail_title_editor = inline_detail_title_editor(view);
     if body.width < 100 {
@@ -621,6 +622,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
         OverlayView::DatabaseStats { stats, scroll } => {
             render_database_stats(frame, stats, *scroll)
         }
+        OverlayView::Update(state) => render_update(frame, state),
         OverlayView::Detail { .. } => {}
     }
 }

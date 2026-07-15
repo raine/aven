@@ -264,6 +264,9 @@ impl App {
                 self.detail_context = false;
                 self.restore_detail_overlay(return_to_detail);
             }
+            Some(ConfirmSubmitRoute::UpdateConfirm) => {
+                self.confirm_update()?;
+            }
             None => self.set_success(route.fallback_message(OverlaySubmitKind::Confirm)),
         }
         Ok(())

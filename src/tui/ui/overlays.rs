@@ -9,6 +9,7 @@ mod sync_status;
 mod tag_combobox;
 mod text_input;
 mod text_panel;
+mod update;
 
 pub(crate) use add_task::add_task_field_at;
 pub(super) use add_task::{render_add_task, render_add_task_full_frame};
@@ -27,6 +28,7 @@ pub(super) use tag_combobox::render_tag_combobox;
 pub(super) use text_input::render_text_input;
 pub(super) use text_panel::render_text_panel;
 pub(crate) use text_panel::text_panel_scroll_cap;
+pub(super) use update::render_update;
 
 #[cfg(test)]
 pub(super) use add_task::{
@@ -52,6 +54,9 @@ pub(super) use text_input::{
     ADD_LABEL_NAME_PLACEHOLDER, ADD_PROJECT_NAME_PLACEHOLDER, CONFLICT_MANUAL_VALUE_PLACEHOLDER,
     RENAME_PROJECT_NAME_PLACEHOLDER, placeholder_text_input_line,
 };
+
+#[cfg(test)]
+pub(super) use update::update_lines_for_test;
 
 #[cfg(test)]
 mod tests;

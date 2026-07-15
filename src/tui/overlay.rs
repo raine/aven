@@ -24,7 +24,7 @@ pub(crate) use state::{
     HeaderMenuKind, HeaderMenuState, MultilineInputState, MultilineSubmitRoute, OrderMenuState,
     OverlayOutcome, OverlayRoute, OverlayState, OverlaySubmit, OverlaySubmitKind, PickerItem,
     PickerMode, PickerState, PickerSubmitRoute, SearchPurpose, SearchResultItem, SearchState,
-    TextPanelState, TextSubmitRoute,
+    TextPanelState, TextSubmitRoute, UpdateOverlayState,
 };
 #[cfg(test)]
 pub(crate) use state::{ConfirmState, TextInputState};
