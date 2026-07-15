@@ -36,6 +36,9 @@ export default defineConfig({
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/raine/aven' },
       ],
+      components: {
+        SocialIcons: './src/components/HeaderLinks.astro',
+      },
       customCss: ['./src/styles/code.css'],
       sidebar: [
         {
