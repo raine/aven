@@ -25,6 +25,13 @@ export default defineConfig({
             defer: true,
           },
         },
+        {
+          tag: 'script',
+          attrs: {
+            src: '/video-player.js',
+            defer: true,
+          },
+        },
       ],
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/raine/aven' },

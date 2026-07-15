@@ -11,7 +11,7 @@ aven tui
 
 ![aven TUI showing the queue view across workspace projects](/tui.webp)
 
-<p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The queue view brings workspace scope, project groups, task metadata, and selected-task context into one screen.</p>
+<p class="media-caption">The queue view brings workspace scope, project groups, task metadata, and selected-task context into one screen.</p>
 
 ## Screen tour
 
@@ -38,7 +38,7 @@ aven is keyboard-first. Common actions have direct shortcuts, broader command fa
 
 ![aven TUI command palette filtering view commands](/command-palette.webp)
 
-<p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The command palette searches the same command catalog used by prefix hints and help.</p>
+<p class="media-caption">The command palette searches the same command catalog used by prefix hints and help.</p>
 
 ## Daily workflow
 
@@ -64,7 +64,7 @@ The Columns view arranges tasks into configurable lifecycle lanes. Its defaults 
 
 ![aven TUI showing tasks organized across lifecycle columns](/columns.webp)
 
-<p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The columns view keeps the complete task lifecycle visible while preserving task metadata and selected-task context.</p>
+<p class="media-caption">The columns view keeps the complete task lifecycle visible while preserving task metadata and selected-task context.</p>
 
 Use `v l` to open the view. Up and down move within a lane, while left and right move the selection between lanes. Press `<` or `>` to move the selected task one lane, or press `m` to choose a destination lane. Marked tasks move together and create one undo step. Relative moves use each task's current lane, and the batch remains unchanged when any marked task is already at the requested edge.
 
@@ -82,7 +82,7 @@ When you live in tmux, bind the full TUI to a popup so you can open aven over th
 
 ![aven TUI running in a tmux popup over terminal panes](/tui-tmux-popup.webp)
 
-<p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">A tmux popup keeps the full queue and detail workflow available over the terminal session you are already using.</p>
+<p class="media-caption">A tmux popup keeps the full queue and detail workflow available over the terminal session you are already using.</p>
 
 For example, this binds prefix + `Ctrl-a` to a large popup in the current pane's directory:
 
@@ -96,11 +96,13 @@ Press `a` to open the task composer. Project, status, priority, labels, title, a
 
 ![aven TUI add task popup with title and description fields](/add-task.webp)
 
-<p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The composer captures structured fields without leaving the keyboard workflow.</p>
+<p class="media-caption">The composer captures structured fields without leaving the keyboard workflow.</p>
 
 Use `Tab` and `Shift-Tab` to move through every field. Press `Enter` to edit the focused metadata field. `Enter` creates from the title field and inserts a newline in the description. `Ctrl-Enter` creates from any field when the terminal reports modified Enter keys. `Ctrl-s` is the portable create fallback. Press `F1` for complete composer help.
 
+:::note[Terminal compatibility]
 Aven negotiates progressive keyboard enhancement with compatible terminals and uses the xterm modified-key protocol as a fallback. In tmux, enable forwarding with `set -s extended-keys on`. The outer terminal must also support tmux's extended-key mode. Use `Ctrl-s` when that path does not distinguish `Ctrl-Enter` from `Enter`. See [Tips](/tips/#use-ctrl-enter-in-alacritty-and-tmux) for the complete Alacritty and tmux configuration.
+:::
 
 `Esc` closes an empty composer. A draft with entered or changed values asks for confirmation before it is discarded. Opening metadata controls and help preserves the title and description cursors and viewport.
 
@@ -118,7 +120,7 @@ When you live in tmux, bind the task composer to a key so it opens as a popup ov
 
 ![aven tmux popup add task composer over terminal panes](/tmux-popup.webp)
 
-<p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The tmux popup opens the same composer over your current terminal session.</p>
+<p class="media-caption">The tmux popup opens the same composer over your current terminal session.</p>
 
 For example, this binds prefix + `t` to a 120 by 30 popup in the current pane's directory:
 
@@ -144,11 +146,24 @@ Press `Enter` on a task to open its detail view. Double-clicking a task row also
 
 ![aven TUI task detail view with Markdown description and task metadata](/task-detail.webp)
 
-<p style="color: var(--sl-color-gray-3); font-size: 0.875rem; margin-top: -0.75rem;">The detail view keeps Markdown context, notes, relationships, and editable metadata together.</p>
+<p class="media-caption">The detail view keeps Markdown context, notes, relationships, and editable metadata together.</p>
 
-The detail view renders Markdown descriptions, notes, and task metadata. Use `j/k`, arrows, `Ctrl-d`, `Ctrl-u`, `PageDown`, `PageUp`, or the mouse wheel to scroll. Use `[` and `]` to switch tasks while staying in detail. Press `Esc`, `Enter`, or `q` to return to the list.
+The detail view renders Markdown descriptions, notes, and task metadata. Use `j/k`, arrows, `Ctrl-d`, `Ctrl-u`, `PageDown`, `PageUp`, or the mouse wheel to scroll. Use `[` and `]` to switch tasks while staying in detail. Press `Esc`, `Enter`, or `q` to return to the list. Clicking status or priority opens the matching menu and returns to detail after selection.
 
-Clicking status or priority in detail opens the matching menu and returns to detail after selection.
+### Select and copy text
+
+Drag across the rendered title or description to select text, then press `y` to copy it. Selection follows the rendered Markdown and remains anchored while the detail view scrolls. Press `Esc` or click outside the selectable text to clear it.
+
+<div class="video-player" data-video-player>
+  <video controls muted playsinline preload="metadata">
+    <source src="/task-detail-text-selection.mp4" type="video/mp4" />
+  </video>
+  <button type="button" class="video-player-toggle" aria-label="Play video">
+    <span class="video-player-toggle-icon" aria-hidden="true"></span>
+  </button>
+</div>
+
+<p class="media-caption">Drag across rendered task text and press <code>y</code> to copy the selection.</p>
 
 ## Search, filter, and order
 
