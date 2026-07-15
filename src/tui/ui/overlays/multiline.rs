@@ -1,4 +1,5 @@
 use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
@@ -7,7 +8,9 @@ use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::input::{InputWidth, input_cursor_spans, input_line};
 use super::shared::{tail_viewport_start, viewport_start_for_cursor};
 use crate::tui::overlay::{MultilineInputView, OverlayRoute};
-use crate::tui::text::{char_boundary_at_or_before, char_count_ranges, char_count_segment_index};
+use crate::tui::text::{
+    cell_width_ranges, char_boundary_at_or_before, char_count_ranges, char_count_segment_index,
+};
 use crate::tui::theme::{FG, FG_DIM, FG_MUTED};
 
 pub(in crate::tui::ui) fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
@@ -267,10 +270,13 @@ fn render_tail_viewport_multiline(
     mut make_line: impl FnMut(&str, Option<usize>) -> Line<'static>,
 ) {
     let visible_rows = 8usize;
-    let content_rows = state.lines.len().min(visible_rows).max(1);
-    let height = (content_rows as u16).saturating_add(4).min(13);
     let start = tail_viewport_start(state.row, visible_rows);
+    let line_width = width
+        .min(frame.area().width.saturating_sub(2))
+        .saturating_sub(4)
+        .max(1) as usize;
     let mut lines = Vec::new();
+    let mut cursor_row = 0;
     for (row_index, line) in state
         .lines
         .iter()
@@ -278,20 +284,46 @@ fn render_tail_viewport_multiline(
         .skip(start)
         .take(visible_rows)
     {
-        lines.push(make_line(
-            line,
-            if row_index == state.row {
-                Some(state.column)
-            } else {
-                None
-            },
-        ));
+        let ranges = cell_width_ranges(line, line_width);
+        let cursor =
+            (row_index == state.row).then(|| char_boundary_at_or_before(line, state.column));
+        let cursor_segment = cursor.and_then(|cursor| {
+            ranges
+                .iter()
+                .position(|(range_start, range_end)| {
+                    cursor < *range_end || (*range_start == *range_end && cursor == *range_start)
+                })
+                .or_else(|| ranges.len().checked_sub(1))
+        });
+        for (range_index, (range_start, range_end)) in ranges.into_iter().enumerate() {
+            let segment_cursor = cursor
+                .filter(|_| cursor_segment == Some(range_index))
+                .map(|cursor| cursor.saturating_sub(range_start));
+            if segment_cursor.is_some() {
+                cursor_row = lines.len();
+            }
+            lines.push(make_line(&line[range_start..range_end], segment_cursor));
+        }
     }
-    lines.push(Line::from(""));
-    lines.push(hint_line);
-    Dialog::new(&state.title, width, height)
-        .wrap()
-        .render_text(frame, Text::from(lines));
+
+    let visual_rows = lines.len().max(1);
+    let height = (visual_rows.min(9) as u16).saturating_add(4);
+    let content = Dialog::new(&state.title, width, height).render_block(frame);
+    let [editor, _, hints] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(content);
+    let scroll =
+        viewport_start_for_cursor(cursor_row, editor.height.max(1) as usize, visual_rows, true);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT))
+            .scroll((scroll as u16, 0)),
+        editor,
+    );
+    frame.render_widget(Paragraph::new(hint_line), hints);
 }
 
 pub(in crate::tui::ui) fn add_note_input_line(line: &str, cursor: Option<usize>) -> Line<'static> {

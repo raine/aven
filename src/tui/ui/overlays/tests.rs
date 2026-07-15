@@ -1146,6 +1146,23 @@ mod multiline_overlays {
         );
     }
 
+    #[test]
+    fn add_note_overlay_keeps_hints_visible_when_input_wraps() {
+        let body = "wrapped note text ".repeat(12);
+        let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+            route: OverlayRoute::AddNote,
+            title: "Add note".to_string(),
+            prompt: "note body:".to_string(),
+            lines: vec![body.clone()],
+            row: 0,
+            column: body.len(),
+        }));
+
+        assert!(rendered.contains("wrapped note text"));
+        assert!(rendered.contains("Ctrl+S submit"));
+        assert!(rendered.contains("Esc cancel"));
+    }
+
     struct DescriptionOverlayMetrics {
         rows: usize,
         columns: usize,
