@@ -178,7 +178,7 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
     ));
     lines.push(indent_add_task_input(add_task_title_input_line(
         if state.available_at.is_empty() {
-            "Immediately, today, tomorrow, or a date"
+            "Immediately, in 2 weeks, next monday, or a date"
         } else {
             &state.available_at
         },

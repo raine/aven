@@ -13,7 +13,7 @@ fn natural_add_uses_configured_task_intake_command() {
     fs::write(
         &command,
         format!(
-            "#!/bin/sh\ncat >'{}'\nprintf '%s\\n' '{{\"title\":\"fix slack dispatch\",\"description\":\"details from model\",\"project\":\"app\",\"priority\":\"high\",\"labels\":[]}}'\n",
+            "#!/bin/sh\ncat >'{}'\nprintf '%s\\n' '{{\"title\":\"fix slack dispatch\",\"description\":\"details from model\",\"project\":\"app\",\"priority\":\"high\",\"labels\":[],\"available_at\":\"in 2 weeks at 9am\"}}'\n",
             prompt.display()
         ),
     )
@@ -49,10 +49,16 @@ agent:
             "title=\"fix slack dispatch\"",
             "project=app",
             "priority=high",
+            "available_at=",
             "description<<EOF",
             "details from model",
         ],
     );
+    let shown_json: serde_json::Value =
+        serde_json::from_str(&ok(env.aven_config(["show", &task_ref, "--json"]))).unwrap();
+    let available_at = shown_json["available_at"].as_str().unwrap();
+    assert_eq!(available_at.len(), 20);
+    assert!(available_at.ends_with('Z'));
     let prompt = fs::read_to_string(prompt).unwrap();
     assert_eq!(prompt, "custom task shaping");
 }

@@ -3580,20 +3580,41 @@ mod authoring {
     }
 
     #[tokio::test]
-    async fn add_task_composer_sets_availability() {
+    async fn add_task_composer_sets_fuzzy_availability() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Test rollout").await;
         let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
             panic!("expected composer");
         };
-        state.available_at = crate::tui::overlay::LineEdit::new("tomorrow".to_string());
+        state.available_at = crate::tui::overlay::LineEdit::new("next monday at 9am".to_string());
 
         app.handle_overlay_key(ctrl_s()).await.unwrap();
         app.store.show_view(TaskView::Upcoming).await.unwrap();
 
         assert_eq!(app.store.tasks.len(), 1);
         assert!(!app.store.tasks[0].task.available_at.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_task_composer_preserves_ambiguous_availability() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Test rollout").await;
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+            panic!("expected composer");
+        };
+        state.available_at = crate::tui::overlay::LineEdit::new("monday".to_string());
+
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.focus == AddTaskStep::AvailableAt
+                    && state.available_at.text == "monday"
+        ));
+        assert!(toast_message(&app).is_some_and(|message| message.contains("use next monday")));
     }
 
     #[tokio::test]

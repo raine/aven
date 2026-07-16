@@ -69,6 +69,7 @@ aven add <title> [options]
 | `--description-file <path>` | Read the description from a UTF-8 file. |
 | `--description-stdin` | Read the description from standard input. |
 | `--priority <priority>` | Set the priority. Defaults to `none`. |
+| `--available-at <when>` | Defer the task until a calendar expression or timestamp. See [Availability input](#availability-input). |
 | `--label <label>` | Add a label. Repeat for multiple labels. Labels must already exist. |
 | `--epic` | Create an epic container. |
 | `--natural` | Parse the title as natural-language task intake using the configured agent command. |
@@ -79,6 +80,7 @@ The command prints the created task's qualified reference and bare suffix.
 
 ```sh
 aven add "Fix conflict display" --project aven --priority high --label bug
+aven add "Review launch notes" --available-at "next monday at 9am"
 aven add "Add release automation" --epic
 aven add --natural "high priority docs task for the aven project"
 ```
@@ -190,6 +192,8 @@ aven edit <task-ref> [options]
 | `--project <project>` | Move the task to an existing project. |
 | `--status <status>` | Set the status. |
 | `--priority <priority>` | Set the priority. |
+| `--available-at <when>` | Defer the task until a calendar expression or timestamp. See [Availability input](#availability-input). |
+| `--clear-available-at` | Make the task immediately available. Cannot be combined with `--available-at`. |
 | `--epic <on-or-off>` | Set epic state. Accepted true values are `on`, `true`, and `1`; accepted false values are `off`, `false`, and `0`. |
 | `--label <label>` | Add an existing label. Repeat as needed. |
 | `--remove-label <label>` | Remove a label. Repeat as needed. |
@@ -201,8 +205,37 @@ A task with epic children cannot have epic state turned off. Epic containers can
 ```sh
 aven edit APP-7KQ9 --status active
 aven edit APP-7KQ9 --title "Clarify conflict output" --priority medium
+aven edit APP-7KQ9 --available-at "in 2 weeks at 14:30"
+aven edit APP-7KQ9 --clear-available-at
 aven edit APP-7KQ9 --label docs --remove-label bug
 aven edit APP-7KQ0 --epic on
+```
+
+### Availability input
+
+Availability controls when a task enters normal task lists and queue groups. It is not a deadline. `aven add --available-at`, `aven edit --available-at`, natural task intake, and the TUI task composer use the same expressions:
+
+| Expression | Local-calendar meaning |
+| --- | --- |
+| `today` | Today at local midnight. |
+| `tomorrow` | Tomorrow at local midnight. |
+| `in N days` | Local midnight after `N` calendar days. Singular `day` is accepted. |
+| `in N weeks` | Local midnight after `N * 7` calendar days. Singular `week` is accepted. |
+| `next monday` | The next Monday strictly after today at local midnight. All full weekday names are accepted. If today is Monday, this means seven days later. |
+| `<date expression> at <time>` | The expression's local date at `HH:MM`, `9am`, `9:30pm`, `noon`, or `midnight`. |
+| `YYYY-MM-DD` | Local midnight on that date. |
+| `YYYY-MM-DDTHH:MM:SSZ` | The exact UTC timestamp. The same form without `Z` is also interpreted as UTC. |
+| Unix timestamp | The exact whole number of seconds since the Unix epoch. |
+| `now` | Immediate availability. On `aven edit`, `--clear-available-at` is clearer. |
+
+Relative days and weeks add calendar days to the current local date rather than fixed 24-hour durations. Local expressions use the machine's local timezone and convert to a canonical UTC timestamp for storage. This preserves the requested local wall-clock time across daylight-saving offsets. A local time that is skipped or repeated by a timezone transition is rejected, so use another local time or an explicit UTC timestamp.
+
+Bare weekdays such as `monday` and bare times such as `9am` are ambiguous and rejected with a suggested explicit form. Month and year arithmetic, abbreviated weekdays, informal periods such as `morning`, recurrence, due dates, and notifications are outside the accepted grammar.
+
+```sh
+aven add "Prepare demo" --available-at "in 2 weeks"
+aven add "Call supplier" --available-at "next monday at 9am"
+aven edit APP-7KQ9 --available-at "tomorrow at 14:30"
 ```
 
 ### `aven note`

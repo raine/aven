@@ -58,6 +58,46 @@ fn availability_hides_tasks_until_cleared() {
 }
 
 #[test]
+fn fuzzy_availability_is_shared_by_cli_add_and_edit() {
+    let env = TestEnv::new();
+    let db = env.db("fuzzy-availability.sqlite");
+    let task_ref = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "fuzzy deferred task",
+            "--project",
+            "app",
+            "--available-at",
+            "in 2 weeks",
+        ],
+    )));
+
+    let created: serde_json::Value =
+        serde_json::from_str(&ok(env.aven(&db, ["show", &task_ref, "--json"]))).unwrap();
+    let created_at = created["available_at"].as_str().unwrap();
+    assert_eq!(created_at.len(), 20);
+    assert!(created_at.ends_with('Z'));
+
+    ok(env.aven(
+        &db,
+        ["edit", &task_ref, "--available-at", "next monday at 9am"],
+    ));
+    let edited: serde_json::Value =
+        serde_json::from_str(&ok(env.aven(&db, ["show", &task_ref, "--json"]))).unwrap();
+    let edited_at = edited["available_at"].as_str().unwrap();
+    assert_eq!(edited_at.len(), 20);
+    assert!(edited_at.ends_with('Z'));
+    assert_ne!(edited_at, created_at);
+
+    let error = fail(env.aven(&db, ["edit", &task_ref, "--available-at", "monday"]));
+    contains_all(
+        &error,
+        &["ambiguous-available-at-weekday", "use next monday"],
+    );
+}
+
+#[test]
 fn show_json_returns_single_task() {
     let env = TestEnv::new();
     let db = env.db("show-json.sqlite");

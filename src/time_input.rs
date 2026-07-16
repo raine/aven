@@ -1,9 +1,18 @@
 use anyhow::{Context, Result, bail};
-use chrono::{DateTime, Days, Local, NaiveDate, TimeZone, Utc};
+use chrono::{
+    DateTime, Datelike, Days, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc, Weekday,
+};
 
 use crate::queue::unix_seconds;
 
 pub(crate) fn parse_available_at_input(input: &str) -> Result<String> {
+    parse_available_at_input_at(input, Local::now())
+}
+
+fn parse_available_at_input_at<Tz>(input: &str, now: DateTime<Tz>) -> Result<String>
+where
+    Tz: TimeZone + Clone,
+{
     let input = input.trim();
     if input.is_empty() {
         bail!("error available-at-empty");
@@ -11,26 +20,60 @@ pub(crate) fn parse_available_at_input(input: &str) -> Result<String> {
     if input.eq_ignore_ascii_case("now") {
         return Ok(String::new());
     }
-    if input.eq_ignore_ascii_case("today") {
-        return relative_day(0);
-    }
-    if input.eq_ignore_ascii_case("tomorrow") {
-        return relative_day(1);
-    }
     if let Ok(seconds) = input.parse::<i64>() {
         return epoch_seconds_to_utc(seconds);
     }
     if is_iso_date(input) {
-        return local_date_start(input);
+        let date = parse_iso_date(input)?;
+        return local_datetime_to_utc(now.timezone(), date.and_time(NaiveTime::MIN));
     }
     if is_iso_timestamp(input) {
         let value = normalize_timestamp(input);
         validate_available_at_value(&value)?;
         return Ok(value);
     }
-    bail!(
-        "error invalid-available-at value={input} hint=\"use YYYY-MM-DD, YYYY-MM-DDTHH:MM:SSZ, epoch seconds, today, tomorrow, or now\""
-    )
+
+    let normalized = input
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    let (date_input, time) = if let Some((date_input, time_input)) = normalized.rsplit_once(" at ")
+    {
+        if date_input.contains(" at ") {
+            bail!(
+                "error ambiguous-available-at value={input:?} hint=\"use one 'at' followed by a time, such as next monday at 9am\""
+            );
+        }
+        let time = parse_local_time(time_input).with_context(|| {
+            format!(
+                "error invalid-available-at-time value={time_input:?} hint=\"use HH:MM, 9am, 9:30pm, noon, or midnight\""
+            )
+        })?;
+        (date_input, time)
+    } else {
+        if parse_local_time(&normalized).is_some() {
+            bail!(
+                "error ambiguous-available-at-time value={input:?} hint=\"include a date, such as today at 9am or next monday at 9am\""
+            );
+        }
+        (normalized.as_str(), NaiveTime::MIN)
+    };
+
+    let timezone = now.timezone();
+    let today = now.date_naive();
+    let date = parse_local_date_expression(date_input, today)?.with_context(|| {
+        if weekday(date_input).is_some() {
+            format!(
+                "error ambiguous-available-at-weekday value={input:?} hint=\"use next {date_input}\""
+            )
+        } else {
+            format!(
+                "error invalid-available-at value={input:?} hint=\"use today, tomorrow, in N days, in N weeks, next monday, an ISO date, or add 'at 9am'\""
+            )
+        }
+    })?;
+    local_datetime_to_utc(timezone, date.and_time(time))
 }
 
 pub(crate) fn validate_available_at_value(value: &str) -> Result<()> {
@@ -54,6 +97,110 @@ pub(crate) fn validate_available_at_value(value: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn parse_local_date_expression(value: &str, today: NaiveDate) -> Result<Option<NaiveDate>> {
+    let offset_days = match value {
+        "today" => Some(0),
+        "tomorrow" => Some(1),
+        _ => None,
+    };
+    if let Some(offset_days) = offset_days {
+        return add_days(today, offset_days).map(Some);
+    }
+
+    let words = value.split_whitespace().collect::<Vec<_>>();
+    if let ["in", amount, unit] = words.as_slice() {
+        let amount = amount.parse::<u64>().with_context(|| {
+            format!(
+                "error invalid-available-at-amount value={amount:?} hint=\"use a whole number, such as in 2 weeks\""
+            )
+        })?;
+        let days = match *unit {
+            "day" | "days" => amount,
+            "week" | "weeks" => amount
+                .checked_mul(7)
+                .context("relative week count is out of range")?,
+            _ => return Ok(None),
+        };
+        return add_days(today, days).map(Some);
+    }
+
+    if let ["next", weekday_name] = words.as_slice()
+        && let Some(target) = weekday(weekday_name)
+    {
+        let current = today.weekday().num_days_from_monday();
+        let target = target.num_days_from_monday();
+        let mut days = (target + 7 - current) % 7;
+        if days == 0 {
+            days = 7;
+        }
+        return add_days(today, u64::from(days)).map(Some);
+    }
+
+    if is_iso_date(value) {
+        return parse_iso_date(value).map(Some);
+    }
+    Ok(None)
+}
+
+fn add_days(date: NaiveDate, days: u64) -> Result<NaiveDate> {
+    date.checked_add_days(Days::new(days))
+        .context("relative date is out of range")
+}
+
+fn weekday(value: &str) -> Option<Weekday> {
+    match value {
+        "monday" => Some(Weekday::Mon),
+        "tuesday" => Some(Weekday::Tue),
+        "wednesday" => Some(Weekday::Wed),
+        "thursday" => Some(Weekday::Thu),
+        "friday" => Some(Weekday::Fri),
+        "saturday" => Some(Weekday::Sat),
+        "sunday" => Some(Weekday::Sun),
+        _ => None,
+    }
+}
+
+fn parse_local_time(value: &str) -> Option<NaiveTime> {
+    let value = value.trim();
+    match value {
+        "midnight" => return NaiveTime::from_hms_opt(0, 0, 0),
+        "noon" => return NaiveTime::from_hms_opt(12, 0, 0),
+        _ => {}
+    }
+
+    let (clock, meridiem) = if let Some(clock) = value.strip_suffix("am") {
+        (clock.trim(), Some(false))
+    } else if let Some(clock) = value.strip_suffix("pm") {
+        (clock.trim(), Some(true))
+    } else {
+        (value, None)
+    };
+    let (hour, minute) = if let Some((hour, minute)) = clock.split_once(':') {
+        if minute.contains(':') {
+            return None;
+        }
+        (hour.parse::<u32>().ok()?, minute.parse::<u32>().ok()?)
+    } else {
+        meridiem?;
+        (clock.parse::<u32>().ok()?, 0)
+    };
+
+    let hour = match meridiem {
+        Some(is_pm) if (1..=12).contains(&hour) => (hour % 12) + u32::from(is_pm) * 12,
+        Some(_) => return None,
+        None => hour,
+    };
+    NaiveTime::from_hms_opt(hour, minute, 0)
+}
+
+fn parse_iso_date(value: &str) -> Result<NaiveDate> {
+    NaiveDate::parse_from_str(value, "%Y-%m-%d").with_context(|| {
+        format!(
+            "error invalid-local-date value={value:?} hint=\"use a real calendar date in YYYY-MM-DD form\""
+        )
+    })
 }
 
 fn is_iso_date(value: &str) -> bool {
@@ -125,30 +272,16 @@ fn leap_year(year: i64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
-fn relative_day(offset_days: i64) -> Result<String> {
-    let offset_days = u64::try_from(offset_days).context("invalid relative day")?;
-    let date = Local::now()
-        .date_naive()
-        .checked_add_days(Days::new(offset_days))
-        .context("relative date is out of range")?;
-    local_midnight_to_utc(date)
-}
-
-fn local_date_start(value: &str) -> Result<String> {
-    let date = NaiveDate::parse_from_str(value, "%Y-%m-%d")
-        .with_context(|| format!("invalid local date: {value}"))?;
-    local_midnight_to_utc(date)
-}
-
-fn local_midnight_to_utc(date: NaiveDate) -> Result<String> {
-    let local = Local
-        .from_local_datetime(
-            &date
-                .and_hms_opt(0, 0, 0)
-                .context("local midnight is out of range")?,
+fn local_datetime_to_utc<Tz>(timezone: Tz, value: NaiveDateTime) -> Result<String>
+where
+    Tz: TimeZone,
+{
+    let local = timezone.from_local_datetime(&value).single().with_context(|| {
+        format!(
+            "error ambiguous-or-unavailable-local-time value={} hint=\"choose another local time or use an explicit UTC timestamp\"",
+            value.format("%Y-%m-%dT%H:%M:%S")
         )
-        .single()
-        .context("local midnight is ambiguous or unavailable")?;
+    })?;
     let value = local
         .with_timezone(&Utc)
         .format("%Y-%m-%dT%H:%M:%SZ")
@@ -168,37 +301,88 @@ fn epoch_seconds_to_utc(seconds: i64) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use chrono::FixedOffset;
+
     use super::*;
 
-    #[test]
-    fn parses_date_as_start_of_local_day() {
-        let value = parse_available_at_input("2026-06-25").unwrap();
-        let seconds = unix_seconds(&value).unwrap();
-        let local = Local.timestamp_opt(seconds, 0).single().unwrap();
+    fn fixed_now() -> DateTime<FixedOffset> {
+        FixedOffset::west_opt(5 * 60 * 60)
+            .unwrap()
+            .with_ymd_and_hms(2026, 7, 16, 15, 45, 0)
+            .single()
+            .unwrap()
+    }
 
-        assert_eq!(local.date_naive().to_string(), "2026-06-25");
-        assert_eq!(local.time().to_string(), "00:00:00");
+    fn parse_fixed(input: &str) -> Result<String> {
+        parse_available_at_input_at(input, fixed_now())
+    }
+
+    #[test]
+    fn parses_relative_calendar_dates_with_fixed_clock_and_timezone() {
+        assert_eq!(parse_fixed("today").unwrap(), "2026-07-16T05:00:00Z");
+        assert_eq!(parse_fixed("tomorrow").unwrap(), "2026-07-17T05:00:00Z");
+        assert_eq!(parse_fixed("in 2 days").unwrap(), "2026-07-18T05:00:00Z");
+        assert_eq!(parse_fixed("in 2 weeks").unwrap(), "2026-07-30T05:00:00Z");
+    }
+
+    #[test]
+    fn next_weekday_is_strictly_after_today() {
+        assert_eq!(parse_fixed("next monday").unwrap(), "2026-07-20T05:00:00Z");
+        assert_eq!(
+            parse_fixed("next thursday").unwrap(),
+            "2026-07-23T05:00:00Z"
+        );
+    }
+
+    #[test]
+    fn parses_local_times_on_calendar_expressions() {
+        assert_eq!(
+            parse_fixed("next monday at 9am").unwrap(),
+            "2026-07-20T14:00:00Z"
+        );
+        assert_eq!(
+            parse_fixed("in 2 weeks at 14:30").unwrap(),
+            "2026-07-30T19:30:00Z"
+        );
+        assert_eq!(
+            parse_fixed("tomorrow at noon").unwrap(),
+            "2026-07-17T17:00:00Z"
+        );
+    }
+
+    #[test]
+    fn parses_iso_date_as_start_of_supplied_local_day() {
+        assert_eq!(parse_fixed("2026-06-25").unwrap(), "2026-06-25T05:00:00Z");
+    }
+
+    #[test]
+    fn rejects_ambiguous_or_unsupported_expressions_with_guidance() {
+        let weekday = parse_fixed("monday").unwrap_err().to_string();
+        assert!(weekday.contains("use next monday"));
+
+        let time = parse_fixed("9am").unwrap_err().to_string();
+        assert!(time.contains("include a date"));
+
+        let unsupported = parse_fixed("in two months").unwrap_err().to_string();
+        assert!(unsupported.contains("use a whole number"));
     }
 
     #[test]
     fn parses_timestamp_without_z_as_utc() {
         assert_eq!(
-            parse_available_at_input("2026-06-25T10:11:12").unwrap(),
+            parse_fixed("2026-06-25T10:11:12").unwrap(),
             "2026-06-25T10:11:12Z"
         );
     }
 
     #[test]
     fn parses_epoch_seconds_to_canonical_utc() {
-        assert_eq!(
-            parse_available_at_input("0").unwrap(),
-            "1970-01-01T00:00:00Z"
-        );
+        assert_eq!(parse_fixed("0").unwrap(), "1970-01-01T00:00:00Z");
     }
 
     #[test]
     fn now_clears_availability() {
-        assert_eq!(parse_available_at_input("now").unwrap(), "");
+        assert_eq!(parse_fixed("now").unwrap(), "");
     }
 
     #[test]
