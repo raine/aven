@@ -635,6 +635,8 @@ mod add_task_overlay {
         assert!(help.contains("Composer help"));
         assert!(help.contains("Shift+Tab"));
         assert!(help.contains("create with AI"));
+        assert!(help.contains("next mon at 9am"));
+        assert!(help.contains("Due"));
         assert!(help.contains("confirm discard"));
     }
 

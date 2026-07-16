@@ -216,14 +216,14 @@ fn add_days(date: NaiveDate, days: u64) -> Result<NaiveDate> {
 }
 
 fn weekday(value: &str) -> Option<Weekday> {
-    match value {
-        "monday" => Some(Weekday::Mon),
-        "tuesday" => Some(Weekday::Tue),
-        "wednesday" => Some(Weekday::Wed),
-        "thursday" => Some(Weekday::Thu),
-        "friday" => Some(Weekday::Fri),
-        "saturday" => Some(Weekday::Sat),
-        "sunday" => Some(Weekday::Sun),
+    match value.trim_end_matches('.') {
+        "mon" | "monday" => Some(Weekday::Mon),
+        "tue" | "tues" | "tuesday" => Some(Weekday::Tue),
+        "wed" | "weds" | "wednesday" => Some(Weekday::Wed),
+        "thu" | "thur" | "thurs" | "thursday" => Some(Weekday::Thu),
+        "fri" | "friday" => Some(Weekday::Fri),
+        "sat" | "saturday" => Some(Weekday::Sat),
+        "sun" | "sunday" => Some(Weekday::Sun),
         _ => None,
     }
 }
@@ -425,6 +425,36 @@ mod tests {
         assert_eq!(
             parse_fixed("next thursday").unwrap(),
             "2026-07-23T05:00:00Z"
+        );
+    }
+
+    #[test]
+    fn accepts_common_weekday_abbreviations() {
+        for (input, expected_date, expected_available_at) in [
+            ("mon", "2026-07-20", "2026-07-20T14:00:00Z"),
+            ("tue", "2026-07-21", "2026-07-21T14:00:00Z"),
+            ("tues", "2026-07-21", "2026-07-21T14:00:00Z"),
+            ("wed", "2026-07-22", "2026-07-22T14:00:00Z"),
+            ("weds", "2026-07-22", "2026-07-22T14:00:00Z"),
+            ("thu", "2026-07-23", "2026-07-23T14:00:00Z"),
+            ("thur", "2026-07-23", "2026-07-23T14:00:00Z"),
+            ("thurs", "2026-07-23", "2026-07-23T14:00:00Z"),
+            ("fri", "2026-07-17", "2026-07-17T14:00:00Z"),
+            ("sat", "2026-07-18", "2026-07-18T14:00:00Z"),
+            ("sun", "2026-07-19", "2026-07-19T14:00:00Z"),
+        ] {
+            assert_eq!(
+                parse_due_fixed(&format!("next {input}")).unwrap(),
+                expected_date
+            );
+            assert_eq!(
+                parse_fixed(&format!("next {input} at 9am")).unwrap(),
+                expected_available_at
+            );
+        }
+        assert_eq!(
+            parse_fixed("next Mon. at 9am").unwrap(),
+            "2026-07-20T14:00:00Z"
         );
     }
 

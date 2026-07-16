@@ -410,13 +410,19 @@ fn join_lines(lines: Vec<Line<'static>>, separator: &'static str) -> Line<'stati
 
 const COMPOSER_HELP_TOPICS: &[(&str, &str)] = &[
     ("Tab / Shift+Tab", "next / previous field"),
-    ("Arrows", "move fields; edit cursor in Available"),
-    ("Enter", "open metadata or create from title"),
-    ("Enter", "newline in description"),
+    ("Arrows", "move fields; edit cursor in date fields"),
+    (
+        "Enter",
+        "open metadata, create title, or newline description",
+    ),
     ("Available", "tomorrow · in 2 weeks · next mon at 9am"),
     ("Available", "YYYY-MM-DD · UTC timestamp · epoch seconds"),
     ("Available", "local time; empty or now = immediate"),
-    ("Ctrl-p/t/r/l/a", "jump to metadata fields"),
+    (
+        "Due",
+        "today · in 2 weeks · next mon · YYYY-MM-DD · none clears",
+    ),
+    ("Ctrl-p/t/r/l/a/u", "jump to metadata fields"),
     ("Ctrl-Enter", "create from any field"),
     ("Ctrl-s", "portable create fallback"),
     ("Ctrl-n", "create with AI"),
