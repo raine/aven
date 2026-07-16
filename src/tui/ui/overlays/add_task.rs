@@ -415,13 +415,13 @@ const COMPOSER_HELP_TOPICS: &[(&str, &str)] = &[
         "Enter",
         "open metadata, create title, or newline description",
     ),
-    ("Available", "tomorrow · in 2 weeks · next mon at 9am"),
+    (
+        "Available",
+        "tomorrow · next mon at 9am · 2w · in 2 months · next week",
+    ),
     ("Available", "YYYY-MM-DD · UTC timestamp · epoch seconds"),
     ("Available", "local time; empty or now = immediate"),
-    (
-        "Due",
-        "today · in 2 weeks · next mon · YYYY-MM-DD · none clears",
-    ),
+    ("Due", "same dates without times · YYYY-MM-DD · none clears"),
     ("Ctrl-p/t/r/l/a/u", "jump to metadata fields"),
     ("Ctrl-Enter", "create from any field"),
     ("Ctrl-s", "portable create fallback"),

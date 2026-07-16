@@ -92,7 +92,7 @@ bind C-a display-popup -E -d '#{pane_current_path}' -w 80% -h 80% 'aven tui'
 
 ## Capture tasks
 
-Press `a` to open the task composer. Project, status, priority, labels, title, and description stay visible as one form. The active field has a `▶` marker, so focus remains clear without relying on color.
+Press `a` to open the task composer. Project, status, priority, labels, availability, due date, title, and description stay visible as one form. The active field has a `▶` marker, so focus remains clear without relying on color.
 
 ![aven TUI add task popup with title and description fields](/add-task.webp)
 
@@ -106,7 +106,7 @@ Aven negotiates progressive keyboard enhancement with compatible terminals and u
 
 `Esc` closes an empty composer. A draft with entered or changed values asks for confirmation before it is discarded. Opening metadata controls and help preserves the title and description cursors and viewport.
 
-`Ctrl-x Ctrl-e` opens an external editor while the description is focused. Optional accelerators such as `Ctrl-p`, `Ctrl-t`, `Ctrl-r`, and `Ctrl-l` remain available, but all metadata is accessible with Tab and Enter.
+`Ctrl-x Ctrl-e` opens an external editor while the description is focused. Optional accelerators such as `Ctrl-p`, `Ctrl-t`, `Ctrl-r`, `Ctrl-l`, `Ctrl-a`, and `Ctrl-u` jump to metadata fields, but all metadata is accessible with Tab and Enter. Availability accepts timestamps and local-calendar expressions such as `next mon at 9am`. Due dates accept the same date expressions without times. See [Availability input](/command-reference/#availability-input) and [Due date input](/command-reference/#due-date-input) for their independent semantics and complete grammar.
 
 ### LLM task intake
 
@@ -138,7 +138,7 @@ Use direct shortcuts for common task changes:
 - `n` adds a note.
 - `u` undoes a completed TUI mutation.
 
-Use the `t` prefix family for more task fields and lifecycle actions. Task actions include editing status, priority, project, labels, descriptions, notes, dependencies, and epic relationships.
+Use the `t` prefix family for more task fields and lifecycle actions. Task actions include editing status, priority, project, labels, availability, due dates, descriptions, notes, dependencies, and epic relationships.
 
 ## Open detail
 
@@ -148,7 +148,7 @@ Press `Enter` on a task to open its detail view. Double-clicking a task row also
 
 <p class="media-caption">The detail view keeps Markdown context, notes, relationships, and editable metadata together.</p>
 
-The detail view renders Markdown descriptions, notes, and task metadata. Use `j/k`, arrows, `Ctrl-d`, `Ctrl-u`, `PageDown`, `PageUp`, or the mouse wheel to scroll. Use `[` and `]` to switch tasks while staying in detail. Press `Esc`, `Enter`, or `q` to return to the list. Clicking status or priority opens the matching menu and returns to detail after selection.
+The detail view renders Markdown descriptions, notes, task metadata, availability, and due-date state. Overdue and due-today labels are highlighted while future deadlines remain visible as dates. Use `j/k`, arrows, `Ctrl-d`, `Ctrl-u`, `PageDown`, `PageUp`, or the mouse wheel to scroll. Use `[` and `]` to switch tasks while staying in detail. Press `Esc`, `Enter`, or `q` to return to the list. Clicking status or priority opens the matching menu and returns to detail after selection.
 
 ### Select and copy text
 
@@ -171,7 +171,7 @@ Search, filters, and ordering are separate tools:
 
 - **Search** finds tasks by title, description, project, label, note, status, priority, or ref.
 - **Filters** constrain the current task list by fields such as label, priority, and deleted visibility.
-- **Ordering** changes the sort field or direction. Queue ordering uses aven's attention score, while other views can use supported sort fields.
+- **Ordering** changes the sort field or direction. Queue ordering uses aven's attention score, while other views can order by fields including availability and due date. Due ordering places undated tasks last.
 
 Press `/` to search. Search shows live preview results while you type.
 

@@ -65,13 +65,24 @@ Epic children belong to the same workspace and project as the epic. Each child b
 
 Use epics for grouping. Use dependencies for ordering.
 
+## Availability and due dates
+
+Availability and due dates describe independent parts of a task's timeline:
+
+- `available_at` controls when an open task becomes eligible for attention. A future value hides it from normal lists and queue groups. Upcoming shows deferred work explicitly.
+- `due_on` is the local-calendar date when completion is expected. It never hides a task or changes its status. Overdue shows open work whose due date is before today.
+
+A task may use either field or both. A future due date does not defer work. A passed due date does not reveal a deferred task. Combine Upcoming and Overdue when you need to inspect deferred work whose deadline passed.
+
+Availability is a timestamp because it can represent a local time of day or an exact UTC instant. Due dates are date-only values because the deadline applies to the local calendar day. Neither field creates reminders, notifications, recurrence, or automatic status changes.
+
 ## Queue
 
 The queue is the default attention view in the TUI. It answers: what should I look at next?
 
 Tasks are grouped from most urgent to least urgent:
 
-1. **Needs action**: sync conflicts, urgent tasks, and stale active tasks
+1. **Needs action**: sync conflicts, urgent tasks, stale active tasks, and available, unblocked tasks due today or overdue
 2. **Blocked**: tasks with unresolved open dependencies
 3. **Focus**: active tasks and high-priority todo tasks
 4. **Triage**: inbox tasks and medium-priority todo tasks
@@ -79,7 +90,7 @@ Tasks are grouped from most urgent to least urgent:
 
 A stale active task is active work that has gone without updates long enough to need attention.
 
-Inside a group, queue order is stable and favors important statuses, higher priorities, stale active work, and older tasks.
+Inside a group, queue order is stable and favors important statuses, higher priorities, stale active work, approaching deadlines, and older tasks. Due today and overdue work receive the strongest deadline boost. Deadlines within the next seven days receive a progressively larger boost as they approach. Deadline scoring applies only to visible, non-epic work, so it does not reveal deferred tasks or promote epic containers as actionable tasks.
 
 ## Deleted tasks
 

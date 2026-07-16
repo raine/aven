@@ -102,18 +102,15 @@ aven restore APP-7KQ9
 - `available_at` defers attention until its timestamp. Set it with
   `add --available-at <when>` or `edit --available-at <when>`, clear it with
   `edit --clear-available-at` or the value `now`, and use `list --upcoming` to
-  inspect deferred tasks. Accepted values include `today`, `tomorrow`,
-  `in N days`, `in N weeks`, `next <weekday>`, those date expressions followed
-  by `at <time>`, ISO dates, ISO timestamps, and Unix timestamps. Date
-  expressions use the local calendar and store canonical UTC. Exact timestamps
-  with or without `Z` are UTC. Bare weekdays and times are ambiguous. Do not use
-  availability for deadlines.
+  inspect deferred tasks. It accepts local-calendar dates such as `tomorrow`,
+  `2w`, `in 2 months`, and `next mon at 9am`, plus ISO dates, UTC timestamps,
+  and Unix timestamps. Do not use availability for deadlines.
 - `due_on` is an optional completion deadline on the local calendar. Set it with
   `add --due <when>` or `edit --due <when>`, clear it with `edit --clear-due`
   or the value `none`, and use `list --overdue` to inspect missed deadlines.
-  Accepted values include `today`, `tomorrow`, `in N days`, `in N weeks`,
-  `next <weekday>`, and ISO dates. Due dates do not accept times, hide tasks,
-  change status, clear availability, or create notifications. Combine
+  It accepts the same local-calendar date forms as availability, without times.
+  Due dates do not hide tasks, change status, clear availability, or create
+  notifications. Combine
   `list --upcoming --overdue` to find deferred tasks whose deadlines passed.
 - Let commands infer the project from the current directory, even if project
   does not exist yet. Pass `--project` only if project is specified by user.

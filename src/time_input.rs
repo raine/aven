@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use chrono::{
-    DateTime, Datelike, Days, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc, Weekday,
+    DateTime, Datelike, Days, Local, Months, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
+    Weekday,
 };
 
 use crate::queue::unix_seconds;
@@ -32,7 +33,7 @@ fn parse_due_on_input_at(input: &str, today: NaiveDate) -> Result<String> {
             format!("error ambiguous-due-weekday value={input:?} hint=\"use next {normalized}\"")
         } else {
             format!(
-                "error invalid-due value={input:?} hint=\"use today, tomorrow, in N days, in N weeks, next monday, or an ISO date\""
+                "error invalid-due value={input:?} hint=\"use today, tomorrow, 2d, 2w, in N months, next week, next monday, or an ISO date\""
             )
         }
     })?;
@@ -101,7 +102,7 @@ where
             )
         } else {
             format!(
-                "error invalid-available-at value={input:?} hint=\"use today, tomorrow, in N days, in N weeks, next monday, an ISO date, or add 'at 9am'\""
+                "error invalid-available-at value={input:?} hint=\"use today, tomorrow, 2d, 2w, in N months, next week, next monday, an ISO date, or add 'at 9am'\""
             )
         }
     })?;
@@ -115,7 +116,8 @@ pub(crate) fn available_at_error_message(error: &anyhow::Error) -> String {
         .and_then(|(_, hint)| hint.split_once('"'))
         .map(|(hint, _)| hint.to_string())
         .unwrap_or_else(|| {
-            "try tomorrow, in 2 weeks, next monday at 9am, or YYYY-MM-DD".to_string()
+            "try tomorrow, 2d, 2w, in 2 months, next week, next monday at 9am, or YYYY-MM-DD"
+                .to_string()
         })
 }
 
@@ -125,7 +127,9 @@ pub(crate) fn due_on_error_message(error: &anyhow::Error) -> String {
         .rsplit_once("hint=\"")
         .and_then(|(_, hint)| hint.split_once('"'))
         .map(|(hint, _)| hint.to_string())
-        .unwrap_or_else(|| "try tomorrow, in 2 weeks, next monday, or YYYY-MM-DD".to_string())
+        .unwrap_or_else(|| {
+            "try tomorrow, 2d, 2w, in 2 months, next week, next monday, or YYYY-MM-DD".to_string()
+        })
 }
 
 pub(crate) fn validate_due_on_value(value: &str) -> Result<()> {
@@ -169,10 +173,14 @@ fn parse_local_date_expression(
     let offset_days = match value {
         "today" => Some(0),
         "tomorrow" => Some(1),
-        _ => None,
+        _ => compact_day_offset(value)?,
     };
     if let Some(offset_days) = offset_days {
         return add_days(today, offset_days).map(Some);
+    }
+
+    if value == "next week" {
+        return next_weekday(today, Weekday::Mon).map(Some);
     }
 
     let words = value.split_whitespace().collect::<Vec<_>>();
@@ -182,26 +190,22 @@ fn parse_local_date_expression(
                 "error invalid-{field_slug}-amount value={amount:?} hint=\"use a whole number, such as in 2 weeks\""
             )
         })?;
-        let days = match *unit {
-            "day" | "days" => amount,
+        return match *unit {
+            "day" | "days" => add_days(today, amount).map(Some),
             "week" | "weeks" => amount
                 .checked_mul(7)
-                .context("relative week count is out of range")?,
-            _ => return Ok(None),
+                .context("relative week count is out of range")
+                .and_then(|days| add_days(today, days))
+                .map(Some),
+            "month" | "months" => add_months(today, amount).map(Some),
+            _ => Ok(None),
         };
-        return add_days(today, days).map(Some);
     }
 
     if let ["next", weekday_name] = words.as_slice()
         && let Some(target) = weekday(weekday_name)
     {
-        let current = today.weekday().num_days_from_monday();
-        let target = target.num_days_from_monday();
-        let mut days = (target + 7 - current) % 7;
-        if days == 0 {
-            days = 7;
-        }
-        return add_days(today, u64::from(days)).map(Some);
+        return next_weekday(today, target).map(Some);
     }
 
     if is_iso_date(value) {
@@ -210,9 +214,44 @@ fn parse_local_date_expression(
     Ok(None)
 }
 
+fn compact_day_offset(value: &str) -> Result<Option<u64>> {
+    for (suffix, multiplier) in [("d", 1), ("w", 7)] {
+        let Some(amount) = value.strip_suffix(suffix) else {
+            continue;
+        };
+        if amount.is_empty() || !amount.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let amount = amount
+            .parse::<u64>()
+            .context("compact relative date is out of range")?;
+        let days = amount
+            .checked_mul(multiplier)
+            .context("compact relative date is out of range")?;
+        return Ok(Some(days));
+    }
+    Ok(None)
+}
+
+fn next_weekday(date: NaiveDate, target: Weekday) -> Result<NaiveDate> {
+    let current = date.weekday().num_days_from_monday();
+    let target = target.num_days_from_monday();
+    let mut days = (target + 7 - current) % 7;
+    if days == 0 {
+        days = 7;
+    }
+    add_days(date, u64::from(days))
+}
+
 fn add_days(date: NaiveDate, days: u64) -> Result<NaiveDate> {
     date.checked_add_days(Days::new(days))
         .context("relative date is out of range")
+}
+
+fn add_months(date: NaiveDate, months: u64) -> Result<NaiveDate> {
+    let months = u32::try_from(months).context("relative month count is out of range")?;
+    date.checked_add_months(Months::new(months))
+        .context("relative month count is out of range")
 }
 
 fn weekday(value: &str) -> Option<Weekday> {
@@ -425,6 +464,28 @@ mod tests {
         assert_eq!(
             parse_fixed("next thursday").unwrap(),
             "2026-07-23T05:00:00Z"
+        );
+    }
+
+    #[test]
+    fn parses_compact_offsets_next_week_and_calendar_months() {
+        assert_eq!(parse_due_fixed("2d").unwrap(), "2026-07-18");
+        assert_eq!(parse_due_fixed("2w").unwrap(), "2026-07-30");
+        assert_eq!(parse_due_fixed("in 2 months").unwrap(), "2026-09-16");
+        assert_eq!(
+            parse_fixed("next week at 9am").unwrap(),
+            "2026-07-20T14:00:00Z"
+        );
+
+        let january_end = NaiveDate::from_ymd_opt(2025, 1, 31).unwrap();
+        assert_eq!(
+            parse_due_on_input_at("in 1 month", january_end).unwrap(),
+            "2025-02-28"
+        );
+        let leap_january_end = NaiveDate::from_ymd_opt(2024, 1, 31).unwrap();
+        assert_eq!(
+            parse_due_on_input_at("in 1 month", leap_january_end).unwrap(),
+            "2024-02-29"
         );
     }
 

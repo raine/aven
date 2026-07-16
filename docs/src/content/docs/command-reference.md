@@ -49,7 +49,7 @@ EOF
 
 ### Structured output
 
-The `--json` option is available on `context`, `show`, `list`, `search`, `dep list`, `epic list`, `prime`, `label list`, `project list`, `conflict list`, `conflict show`, and `doctor`. JSON task objects expose availability through `available_at` and epic membership separately from dependency ordering through `is_epic`, `epic_parent`, and `epic_children`.
+The `--json` option is available on `context`, `show`, `list`, `search`, `dep list`, `epic list`, `prime`, `label list`, `project list`, `conflict list`, `conflict show`, and `doctor`. JSON task objects expose temporal fields through `available_at` and `due_on`, and epic membership separately from dependency ordering through `is_epic`, `epic_parent`, and `epic_children`. An empty `available_at` means immediate availability. An empty `due_on` means no deadline.
 
 ## Task commands
 
@@ -70,17 +70,19 @@ aven add <title> [options]
 | `--description-stdin` | Read the description from standard input. |
 | `--priority <priority>` | Set the priority. Defaults to `none`. |
 | `--available-at <when>` | Defer the task until a calendar expression or timestamp. See [Availability input](#availability-input). |
+| `--due <when>` | Set a date-only deadline. See [Due date input](#due-date-input). |
 | `--label <label>` | Add a label. Repeat for multiple labels. Labels must already exist. |
 | `--epic` | Create an epic container. |
 | `--natural` | Parse the title as natural-language task intake using the configured agent command. |
 
-A plain task starts with status `inbox`. `--natural` cannot be combined with a description source, `--project`, a non-default priority, `--label`, or `--available-at`. Natural intake can infer a title, description, project, status, priority, labels, availability, and epic state from the request.
+A plain task starts with status `inbox`. `--natural` cannot be combined with a description source, `--project`, a non-default priority, `--label`, `--available-at`, or `--due`. Natural intake can infer a title, description, project, status, priority, labels, availability, due date, and epic state from the request.
 
 The command prints the created task's qualified reference and bare suffix.
 
 ```sh
 aven add "Fix conflict display" --project aven --priority high --label bug
 aven add "Review launch notes" --available-at "next monday at 9am"
+aven add "Submit expense report" --due "next fri"
 aven add "Add release automation" --epic
 aven add --natural "high priority docs task for the aven project"
 ```
@@ -105,12 +107,15 @@ aven list [options]
 | `--blocked` | Show open tasks with at least one unresolved blocker. |
 | `--epics` | Show epic containers only. |
 | `--upcoming` | Show open, live tasks with a future availability time, ordered by availability time from earliest to latest. |
+| `--overdue` | Show open, live tasks with a due date before today, ordered by due date from oldest to newest. |
 | `--limit <number>` | Return at most this many tasks after sorting and filtering. |
 | `--json` | Print a JSON array. |
 
 Normal lists hide open tasks whose availability time is in the future. They include tasks with empty or elapsed availability. Explicit `--status done` and `--status canceled` lists include matching tasks regardless of availability, and `--deleted` includes matching deleted tasks regardless of availability.
 
-`--upcoming` finds only live tasks with an open status and a future availability time. It can be combined with `--project`, `--status`, `--priority`, `--label`, `--all`, and `--limit`. `--all` does not add deleted tasks to Upcoming. `--upcoming` cannot be combined with `--ready`, `--blocked`, `--epics`, or `--deleted`.
+`--upcoming` finds only live tasks with an open status and a future availability time. It can be combined with `--project`, `--status`, `--priority`, `--label`, `--all`, `--overdue`, and `--limit`. `--all` does not add deleted tasks to Upcoming. `--upcoming` cannot be combined with `--ready`, `--blocked`, `--epics`, or `--deleted`.
+
+`--overdue` finds open, live tasks whose `due_on` date is earlier than the current local date. Due today is not overdue. Normal availability filtering still applies, so deferred overdue tasks remain hidden. Combine `--upcoming --overdue` to inspect deferred tasks whose deadlines passed.
 
 `--ready` and `--blocked` are mutually exclusive. Neither can be combined with `--all` or `--deleted`. `--ready` and `--epics` are also mutually exclusive.
 
@@ -120,6 +125,8 @@ aven list --project aven --label bug --limit 20
 aven list --ready
 aven list --upcoming
 aven list --upcoming --project aven --limit 10
+aven list --overdue
+aven list --upcoming --overdue
 aven list --deleted --json
 ```
 
@@ -201,11 +208,13 @@ aven edit <task-ref> [options]
 | `--priority <priority>` | Set the priority. |
 | `--available-at <when>` | Set or reschedule availability with a calendar expression or timestamp. Passing `now` makes the task immediately available. See [Availability input](#availability-input). |
 | `--clear-available-at` | Clear availability so the task is immediately available. |
+| `--due <when>` | Set or reschedule the date-only deadline. Passing `none` or `clear` removes it. See [Due date input](#due-date-input). |
+| `--clear-due` | Remove the due date. |
 | `--epic <on-or-off>` | Set epic state. Accepted true values are `on`, `true`, and `1`; accepted false values are `off`, `false`, and `0`. |
 | `--label <label>` | Add an existing label. Repeat as needed. |
 | `--remove-label <label>` | Remove a label. Repeat as needed. |
 
-Description sources are mutually exclusive. `--available-at` and `--clear-available-at` are mutually exclusive. Aven reports whether the update changed the task.
+Description sources are mutually exclusive. `--available-at` and `--clear-available-at` are mutually exclusive. `--due` and `--clear-due` are mutually exclusive. Aven reports whether the update changed the task.
 
 A task with epic children cannot have epic state turned off. Epic containers cannot become children of another epic.
 
@@ -214,6 +223,8 @@ aven edit APP-7KQ9 --status active
 aven edit APP-7KQ9 --title "Clarify conflict output" --priority medium
 aven edit APP-7KQ9 --available-at "in 2 weeks at 14:30"
 aven edit APP-7KQ9 --clear-available-at
+aven edit APP-7KQ9 --due "in 1 month"
+aven edit APP-7KQ9 --clear-due
 aven edit APP-7KQ9 --label docs --remove-label bug
 aven edit APP-7KQ0 --epic on
 ```
@@ -226,23 +237,41 @@ Availability controls when a task becomes eligible for attention and enters norm
 | --- | --- |
 | `today` | Today at local midnight. |
 | `tomorrow` | Tomorrow at local midnight. |
+| `Nd`, `Nw` | Local midnight after `N` calendar days or weeks, such as `2d` or `3w`. |
 | `in N days` | Local midnight after `N` calendar days. Singular `day` is accepted. |
 | `in N weeks` | Local midnight after `N * 7` calendar days. Singular `week` is accepted. |
-| `next monday` | The next Monday strictly after today at local midnight. All full weekday names are accepted. If today is Monday, this means seven days later. |
+| `in N months` | The same local day after `N` calendar months. End-of-month dates clamp to the last valid day. Singular `month` is accepted. |
+| `next week` | The next Monday strictly after today at local midnight. |
+| `next monday` | The named weekday strictly after today at local midnight. Full names and common abbreviations such as `mon`, `tues`, and `thurs` are accepted. If today is that weekday, this means seven days later. |
 | `<date expression> at <time>` | The expression's local date at `HH:MM`, `9am`, `9:30pm`, `noon`, or `midnight`. |
 | `YYYY-MM-DD` | Local midnight on that date. |
 | `YYYY-MM-DDTHH:MM:SSZ` | The exact UTC timestamp. The same form without `Z` is also interpreted as UTC. |
 | Unix timestamp | The exact whole number of seconds since the Unix epoch. |
 | `now` | Immediate availability. On `aven edit`, `--clear-available-at` is clearer. |
 
-Relative days and weeks add calendar days to the current local date rather than fixed 24-hour durations. Local expressions use the machine's local timezone and convert to a canonical UTC timestamp for storage. This preserves the requested local wall-clock time across daylight-saving offsets. A local time that is skipped or repeated by a timezone transition is rejected, so use another local time or an explicit UTC timestamp.
+Relative expressions add calendar units to the current local date rather than fixed durations. Local expressions use the machine's local timezone and convert to a canonical UTC timestamp for storage. This preserves the requested local wall-clock time across daylight-saving offsets. A local time that is skipped or repeated by a timezone transition is rejected, so use another local time or an explicit UTC timestamp.
 
-Bare weekdays such as `monday` and bare times such as `9am` are ambiguous and rejected with a suggested explicit form. Month and year arithmetic, abbreviated weekdays, informal periods such as `morning`, recurrence, due dates, and notifications are outside the accepted grammar.
+Bare weekdays such as `monday` and bare times such as `9am` are ambiguous and rejected with a suggested explicit form. Informal periods such as `morning`, recurrence, year arithmetic, and notifications are outside the accepted grammar.
 
 ```sh
 aven add "Prepare demo" --available-at "in 2 weeks"
 aven add "Call supplier" --available-at "next monday at 9am"
 aven edit APP-7KQ9 --available-at "tomorrow at 14:30"
+```
+
+### Due date input
+
+A due date describes when completion is expected. It does not control visibility, change status, clear availability, or create a reminder or notification. A task can be available before its deadline, deferred beyond its deadline, or have either field on its own.
+
+`aven add --due`, `aven edit --due`, natural task intake, and the TUI use the date expressions from [Availability input](#availability-input), including compact offsets, calendar months, `next week`, named weekdays, and ISO dates. Due dates are local-calendar values stored as `YYYY-MM-DD`. They reject times, UTC timestamps, and Unix timestamps because a deadline is date-only.
+
+Use `none`, `clear`, or `aven edit --clear-due` to remove a deadline. A due date equal to today is due today. It becomes overdue when the local date advances past it.
+
+```sh
+aven add "Submit report" --due "next fri"
+aven edit APP-7KQ9 --due "in 1 month"
+aven edit APP-7KQ9 --clear-due
+aven list --overdue
 ```
 
 ### `aven note`
