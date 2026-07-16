@@ -1065,10 +1065,10 @@ mod multiline_overlays {
     #[test]
     fn add_note_empty_input_shows_placeholder() {
         let line = add_note_input_line("", Some(0), true);
-        assert_eq!(line.spans[0].content.as_ref(), "n");
+        assert_eq!(line.spans[0].content.as_ref(), "E");
         assert_eq!(line.spans[0].style.fg, Some(BG_ALT));
         assert_eq!(line.spans[0].style.bg, Some(FG));
-        assert_eq!(line.spans[1].content.as_ref(), "ote body");
+        assert_eq!(line.spans[1].content.as_ref(), "nter note body here...");
         assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
     }
 
@@ -1134,7 +1134,7 @@ mod multiline_overlays {
         });
         let rendered = render_overlay_view(overlay.clone());
         assert!(rendered.contains("Add note"));
-        assert!(rendered.contains("note body"));
+        assert!(rendered.contains("Enter note body here..."));
         assert!(rendered.contains("Ctrl-Enter / ^S submit"));
 
         let buffer = overlay_buffer(overlay);
@@ -1162,7 +1162,7 @@ mod multiline_overlays {
         }));
 
         assert!(rendered.contains("existing note text"));
-        assert!(!rendered.contains("note body"));
+        assert!(!rendered.contains("Enter note body here..."));
         assert!(rendered.contains("Ctrl-Enter / ^S submit"));
     }
 
@@ -1610,9 +1610,8 @@ mod route_specific_rendering {
             column: 0,
         }));
         assert!(rendered.contains("Changed note title"));
-        assert!(rendered.contains("note body"));
+        assert!(rendered.contains("Enter note body here..."));
         assert!(rendered.contains("Ctrl-Enter / ^S submit"));
-        assert!(rendered.contains("ote body"));
     }
 
     #[test]

@@ -340,8 +340,8 @@ pub(in crate::tui::ui) fn add_note_input_line(
 ) -> Line<'static> {
     if show_placeholder && line.is_empty() && cursor.is_some() {
         return Line::from(vec![
-            super::super::input::cursor_cell("n"),
-            Span::styled("ote body", Style::new().fg(FG_DIM)),
+            super::super::input::cursor_cell("E"),
+            Span::styled("nter note body here...", Style::new().fg(FG_DIM)),
         ]);
     }
     match cursor {
