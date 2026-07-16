@@ -262,6 +262,63 @@ impl TuiStore {
         Ok(outcome)
     }
 
+    pub(crate) async fn update_availability(
+        &mut self,
+        index: Option<usize>,
+        available_at: String,
+        preserve_task: bool,
+    ) -> Result<Option<MutationMessage>> {
+        let Some(mut item) = self.selected_task(index).cloned() else {
+            return Ok(None);
+        };
+        let before = item.task.available_at.clone();
+        if available_at == before {
+            return Ok(Some(
+                self.refresh_task_message(
+                    &item.task.id,
+                    format!("unchanged {} availability", item.display_ref),
+                )
+                .await?,
+            ));
+        }
+
+        self.activate_workspace();
+        let mut conn = self.pool.acquire().await?;
+        let outcome = update_task_operation(
+            &mut conn,
+            &item.task.id,
+            TaskUpdate {
+                available_at: Some(available_at.clone()),
+                ..TaskUpdate::default()
+            },
+        )
+        .await?;
+        drop(conn);
+        self.record_undo_commands(
+            &format!("availability {}", item.display_ref),
+            vec![UndoCommand::SetTaskField {
+                task_id: item.task.id.clone(),
+                field: "available_at".to_string(),
+                before,
+                after: available_at.clone(),
+            }],
+        )
+        .await?;
+        let message = if available_at.is_empty() {
+            format!("cleared {} availability", item.display_ref)
+        } else {
+            format!("set {} availability", item.display_ref)
+        };
+        item.task = outcome.task;
+        let result = if preserve_task {
+            self.refresh_preserved_task_message(index, item, message)
+                .await?
+        } else {
+            self.refresh_task_message(&item.task.id, message).await?
+        };
+        Ok(Some(result))
+    }
+
     pub(crate) async fn update_project(
         &mut self,
         index: Option<usize>,

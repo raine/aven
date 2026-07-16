@@ -21,8 +21,8 @@ impl AddTaskStep {
         Self::Status,
         Self::Priority,
         Self::Labels,
-        Self::Title,
         Self::AvailableAt,
+        Self::Title,
         Self::Description,
     ];
 
@@ -42,7 +42,7 @@ impl AddTaskStep {
     pub(crate) fn is_metadata(self) -> bool {
         matches!(
             self,
-            Self::Project | Self::Status | Self::Priority | Self::Labels
+            Self::Project | Self::Status | Self::Priority | Self::Labels | Self::AvailableAt
         )
     }
 }

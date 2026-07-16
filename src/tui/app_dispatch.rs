@@ -922,7 +922,10 @@ impl App {
             );
             match outcome {
                 OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
-                OverlayOutcome::Cancelled => self.cancel_authoring_overlay(),
+                OverlayOutcome::Cancelled => {
+                    self.cancel_authoring_overlay();
+                    self.refresh().await?;
+                }
                 OverlayOutcome::Submitted(submit) => self.handle_overlay_submit(submit).await?,
             }
             return Ok(());
@@ -1206,6 +1209,7 @@ impl App {
             Action::BeginEditDescription => self.begin_edit_description(),
             Action::BeginEditProject => self.begin_edit_project(),
             Action::BeginEditPriority => self.begin_edit_priority(),
+            Action::BeginEditAvailability => self.begin_edit_availability(),
             Action::BeginEditLabels => self.begin_edit_labels(),
             Action::Delete => self.begin_delete_task(),
             Action::Restore => self.update_deleted(false).await?,

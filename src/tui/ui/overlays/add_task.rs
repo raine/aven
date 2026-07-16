@@ -51,19 +51,22 @@ pub(crate) fn add_task_field_at(
     }
     let relative_x = column.saturating_sub(content.x);
     let relative_y = row.saturating_sub(content.y);
-    let metadata_rows = if content.width >= 96 {
+    let metadata_rows = if content.width >= 120 {
         1
     } else if content.width >= 60 {
         2
     } else {
-        4
+        5
     };
     if relative_y < metadata_rows {
         let index = if metadata_rows == 1 {
-            (relative_x as usize * 4 / content.width.max(1) as usize).min(3)
+            (relative_x as usize * 5 / content.width.max(1) as usize).min(4)
         } else if metadata_rows == 2 {
-            (relative_y as usize * 2)
-                + (relative_x as usize * 2 / content.width.max(1) as usize).min(1)
+            if relative_y == 0 {
+                (relative_x as usize * 3 / content.width.max(1) as usize).min(2)
+            } else {
+                3 + (relative_x as usize * 2 / content.width.max(1) as usize).min(1)
+            }
         } else {
             relative_y as usize
         };
@@ -74,9 +77,6 @@ pub(crate) fn add_task_field_at(
             return Some(AddTaskStep::Title);
         }
         if relative_y == metadata_rows + 1 {
-            return Some(AddTaskStep::AvailableAt);
-        }
-        if relative_y == metadata_rows + 2 {
             return Some(AddTaskStep::Description);
         }
         return None;
@@ -85,10 +85,7 @@ pub(crate) fn add_task_field_at(
     if relative_y == title_y || relative_y == title_y + 1 {
         return Some(AddTaskStep::Title);
     }
-    if relative_y == title_y + 3 || relative_y == title_y + 4 {
-        return Some(AddTaskStep::AvailableAt);
-    }
-    if relative_y >= title_y + 6 {
+    if relative_y >= title_y + 3 {
         return Some(AddTaskStep::Description);
     }
     None
@@ -118,15 +115,6 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
                 &state.title
             },
             state.focus == AddTaskStep::Title,
-        ));
-        lines.push(compact_text_field(
-            "Available",
-            if state.available_at.is_empty() {
-                "Immediately"
-            } else {
-                &state.available_at
-            },
-            state.focus == AddTaskStep::AvailableAt,
         ));
         lines.push(compact_text_field(
             "Description",
@@ -172,20 +160,6 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
     } else {
         lines.push(Line::from(""));
     }
-    lines.push(add_task_field_label(
-        "Available",
-        state.focus == AddTaskStep::AvailableAt,
-    ));
-    lines.push(indent_add_task_input(add_task_title_input_line(
-        if state.available_at.is_empty() {
-            "Immediately, in 2 weeks, next monday, or a date"
-        } else {
-            &state.available_at
-        },
-        (state.focus == AddTaskStep::AvailableAt).then_some(state.available_at_cursor),
-        (content.width as usize).saturating_sub(2),
-    )));
-    lines.push(Line::from(""));
     lines.push(add_task_field_label(
         "Description",
         state.focus == AddTaskStep::Description,
@@ -241,23 +215,43 @@ fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>
         (AddTaskStep::Priority, "Priority", state.priority.clone()),
         (AddTaskStep::Labels, "Labels", labels_display(&state.labels)),
     ];
-    let owned = fields
+    let mut owned = fields
         .into_iter()
         .map(|(field, label, value)| metadata_field(field, label, &value, state.focus))
         .collect::<Vec<_>>();
-    if width >= 96 {
+    owned.push(availability_metadata_field(state));
+    if width >= 120 {
         return vec![metadata_row(owned, width as usize)];
     }
     if width >= 60 {
         return vec![
-            metadata_row(owned[..2].to_vec(), width as usize),
-            metadata_row(owned[2..].to_vec(), width as usize),
+            metadata_row(owned[..3].to_vec(), width as usize),
+            metadata_row(owned[3..].to_vec(), width as usize),
         ];
     }
     owned
         .into_iter()
         .map(|line| fit_line_to_width(line, width as usize))
         .collect()
+}
+
+fn availability_metadata_field(state: &AddTaskView) -> Line<'static> {
+    let value = if state.available_at.is_empty() {
+        if state.focus == AddTaskStep::AvailableAt {
+            "Immediately, in 2 weeks, next monday, or a date"
+        } else {
+            "Immediately"
+        }
+    } else {
+        &state.available_at
+    };
+    let mut line = metadata_field(AddTaskStep::AvailableAt, "Available", value, state.focus);
+    if state.focus == AddTaskStep::AvailableAt {
+        line.spans.pop();
+        line.spans
+            .extend(add_task_title_input_line(value, Some(state.available_at_cursor), 48).spans);
+    }
+    line
 }
 
 pub(in crate::tui::ui) fn metadata_field(
@@ -441,9 +435,11 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
         AddTaskMode::Help { scroll } => {
             let all = [
                 "Tab / Shift+Tab   next / previous field",
-                "Arrows            move between visible fields",
+                "Arrows            move fields; edit cursor in Available",
                 "Enter             open metadata or create from title",
                 "Enter             newline in description",
+                "Available         local date, today, tomorrow, or now",
+                "Available         empty or now means immediately",
                 "Ctrl-p/t/r/l      edit project/status/priority/labels",
                 "Ctrl-Enter        create from any field",
                 "Ctrl-s            portable create fallback",
@@ -758,10 +754,10 @@ pub(in crate::tui::ui) fn add_task_hint_line(
             ("Esc", "cancel"),
         ]),
         AddTaskStep::AvailableAt => dialog_hint_line(&[
-            ("↑/↓", "field"),
+            ("←/→", "cursor"),
+            ("empty/now", "clear"),
             ("Tab", "next"),
             ("^S", "create"),
-            ("^N", "create with AI"),
             ("F1", "help"),
             ("Esc", "cancel"),
         ]),

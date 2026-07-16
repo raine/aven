@@ -73,11 +73,11 @@ impl App {
         } else {
             match crate::time_input::parse_available_at_input(&state.available_at.text) {
                 Ok(value) => value,
-                Err(error) => {
+                Err(_) => {
                     state.focus = AddTaskStep::AvailableAt;
                     state.mode = AddTaskMode::Compose;
                     self.overlay = Some(OverlayState::AddTask(Box::new(state)));
-                    self.set_warning(format!("{error:#}"));
+                    self.set_warning(crate::tui::app_edit::INVALID_AVAILABILITY_MESSAGE);
                     return Ok(());
                 }
             }
@@ -122,6 +122,9 @@ impl App {
             }
             Some(TextSubmitRoute::EditTitle) => {
                 self.submit_edit_title(value).await?;
+            }
+            Some(TextSubmitRoute::EditAvailability) => {
+                self.submit_edit_availability(value).await?;
             }
             Some(TextSubmitRoute::ConflictManual) => {
                 self.submit_manual_conflict_value(value).await?;

@@ -59,6 +59,11 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
         return;
     }
 
+    let dialog_width = if state.route == OverlayRoute::EditAvailability {
+        64
+    } else {
+        54
+    };
     let input = input_line("", &state.input, state.cursor);
     let lines = if state.route == OverlayRoute::DeleteProjectNameConfirm {
         vec![
@@ -81,7 +86,7 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
     } else {
         6
     };
-    Dialog::new(&state.title, 54, height).render_text(frame, Text::from(lines));
+    Dialog::new(&state.title, dialog_width, height).render_text(frame, Text::from(lines));
 }
 
 pub(in crate::tui::ui) const ADD_PROJECT_NAME_PLACEHOLDER: &str = "Enter project name here...";

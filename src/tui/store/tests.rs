@@ -595,6 +595,43 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
+    async fn availability_edit_refreshes_task_and_sidebar_counts() {
+        let mut store = test_store().await;
+        let (_, selected) = store
+            .create_task(task_draft("Availability target"), None)
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+
+        let set = store
+            .update_availability(Some(selected), "2099-01-01T00:00:00Z".to_string(), true)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(set.message.contains("set"));
+        assert_eq!(store.counts.inbox, 0);
+        assert_eq!(store.counts.upcoming, 1);
+        let selected = set.selected.unwrap();
+        assert_eq!(
+            store.tasks[selected].task.available_at,
+            "2099-01-01T00:00:00Z"
+        );
+
+        let cleared = store
+            .update_availability(Some(selected), String::new(), false)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(cleared.message.contains("cleared"));
+        assert_eq!(store.counts.inbox, 1);
+        assert_eq!(store.counts.upcoming, 0);
+        let selected = cleared.selected.unwrap();
+        assert!(store.tasks[selected].task.available_at.is_empty());
+    }
+
+    #[tokio::test]
     async fn title_edit_keeps_queue_activity_timestamp() {
         let (_dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) =

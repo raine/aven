@@ -496,8 +496,10 @@ mod add_task_overlay {
         assert!(rendered.contains("Status: ▣ inbox"));
         assert!(rendered.contains("Priority: ● high"));
         assert!(rendered.contains("Labels: none"));
+        assert!(rendered.contains("Available: Immediately"));
         assert!(rendered.contains("Title"));
         assert!(rendered.contains("Description"));
+        assert!(rendered.find("Available: Immediately").unwrap() < rendered.find("Title").unwrap());
         assert!(rendered.contains("  ship dialogs"));
         assert!(rendered.contains("Optional details, links, or handoff context..."));
         assert!(rendered.contains("Tab next"));
@@ -548,6 +550,7 @@ mod add_task_overlay {
                 "Status",
                 "Priority",
                 "Labels",
+                "Available",
                 "Title",
                 "Description",
             ] {

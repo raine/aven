@@ -825,6 +825,22 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::BeginEditPriority,
     ),
     CommandSpec::implemented(
+        "edit-availability",
+        "edit selected task availability",
+        "Tasks",
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('a')],
+                label: "e a",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('a')],
+                label: "t e a",
+            },
+        ],
+        Action::BeginEditAvailability,
+    ),
+    CommandSpec::implemented(
         "edit-labels",
         "edit selected task labels",
         "Tasks",
@@ -1343,6 +1359,22 @@ pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
             },
         ],
         Action::BeginEditPriority,
+    ),
+    CommandSpec::implemented(
+        "detail-edit-availability",
+        "edit selected task availability",
+        "Tasks",
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('a')],
+                label: "e a",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('a')],
+                label: "t e a",
+            },
+        ],
+        Action::BeginEditAvailability,
     ),
     CommandSpec::implemented(
         "detail-edit-labels",

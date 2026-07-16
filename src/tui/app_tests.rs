@@ -3,7 +3,8 @@ use crate::choices::{TaskPriority, TaskStatus};
 use crate::operations::TaskDraft;
 use crate::tui::app_conflicts::CONFLICT_CONFIRM_LOCAL_TITLE;
 use crate::tui::app_edit::{
-    EDIT_DESCRIPTION_TITLE, EDIT_LABELS_TITLE, EDIT_PROJECT_TITLE, EDIT_TITLE_TITLE,
+    EDIT_AVAILABILITY_TITLE, EDIT_DESCRIPTION_TITLE, EDIT_LABELS_TITLE, EDIT_PROJECT_TITLE,
+    EDIT_TITLE_TITLE,
 };
 use crate::tui::app_filters::{SCOPE_PROJECT_TITLE, SWITCH_WORKSPACE_TITLE};
 use crate::tui::app_projects::{DELETE_PROJECT_TITLE, DELETE_TASK_TITLE};
@@ -3018,7 +3019,6 @@ mod authoring {
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
-        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
 
         assert!(matches!(
             &app.overlay,
@@ -3052,7 +3052,6 @@ mod authoring {
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
-        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         type_chars(&mut app, "Include setup details").await;
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
@@ -3068,7 +3067,6 @@ mod authoring {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
-        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         type_chars(&mut app, "Details").await;
         app.handle_overlay_key(ctrl_x()).await.unwrap();
@@ -3087,7 +3085,6 @@ mod authoring {
     async fn add_task_description_ctrl_x_non_editor_key_clears_prefix_and_edits_text() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         app.handle_overlay_key(ctrl_x()).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Char('z')))
@@ -3108,7 +3105,6 @@ mod authoring {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
-        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         type_chars(&mut app, "Details").await;
         app.handle_overlay_key(ctrl_e()).await.unwrap();
@@ -3132,7 +3128,6 @@ mod authoring {
 
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
-        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         type_chars(&mut app, "Details").await;
         app.handle_overlay_key(ctrl_p()).await.unwrap();
@@ -3347,7 +3342,6 @@ mod authoring {
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
-        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         type_chars(&mut app, "Include setup details").await;
         app.handle_overlay_key(ctrl_n()).await.unwrap();
 
@@ -3509,7 +3503,7 @@ mod authoring {
             AddTaskStep::Status,
             AddTaskStep::Priority,
             AddTaskStep::Labels,
-            AddTaskStep::Project,
+            AddTaskStep::AvailableAt,
         ] {
             app.handle_overlay_key(key(KeyCode::Right)).await.unwrap();
             assert!(matches!(
@@ -3517,15 +3511,15 @@ mod authoring {
                 Some(OverlayState::AddTask(state)) if state.focus == expected
             ));
         }
-        app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Right)).await.unwrap();
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Title
+            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::AvailableAt
         ));
         app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::AvailableAt
+            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Title
         ));
         app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
         assert!(matches!(
@@ -3535,7 +3529,7 @@ mod authoring {
         app.handle_overlay_key(key(KeyCode::Up)).await.unwrap();
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::AvailableAt
+            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Title
         ));
     }
 
@@ -3543,9 +3537,9 @@ mod authoring {
     async fn add_task_mouse_opens_metadata_and_focuses_text_fields() {
         for (column, row, expected) in [
             (3, 2, AddTaskStep::Project),
-            (55, 2, AddTaskStep::Status),
-            (3, 3, AddTaskStep::Priority),
-            (55, 3, AddTaskStep::Labels),
+            (29, 2, AddTaskStep::Status),
+            (55, 2, AddTaskStep::Priority),
+            (3, 3, AddTaskStep::Labels),
         ] {
             let mut app = test_app().await;
             app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
@@ -3563,9 +3557,9 @@ mod authoring {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         for (column, row, expected) in [
+            (55, 3, AddTaskStep::AvailableAt),
             (3, 5, AddTaskStep::Title),
-            (3, 8, AddTaskStep::AvailableAt),
-            (3, 11, AddTaskStep::Description),
+            (3, 8, AddTaskStep::Description),
         ] {
             app.dispatch_mouse(task_row_click(column, row), (80, 24).into())
                 .await
@@ -4291,6 +4285,173 @@ mod detail_mode {
         ));
         let selected = app.widgets.table.selected().unwrap();
         assert_eq!(app.store.tasks[selected].notes.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn availability_editor_sets_task_from_task_list() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Defer from list")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+
+        app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('a')), (100, 30).into())
+            .await
+            .unwrap();
+
+        let rendered = render_app_text(&mut app, 100, 30);
+        assert!(rendered.contains(EDIT_AVAILABILITY_TITLE));
+        assert!(rendered.contains("Dates use local time"));
+        assert!(rendered.contains("Empty/now clears."));
+        type_chars(&mut app, "tomorrow").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        app.show_view(TaskView::Upcoming).await.unwrap();
+        let task = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == task_id)
+            .unwrap();
+        assert!(!task.task.available_at.is_empty());
+    }
+
+    #[tokio::test]
+    async fn availability_editor_keeps_invalid_input_open() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Invalid availability")).await;
+        app.begin_edit_availability();
+        type_chars(&mut app, "someday maybe").await;
+
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::TextInput(state))
+                if state.route == OverlayRoute::EditAvailability
+                    && state.input.text == "someday maybe"
+        ));
+        assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some(crate::tui::app_edit::INVALID_AVAILABILITY_MESSAGE)
+        );
+    }
+
+    #[tokio::test]
+    async fn detail_availability_editor_reschedules_and_clears_task() {
+        let mut app = test_app().await;
+        let selected =
+            create_and_select_task(&mut app, test_task_draft("Detail availability")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        app.overlay = Some(OverlayState::Detail { scroll: 2 });
+
+        for value in ["2099-01-01", "2099-02-01"] {
+            let expected = crate::time_input::parse_available_at_input(value).unwrap();
+            app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
+                .await
+                .unwrap();
+            app.dispatch_key(key(KeyCode::Char('a')), (100, 30).into())
+                .await
+                .unwrap();
+            app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+                .await
+                .unwrap();
+            type_chars(&mut app, value).await;
+            app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+            assert!(matches!(
+                app.overlay,
+                Some(OverlayState::Detail { scroll: 2 })
+            ));
+            let selected = app.widgets.table.selected().unwrap();
+            assert_eq!(app.store.tasks[selected].task.available_at, expected);
+
+            app.refresh().await.unwrap();
+            let selected = app.widgets.table.selected().unwrap();
+            assert_eq!(app.store.tasks[selected].task.id, task_id);
+            assert!(matches!(
+                app.overlay,
+                Some(OverlayState::Detail { scroll: 2 })
+            ));
+        }
+
+        app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('a')), (100, 30).into())
+            .await
+            .unwrap();
+        app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+            .await
+            .unwrap();
+        type_chars(&mut app, "now").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 2 })
+        ));
+        let selected = app.widgets.table.selected().unwrap();
+        assert!(app.store.tasks[selected].task.available_at.is_empty());
+    }
+
+    #[tokio::test]
+    async fn leaving_detail_reconciles_deferred_task_with_active_view() {
+        let mut app = test_app().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Leave detail")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('a')), (100, 30).into())
+            .await
+            .unwrap();
+        type_chars(&mut app, "2099-01-01").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(app.store.tasks.iter().any(|item| item.task.id == task_id));
+
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(app.store.tasks.iter().all(|item| item.task.id != task_id));
+    }
+
+    #[tokio::test]
+    async fn task_list_availability_editor_clears_with_empty_input() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Clear from list")).await;
+        app.store
+            .update_availability(
+                app.widgets.table.selected(),
+                "2099-01-01T00:00:00Z".to_string(),
+                true,
+            )
+            .await
+            .unwrap();
+        app.show_view(TaskView::Upcoming).await.unwrap();
+        app.widgets.table.select(Some(0));
+
+        app.begin_edit_availability();
+        app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        app.show_view(TaskView::Queue).await.unwrap();
+        assert!(
+            app.store
+                .tasks
+                .iter()
+                .any(|item| item.task.title == "Clear from list"
+                    && item.task.available_at.is_empty())
+        );
     }
 
     #[tokio::test]

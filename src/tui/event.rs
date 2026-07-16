@@ -57,6 +57,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginEditDescription
             | Action::BeginEditProject
             | Action::BeginEditPriority
+            | Action::BeginEditAvailability
             | Action::BeginEditLabels
             | Action::Delete
             | Action::Restore
@@ -574,6 +575,13 @@ mod tests {
         assert_eq!(
             resolve_shortcut_for(
                 CommandContext::Detail,
+                &[KeyCode::Char('e'), KeyCode::Char('a')]
+            ),
+            ShortcutLookup::Found(Action::BeginEditAvailability)
+        );
+        assert_eq!(
+            resolve_shortcut_for(
+                CommandContext::Detail,
                 &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('l')]
             ),
             ShortcutLookup::Found(Action::BeginEditLabels)
@@ -724,6 +732,10 @@ mod tests {
             ShortcutLookup::Found(Action::BeginEditPriority)
         ));
         assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('a')]),
+            ShortcutLookup::Found(Action::BeginEditAvailability)
+        ));
+        assert!(matches!(
             resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('l')]),
             ShortcutLookup::Found(Action::BeginEditLabels)
         ));
@@ -746,6 +758,10 @@ mod tests {
         assert!(matches!(
             resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('p')]),
             ShortcutLookup::Found(Action::BeginEditPriority)
+        ));
+        assert!(matches!(
+            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('a')]),
+            ShortcutLookup::Found(Action::BeginEditAvailability)
         ));
         assert!(matches!(
             resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('l')]),

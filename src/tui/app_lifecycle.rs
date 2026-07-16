@@ -192,6 +192,10 @@ impl App {
                 .selected_task(selected)
                 .map(|item| item.task.id.clone())
         };
+        let detail_task = self
+            .detail_underlay()
+            .then(|| self.store.selected_task(selected).cloned())
+            .flatten();
         let result = self
             .store
             .refresh_with_scope_fallback(selected_id.as_deref())
@@ -200,7 +204,22 @@ impl App {
             .map(|(selected, change_id)| {
                 self.restored_recent_action_selection(selected, change_id.as_deref())
             })
-            .unwrap_or(result.selected);
+            .unwrap_or_else(|| {
+                if let Some(item) = detail_task
+                    && self
+                        .store
+                        .tasks
+                        .iter()
+                        .all(|candidate| candidate.task.id != item.task.id)
+                {
+                    let index = selected
+                        .unwrap_or(self.store.tasks.len())
+                        .min(self.store.tasks.len());
+                    self.store.tasks.insert(index, item);
+                    return Some(index);
+                }
+                result.selected
+            });
         self.widgets.table.select(selected);
         self.preserve_or_restore_sidebar_selection();
         self.prune_task_marks();

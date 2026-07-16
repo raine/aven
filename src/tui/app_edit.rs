@@ -14,6 +14,10 @@ use crate::tui::platform::edit_text_externally;
 pub(crate) const EDIT_TITLE_TITLE: &str = "Edit title";
 pub(crate) const EDIT_DESCRIPTION_TITLE: &str = "Edit description";
 pub(crate) const EDIT_PROJECT_TITLE: &str = "Edit project";
+pub(crate) const EDIT_AVAILABILITY_TITLE: &str = "Edit availability";
+pub(crate) const EDIT_AVAILABILITY_PROMPT: &str =
+    "Dates use local time; timestamps UTC. Empty/now clears.";
+pub(crate) const INVALID_AVAILABILITY_MESSAGE: &str = "Invalid availability. Use YYYY-MM-DD, a UTC timestamp, epoch seconds, today, tomorrow, or now.";
 pub(crate) const EDIT_LABELS_TITLE: &str = "Edit task: labels";
 pub(crate) const REMOVE_DEPENDENCY_TITLE: &str = "Remove dependency";
 
@@ -379,6 +383,29 @@ impl App {
         self.footer_choice_mode = Some(FooterChoiceMode::Priority);
     }
 
+    pub(super) fn begin_edit_availability(&mut self) {
+        let Some(index) = self.guard_selected_task() else {
+            return;
+        };
+        let available_at = self
+            .store
+            .selected_task(Some(index))
+            .unwrap()
+            .task
+            .available_at
+            .clone();
+        self.open_edit_availability_overlay(available_at);
+    }
+
+    fn open_edit_availability_overlay(&mut self, input: String) {
+        self.overlay = Some(OverlayState::text_input(
+            OverlayRoute::EditAvailability,
+            EDIT_AVAILABILITY_TITLE,
+            EDIT_AVAILABILITY_PROMPT,
+            input,
+        ));
+    }
+
     pub(super) fn begin_edit_labels(&mut self) {
         let task_ids = self.marked_task_ids_in_view();
         if !task_ids.is_empty() {
@@ -515,6 +542,28 @@ impl App {
                 .await
         };
         self.apply_edit_mutation(result, |app| app.begin_edit_priority());
+        Ok(())
+    }
+
+    pub(super) async fn submit_edit_availability(&mut self, input: String) -> Result<()> {
+        let available_at = if input.trim().is_empty() {
+            String::new()
+        } else {
+            match crate::time_input::parse_available_at_input(&input) {
+                Ok(value) => value,
+                Err(_) => {
+                    self.open_edit_availability_overlay(input);
+                    self.set_warning(INVALID_AVAILABILITY_MESSAGE);
+                    return Ok(());
+                }
+            }
+        };
+        let preserve_task = self.detail_context;
+        let result = self
+            .store
+            .update_availability(self.widgets.table.selected(), available_at, preserve_task)
+            .await;
+        self.apply_edit_mutation(result, |app| app.open_edit_availability_overlay(input));
         Ok(())
     }
 
