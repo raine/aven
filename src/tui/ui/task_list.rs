@@ -38,6 +38,7 @@ use ratatui::widgets::{
 
 pub(super) const EPIC_MARKER: &str = "\u{f04ce}";
 const EPIC_CHILD_MARKER: &str = "↳";
+const DEFERRED_MARKER: &str = "\u{f017}";
 
 #[derive(Debug)]
 struct TaskListRenderModel {
@@ -49,6 +50,7 @@ struct TaskListRenderModel {
     viewport_rows: usize,
     top_scroll: usize,
     render_mode: TaskListRenderMode,
+    has_deferred_rows: bool,
 }
 
 #[derive(Debug)]
@@ -207,7 +209,13 @@ fn render_task_list(
         return;
     }
 
-    render_task_header(frame, model.row_areas[0], model.columns, model.render_mode);
+    render_task_header(
+        frame,
+        model.row_areas[0],
+        model.columns,
+        model.render_mode,
+        model.has_deferred_rows,
+    );
 
     for (index, row) in model.rows.iter().enumerate() {
         let Some(row_area) = model.row_areas.get(index + 1).copied() else {
@@ -253,6 +261,7 @@ fn build_task_list_render_model(
             viewport_rows: 0,
             top_scroll: 0,
             render_mode: store.view_state.render_mode(),
+            has_deferred_rows: false,
         };
     }
 
@@ -274,6 +283,8 @@ fn build_task_list_render_model(
         task_list_columns_for_tasks(store, area.width < 90, &visible_tasks, selected_epic_id);
 
     let now = now_seconds();
+    let has_deferred_rows = view.render_mode == TaskListRenderMode::Flat
+        && visible_tasks.iter().any(|item| is_deferred(item, now));
     let column_widths = task_list_column_widths(
         &columns,
         row_areas.get(1).map_or(area.width, |area| area.width),
@@ -354,6 +365,7 @@ fn build_task_list_render_model(
         viewport_rows,
         top_scroll: task_list_top_scroll(&view),
         render_mode: view.render_mode,
+        has_deferred_rows,
     }
 }
 
@@ -369,7 +381,11 @@ fn task_list_columns_for_tasks(
 ) -> [Constraint; 8] {
     let project_width = project_column_width(store, narrow);
     let label_width = label_column_width_from_task_refs(label_tasks, narrow);
-    let metadata_width = metadata_column_width_from_task_refs(label_tasks, selected_epic_id);
+    let metadata_width = metadata_column_width_from_task_refs(
+        label_tasks,
+        selected_epic_id,
+        store.view_state.render_mode() == TaskListRenderMode::Flat,
+    );
     let priority_width = priority_column_width(store);
     let ref_width = if store.view_state.render_mode() == TaskListRenderMode::Epics {
         14
@@ -500,20 +516,26 @@ fn label_column_width_from_task_refs(tasks: &[&TaskListItem], narrow: bool) -> u
 #[cfg(test)]
 fn metadata_column_width_from_tasks(tasks: &[TaskListItem]) -> u16 {
     let tasks = tasks.iter().collect::<Vec<_>>();
-    metadata_column_width_from_task_refs(&tasks, None)
+    metadata_column_width_from_task_refs(&tasks, None, false)
 }
 
 fn metadata_column_width_from_task_refs(
     tasks: &[&TaskListItem],
     selected_epic_id: Option<&str>,
+    mark_deferred: bool,
 ) -> u16 {
+    let now = now_seconds();
     let width = tasks
         .iter()
         .map(|item| {
-            metadata_cell(item, selected_epic_id)
-                .to_string()
-                .chars()
-                .count() as u16
+            metadata_cell(
+                item,
+                selected_epic_id,
+                mark_deferred && is_deferred(item, now),
+            )
+            .to_string()
+            .chars()
+            .count() as u16
         })
         .max()
         .unwrap_or(0);
@@ -540,6 +562,7 @@ fn render_task_header(
     area: Rect,
     columns: [Constraint; 8],
     render_mode: TaskListRenderMode,
+    has_deferred_rows: bool,
 ) {
     let cells = Layout::horizontal(columns).areas::<8>(area);
     let style = Style::new()
@@ -550,6 +573,7 @@ fn render_task_header(
     let time_header = match render_mode {
         TaskListRenderMode::Queue => "IDLE",
         TaskListRenderMode::Upcoming => "WHEN",
+        TaskListRenderMode::Flat if has_deferred_rows => "TIME",
         _ => "AGE",
     };
     for (index, (area, label)) in cells
@@ -652,7 +676,11 @@ fn build_task_row_cells(
         task_ref_cell(item, marked),
         title,
         labels,
-        metadata_cell(item, selected_epic_id),
+        metadata_cell(
+            item,
+            selected_epic_id,
+            render_mode == TaskListRenderMode::Flat && is_deferred(item, now_seconds),
+        ),
         project_cell(item, column_widths[4]),
         status_chip(item.task.status.as_str()),
         Line::from(Span::styled(
@@ -661,6 +689,10 @@ fn build_task_row_cells(
         )),
         time,
     ]
+}
+
+fn is_deferred(item: &TaskListItem, now_seconds: i64) -> bool {
+    unix_seconds(&item.task.available_at).is_some_and(|available_at| available_at > now_seconds)
 }
 
 fn task_time_cell(
@@ -688,6 +720,11 @@ fn task_time_cell(
                 age_style(style_input, now_seconds),
             ))
         }
+        TaskListRenderMode::Flat if is_deferred(item, now_seconds) => Line::from(Span::styled(
+            crate::tui::time::available_in_label(&item.task.available_at, now_seconds)
+                .unwrap_or_default(),
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )),
         _ => Line::from(Span::styled(
             task_seconds_since(&item.task.created_at, now_seconds)
                 .map(compact_age)
@@ -733,7 +770,7 @@ fn build_epic_parent_row_cells(
         Line::from(ref_spans),
         title,
         label_cell(&item.labels, column_widths[2]),
-        metadata_cell(item, selected_epic_id),
+        metadata_cell(item, selected_epic_id, false),
         project_cell(item, column_widths[4]),
         status_chip(item.task.status.as_str()),
         Line::from(Span::styled(
@@ -771,7 +808,7 @@ fn build_epic_child_row_cells(
         ref_line,
         title_cell(item, column_widths[1]),
         label_cell(&item.labels, column_widths[2]),
-        metadata_cell(item, selected_epic_id),
+        metadata_cell(item, selected_epic_id, false),
         project_cell(item, column_widths[4]),
         status_chip(item.task.status.as_str()),
         Line::from(Span::styled(
@@ -798,18 +835,34 @@ fn blank_task_row_cells() -> Vec<Line<'static>> {
     ]
 }
 
-fn metadata_cell(item: &TaskListItem, selected_epic_id: Option<&str>) -> Line<'static> {
+fn metadata_cell(
+    item: &TaskListItem,
+    selected_epic_id: Option<&str>,
+    show_deferred: bool,
+) -> Line<'static> {
     let mut spans = Vec::new();
+    if show_deferred {
+        spans.push(Span::styled(
+            DEFERRED_MARKER,
+            Style::new().fg(ACCENT).remove_modifier(Modifier::BOLD),
+        ));
+    }
     let is_selected_epic_child = item
         .epic_parent
         .as_ref()
         .is_some_and(|parent| Some(parent.task_id.as_str()) == selected_epic_id);
     if item.task.is_epic {
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+        }
         spans.push(Span::styled(
             EPIC_MARKER,
             Style::new().fg(YELLOW).remove_modifier(Modifier::BOLD),
         ));
     } else if is_selected_epic_child {
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+        }
         spans.push(Span::styled(
             EPIC_CHILD_MARKER,
             Style::new().fg(ACCENT).remove_modifier(Modifier::BOLD),
@@ -962,6 +1015,31 @@ fn task_preview_fields_line(item: &TaskListItem) -> Line<'static> {
     Line::from(fields)
 }
 
+fn availability_preview_line(
+    item: &TaskListItem,
+    now_seconds: i64,
+    width: usize,
+) -> Option<Line<'static>> {
+    if !is_deferred(item, now_seconds) {
+        return None;
+    }
+    let [relative, local] =
+        crate::tui::time::availability_summary_lines(&item.task.available_at, false, now_seconds)?;
+    let countdown = relative.strip_prefix("available ").unwrap_or(&relative);
+    let fixed_width = "available ".len() + countdown.len() + " · ".len();
+    let local = truncate_chars(&local, width.saturating_sub(fixed_width));
+
+    Some(Line::from(vec![
+        Span::styled("available ", Style::new().fg(FG_DIM)),
+        Span::styled(
+            countdown.to_string(),
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" · ", Style::new().fg(FG_DIM)),
+        Span::styled(local, Style::new().fg(FG_MUTED)),
+    ]))
+}
+
 fn dependency_preview_lines(item: &TaskListItem) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     if !item.depends_on.is_empty() {
@@ -1022,14 +1100,14 @@ pub(super) fn render_task_preview(
 
 fn task_preview_lines(item: &TaskListItem, width: usize, height: usize) -> Vec<Line<'static>> {
     let labels = labels_display(&item.labels, ", ");
-    let mut lines = vec![
-        task_heading_line(item),
-        task_preview_fields_line(item),
-        Line::from(vec![
-            Span::styled("labels ", Style::new().fg(FG_DIM)),
-            Span::styled(labels, Style::new().fg(FG_MUTED)),
-        ]),
-    ];
+    let mut lines = vec![task_heading_line(item), task_preview_fields_line(item)];
+    if let Some(availability) = availability_preview_line(item, now_seconds(), width) {
+        lines.push(availability);
+    }
+    lines.push(Line::from(vec![
+        Span::styled("labels ", Style::new().fg(FG_DIM)),
+        Span::styled(labels, Style::new().fg(FG_MUTED)),
+    ]));
     lines.extend(dependency_preview_lines(item));
     if let Some(parent) = &item.epic_parent {
         lines.push(epic_parent_preview_line(parent));
@@ -1324,6 +1402,26 @@ mod tests {
     }
 
     #[test]
+    fn flat_row_marks_deferred_task_and_shows_availability_time() {
+        let mut item = task_item("deferred");
+        item.task.available_at = "200".to_string();
+
+        let cells = build_task_row_cells(
+            &item,
+            100,
+            TaskListRenderMode::Flat,
+            None,
+            &[12, 40, 12, 6, 9, 10, 3, 5],
+            false,
+            None,
+        );
+
+        assert_eq!(cells[3].to_string(), DEFERRED_MARKER);
+        assert_eq!(cells[7].to_string(), "in1m");
+        assert_eq!(cells[7].spans[0].style.fg, Some(ACCENT));
+    }
+
+    #[test]
     fn task_header_labels_age_column() {
         let backend = TestBackend::new(80, 1);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -1339,13 +1437,44 @@ mod tests {
         ];
         terminal
             .draw(|frame| {
-                render_task_header(frame, frame.area(), columns, TaskListRenderMode::Flat)
+                render_task_header(
+                    frame,
+                    frame.area(),
+                    columns,
+                    TaskListRenderMode::Flat,
+                    false,
+                )
             })
             .unwrap();
 
         let rendered = buffer_text(terminal.backend().buffer());
         assert!(rendered.contains("AGE"));
         assert!(!rendered.contains("IDLE"));
+    }
+
+    #[test]
+    fn task_header_labels_mixed_deferred_time_column() {
+        let backend = TestBackend::new(80, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let columns = [
+            Constraint::Length(12),
+            Constraint::Fill(1),
+            Constraint::Length(12),
+            Constraint::Length(6),
+            Constraint::Length(9),
+            Constraint::Length(10),
+            Constraint::Length(3),
+            Constraint::Length(5),
+        ];
+        terminal
+            .draw(|frame| {
+                render_task_header(frame, frame.area(), columns, TaskListRenderMode::Flat, true)
+            })
+            .unwrap();
+
+        let rendered = buffer_text(terminal.backend().buffer());
+        assert!(rendered.contains("TIME"));
+        assert!(!rendered.contains("AGE"));
     }
 
     #[test]
@@ -1367,10 +1496,28 @@ mod tests {
         let all_tasks = vec![&plain, &documented];
 
         assert_eq!(
-            metadata_column_width_from_task_refs(&visible_tasks, None),
+            metadata_column_width_from_task_refs(&visible_tasks, None, false),
             0
         );
-        assert_eq!(metadata_column_width_from_task_refs(&all_tasks, None), 3);
+        assert_eq!(
+            metadata_column_width_from_task_refs(&all_tasks, None, false),
+            3
+        );
+    }
+
+    #[test]
+    fn metadata_column_width_reserves_lane_for_deferred_marker() {
+        let mut task = task_item("deferred");
+        task.task.available_at = "2999-01-01T00:00:00Z".to_string();
+
+        assert_eq!(
+            metadata_column_width_from_task_refs(&[&task], None, true),
+            3
+        );
+        assert_eq!(
+            metadata_column_width_from_task_refs(&[&task], None, false),
+            0
+        );
     }
 
     #[test]
@@ -1595,7 +1742,7 @@ mod tests {
             },
         ];
 
-        assert_eq!(metadata_cell(&item, None).to_string(), "✎");
+        assert_eq!(metadata_cell(&item, None, false).to_string(), "✎");
     }
 
     #[test]
@@ -1603,7 +1750,7 @@ mod tests {
         let mut item = task_item("epic");
         item.task.is_epic = true;
 
-        let line = metadata_cell(&item, None);
+        let line = metadata_cell(&item, None, false);
 
         assert_eq!(line.to_string(), EPIC_MARKER);
         assert_eq!(line.spans[0].style.fg, Some(YELLOW));
@@ -1621,13 +1768,16 @@ mod tests {
             unresolved: true,
         });
 
-        let line = metadata_cell(&item, Some("epic-1"));
+        let line = metadata_cell(&item, Some("epic-1"), false);
 
         assert_eq!(line.to_string(), EPIC_CHILD_MARKER);
         assert_eq!(line.spans[0].style.fg, Some(ACCENT));
-        assert_eq!(metadata_cell(&item, Some("other-epic")).to_string(), "");
         assert_eq!(
-            metadata_column_width_from_task_refs(&[&item], Some("epic-1")),
+            metadata_cell(&item, Some("other-epic"), false).to_string(),
+            ""
+        );
+        assert_eq!(
+            metadata_column_width_from_task_refs(&[&item], Some("epic-1"), false),
             3
         );
     }
@@ -1638,7 +1788,7 @@ mod tests {
         item.unresolved_blocker_count = 2;
         item.dependent_count = 1;
 
-        assert_eq!(metadata_cell(&item, None).to_string(), "←2 →1");
+        assert_eq!(metadata_cell(&item, None, false).to_string(), "←2 →1");
     }
 
     #[test]
@@ -1646,7 +1796,7 @@ mod tests {
         let mut item = task_item("plain");
         item.task.description = "details".to_string();
 
-        assert_eq!(metadata_cell(&item, None).to_string(), "");
+        assert_eq!(metadata_cell(&item, None, false).to_string(), "");
     }
 
     #[test]
@@ -1655,6 +1805,28 @@ mod tests {
         let rendered = task_preview_fields_line(&item).to_string();
 
         assert!(rendered.contains("created "));
+    }
+
+    #[test]
+    fn task_preview_shows_future_availability() {
+        let mut item = task_item("preview");
+        item.task.available_at = "200".to_string();
+
+        let line = availability_preview_line(&item, 100, 80).unwrap();
+
+        assert!(line.to_string().starts_with("available in 1m · "));
+        assert_eq!(line.spans[0].style.fg, Some(FG_DIM));
+        assert_eq!(line.spans[1].style.fg, Some(ACCENT));
+        assert!(line.spans[1].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(line.spans[3].style.fg, Some(FG_MUTED));
+    }
+
+    #[test]
+    fn task_preview_omits_elapsed_availability() {
+        let mut item = task_item("preview");
+        item.task.available_at = "100".to_string();
+
+        assert!(availability_preview_line(&item, 200, 80).is_none());
     }
 
     #[test]
