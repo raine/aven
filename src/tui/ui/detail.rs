@@ -795,12 +795,16 @@ fn render_detail_metadata(frame: &mut Frame, item: &TaskListItem, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     frame.render_widget(
-        Paragraph::new(Text::from(detail_metadata_lines(item))).style(Style::new().fg(FG).bg(BG)),
+        Paragraph::new(Text::from(detail_metadata_lines(
+            item,
+            inner.width as usize,
+        )))
+        .style(Style::new().fg(FG).bg(BG)),
         inner,
     );
 }
 
-fn detail_metadata_lines(item: &TaskListItem) -> Vec<Line<'static>> {
+fn detail_metadata_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from(Span::styled(
             if item.task.is_epic {
@@ -856,18 +860,17 @@ fn detail_metadata_lines(item: &TaskListItem) -> Vec<Line<'static>> {
             Style::new().fg(FG_MUTED),
         )),
     ];
-    if let Some(summary) = crate::tui::time::availability_summary(
+    if let Some([relative, local]) = crate::tui::time::availability_summary_lines(
         &item.task.available_at,
         item.queue.band == crate::queue::QueueBand::Available,
         crate::queue::now_seconds(),
     ) {
+        let value_style = Style::new().fg(ACCENT).add_modifier(Modifier::BOLD);
         lines.extend([
             Line::from(""),
             metadata_label("AVAILABILITY"),
-            Line::from(Span::styled(
-                summary,
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-            )),
+            Line::from(Span::styled(truncate_width(&relative, width), value_style)),
+            Line::from(Span::styled(truncate_width(&local, width), value_style)),
         ]);
     }
     lines.extend(detail_epic_metadata_lines(item));
@@ -1520,7 +1523,7 @@ mod tests {
     #[test]
     fn detail_metadata_includes_operational_fields() {
         let item = detail_test_item();
-        let rendered = detail_metadata_lines(&item)
+        let rendered = detail_metadata_lines(&item, 31)
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -1531,6 +1534,22 @@ mod tests {
         assert!(rendered.contains("PRIORITY\n▲ urgent"));
         assert!(rendered.contains("LABELS\nbug, mobile"));
         assert!(rendered.contains("CONFLICTS\nyes"));
+    }
+
+    #[test]
+    fn detail_metadata_splits_availability_across_bounded_lines() {
+        let mut item = detail_test_item();
+        item.task.available_at = "2999-07-17T12:30:00Z".to_string();
+
+        let lines = detail_metadata_lines(&item, 20);
+        let availability = lines
+            .iter()
+            .position(|line| line.to_string() == "AVAILABILITY")
+            .unwrap();
+        let values = &lines[availability + 1..availability + 3];
+
+        assert!(values.iter().all(|line| !line.to_string().is_empty()));
+        assert!(values.iter().all(|line| line.width() <= 20));
     }
 
     #[test]
@@ -1556,7 +1575,7 @@ mod tests {
             },
         ];
 
-        let rendered = detail_metadata_lines(&item)
+        let rendered = detail_metadata_lines(&item, 31)
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -1574,7 +1593,7 @@ mod tests {
         let mut item = detail_test_item();
         item.task.is_epic = true;
 
-        let rendered = detail_metadata_lines(&item)
+        let rendered = detail_metadata_lines(&item, 31)
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()

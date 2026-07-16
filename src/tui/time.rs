@@ -23,11 +23,11 @@ pub(crate) fn available_day_label(available_at: &str, now_seconds: i64) -> Strin
     }
 }
 
-pub(crate) fn availability_summary(
+pub(crate) fn availability_summary_lines(
     available_at: &str,
     ready: bool,
     now_seconds: i64,
-) -> Option<String> {
+) -> Option<[String; 2]> {
     let available_seconds = unix_seconds(available_at)?;
     let local = local_datetime_label(available_seconds)?;
     let relative = if ready || available_seconds <= now_seconds {
@@ -41,7 +41,7 @@ pub(crate) fn availability_summary(
             compact_duration(available_seconds.saturating_sub(now_seconds))
         )
     };
-    Some(format!("{relative}, {local}"))
+    Some([relative, local])
 }
 
 pub(crate) fn available_in_label(available_at: &str, now_seconds: i64) -> Option<String> {
