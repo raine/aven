@@ -69,15 +69,13 @@ impl App {
                 needs_redraw = true;
             }
 
-            if self.refresh_is_due() {
-                match self.refresh().await {
-                    Ok(()) => needs_redraw = true,
-                    Err(error) => {
-                        self.set_error(format!("refresh failed: {error:#}"));
-                        needs_redraw = true;
-                    }
+            match self.refresh_if_due().await {
+                Ok(true) => needs_redraw = true,
+                Ok(false) => {}
+                Err(error) => {
+                    self.set_error(format!("refresh failed: {error:#}"));
+                    needs_redraw = true;
                 }
-                self.schedule_next_refresh();
             }
 
             if self.clear_expired_notification() {
@@ -289,6 +287,16 @@ impl App {
         }
 
         timeout
+    }
+
+    pub(super) async fn refresh_if_due(&mut self) -> Result<bool> {
+        if !self.refresh_is_due() {
+            return Ok(false);
+        }
+        let result = self.refresh().await;
+        self.schedule_next_refresh();
+        result?;
+        Ok(true)
     }
 
     pub(super) fn refresh_is_due(&self) -> bool {

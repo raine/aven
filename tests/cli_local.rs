@@ -1,6 +1,8 @@
 mod common;
 
-use common::{TestEnv, command, contains_all, contains_none, extract_ref, fail, ok, suffix};
+use common::{
+    TestEnv, command, command_with_db, contains_all, contains_none, extract_ref, fail, ok, suffix,
+};
 
 #[test]
 fn version_flag_prints_package_version() {
@@ -28,32 +30,94 @@ fn list_json_supports_limit() {
 }
 
 #[test]
-fn availability_hides_tasks_until_cleared() {
+fn availability_preserves_attention_filters_and_explicit_discovery() {
     let env = TestEnv::new();
     let db = env.db("availability.sqlite");
-    let created = ok(env.aven(
+    let open_ref = extract_ref(&ok(env.aven(
         &db,
         [
             "add",
-            "deferred task",
+            "future open needle",
             "--project",
             "app",
             "--available-at",
             "2099-01-01T00:00:00Z",
         ],
-    ));
-    let task_ref = extract_ref(&created);
+    )));
+    let done_ref = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "future terminal needle",
+            "--project",
+            "app",
+            "--available-at",
+            "2099-01-02T00:00:00Z",
+        ],
+    )));
+    ok(env.aven(&db, ["edit", &done_ref, "--status", "done"]));
+    let deleted_ref = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "future deleted needle",
+            "--project",
+            "app",
+            "--available-at",
+            "2099-01-03T00:00:00Z",
+        ],
+    )));
+    ok(env.aven(&db, ["delete", &deleted_ref]));
 
     let regular = ok(env.aven(&db, ["list"]));
-    assert!(!regular.contains("deferred task"));
+    contains_none(
+        &regular,
+        &[
+            "future open needle",
+            "future terminal needle",
+            "future deleted needle",
+        ],
+    );
+
     let upcoming = ok(env.aven(&db, ["list", "--upcoming", "--json"]));
     let items: serde_json::Value = serde_json::from_str(&upcoming).unwrap();
-    assert_eq!(items[0]["ref"], task_ref);
+    assert_eq!(items.as_array().unwrap().len(), 1);
+    assert_eq!(items[0]["ref"], open_ref);
     assert_eq!(items[0]["available_at"], "2099-01-01T00:00:00Z");
 
-    ok(env.aven(&db, ["edit", &task_ref, "--clear-available-at"]));
+    let terminal = ok(env.aven(&db, ["list", "--status", "done"]));
+    contains_all(&terminal, &[&done_ref, "future terminal needle"]);
+    contains_none(&terminal, &["future open needle", "future deleted needle"]);
+
+    let deleted = ok(env.aven(&db, ["list", "--deleted"]));
+    contains_all(
+        &deleted,
+        &[&deleted_ref, "future deleted needle", "deleted=yes"],
+    );
+    contains_none(&deleted, &["future open needle", "future terminal needle"]);
+
+    let shown = ok(env.aven(&db, ["show", &open_ref]));
+    contains_all(
+        &shown,
+        &[
+            &open_ref,
+            "future open needle",
+            "available_at=2099-01-01T00:00:00Z",
+        ],
+    );
+
+    let searched = ok(env.aven(&db, ["search", "future open needle"]));
+    contains_all(&searched, &[&open_ref, "future open needle"]);
+    contains_none(
+        &searched,
+        &["future terminal needle", "future deleted needle"],
+    );
+
+    ok(env.aven(&db, ["edit", &open_ref, "--clear-available-at"]));
     let regular = ok(env.aven(&db, ["list", "--json"]));
     let items: serde_json::Value = serde_json::from_str(&regular).unwrap();
+    assert_eq!(items.as_array().unwrap().len(), 1);
+    assert_eq!(items[0]["ref"], open_ref);
     assert_eq!(items[0]["available_at"], "");
 }
 
@@ -95,6 +159,52 @@ fn fuzzy_availability_is_shared_by_cli_add_and_edit() {
         &error,
         &["ambiguous-available-at-weekday", "use next monday"],
     );
+}
+
+#[test]
+fn local_calendar_dates_use_offsets_across_daylight_saving_boundaries() {
+    let env = TestEnv::new();
+    let db = env.db("availability-timezones.sqlite");
+    let cases = [
+        (
+            "spring transition",
+            "2026-03-08",
+            "America/New_York",
+            "2026-03-08T05:00:00Z",
+        ),
+        (
+            "fall transition",
+            "2026-11-01",
+            "America/New_York",
+            "2026-11-01T04:00:00Z",
+        ),
+        (
+            "quarter hour offset",
+            "2026-07-16",
+            "Asia/Kathmandu",
+            "2026-07-15T18:15:00Z",
+        ),
+    ];
+
+    for (title, date, timezone, expected) in cases {
+        let created = ok(command_with_db(&db)
+            .env("TZ", timezone)
+            .env("XDG_STATE_HOME", env.state_dir())
+            .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
+            .args(["add", title, "--project", "app", "--available-at", date])
+            .output()
+            .expect("run aven in timezone"));
+        let task_ref = extract_ref(&created);
+        let shown = ok(command_with_db(&db)
+            .env("TZ", timezone)
+            .env("XDG_STATE_HOME", env.state_dir())
+            .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
+            .args(["show", &task_ref, "--json"])
+            .output()
+            .expect("show timezone task"));
+        let task: serde_json::Value = serde_json::from_str(&shown).unwrap();
+        assert_eq!(task["available_at"], expected, "timezone={timezone}");
+    }
 }
 
 #[test]

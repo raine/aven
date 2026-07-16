@@ -1962,6 +1962,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn availability_transition_updates_queries_queue_band_and_counts() {
+        let (_temp, mut conn) = test_conn().await;
+        seed_default_project(&mut conn).await;
+        insert_test_task(
+            &mut conn,
+            "AVAIL00000000001",
+            "scheduled task",
+            "inbox",
+            "none",
+            "2026-01-01T00:00:00Z",
+        )
+        .await;
+        sqlx::query("UPDATE tasks SET available_at = ? WHERE id = 'AVAIL00000000001'")
+            .bind("2999-03-08T05:00:00Z")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let available_filters = TaskFilters {
+            hide_done: true,
+            availability: TaskAvailabilityFilter::Available,
+            ..TaskFilters::default()
+        };
+        let upcoming_filters = TaskFilters {
+            availability: TaskAvailabilityFilter::Upcoming,
+            ..TaskFilters::default()
+        };
+        let available = list_task_items(
+            &mut conn,
+            available_filters.clone(),
+            TaskQueryMode::RankedQueue,
+            TaskSort::Created,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+        let upcoming = list_task_items(
+            &mut conn,
+            upcoming_filters.clone(),
+            TaskQueryMode::Flat,
+            TaskSort::AvailableAt,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+        let counts = sidebar_counts(&mut conn).await.unwrap();
+        let projects = list_project_items(&mut conn).await.unwrap();
+
+        assert!(available.is_empty());
+        assert_eq!(listed_titles(&upcoming), ["scheduled task"]);
+        assert_eq!(counts.open, 0);
+        assert_eq!(counts.inbox, 0);
+        assert_eq!(counts.upcoming, 1);
+        assert_eq!(projects[0].open_count, 0);
+        assert_eq!(projects[0].inbox_count, 0);
+
+        sqlx::query("UPDATE tasks SET available_at = ? WHERE id = 'AVAIL00000000001'")
+            .bind("2026-03-08T05:00:00Z")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let available = list_task_items(
+            &mut conn,
+            available_filters,
+            TaskQueryMode::RankedQueue,
+            TaskSort::Created,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+        let upcoming = list_task_items(
+            &mut conn,
+            upcoming_filters,
+            TaskQueryMode::Flat,
+            TaskSort::AvailableAt,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+        let counts = sidebar_counts(&mut conn).await.unwrap();
+        let projects = list_project_items(&mut conn).await.unwrap();
+
+        assert_eq!(listed_titles(&available), ["scheduled task"]);
+        assert_eq!(available[0].queue.band, crate::queue::QueueBand::Available);
+        assert!(upcoming.is_empty());
+        assert_eq!(counts.open, 1);
+        assert_eq!(counts.inbox, 1);
+        assert_eq!(counts.upcoming, 0);
+        assert_eq!(projects[0].open_count, 1);
+        assert_eq!(projects[0].inbox_count, 1);
+    }
+
+    #[tokio::test]
     async fn sidebar_counts_include_epics_count() {
         let (_temp, mut conn) = test_conn().await;
         seed_default_project(&mut conn).await;

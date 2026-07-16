@@ -1110,6 +1110,68 @@ mod views_filters_and_sort {
     use super::*;
 
     #[tokio::test]
+    async fn availability_transition_refreshes_tasks_sidebar_and_project_counts() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (message, selected) = store
+            .create_task(
+                TaskDraft {
+                    title: "Scheduled store task".to_string(),
+                    available_at: "2999-03-08T05:00:00Z".to_string(),
+                    ..task_draft("")
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(selected.is_none());
+        assert!(message.contains("hidden by current filters"));
+        assert!(store.tasks.is_empty());
+        assert_eq!(store.counts.open, 0);
+        assert_eq!(store.counts.inbox, 0);
+        assert_eq!(store.counts.upcoming, 1);
+        let project = store
+            .projects
+            .iter()
+            .find(|project| project.key == "aven")
+            .unwrap();
+        assert_eq!(project.open_count, 0);
+        assert_eq!(project.inbox_count, 0);
+
+        store.show_view(TaskView::Upcoming).await.unwrap();
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.title, "Scheduled store task");
+        let task_id = store.tasks[0].task.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("UPDATE tasks SET available_at = ? WHERE id = ?")
+            .bind("2026-03-08T05:00:00Z")
+            .bind(&task_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+
+        store.show_view(TaskView::Queue).await.unwrap();
+
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.id, task_id);
+        assert_eq!(
+            store.tasks[0].queue.band,
+            crate::queue::QueueBand::Available
+        );
+        assert_eq!(store.counts.open, 1);
+        assert_eq!(store.counts.inbox, 1);
+        assert_eq!(store.counts.upcoming, 0);
+        let project = store
+            .projects
+            .iter()
+            .find(|project| project.key == "aven")
+            .unwrap();
+        assert_eq!(project.open_count, 1);
+        assert_eq!(project.inbox_count, 1);
+    }
+
+    #[tokio::test]
     async fn sidebar_selection_prefers_project_scope_when_scoped() {
         let mut store = test_store().await;
         create_mobile_project(&mut store).await;

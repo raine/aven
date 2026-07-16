@@ -3218,6 +3218,50 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn automatic_refresh_surfaces_task_when_availability_arrives() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let (message, selected) = app
+            .store
+            .create_task(
+                TaskDraft {
+                    title: "Scheduled refresh task".to_string(),
+                    available_at: "2999-11-01T04:00:00Z".to_string(),
+                    ..test_task_draft("")
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(selected.is_none());
+        assert!(message.contains("hidden by current filters"));
+        assert!(app.store.tasks.is_empty());
+        assert_eq!(app.store.counts.upcoming, 1);
+
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("UPDATE tasks SET available_at = ? WHERE title = ?")
+            .bind("2026-03-08T05:00:00Z")
+            .bind("Scheduled refresh task")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+        app.next_refresh_at = std::time::Instant::now() - std::time::Duration::from_secs(1);
+
+        assert!(app.refresh_if_due().await.unwrap());
+
+        assert_eq!(app.store.tasks.len(), 1);
+        assert_eq!(app.store.tasks[0].task.title, "Scheduled refresh task");
+        assert_eq!(
+            app.store.tasks[0].queue.band,
+            crate::queue::QueueBand::Available
+        );
+        assert_eq!(app.store.counts.open, 1);
+        assert_eq!(app.store.counts.inbox, 1);
+        assert_eq!(app.store.counts.upcoming, 0);
+        assert!(!app.refresh_is_due());
+    }
+
+    #[tokio::test]
     async fn refresh_attempt_schedules_next_deadline() {
         let mut app = test_app().await;
         app.next_refresh_at = std::time::Instant::now() - std::time::Duration::from_secs(1);

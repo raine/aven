@@ -817,6 +817,99 @@ fn independent_field_edits_converge() {
 }
 
 #[test]
+fn available_at_remote_creation_and_scalar_updates_round_trip() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("available-client-a.sqlite");
+    let b = env.db("available-client-b.sqlite");
+
+    let task_ref = extract_ref(&ok(env.aven(
+        &a,
+        [
+            "add",
+            "scheduled sync task",
+            "--project",
+            "app",
+            "--available-at",
+            "2099-01-01T00:00:00Z",
+        ],
+    )));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    let remote_create = ok(env.aven(&b, ["show", &task_ref]));
+    contains_all(
+        &remote_create,
+        &["scheduled sync task", "available_at=2099-01-01T00:00:00Z"],
+    );
+
+    ok(env.aven(
+        &b,
+        ["edit", &task_ref, "--available-at", "2099-02-01T00:00:00Z"],
+    ));
+    sync(&env, &b, &server);
+    sync(&env, &a, &server);
+    let updated = ok(env.aven(&a, ["show", &task_ref]));
+    contains_all(&updated, &["available_at=2099-02-01T00:00:00Z"]);
+    contains_none(&updated, &["conflicts=yes"]);
+
+    ok(env.aven(&a, ["edit", &task_ref, "--clear-available-at"]));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    let cleared = ok(env.aven(&b, ["show", &task_ref, "--json"]));
+    let task: Value = serde_json::from_str(&cleared).unwrap();
+    assert_eq!(task["available_at"], "");
+}
+
+#[test]
+fn concurrent_available_at_updates_create_field_conflict() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("available-conflict-a.sqlite");
+    let b = env.db("available-conflict-b.sqlite");
+
+    let task_ref = extract_ref(&ok(env.aven(
+        &a,
+        [
+            "add",
+            "availability conflict",
+            "--project",
+            "app",
+            "--available-at",
+            "2099-01-01T00:00:00Z",
+        ],
+    )));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    ok(env.aven(
+        &a,
+        ["edit", &task_ref, "--available-at", "2099-03-01T00:00:00Z"],
+    ));
+    ok(env.aven(
+        &b,
+        ["edit", &task_ref, "--available-at", "2099-04-01T00:00:00Z"],
+    ));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    let shown = ok(env.aven(&b, ["show", &task_ref]));
+    contains_all(
+        &shown,
+        &["available_at=2099-04-01T00:00:00Z", "conflicts=yes"],
+    );
+    let conflict = ok(env.aven(&b, ["conflict", "show", &task_ref]));
+    contains_all(
+        &conflict,
+        &[
+            "field=available_at",
+            "2099-03-01T00:00:00Z",
+            "2099-04-01T00:00:00Z",
+        ],
+    );
+}
+
+#[test]
 fn notes_and_labels_converge() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
