@@ -51,6 +51,53 @@ EOF
 
 The `--json` option is available on `context`, `show`, `list`, `search`, `dep list`, `epic list`, `prime`, `label list`, `project list`, `conflict list`, `conflict show`, and `doctor`. JSON task objects expose temporal fields through `available_at` and `due_on`, and epic membership separately from dependency ordering through `is_epic`, `epic_parent`, and `epic_children`. An empty `available_at` means immediate availability. An empty `due_on` means no deadline.
 
+## Temporal input
+
+### Availability input
+
+Availability controls when a task becomes eligible for attention and enters normal task lists and queue groups. It is not a deadline or due date. An empty `available_at` value means the task is immediately available. `aven add --available-at`, `aven edit --available-at`, natural task intake, and the TUI task composer use the same expressions:
+
+| Expression | Local-calendar meaning |
+| --- | --- |
+| `today` | Today at local midnight. |
+| `tomorrow` | Tomorrow at local midnight. |
+| `Nd`, `Nw` | Local midnight after `N` calendar days or weeks, such as `2d` or `3w`. |
+| `in N days` | Local midnight after `N` calendar days. Singular `day` is accepted. |
+| `in N weeks` | Local midnight after `N * 7` calendar days. Singular `week` is accepted. |
+| `in N months` | The same local day after `N` calendar months. End-of-month dates clamp to the last valid day. Singular `month` is accepted. |
+| `next week` | The next Monday strictly after today at local midnight. |
+| `next monday` | The named weekday strictly after today at local midnight. Full names and common abbreviations such as `mon`, `tues`, and `thurs` are accepted. If today is that weekday, this means seven days later. |
+| `<date expression> at <time>` | The expression's local date at `HH:MM`, `9am`, `9:30pm`, `noon`, or `midnight`. |
+| `YYYY-MM-DD` | Local midnight on that date. |
+| `YYYY-MM-DDTHH:MM:SSZ` | The exact UTC timestamp. The same form without `Z` is also interpreted as UTC. |
+| Unix timestamp | The exact whole number of seconds since the Unix epoch. |
+| `now` | Immediate availability. On `aven edit`, `--clear-available-at` is clearer. |
+
+Relative expressions add calendar units to the current local date rather than fixed durations. Local expressions use the machine's local timezone and convert to a canonical UTC timestamp for storage. This preserves the requested local wall-clock time across daylight-saving offsets. A local time that is skipped or repeated by a timezone transition is rejected, so use another local time or an explicit UTC timestamp.
+
+Bare weekdays such as `monday` and bare times such as `9am` are ambiguous and rejected with a suggested explicit form. Informal periods such as `morning`, recurrence, year arithmetic, and notifications are outside the accepted grammar.
+
+```sh
+aven add "Prepare demo" --available-at "in 2 weeks"
+aven add "Call supplier" --available-at "next monday at 9am"
+aven edit APP-7KQ9 --available-at "tomorrow at 14:30"
+```
+
+### Due date input
+
+A due date describes when completion is expected. It does not control visibility, change status, clear availability, or create a reminder or notification. A task can be available before its deadline, deferred beyond its deadline, or have either field on its own.
+
+`aven add --due`, `aven edit --due`, natural task intake, and the TUI use the date expressions from [Availability input](#availability-input), including compact offsets, calendar months, `next week`, named weekdays, and ISO dates. Due dates are local-calendar values stored as `YYYY-MM-DD`. They reject times, UTC timestamps, and Unix timestamps because a deadline is date-only.
+
+Use `none`, `clear`, or `aven edit --clear-due` to remove a deadline. A due date equal to today is due today. It becomes overdue when the local date advances past it.
+
+```sh
+aven add "Submit report" --due "next fri"
+aven edit APP-7KQ9 --due "in 1 month"
+aven edit APP-7KQ9 --clear-due
+aven list --overdue
+```
+
 ## Task commands
 
 ### `aven add`
@@ -227,51 +274,6 @@ aven edit APP-7KQ9 --due "in 1 month"
 aven edit APP-7KQ9 --clear-due
 aven edit APP-7KQ9 --label docs --remove-label bug
 aven edit APP-7KQ0 --epic on
-```
-
-### Availability input
-
-Availability controls when a task becomes eligible for attention and enters normal task lists and queue groups. It is not a deadline or due date. An empty `available_at` value means the task is immediately available. `aven add --available-at`, `aven edit --available-at`, natural task intake, and the TUI task composer use the same expressions:
-
-| Expression | Local-calendar meaning |
-| --- | --- |
-| `today` | Today at local midnight. |
-| `tomorrow` | Tomorrow at local midnight. |
-| `Nd`, `Nw` | Local midnight after `N` calendar days or weeks, such as `2d` or `3w`. |
-| `in N days` | Local midnight after `N` calendar days. Singular `day` is accepted. |
-| `in N weeks` | Local midnight after `N * 7` calendar days. Singular `week` is accepted. |
-| `in N months` | The same local day after `N` calendar months. End-of-month dates clamp to the last valid day. Singular `month` is accepted. |
-| `next week` | The next Monday strictly after today at local midnight. |
-| `next monday` | The named weekday strictly after today at local midnight. Full names and common abbreviations such as `mon`, `tues`, and `thurs` are accepted. If today is that weekday, this means seven days later. |
-| `<date expression> at <time>` | The expression's local date at `HH:MM`, `9am`, `9:30pm`, `noon`, or `midnight`. |
-| `YYYY-MM-DD` | Local midnight on that date. |
-| `YYYY-MM-DDTHH:MM:SSZ` | The exact UTC timestamp. The same form without `Z` is also interpreted as UTC. |
-| Unix timestamp | The exact whole number of seconds since the Unix epoch. |
-| `now` | Immediate availability. On `aven edit`, `--clear-available-at` is clearer. |
-
-Relative expressions add calendar units to the current local date rather than fixed durations. Local expressions use the machine's local timezone and convert to a canonical UTC timestamp for storage. This preserves the requested local wall-clock time across daylight-saving offsets. A local time that is skipped or repeated by a timezone transition is rejected, so use another local time or an explicit UTC timestamp.
-
-Bare weekdays such as `monday` and bare times such as `9am` are ambiguous and rejected with a suggested explicit form. Informal periods such as `morning`, recurrence, year arithmetic, and notifications are outside the accepted grammar.
-
-```sh
-aven add "Prepare demo" --available-at "in 2 weeks"
-aven add "Call supplier" --available-at "next monday at 9am"
-aven edit APP-7KQ9 --available-at "tomorrow at 14:30"
-```
-
-### Due date input
-
-A due date describes when completion is expected. It does not control visibility, change status, clear availability, or create a reminder or notification. A task can be available before its deadline, deferred beyond its deadline, or have either field on its own.
-
-`aven add --due`, `aven edit --due`, natural task intake, and the TUI use the date expressions from [Availability input](#availability-input), including compact offsets, calendar months, `next week`, named weekdays, and ISO dates. Due dates are local-calendar values stored as `YYYY-MM-DD`. They reject times, UTC timestamps, and Unix timestamps because a deadline is date-only.
-
-Use `none`, `clear`, or `aven edit --clear-due` to remove a deadline. A due date equal to today is due today. It becomes overdue when the local date advances past it.
-
-```sh
-aven add "Submit report" --due "next fri"
-aven edit APP-7KQ9 --due "in 1 month"
-aven edit APP-7KQ9 --clear-due
-aven list --overdue
 ```
 
 ### `aven note`
