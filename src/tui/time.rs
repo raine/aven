@@ -45,6 +45,19 @@ pub(crate) fn due_label(due_on: &str, now_seconds: i64) -> Option<String> {
     })
 }
 
+pub(crate) fn compact_due_label(due_on: &str, now_seconds: i64) -> Option<String> {
+    let due = NaiveDate::parse_from_str(due_on, "%Y-%m-%d").ok()?;
+    let today = local_date(now_seconds)?;
+    Some(match crate::due::due_state(due_on, today) {
+        crate::due::DueState::Overdue(days @ 1..=999) => format!("{days}d!"),
+        crate::due::DueState::Overdue(_) => "late!".to_string(),
+        crate::due::DueState::Today => "today".to_string(),
+        crate::due::DueState::Future(days @ 1..=7) => format!("+{days}d"),
+        crate::due::DueState::Future(_) => due.format("%b%-d").to_string(),
+        crate::due::DueState::None => return None,
+    })
+}
+
 pub(crate) fn due_summary_lines(due_on: &str, now_seconds: i64) -> Option<[String; 2]> {
     let due = NaiveDate::parse_from_str(due_on, "%Y-%m-%d").ok()?;
     Some([
@@ -130,6 +143,22 @@ mod tests {
         assert_eq!(compact_duration(13 * 86_400), "13d");
         assert_eq!(compact_duration(9 * 7 * 86_400), "9w");
         assert_eq!(compact_duration(122 * 86_400), "4mo");
+    }
+
+    #[test]
+    fn compact_due_labels_fit_the_task_list_column() {
+        let now = Local
+            .with_ymd_and_hms(2026, 7, 16, 12, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp();
+
+        assert_eq!(compact_due_label("2026-07-13", now).unwrap(), "3d!");
+        assert_eq!(compact_due_label("2026-07-16", now).unwrap(), "today");
+        assert_eq!(compact_due_label("2026-07-17", now).unwrap(), "+1d");
+        assert_eq!(compact_due_label("2026-07-19", now).unwrap(), "+3d");
+        assert_eq!(compact_due_label("2026-07-24", now).unwrap(), "Jul24");
+        assert_eq!(compact_due_label("2027-01-01", now).unwrap(), "Jan1");
     }
 
     #[test]

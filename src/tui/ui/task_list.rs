@@ -726,7 +726,7 @@ fn task_time_cell(
     let due_state = crate::tui::time::due_state_at(&item.task.due_on, now_seconds);
     if render_mode != TaskListRenderMode::Upcoming
         && (due_order || item.task.status.is_open() && due_state.needs_action())
-        && let Some(label) = crate::tui::time::due_label(&item.task.due_on, now_seconds)
+        && let Some(label) = crate::tui::time::compact_due_label(&item.task.due_on, now_seconds)
     {
         let color = if !item.task.status.is_open() {
             FG_DIM
@@ -1581,7 +1581,7 @@ mod tests {
         let mut item = task_item("future deadline");
         item.task.due_on = "2999-01-01".to_string();
         let cell = task_time_cell(&item, 0, TaskListRenderMode::Flat, true);
-        assert!(cell.to_string().contains("2999"));
+        assert_eq!(cell.to_string(), "Jan1");
         assert_eq!(cell.spans[0].style.fg, Some(ACCENT));
     }
 
