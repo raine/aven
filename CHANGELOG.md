@@ -3,6 +3,11 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.11 (2026-07-16)
+
+- Due dates use compact labels in the task list so deadlines fit cleanly in the
+  time column.
+
 ## v0.1.10 (2026-07-16)
 
 - Set task availability to defer work until a date or time, and find deferred

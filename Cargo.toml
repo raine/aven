@@ -1,6 +1,6 @@
 [package]
 name = "aven"
-version = "0.1.10"
+version = "0.1.11"
 edition = "2024"
 rust-version = "1.96"
 authors = ["Raine"]
