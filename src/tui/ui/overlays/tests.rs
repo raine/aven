@@ -508,6 +508,18 @@ mod add_task_overlay {
     }
 
     #[test]
+    fn focused_add_task_availability_teaches_relative_input() {
+        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            focus: AddTaskStep::AvailableAt,
+            ..add_task_view()
+        }));
+
+        assert!(rendered.contains("Available: tomorrow, in 2 weeks"));
+        assert!(rendered.contains("empty/now immediate"));
+        assert!(rendered.contains("F1 formats"));
+    }
+
+    #[test]
     fn add_task_metadata_values_use_shared_styles() {
         let project = metadata_field(AddTaskStep::Project, "Project", "aven", AddTaskStep::Title);
         assert_eq!(project.to_string(), "  ^P Project: ● aven");

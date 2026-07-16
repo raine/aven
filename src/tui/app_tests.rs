@@ -4346,8 +4346,8 @@ mod detail_mode {
 
         let rendered = render_app_text(&mut app, 100, 30);
         assert!(rendered.contains(EDIT_AVAILABILITY_TITLE));
-        assert!(rendered.contains("Dates use local time"));
-        assert!(rendered.contains("Empty/now clears."));
+        assert!(rendered.contains("Try tomorrow · in 2 weeks · next monday at 9am"));
+        assert!(rendered.contains("Local dates/times · empty or now = immediate"));
         type_chars(&mut app, "tomorrow").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
@@ -4377,10 +4377,7 @@ mod detail_mode {
                     && state.input.text == "someday maybe"
         ));
         assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
-        assert_eq!(
-            toast_message(&app).as_deref(),
-            Some(crate::tui::app_edit::INVALID_AVAILABILITY_MESSAGE)
-        );
+        assert!(toast_message(&app).is_some_and(|message| message.contains("use today, tomorrow")));
     }
 
     #[tokio::test]

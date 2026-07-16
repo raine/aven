@@ -237,19 +237,22 @@ fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>
 
 fn availability_metadata_field(state: &AddTaskView) -> Line<'static> {
     let value = if state.available_at.is_empty() {
-        if state.focus == AddTaskStep::AvailableAt {
-            "Immediately, in 2 weeks, next monday, or a date"
-        } else {
-            "Immediately"
-        }
+        "Immediately"
     } else {
         &state.available_at
     };
     let mut line = metadata_field(AddTaskStep::AvailableAt, "Available", value, state.focus);
     if state.focus == AddTaskStep::AvailableAt {
         line.spans.pop();
-        line.spans
-            .extend(add_task_title_input_line(value, Some(state.available_at_cursor), 48).spans);
+        line.spans.extend(
+            placeholder_input_line(
+                &state.available_at,
+                Some(state.available_at_cursor),
+                48,
+                ADD_TASK_AVAILABILITY_PLACEHOLDER,
+            )
+            .spans,
+        );
     }
     line
 }
@@ -438,8 +441,9 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
                 "Arrows            move fields; edit cursor in Available",
                 "Enter             open metadata or create from title",
                 "Enter             newline in description",
-                "Available         local date, today, tomorrow, or now",
-                "Available         empty or now means immediately",
+                "Available         tomorrow · in 2 weeks · next mon at 9am",
+                "Available         YYYY-MM-DD · UTC timestamp · epoch seconds",
+                "Available         local time; empty or now = immediate",
                 "Ctrl-p/t/r/l      edit project/status/priority/labels",
                 "Ctrl-Enter        create from any field",
                 "Ctrl-s            portable create fallback",
@@ -533,23 +537,30 @@ pub(in crate::tui::ui) fn add_task_title_metadata(title: &str) -> Option<(&str, 
 }
 
 pub(in crate::tui::ui) const ADD_TASK_TITLE_PLACEHOLDER: &str = "Enter title here...";
+const ADD_TASK_AVAILABILITY_PLACEHOLDER: &str = "tomorrow, in 2 weeks, or next monday at 9am";
 
 pub(in crate::tui::ui) fn add_task_title_input_line(
     input: &str,
     cursor: Option<usize>,
     width: usize,
 ) -> Line<'static> {
+    placeholder_input_line(input, cursor, width, ADD_TASK_TITLE_PLACEHOLDER)
+}
+
+fn placeholder_input_line(
+    input: &str,
+    cursor: Option<usize>,
+    width: usize,
+    placeholder: &'static str,
+) -> Line<'static> {
     if input.is_empty() {
         if cursor.is_some() {
             return Line::from(vec![
-                cursor_cell(&ADD_TASK_TITLE_PLACEHOLDER[..1]),
-                Span::styled(&ADD_TASK_TITLE_PLACEHOLDER[1..], Style::new().fg(FG_DIM)),
+                cursor_cell(&placeholder[..1]),
+                Span::styled(&placeholder[1..], Style::new().fg(FG_DIM)),
             ]);
         }
-        return Line::from(Span::styled(
-            ADD_TASK_TITLE_PLACEHOLDER,
-            Style::new().fg(FG_DIM),
-        ));
+        return Line::from(Span::styled(placeholder, Style::new().fg(FG_DIM)));
     }
     match cursor {
         Some(cursor) => clipped_input_line(input, cursor, width),
@@ -755,10 +766,10 @@ pub(in crate::tui::ui) fn add_task_hint_line(
         ]),
         AddTaskStep::AvailableAt => dialog_hint_line(&[
             ("←/→", "cursor"),
-            ("empty/now", "clear"),
+            ("empty/now", "immediate"),
             ("Tab", "next"),
             ("^S", "create"),
-            ("F1", "help"),
+            ("F1", "formats"),
             ("Esc", "cancel"),
         ]),
         AddTaskStep::Description => dialog_hint_line(&[

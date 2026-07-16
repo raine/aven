@@ -76,6 +76,17 @@ where
     local_datetime_to_utc(timezone, date.and_time(time))
 }
 
+pub(crate) fn available_at_error_message(error: &anyhow::Error) -> String {
+    let message = format!("{error:#}");
+    message
+        .rsplit_once("hint=\"")
+        .and_then(|(_, hint)| hint.split_once('"'))
+        .map(|(hint, _)| hint.to_string())
+        .unwrap_or_else(|| {
+            "try tomorrow, in 2 weeks, next monday at 9am, or YYYY-MM-DD".to_string()
+        })
+}
+
 pub(crate) fn validate_available_at_value(value: &str) -> Result<()> {
     if value.is_empty() {
         return Ok(());
@@ -365,6 +376,12 @@ mod tests {
 
         let unsupported = parse_fixed("in two months").unwrap_err().to_string();
         assert!(unsupported.contains("use a whole number"));
+    }
+
+    #[test]
+    fn presents_parser_guidance_without_internal_error_details() {
+        let error = parse_fixed("monday").unwrap_err();
+        assert_eq!(available_at_error_message(&error), "use next monday");
     }
 
     #[test]

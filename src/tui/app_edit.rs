@@ -16,8 +16,7 @@ pub(crate) const EDIT_DESCRIPTION_TITLE: &str = "Edit description";
 pub(crate) const EDIT_PROJECT_TITLE: &str = "Edit project";
 pub(crate) const EDIT_AVAILABILITY_TITLE: &str = "Edit availability";
 pub(crate) const EDIT_AVAILABILITY_PROMPT: &str =
-    "Dates use local time; timestamps UTC. Empty/now clears.";
-pub(crate) const INVALID_AVAILABILITY_MESSAGE: &str = "Invalid availability. Use YYYY-MM-DD, a UTC timestamp, epoch seconds, today, tomorrow, or now.";
+    "Try tomorrow · in 2 weeks · next monday at 9am\nLocal dates/times · empty or now = immediate";
 pub(crate) const EDIT_LABELS_TITLE: &str = "Edit task: labels";
 pub(crate) const REMOVE_DEPENDENCY_TITLE: &str = "Remove dependency";
 
@@ -551,9 +550,9 @@ impl App {
         } else {
             match crate::time_input::parse_available_at_input(&input) {
                 Ok(value) => value,
-                Err(_) => {
+                Err(error) => {
                     self.open_edit_availability_overlay(input);
-                    self.set_warning(INVALID_AVAILABILITY_MESSAGE);
+                    self.set_warning(crate::time_input::available_at_error_message(&error));
                     return Ok(());
                 }
             }

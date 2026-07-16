@@ -59,11 +59,8 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
         return;
     }
 
-    let dialog_width = if state.route == OverlayRoute::EditAvailability {
-        64
-    } else {
-        54
-    };
+    let edit_availability = state.route == OverlayRoute::EditAvailability;
+    let dialog_width = if edit_availability { 64 } else { 54 };
     let input = input_line("", &state.input, state.cursor);
     let lines = if state.route == OverlayRoute::DeleteProjectNameConfirm {
         vec![
@@ -73,6 +70,18 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
             Line::from(""),
             dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
         ]
+    } else if edit_availability {
+        let mut lines = state
+            .prompt
+            .lines()
+            .map(|line| Line::from(Span::styled(line.to_string(), Style::new().fg(FG_DIM))))
+            .collect::<Vec<_>>();
+        lines.extend([
+            input,
+            Line::from(""),
+            dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
+        ]);
+        lines
     } else {
         vec![
             Line::from(Span::styled(&state.prompt, Style::new().fg(FG_DIM))),
@@ -81,7 +90,7 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
             dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
         ]
     };
-    let height = if state.route == OverlayRoute::DeleteProjectNameConfirm {
+    let height = if state.route == OverlayRoute::DeleteProjectNameConfirm || edit_availability {
         7
     } else {
         6

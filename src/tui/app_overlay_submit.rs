@@ -73,11 +73,11 @@ impl App {
         } else {
             match crate::time_input::parse_available_at_input(&state.available_at.text) {
                 Ok(value) => value,
-                Err(_) => {
+                Err(error) => {
                     state.focus = AddTaskStep::AvailableAt;
                     state.mode = AddTaskMode::Compose;
                     self.overlay = Some(OverlayState::AddTask(Box::new(state)));
-                    self.set_warning(crate::tui::app_edit::INVALID_AVAILABILITY_MESSAGE);
+                    self.set_warning(crate::time_input::available_at_error_message(&error));
                     return Ok(());
                 }
             }
