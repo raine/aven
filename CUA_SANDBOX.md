@@ -250,6 +250,12 @@ checks still run.
 
 ## Drive and capture the TUI
 
+Inspect screenshots directly with the Read tool. Use the model's image understanding
+to evaluate layout, spacing, colors, focus styling, clipping, alignment, visual
+hierarchy, and overall appearance. Do not use OCR tools such as Tesseract as a
+substitute for direct image inspection. OCR is suitable only as a supplemental
+check when exact text extraction is useful.
+
 CuaBot key names follow Playwright naming. Use `Enter` and `Escape`, not uppercase
 `ENTER` or `ESC`.
 
