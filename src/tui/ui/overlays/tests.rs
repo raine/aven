@@ -496,10 +496,10 @@ mod add_task_overlay {
         assert!(rendered.contains("Status: ▣ inbox"));
         assert!(rendered.contains("Priority: ● high"));
         assert!(rendered.contains("Labels: none"));
-        assert!(rendered.contains("Available: Immediately"));
+        assert!(rendered.contains("Available: Now"));
         assert!(rendered.contains("Title"));
         assert!(rendered.contains("Description"));
-        assert!(rendered.find("Available: Immediately").unwrap() < rendered.find("Title").unwrap());
+        assert!(rendered.find("Available: Now").unwrap() < rendered.find("Title").unwrap());
         assert!(rendered.contains("  ship dialogs"));
         assert!(rendered.contains("Optional details, links, or handoff context..."));
         assert!(rendered.contains("Tab next"));
@@ -551,10 +551,10 @@ mod add_task_overlay {
         let availability = metadata_field(
             AddTaskStep::AvailableAt,
             "Available",
-            "Immediately",
+            "Now",
             AddTaskStep::Title,
         );
-        assert_eq!(availability.to_string(), "  ^A Available: Immediately");
+        assert_eq!(availability.to_string(), "  ^A Available: Now");
     }
 
     #[test]
@@ -634,6 +634,14 @@ mod add_task_overlay {
         assert!(help.contains("Shift+Tab"));
         assert!(help.contains("create with AI"));
         assert!(help.contains("confirm discard"));
+    }
+
+    #[test]
+    fn composer_help_uses_muted_keys_and_dim_descriptions() {
+        let line = composer_help_line("Ctrl-a", "jump to availability");
+
+        assert_eq!(line.spans[0].style.fg, Some(crate::tui::theme::FG_MUTED));
+        assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
     }
 
     #[test]

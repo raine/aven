@@ -241,7 +241,7 @@ fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>
 
 fn availability_metadata_field(state: &AddTaskView) -> Line<'static> {
     let value = if state.available_at.is_empty() {
-        "Immediately"
+        "Now"
     } else {
         &state.available_at
     };
@@ -465,25 +465,25 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
         }
         AddTaskMode::Help { scroll } => {
             let all = [
-                "Tab / Shift+Tab   next / previous field",
-                "Arrows            move fields; edit cursor in Available",
-                "Enter             open metadata or create from title",
-                "Enter             newline in description",
-                "Available         tomorrow · in 2 weeks · next mon at 9am",
-                "Available         YYYY-MM-DD · UTC timestamp · epoch seconds",
-                "Available         local time; empty or now = immediate",
-                "Ctrl-p/t/r/l/a    jump to metadata fields",
-                "Ctrl-Enter        create from any field",
-                "Ctrl-s            portable create fallback",
-                "Ctrl-n            create with AI",
-                "F1                open this help",
-                "Ctrl-x Ctrl-e     edit description externally",
-                "Esc               cancel or confirm discard",
+                ("Tab / Shift+Tab", "next / previous field"),
+                ("Arrows", "move fields; edit cursor in Available"),
+                ("Enter", "open metadata or create from title"),
+                ("Enter", "newline in description"),
+                ("Available", "tomorrow · in 2 weeks · next mon at 9am"),
+                ("Available", "YYYY-MM-DD · UTC timestamp · epoch seconds"),
+                ("Available", "local time; empty or now = immediate"),
+                ("Ctrl-p/t/r/l/a", "jump to metadata fields"),
+                ("Ctrl-Enter", "create from any field"),
+                ("Ctrl-s", "portable create fallback"),
+                ("Ctrl-n", "create with AI"),
+                ("F1", "open this help"),
+                ("Ctrl-x Ctrl-e", "edit description externally"),
+                ("Esc", "cancel or confirm discard"),
             ];
             let mut lines = all
                 .into_iter()
                 .skip(*scroll as usize)
-                .map(Line::from)
+                .map(|(keys, description)| composer_help_line(keys, description))
                 .collect::<Vec<_>>();
             lines.push(Line::from(""));
             lines.push(dialog_hint_line(&[("j/k", "scroll"), ("Esc", "close")]));
@@ -507,6 +507,16 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
             .style(Style::new().fg(FG).bg(background)),
         inner,
     );
+}
+
+pub(in crate::tui::ui) fn composer_help_line(
+    keys: &'static str,
+    description: &'static str,
+) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{keys:<18}"), Style::new().fg(FG_MUTED)),
+        Span::styled(description, Style::new().fg(FG_DIM)),
+    ])
 }
 
 fn add_task_picker_lines(state: &PickerView) -> Vec<Line<'static>> {
