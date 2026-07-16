@@ -97,11 +97,12 @@ aven restore APP-7KQ9
 - `list --ready` excludes epics so agents pick actionable child tasks.
 - `available_at` defers attention until its timestamp. Set it with
   `add --available-at <when>` or `edit --available-at <when>`, clear it with
-  `edit --clear-available-at`, and use `list --upcoming` to inspect deferred
-  tasks. Accepted values include `today`, `tomorrow`, `in N days`, `in N weeks`,
-  `next <weekday>`, those date expressions followed by `at <time>`, ISO dates,
-  ISO timestamps, and Unix timestamps. Date expressions use the local calendar
-  and store canonical UTC. Bare weekdays and times are ambiguous. Do not use
+  `edit --clear-available-at` or the value `now`, and use `list --upcoming` to
+  inspect deferred tasks. Accepted values include `today`, `tomorrow`,
+  `in N days`, `in N weeks`, `next <weekday>`, those date expressions followed
+  by `at <time>`, ISO dates, ISO timestamps, and Unix timestamps. Date
+  expressions use the local calendar and store canonical UTC. Exact timestamps
+  with or without `Z` are UTC. Bare weekdays and times are ambiguous. Do not use
   availability for deadlines.
 - Let commands infer the project from the current directory, even if project
   does not exist yet. Pass `--project` only if project is specified by user.

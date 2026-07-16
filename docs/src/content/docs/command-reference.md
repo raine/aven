@@ -49,7 +49,7 @@ EOF
 
 ### Structured output
 
-The `--json` option is available on `context`, `show`, `list`, `search`, `dep list`, `epic list`, `prime`, `label list`, `project list`, `conflict list`, `conflict show`, and `doctor`. JSON task objects expose epic membership separately from dependency ordering through `is_epic`, `epic_parent`, and `epic_children`.
+The `--json` option is available on `context`, `show`, `list`, `search`, `dep list`, `epic list`, `prime`, `label list`, `project list`, `conflict list`, `conflict show`, and `doctor`. JSON task objects expose availability through `available_at` and epic membership separately from dependency ordering through `is_epic`, `epic_parent`, and `epic_children`.
 
 ## Task commands
 
@@ -74,7 +74,7 @@ aven add <title> [options]
 | `--epic` | Create an epic container. |
 | `--natural` | Parse the title as natural-language task intake using the configured agent command. |
 
-A plain task starts with status `inbox`. `--natural` cannot be combined with a description source, `--project`, a non-default priority, or `--label`. Natural intake can infer a title, description, project, status, priority, labels, and epic state from the request.
+A plain task starts with status `inbox`. `--natural` cannot be combined with a description source, `--project`, a non-default priority, `--label`, or `--available-at`. Natural intake can infer a title, description, project, status, priority, labels, availability, and epic state from the request.
 
 The command prints the created task's qualified reference and bare suffix.
 
@@ -104,8 +104,13 @@ aven list [options]
 | `--ready` | Show open, non-epic tasks with no unresolved blocker. |
 | `--blocked` | Show open tasks with at least one unresolved blocker. |
 | `--epics` | Show epic containers only. |
+| `--upcoming` | Show open, live tasks with a future availability time, ordered by availability time from earliest to latest. |
 | `--limit <number>` | Return at most this many tasks after sorting and filtering. |
 | `--json` | Print a JSON array. |
+
+Normal lists hide open tasks whose availability time is in the future. They include tasks with empty or elapsed availability. Explicit `--status done` and `--status canceled` lists include matching tasks regardless of availability, and `--deleted` includes matching deleted tasks regardless of availability.
+
+`--upcoming` finds only live tasks with an open status and a future availability time. It can be combined with `--project`, `--status`, `--priority`, `--label`, `--all`, and `--limit`. `--all` does not add deleted tasks to Upcoming. `--upcoming` cannot be combined with `--ready`, `--blocked`, `--epics`, or `--deleted`.
 
 `--ready` and `--blocked` are mutually exclusive. Neither can be combined with `--all` or `--deleted`. `--ready` and `--epics` are also mutually exclusive.
 
@@ -113,6 +118,8 @@ aven list [options]
 aven list --status active
 aven list --project aven --label bug --limit 20
 aven list --ready
+aven list --upcoming
+aven list --upcoming --project aven --limit 10
 aven list --deleted --json
 ```
 
@@ -192,13 +199,13 @@ aven edit <task-ref> [options]
 | `--project <project>` | Move the task to an existing project. |
 | `--status <status>` | Set the status. |
 | `--priority <priority>` | Set the priority. |
-| `--available-at <when>` | Defer the task until a calendar expression or timestamp. See [Availability input](#availability-input). |
-| `--clear-available-at` | Make the task immediately available. Cannot be combined with `--available-at`. |
+| `--available-at <when>` | Set or reschedule availability with a calendar expression or timestamp. Passing `now` makes the task immediately available. See [Availability input](#availability-input). |
+| `--clear-available-at` | Clear availability so the task is immediately available. |
 | `--epic <on-or-off>` | Set epic state. Accepted true values are `on`, `true`, and `1`; accepted false values are `off`, `false`, and `0`. |
 | `--label <label>` | Add an existing label. Repeat as needed. |
 | `--remove-label <label>` | Remove a label. Repeat as needed. |
 
-Description sources are mutually exclusive. Aven reports whether the update changed the task.
+Description sources are mutually exclusive. `--available-at` and `--clear-available-at` are mutually exclusive. Aven reports whether the update changed the task.
 
 A task with epic children cannot have epic state turned off. Epic containers cannot become children of another epic.
 
@@ -213,7 +220,7 @@ aven edit APP-7KQ0 --epic on
 
 ### Availability input
 
-Availability controls when a task enters normal task lists and queue groups. It is not a deadline. `aven add --available-at`, `aven edit --available-at`, natural task intake, and the TUI task composer use the same expressions:
+Availability controls when a task becomes eligible for attention and enters normal task lists and queue groups. It is not a deadline or due date. An empty `available_at` value means the task is immediately available. `aven add --available-at`, `aven edit --available-at`, natural task intake, and the TUI task composer use the same expressions:
 
 | Expression | Local-calendar meaning |
 | --- | --- |
