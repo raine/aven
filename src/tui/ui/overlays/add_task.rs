@@ -64,8 +64,12 @@ pub(crate) fn add_task_field_at(
         } else if metadata_rows == 2 {
             if relative_y == 0 {
                 (relative_x as usize * 3 / content.width.max(1) as usize).min(2)
+            } else if (relative_x as usize)
+                < metadata_second_row_labels_width(content.width as usize)
+            {
+                3
             } else {
-                3 + (relative_x as usize * 2 / content.width.max(1) as usize).min(1)
+                4
             }
         } else {
             relative_y as usize
@@ -226,7 +230,7 @@ fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>
     if width >= 60 {
         return vec![
             metadata_row(owned[..3].to_vec(), width as usize),
-            metadata_row(owned[3..].to_vec(), width as usize),
+            metadata_second_row(owned[3].clone(), owned[4].clone(), width as usize),
         ];
     }
     owned
@@ -269,6 +273,7 @@ pub(in crate::tui::ui) fn metadata_field(
         AddTaskStep::Status => "^T ",
         AddTaskStep::Priority => "^R ",
         AddTaskStep::Labels => "^L ",
+        AddTaskStep::AvailableAt => "^A ",
         _ => "",
     };
     let mut spans = vec![
@@ -321,6 +326,29 @@ fn label_summary(value: &str) -> String {
 }
 
 const METADATA_SEPARATOR: &str = "   ";
+
+fn metadata_second_row_labels_width(width: usize) -> usize {
+    let fields_width = width.saturating_sub(METADATA_SEPARATOR.width() * 2);
+    let base_width = fields_width / 3;
+    base_width + usize::from(!fields_width.is_multiple_of(3))
+}
+
+fn metadata_second_row(
+    labels: Line<'static>,
+    availability: Line<'static>,
+    width: usize,
+) -> Line<'static> {
+    let separator_width = METADATA_SEPARATOR.width();
+    let labels_width = metadata_second_row_labels_width(width);
+    let availability_width = width.saturating_sub(labels_width + separator_width);
+    join_lines(
+        vec![
+            fit_line_to_width(labels, labels_width),
+            fit_line_to_width(availability, availability_width),
+        ],
+        METADATA_SEPARATOR,
+    )
+}
 
 fn metadata_row(lines: Vec<Line<'static>>, width: usize) -> Line<'static> {
     let separator_width = METADATA_SEPARATOR.width();
@@ -444,7 +472,7 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
                 "Available         tomorrow · in 2 weeks · next mon at 9am",
                 "Available         YYYY-MM-DD · UTC timestamp · epoch seconds",
                 "Available         local time; empty or now = immediate",
-                "Ctrl-p/t/r/l      edit project/status/priority/labels",
+                "Ctrl-p/t/r/l/a    jump to metadata fields",
                 "Ctrl-Enter        create from any field",
                 "Ctrl-s            portable create fallback",
                 "Ctrl-n            create with AI",

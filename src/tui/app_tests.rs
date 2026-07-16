@@ -105,6 +105,10 @@ fn ctrl_c() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
 }
 
+fn ctrl_a() -> KeyEvent {
+    KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)
+}
+
 fn ctrl_p() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)
 }
@@ -3531,6 +3535,19 @@ mod authoring {
                     if !matches!(state.mode, crate::tui::overlay::AddTaskMode::Compose)
             ));
         }
+    }
+
+    #[tokio::test]
+    async fn add_task_ctrl_a_focuses_availability() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+
+        app.handle_overlay_key(ctrl_a()).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::AvailableAt
+        ));
     }
 
     #[tokio::test]

@@ -1022,6 +1022,13 @@ impl App {
                 self.overlay = Some(overlay);
                 return Ok(());
             }
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('a') {
+                self.overlay = Some(overlay);
+                if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
+                    state.focus = AddTaskStep::AvailableAt;
+                }
+                return Ok(());
+            }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
                 let return_focus = state.focus;
                 self.overlay = Some(overlay);

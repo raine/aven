@@ -515,6 +515,9 @@ mod add_task_overlay {
         }));
 
         assert!(rendered.contains("Available: tomorrow, in 2 weeks"));
+        let labels = rendered.find("^L Labels:").unwrap();
+        let availability = rendered.find("Available:").unwrap();
+        assert!(availability.saturating_sub(labels) < 40);
         assert!(rendered.contains("empty/now immediate"));
         assert!(rendered.contains("F1 formats"));
     }
@@ -544,6 +547,14 @@ mod add_task_overlay {
             theme::priority_style("medium").fg
         );
         assert!(!priority.to_string().contains('['));
+
+        let availability = metadata_field(
+            AddTaskStep::AvailableAt,
+            "Available",
+            "Immediately",
+            AddTaskStep::Title,
+        );
+        assert_eq!(availability.to_string(), "  ^A Available: Immediately");
     }
 
     #[test]
