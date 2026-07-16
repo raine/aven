@@ -3,6 +3,15 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.10 (2026-07-16)
+
+- Set task availability to defer work until a date or time, and find deferred
+  tasks in the Upcoming view.
+- Add due dates independently of availability, with overdue filtering and
+  deadline-aware queue ordering for visible, actionable tasks.
+- The documentation includes a complete CLI command reference and a practical
+  VPN sync setup guide.
+
 ## v0.1.9 (2026-07-15)
 
 - The TUI automatically checks for new releases and offers guided installation,
