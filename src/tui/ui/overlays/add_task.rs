@@ -651,13 +651,13 @@ fn placeholder_input_line(
     }
 }
 
-fn add_task_field_label(label: &'static str, active: bool) -> Line<'static> {
+pub(in crate::tui::ui) fn add_task_field_label(label: &'static str, active: bool) -> Line<'static> {
     let style = if active {
         Style::new()
             .fg(Color::Rgb(194, 174, 255))
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::new().fg(FG_DIM)
+        Style::new().fg(FG_MUTED).add_modifier(Modifier::BOLD)
     };
     Line::from(vec![
         Span::styled(if active { "▶ " } else { "  " }, style),

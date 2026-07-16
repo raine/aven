@@ -639,6 +639,27 @@ mod add_task_overlay {
     }
 
     #[test]
+    fn inactive_composer_headers_stay_distinct_from_placeholders() {
+        let header = add_task_field_label("Title", false);
+        let placeholder = add_task_title_input_line("", None, 40);
+
+        assert_eq!(header.spans[1].style.fg, Some(crate::tui::theme::FG_MUTED));
+        assert!(
+            header.spans[1]
+                .style
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        );
+        assert_eq!(placeholder.spans[0].style.fg, Some(FG_DIM));
+        assert!(
+            !placeholder.spans[0]
+                .style
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        );
+    }
+
+    #[test]
     fn composer_help_scrolls_with_a_stable_dialog_and_scrollbar() {
         let top = render_overlay_view_at(
             OverlayView::AddTask(AddTaskView {
