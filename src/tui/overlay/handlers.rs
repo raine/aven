@@ -38,6 +38,7 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
             match state.focus {
                 AddTaskStep::Title => state.title.insert_paste(text),
                 AddTaskStep::AvailableAt => state.available_at.insert_paste(text),
+                AddTaskStep::Due => state.due_on.insert_paste(text),
                 AddTaskStep::Description => state.description.insert_paste(text),
                 _ => {}
             }
@@ -181,10 +182,11 @@ pub(crate) fn handle_generic_overlay_key(
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
                 KeyCode::Left
-                    if state.focus.is_metadata() && state.focus != AddTaskStep::AvailableAt =>
+                    if state.focus.is_metadata()
+                        && !matches!(state.focus, AddTaskStep::AvailableAt | AddTaskStep::Due) =>
                 {
                     state.focus = match state.focus {
-                        AddTaskStep::Project => AddTaskStep::AvailableAt,
+                        AddTaskStep::Project => AddTaskStep::Due,
                         AddTaskStep::Status => AddTaskStep::Project,
                         AddTaskStep::Priority => AddTaskStep::Status,
                         AddTaskStep::Labels => AddTaskStep::Priority,
@@ -193,7 +195,8 @@ pub(crate) fn handle_generic_overlay_key(
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
                 KeyCode::Right
-                    if state.focus.is_metadata() && state.focus != AddTaskStep::AvailableAt =>
+                    if state.focus.is_metadata()
+                        && !matches!(state.focus, AddTaskStep::AvailableAt | AddTaskStep::Due) =>
                 {
                     state.focus = match state.focus {
                         AddTaskStep::Project => AddTaskStep::Status,
@@ -227,7 +230,8 @@ pub(crate) fn handle_generic_overlay_key(
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
                 KeyCode::Char('?')
-                    if state.focus.is_metadata() && state.focus != AddTaskStep::AvailableAt =>
+                    if state.focus.is_metadata()
+                        && !matches!(state.focus, AddTaskStep::AvailableAt | AddTaskStep::Due) =>
                 {
                     state.mode = AddTaskMode::Help { scroll: 0 };
                     OverlayOutcome::None(OverlayState::AddTask(state))
@@ -248,6 +252,7 @@ pub(crate) fn handle_generic_overlay_key(
                             state.title_error = false;
                         }
                         AddTaskStep::AvailableAt => state.available_at.handle_key(key),
+                        AddTaskStep::Due => state.due_on.handle_key(key),
                         AddTaskStep::Description => {
                             edit_multiline_input(&mut state.description, key)
                         }
@@ -726,6 +731,9 @@ fn handle_order_menu_key(mut state: OrderMenuState, key: KeyEvent) -> OverlayOut
             state.selected = previous_order(state.selected);
             OverlayOutcome::None(OverlayState::OrderMenu(state))
         }
+        KeyCode::Char('d') => OverlayOutcome::Submitted(OverlaySubmit::Order {
+            order: TaskOrder::DueOn,
+        }),
         KeyCode::Char('c') => OverlayOutcome::Submitted(OverlaySubmit::Order {
             order: TaskOrder::Created,
         }),
@@ -747,17 +755,19 @@ fn handle_order_menu_key(mut state: OrderMenuState, key: KeyEvent) -> OverlayOut
 
 fn next_order(order: TaskOrder) -> TaskOrder {
     match order {
+        TaskOrder::DueOn => TaskOrder::Created,
         TaskOrder::Created => TaskOrder::Updated,
         TaskOrder::Updated => TaskOrder::Priority,
         TaskOrder::Priority => TaskOrder::Project,
         TaskOrder::Project => TaskOrder::Title,
-        TaskOrder::Title => TaskOrder::Created,
+        TaskOrder::Title => TaskOrder::DueOn,
     }
 }
 
 fn previous_order(order: TaskOrder) -> TaskOrder {
     match order {
-        TaskOrder::Created => TaskOrder::Title,
+        TaskOrder::DueOn => TaskOrder::Title,
+        TaskOrder::Created => TaskOrder::DueOn,
         TaskOrder::Updated => TaskOrder::Created,
         TaskOrder::Priority => TaskOrder::Updated,
         TaskOrder::Project => TaskOrder::Priority,
@@ -797,6 +807,7 @@ mod tests {
             priority: "none".to_string(),
             labels: Vec::new(),
             available_at: LineEdit::blank(),
+            due_on: LineEdit::blank(),
             mode: crate::tui::overlay::AddTaskMode::Compose,
             title_error: false,
         })

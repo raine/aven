@@ -52,6 +52,8 @@ struct ContextTask {
     description: String,
     status: String,
     priority: String,
+    available_at: String,
+    due_on: String,
     deleted: bool,
     is_epic: bool,
     created_at: String,
@@ -167,6 +169,8 @@ async fn task_context_snapshot(
             description: task.description.clone(),
             status: task.status.as_str().to_string(),
             priority: task.priority.as_str().to_string(),
+            available_at: task.available_at.clone(),
+            due_on: task.due_on.clone(),
             deleted: task.deleted,
             is_epic: task.is_epic,
             created_at: task.created_at.clone(),
@@ -315,6 +319,10 @@ fn print_task_context(snapshot: &TaskContextSnapshot) {
     println!(
         "created={} updated={}",
         snapshot.task.created_at, snapshot.task.updated_at
+    );
+    println!(
+        "available_at={} due_on={}",
+        snapshot.task.available_at, snapshot.task.due_on
     );
     if !snapshot.task.description.is_empty() {
         print_multiline_block("description", &snapshot.task.description);

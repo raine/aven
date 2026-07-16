@@ -157,6 +157,7 @@ mod tests {
                 updated_at: "2026-06-20T00:00:00Z".to_string(),
                 queue_activity_at: "2026-06-20T00:00:00Z".to_string(),
                 available_at: String::new(),
+                due_on: String::new(),
                 deleted: false,
                 is_epic: false,
             },

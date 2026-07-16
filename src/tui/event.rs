@@ -3,13 +3,13 @@ mod catalog;
 mod lookup;
 
 pub(crate) use self::action::Action;
+#[cfg(test)]
+pub(crate) use self::catalog::PROJECT_PATH_FLOW_REASON;
 #[allow(unused_imports)]
 pub(crate) use self::catalog::{
     COMMAND_DOMAINS, COMMANDS, CommandContext, CommandDomain, CommandLifecycle, CommandSpec,
     DETAIL_COMMANDS, KeySequence,
 };
-#[cfg(test)]
-pub(crate) use self::catalog::{DUE_SORT_REASON, PROJECT_PATH_FLOW_REASON};
 #[allow(unused_imports)]
 pub(crate) use self::lookup::{
     CommandCompletion, CommandLookup, ShortcutLookup, command_cycle_options, complete_command,
@@ -58,6 +58,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginEditProject
             | Action::BeginEditPriority
             | Action::BeginEditAvailability
+            | Action::BeginEditDue
             | Action::BeginEditLabels
             | Action::Delete
             | Action::Restore
@@ -1002,10 +1003,7 @@ mod tests {
     fn resolves_order_shortcuts() {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('d')]),
-            ShortcutLookup::Found(Action::Disabled {
-                name: "order-due",
-                reason: DUE_SORT_REASON,
-            })
+            ShortcutLookup::Found(Action::SetOrder(crate::tui::store::TaskOrder::DueOn))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('c')]),

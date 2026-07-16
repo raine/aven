@@ -50,8 +50,13 @@ async fn print_task_line(conn: &mut SqliteConnection, task: &Task) -> Result<()>
     } else {
         format!(" available_at={}", task.available_at)
     };
+    let due_on = if task.due_on.is_empty() {
+        String::new()
+    } else {
+        format!(" due_on={}", task.due_on)
+    };
     println!(
-        "{} status={} priority={} labels={}{}{}{}{} title={}",
+        "{} status={} priority={} labels={}{}{}{}{}{} title={}",
         display_ref(conn, task).await?,
         task.status,
         task.priority,
@@ -60,6 +65,7 @@ async fn print_task_line(conn: &mut SqliteConnection, task: &Task) -> Result<()>
         deleted,
         epic,
         available_at,
+        due_on,
         quote(&task.title)
     );
     Ok(())
@@ -77,6 +83,10 @@ pub(crate) async fn print_task_line_item(item: &TaskListItem) -> Result<()> {
         .optional(
             "available_at",
             (!item.task.available_at.is_empty()).then(|| item.task.available_at.clone()),
+        )
+        .optional(
+            "due_on",
+            (!item.task.due_on.is_empty()).then(|| item.task.due_on.clone()),
         )
         .optional(
             "blocked_by",
@@ -222,6 +232,7 @@ pub(crate) struct TaskLineJson {
     pub(crate) blocked_by: i64,
     pub(crate) blocks: i64,
     pub(crate) available_at: String,
+    pub(crate) due_on: String,
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
 }
@@ -243,6 +254,7 @@ pub(crate) fn task_line_json_item(item: &TaskListItem) -> TaskLineJson {
         blocked_by: item.unresolved_blocker_count,
         blocks: item.dependent_count,
         available_at: item.task.available_at.clone(),
+        due_on: item.task.due_on.clone(),
         created_at: item.task.created_at.clone(),
         updated_at: item.task.updated_at.clone(),
     }

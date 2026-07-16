@@ -122,6 +122,109 @@ fn availability_preserves_attention_filters_and_explicit_discovery() {
 }
 
 #[test]
+fn due_dates_round_trip_filter_and_preserve_defer_semantics() {
+    let env = TestEnv::new();
+    let db = env.db("due-dates.sqlite");
+    let overdue_ref = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "overdue task",
+            "--project",
+            "app",
+            "--due",
+            "2000-01-01",
+        ],
+    )));
+    let newer_overdue_ref = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "newer overdue task",
+            "--project",
+            "app",
+            "--due",
+            "2010-01-01",
+        ],
+    )));
+    let future_ref = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "future deadline",
+            "--project",
+            "app",
+            "--due",
+            "2099-01-01",
+        ],
+    )));
+    let deferred_ref = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "deferred overdue task",
+            "--project",
+            "app",
+            "--available-at",
+            "2099-02-01T00:00:00Z",
+            "--due",
+            "2000-02-01",
+        ],
+    )));
+
+    let shown: serde_json::Value =
+        serde_json::from_str(&ok(env.aven(&db, ["show", &future_ref, "--json"]))).unwrap();
+    assert_eq!(shown["due_on"], "2099-01-01");
+
+    let overdue: serde_json::Value =
+        serde_json::from_str(&ok(env.aven(&db, ["list", "--overdue", "--json"]))).unwrap();
+    assert_eq!(overdue.as_array().unwrap().len(), 2);
+    assert_eq!(overdue[0]["ref"], overdue_ref);
+    assert_eq!(overdue[1]["ref"], newer_overdue_ref);
+
+    let mismatch: serde_json::Value = serde_json::from_str(&ok(
+        env.aven(&db, ["list", "--upcoming", "--overdue", "--json"])
+    ))
+    .unwrap();
+    assert_eq!(mismatch.as_array().unwrap().len(), 1);
+    assert_eq!(mismatch[0]["ref"], deferred_ref);
+    assert_eq!(mismatch[0]["due_on"], "2000-02-01");
+
+    ok(env.aven(&db, ["edit", &future_ref, "--due", "2099-03-01"]));
+    let edited: serde_json::Value =
+        serde_json::from_str(&ok(env.aven(&db, ["show", &future_ref, "--json"]))).unwrap();
+    assert_eq!(edited["due_on"], "2099-03-01");
+
+    ok(env.aven(&db, ["edit", &future_ref, "--clear-due"]));
+    let cleared: serde_json::Value =
+        serde_json::from_str(&ok(env.aven(&db, ["show", &future_ref, "--json"]))).unwrap();
+    assert_eq!(cleared["due_on"], "");
+}
+
+#[test]
+fn due_dates_accept_calendar_expressions_and_reject_times() {
+    let env = TestEnv::new();
+    let db = env.db("due-date-input.sqlite");
+    let task_ref = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "add",
+            "fuzzy deadline",
+            "--project",
+            "app",
+            "--due",
+            "in 2 weeks",
+        ],
+    )));
+    let shown: serde_json::Value =
+        serde_json::from_str(&ok(env.aven(&db, ["show", &task_ref, "--json"]))).unwrap();
+    assert_eq!(shown["due_on"].as_str().unwrap().len(), 10);
+
+    let error = fail(env.aven(&db, ["edit", &task_ref, "--due", "2099-01-01T09:00:00Z"]));
+    contains_all(&error, &["invalid-due", "ISO date"]);
+}
+
+#[test]
 fn fuzzy_availability_is_shared_by_cli_add_and_edit() {
     let env = TestEnv::new();
     let db = env.db("fuzzy-availability.sqlite");

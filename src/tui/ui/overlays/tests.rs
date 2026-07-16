@@ -141,6 +141,8 @@ fn add_task_view() -> AddTaskView {
         labels: Vec::new(),
         available_at: String::new(),
         available_at_cursor: 0,
+        due_on: String::new(),
+        due_on_cursor: 0,
         mode: crate::tui::overlay::AddTaskMode::Compose,
         title_error: false,
         status_prefix_active: false,
@@ -514,7 +516,7 @@ mod add_task_overlay {
             ..add_task_view()
         }));
 
-        assert!(rendered.contains("Available: tomorrow, in 2 weeks"));
+        assert!(rendered.contains("Available: tomorrow"));
         let labels = rendered.find("^L Labels:").unwrap();
         let availability = rendered.find("Available:").unwrap();
         assert!(availability.saturating_sub(labels) < 40);

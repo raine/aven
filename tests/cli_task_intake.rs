@@ -13,7 +13,7 @@ fn natural_add_uses_configured_task_intake_command() {
     fs::write(
         &command,
         format!(
-            "#!/bin/sh\ncat >'{}'\nprintf '%s\\n' '{{\"title\":\"fix slack dispatch\",\"description\":\"details from model\",\"project\":\"app\",\"priority\":\"high\",\"labels\":[],\"available_at\":\"in 2 weeks at 9am\"}}'\n",
+            "#!/bin/sh\ncat >'{}'\nprintf '%s\\n' '{{\"title\":\"fix slack dispatch\",\"description\":\"details from model\",\"project\":\"app\",\"priority\":\"high\",\"labels\":[],\"available_at\":\"in 2 weeks at 9am\",\"due_on\":\"in 3 weeks\"}}'\n",
             prompt.display()
         ),
     )
@@ -50,6 +50,7 @@ agent:
             "project=app",
             "priority=high",
             "available_at=",
+            "due_on=",
             "description<<EOF",
             "details from model",
         ],
@@ -59,6 +60,9 @@ agent:
     let available_at = shown_json["available_at"].as_str().unwrap();
     assert_eq!(available_at.len(), 20);
     assert!(available_at.ends_with('Z'));
+    let due_on = shown_json["due_on"].as_str().unwrap();
+    assert_eq!(due_on.len(), 10);
+    assert!(due_on > &available_at[..10]);
     let prompt = fs::read_to_string(prompt).unwrap();
     assert_eq!(prompt, "custom task shaping");
 }

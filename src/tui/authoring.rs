@@ -12,16 +12,18 @@ pub(crate) enum AddTaskStep {
     Labels,
     Title,
     AvailableAt,
+    Due,
     Description,
 }
 
 impl AddTaskStep {
-    pub(crate) const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 8] = [
         Self::Project,
         Self::Status,
         Self::Priority,
         Self::Labels,
         Self::AvailableAt,
+        Self::Due,
         Self::Title,
         Self::Description,
     ];
@@ -42,7 +44,12 @@ impl AddTaskStep {
     pub(crate) fn is_metadata(self) -> bool {
         matches!(
             self,
-            Self::Project | Self::Status | Self::Priority | Self::Labels | Self::AvailableAt
+            Self::Project
+                | Self::Status
+                | Self::Priority
+                | Self::Labels
+                | Self::AvailableAt
+                | Self::Due
         )
     }
 }
@@ -57,6 +64,7 @@ struct AddTaskDraftState {
     priority: String,
     labels: Vec<String>,
     available_at: String,
+    due_on: String,
     step: AddTaskStep,
 }
 
@@ -71,6 +79,7 @@ impl Default for AddTaskDraftState {
             priority: "none".to_string(),
             labels: Vec::new(),
             available_at: String::new(),
+            due_on: String::new(),
             step: AddTaskStep::Title,
         }
     }
@@ -101,6 +110,7 @@ pub(crate) struct AddTaskContext {
     pub(crate) priority: String,
     pub(crate) labels: Vec<String>,
     pub(crate) available_at: String,
+    pub(crate) due_on: String,
 }
 
 #[cfg(test)]
@@ -170,6 +180,7 @@ impl AuthoringState {
             priority: draft.priority.clone(),
             labels: draft.labels.clone(),
             available_at: draft.available_at.clone(),
+            due_on: draft.due_on.clone(),
         })
     }
 
@@ -241,6 +252,14 @@ impl AuthoringState {
         true
     }
 
+    pub(crate) fn apply_add_task_due_on(&mut self, value: String) -> bool {
+        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
+            return false;
+        };
+        draft.due_on = value;
+        true
+    }
+
     pub(crate) fn apply_add_task_priority_value(&mut self, priority: &str) -> Option<String> {
         let AuthoringFlow::AddTask(draft) = self.flow.as_mut()? else {
             return None;
@@ -263,6 +282,7 @@ impl AuthoringState {
         draft.priority = task.priority;
         draft.labels = task.labels;
         draft.available_at = task.available_at;
+        draft.due_on = task.due_on;
         draft.step = AddTaskStep::Title;
         true
     }
@@ -287,6 +307,7 @@ impl AuthoringState {
             priority: draft.priority,
             labels: draft.labels,
             available_at: draft.available_at,
+            due_on: draft.due_on,
             is_epic: false,
         })
     }

@@ -366,6 +366,7 @@ pub(crate) enum OverlayRoute {
     EditProject,
     EditPriority,
     EditAvailability,
+    EditDue,
     EditLabels,
     EditLabelsMulti,
     FilterLabel,
@@ -396,6 +397,7 @@ pub(crate) enum TextSubmitRoute {
     DeleteProjectNameConfirm,
     EditTitle,
     EditAvailability,
+    EditDue,
     ConflictManual,
 }
 
@@ -584,6 +586,10 @@ impl OverlayRoute {
                 text_submit: Some(TextSubmitRoute::EditAvailability),
                 ..OverlayRouteDescriptor::default()
             },
+            Self::EditDue => OverlayRouteDescriptor {
+                text_submit: Some(TextSubmitRoute::EditDue),
+                ..OverlayRouteDescriptor::default()
+            },
             Self::EditLabels => OverlayRouteDescriptor {
                 picker_submit: Some(PickerSubmitRoute::EditLabels),
                 ..OverlayRouteDescriptor::default()
@@ -696,7 +702,7 @@ impl OverlayRoute {
 
 #[cfg(test)]
 impl OverlayRoute {
-    pub(crate) const ALL: [Self; 36] = [
+    pub(crate) const ALL: [Self; 37] = [
         Self::MessageOnly,
         Self::AddTaskTitle,
         Self::AddTaskDescription,
@@ -714,6 +720,7 @@ impl OverlayRoute {
         Self::EditProject,
         Self::EditPriority,
         Self::EditAvailability,
+        Self::EditDue,
         Self::EditLabels,
         Self::EditLabelsMulti,
         Self::FilterLabel,
@@ -777,6 +784,7 @@ pub(crate) struct AddTaskState {
     pub(crate) priority: String,
     pub(crate) labels: Vec<String>,
     pub(crate) available_at: LineEdit,
+    pub(crate) due_on: LineEdit,
     pub(crate) mode: AddTaskMode,
     pub(crate) title_error: bool,
 }
@@ -794,6 +802,7 @@ impl AddTaskState {
             || self.priority != "none"
             || !self.labels.is_empty()
             || !self.available_at.text.trim().is_empty()
+            || !self.due_on.text.trim().is_empty()
     }
 
     pub(crate) fn focus_next(&mut self, reverse: bool) {

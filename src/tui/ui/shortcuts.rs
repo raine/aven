@@ -754,22 +754,30 @@ mod tests {
 
     #[test]
     fn command_line_marks_disabled_actions() {
-        let command = COMMANDS
-            .iter()
-            .find(|command| command.name == "order-due")
-            .unwrap();
-        assert!(command_line(command).to_string().contains("disabled"));
+        let command = CommandSpec {
+            name: "disabled-test",
+            aliases: &[],
+            description: "disabled test command",
+            section: "Test",
+            keys: &[],
+            action: crate::tui::event::Action::Disabled {
+                name: "disabled-test",
+                reason: "test reason",
+            },
+            lifecycle: CommandLifecycle::Disabled {
+                reason: "test reason",
+            },
+        };
+        assert!(command_line(&command).to_string().contains("disabled"));
     }
 
     #[test]
-    fn prefix_hint_lines_mark_disabled_actions() {
-        let rendered = prefix_hint_lines(CommandContext::Normal, &["o".to_string()])
-            .iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(rendered.contains(":order-due"));
-        assert!(rendered.contains("disabled"));
+    fn disabled_lifecycle_badge_is_labeled() {
+        let badge = lifecycle_badge(CommandLifecycle::Disabled {
+            reason: "test reason",
+        })
+        .unwrap();
+        assert!(badge.content.contains("disabled"));
     }
 
     #[test]

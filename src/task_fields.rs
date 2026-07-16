@@ -13,12 +13,13 @@ pub(crate) enum TaskField {
     Status,
     Priority,
     AvailableAt,
+    DueOn,
     Deleted,
     IsEpic,
 }
 
 impl TaskField {
-    pub(crate) const VERSIONED: [TaskField; 8] = [
+    pub(crate) const VERSIONED: [TaskField; 9] = [
         TaskField::Title,
         TaskField::Description,
         TaskField::Project,
@@ -27,6 +28,7 @@ impl TaskField {
         TaskField::AvailableAt,
         TaskField::Deleted,
         TaskField::IsEpic,
+        TaskField::DueOn,
     ];
 
     pub(crate) fn parse(field: &str) -> Option<Self> {
@@ -37,6 +39,7 @@ impl TaskField {
             "status" => Some(Self::Status),
             "priority" => Some(Self::Priority),
             "available_at" => Some(Self::AvailableAt),
+            "due_on" => Some(Self::DueOn),
             "deleted" => Some(Self::Deleted),
             "is_epic" => Some(Self::IsEpic),
             _ => None,
@@ -67,6 +70,7 @@ impl TaskField {
             Self::Status => "status",
             Self::Priority => "priority",
             Self::AvailableAt => "available_at",
+            Self::DueOn => "due_on",
             Self::Deleted => "deleted",
             Self::IsEpic => "is_epic",
         }
@@ -77,6 +81,7 @@ impl TaskField {
             Self::Status => TaskStatus::parse(value).map(|_| ()),
             Self::Priority => TaskPriority::parse(value).map(|_| ()),
             Self::AvailableAt => crate::time_input::validate_available_at_value(value),
+            Self::DueOn => crate::time_input::validate_due_on_value(value),
             Self::Deleted if matches!(value, "0" | "1") => Ok(()),
             Self::Deleted => anyhow::bail!("error invalid-deleted value={value}"),
             Self::IsEpic if matches!(value, "0" | "1") => Ok(()),
@@ -127,6 +132,7 @@ impl TaskField {
             Self::Status => task.status.as_str().to_string(),
             Self::Priority => task.priority.as_str().to_string(),
             Self::AvailableAt => task.available_at.clone(),
+            Self::DueOn => task.due_on.clone(),
             Self::Deleted => {
                 if task.deleted {
                     "1".to_string()
@@ -166,7 +172,8 @@ mod tests {
                 "priority",
                 "available_at",
                 "deleted",
-                "is_epic"
+                "is_epic",
+                "due_on"
             ]
         );
     }

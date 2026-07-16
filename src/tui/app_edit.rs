@@ -17,6 +17,8 @@ pub(crate) const EDIT_PROJECT_TITLE: &str = "Edit project";
 pub(crate) const EDIT_AVAILABILITY_TITLE: &str = "Edit availability";
 pub(crate) const EDIT_AVAILABILITY_PROMPT: &str =
     "Try tomorrow · in 2 weeks · next monday at 9am\nLocal dates/times · empty or now = immediate";
+pub(crate) const EDIT_DUE_TITLE: &str = "Edit due date";
+pub(crate) const EDIT_DUE_PROMPT: &str = "Try today · tomorrow · in 2 weeks · next monday\nCalendar dates only · empty or none = no due date";
 pub(crate) const EDIT_LABELS_TITLE: &str = "Edit task: labels";
 pub(crate) const REMOVE_DEPENDENCY_TITLE: &str = "Remove dependency";
 
@@ -405,6 +407,29 @@ impl App {
         ));
     }
 
+    pub(super) fn begin_edit_due(&mut self) {
+        let Some(index) = self.guard_selected_task() else {
+            return;
+        };
+        let due_on = self
+            .store
+            .selected_task(Some(index))
+            .unwrap()
+            .task
+            .due_on
+            .clone();
+        self.open_edit_due_overlay(due_on);
+    }
+
+    fn open_edit_due_overlay(&mut self, input: String) {
+        self.overlay = Some(OverlayState::text_input(
+            OverlayRoute::EditDue,
+            EDIT_DUE_TITLE,
+            EDIT_DUE_PROMPT,
+            input,
+        ));
+    }
+
     pub(super) fn begin_edit_labels(&mut self) {
         let task_ids = self.marked_task_ids_in_view();
         if !task_ids.is_empty() {
@@ -563,6 +588,28 @@ impl App {
             .update_availability(self.widgets.table.selected(), available_at, preserve_task)
             .await;
         self.apply_edit_mutation(result, |app| app.open_edit_availability_overlay(input));
+        Ok(())
+    }
+
+    pub(super) async fn submit_edit_due(&mut self, input: String) -> Result<()> {
+        let due_on = if input.trim().is_empty() {
+            String::new()
+        } else {
+            match crate::time_input::parse_due_on_input(&input) {
+                Ok(value) => value,
+                Err(error) => {
+                    self.open_edit_due_overlay(input);
+                    self.set_warning(crate::time_input::due_on_error_message(&error));
+                    return Ok(());
+                }
+            }
+        };
+        let preserve_task = self.detail_context;
+        let result = self
+            .store
+            .update_due(self.widgets.table.selected(), due_on, preserve_task)
+            .await;
+        self.apply_edit_mutation(result, |app| app.open_edit_due_overlay(input));
         Ok(())
     }
 

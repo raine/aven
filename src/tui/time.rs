@@ -1,4 +1,4 @@
-use chrono::{Datelike, Local, TimeZone};
+use chrono::{Datelike, Local, NaiveDate, TimeZone};
 
 use crate::queue::unix_seconds;
 
@@ -21,6 +21,36 @@ pub(crate) fn available_day_label(available_at: &str, now_seconds: i64) -> Strin
         _ if available_date.year() == today.year() => available_date.format("%b %-d").to_string(),
         _ => available_date.format("%b %-d, %Y").to_string(),
     }
+}
+
+pub(crate) fn due_state_at(due_on: &str, now_seconds: i64) -> crate::due::DueState {
+    local_date(now_seconds)
+        .map(|today| crate::due::due_state(due_on, today))
+        .unwrap_or(crate::due::DueState::None)
+}
+
+pub(crate) fn due_label(due_on: &str, now_seconds: i64) -> Option<String> {
+    let due = NaiveDate::parse_from_str(due_on, "%Y-%m-%d").ok()?;
+    let today = local_date(now_seconds)?;
+    Some(match crate::due::due_state(due_on, today) {
+        crate::due::DueState::Overdue(days) => format!("{days}d late"),
+        crate::due::DueState::Today => "due today".to_string(),
+        crate::due::DueState::Future(1) => "due tomorrow".to_string(),
+        crate::due::DueState::Future(days @ 2..=7) => format!("due in {days}d"),
+        crate::due::DueState::Future(_) if due.year() == today.year() => {
+            due.format("%b %-d").to_string()
+        }
+        crate::due::DueState::Future(_) => due.format("%b %-d, %Y").to_string(),
+        crate::due::DueState::None => return None,
+    })
+}
+
+pub(crate) fn due_summary_lines(due_on: &str, now_seconds: i64) -> Option<[String; 2]> {
+    let due = NaiveDate::parse_from_str(due_on, "%Y-%m-%d").ok()?;
+    Some([
+        due_label(due_on, now_seconds)?,
+        due.format("%A, %b %-d, %Y").to_string(),
+    ])
 }
 
 pub(crate) fn availability_summary_lines(

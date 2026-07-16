@@ -62,6 +62,7 @@ impl App {
             priority: context.priority,
             labels: context.labels,
             available_at: LineEdit::new(context.available_at),
+            due_on: LineEdit::new(context.due_on),
             mode: crate::tui::overlay::AddTaskMode::Compose,
             title_error: false,
         })));
@@ -107,6 +108,8 @@ impl App {
             self.authoring.apply_add_task_labels(state.labels.clone());
             self.authoring
                 .apply_add_task_available_at(state.available_at.text.clone());
+            self.authoring
+                .apply_add_task_due_on(state.due_on.text.clone());
         }
         captured
     }

@@ -111,6 +111,8 @@ struct TaskRow {
     queue_activity_at: String,
     #[serde(default)]
     available_at: String,
+    #[serde(default)]
+    due_on: String,
     deleted: i64,
     is_epic: i64,
 }
@@ -343,7 +345,7 @@ async fn scan_labels(conn: &mut SqliteConnection) -> Result<Vec<LabelRow>> {
 }
 
 async fn scan_tasks(conn: &mut SqliteConnection) -> Result<Vec<TaskRow>> {
-    tables::scan_rows(conn, "SELECT workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, available_at, deleted, is_epic FROM tasks").await
+    tables::scan_rows(conn, "SELECT workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, available_at, due_on, deleted, is_epic FROM tasks").await
 }
 
 async fn scan_task_labels(conn: &mut SqliteConnection) -> Result<Vec<TaskLabelRow>> {
@@ -466,6 +468,12 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
 
     let mut task_ids: HashMap<String, HashSet<String>> = HashMap::new();
     for task in &export.tables.tasks {
+        if let Err(error) = crate::time_input::validate_due_on_value(&task.due_on) {
+            bail!(
+                "error invalid-export-snapshot task.due_on={} is invalid: {error}",
+                task.due_on
+            );
+        }
         let workspace_projects = project_ids.get(&task.workspace_id).ok_or_else(|| {
             anyhow::Error::msg(format!(
                 "error invalid-export-snapshot task.workspace_id={} is missing",
@@ -729,8 +737,14 @@ pub(crate) async fn database_integrity_report(
     .await?);
     checks.push(count_check(
         conn,
+        "task due dates",
+        "SELECT count(*) FROM tasks WHERE due_on != '' AND (length(due_on) != 10 OR substr(due_on, 5, 1) != '-' OR substr(due_on, 8, 1) != '-' OR date(due_on) IS NULL OR strftime('%Y-%m-%d', due_on) != due_on)",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
         "field version tasks",
-        "SELECT count(*) FROM field_versions fv LEFT JOIN tasks t ON t.id = fv.entity_id WHERE t.id IS NULL AND fv.field IN ('title','description','status','priority','project','labels','available_at','deleted','is_epic')",
+        "SELECT count(*) FROM field_versions fv LEFT JOIN tasks t ON t.id = fv.entity_id WHERE t.id IS NULL AND fv.field IN ('title','description','status','priority','project','labels','available_at','due_on','deleted','is_epic')",
     )
     .await?);
     checks.push(count_check(

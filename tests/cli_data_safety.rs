@@ -77,6 +77,17 @@ fn export_command_writes_portable_snapshot() {
     let env = TestEnv::new();
     let db = env.db("export.json.sqlite");
     seed_sample_data(&env, &db);
+    ok(env.aven(
+        &db,
+        [
+            "add",
+            "exported deadline",
+            "--project",
+            "app",
+            "--due",
+            "2099-01-01",
+        ],
+    ));
 
     let output_path = env.path("export.json");
     let output = ok(env.aven(&db, ["export", "--output", output_path.to_str().unwrap()]));
@@ -101,6 +112,34 @@ fn export_command_writes_portable_snapshot() {
 
     let tasks = tables["tasks"].as_array().unwrap();
     assert!(!tasks.is_empty());
+    let deadline = tasks
+        .iter()
+        .find(|task| task["title"] == "exported deadline")
+        .unwrap();
+    assert_eq!(deadline["due_on"], "2099-01-01");
+}
+
+#[test]
+fn import_defaults_due_on_for_older_snapshots() {
+    let env = TestEnv::new();
+    let db = env.db("import-old-due-snapshot.sqlite");
+    let task_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "older snapshot task", "--project", "app"])
+    ));
+    let output_path = env.path("import-old-due-snapshot.json");
+    ok(env.aven(&db, ["export", "--output", output_path.to_str().unwrap()]));
+
+    let mut snapshot: Value =
+        serde_json::from_str(&fs::read_to_string(&output_path).unwrap()).unwrap();
+    for task in snapshot["tables"]["tasks"].as_array_mut().unwrap() {
+        task.as_object_mut().unwrap().remove("due_on");
+    }
+    fs::write(&output_path, serde_json::to_string(&snapshot).unwrap()).unwrap();
+
+    ok(env.aven(&db, ["import", "--yes", output_path.to_str().unwrap()]));
+    let shown: Value =
+        serde_json::from_str(&ok(env.aven(&db, ["show", &task_ref, "--json"]))).unwrap();
+    assert_eq!(shown["due_on"], "");
 }
 
 #[test]
@@ -184,6 +223,26 @@ fn import_rejects_invalid_snapshot_without_replacing_existing_data() {
     let list = ok(env.aven(&target_db, ["list", "--all"]));
     contains_all(&list, &["target stays"]);
     contains_none(&list, &["seed alpha", "seed beta"]);
+}
+
+#[test]
+fn import_rejects_invalid_due_on_values() {
+    let env = TestEnv::new();
+    let db = env.db("invalid-import-due.sqlite");
+    seed_sample_data(&env, &db);
+    let export_path = env.path("invalid-import-due.json");
+    ok(env.aven(&db, ["export", "--output", export_path.to_str().unwrap()]));
+
+    let mut snapshot: Value =
+        serde_json::from_str(&fs::read_to_string(&export_path).unwrap()).unwrap();
+    snapshot["tables"]["tasks"][0]["due_on"] = Value::String("tomorrowish".to_string());
+    fs::write(&export_path, serde_json::to_string(&snapshot).unwrap()).unwrap();
+
+    let output = fail(env.aven(&db, ["import", "--yes", export_path.to_str().unwrap()]));
+    contains_all(
+        &output,
+        &["error invalid-export-snapshot", "task.due_on=tomorrowish"],
+    );
 }
 
 fn seed_sample_data(env: &TestEnv, db: &Path) {

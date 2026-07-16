@@ -91,6 +91,7 @@ pub(crate) async fn cmd_add(
             || args.priority != "none"
             || !args.label.is_empty()
             || args.available_at.is_some()
+            || args.due.is_some()
         {
             bail!(
                 "error natural-add-exclusive hint=\"use plain add flags or --natural, not both\""
@@ -111,19 +112,26 @@ pub(crate) async fn cmd_add(
                 .map(crate::time_input::parse_available_at_input)
                 .transpose()?
                 .unwrap_or_default(),
+            due_on: args
+                .due
+                .as_deref()
+                .map(crate::time_input::parse_due_on_input)
+                .transpose()?
+                .unwrap_or_default(),
             is_epic: args.epic,
         }
     };
     let outcome = create_task(conn, draft).await?;
     let task = outcome.task;
     println!(
-        "created {} ref={} project={} status={} priority={}{} title={}",
+        "created {} ref={} project={} status={} priority={}{}{} title={}",
         display_ref(conn, &task).await?,
         display_suffix(conn, &task.id).await?,
         task.project_key,
         task.status,
         task.priority,
         available_at_display(&task.available_at),
+        due_on_display(&task.due_on),
         quote(&task.title)
     );
     Ok(())
@@ -186,13 +194,14 @@ pub(crate) async fn cmd_internal_natural_add(
         "created task from internal natural-add"
     );
     println!(
-        "created {} ref={} project={} status={} priority={}{} title={}",
+        "created {} ref={} project={} status={} priority={}{}{} title={}",
         display_ref(conn, &task).await?,
         display_suffix(conn, &task.id).await?,
         task.project_key,
         task.status,
         task.priority,
         available_at_display(&task.available_at),
+        due_on_display(&task.due_on),
         quote(&task.title)
     );
     if config.sync.enabled
@@ -209,6 +218,14 @@ fn available_at_display(available_at: &str) -> String {
         String::new()
     } else {
         format!(" available_at={available_at}")
+    }
+}
+
+fn due_on_display(due_on: &str) -> String {
+    if due_on.is_empty() {
+        String::new()
+    } else {
+        format!(" due_on={due_on}")
     }
 }
 
@@ -316,10 +333,12 @@ pub(crate) async fn cmd_list(conn: &mut SqliteConnection, args: ListArgs) -> Res
     let filters = list_task_filters(&args);
     let sort = if args.upcoming {
         TaskSort::AvailableAt
+    } else if args.overdue {
+        TaskSort::DueOn
     } else {
         TaskSort::Updated
     };
-    let direction = if args.upcoming {
+    let direction = if args.upcoming || args.overdue {
         SortDirection::Asc
     } else {
         SortDirection::Desc
@@ -784,6 +803,7 @@ fn bulk_update_for_item(
             .filter(|priority| *priority != item.task.priority.as_str())
             .map(str::to_string),
         available_at: None,
+        due_on: None,
         is_epic: None,
         add_labels: add_labels
             .iter()
@@ -1375,6 +1395,7 @@ fn list_task_filters(args: &ListArgs) -> TaskFilters {
         blocked_only: args.blocked,
         epics_only: args.epics,
         exclude_epics: args.ready,
+        overdue_only: args.overdue,
         availability,
         label: args.label.clone(),
         ..TaskFilters::default()
@@ -1428,6 +1449,17 @@ pub(crate) async fn cmd_edit(conn: &mut SqliteConnection, args: TaskEditArgs) ->
             .map(crate::time_input::parse_available_at_input)
             .transpose()?
     };
+    let due_on = if args.clear_due {
+        if args.due.is_some() {
+            bail!("error due-conflict hint=\"use --due or --clear-due, not both\"");
+        }
+        Some(String::new())
+    } else {
+        args.due
+            .as_deref()
+            .map(crate::time_input::parse_due_on_input)
+            .transpose()?
+    };
     let is_epic = parse_epic_switch(args.epic)?;
     let outcome = update_task(
         conn,
@@ -1439,6 +1471,7 @@ pub(crate) async fn cmd_edit(conn: &mut SqliteConnection, args: TaskEditArgs) ->
             status: args.status,
             priority: args.priority,
             available_at,
+            due_on,
             is_epic,
             add_labels: args.label,
             remove_labels: args.remove_label,
@@ -1447,12 +1480,13 @@ pub(crate) async fn cmd_edit(conn: &mut SqliteConnection, args: TaskEditArgs) ->
     .await?;
     let task = outcome.task;
     println!(
-        "updated {} changed={} status={} priority={}{} title={}",
+        "updated {} changed={} status={} priority={}{}{} title={}",
         display_ref(conn, &task).await?,
         changed_text(outcome.changed),
         task.status,
         task.priority,
         available_at_display(&task.available_at),
+        due_on_display(&task.due_on),
         quote(&task.title)
     );
     Ok(())

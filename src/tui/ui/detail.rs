@@ -860,10 +860,11 @@ fn detail_metadata_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>
             Style::new().fg(FG_MUTED),
         )),
     ];
+    let now_seconds = crate::queue::now_seconds();
     if let Some([relative, local]) = crate::tui::time::availability_summary_lines(
         &item.task.available_at,
         item.queue.band == crate::queue::QueueBand::Available,
-        crate::queue::now_seconds(),
+        now_seconds,
     ) {
         let value_style = Style::new().fg(ACCENT).add_modifier(Modifier::BOLD);
         lines.extend([
@@ -871,6 +872,27 @@ fn detail_metadata_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>
             metadata_label("AVAILABILITY"),
             Line::from(Span::styled(truncate_width(&relative, width), value_style)),
             Line::from(Span::styled(truncate_width(&local, width), value_style)),
+        ]);
+    }
+    if let Some([relative, date]) =
+        crate::tui::time::due_summary_lines(&item.task.due_on, now_seconds)
+    {
+        let color = if !item.task.status.is_open() {
+            FG_MUTED
+        } else {
+            match crate::tui::time::due_state_at(&item.task.due_on, now_seconds) {
+                crate::due::DueState::Overdue(_) => RED,
+                crate::due::DueState::Today => ORANGE,
+                crate::due::DueState::Future(_) => ACCENT,
+                crate::due::DueState::None => FG_MUTED,
+            }
+        };
+        let value_style = Style::new().fg(color).add_modifier(Modifier::BOLD);
+        lines.extend([
+            Line::from(""),
+            metadata_label("DUE"),
+            Line::from(Span::styled(truncate_width(&relative, width), value_style)),
+            Line::from(Span::styled(truncate_width(&date, width), value_style)),
         ]);
     }
     lines.extend(detail_epic_metadata_lines(item));
@@ -1719,6 +1741,7 @@ mod tests {
                 updated_at: "2026-06-20T12:00:00Z".to_string(),
                 queue_activity_at: "2026-06-20T12:00:00Z".to_string(),
                 available_at: String::new(),
+                due_on: String::new(),
                 deleted: false,
                 is_epic: false,
             },

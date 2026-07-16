@@ -39,11 +39,13 @@ aven list --deleted
 aven list --ready
 aven list --blocked
 aven list --upcoming
+aven list --overdue
 aven search "auth bug"
 aven context APP-7KQ9
 aven show APP-7KQ9 --full
 aven add "fix conflict display" --priority high --label bug
 aven add "test rollout" --available-at tomorrow
+aven add "submit report" --due "next monday"
 aven add "add due dates" --epic
 aven epic add APP-7KQ9 APP-7KQ0
 aven epic remove APP-7KQ9 APP-7KQ0
@@ -55,6 +57,8 @@ aven edit APP-7KQ9 --status active
 aven edit APP-7KQ9 --title "clearer title" --priority medium
 aven edit APP-7KQ9 --available-at tomorrow
 aven edit APP-7KQ9 --clear-available-at
+aven edit APP-7KQ9 --due "in 2 weeks"
+aven edit APP-7KQ9 --clear-due
 aven update
 aven project list --search app
 aven label list --search bug
@@ -104,6 +108,13 @@ aven restore APP-7KQ9
   expressions use the local calendar and store canonical UTC. Exact timestamps
   with or without `Z` are UTC. Bare weekdays and times are ambiguous. Do not use
   availability for deadlines.
+- `due_on` is an optional completion deadline on the local calendar. Set it with
+  `add --due <when>` or `edit --due <when>`, clear it with `edit --clear-due`
+  or the value `none`, and use `list --overdue` to inspect missed deadlines.
+  Accepted values include `today`, `tomorrow`, `in N days`, `in N weeks`,
+  `next <weekday>`, and ISO dates. Due dates do not accept times, hide tasks,
+  change status, clear availability, or create notifications. Combine
+  `list --upcoming --overdue` to find deferred tasks whose deadlines passed.
 - Let commands infer the project from the current directory, even if project
   does not exist yet. Pass `--project` only if project is specified by user.
 - Use `project rename <old> <new> [--prefix <prefix>]` when a project itself
@@ -132,10 +143,10 @@ aven restore APP-7KQ9
 - `--json` is available on `context`, `search`, `list`, `show`, `dep list`,
   `epic list`, `project list`, `label list`, `conflict list`, `conflict show`,
   `prime`, and `doctor`.
-- JSON task objects include `available_at`, `is_epic`, `epic_parent`, and
-  `epic_children`. An empty `available_at` means the task is immediately
-  available. Use the epic fields to distinguish epic membership from dependency
-  ordering.
+- JSON task objects include `available_at`, `due_on`, `is_epic`, `epic_parent`,
+  and `epic_children`. An empty `available_at` means the task is immediately
+  available. An empty `due_on` means the task has no deadline. Use the epic
+  fields to distinguish epic membership from dependency ordering.
 - Use `--limit <n>` with list-style reads such as `list`, `project list`,
   `label list`, `conflict list`, and `prime` to bound response size.
 

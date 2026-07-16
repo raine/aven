@@ -1,6 +1,8 @@
 use std::cmp::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use chrono::NaiveDate;
+
 use crate::choices::{TaskPriority, TaskStatus};
 use crate::types::Task;
 
@@ -53,14 +55,17 @@ impl QueueBand {
     }
 }
 
-pub(crate) fn queue_meta(
+pub(crate) fn queue_meta_on(
     task: &Task,
     has_conflict: bool,
     has_unresolved_blockers: bool,
     dependent_count: i64,
     now_seconds: i64,
+    local_today: NaiveDate,
 ) -> QueueMeta {
     let available = available_since_defer(task, now_seconds);
+    let visible = work_visible(task, now_seconds);
+    let due = crate::due::due_state(&task.due_on, local_today);
     let activity_at = if available {
         &task.available_at
     } else {
@@ -74,14 +79,44 @@ pub(crate) fn queue_meta(
         + priority_score(task.priority)
         + idle_score(task.status, idle)
         + dependent_score(dependent_count)
+        + if visible && !task.is_epic {
+            due.score()
+        } else {
+            0
+        }
         + if available { 100 } else { 0 }
         + if has_conflict { 50 } else { 0 };
     QueueMeta {
-        band: queue_band(task, has_conflict, has_unresolved_blockers, idle, available),
+        band: queue_band(
+            task,
+            has_conflict,
+            has_unresolved_blockers,
+            idle,
+            available,
+            visible && due.needs_action(),
+        ),
         score,
         idle_days,
         idle_seconds,
     }
+}
+
+#[cfg(test)]
+fn queue_meta(
+    task: &Task,
+    has_conflict: bool,
+    has_unresolved_blockers: bool,
+    dependent_count: i64,
+    now_seconds: i64,
+) -> QueueMeta {
+    queue_meta_on(
+        task,
+        has_conflict,
+        has_unresolved_blockers,
+        dependent_count,
+        now_seconds,
+        NaiveDate::from_ymd_opt(1970, 1, 1).unwrap(),
+    )
 }
 
 pub(crate) fn queue_order(a: (&Task, QueueMeta), b: (&Task, QueueMeta)) -> Ordering {
@@ -118,6 +153,14 @@ pub(crate) fn unix_seconds(value: &str) -> Option<i64> {
     Some(unix_days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 
+pub(crate) fn work_visible(task: &Task, now_seconds: i64) -> bool {
+    !task.deleted
+        && task.status.is_open()
+        && (task.available_at.is_empty()
+            || unix_seconds(&task.available_at)
+                .is_some_and(|available_at| available_at <= now_seconds))
+}
+
 pub(crate) fn available_since_defer(task: &Task, now_seconds: i64) -> bool {
     if task.deleted || !task.status.is_open() {
         return false;
@@ -142,6 +185,7 @@ fn queue_band(
     has_unresolved_blockers: bool,
     idle_days: i64,
     available: bool,
+    due_actionable: bool,
 ) -> QueueBand {
     if task.is_epic {
         QueueBand::Epics
@@ -152,6 +196,8 @@ fn queue_band(
         QueueBand::NeedsAction
     } else if has_unresolved_blockers {
         QueueBand::Blocked
+    } else if due_actionable {
+        QueueBand::NeedsAction
     } else if available {
         QueueBand::Available
     } else if task.status == TaskStatus::Active
@@ -232,6 +278,7 @@ mod tests {
             updated_at: queue_activity_at.to_string(),
             queue_activity_at: queue_activity_at.to_string(),
             available_at: String::new(),
+            due_on: String::new(),
             deleted: false,
             is_epic: false,
         }
@@ -353,6 +400,65 @@ mod tests {
             queue_meta(&deferred, false, true, 0, 2000).band,
             QueueBand::Blocked
         );
+    }
+
+    #[test]
+    fn due_today_and_overdue_visible_tasks_need_action() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let mut due_today = task("todo", "none", "1000");
+        due_today.due_on = "2026-07-16".to_string();
+        let mut overdue = task("inbox", "none", "1000");
+        overdue.due_on = "2026-07-15".to_string();
+
+        assert_eq!(
+            queue_meta_on(&due_today, false, false, 0, 2000, today).band,
+            QueueBand::NeedsAction
+        );
+        assert_eq!(
+            queue_meta_on(&overdue, false, false, 0, 2000, today).band,
+            QueueBand::NeedsAction
+        );
+    }
+
+    #[test]
+    fn due_does_not_override_blockers_epics_or_future_availability() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let mut due = task("todo", "none", "1000");
+        due.due_on = "2026-07-15".to_string();
+        assert_eq!(
+            queue_meta_on(&due, false, true, 0, 2000, today).band,
+            QueueBand::Blocked
+        );
+
+        due.is_epic = true;
+        let epic_with_due = queue_meta_on(&due, false, false, 0, 2000, today);
+        assert_eq!(epic_with_due.band, QueueBand::Epics);
+        due.due_on.clear();
+        assert_eq!(
+            epic_with_due.score,
+            queue_meta_on(&due, false, false, 0, 2000, today).score
+        );
+
+        due.is_epic = false;
+        due.due_on = "2026-07-15".to_string();
+        due.available_at = "3000".to_string();
+        assert_eq!(
+            queue_meta_on(&due, false, false, 0, 2000, today).band,
+            QueueBand::Later
+        );
+    }
+
+    #[test]
+    fn due_week_adds_bounded_queue_weight() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let mut near = task("todo", "medium", "1000");
+        near.due_on = "2026-07-17".to_string();
+        let mut far = near.clone();
+        far.due_on = "2026-07-23".to_string();
+
+        let near_score = queue_meta_on(&near, false, false, 0, 2000, today).score;
+        let far_score = queue_meta_on(&far, false, false, 0, 2000, today).score;
+        assert!(near_score > far_score);
     }
 
     #[test]

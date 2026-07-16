@@ -557,8 +557,9 @@ fn order_menu_line(
     ])
 }
 
-fn order_menu_items() -> [(TaskOrder, &'static str, &'static str); 5] {
+fn order_menu_items() -> [(TaskOrder, &'static str, &'static str); 6] {
     [
+        (TaskOrder::DueOn, "d", "due"),
         (TaskOrder::Created, "c", "created"),
         (TaskOrder::Updated, "u", "updated"),
         (TaskOrder::Priority, "p", "priority"),

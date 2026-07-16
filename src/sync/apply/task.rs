@@ -39,14 +39,16 @@ pub(super) async fn create_task(conn: &mut SqliteConnection, change: &ChangeWire
     };
     let available_at = p.available_at.unwrap_or_default();
     crate::time_input::validate_available_at_value(&available_at)?;
+    let due_on = p.due_on.unwrap_or_default();
+    crate::time_input::validate_due_on_value(&due_on)?;
     let is_epic = match p.is_epic.as_deref() {
         Some("1") | Some("true") => 1,
         _ => 0,
     };
     let created_at = p.created_at.unwrap_or_else(|| change.created_at.clone());
     sqlx::query(
-        "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, available_at, is_epic)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, available_at, due_on, is_epic)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&workspace_id)
     .bind(&change.entity_id)
@@ -59,6 +61,7 @@ pub(super) async fn create_task(conn: &mut SqliteConnection, change: &ChangeWire
     .bind(&change.created_at)
     .bind(&change.created_at)
     .bind(&available_at)
+    .bind(&due_on)
     .bind(is_epic)
     .execute(&mut *conn)
     .await?;

@@ -4,6 +4,7 @@ use crate::tui::store::{TaskOrder, TaskView};
 
 use super::Action;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandLifecycle {
     Implemented,
@@ -29,7 +30,6 @@ pub(crate) struct CommandSpec {
 }
 
 pub(crate) const PROJECT_PATH_FLOW_REASON: &str = "requires a multi-step project/path picker flow";
-pub(crate) const DUE_SORT_REASON: &str = "tasks do not have due dates";
 
 impl CommandSpec {
     pub(crate) const fn implemented(
@@ -79,6 +79,7 @@ impl CommandSpec {
         }
     }
 
+    #[allow(dead_code)]
     const fn disabled(
         name: &'static str,
         description: &'static str,
@@ -841,6 +842,22 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::BeginEditAvailability,
     ),
     CommandSpec::implemented(
+        "edit-due",
+        "edit selected task due date",
+        "Tasks",
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('u')],
+                label: "e u",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('u')],
+                label: "t e u",
+            },
+        ],
+        Action::BeginEditDue,
+    ),
+    CommandSpec::implemented(
         "edit-labels",
         "edit selected task labels",
         "Tasks",
@@ -1091,7 +1108,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ToggleDeletedFilter,
     ),
     // Order
-    CommandSpec::disabled(
+    CommandSpec::implemented(
         "order-due",
         "sort by due date",
         "Order",
@@ -1099,7 +1116,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('o'), KeyCode::Char('d')],
             label: "o d",
         }],
-        DUE_SORT_REASON,
+        Action::SetOrder(crate::tui::store::TaskOrder::DueOn),
     ),
     CommandSpec::implemented(
         "order-created",
@@ -1375,6 +1392,22 @@ pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
             },
         ],
         Action::BeginEditAvailability,
+    ),
+    CommandSpec::implemented(
+        "detail-edit-due",
+        "edit selected task due date",
+        "Tasks",
+        &[
+            KeySequence {
+                codes: &[KeyCode::Char('e'), KeyCode::Char('u')],
+                label: "e u",
+            },
+            KeySequence {
+                codes: &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('u')],
+                label: "t e u",
+            },
+        ],
+        Action::BeginEditDue,
     ),
     CommandSpec::implemented(
         "detail-edit-labels",

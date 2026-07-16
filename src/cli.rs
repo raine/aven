@@ -361,6 +361,8 @@ pub(crate) struct AddArgs {
     pub(crate) natural: bool,
     #[arg(long, value_name = "WHEN")]
     pub(crate) available_at: Option<String>,
+    #[arg(long, value_name = "WHEN")]
+    pub(crate) due: Option<String>,
 }
 
 #[derive(Args)]
@@ -401,6 +403,8 @@ pub(crate) struct ListArgs {
     pub(crate) epics: bool,
     #[arg(long)]
     pub(crate) upcoming: bool,
+    #[arg(long)]
+    pub(crate) overdue: bool,
     #[arg(long)]
     pub(crate) limit: Option<usize>,
     #[arg(long, help = "Print machine-readable JSON")]
@@ -541,6 +545,10 @@ pub(crate) struct TaskEditArgs {
     pub(crate) available_at: Option<String>,
     #[arg(long)]
     pub(crate) clear_available_at: bool,
+    #[arg(long, value_name = "WHEN")]
+    pub(crate) due: Option<String>,
+    #[arg(long)]
+    pub(crate) clear_due: bool,
     #[arg(long, value_name = "on|off")]
     pub(crate) epic: Option<String>,
     #[arg(long)]

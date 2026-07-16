@@ -42,6 +42,7 @@ async fn create_selected_task(store: &mut TuiStore, title: &str) -> (String, usi
                 priority: "none".to_string(),
                 labels: Vec::new(),
                 available_at: String::new(),
+                due_on: String::new(),
                 is_epic: false,
             },
             None,
@@ -78,6 +79,7 @@ fn task_draft(title: &str) -> TaskDraft {
         priority: "none".to_string(),
         labels: Vec::new(),
         available_at: String::new(),
+        due_on: String::new(),
         is_epic: false,
     }
 }
@@ -1117,6 +1119,7 @@ mod views_filters_and_sort {
                 TaskDraft {
                     title: "Scheduled store task".to_string(),
                     available_at: "2999-03-08T05:00:00Z".to_string(),
+                    due_on: String::new(),
                     ..task_draft("")
                 },
                 None,
@@ -1597,6 +1600,20 @@ mod views_filters_and_sort {
         store.reverse_sort().await.unwrap();
         assert_eq!(store.view_state.view, TaskView::Open);
         assert_eq!(store.view_state.direction, SortDirection::Desc);
+    }
+
+    #[tokio::test]
+    async fn upcoming_keeps_availability_as_effective_order() {
+        let mut store = test_store().await;
+        store.show_view(TaskView::Upcoming).await.unwrap();
+        store.set_order(TaskOrder::DueOn).await.unwrap();
+        store.reverse_sort().await.unwrap();
+
+        assert_eq!(store.view_state.view, TaskView::Upcoming);
+        assert_eq!(store.view_state.sort(), crate::query::TaskSort::AvailableAt);
+        assert_eq!(store.view_state.sort_direction(), SortDirection::Asc);
+        assert_eq!(store.sort_label(), "available");
+        assert_eq!(store.sort_direction_label(), "asc");
     }
 
     #[tokio::test]

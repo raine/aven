@@ -319,6 +319,63 @@ impl TuiStore {
         Ok(Some(result))
     }
 
+    pub(crate) async fn update_due(
+        &mut self,
+        index: Option<usize>,
+        due_on: String,
+        preserve_task: bool,
+    ) -> Result<Option<MutationMessage>> {
+        let Some(mut item) = self.selected_task(index).cloned() else {
+            return Ok(None);
+        };
+        let before = item.task.due_on.clone();
+        if due_on == before {
+            return Ok(Some(
+                self.refresh_task_message(
+                    &item.task.id,
+                    format!("unchanged {} due date", item.display_ref),
+                )
+                .await?,
+            ));
+        }
+
+        self.activate_workspace();
+        let mut conn = self.pool.acquire().await?;
+        let outcome = update_task_operation(
+            &mut conn,
+            &item.task.id,
+            TaskUpdate {
+                due_on: Some(due_on.clone()),
+                ..TaskUpdate::default()
+            },
+        )
+        .await?;
+        drop(conn);
+        self.record_undo_commands(
+            &format!("due date {}", item.display_ref),
+            vec![UndoCommand::SetTaskField {
+                task_id: item.task.id.clone(),
+                field: "due_on".to_string(),
+                before,
+                after: due_on.clone(),
+            }],
+        )
+        .await?;
+        let message = if due_on.is_empty() {
+            format!("cleared {} due date", item.display_ref)
+        } else {
+            format!("set {} due date", item.display_ref)
+        };
+        item.task = outcome.task;
+        let result = if preserve_task {
+            self.refresh_preserved_task_message(index, item, message)
+                .await?
+        } else {
+            self.refresh_task_message(&item.task.id, message).await?
+        };
+        Ok(Some(result))
+    }
+
     pub(crate) async fn update_project(
         &mut self,
         index: Option<usize>,

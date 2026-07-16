@@ -15,6 +15,7 @@ pub(crate) enum TaskSort {
     Project,
     Title,
     AvailableAt,
+    DueOn,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -56,6 +57,7 @@ pub(crate) struct TaskFilters {
     pub(crate) epics_only: bool,
     pub(crate) exclude_epics: bool,
     pub(crate) availability: TaskAvailabilityFilter,
+    pub(crate) overdue_only: bool,
     pub(crate) search: Option<String>,
     pub(crate) task_ids: Vec<String>,
 }

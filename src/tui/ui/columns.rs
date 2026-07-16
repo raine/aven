@@ -458,6 +458,15 @@ fn card_marker_spans(item: &crate::query::TaskListItem, marked: bool) -> Vec<Spa
             Style::new().fg(ORANGE),
         ));
     }
+    if item.task.status.is_open()
+        && crate::tui::time::due_state_at(&item.task.due_on, crate::queue::now_seconds())
+            .needs_action()
+    {
+        spans.push(Span::styled(
+            " !",
+            Style::new().fg(RED).add_modifier(Modifier::BOLD),
+        ));
+    }
     if item.task.is_epic {
         spans.push(Span::styled(
             format!(" {EPIC_MARKER}"),
@@ -543,6 +552,7 @@ mod tests {
                 updated_at: String::new(),
                 queue_activity_at: String::new(),
                 available_at: String::new(),
+                due_on: String::new(),
                 deleted: false,
                 is_epic: false,
             },
@@ -643,6 +653,19 @@ mod tests {
             " × canceled"
         );
         assert_eq!(canceled[1].style.fg, theme::status_style("canceled").fg);
+    }
+
+    #[test]
+    fn overdue_cards_show_deadline_marker() {
+        let mut task = item(0);
+        task.task.due_on = "2000-01-01".to_string();
+        let markers = card_marker_spans(&task, false);
+
+        assert!(markers.iter().any(|span| span.content == " !"));
+        assert!(markers.iter().any(|span| span.style.fg == Some(RED)));
+
+        task.task.status = TaskStatus::Done;
+        assert!(card_marker_spans(&task, false).is_empty());
     }
 
     #[test]

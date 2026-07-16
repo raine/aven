@@ -9,6 +9,7 @@ mod config;
 mod config_edit;
 mod daemon;
 mod db;
+mod due;
 mod fuzzy;
 mod ids;
 mod input;

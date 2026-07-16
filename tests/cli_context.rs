@@ -21,6 +21,10 @@ fn seed_context(env: &TestEnv, db: &std::path::Path) -> (String, String, String)
             "bug",
             "--description",
             "details",
+            "--available-at",
+            "2000-01-01T00:00:00Z",
+            "--due",
+            "2099-01-01",
         ],
     )));
     let leaf = extract_ref(&ok(env.aven(db, ["add", "leaf", "--project", "app"])));
@@ -41,6 +45,8 @@ fn context_json_contains_structured_snapshot() {
     assert_eq!(value["task"]["display_ref"], middle);
     assert_eq!(value["task"]["title"], "middle");
     assert_eq!(value["task"]["description"], "details");
+    assert_eq!(value["task"]["available_at"], "2000-01-01T00:00:00Z");
+    assert_eq!(value["task"]["due_on"], "2099-01-01");
     assert_eq!(value["task"]["deleted"], false);
     assert_eq!(value["project"]["key"], "app");
     assert_eq!(value["project"]["name"], "app");

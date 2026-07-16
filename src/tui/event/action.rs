@@ -54,6 +54,7 @@ pub(crate) enum Action {
     BeginEditProject,
     BeginEditPriority,
     BeginEditAvailability,
+    BeginEditDue,
     BeginEditLabels,
     Delete,
     Restore,

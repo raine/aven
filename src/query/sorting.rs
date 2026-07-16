@@ -58,5 +58,11 @@ pub(super) fn push_sort(
         (TaskSort::AvailableAt, SortDirection::Desc) => {
             query.push(" ORDER BY t.available_at DESC, t.created_at DESC")
         }
+        (TaskSort::DueOn, SortDirection::Asc) => {
+            query.push(" ORDER BY (t.due_on = '') ASC, t.due_on ASC, t.created_at ASC, t.id ASC")
+        }
+        (TaskSort::DueOn, SortDirection::Desc) => {
+            query.push(" ORDER BY (t.due_on = '') ASC, t.due_on DESC, t.created_at DESC, t.id DESC")
+        }
     };
 }

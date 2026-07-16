@@ -3,8 +3,8 @@ use crate::choices::{TaskPriority, TaskStatus};
 use crate::operations::TaskDraft;
 use crate::tui::app_conflicts::CONFLICT_CONFIRM_LOCAL_TITLE;
 use crate::tui::app_edit::{
-    EDIT_AVAILABILITY_TITLE, EDIT_DESCRIPTION_TITLE, EDIT_LABELS_TITLE, EDIT_PROJECT_TITLE,
-    EDIT_TITLE_TITLE,
+    EDIT_AVAILABILITY_TITLE, EDIT_DESCRIPTION_TITLE, EDIT_DUE_TITLE, EDIT_LABELS_TITLE,
+    EDIT_PROJECT_TITLE, EDIT_TITLE_TITLE,
 };
 use crate::tui::app_filters::{SCOPE_PROJECT_TITLE, SWITCH_WORKSPACE_TITLE};
 use crate::tui::app_projects::{DELETE_PROJECT_TITLE, DELETE_TASK_TITLE};
@@ -52,6 +52,7 @@ fn test_task_draft(title: &str) -> TaskDraft {
         priority: "none".to_string(),
         labels: Vec::new(),
         available_at: String::new(),
+        due_on: String::new(),
         is_epic: false,
     }
 }
@@ -640,14 +641,12 @@ mod keyboard_dispatch {
     }
 
     #[tokio::test]
-    async fn due_order_shortcut_reports_unsupported() {
+    async fn due_order_shortcut_sets_sort() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
-        assert_eq!(
-            toast_message(&app).as_deref(),
-            Some(":order-due is disabled: tasks do not have due dates")
-        );
+        assert_eq!(app.store.view_state.order, TaskOrder::DueOn);
+        assert_eq!(toast_message(&app).as_deref(), Some("order due asc"));
     }
 
     #[tokio::test]
@@ -783,22 +782,22 @@ mod keyboard_dispatch {
     }
 
     #[tokio::test]
-    async fn planned_and_disabled_shortcut_and_command_report_non_executing() {
+    async fn implemented_and_planned_commands_report_their_lifecycle() {
         let mut app = test_app().await;
 
         app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
         app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
-        assert_eq!(
-            toast_message(&app).as_deref(),
-            Some(":order-due is disabled: tasks do not have due dates")
-        );
+        assert_eq!(app.store.view_state.order, TaskOrder::DueOn);
+        assert_eq!(toast_message(&app).as_deref(), Some("order due asc"));
 
         app.begin_command();
-        type_chars(&mut app, "order-due").await;
+        type_chars(&mut app, "add-project-path").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         assert_eq!(
             toast_message(&app).as_deref(),
-            Some(":order-due is disabled: tasks do not have due dates")
+            Some(
+                ":add-project-path is not yet implemented: requires a multi-step project/path picker flow"
+            )
         );
         assert!(app.overlay.is_none());
     }
@@ -1462,6 +1461,7 @@ mod command_and_config_overlays {
                 priority: "urgent".to_string(),
                 labels: Vec::new(),
                 available_at: String::new(),
+                due_on: String::new(),
                 is_epic: false,
             },
         )
@@ -1883,6 +1883,7 @@ mod filters_and_workspaces {
                         priority: "none".to_string(),
                         labels: Vec::new(),
                         available_at: String::new(),
+                        due_on: String::new(),
                         is_epic: false,
                     },
                     None,
@@ -1925,6 +1926,7 @@ mod filters_and_workspaces {
                 priority: "urgent".to_string(),
                 labels: vec!["backend".to_string()],
                 available_at: String::new(),
+                due_on: String::new(),
                 is_epic: false,
             },
         )
@@ -2243,7 +2245,7 @@ mod filters_and_workspaces {
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 column: 130,
-                row: 5,
+                row: 6,
                 modifiers: KeyModifiers::NONE,
             },
             (140, 24).into(),
@@ -3230,6 +3232,7 @@ mod authoring {
                 TaskDraft {
                     title: "Scheduled refresh task".to_string(),
                     available_at: "2999-11-01T04:00:00Z".to_string(),
+                    due_on: String::new(),
                     ..test_task_draft("")
                 },
                 None,
@@ -3551,6 +3554,26 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn add_task_ctrl_u_focuses_due_and_clears_its_input() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+
+        app.handle_overlay_key(ctrl_u()).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Due
+        ));
+
+        type_chars(&mut app, "tomorrow").await;
+        app.handle_overlay_key(ctrl_u()).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.focus == AddTaskStep::Due && state.due_on.text.is_empty()
+        ));
+    }
+
+    #[tokio::test]
     async fn add_task_arrow_keys_navigate_visible_fields() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
@@ -3618,7 +3641,8 @@ mod authoring {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         for (column, row, expected) in [
-            (55, 3, AddTaskStep::AvailableAt),
+            (29, 3, AddTaskStep::AvailableAt),
+            (55, 3, AddTaskStep::Due),
             (3, 5, AddTaskStep::Title),
             (3, 8, AddTaskStep::Description),
         ] {
@@ -3649,6 +3673,27 @@ mod authoring {
 
         assert_eq!(app.store.tasks.len(), 1);
         assert!(!app.store.tasks[0].task.available_at.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_task_composer_preserves_availability_and_due_date() {
+        let mut app = test_app().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Ship rollout").await;
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+            panic!("expected composer");
+        };
+        state.available_at = crate::tui::overlay::LineEdit::new("in 2 weeks".to_string());
+        state.due_on = crate::tui::overlay::LineEdit::new("in 3 weeks".to_string());
+
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+        app.store.show_view(TaskView::Upcoming).await.unwrap();
+
+        assert_eq!(app.store.tasks.len(), 1);
+        let task = &app.store.tasks[0].task;
+        assert!(!task.available_at.is_empty());
+        assert_eq!(task.due_on.len(), 10);
+        assert!(task.due_on.as_str() > &task.available_at[..10]);
     }
 
     #[tokio::test]
@@ -4398,6 +4443,40 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn due_editor_sets_clears_and_undoes_deadline() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Due from list")).await;
+
+        app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('u')), (100, 30).into())
+            .await
+            .unwrap();
+
+        let rendered = render_app_text(&mut app, 100, 30);
+        assert!(rendered.contains(EDIT_DUE_TITLE));
+        assert!(rendered.contains("Try today · tomorrow · in 2 weeks · next monday"));
+        type_chars(&mut app, "2099-01-01").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.due_on, "2099-01-01");
+
+        app.begin_edit_due();
+        app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        let selected = app.widgets.table.selected().unwrap();
+        assert!(app.store.tasks[selected].task.due_on.is_empty());
+
+        app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.due_on, "2099-01-01");
+    }
+
+    #[tokio::test]
     async fn detail_availability_editor_reschedules_and_clears_task() {
         let mut app = test_app().await;
         let selected =
@@ -4631,6 +4710,7 @@ mod detail_mode {
                 priority: "none".to_string(),
                 labels: vec!["bug".to_string()],
                 available_at: String::new(),
+                due_on: String::new(),
                 is_epic: false,
             },
         )

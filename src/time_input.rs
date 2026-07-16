@@ -9,6 +9,38 @@ pub(crate) fn parse_available_at_input(input: &str) -> Result<String> {
     parse_available_at_input_at(input, Local::now())
 }
 
+pub(crate) fn parse_due_on_input(input: &str) -> Result<String> {
+    parse_due_on_input_at(input, Local::now().date_naive())
+}
+
+fn parse_due_on_input_at(input: &str, today: NaiveDate) -> Result<String> {
+    let input = input.trim();
+    if input.is_empty() {
+        bail!("error due-empty");
+    }
+    if input.eq_ignore_ascii_case("none") || input.eq_ignore_ascii_case("clear") {
+        return Ok(String::new());
+    }
+
+    let normalized = input
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    let date = parse_local_date_expression(&normalized, today, "due")?.with_context(|| {
+        if weekday(&normalized).is_some() {
+            format!("error ambiguous-due-weekday value={input:?} hint=\"use next {normalized}\"")
+        } else {
+            format!(
+                "error invalid-due value={input:?} hint=\"use today, tomorrow, in N days, in N weeks, next monday, or an ISO date\""
+            )
+        }
+    })?;
+    let value = date.format("%Y-%m-%d").to_string();
+    validate_due_on_value(&value)?;
+    Ok(value)
+}
+
 fn parse_available_at_input_at<Tz>(input: &str, now: DateTime<Tz>) -> Result<String>
 where
     Tz: TimeZone + Clone,
@@ -62,7 +94,7 @@ where
 
     let timezone = now.timezone();
     let today = now.date_naive();
-    let date = parse_local_date_expression(date_input, today)?.with_context(|| {
+    let date = parse_local_date_expression(date_input, today, "available-at")?.with_context(|| {
         if weekday(date_input).is_some() {
             format!(
                 "error ambiguous-available-at-weekday value={input:?} hint=\"use next {date_input}\""
@@ -85,6 +117,25 @@ pub(crate) fn available_at_error_message(error: &anyhow::Error) -> String {
         .unwrap_or_else(|| {
             "try tomorrow, in 2 weeks, next monday at 9am, or YYYY-MM-DD".to_string()
         })
+}
+
+pub(crate) fn due_on_error_message(error: &anyhow::Error) -> String {
+    let message = format!("{error:#}");
+    message
+        .rsplit_once("hint=\"")
+        .and_then(|(_, hint)| hint.split_once('"'))
+        .map(|(hint, _)| hint.to_string())
+        .unwrap_or_else(|| "try tomorrow, in 2 weeks, next monday, or YYYY-MM-DD".to_string())
+}
+
+pub(crate) fn validate_due_on_value(value: &str) -> Result<()> {
+    if value.is_empty() {
+        return Ok(());
+    }
+    if !is_iso_date(value) || parse_iso_date(value).is_err() {
+        bail!("error invalid-due value={value} hint=\"use YYYY-MM-DD or empty\"");
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_available_at_value(value: &str) -> Result<()> {
@@ -110,7 +161,11 @@ pub(crate) fn validate_available_at_value(value: &str) -> Result<()> {
     Ok(())
 }
 
-fn parse_local_date_expression(value: &str, today: NaiveDate) -> Result<Option<NaiveDate>> {
+fn parse_local_date_expression(
+    value: &str,
+    today: NaiveDate,
+    field_slug: &str,
+) -> Result<Option<NaiveDate>> {
     let offset_days = match value {
         "today" => Some(0),
         "tomorrow" => Some(1),
@@ -124,7 +179,7 @@ fn parse_local_date_expression(value: &str, today: NaiveDate) -> Result<Option<N
     if let ["in", amount, unit] = words.as_slice() {
         let amount = amount.parse::<u64>().with_context(|| {
             format!(
-                "error invalid-available-at-amount value={amount:?} hint=\"use a whole number, such as in 2 weeks\""
+                "error invalid-{field_slug}-amount value={amount:?} hint=\"use a whole number, such as in 2 weeks\""
             )
         })?;
         let days = match *unit {
@@ -326,6 +381,34 @@ mod tests {
 
     fn parse_fixed(input: &str) -> Result<String> {
         parse_available_at_input_at(input, fixed_now())
+    }
+
+    fn parse_due_fixed(input: &str) -> Result<String> {
+        parse_due_on_input_at(input, fixed_now().date_naive())
+    }
+
+    #[test]
+    fn parses_due_calendar_expressions_without_timezones() {
+        assert_eq!(parse_due_fixed("today").unwrap(), "2026-07-16");
+        assert_eq!(parse_due_fixed("tomorrow").unwrap(), "2026-07-17");
+        assert_eq!(parse_due_fixed("in 2 weeks").unwrap(), "2026-07-30");
+        assert_eq!(parse_due_fixed("next monday").unwrap(), "2026-07-20");
+        assert_eq!(parse_due_fixed("2028-02-29").unwrap(), "2028-02-29");
+    }
+
+    #[test]
+    fn due_input_clears_and_rejects_timed_or_invalid_dates() {
+        assert_eq!(parse_due_fixed("none").unwrap(), "");
+        assert_eq!(parse_due_fixed("clear").unwrap(), "");
+        assert!(parse_due_fixed("tomorrow at 9am").is_err());
+        assert!(parse_due_fixed("2026-07-17T09:00:00Z").is_err());
+        assert!(
+            parse_due_fixed("monday")
+                .unwrap_err()
+                .to_string()
+                .contains("use next monday")
+        );
+        assert!(validate_due_on_value("2026-02-29").is_err());
     }
 
     #[test]

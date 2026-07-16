@@ -1029,6 +1029,16 @@ impl App {
                 }
                 return Ok(());
             }
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && key.code == KeyCode::Char('u')
+                && state.focus != AddTaskStep::Due
+            {
+                self.overlay = Some(overlay);
+                if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
+                    state.focus = AddTaskStep::Due;
+                }
+                return Ok(());
+            }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
                 let return_focus = state.focus;
                 self.overlay = Some(overlay);
@@ -1217,6 +1227,7 @@ impl App {
             Action::BeginEditProject => self.begin_edit_project(),
             Action::BeginEditPriority => self.begin_edit_priority(),
             Action::BeginEditAvailability => self.begin_edit_availability(),
+            Action::BeginEditDue => self.begin_edit_due(),
             Action::BeginEditLabels => self.begin_edit_labels(),
             Action::Delete => self.begin_delete_task(),
             Action::Restore => self.update_deleted(false).await?,

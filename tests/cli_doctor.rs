@@ -375,6 +375,18 @@ fn doctor_with_integrity_reports_orphaned_task_data() {
 }
 
 #[test]
+fn doctor_with_integrity_reports_invalid_due_dates() {
+    let env = TestEnv::new();
+    let db = env.db("integrity-due-doctor.sqlite");
+
+    ok(env.aven(&db, ["add", "invalid deadline", "--project", "app"]));
+    run_sql(&db, "UPDATE tasks SET due_on = '2026-99-99'");
+
+    let output = ok(env.aven(&db, ["doctor", "--integrity"]));
+    contains_all(&output, &["Integrity", "!! task due dates", "!! result"]);
+}
+
+#[test]
 fn doctor_json_reports_default_database_health() {
     let env = TestEnv::new();
     let db = env.db("doctor-json.sqlite");

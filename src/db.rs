@@ -329,6 +329,7 @@ pub(crate) fn task_from_row(row: &SqliteRow) -> Result<Task> {
         updated_at: row.try_get("updated_at")?,
         queue_activity_at: row.try_get("queue_activity_at")?,
         available_at: row.try_get("available_at")?,
+        due_on: row.try_get("due_on")?,
         deleted: row.try_get::<i64, _>("deleted")? != 0,
         is_epic: row.try_get::<i64, _>("is_epic")? != 0,
     })

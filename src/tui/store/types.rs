@@ -70,6 +70,7 @@ pub(crate) enum TaskOrder {
     Priority,
     Project,
     Title,
+    DueOn,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,6 +179,14 @@ impl TaskViewState {
         }
     }
 
+    pub(crate) fn sort_direction(&self) -> SortDirection {
+        if self.view == TaskView::Upcoming {
+            SortDirection::Asc
+        } else {
+            self.direction
+        }
+    }
+
     pub(crate) fn render_mode(&self) -> TaskListRenderMode {
         match self.view {
             TaskView::Queue => TaskListRenderMode::Queue,
@@ -198,6 +207,7 @@ impl From<TaskOrder> for TaskSort {
             TaskOrder::Priority => Self::Priority,
             TaskOrder::Project => Self::Project,
             TaskOrder::Title => Self::Title,
+            TaskOrder::DueOn => Self::DueOn,
         }
     }
 }

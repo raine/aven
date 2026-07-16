@@ -1,7 +1,8 @@
 use anyhow::Result;
+use chrono::NaiveDate;
 use sqlx::SqliteConnection;
 
-use crate::queue::queue_meta;
+use crate::queue::queue_meta_on;
 use crate::refs::display_refs_for_tasks;
 use crate::task_enrichment::load_task_enrichment;
 use crate::types::Task;
@@ -17,6 +18,7 @@ pub(crate) async fn build_task_list_items(
     workspace_id: &str,
     tasks: Vec<Task>,
     now_seconds: i64,
+    local_today: NaiveDate,
 ) -> Result<Vec<TaskListItem>> {
     let display_refs = display_refs_for_tasks(conn, &tasks).await?;
     let task_ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
@@ -59,12 +61,13 @@ pub(crate) async fn build_task_list_items(
             .remove(&task_id)
             .unwrap_or_default();
         let epic_parent = enrichment.epic_parent_by_task.remove(&task_id);
-        let queue = queue_meta(
+        let queue = queue_meta_on(
             &task,
             has_conflict,
             unresolved_blocker_count > 0,
             dependent_count,
             now_seconds,
+            local_today,
         );
 
         items.push(TaskListItem {

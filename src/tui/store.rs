@@ -185,7 +185,7 @@ impl TuiStore {
                 filters,
                 self.view_state.query_mode(),
                 self.view_state.sort(),
-                self.view_state.direction,
+                self.view_state.sort_direction(),
             )
             .await?;
         }

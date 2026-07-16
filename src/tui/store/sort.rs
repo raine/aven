@@ -10,17 +10,21 @@ impl TuiStore {
         if self.view_state.view == TaskView::Search {
             return "relevance";
         }
+        if self.view_state.view == TaskView::Upcoming {
+            return "available";
+        }
         match self.view_state.order {
             TaskOrder::Created => "created",
             TaskOrder::Updated => "updated",
             TaskOrder::Priority => "priority",
             TaskOrder::Project => "project",
             TaskOrder::Title => "title",
+            TaskOrder::DueOn => "due",
         }
     }
 
     pub(crate) fn sort_direction_label(&self) -> &'static str {
-        match self.view_state.direction {
+        match self.view_state.sort_direction() {
             crate::query::SortDirection::Asc => "asc",
             crate::query::SortDirection::Desc => "desc",
         }
