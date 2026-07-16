@@ -22,10 +22,10 @@ use crate::tui::platform::is_editor_prefix_key;
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
 use crate::tui::store::TaskView;
 use crate::tui::ui::{
-    database_stats_scroll_cap, detail_child_task_at_position, detail_help_scroll_cap,
-    detail_section_scroll_target, detail_selected_text, detail_text_cell_at_position,
-    help_scroll_cap, prefix_hint_scroll_cap, recent_action_at_position, task_at_position,
-    task_status_at_position, text_panel_scroll_cap,
+    composer_help_scroll_cap, database_stats_scroll_cap, detail_child_task_at_position,
+    detail_help_scroll_cap, detail_section_scroll_target, detail_selected_text,
+    detail_text_cell_at_position, help_scroll_cap, prefix_hint_scroll_cap,
+    recent_action_at_position, task_at_position, task_status_at_position, text_panel_scroll_cap,
 };
 
 impl App {
@@ -1084,7 +1084,10 @@ impl App {
             }
         }
 
-        let scroll_cap = match overlay {
+        let scroll_cap = match &overlay {
+            OverlayState::AddTask(state) if matches!(state.mode, AddTaskMode::Help { .. }) => {
+                composer_help_scroll_cap(terminal_size.height, self.add_task_only)
+            }
             OverlayState::DetailHelp { .. } => detail_help_scroll_cap(terminal_size.height),
             OverlayState::DatabaseStats { .. } => database_stats_scroll_cap(terminal_size.height),
             _ => help_scroll_cap(terminal_size.height),

@@ -43,7 +43,7 @@ pub(crate) use self::detail::{
     detail_text_cell_at_position,
 };
 pub(crate) use self::overlays::{
-    add_task_field_at, database_stats_scroll_cap, text_panel_scroll_cap,
+    add_task_field_at, composer_help_scroll_cap, database_stats_scroll_cap, text_panel_scroll_cap,
 };
 pub(crate) use self::recent_actions::recent_action_at_position;
 pub(crate) use self::shortcuts::{detail_help_scroll_cap, help_scroll_cap, prefix_hint_scroll_cap};

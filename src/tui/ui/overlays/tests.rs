@@ -639,6 +639,51 @@ mod add_task_overlay {
     }
 
     #[test]
+    fn composer_help_scrolls_with_a_stable_dialog_and_scrollbar() {
+        let top = render_overlay_view_at(
+            OverlayView::AddTask(AddTaskView {
+                mode: AddTaskMode::Help { scroll: 0 },
+                ..add_task_view()
+            }),
+            100,
+            20,
+        );
+        let bottom = render_overlay_view_at(
+            OverlayView::AddTask(AddTaskView {
+                mode: AddTaskMode::Help {
+                    scroll: composer_help_scroll_cap(20, false),
+                },
+                ..add_task_view()
+            }),
+            100,
+            20,
+        );
+
+        let top_border = top.lines().position(|line| line.contains("Composer help"));
+        let bottom_border = bottom
+            .lines()
+            .position(|line| line.contains("Composer help"));
+        let top_end = top.lines().position(|line| line.contains('╰'));
+        let bottom_end = bottom.lines().position(|line| line.contains('╰'));
+        assert_eq!(top_border, bottom_border);
+        assert_eq!(top_end, bottom_end);
+        assert!(top.contains('▲'));
+        assert!(top.contains('▼'));
+        assert!(top.contains("Tab / Shift+Tab"));
+        assert!(!top.contains("confirm discard"));
+        assert!(!bottom.contains("Tab / Shift+Tab"));
+        assert!(bottom.contains("confirm discard"));
+        assert!(bottom.contains("j/k scroll"));
+    }
+
+    #[test]
+    fn composer_help_scroll_cap_matches_add_task_layout() {
+        assert_eq!(composer_help_scroll_cap(20, false), 2);
+        assert_eq!(composer_help_scroll_cap(20, true), 0);
+        assert_eq!(composer_help_scroll_cap(30, false), 0);
+    }
+
+    #[test]
     fn composer_help_uses_muted_keys_and_dim_descriptions() {
         let line = composer_help_line("Ctrl-a", "jump to availability");
 

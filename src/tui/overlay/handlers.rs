@@ -142,10 +142,11 @@ pub(crate) fn handle_generic_overlay_key(
                     return OverlayOutcome::None(OverlayState::AddTask(state));
                 }
                 AddTaskMode::Help { mut scroll } => {
+                    scroll = scroll.min(help_scroll_cap);
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') => {}
                         KeyCode::Down | KeyCode::Char('j') => {
-                            scroll = scroll.saturating_add(1);
+                            scroll = scroll.saturating_add(1).min(help_scroll_cap);
                             state.mode = AddTaskMode::Help { scroll };
                         }
                         KeyCode::Up | KeyCode::Char('k') => {
@@ -815,6 +816,26 @@ mod tests {
 
     fn handle(key: KeyEvent, overlay: OverlayState) -> OverlayOutcome {
         handle_generic_overlay_key(key, overlay, 100)
+    }
+
+    #[test]
+    fn composer_help_scroll_stops_at_viewport_cap() {
+        let mut state = add_task_state(AddTaskStep::Title);
+        state.mode = AddTaskMode::Help { scroll: 10 };
+
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle_generic_overlay_key(key(KeyCode::Char('k')), OverlayState::AddTask(state), 2)
+        else {
+            panic!("expected add task state");
+        };
+        assert_eq!(state.mode, AddTaskMode::Help { scroll: 1 });
+
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle_generic_overlay_key(key(KeyCode::Char('j')), OverlayState::AddTask(state), 0)
+        else {
+            panic!("expected add task state");
+        };
+        assert_eq!(state.mode, AddTaskMode::Help { scroll: 0 });
     }
 
     #[test]

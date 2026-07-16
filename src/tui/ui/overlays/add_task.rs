@@ -7,6 +7,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::input::{clipped_input_line, cursor_cell};
+use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use super::super::truncate::truncate_chars;
 use super::confirm::render_confirm;
 use super::multiline::add_task_description_input_line;
@@ -407,6 +408,33 @@ fn join_lines(lines: Vec<Line<'static>>, separator: &'static str) -> Line<'stati
     Line::from(spans)
 }
 
+const COMPOSER_HELP_TOPICS: &[(&str, &str)] = &[
+    ("Tab / Shift+Tab", "next / previous field"),
+    ("Arrows", "move fields; edit cursor in Available"),
+    ("Enter", "open metadata or create from title"),
+    ("Enter", "newline in description"),
+    ("Available", "tomorrow · in 2 weeks · next mon at 9am"),
+    ("Available", "YYYY-MM-DD · UTC timestamp · epoch seconds"),
+    ("Available", "local time; empty or now = immediate"),
+    ("Ctrl-p/t/r/l/a", "jump to metadata fields"),
+    ("Ctrl-Enter", "create from any field"),
+    ("Ctrl-s", "portable create fallback"),
+    ("Ctrl-n", "create with AI"),
+    ("F1", "open this help"),
+    ("Ctrl-x Ctrl-e", "edit description externally"),
+    ("Esc", "cancel or confirm discard"),
+];
+const COMPOSER_HELP_HEIGHT: u16 = 18;
+const COMPOSER_HELP_FIXED_ROWS: u16 = 4;
+
+pub(crate) fn composer_help_scroll_cap(frame_height: u16, full_frame: bool) -> u16 {
+    let frame_padding = if full_frame { 2 } else { 4 };
+    let add_task_content_height = frame_height.saturating_sub(frame_padding).min(20);
+    let dialog_height = COMPOSER_HELP_HEIGHT.min(add_task_content_height);
+    let visible_rows = dialog_height.saturating_sub(COMPOSER_HELP_FIXED_ROWS) as usize;
+    COMPOSER_HELP_TOPICS.len().saturating_sub(visible_rows) as u16
+}
+
 fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) {
     if matches!(&state.mode, AddTaskMode::ConfirmDiscard) {
         render_confirm(
@@ -417,6 +445,10 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
                 prompt: "Discard this task draft?".to_string(),
             },
         );
+        return;
+    }
+    if let AddTaskMode::Help { scroll } = &state.mode {
+        render_composer_help(frame, content, *scroll);
         return;
     }
 
@@ -457,32 +489,7 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
             };
             (view.title.clone(), tag_combobox_lines(&view), 64, BG_PANEL)
         }
-        AddTaskMode::Help { scroll } => {
-            let all = [
-                ("Tab / Shift+Tab", "next / previous field"),
-                ("Arrows", "move fields; edit cursor in Available"),
-                ("Enter", "open metadata or create from title"),
-                ("Enter", "newline in description"),
-                ("Available", "tomorrow · in 2 weeks · next mon at 9am"),
-                ("Available", "YYYY-MM-DD · UTC timestamp · epoch seconds"),
-                ("Available", "local time; empty or now = immediate"),
-                ("Ctrl-p/t/r/l/a", "jump to metadata fields"),
-                ("Ctrl-Enter", "create from any field"),
-                ("Ctrl-s", "portable create fallback"),
-                ("Ctrl-n", "create with AI"),
-                ("F1", "open this help"),
-                ("Ctrl-x Ctrl-e", "edit description externally"),
-                ("Esc", "cancel or confirm discard"),
-            ];
-            let mut lines = all
-                .into_iter()
-                .skip(*scroll as usize)
-                .map(|(keys, description)| composer_help_line(keys, description))
-                .collect::<Vec<_>>();
-            lines.push(Line::from(""));
-            lines.push(dialog_hint_line(&[("j/k", "scroll"), ("Esc", "close")]));
-            ("Composer help".to_string(), lines, 66, BG_ALT)
-        }
+        AddTaskMode::Help { .. } => unreachable!("composer help renders separately"),
         AddTaskMode::ConfirmDiscard => unreachable!("discard confirmation renders above"),
     };
     let width = width.min(content.width.saturating_sub(2)).max(1);
@@ -501,6 +508,49 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
             .style(Style::new().fg(FG).bg(background)),
         inner,
     );
+}
+
+fn render_composer_help(frame: &mut Frame, content: Rect, scroll: u16) {
+    let width = 66.min(content.width.saturating_sub(2)).max(1);
+    let height = COMPOSER_HELP_HEIGHT.min(content.height).max(1);
+    let area = Rect {
+        x: content.x + content.width.saturating_sub(width) / 2,
+        y: content.y + content.height.saturating_sub(height) / 2,
+        width,
+        height,
+    };
+    let inner = Dialog::new("Composer help", width, height).render_block_at(frame, area);
+    let help_area = Rect {
+        height: inner.height.saturating_sub(2),
+        ..inner
+    };
+    let visible_rows = help_area.height as usize;
+    let start = clamp_scroll_start(scroll, COMPOSER_HELP_TOPICS.len(), visible_rows);
+    let lines = COMPOSER_HELP_TOPICS
+        .iter()
+        .skip(start)
+        .take(visible_rows)
+        .map(|(keys, description)| composer_help_line(keys, description))
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG_ALT)),
+        help_area,
+    );
+    if help_area.height > 0 {
+        render_vertical_scrollbar(frame, help_area, COMPOSER_HELP_TOPICS.len(), scroll);
+    }
+    if inner.height > 0 {
+        let hint_area = Rect {
+            y: inner.bottom().saturating_sub(1),
+            height: 1,
+            ..inner
+        };
+        frame.render_widget(
+            Paragraph::new(dialog_hint_line(&[("j/k", "scroll"), ("Esc", "close")]))
+                .style(Style::new().fg(FG).bg(BG_ALT)),
+            hint_area,
+        );
+    }
 }
 
 pub(in crate::tui::ui) fn composer_help_line(
