@@ -1,7 +1,4 @@
-use std::path::Path;
-
-use anyhow::Result;
-use base64::Engine;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 use crate::config::InlineImagesConfig;
 
@@ -96,24 +93,57 @@ fn active_protocol(terminal: InlineImageTerminal<'_>) -> Option<InlineImageProto
     None
 }
 
+pub(crate) fn kitty_image_identifiers(
+    source_hash: &str,
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+) -> (u32, u32) {
+    let mut hasher = DefaultHasher::new();
+    (
+        "aven-inline-image",
+        std::process::id(),
+        source_hash,
+        x,
+        y,
+        width,
+        height,
+    )
+        .hash(&mut hasher);
+    let hash = hasher.finish();
+    let image_number = (hash as u32 & 0x7fff_ffff).max(1);
+    let placement_id = ((hash >> 32) as u32 & 0x7fff_ffff).max(1);
+    (image_number, placement_id)
+}
+
 pub(crate) fn inline_image_escape(
-    path: &Path,
+    encoded_png: &str,
+    byte_len: usize,
     width_cols: u16,
     height_rows: u16,
     backend: InlineImageBackend,
-) -> Result<String> {
+    kitty_ids: (u32, u32),
+) -> String {
     match backend {
-        InlineImageBackend::None => Ok(String::new()),
-        InlineImageBackend::Iterm2 => iterm2_escape(path, width_cols, height_rows, false),
-        InlineImageBackend::Iterm2Tmux => iterm2_escape(path, width_cols, height_rows, true),
-        InlineImageBackend::Kitty => kitty_escape(path, width_cols, height_rows, false),
-        InlineImageBackend::KittyTmux => kitty_escape(path, width_cols, height_rows, true),
+        InlineImageBackend::None => String::new(),
+        InlineImageBackend::Iterm2 => {
+            iterm2_escape(encoded_png, byte_len, width_cols, height_rows, false)
+        }
+        InlineImageBackend::Iterm2Tmux => {
+            iterm2_escape(encoded_png, byte_len, width_cols, height_rows, true)
+        }
+        InlineImageBackend::Kitty => {
+            kitty_escape(encoded_png, width_cols, height_rows, false, kitty_ids)
+        }
+        InlineImageBackend::KittyTmux => {
+            kitty_escape(encoded_png, width_cols, height_rows, true, kitty_ids)
+        }
     }
 }
 
 pub(crate) fn inline_image_delete_escape(
-    x: u16,
-    y: u16,
+    kitty_ids: (u32, u32),
     backend: InlineImageBackend,
 ) -> Option<String> {
     let tmux = match backend {
@@ -123,47 +153,47 @@ pub(crate) fn inline_image_delete_escape(
             return None;
         }
     };
-    let escape = format!(
-        "\x1b_Ga=d,d=p,q=2,x={},y={}\x1b\\",
-        x.saturating_add(1),
-        y.saturating_add(1)
-    );
+    let (image_number, placement_id) = kitty_ids;
+    let escape = format!("\x1b_Ga=d,d=N,q=2,I={image_number},p={placement_id}\x1b\\");
     Some(if tmux { tmux_wrap(&escape) } else { escape })
 }
 
 pub(crate) fn iterm2_escape(
-    path: &Path,
+    encoded_png: &str,
+    byte_len: usize,
     width_cols: u16,
     height_rows: u16,
     tmux: bool,
-) -> Result<String> {
-    let bytes = std::fs::read(path)?;
-    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+) -> String {
     let escape = format!(
-        "\x1b]1337;File=inline=1;width={}cells;height={}cells;size={};preserveAspectRatio=1:{encoded}\x07",
+        "\x1b]1337;File=inline=1;width={}cells;height={}cells;size={byte_len};preserveAspectRatio=1:{encoded_png}\x07",
         width_cols.max(1),
         height_rows.max(1),
-        bytes.len()
     );
-    Ok(if tmux { tmux_wrap(&escape) } else { escape })
+    if tmux { tmux_wrap(&escape) } else { escape }
 }
 
-const KITTY_CHUNK_SIZE: usize = 128 * 1024;
+const KITTY_CHUNK_SIZE: usize = 4_000;
 
-fn kitty_escape(path: &Path, width_cols: u16, height_rows: u16, tmux: bool) -> Result<String> {
-    let bytes = std::fs::read(path)?;
-    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    let chunks = encoded
+fn kitty_escape(
+    encoded_png: &str,
+    width_cols: u16,
+    height_rows: u16,
+    tmux: bool,
+    kitty_ids: (u32, u32),
+) -> String {
+    let (image_number, placement_id) = kitty_ids;
+    let chunks = encoded_png
         .as_bytes()
         .chunks(KITTY_CHUNK_SIZE)
         .collect::<Vec<_>>();
     let mut escape = String::new();
     for (index, chunk) in chunks.iter().enumerate() {
         let more = usize::from(index + 1 < chunks.len());
-        let chunk = std::str::from_utf8(chunk)?;
+        let chunk = std::str::from_utf8(chunk).expect("base64 is valid UTF-8");
         let apc = if index == 0 {
             format!(
-                "\x1b_Ga=T,f=100,t=d,q=2,C=1,c={},r={},m={more};{chunk}\x1b\\",
+                "\x1b_Ga=T,f=100,t=d,q=2,C=1,N=1,I={image_number},p={placement_id},c={},r={},m={more};{chunk}\x1b\\",
                 width_cols.max(1),
                 height_rows.max(1)
             )
@@ -178,7 +208,7 @@ fn kitty_escape(path: &Path, width_cols: u16, height_rows: u16, tmux: bool) -> R
     }
     if escape.is_empty() {
         let apc = format!(
-            "\x1b_Ga=T,f=100,t=d,q=2,C=1,c={},r={}\x1b\\",
+            "\x1b_Ga=T,f=100,t=d,q=2,C=1,N=1,I={image_number},p={placement_id},c={},r={}\x1b\\",
             width_cols.max(1),
             height_rows.max(1)
         );
@@ -188,7 +218,7 @@ fn kitty_escape(path: &Path, width_cols: u16, height_rows: u16, tmux: bool) -> R
             escape.push_str(&apc);
         }
     }
-    Ok(escape)
+    escape
 }
 
 fn tmux_wrap(escape: &str) -> String {
@@ -302,10 +332,6 @@ mod tests {
 
     #[test]
     fn forced_on_wraps_iterm_escape_for_tmux() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("chart.png");
-        std::fs::write(&path, b"png bytes").unwrap();
-
         assert_eq!(
             active_backend(
                 InlineImagesConfig::On,
@@ -313,7 +339,7 @@ mod tests {
             ),
             InlineImageBackend::Iterm2Tmux
         );
-        let escape = iterm2_escape(&path, 20, 6, true).unwrap();
+        let escape = iterm2_escape("cG5nIGJ5dGVz", 9, 20, 6, true);
         assert!(escape.starts_with("\x1bPtmux;\x1b\x1b]1337;File=inline=1;"));
         assert!(escape.contains("width=20cells;height=6cells;size=9;preserveAspectRatio=1:"));
         assert!(escape.ends_with("\x07\x1b\\"));
@@ -331,74 +357,89 @@ mod tests {
     }
 
     #[test]
-    fn kitty_escape_transmits_png_bytes_directly() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("chart.png");
-        std::fs::write(&path, b"png bytes").unwrap();
+    fn kitty_escape_transmits_encoded_png_payload() {
+        let escape = kitty_escape("cG5nIGJ5dGVz", 20, 6, false, (11, 12));
 
-        let escape = kitty_escape(&path, 20, 6, false).unwrap();
-
-        assert!(escape.starts_with("\x1b_Ga=T,f=100,t=d,q=2,C=1,c=20,r=6,m=0;"));
+        assert!(escape.starts_with("\x1b_Ga=T,f=100,t=d,q=2,C=1,N=1,I=11,p=12,c=20,r=6,m=0;"));
         assert!(escape.contains("cG5nIGJ5dGVz"));
         assert!(escape.ends_with("\x1b\\"));
     }
 
     #[test]
-    fn kitty_escape_chunks_large_payloads() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("large.png");
-        std::fs::write(&path, vec![b'a'; 100_000]).unwrap();
-
-        let escape = kitty_escape(&path, 20, 6, false).unwrap();
+    fn kitty_escape_chunks_large_payloads_with_bounded_packets() {
+        let escape = kitty_escape(&"a".repeat(100_000), 20, 6, false, (11, 12));
 
         assert!(escape.contains("m=1;"));
         assert!(escape.contains("\x1b_Ga=T,q=2,m=0;"));
+        assert!(
+            escape
+                .split_inclusive("\x1b\\")
+                .all(|packet| packet.len() <= 4_096)
+        );
     }
 
     #[test]
-    fn forced_on_wraps_kitty_escape_for_tmux() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("chart.png");
-        std::fs::write(&path, b"png bytes").unwrap();
-
-        let escape = kitty_escape(&path, 20, 6, true).unwrap();
+    fn forced_on_wraps_kitty_escape_for_tmux_with_bounded_packets() {
+        let escape = kitty_escape(&"a".repeat(100_000), 20, 6, true, (11, 12));
 
         assert!(escape.starts_with("\x1bPtmux;\x1b\x1b_Ga=T,"));
         assert!(escape.ends_with("\x1b\x1b\\\x1b\\"));
+        let starts = escape
+            .match_indices("\x1bPtmux;")
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        assert!(
+            starts
+                .windows(2)
+                .all(|window| window[1] - window[0] <= 4_096)
+        );
+        assert!(escape.len() - starts.last().copied().unwrap() <= 4_096);
     }
 
     #[test]
     fn dispatcher_preserves_iterm2_escape() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("chart.png");
-        std::fs::write(&path, b"png bytes").unwrap();
-
-        let escape = inline_image_escape(&path, 20, 6, InlineImageBackend::Iterm2).unwrap();
+        let escape = inline_image_escape(
+            "cG5nIGJ5dGVz",
+            9,
+            20,
+            6,
+            InlineImageBackend::Iterm2,
+            (11, 12),
+        );
 
         assert!(escape.starts_with("\x1b]1337;File=inline=1;"));
         assert!(escape.contains("width=20cells;height=6cells;size=9;preserveAspectRatio=1:"));
     }
 
     #[test]
-    fn kitty_delete_escape_uses_one_based_coordinates() {
+    fn kitty_identifiers_are_stable_and_placement_specific() {
+        let first = kitty_image_identifiers(&"0".repeat(64), 4, 7, 20, 6);
+        assert_eq!(first, kitty_image_identifiers(&"0".repeat(64), 4, 7, 20, 6));
+        assert_ne!(first, kitty_image_identifiers(&"0".repeat(64), 4, 8, 20, 6));
+        assert_ne!(first.0, 0);
+        assert_ne!(first.1, 0);
+    }
+
+    #[test]
+    fn kitty_delete_escape_targets_aven_owned_identifiers() {
         assert_eq!(
-            inline_image_delete_escape(4, 7, InlineImageBackend::Kitty).unwrap(),
-            "\x1b_Ga=d,d=p,q=2,x=5,y=8\x1b\\"
+            inline_image_delete_escape((11, 12), InlineImageBackend::Kitty).unwrap(),
+            "\x1b_Ga=d,d=N,q=2,I=11,p=12\x1b\\"
         );
     }
 
     #[test]
     fn kitty_tmux_delete_escape_is_wrapped() {
-        let escape = inline_image_delete_escape(4, 7, InlineImageBackend::KittyTmux).unwrap();
+        let escape = inline_image_delete_escape((11, 12), InlineImageBackend::KittyTmux).unwrap();
 
-        assert!(escape.starts_with("\x1bPtmux;\x1b\x1b_Ga=d,d=p,q=2,x=5,y=8"));
+        assert!(escape.starts_with("\x1bPtmux;\x1b\x1b_Ga=d,d=N,q=2,I=11,p=12"));
         assert!(escape.ends_with("\x1b\x1b\\\x1b\\"));
     }
 
     #[test]
     fn iterm2_delete_escape_is_absent() {
         assert_eq!(
-            inline_image_delete_escape(4, 7, InlineImageBackend::Iterm2),
+            inline_image_delete_escape((11, 12), InlineImageBackend::Iterm2),
             None
         );
     }

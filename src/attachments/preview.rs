@@ -14,7 +14,7 @@ use super::validation::validate_sha256;
 pub(crate) const PREVIEW_LONG_EDGE: u32 = 1_200;
 pub(crate) const MAX_PREVIEW_PIXELS: u64 = 1_000_000;
 pub(crate) const MAX_PREVIEW_BYTES: usize = 5 * 1024 * 1024;
-const PREVIEW_PROFILE: &str = "v1-edge1200-pixels1000000-png";
+pub(crate) const PREVIEW_PROFILE: &str = "v1-edge1200-pixels1000000-png";
 
 pub(crate) fn cached_preview_path(blob_dir: &Path, source_hash: &str) -> Result<PathBuf> {
     validate_sha256(source_hash)?;
@@ -25,10 +25,21 @@ pub(crate) fn cached_preview_path(blob_dir: &Path, source_hash: &str) -> Result<
         .join(format!("{source_hash}.png")))
 }
 
+#[cfg(test)]
 pub(crate) async fn ensure_preview(blob_dir: &Path, source_hash: &str) -> Result<PathBuf> {
     let blob_dir = blob_dir.to_path_buf();
     let source_hash = source_hash.to_string();
     blocking::run(move || ensure_preview_blocking(&blob_dir, &source_hash)).await
+}
+
+pub(crate) async fn load_preview_png(blob_dir: &Path, source_hash: &str) -> Result<Vec<u8>> {
+    let blob_dir = blob_dir.to_path_buf();
+    let source_hash = source_hash.to_string();
+    blocking::run(move || {
+        let path = ensure_preview_blocking(&blob_dir, &source_hash)?;
+        read_validated_preview(&path)
+    })
+    .await
 }
 
 fn ensure_preview_blocking(blob_dir: &Path, source_hash: &str) -> Result<PathBuf> {
@@ -81,6 +92,10 @@ fn ensure_preview_blocking(blob_dir: &Path, source_hash: &str) -> Result<PathBuf
 }
 
 fn validate_cached_preview(path: &Path) -> Result<()> {
+    read_validated_preview(path).map(|_| ())
+}
+
+fn read_validated_preview(path: &Path) -> Result<Vec<u8>> {
     let bytes = fs::read(path)?;
     if bytes.len() > MAX_PREVIEW_BYTES {
         bail!("error attachment-preview-byte-limit");
@@ -94,7 +109,7 @@ fn validate_cached_preview(path: &Path) -> Result<()> {
     {
         bail!("error attachment-preview-dimension-limit");
     }
-    Ok(())
+    Ok(validated.bytes)
 }
 
 fn preview_dimensions(width: u32, height: u32) -> (u32, u32) {
@@ -145,6 +160,11 @@ mod tests {
         let first = first.unwrap();
         assert_eq!(first, concurrent.unwrap());
         let first_bytes = fs::read(&first).unwrap();
+        let loaded = load_preview_png(temp.path(), &hash).await.unwrap();
+        assert_eq!(loaded, first_bytes);
+        assert_ne!(loaded, fs::read(&source).unwrap());
+        let decoded = image::load_from_memory_with_format(&loaded, ImageFormat::Png).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (1_200, 600));
         let second = ensure_preview(temp.path(), &hash).await.unwrap();
         assert_eq!(first, second);
         assert_eq!(first_bytes, fs::read(second).unwrap());
@@ -152,6 +172,15 @@ mod tests {
         fs::write(&first, b"partial preview").unwrap();
         let regenerated = ensure_preview(temp.path(), &hash).await.unwrap();
         assert_eq!(first_bytes, fs::read(regenerated).unwrap());
+    }
+
+    #[tokio::test]
+    async fn missing_source_fails_without_creating_cache_entry() {
+        let temp = tempfile::tempdir().unwrap();
+        let hash = "0".repeat(64);
+
+        assert!(load_preview_png(temp.path(), &hash).await.is_err());
+        assert!(!cached_preview_path(temp.path(), &hash).unwrap().exists());
     }
 
     #[test]

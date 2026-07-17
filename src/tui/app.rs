@@ -142,6 +142,8 @@ pub(crate) struct App {
     pub(crate) detail_text_selection: Option<crate::tui::detail_selection::DetailTextSelection>,
     pub(crate) detail_text_dragging: bool,
     pub(super) previous_inline_image_placements: Vec<crate::tui::ui::DetailInlineImagePlacement>,
+    pub(super) previous_inline_image_backend: crate::tui::inline_images::InlineImageBackend,
+    pub(super) preview_controller: crate::tui::preview_controller::PreviewController,
     pub(super) navigation_history: BoundedHistory<TaskViewState>,
     pub(super) detail_navigation_history: BoundedHistory<DetailNavigationState>,
 }
@@ -201,6 +203,8 @@ impl App {
             detail_text_selection: None,
             detail_text_dragging: false,
             previous_inline_image_placements: Vec::new(),
+            previous_inline_image_backend: crate::tui::inline_images::InlineImageBackend::None,
+            preview_controller: crate::tui::preview_controller::PreviewController::new(),
             navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
             detail_navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
         };

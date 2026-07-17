@@ -30,6 +30,7 @@ mod natural_add_runtime;
 mod navigation;
 mod overlay;
 mod platform;
+mod preview_controller;
 mod shortcut_buffer;
 mod store;
 mod text;

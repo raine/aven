@@ -181,6 +181,7 @@ pub(crate) fn attachment_placeholder(attachment: &AttachmentMetadataJson) -> Str
     }
 }
 
+#[cfg(test)]
 pub(crate) fn attachment_unavailable_placeholder(attachment: &AttachmentMetadataJson) -> String {
     let label = attachment
         .alt_text

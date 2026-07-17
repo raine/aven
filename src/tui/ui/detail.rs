@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
     Block, Borders, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
-use std::path::PathBuf;
+use std::collections::HashSet;
 
 use super::input::clipped_input_line;
 use super::scroll::{clamp_scroll_start, scrollbar_thumb_position};
@@ -13,11 +13,8 @@ use super::task_display::{description_or_placeholder, labels_display};
 use super::task_list::EPIC_MARKER;
 use super::timestamps::local_timestamp_display;
 use super::truncate::truncate_width;
-use crate::attachments::storage::object_path;
 use crate::query::TaskListItem;
-use crate::task_render::{
-    AttachmentMetadataJson, attachment_placeholder, attachment_unavailable_placeholder,
-};
+use crate::task_render::{AttachmentMetadataJson, attachment_placeholder};
 use crate::tui::app::WidgetState;
 use crate::tui::detail_selection::{DetailTextSelection, TextCell, text_cell_at_column};
 use crate::tui::markdown::{
@@ -66,14 +63,14 @@ struct DetailContentRenderModel {
     image_placements: Vec<DetailBodyImagePlacement>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct DetailInlineImageContext {
-    pub(crate) blob_dir: PathBuf,
+    pub(crate) unavailable_hashes: HashSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DetailInlineImagePlacement {
-    pub(crate) path: PathBuf,
+    pub(crate) source_hash: String,
     pub(crate) x: u16,
     pub(crate) y: u16,
     pub(crate) width: u16,
@@ -82,7 +79,7 @@ pub(crate) struct DetailInlineImagePlacement {
 
 #[derive(Debug, Clone)]
 struct DetailBodyImagePlacement {
-    path: PathBuf,
+    source_hash: String,
     line_index: usize,
     width: u16,
     height: u16,
@@ -93,7 +90,7 @@ enum DetailBodyBlock {
     Line(Line<'static>),
     Image {
         placeholder: Line<'static>,
-        path: PathBuf,
+        source_hash: String,
         width: u16,
         height: u16,
     },
@@ -342,12 +339,19 @@ fn render_detail_content_from_model(
             if row >= body_visible {
                 return None;
             }
+            let visible_height = body_visible
+                .saturating_sub(row)
+                .min(placement.height as usize);
+            let visible_width = placement.width.min(body_area.width.saturating_sub(2));
+            if visible_height == 0 || visible_width == 0 {
+                return None;
+            }
             Some(DetailInlineImagePlacement {
-                path: placement.path.clone(),
+                source_hash: placement.source_hash.clone(),
                 x: body_area.x.saturating_add(2),
                 y: body_area.y.saturating_add(row as u16),
-                width: placement.width,
-                height: placement.height,
+                width: visible_width,
+                height: visible_height as u16,
             })
         }));
 }
@@ -965,7 +969,7 @@ fn extend_detail_body_blocks(
             DetailBodyBlock::Line(line) => lines.push(quoted_line(line, style)),
             DetailBodyBlock::Image {
                 placeholder,
-                path,
+                source_hash,
                 width,
                 height,
             } => {
@@ -979,7 +983,7 @@ fn extend_detail_body_blocks(
                     )]));
                 }
                 placements.push(DetailBodyImagePlacement {
-                    path,
+                    source_hash,
                     line_index,
                     width,
                     height,
@@ -1016,7 +1020,7 @@ fn extend_attachment_section(
             }
             DetailBodyBlock::Image {
                 placeholder,
-                path,
+                source_hash,
                 width,
                 height,
             } => {
@@ -1029,7 +1033,7 @@ fn extend_attachment_section(
                     )]));
                 }
                 placements.push(DetailBodyImagePlacement {
-                    path,
+                    source_hash,
                     line_index,
                     width,
                     height,
@@ -1051,16 +1055,17 @@ fn attachment_detail_block(
     let Some(inline_images) = inline_images else {
         return DetailBodyBlock::Line(placeholder);
     };
-    let Ok(path) = object_path(&inline_images.blob_dir, &attachment.sha256) else {
-        return DetailBodyBlock::Line(Line::from(attachment_unavailable_placeholder(attachment)));
-    };
-    if !path.is_file() {
-        return DetailBodyBlock::Line(Line::from(attachment_unavailable_placeholder(attachment)));
+    if inline_images
+        .unavailable_hashes
+        .contains(&attachment.sha256)
+        || !matches!((attachment.width, attachment.height), (Some(width), Some(height)) if width > 0 && height > 0)
+    {
+        return DetailBodyBlock::Line(placeholder);
     }
     let (width, height) = image_preview_size(attachment, content_width);
     DetailBodyBlock::Image {
         placeholder,
-        path,
+        source_hash: attachment.sha256.clone(),
         width,
         height,
     }
@@ -1498,6 +1503,12 @@ pub(super) fn render_detail_underlay(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::widgets::{ListState, TableState};
+
     use super::*;
     use crate::choices::{TaskPriority, TaskStatus};
 
@@ -2154,18 +2165,12 @@ mod tests {
         let mut item = detail_test_item();
         item.task.description = String::new();
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
-        let temp = tempfile::tempdir().unwrap();
-        let context = DetailInlineImageContext {
-            blob_dir: temp.path().to_path_buf(),
-        };
-        let object = object_path(&context.blob_dir, &item.attachments[0].sha256).unwrap();
-        std::fs::create_dir_all(object.parent().unwrap()).unwrap();
-        std::fs::write(&object, b"png bytes").unwrap();
+        let context = DetailInlineImageContext::default();
 
         let (lines, placements) = detail_body_lines_with_images(&item, 80, None, Some(&context));
 
         assert_eq!(placements.len(), 1);
-        assert_eq!(placements[0].height, 6);
+        assert_eq!(placements[0].height, 12);
         assert!(
             lines
                 .iter()
@@ -2173,7 +2178,7 @@ mod tests {
         );
         assert_eq!(
             lines.iter().filter(|line| line.to_string() == "│ ").count(),
-            6
+            12
         );
     }
 
@@ -2184,19 +2189,32 @@ mod tests {
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
         item.attachments[0].width = Some(646);
         item.attachments[0].height = Some(302);
-        let temp = tempfile::tempdir().unwrap();
-        let context = DetailInlineImageContext {
-            blob_dir: temp.path().to_path_buf(),
-        };
-        let object = object_path(&context.blob_dir, &item.attachments[0].sha256).unwrap();
-        std::fs::create_dir_all(object.parent().unwrap()).unwrap();
-        std::fs::write(&object, b"png bytes").unwrap();
+        let context = DetailInlineImageContext::default();
 
         let (_lines, placements) = detail_body_lines_with_images(&item, 200, None, Some(&context));
 
         assert_eq!(placements.len(), 1);
         assert_eq!(placements[0].height, 12);
         assert_eq!(placements[0].width, 51);
+    }
+
+    #[test]
+    fn detail_suppressed_preview_keeps_textual_attachment_row() {
+        let mut item = detail_test_item();
+        item.task.description = String::new();
+        item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
+        let context = DetailInlineImageContext {
+            unavailable_hashes: [item.attachments[0].sha256.clone()].into_iter().collect(),
+        };
+
+        let (lines, placements) = detail_body_lines_with_images(&item, 80, None, Some(&context));
+
+        assert!(placements.is_empty());
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.to_string() == "│ [image: Chart]")
+        );
     }
 
     #[test]
@@ -2226,13 +2244,7 @@ mod tests {
         let mut item = detail_test_item();
         item.task.description = "intro".to_string();
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
-        let temp = tempfile::tempdir().unwrap();
-        let context = DetailInlineImageContext {
-            blob_dir: temp.path().to_path_buf(),
-        };
-        let object = object_path(&context.blob_dir, &item.attachments[0].sha256).unwrap();
-        std::fs::create_dir_all(object.parent().unwrap()).unwrap();
-        std::fs::write(&object, b"png bytes").unwrap();
+        let context = DetailInlineImageContext::default();
 
         let model = build_detail_content_model(
             &item,
@@ -2248,6 +2260,46 @@ mod tests {
         assert!(model.image_placements[0].line_index < model.content_height);
     }
 
+    #[test]
+    fn detail_clips_emitted_preview_to_visible_viewport() {
+        let model = DetailContentRenderModel {
+            sticky_lines: Vec::new(),
+            lines: vec![Line::from(""); 5],
+            content_height: 12,
+            body_start: 0,
+            scrollbar_position: 0,
+            image_placements: vec![DetailBodyImagePlacement {
+                source_hash: "0".repeat(64),
+                line_index: 3,
+                width: 30,
+                height: 12,
+            }],
+        };
+        let mut widgets = WidgetState {
+            sidebar: ListState::default(),
+            table: TableState::default(),
+            marked_task_ids: BTreeSet::new(),
+            inline_image_placements: Vec::new(),
+        };
+        let backend = TestBackend::new(20, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| {
+                render_detail_content_from_model(
+                    frame,
+                    Rect::new(0, 0, 20, 5),
+                    &model,
+                    &mut widgets,
+                );
+            })
+            .unwrap();
+
+        assert_eq!(widgets.inline_image_placements.len(), 1);
+        assert_eq!(widgets.inline_image_placements[0].width, 18);
+        assert_eq!(widgets.inline_image_placements[0].height, 2);
+    }
+
     fn attachment_metadata(
         attachment_id: &str,
         deleted: bool,
@@ -2261,8 +2313,8 @@ mod tests {
             byte_size: 4,
             filename: Some("chart.png".to_string()),
             alt_text: Some("Chart".to_string()),
-            width: None,
-            height: None,
+            width: Some(640),
+            height: Some(480),
             created_at: "2026-06-20T12:00:00Z".to_string(),
             deleted,
             deleted_at: deleted.then(|| "2026-06-20T12:00:00Z".to_string()),
