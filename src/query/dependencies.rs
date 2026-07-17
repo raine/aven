@@ -3,7 +3,7 @@ use anyhow::Result;
 use sqlx::{Row, SqliteConnection};
 
 use crate::choices::TaskStatus;
-use crate::refs::display_refs_for_tasks;
+use crate::refs::DisplayRefContext;
 use crate::types::Task;
 
 use super::fragments;
@@ -27,11 +27,21 @@ pub(crate) async fn task_dependency_summary(
     workspace_id: &WorkspaceId,
     task_id: &str,
 ) -> Result<TaskDependencySummary> {
-    let depends_on = query_dependency_items(&mut *conn, workspace_id, task_id, false)
+    let display_refs = DisplayRefContext::for_workspace(conn, workspace_id).await?;
+    task_dependency_summary_with_display_refs(conn, workspace_id, task_id, &display_refs).await
+}
+
+pub(crate) async fn task_dependency_summary_with_display_refs(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    task_id: &str,
+    display_refs: &DisplayRefContext,
+) -> Result<TaskDependencySummary> {
+    let depends_on = query_dependency_items(&mut *conn, workspace_id, task_id, false, display_refs)
         .await?
         .into_iter()
         .collect::<Vec<_>>();
-    let blocks = query_dependency_items(&mut *conn, workspace_id, task_id, true)
+    let blocks = query_dependency_items(&mut *conn, workspace_id, task_id, true, display_refs)
         .await?
         .into_iter()
         .collect::<Vec<_>>();
@@ -43,6 +53,7 @@ async fn query_dependency_items(
     workspace_id: &WorkspaceId,
     task_id: &str,
     blocks_only: bool,
+    display_refs: &DisplayRefContext,
 ) -> Result<Vec<TaskDependencyItem>> {
     let rows = if blocks_only {
         sqlx::query(
@@ -83,7 +94,6 @@ async fn query_dependency_items(
         .iter()
         .map(crate::db::task_from_row)
         .collect::<Result<Vec<_>>>()?;
-    let display_refs = display_refs_for_tasks(conn, &rows_tasks).await?;
     let mut items = rows
         .into_iter()
         .zip(rows_tasks.drain(..))
@@ -91,10 +101,7 @@ async fn query_dependency_items(
             let created_at: String = row.get("dependency_created_at");
             let task_is_open = !task.deleted && task.status.is_open();
             let unresolved = task_is_open && (!blocks_only || subject_is_open);
-            let display_ref = display_refs
-                .get(&task.id)
-                .cloned()
-                .unwrap_or_else(|| format!("{}-{}", task.project_prefix, task.id));
+            let display_ref = display_refs.display_ref(&task);
             TaskDependencyItem {
                 task,
                 display_ref,

@@ -6,7 +6,7 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 use std::collections::HashMap;
 
 use crate::db::task_from_row;
-use crate::refs::display_refs_for_tasks;
+use crate::refs::DisplayRefContext;
 use crate::types::Task;
 
 use super::TaskListItem;
@@ -143,7 +143,8 @@ pub(crate) async fn search_task_item_set_in_workspace(
     workspace_id: &WorkspaceId,
     query: TaskSearchQuery,
 ) -> Result<TaskSearchResultSet> {
-    let scored = scored_search_documents(conn, workspace_id, &query).await?;
+    let display_refs = DisplayRefContext::for_workspace(conn, workspace_id).await?;
+    let scored = scored_search_documents(conn, workspace_id, &query, &display_refs).await?;
     let tasks = scored
         .items
         .iter()
@@ -156,6 +157,7 @@ pub(crate) async fn search_task_item_set_in_workspace(
         tasks,
         now_seconds,
         Local::now().date_naive(),
+        &display_refs,
     )
     .await?;
     let by_id = items
@@ -184,6 +186,7 @@ async fn scored_search_documents(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     query: &TaskSearchQuery,
+    display_refs: &DisplayRefContext,
 ) -> Result<ScoredSearchResults> {
     let limit = if query.limit == 0 {
         DEFAULT_LIMIT
@@ -199,7 +202,8 @@ async fn scored_search_documents(
     }
     let load_deleted = query.include_deleted || parsed.ref_query.is_some();
     let documents =
-        load_candidate_search_documents(conn, workspace_id, load_deleted, &parsed).await?;
+        load_candidate_search_documents(conn, workspace_id, load_deleted, &parsed, display_refs)
+            .await?;
 
     let now_seconds = crate::queue::now_seconds();
     let mut scored = documents
@@ -240,7 +244,8 @@ pub(crate) async fn search_task_preview_set_in_workspace(
     workspace_id: &WorkspaceId,
     query: TaskSearchQuery,
 ) -> Result<TaskSearchPreviewResultSet> {
-    let scored = scored_search_documents(conn, workspace_id, &query).await?;
+    let display_refs = DisplayRefContext::for_workspace(conn, workspace_id).await?;
+    let scored = scored_search_documents(conn, workspace_id, &query, &display_refs).await?;
     let task_ids = scored
         .items
         .iter()
@@ -318,15 +323,18 @@ async fn load_candidate_search_documents(
     workspace_id: &WorkspaceId,
     include_deleted: bool,
     parsed: &parser::ParsedTaskSearchQuery,
+    display_refs: &DisplayRefContext,
 ) -> Result<Vec<SearchDocument>> {
     let mut documents = if let Some(fts_match) = parsed.fts_match.as_deref() {
-        load_fts_search_documents(conn, workspace_id, include_deleted, fts_match).await?
+        load_fts_search_documents(conn, workspace_id, include_deleted, fts_match, display_refs)
+            .await?
     } else {
         Vec::new()
     };
     if let Some(ref_query) = &parsed.ref_query {
         let ref_documents =
-            load_ref_search_documents(conn, workspace_id, include_deleted, ref_query).await?;
+            load_ref_search_documents(conn, workspace_id, include_deleted, ref_query, display_refs)
+                .await?;
         merge_search_documents(&mut documents, ref_documents);
     }
     Ok(documents)
@@ -337,6 +345,7 @@ async fn load_ref_search_documents(
     workspace_id: &WorkspaceId,
     include_deleted: bool,
     ref_query: &parser::ParsedRefSearchQuery,
+    display_refs: &DisplayRefContext,
 ) -> Result<Vec<SearchDocument>> {
     let rows = sqlx::query(
         "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
@@ -352,7 +361,7 @@ async fn load_ref_search_documents(
     .bind(&ref_query.normalized_suffix)
     .fetch_all(&mut *conn)
     .await?;
-    search_documents_from_rows(conn, rows).await
+    search_documents_from_rows(rows, display_refs)
 }
 
 fn merge_search_documents(documents: &mut Vec<SearchDocument>, incoming: Vec<SearchDocument>) {
@@ -371,6 +380,7 @@ async fn load_fts_search_documents(
     workspace_id: &WorkspaceId,
     include_deleted: bool,
     raw_fts_match: &str,
+    display_refs: &DisplayRefContext,
 ) -> Result<Vec<SearchDocument>> {
     let fts_match = workspace_scoped_fts_match(workspace_id, raw_fts_match);
     let rows = sqlx::query(
@@ -390,12 +400,12 @@ async fn load_fts_search_documents(
     .bind(include_deleted)
     .fetch_all(&mut *conn)
     .await?;
-    search_documents_from_rows(conn, rows).await
+    search_documents_from_rows(rows, display_refs)
 }
 
-async fn search_documents_from_rows(
-    conn: &mut SqliteConnection,
+fn search_documents_from_rows(
     rows: Vec<sqlx::sqlite::SqliteRow>,
+    display_refs: &DisplayRefContext,
 ) -> Result<Vec<SearchDocument>> {
     let mut tasks = Vec::with_capacity(rows.len());
     let mut project_names = Vec::with_capacity(rows.len());
@@ -407,17 +417,13 @@ async fn search_documents_from_rows(
         notes_texts.push(row.get::<String, _>("fts_notes"));
         tasks.push(task_from_row(&row)?);
     }
-    let display_refs = display_refs_for_tasks(conn, &tasks).await?;
     Ok(tasks
         .into_iter()
         .zip(project_names)
         .zip(labels_texts)
         .zip(notes_texts)
         .map(|(((task, project_name), labels_text), notes_text)| {
-            let display_ref = display_refs
-                .get(&task.id)
-                .cloned()
-                .unwrap_or_else(|| format!("{}-{}", task.project_prefix, task.id));
+            let display_ref = display_refs.display_ref(&task);
             SearchDocument {
                 labels_text,
                 notes_text,

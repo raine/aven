@@ -5,7 +5,7 @@ use sqlx::{Row, SqliteConnection};
 
 use crate::change_log::op_type;
 use crate::query::types::{RecentActionItem, RecentActionTarget};
-use crate::refs::display_ref_for_id;
+use crate::refs::DisplayRefContext;
 
 const RECENT_ACTION_LIMIT: i64 = 80;
 
@@ -14,11 +14,7 @@ pub(crate) async fn list_recent_actions_in_workspace(
     workspace_id: &WorkspaceId,
     project_scope: Option<&str>,
 ) -> Result<Vec<RecentActionItem>> {
-    let task_ids =
-        sqlx::query_scalar::<_, String>("SELECT id FROM tasks WHERE workspace_id = ? ORDER BY id")
-            .bind(workspace_id)
-            .fetch_all(&mut *conn)
-            .await?;
+    let display_refs = DisplayRefContext::for_workspace(conn, workspace_id).await?;
 
     let rows = sqlx::query(
         "SELECT c.change_id, c.entity_type, c.entity_id, c.field, c.op_type, c.payload,
@@ -51,11 +47,15 @@ pub(crate) async fn list_recent_actions_in_workspace(
     .await?;
 
     rows.into_iter()
-        .map(|row| action_from_row(row, &task_ids))
+        .map(|row| action_from_row(row, workspace_id, &display_refs))
         .collect()
 }
 
-fn action_from_row(row: sqlx::sqlite::SqliteRow, task_ids: &[String]) -> Result<RecentActionItem> {
+fn action_from_row(
+    row: sqlx::sqlite::SqliteRow,
+    workspace_id: &WorkspaceId,
+    display_refs: &DisplayRefContext,
+) -> Result<RecentActionItem> {
     let change_id: String = row.try_get("change_id")?;
     let entity_type: String = row.try_get("entity_type")?;
     let entity_id: String = row.try_get("entity_id")?;
@@ -75,7 +75,7 @@ fn action_from_row(row: sqlx::sqlite::SqliteRow, task_ids: &[String]) -> Result<
     let display_ref = if entity_type == "task" {
         project_prefix
             .as_deref()
-            .map(|prefix| display_ref_for_id(prefix, &entity_id, task_ids))
+            .map(|prefix| display_refs.display_ref_for_id(workspace_id, prefix, &entity_id))
     } else {
         None
     };

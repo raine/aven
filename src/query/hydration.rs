@@ -4,7 +4,7 @@ use chrono::NaiveDate;
 use sqlx::SqliteConnection;
 
 use crate::queue::queue_meta_on;
-use crate::refs::display_refs_for_tasks;
+use crate::refs::DisplayRefContext;
 use crate::task_enrichment::load_task_enrichment;
 use crate::types::Task;
 
@@ -20,18 +20,15 @@ pub(crate) async fn build_task_list_items(
     tasks: Vec<Task>,
     now_seconds: i64,
     local_today: NaiveDate,
+    display_refs: &DisplayRefContext,
 ) -> Result<Vec<TaskListItem>> {
-    let display_refs = display_refs_for_tasks(conn, &tasks).await?;
     let task_ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
-    let mut enrichment = load_task_enrichment(conn, workspace_id, &task_ids).await?;
+    let mut enrichment = load_task_enrichment(conn, workspace_id, &task_ids, display_refs).await?;
 
     let mut items = Vec::with_capacity(tasks.len());
     for task in tasks {
         let task_id = task.id.clone();
-        let display_ref = display_refs
-            .get(&task_id)
-            .cloned()
-            .unwrap_or_else(|| format!("{}-{}", task.project_prefix, task_id));
+        let display_ref = display_refs.display_ref(&task);
         let labels = enrichment
             .labels_by_task
             .remove(&task_id)

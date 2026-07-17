@@ -8,6 +8,7 @@ use crate::db::task_from_row;
 use crate::labels::ensure_label_exists_in_workspace;
 use crate::projects::resolve_existing_project_in_workspace;
 use crate::queue::{now_seconds, queue_order};
+use crate::refs::DisplayRefContext;
 
 use super::fragments;
 use super::hydration::build_task_list_items;
@@ -23,6 +24,28 @@ pub(crate) async fn list_task_items_in_workspace(
     mode: TaskQueryMode,
     sort: TaskSort,
     direction: SortDirection,
+) -> Result<Vec<TaskListItem>> {
+    let display_refs = DisplayRefContext::for_workspace(conn, workspace_id).await?;
+    list_task_items_with_display_refs(
+        conn,
+        workspace_id,
+        filters,
+        mode,
+        sort,
+        direction,
+        &display_refs,
+    )
+    .await
+}
+
+pub(crate) async fn list_task_items_with_display_refs(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    filters: TaskFilters,
+    mode: TaskQueryMode,
+    sort: TaskSort,
+    direction: SortDirection,
+    display_refs: &DisplayRefContext,
 ) -> Result<Vec<TaskListItem>> {
     if let Some(status) = filters.status.as_deref() {
         TaskStatus::parse(status)?;
@@ -171,8 +194,15 @@ pub(crate) async fn list_task_items_in_workspace(
         .collect::<Result<Vec<_>>>()?;
     let now_seconds = now_seconds();
     let local_today = Local::now().date_naive();
-    let mut items =
-        build_task_list_items(conn, workspace_id, tasks, now_seconds, local_today).await?;
+    let mut items = build_task_list_items(
+        conn,
+        workspace_id,
+        tasks,
+        now_seconds,
+        local_today,
+        display_refs,
+    )
+    .await?;
     if mode == TaskQueryMode::RankedQueue {
         items.sort_by(|a, b| queue_order((&a.task, a.queue), (&b.task, b.queue)));
     }

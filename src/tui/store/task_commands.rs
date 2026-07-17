@@ -537,8 +537,11 @@ impl TuiStore {
             depends_on_task_id,
         )
         .await?;
-        let task_ref = crate::refs::display_ref(&mut conn, &outcome.task).await?;
-        let depends_on_ref = crate::refs::display_ref(&mut conn, &outcome.depends_on).await?;
+        let display_refs =
+            crate::refs::DisplayRefContext::for_workspace(&mut conn, &self.active_workspace.id)
+                .await?;
+        let task_ref = display_refs.display_ref(&outcome.task);
+        let depends_on_ref = display_refs.display_ref(&outcome.depends_on);
         drop(conn);
         if outcome.changed {
             self.record_undo_commands(
@@ -574,7 +577,10 @@ impl TuiStore {
             depends_on_task_id,
         )
         .await?;
-        let depends_on_ref = crate::refs::display_ref(&mut conn, &outcome.depends_on).await?;
+        let display_refs =
+            crate::refs::DisplayRefContext::for_workspace(&mut conn, &self.active_workspace.id)
+                .await?;
+        let depends_on_ref = display_refs.display_ref(&outcome.depends_on);
         drop(conn);
         if outcome.changed {
             self.record_undo_commands(

@@ -56,7 +56,7 @@ use crate::query::{
     self, SortDirection, TaskAvailabilityFilter, TaskFilters, TaskQueryMode, TaskSearchQuery,
     TaskSearchResult, TaskSort,
 };
-use crate::refs::{display_ref, display_suffix_in_workspace, resolve_task_ref_in_workspace};
+use crate::refs::{DisplayRefContext, resolve_task_ref_in_workspace};
 use crate::render::{
     KvLine, changed_text, print_json_pretty, print_multiline_block, print_text_diff, quote,
 };
@@ -127,10 +127,11 @@ pub(crate) async fn cmd_add(
     };
     let outcome = create_task(conn, workspace, draft).await?;
     let task = outcome.task;
+    let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
     println!(
         "created {} ref={} project={} status={} priority={}{}{} title={}",
-        display_ref(conn, &task).await?,
-        display_suffix_in_workspace(conn, workspace, &task.id).await?,
+        display_refs.display_ref(&task),
+        display_refs.display_suffix(&workspace.id, &task.id),
         task.project_key,
         task.status,
         task.priority,
@@ -196,10 +197,11 @@ pub(crate) async fn cmd_internal_natural_add(
         project = %task.project_key,
         "created task from internal natural-add"
     );
+    let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
     println!(
         "created {} ref={} project={} status={} priority={}{}{} title={}",
-        display_ref(conn, &task).await?,
-        display_suffix_in_workspace(conn, &workspace, &task.id).await?,
+        display_refs.display_ref(&task),
+        display_refs.display_suffix(&workspace.id, &task.id),
         task.project_key,
         task.status,
         task.priority,
@@ -454,11 +456,12 @@ pub(crate) async fn cmd_dep(
             let depends_on =
                 resolve_task_ref_in_workspace(conn, workspace, &args.depends_on_ref).await?;
             let outcome = add_task_dependency(conn, workspace, &task.id, &depends_on.id).await?;
+            let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
             println!(
                 "dependency-added {} changed={} depends_on={}",
-                display_ref(conn, &outcome.task).await?,
+                display_refs.display_ref(&outcome.task),
                 changed_text(outcome.changed),
-                display_ref(conn, &outcome.depends_on).await?,
+                display_refs.display_ref(&outcome.depends_on),
             );
         }
         DepSubcommand::Remove(args) => {
@@ -466,11 +469,12 @@ pub(crate) async fn cmd_dep(
             let depends_on =
                 resolve_task_ref_in_workspace(conn, workspace, &args.depends_on_ref).await?;
             let outcome = remove_task_dependency(conn, workspace, &task.id, &depends_on.id).await?;
+            let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
             println!(
                 "dependency-removed {} changed={} depends_on={}",
-                display_ref(conn, &outcome.task).await?,
+                display_refs.display_ref(&outcome.task),
                 changed_text(outcome.changed),
-                display_ref(conn, &outcome.depends_on).await?,
+                display_refs.display_ref(&outcome.depends_on),
             );
         }
         DepSubcommand::List(args) => {
@@ -498,22 +502,24 @@ pub(crate) async fn cmd_epic(
             let child = resolve_task_ref_in_workspace(conn, workspace, &args.child_ref).await?;
             let epic = resolve_task_ref_in_workspace(conn, workspace, &args.epic_ref).await?;
             let outcome = add_task_to_epic(conn, workspace, &child.id, &epic.id).await?;
+            let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
             println!(
                 "epic-added {} changed={} epic={}",
-                display_ref(conn, &outcome.child).await?,
+                display_refs.display_ref(&outcome.child),
                 changed_text(outcome.changed),
-                display_ref(conn, &outcome.epic).await?,
+                display_refs.display_ref(&outcome.epic),
             );
         }
         EpicSubcommand::Remove(args) => {
             let child = resolve_task_ref_in_workspace(conn, workspace, &args.child_ref).await?;
             let epic = resolve_task_ref_in_workspace(conn, workspace, &args.epic_ref).await?;
             let outcome = remove_task_from_epic(conn, workspace, &child.id, &epic.id).await?;
+            let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
             println!(
                 "epic-removed {} changed={} epic={}",
-                display_ref(conn, &outcome.child).await?,
+                display_refs.display_ref(&outcome.child),
                 changed_text(outcome.changed),
-                display_ref(conn, &outcome.epic).await?,
+                display_refs.display_ref(&outcome.epic),
             );
         }
         EpicSubcommand::List(args) => {
@@ -576,13 +582,15 @@ pub(crate) async fn cmd_bulk_update(
     let set_project_key = resolve_bulk_project_mutation(conn, &workspace_id, &args).await?;
 
     let filters = bulk_update_filters(&args);
-    let items = query::list_task_items_in_workspace(
+    let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
+    let items = query::list_task_items_with_display_refs(
         conn,
         &workspace.id,
         filters,
         TaskQueryMode::Flat,
         TaskSort::Updated,
         SortDirection::Desc,
+        &display_refs,
     )
     .await?;
     let matched = items.len();
@@ -613,7 +621,7 @@ pub(crate) async fn cmd_bulk_update(
         }
         let outcome = update_task(conn, workspace, &item.task.id, update).await?;
         changed += 1;
-        print_changed_bulk_update(conn, &outcome.task).await?;
+        print_changed_bulk_update(&display_refs, &outcome.task);
     }
     if args.dry_run {
         unchanged = matched - would_change;
@@ -772,15 +780,14 @@ fn print_unchanged_bulk_update(item: &query::TaskListItem) {
     println!("{line}");
 }
 
-async fn print_changed_bulk_update(conn: &mut SqliteConnection, task: &Task) -> Result<()> {
-    let line = KvLine::new(format!("bulk-updated {}", display_ref(conn, task).await?))
+fn print_changed_bulk_update(display_refs: &DisplayRefContext, task: &Task) {
+    let line = KvLine::new(format!("bulk-updated {}", display_refs.display_ref(task)))
         .field("changed", changed_text(true))
         .field("status", task.status)
         .field("priority", task.priority)
         .quoted("title", &task.title)
         .finish();
     println!("{line}");
-    Ok(())
 }
 
 fn ensure_disjoint_labels(add_labels: &[String], remove_labels: &[String]) -> Result<()> {
@@ -1006,9 +1013,10 @@ pub(crate) async fn cmd_edit(
     )
     .await?;
     let task = outcome.task;
+    let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
     println!(
         "updated {} changed={} status={} priority={}{}{} title={}",
-        display_ref(conn, &task).await?,
+        display_refs.display_ref(&task),
         changed_text(outcome.changed),
         task.status,
         task.priority,
@@ -1027,9 +1035,10 @@ pub(crate) async fn cmd_note(
     let task = resolve_task_ref_in_workspace(conn, workspace, &args.task_ref).await?;
     let body = read_required_text(args.text, args.file.as_deref(), args.stdin, "note")?;
     let outcome = add_note(conn, workspace, &task.id, body).await?;
+    let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
     println!(
         "noted {} note={}",
-        display_ref(conn, &task).await?,
+        display_refs.display_ref(&task),
         outcome.note_id
     );
     Ok(())
@@ -1042,9 +1051,10 @@ pub(crate) async fn cmd_note_delete(
 ) -> Result<()> {
     let task = resolve_task_ref_in_workspace(conn, workspace, &args.task_ref).await?;
     let outcome = delete_note(conn, workspace, &task.id, &args.note_id).await?;
+    let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
     println!(
         "deleted-note {} note={} changed={}",
-        display_ref(conn, &task).await?,
+        display_refs.display_ref(&task),
         outcome.note_id,
         changed_text(outcome.changed),
     );
@@ -1077,7 +1087,8 @@ pub(crate) async fn cmd_text(
             let task = resolve_task_ref_in_workspace(conn, workspace, &args.task_ref).await?;
             let value = TaskField::Description.current_value(&task);
             let hash = sha256_hex(&value);
-            let task_ref = display_ref(conn, &task).await?;
+            let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
+            let task_ref = display_refs.display_ref(&task);
             if let Some(path) = args.output {
                 fs::write(&path, value.as_bytes())?;
                 println!(
@@ -1121,9 +1132,10 @@ pub(crate) async fn cmd_text(
                 },
             )
             .await?;
+            let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
             println!(
                 "updated {} field=description sha256={}",
-                display_ref(conn, &outcome.task).await?,
+                display_refs.display_ref(&outcome.task),
                 sha256_hex(&outcome.task.description)
             );
         }
@@ -1182,10 +1194,11 @@ pub(crate) async fn cmd_delete_restore(
     let task = resolve_task_ref_in_workspace(conn, workspace, &args.task_ref).await?;
     let outcome = set_task_deleted(conn, workspace, &task.id, delete).await?;
     let task = outcome.task;
+    let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
     if delete {
-        println!("deleted {}", display_ref(conn, &task).await?);
+        println!("deleted {}", display_refs.display_ref(&task));
     } else {
-        println!("restored {}", display_ref(conn, &task).await?);
+        println!("restored {}", display_refs.display_ref(&task));
     }
     Ok(())
 }

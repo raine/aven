@@ -5,7 +5,7 @@ use crate::config::TaskIntakeConfig;
 use crate::operations::{
     TaskDraft, add_note as add_note_operation, create_task as create_task_operation,
 };
-use crate::refs::display_ref;
+use crate::refs::DisplayRefContext;
 use crate::undo::{UndoCommand, task_snapshot};
 
 use super::TuiStore;
@@ -47,7 +47,9 @@ impl TuiStore {
         let mut conn = self.pool.acquire().await?;
         let outcome = create_task_operation(&mut conn, &self.active_workspace, draft).await?;
         let task_id = outcome.task.id.clone();
-        let message_ref = display_ref(&mut conn, &outcome.task).await?;
+        let display_refs =
+            DisplayRefContext::for_workspace(&mut conn, &self.active_workspace.id).await?;
+        let message_ref = display_refs.display_ref(&outcome.task);
         let workspace_id = self.active_workspace.id.clone();
         let snapshot = task_snapshot(&mut conn, &workspace_id, &task_id).await?;
         drop(conn);

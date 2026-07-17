@@ -12,7 +12,7 @@ use crate::operations::{
     ConflictDetail, conflict_variant_value, list_conflicts, resolve_conflict, task_conflicts,
 };
 use crate::projects::resolve_existing_project_in_workspace;
-use crate::refs::{display_ref, display_suffix_in_workspace, resolve_task_ref_in_workspace};
+use crate::refs::{DisplayRefContext, resolve_task_ref_in_workspace};
 use crate::render::{print_json_pretty, print_multiline_block, print_text_diff, quote};
 use crate::task_render::conflict_display_value;
 use crate::types::Task;
@@ -60,13 +60,16 @@ pub(crate) async fn cmd_conflict(
             if let Some(limit) = limit {
                 items.truncate(limit);
             }
+            let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
             if json {
                 let mut json_items = Vec::new();
                 for item in items {
-                    let suffix =
-                        display_suffix_in_workspace(conn, workspace, &item.task_id).await?;
                     json_items.push(ConflictListJsonItem {
-                        r#ref: format!("{}-{}", item.project_prefix, suffix),
+                        r#ref: display_refs.display_ref_for_id(
+                            &workspace.id,
+                            &item.project_prefix,
+                            &item.task_id,
+                        ),
                         task_id: item.task_id,
                         title: item.title,
                         project: item.project_key,
@@ -77,7 +80,7 @@ pub(crate) async fn cmd_conflict(
                 print_json_pretty(&json_items)?;
             } else {
                 for item in items {
-                    print_conflict_list_item(conn, workspace, item).await?;
+                    print_conflict_list_item(&display_refs, workspace, item);
                 }
             }
         }
@@ -123,8 +126,9 @@ pub(crate) async fn cmd_conflict(
                 }
                 print_json_pretty(&json_details)?;
             } else {
+                let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
                 for detail in details {
-                    print_conflict_detail(conn, &task, detail).await?;
+                    print_conflict_detail(conn, &display_refs, &task, detail).await?;
                 }
             }
         }
@@ -159,9 +163,10 @@ pub(crate) async fn cmd_conflict(
                 read_required_text(value, value_file.as_deref(), value_stdin, "value")?
             };
             let outcome = resolve_conflict(conn, workspace, &task.id, &field, &value).await?;
+            let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
             println!(
                 "resolved {} field={}",
-                display_ref(conn, &outcome.task).await?,
+                display_refs.display_ref(&outcome.task),
                 outcome.field
             );
         }
@@ -184,16 +189,13 @@ async fn resolve_conflict_project_filter(
     Ok(None)
 }
 
-async fn print_conflict_list_item(
-    conn: &mut SqliteConnection,
+fn print_conflict_list_item(
+    display_refs: &DisplayRefContext,
     workspace: &Workspace,
     item: crate::operations::ConflictListItem,
-) -> Result<()> {
-    let display = format!(
-        "{}-{}",
-        item.project_prefix,
-        display_suffix_in_workspace(conn, workspace, &item.task_id).await?
-    );
+) {
+    let display =
+        display_refs.display_ref_for_id(&workspace.id, &item.project_prefix, &item.task_id);
     println!(
         "{} conflict field={} variants={},{} title={}",
         display,
@@ -202,17 +204,17 @@ async fn print_conflict_list_item(
         item.variant_b,
         quote(&item.title)
     );
-    Ok(())
 }
 
 async fn print_conflict_detail(
     conn: &mut SqliteConnection,
+    display_refs: &DisplayRefContext,
     task: &Task,
     detail: ConflictDetail,
 ) -> Result<()> {
     println!(
         "conflict {} field={}",
-        display_ref(conn, task).await?,
+        display_refs.display_ref(task),
         detail.field
     );
     let local_value =

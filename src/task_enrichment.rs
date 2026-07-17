@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::query::fragments;
 use crate::query::{TaskDependencyLink, TaskNote};
-use crate::refs::display_ref_for_id;
+use crate::refs::DisplayRefContext;
 use anyhow::Result;
 use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 
@@ -25,6 +25,7 @@ pub(crate) async fn load_task_enrichment(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     task_ids: &[String],
+    display_refs: &DisplayRefContext,
 ) -> Result<TaskEnrichment> {
     Ok(TaskEnrichment {
         labels_by_task: labels_for_tasks(conn, workspace_id, task_ids).await?,
@@ -37,10 +38,26 @@ pub(crate) async fn load_task_enrichment(
         )
         .await?,
         dependent_counts_by_task: dependent_counts_for_tasks(conn, workspace_id, task_ids).await?,
-        depends_on_by_task: dependency_links_for_tasks(conn, workspace_id, task_ids, false).await?,
-        blocks_by_task: dependency_links_for_tasks(conn, workspace_id, task_ids, true).await?,
-        epic_children_by_task: epic_children_for_tasks(conn, workspace_id, task_ids).await?,
-        epic_parent_by_task: epic_parents_for_tasks(conn, workspace_id, task_ids).await?,
+        depends_on_by_task: dependency_links_for_tasks(
+            conn,
+            workspace_id,
+            task_ids,
+            false,
+            display_refs,
+        )
+        .await?,
+        blocks_by_task: dependency_links_for_tasks(
+            conn,
+            workspace_id,
+            task_ids,
+            true,
+            display_refs,
+        )
+        .await?,
+        epic_children_by_task: epic_children_for_tasks(conn, workspace_id, task_ids, display_refs)
+            .await?,
+        epic_parent_by_task: epic_parents_for_tasks(conn, workspace_id, task_ids, display_refs)
+            .await?,
     })
 }
 
@@ -247,12 +264,12 @@ async fn dependency_links_for_tasks(
     workspace_id: &WorkspaceId,
     task_ids: &[String],
     blocks_only: bool,
+    display_refs: &DisplayRefContext,
 ) -> Result<HashMap<String, Vec<TaskDependencyLink>>> {
     let mut links = HashMap::new();
     if task_ids.is_empty() {
         return Ok(links);
     }
-    let workspace_task_ids = workspace_task_ids(conn, workspace_id).await?;
     for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
         if chunk.is_empty() {
             continue;
@@ -323,7 +340,11 @@ async fn dependency_links_for_tasks(
                 .or_insert_with(Vec::new)
                 .push(TaskDependencyLink {
                     task_id: task_id.clone(),
-                    display_ref: display_ref_for_id(&project_prefix, &task_id, &workspace_task_ids),
+                    display_ref: display_refs.display_ref_for_id(
+                        workspace_id,
+                        &project_prefix,
+                        &task_id,
+                    ),
                     title: row.get("title"),
                     status: row.get("status"),
                     priority: row.get("priority"),
@@ -338,12 +359,12 @@ async fn epic_children_for_tasks(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     task_ids: &[String],
+    display_refs: &DisplayRefContext,
 ) -> Result<HashMap<String, Vec<TaskDependencyLink>>> {
     let mut links = HashMap::new();
     if task_ids.is_empty() {
         return Ok(links);
     }
-    let workspace_task_ids = workspace_task_ids(conn, workspace_id).await?;
     for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
         let mut query = QueryBuilder::<Sqlite>::new(
             "SELECT l.epic_task_id AS source_task_id,
@@ -379,7 +400,11 @@ async fn epic_children_for_tasks(
                 .or_insert_with(Vec::new)
                 .push(TaskDependencyLink {
                     task_id: task_id.clone(),
-                    display_ref: display_ref_for_id(&project_prefix, &task_id, &workspace_task_ids),
+                    display_ref: display_refs.display_ref_for_id(
+                        workspace_id,
+                        &project_prefix,
+                        &task_id,
+                    ),
                     title: row.get("title"),
                     status: row.get("status"),
                     priority: row.get("priority"),
@@ -394,12 +419,12 @@ async fn epic_parents_for_tasks(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     task_ids: &[String],
+    display_refs: &DisplayRefContext,
 ) -> Result<HashMap<String, TaskDependencyLink>> {
     let mut links = HashMap::new();
     if task_ids.is_empty() {
         return Ok(links);
     }
-    let workspace_task_ids = workspace_task_ids(conn, workspace_id).await?;
     for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
         let mut query = QueryBuilder::<Sqlite>::new(
             "SELECT l.child_task_id AS source_task_id,
@@ -432,7 +457,11 @@ async fn epic_parents_for_tasks(
                 source_task_id,
                 TaskDependencyLink {
                     task_id: task_id.clone(),
-                    display_ref: display_ref_for_id(&project_prefix, &task_id, &workspace_task_ids),
+                    display_ref: display_refs.display_ref_for_id(
+                        workspace_id,
+                        &project_prefix,
+                        &task_id,
+                    ),
                     title: row.get("title"),
                     status: row.get("status"),
                     priority: row.get("priority"),
@@ -442,18 +471,6 @@ async fn epic_parents_for_tasks(
         }
     }
     Ok(links)
-}
-
-async fn workspace_task_ids(
-    conn: &mut SqliteConnection,
-    workspace_id: &WorkspaceId,
-) -> Result<Vec<String>> {
-    Ok(
-        sqlx::query_scalar::<_, String>("SELECT id FROM tasks WHERE workspace_id = ? ORDER BY id")
-            .bind(workspace_id)
-            .fetch_all(&mut *conn)
-            .await?,
-    )
 }
 
 #[cfg(test)]
@@ -482,7 +499,10 @@ mod tests {
         .await
         .unwrap();
 
-        let enrichment = load_task_enrichment(&mut conn, &workspace_id, &task_ids)
+        let display_refs = DisplayRefContext::for_workspace(&mut conn, &workspace_id)
+            .await
+            .unwrap();
+        let enrichment = load_task_enrichment(&mut conn, &workspace_id, &task_ids, &display_refs)
             .await
             .unwrap();
 

@@ -2,11 +2,12 @@ use crate::ids::WorkspaceId;
 use anyhow::Result;
 use sqlx::{Row, SqliteConnection};
 
+use crate::refs::DisplayRefContext;
 use crate::types::Task;
 
 use super::{
     SortDirection, TaskDependencySummary, TaskFilters, TaskListItem, TaskQueryMode, TaskSort,
-    list_task_items_in_workspace, task_dependency_summary,
+    list_task_items_with_display_refs, task_dependency_summary_with_display_refs,
 };
 
 #[derive(Debug)]
@@ -35,7 +36,16 @@ pub(crate) struct TaskDetailConflict {
 }
 
 pub(crate) async fn task_detail(conn: &mut SqliteConnection, task: &Task) -> Result<TaskDetail> {
-    let item = list_task_items_in_workspace(
+    let display_refs = DisplayRefContext::for_workspace(conn, &task.workspace_id).await?;
+    task_detail_with_display_refs(conn, task, &display_refs).await
+}
+
+pub(crate) async fn task_detail_with_display_refs(
+    conn: &mut SqliteConnection,
+    task: &Task,
+    display_refs: &DisplayRefContext,
+) -> Result<TaskDetail> {
+    let item = list_task_items_with_display_refs(
         conn,
         &task.workspace_id,
         TaskFilters {
@@ -45,6 +55,7 @@ pub(crate) async fn task_detail(conn: &mut SqliteConnection, task: &Task) -> Res
         TaskQueryMode::Flat,
         TaskSort::Updated,
         SortDirection::Desc,
+        display_refs,
     )
     .await?
     .into_iter()
@@ -57,7 +68,9 @@ pub(crate) async fn task_detail(conn: &mut SqliteConnection, task: &Task) -> Res
     .bind(&task.project_id)
     .fetch_one(&mut *conn)
     .await?;
-    let dependencies = task_dependency_summary(conn, &task.workspace_id, &task.id).await?;
+    let dependencies =
+        task_dependency_summary_with_display_refs(conn, &task.workspace_id, &task.id, display_refs)
+            .await?;
     let notes = task_detail_notes(conn, &task.workspace_id, &task.id).await?;
     let conflicts = task_detail_conflicts(conn, &task.workspace_id, &task.id).await?;
 
