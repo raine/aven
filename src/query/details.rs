@@ -3,6 +3,7 @@ use anyhow::Result;
 use sqlx::{Row, SqliteConnection};
 
 use crate::refs::DisplayRefContext;
+use crate::task_fields::TaskField;
 use crate::types::Task;
 
 use super::{
@@ -133,6 +134,41 @@ async fn task_detail_conflicts(
             remote_value: row.get("remote_value"),
         })
         .collect())
+}
+
+pub(crate) async fn conflict_display_value(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    field: &str,
+    value: &str,
+) -> Result<String> {
+    match TaskField::parse(field) {
+        Some(TaskField::Project) => display_project_conflict_value(conn, workspace_id, value).await,
+        Some(TaskField::IsEpic) => Ok(match value {
+            "1" => "on".to_string(),
+            "0" => "off".to_string(),
+            other => other.to_string(),
+        }),
+        _ => Ok(value.to_string()),
+    }
+}
+
+async fn display_project_conflict_value(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    value: &str,
+) -> Result<String> {
+    if let Some((key, prefix)) = sqlx::query_as::<_, (String, String)>(
+        "SELECT key, prefix FROM projects WHERE workspace_id = ? AND id = ?",
+    )
+    .bind(workspace_id)
+    .bind(value)
+    .fetch_optional(&mut *conn)
+    .await?
+    {
+        return Ok(format!("{key} prefix={prefix}"));
+    }
+    Ok(value.to_string())
 }
 
 #[cfg(test)]

@@ -45,6 +45,11 @@ impl CodingAgent {
     }
 }
 
+pub(crate) fn print() -> Result<()> {
+    print!("{SKILL_BODY}");
+    Ok(())
+}
+
 pub(crate) fn install(args: SkillInstallArgs) -> Result<()> {
     let home =
         dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;

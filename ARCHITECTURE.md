@@ -6,7 +6,7 @@
 
 | Layer | Owns | Start here | Rules |
 | --- | --- | --- | --- |
-| CLI entry and dispatch | argument parsing, command routing, config load, database open, daemon wake dispatch, coding-agent skill installation | `src/main.rs`, `src/lib.rs`, `src/cli.rs`, `src/commands.rs`, `src/commands/`, `src/commands/context.rs`, `src/commands/prime.rs`, `src/commands/skill.rs` | Command-family modules own command orchestration and command-local formatting. Business writes belong in operations or mutation helpers. |
+| CLI entry and dispatch | argument parsing, command routing, config load, database open, daemon wake dispatch, coding-agent skill installation | `src/main.rs`, `src/lib.rs`, `src/cli.rs`, `src/commands.rs`, `src/commands/tasks.rs`, `src/commands/bulk_update.rs`, `src/commands/relations.rs`, `src/commands/doctor.rs`, `src/commands/context.rs`, `src/commands/prime.rs`, `src/commands/skill.rs` | `src/commands.rs` is the module and re-export facade. Command-family modules own command orchestration and command-local formatting. Business writes belong in operations or mutation helpers. |
 | Write model | transactional task, project, label, conflict, config, and workspace changes | `src/operations/`, `src/mutation.rs`, `src/task_fields.rs` | Synced scalar task writes must update tasks, `changes`, and `field_versions` together. |
 | Read model | task lists, task details, task search, project lists, sidebar counts, filters, sorting, refs, and enrichment | `src/query.rs`, `src/query/`, `src/query/details.rs`, `src/task_enrichment.rs`, `src/refs.rs`, `src/queue.rs` | Use the task-detail model for enriched single-task reads. Keep list and search reads batch-oriented, and avoid per-row queries on list paths. Keep retrieval-style task search separate from scoped list filters. |
 | Persistence | SQLite setup, migrations, sync metadata, conflict helpers, SQLx metadata | `src/db.rs`, `migrations/`, `.sqlx/` | Create migrations with `just migration-new <lower_snake_name>`. Refresh SQLx metadata after query or schema changes. |
@@ -23,7 +23,7 @@
 
 1. `src/main.rs` starts Tokio and calls `aven::run_cli()`.
 2. `src/cli.rs` parses `Cli` and `Commands`.
-3. `src/lib.rs` classifies every parsed command into the explicit standalone, database, or TUI dispatch class through an exhaustive `Commands` match. Each typed dispatch path performs its required setup, then routes to `src/commands.rs` and focused command-family modules under `src/commands/`. `aven update` dispatches directly to `src/commands/self_update.rs` without opening the task database.
+3. `src/lib.rs` classifies every parsed command into the explicit standalone, database, or TUI dispatch class through an exhaustive `Commands` match. Each typed dispatch path performs its required setup, then routes through the `src/commands.rs` facade to focused command-family modules under `src/commands/`. `aven update` dispatches to `src/commands/self_update.rs` without opening the task database.
 4. Mutating commands call operations or mutation helpers, then dispatch through the daemon wake-if-enabled policy.
 
 ### TUI flow
@@ -112,7 +112,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 
 | Change | Start here | Also check | Tests |
 | --- | --- | --- | --- |
-| Add or change a CLI command | `src/cli.rs`, `src/lib.rs`, `src/commands.rs`, focused `src/commands/` modules | `src/operations/` for writes, `src/input.rs` for text input, `src/render.rs` for shared output helpers, `src/task_render.rs` for task output | focused `tests/cli_*.rs` |
+| Add or change a CLI command | `src/cli.rs`, `src/lib.rs`, the relevant `src/commands/` family module | `src/commands.rs` facade exports, `src/operations/` for writes, `src/input.rs` for text input, `src/render.rs` for shared output helpers, `src/task_render.rs` for task output | focused `tests/cli_*.rs` |
 | Change task detail or context output | `src/query/details.rs`, `src/commands/context.rs`, `src/task_render.rs` | `src/refs.rs`, `src/query/dependencies.rs`, `src/commands.rs` exports | focused context and show CLI tests, query detail tests, or `cargo check` |
 | Add a task scalar field | migration, `src/types.rs`, `src/task_fields.rs`, `src/mutation.rs` | `src/operations/tasks.rs`, `src/sync/apply/task.rs`, `src/sync/apply/conflict.rs`, `src/sync/wire.rs`, `src/query/`, CLI and TUI renderers | sync, conflict, CLI, and TUI tests |
 | Add task dependency relations | `src/operations/dependencies.rs`, `src/query/dependencies.rs` | `src/commands.rs`, `src/task_render.rs`, `src/sync/apply/dependency.rs`, `src/sync/server.rs` | `tests/cli_dependencies.rs`, `tests/cli_sync.rs` |
@@ -140,7 +140,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 1. Add args and a `Commands` variant in `src/cli.rs`.
 2. Classify the variant in the exhaustive `CliDispatch::from` match in `src/lib.rs` and add its command metadata in `src/command_metadata.rs`.
 3. Add handling to the corresponding standalone, database, or TUI dispatch match in `src/lib.rs`.
-4. Add command handling and output formatting in `src/commands.rs` or a focused command module under `src/commands/`.
+4. Add command handling and output formatting to the focused command-family module under `src/commands/`, then export the entry point from `src/commands.rs`.
 5. Put transactional business logic in `src/operations/`.
 6. Add integration tests in `tests/`.
 

@@ -175,7 +175,7 @@ async fn dispatch_standalone(
             run_server(args, config).await
         }
         StandaloneCommand::Skill(args) => match args.command {
-            None => cmd_skill().await,
+            None => cmd_skill(),
             Some(SkillSubcommand::Install(args)) => cmd_skill_install(args),
         },
         StandaloneCommand::Config(args) => cmd_config(args).await,

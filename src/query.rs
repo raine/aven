@@ -1,5 +1,6 @@
 mod dependencies;
 mod details;
+mod doctor;
 pub(crate) mod fragments;
 mod hydration;
 mod projects;
@@ -16,8 +17,10 @@ pub(crate) use dependencies::{
     task_dependency_summary_with_display_refs,
 };
 pub(crate) use details::{
-    TaskDetail, TaskDetailConflict, task_detail, task_detail_with_display_refs,
+    TaskDetail, TaskDetailConflict, conflict_display_value, task_detail,
+    task_detail_with_display_refs,
 };
+pub(crate) use doctor::{unresolved_conflict_count, workspace_task_counts};
 pub(crate) use projects::list_project_items_in_workspace;
 pub(crate) use recent_actions::list_recent_actions_in_workspace;
 pub(crate) use search::{

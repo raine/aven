@@ -12,9 +12,9 @@ use crate::operations::{
     ConflictDetail, conflict_variant_value, list_conflicts, resolve_conflict, task_conflicts,
 };
 use crate::projects::resolve_existing_project_in_workspace;
+use crate::query::conflict_display_value;
 use crate::refs::{DisplayRefContext, resolve_task_ref_in_workspace};
 use crate::render::{print_json_pretty, print_multiline_block, print_text_diff, quote};
-use crate::task_render::conflict_display_value;
 use crate::types::Task;
 use crate::workspaces::Workspace;
 

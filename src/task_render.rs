@@ -1,13 +1,9 @@
-use crate::ids::WorkspaceId;
-use anyhow::Result;
 use serde::Serialize;
-use sqlx::SqliteConnection;
 
 use crate::query::{TaskDependencyLink, TaskDependencySummary, TaskListItem};
 use crate::render::{KvLine, print_multiline_block, quote};
-use crate::task_fields::TaskField;
 
-pub(crate) async fn print_task_line_item(item: &TaskListItem) -> Result<()> {
+pub(crate) fn print_task_line_item(item: &TaskListItem) {
     let labels = item.labels.join(",");
     let line = KvLine::new(item.display_ref.clone())
         .field("status", item.task.status)
@@ -35,14 +31,16 @@ pub(crate) async fn print_task_line_item(item: &TaskListItem) -> Result<()> {
         .quoted("title", &item.task.title)
         .finish();
     println!("{line}");
-    Ok(())
 }
 
-pub(crate) async fn print_full_task_detail(
-    conn: &mut SqliteConnection,
-    detail: &crate::query::TaskDetail,
-) -> Result<()> {
-    print_task_line_item(&detail.item).await?;
+pub(crate) struct TaskFullReport {
+    pub(crate) detail: crate::query::TaskDetail,
+    pub(crate) conflicts: Vec<TaskConflictReport>,
+}
+
+pub(crate) fn print_full_task_report(report: &TaskFullReport) {
+    let detail = &report.detail;
+    print_task_line_item(&detail.item);
     let task = &detail.item.task;
     println!("id={}", task.id);
     println!(
@@ -63,31 +61,36 @@ pub(crate) async fn print_full_task_detail(
         println!("note created={}", note.created_at);
         print_multiline_block("body", &note.body);
     }
-    for conflict in &detail.conflicts {
-        let local_value = conflict_display_value(
-            conn,
-            &task.workspace_id,
-            &conflict.field,
-            &conflict.local_value,
-        )
-        .await?;
-        let remote_value = conflict_display_value(
-            conn,
-            &task.workspace_id,
-            &conflict.field,
-            &conflict.remote_value,
-        )
-        .await?;
+    for conflict in &report.conflicts {
         println!(
             "conflict {} field={}",
             detail.item.display_ref, conflict.field
         );
         println!("variant {}", conflict.variant_a);
-        print_multiline_block("value", &local_value);
+        print_multiline_block("value", &conflict.local_value);
         println!("variant {}", conflict.variant_b);
-        print_multiline_block("value", &remote_value);
+        print_multiline_block("value", &conflict.remote_value);
     }
-    Ok(())
+}
+
+pub(crate) fn task_full_json(report: &TaskFullReport) -> TaskFullJson {
+    let detail = &report.detail;
+    let task = &detail.item.task;
+    TaskFullJson {
+        task: task_line_json_item(&detail.item),
+        project_prefix: task.project_prefix.clone(),
+        description: task.description.clone(),
+        dependencies: task_dependency_summary_json(&detail.dependencies),
+        notes: detail
+            .notes
+            .iter()
+            .map(|note| TaskNoteJson {
+                body: note.body.clone(),
+                created_at: note.created_at.clone(),
+            })
+            .collect(),
+        conflicts: report.conflicts.clone(),
+    }
 }
 
 pub(crate) fn print_task_dependency_summary(summary: &TaskDependencySummary) {
@@ -176,41 +179,6 @@ pub(crate) fn task_epic_link_json(link: &TaskDependencyLink) -> TaskEpicLinkJson
     }
 }
 
-pub(crate) async fn conflict_display_value(
-    conn: &mut SqliteConnection,
-    workspace_id: &WorkspaceId,
-    field: &str,
-    value: &str,
-) -> Result<String> {
-    match TaskField::parse(field) {
-        Some(TaskField::Project) => display_project_conflict_value(conn, workspace_id, value).await,
-        Some(TaskField::IsEpic) => Ok(match value {
-            "1" => "on".to_string(),
-            "0" => "off".to_string(),
-            other => other.to_string(),
-        }),
-        _ => Ok(value.to_string()),
-    }
-}
-
-async fn display_project_conflict_value(
-    conn: &mut SqliteConnection,
-    workspace_id: &WorkspaceId,
-    value: &str,
-) -> Result<String> {
-    if let Some((key, prefix)) = sqlx::query_as::<_, (String, String)>(
-        "SELECT key, prefix FROM projects WHERE workspace_id = ? AND id = ?",
-    )
-    .bind(workspace_id)
-    .bind(value)
-    .fetch_optional(&mut *conn)
-    .await?
-    {
-        return Ok(format!("{key} prefix={prefix}"));
-    }
-    Ok(value.to_string())
-}
-
 #[derive(Serialize)]
 pub(crate) struct TaskFullJson {
     pub(crate) task: TaskLineJson,
@@ -218,7 +186,7 @@ pub(crate) struct TaskFullJson {
     pub(crate) description: String,
     pub(crate) dependencies: TaskDependencySummaryJson,
     pub(crate) notes: Vec<TaskNoteJson>,
-    pub(crate) conflicts: Vec<TaskConflictJson>,
+    pub(crate) conflicts: Vec<TaskConflictReport>,
 }
 
 #[derive(Serialize)]
@@ -227,8 +195,8 @@ pub(crate) struct TaskNoteJson {
     pub(crate) created_at: String,
 }
 
-#[derive(Serialize)]
-pub(crate) struct TaskConflictJson {
+#[derive(Clone, Serialize)]
+pub(crate) struct TaskConflictReport {
     pub(crate) field: String,
     pub(crate) variant_a: String,
     pub(crate) local_value: String,

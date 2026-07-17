@@ -4,10 +4,10 @@ use serde::Serialize;
 use sqlx::SqliteConnection;
 
 use crate::cli::ContextArgs;
-use crate::query::{self, TaskDependencyItem};
+use crate::query::{self, TaskDependencyItem, conflict_display_value};
 use crate::refs::{DisplayRefContext, resolve_task_ref_in_workspace};
 use crate::render::{print_json_pretty, print_multiline_block, quote};
-use crate::task_render::{TaskEpicLinkJson, conflict_display_value, task_epic_link_json};
+use crate::task_render::{TaskEpicLinkJson, task_epic_link_json};
 use crate::types::Task;
 use crate::workspaces::Workspace;
 
