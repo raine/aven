@@ -3449,15 +3449,19 @@ mod authoring {
         app.begin_add_task_natural();
         type_chars(&mut app, "raw natural title").await;
         app.handle_overlay_key(ctrl_s()).await.unwrap();
-        for _ in 0..100 {
-            app.poll_pending_task_intake().await.unwrap();
-            if toast_message(&app).is_some_and(|message| {
-                message.contains("task intake failed") && message.contains("logged to")
-            }) {
-                break;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                app.poll_pending_task_intake().await.unwrap();
+                if toast_message(&app).is_some_and(|message| {
+                    message.contains("task intake failed") && message.contains("logged to")
+                }) {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
+        })
+        .await
+        .expect("task intake failure should finish");
 
         assert!(matches!(
             &app.overlay,
