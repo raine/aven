@@ -8,6 +8,7 @@ use crate::tui::app_edit::{
 };
 use crate::tui::app_filters::{SCOPE_PROJECT_TITLE, SWITCH_WORKSPACE_TITLE};
 use crate::tui::app_projects::{DELETE_PROJECT_TITLE, DELETE_TASK_TITLE};
+use crate::tui::app_search::SearchControllerView;
 use crate::tui::authoring::{ADD_NOTE_TITLE, AddTaskStep};
 use crate::tui::config_overlay::{CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PATHS_TITLE};
 use crate::tui::event::Action;
@@ -1175,7 +1176,10 @@ mod command_and_config_overlays {
             panic!("expected search overlay");
         };
         assert_eq!(state.input.as_str(), "ne");
-        assert!(app.live_search.active.is_some());
+        assert!(matches!(
+            app.search.view(),
+            SearchControllerView::Running { query: "ne" }
+        ));
     }
 
     #[tokio::test]
@@ -1195,13 +1199,10 @@ mod command_and_config_overlays {
         assert!(state.results.is_empty());
         assert!(state.results_query.is_none());
         assert!(!state.results_are_current());
-        assert_eq!(
-            app.live_search
-                .active
-                .as_ref()
-                .map(|active| active.query.as_str()),
-            Some("n")
-        );
+        assert!(matches!(
+            app.search.view(),
+            SearchControllerView::Running { query: "n" }
+        ));
     }
 
     #[tokio::test]
@@ -1220,13 +1221,10 @@ mod command_and_config_overlays {
             .await
             .unwrap();
 
-        assert_eq!(
-            app.live_search
-                .active
-                .as_ref()
-                .map(|active| active.query.as_str()),
-            Some("nee")
-        );
+        assert!(matches!(
+            app.search.view(),
+            SearchControllerView::Running { query: "nee" }
+        ));
 
         settle_search_preview(&mut app).await;
 
@@ -1248,12 +1246,9 @@ mod command_and_config_overlays {
             .await
             .unwrap();
 
-        let active = app.live_search.active.take().expect("active preview");
-
         if let Some(OverlayState::Search(state)) = &mut app.overlay {
             state.input.text = "new".to_string();
         }
-        app.live_search.active = Some(active);
         settle_search_preview(&mut app).await;
 
         let Some(OverlayState::Search(state)) = &app.overlay else {
@@ -1302,13 +1297,10 @@ mod command_and_config_overlays {
         assert!(!state.results.is_empty());
         assert_eq!(state.results_query.as_deref(), Some("alpha"));
         assert!(!state.results_are_current());
-        assert_eq!(
-            app.live_search
-                .active
-                .as_ref()
-                .map(|active| active.query.as_str()),
-            Some("alphax")
-        );
+        assert!(matches!(
+            app.search.view(),
+            SearchControllerView::Running { query: "alphax" }
+        ));
     }
 
     #[tokio::test]

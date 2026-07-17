@@ -2,11 +2,10 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use tokio::task::JoinHandle;
-
 use anyhow::Result;
 use ratatui::widgets::{ListState, TableState};
 use sqlx::SqlitePool;
+use tokio::task::JoinHandle;
 
 use crate::config::AppConfig;
 use crate::operations::TaskDraft;
@@ -67,17 +66,6 @@ pub(super) struct ReadyTaskIntake {
 
 pub(super) const SEARCH_PREVIEW_LIMIT: usize = 8;
 const NAVIGATION_HISTORY_LIMIT: usize = 32;
-
-pub(super) struct PendingSearchPreview {
-    pub(super) query: String,
-    pub(super) workspace_id: String,
-    pub(super) handle: JoinHandle<Result<crate::query::TaskSearchPreviewResultSet>>,
-}
-
-#[derive(Default)]
-pub(super) struct LiveSearchPreview {
-    pub(super) active: Option<PendingSearchPreview>,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Notification {
@@ -170,7 +158,7 @@ pub(crate) struct App {
     pub(super) add_task_config: AppConfig,
     pub(super) pending_task_intake: Option<PendingTaskIntake>,
     pub(super) ready_task_intake: Option<ReadyTaskIntake>,
-    pub(super) live_search: LiveSearchPreview,
+    pub(super) search: crate::tui::app_search::SearchController,
     pub(super) update: crate::tui::app_update::UpdateController,
     pub(super) next_refresh_at: Instant,
     pub(crate) last_task_click: Option<TaskRowClick>,
@@ -228,7 +216,7 @@ impl App {
             add_task_config: AppConfig::default(),
             pending_task_intake: None,
             ready_task_intake: None,
-            live_search: LiveSearchPreview::default(),
+            search: crate::tui::app_search::SearchController::new(),
             update: crate::tui::app_update::UpdateController::new(),
             next_refresh_at,
             last_task_click: None,
@@ -328,13 +316,11 @@ impl App {
     }
 
     pub(super) fn clear_live_search_preview(&mut self) {
-        if let Some(active) = self.live_search.active.take() {
-            active.handle.abort();
-        }
+        self.search.cancel();
     }
 
     pub(super) fn search_preview_work_pending(&self) -> bool {
-        self.live_search.active.is_some()
+        self.search.work_pending()
     }
 
     pub(super) async fn set_sort(&mut self, sort: TaskOrder) -> Result<()> {

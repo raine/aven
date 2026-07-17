@@ -1,8 +1,111 @@
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use tokio::task::JoinHandle;
 
-use crate::tui::app::{App, PendingSearchPreview, SEARCH_PREVIEW_LIMIT};
+use crate::query::TaskSearchPreviewResultSet;
+use crate::tui::app::{App, SEARCH_PREVIEW_LIMIT};
 use crate::tui::overlay::{LineEdit, OverlayState, SearchPurpose, SearchResultItem, SearchState};
+
+struct PendingSearchPreview {
+    query: String,
+    workspace_id: String,
+    handle: JoinHandle<Result<TaskSearchPreviewResultSet>>,
+}
+
+enum SearchStateMachine {
+    Idle,
+    Running(PendingSearchPreview),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SearchControllerView<'a> {
+    Idle,
+    Running { query: &'a str },
+}
+
+struct CompletedSearchPreview {
+    query: String,
+    workspace_id: String,
+    result_set: TaskSearchPreviewResultSet,
+}
+
+pub(super) struct SearchController {
+    state: SearchStateMachine,
+}
+
+impl SearchController {
+    pub(super) fn new() -> Self {
+        Self {
+            state: SearchStateMachine::Idle,
+        }
+    }
+
+    pub(super) fn start(
+        &mut self,
+        query: String,
+        workspace_id: String,
+        handle: JoinHandle<Result<TaskSearchPreviewResultSet>>,
+    ) {
+        self.cancel();
+        self.state = SearchStateMachine::Running(PendingSearchPreview {
+            query,
+            workspace_id,
+            handle,
+        });
+    }
+
+    pub(super) fn cancel(&mut self) {
+        if let SearchStateMachine::Running(active) =
+            std::mem::replace(&mut self.state, SearchStateMachine::Idle)
+        {
+            active.handle.abort();
+        }
+    }
+
+    pub(super) fn view(&self) -> SearchControllerView<'_> {
+        match &self.state {
+            SearchStateMachine::Idle => SearchControllerView::Idle,
+            SearchStateMachine::Running(active) => SearchControllerView::Running {
+                query: &active.query,
+            },
+        }
+    }
+
+    pub(super) fn work_pending(&self) -> bool {
+        matches!(self.state, SearchStateMachine::Running(_))
+    }
+
+    async fn poll(&mut self) -> Result<Option<CompletedSearchPreview>> {
+        let SearchStateMachine::Running(active) = &self.state else {
+            return Ok(None);
+        };
+        if !active.handle.is_finished() {
+            return Ok(None);
+        }
+
+        let SearchStateMachine::Running(active) =
+            std::mem::replace(&mut self.state, SearchStateMachine::Idle)
+        else {
+            unreachable!("search state checked above");
+        };
+        let result_set = match active.handle.await {
+            Ok(result_set) => result_set?,
+            Err(error) if error.is_cancelled() => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        Ok(Some(CompletedSearchPreview {
+            query: active.query,
+            workspace_id: active.workspace_id,
+            result_set,
+        }))
+    }
+}
+
+impl Drop for SearchController {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
 
 fn open_search_results_key(key: KeyEvent) -> bool {
     key.modifiers
@@ -154,11 +257,7 @@ impl App {
         let handle = self
             .store
             .spawn_search_preview(query.clone(), SEARCH_PREVIEW_LIMIT);
-        self.live_search.active = Some(PendingSearchPreview {
-            query,
-            workspace_id,
-            handle,
-        });
+        self.search.start(query, workspace_id, handle);
     }
 
     fn schedule_search_preview(&mut self, state: &mut SearchState) {
@@ -169,12 +268,10 @@ impl App {
             return;
         }
 
-        if self
-            .live_search
-            .active
-            .as_ref()
-            .is_some_and(|active| active.query == query)
-        {
+        if matches!(
+            self.search.view(),
+            SearchControllerView::Running { query: active_query } if active_query == query
+        ) {
             return;
         }
 
@@ -183,30 +280,16 @@ impl App {
     }
 
     pub(super) async fn poll_search_preview(&mut self) -> Result<bool> {
-        let Some(active) = self.live_search.active.as_ref() else {
+        let Some(completed) = self.search.poll().await? else {
             return Ok(false);
-        };
-        if !active.handle.is_finished() {
-            return Ok(false);
-        }
-
-        let active = self
-            .live_search
-            .active
-            .take()
-            .expect("active search preview");
-        let result_set = match active.handle.await {
-            Ok(result_set) => result_set?,
-            Err(error) if error.is_cancelled() => return Ok(false),
-            Err(error) => return Err(error.into()),
         };
 
         let mut changed = false;
         if let Some(OverlayState::Search(state)) = &mut self.overlay
-            && self.store.active_workspace.id == active.workspace_id
-            && state.input.text.trim() == active.query
+            && self.store.active_workspace.id == completed.workspace_id
+            && state.input.text.trim() == completed.query
         {
-            Self::apply_search_preview_results(state, active.query, result_set);
+            Self::apply_search_preview_results(state, completed.query, completed.result_set);
             changed = true;
         }
 
