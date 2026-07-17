@@ -794,31 +794,5 @@ fn char_boundary_at_or_after(text: &str, mut index: usize) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn score_text_lane_does_not_normalize_ref_glyphs() {
-        assert_eq!(score_contiguous_text_lane("looking glass", "100king"), None);
-        assert_eq!(score_contiguous_text_lane("looking glass", "100k1ng"), None);
-        assert!(score_contiguous_text_lane("looking glass", "glass").is_some());
-        assert!(score_contiguous_text_lane("looking glass", "looking").is_some());
-    }
-
-    #[test]
-    fn score_text_lane_matches_parser_owned_quoted_phrase() {
-        let parsed = parser::parse_task_search_query("\"pager rotation\"");
-        let (_, span) = score_text_lane("contains pager rotation context", &parsed).unwrap();
-
-        assert_eq!(&"contains pager rotation context"[span], "pager rotation");
-        assert!(score_text_lane("contains pager context", &parsed).is_none());
-    }
-
-    #[test]
-    fn score_text_lane_handles_unsafe_parser_input_without_panic() {
-        for input in ["\"", "\"(", "a*b", "\"unfinished", "x OR y", "\"*\""] {
-            let parsed = parser::parse_task_search_query(input);
-            let _ = score_text_lane("any task body", &parsed);
-        }
-    }
-}
+#[path = "search_tests.rs"]
+mod tests;

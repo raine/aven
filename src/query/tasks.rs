@@ -247,3 +247,7 @@ fn push_filter_prefix(query: &mut QueryBuilder<Sqlite>, filters: &mut usize) {
     }
     *filters += 1;
 }
+
+#[cfg(test)]
+#[path = "tasks_tests.rs"]
+mod tests;
