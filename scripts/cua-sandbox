@@ -2,34 +2,30 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-state_dir="${CUA_SANDBOX_STATE_DIR:-$repo_root/target/cua-sandbox}"
-cli_prefix="$state_dir/cli"
-playwright_prefix="$state_dir/playwright"
-cuabot="$cli_prefix/node_modules/.bin/cuabot"
 default_session="${CUA_SANDBOX_SESSION:-}"
-custom_image="aven-cuabot:latest"
-cuabot_image="trycua/cuabot:latest"
-cuabot_version="1.0.14"
 default_db="${AVEN_SANDBOX_DB:-$HOME/.local/state/aven/marketing-screenshot.sqlite}"
+global_sandbox="${CUA_SANDBOX_COMMAND:-$(command -v cua-sandbox || true)}"
 
 usage() {
   cat <<'USAGE'
 Usage: scripts/cua-sandbox <command> [arguments]
 
-Commands:
-  setup                    Install the local CLI and build the persistent image
+Aven command:
+  db-bootstrap <session> [source] [--force]
+                           Snapshot a host aven database into a session
+
+Global commands:
+  setup                    Install the CLI and build the persistent image
   start <session>          Start an isolated CuaBot server in the foreground
   stop <session>           Stop a named CuaBot server
   status <session>         Show a named CuaBot server's status
   list                     List discoverable CuaBot sessions
-  db-bootstrap <session> [source] [--force]
-                           Snapshot a host aven database into a session
   cua <session> [args...]  Pass arguments to a named CuaBot server
   container <session>      Print the Docker container name
 
 Environment:
+  CUA_SANDBOX_COMMAND    Global command override
   CUA_SANDBOX_SESSION    Session fallback when an argument is omitted
-  CUA_SANDBOX_STATE_DIR  Host CLI state (default: target/cua-sandbox)
   AVEN_SANDBOX_DB        Database source for db-bootstrap
 USAGE
 }
@@ -41,23 +37,11 @@ require_command() {
   fi
 }
 
-require_cli() {
-  if [[ ! -x "$cuabot" ]]; then
-    echo "CuaBot CLI is missing. Run: scripts/cua-sandbox setup" >&2
+require_global_sandbox() {
+  if [[ -z "$global_sandbox" || ! -x "$global_sandbox" ]]; then
+    echo "Global cua-sandbox command is missing from PATH." >&2
     exit 1
   fi
-}
-
-require_image() {
-  if ! docker image inspect "$custom_image" >/dev/null 2>&1; then
-    echo "Sandbox image is missing. Run: scripts/cua-sandbox setup" >&2
-    exit 1
-  fi
-}
-
-activate_image() {
-  require_image
-  docker tag "$custom_image" "$cuabot_image"
 }
 
 resolve_session() {
@@ -72,35 +56,6 @@ resolve_session() {
     exit 1
   fi
   printf '%s\n' "$requested"
-}
-
-list_sessions() {
-  local found=0
-  printf '%-28s %-8s %-7s %s\n' "SESSION" "SERVER" "PORT" "CONTAINER"
-  shopt -s nullglob
-  for pid_file in "$HOME"/.cuabot/server.*.pid; do
-    local filename session pid port state container_state
-    filename="${pid_file##*/}"
-    session="${filename#server.}"
-    session="${session%.pid}"
-    pid="$(head -n 1 "$pid_file" 2>/dev/null || true)"
-    port="$(cat "$HOME/.cuabot/server.$session.port" 2>/dev/null || true)"
-    state="stale"
-    if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
-      state="active"
-    fi
-    container_state="$(
-      docker inspect --format '{{.State.Status}}' "cuabot-xpra-$session" 2>/dev/null \
-        || printf 'absent'
-    )"
-    printf '%-28s %-8s %-7s %s\n' \
-      "$session" "$state" "${port:--}" "$container_state"
-    found=1
-  done
-  shopt -u nullglob
-  if [[ "$found" -eq 0 ]]; then
-    echo "(none)"
-  fi
 }
 
 bootstrap_database() (
@@ -194,103 +149,8 @@ bootstrap_database() (
   fi
 )
 
-configure_cuabot() {
-  local settings="$HOME/.cuabot/settings.json"
-  mkdir -p "$(dirname "$settings")"
-  SETTINGS_FILE="$settings" node <<'NODE'
-const fs = require('fs');
-const path = process.env.SETTINGS_FILE;
-let settings = {};
-try {
-  settings = JSON.parse(fs.readFileSync(path, 'utf8'));
-} catch (error) {
-  if (error.code !== 'ENOENT') throw error;
-}
-if (settings.telemetryEnabled === undefined) settings.telemetryEnabled = false;
-if (settings.aliasIgnored === undefined) settings.aliasIgnored = true;
-fs.writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`);
-NODE
-}
-
-setup() {
-  require_command docker
-  require_command node
-  require_command npm
-
-  if [[ ! -x /Applications/Xpra.app/Contents/MacOS/Xpra ]]; then
-    echo "Xpra is missing. Install it with: brew install --cask xpra" >&2
-    exit 1
-  fi
-  if xattr -p com.apple.quarantine /Applications/Xpra.app >/dev/null 2>&1; then
-    echo "Xpra is quarantined. Clear it with:" >&2
-    echo "  xattr -cr /Applications/Xpra.app" >&2
-    exit 1
-  fi
-  if ! docker info >/dev/null 2>&1; then
-    echo "Docker is unavailable. Start OrbStack and retry." >&2
-    exit 1
-  fi
-
-  mkdir -p "$state_dir"
-  npm install --prefix "$cli_prefix" "cuabot@$cuabot_version"
-
-  local playwright_version
-  playwright_version="$(
-    node -p \
-      "require('$cli_prefix/node_modules/playwright/package.json').version"
-  )"
-  npm install --prefix "$playwright_prefix" "playwright@$playwright_version"
-  "$playwright_prefix/node_modules/.bin/playwright" install chromium
-
-  configure_cuabot
-  docker build \
-    --file "$repo_root/sandbox/cua/Dockerfile" \
-    --tag "$custom_image" \
-    "$repo_root/sandbox/cua"
-  activate_image
-
-  echo
-  echo "Sandbox setup is ready."
-  echo "Start one with: scripts/cua-sandbox start <unique-session>"
-}
-
 command="${1:-}"
 case "$command" in
-  setup)
-    setup
-    ;;
-  start)
-    require_cli
-    session="$(resolve_session "${2:-}")"
-    pid_file="$HOME/.cuabot/server.$session.pid"
-    if [[ -f "$pid_file" ]]; then
-      pid="$(head -n 1 "$pid_file" 2>/dev/null || true)"
-      if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
-        echo "session '$session' is already active under pid $pid" >&2
-        echo "Use a different session or stop this one explicitly." >&2
-        exit 1
-      fi
-    fi
-    activate_image
-    export XPRA_USER_CONF_DIRS="$repo_root/sandbox/cua/xpra"
-    export XPRA_OSX_SHOW_MENU_DEFAULT=0
-    export XPRA_OSX_USE_WINDOW_MENU=0
-    exec "$cuabot" -n "$session" --serve
-    ;;
-  stop)
-    require_cli
-    session="$(resolve_session "${2:-}")"
-    exec "$cuabot" -n "$session" --stop
-    ;;
-  status)
-    require_cli
-    session="$(resolve_session "${2:-}")"
-    exec "$cuabot" -n "$session" --status
-    ;;
-  list)
-    require_command docker
-    list_sessions
-    ;;
   db-bootstrap)
     session="$(resolve_session "${2:-}")"
     source="${3:-$default_db}"
@@ -306,22 +166,11 @@ case "$command" in
     fi
     bootstrap_database "$session" "$source" "$force"
     ;;
-  cua)
-    require_cli
-    session="$(resolve_session "${2:-}")"
-    shift 2
-    exec "$cuabot" -n "$session" "$@"
-    ;;
-  container)
-    session="$(resolve_session "${2:-}")"
-    printf 'cuabot-xpra-%s\n' "$session"
-    ;;
   help|-h|--help|'')
     usage
     ;;
   *)
-    echo "unknown command: $command" >&2
-    usage >&2
-    exit 1
+    require_global_sandbox
+    exec "$global_sandbox" "$@"
     ;;
 esac

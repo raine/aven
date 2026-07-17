@@ -28,24 +28,24 @@ CuaBot recreates its named container when a server starts. Installing packages
 interactively inside a running container therefore lasts only until that
 container is recreated.
 
-Aven uses a derived image, `aven-cuabot:latest`, to persist Kitty, terminal
-fonts, and other desktop dependencies. `scripts/cua-sandbox start` tags that
+The host uses the shared `cua-sandbox:latest` image to persist Kitty, terminal
+fonts, and other desktop dependencies. The global `cua-sandbox` command tags that
 image as CuaBot's expected `trycua/cuabot:latest` before every launch. CuaBot can
 then recreate the container without losing the provisioned tools.
 
 State has three lifetimes:
 
 - Xpra, OrbStack, Playwright browsers, and npm caches persist on the host.
-- Kitty, fonts, and apt packages persist in `aven-cuabot:latest`.
+- Kitty, fonts, and apt packages persist in `cua-sandbox:latest`.
 - Test binaries, databases, caches, and fixtures live in the named container and
   are disposable.
 
-Rebuild the derived image only when `sandbox/cua/Dockerfile` changes or the image
-is removed. Recreate test data after a CuaBot container replacement.
+Rebuild the shared image only when `~/.config/cua-sandbox/Dockerfile` changes or
+the image is removed. Recreate test data after a CuaBot container replacement.
 
 ## Multi-agent coordination
 
-The derived image is shared, but every agent gets a distinct named session. A
+The shared image is global, but every agent gets a distinct named session. A
 session owns its server process, port files, Docker container, Xpra window, test
 data, and input stream. Two agents must not send input to the same session at
 the same time.
@@ -63,7 +63,7 @@ scripts/cua-sandbox list
 The listing reports the session name, whether its server PID is active, its host
 port, and container state. An active session belongs to its creator. Treat it as
 unavailable unless the creator or user explicitly hands it off. Starting a fresh
-session is cheap because all sessions share `aven-cuabot:latest` and the host
+session is cheap because all sessions share `cua-sandbox:latest` and the host
 Playwright cache.
 
 For an explicit handoff, the receiving agent uses the existing name with
@@ -94,19 +94,20 @@ cua-driver launch_app '{"bundle_id":"dev.kdrag0n.MacVirt","name":"OrbStack"}'
 until docker info >/dev/null 2>&1; do sleep 2; done
 ```
 
-Provision the host CLI, matching Playwright browser, CuaBot settings, and derived
-image:
+Provision the global host CLI, matching Playwright browser, CuaBot settings, and
+shared image:
 
 ```sh
-just cua-sandbox-setup
+cua-sandbox setup
 ```
 
-The setup command stores host-side CLI packages under `target/cua-sandbox`,
-which is ignored by Git. It merges the required CuaBot settings without
+The setup command stores host-side CLI packages under
+`~/.local/state/cua-sandbox`. It merges the required CuaBot settings without
 replacing existing preferences.
 
-The wrapper gives Xpra a sandbox-specific configuration from
-`sandbox/cua/xpra`. Host tray and global window menus are disabled because the
+The command gives Xpra a shared configuration from
+`~/.config/cua-sandbox/xpra`. Host tray and global window menus are disabled
+because the
 sandbox is controlled through its streamed application windows. This also
 avoids GTK's macOS menu integration in Xpra 6.5.1, which can abort while
 constructing native submenus on recent macOS releases.
@@ -335,7 +336,7 @@ Stop the named CuaBot server when the desktop is idle:
 just cua-sandbox-stop aven-auto-update-a1
 ```
 
-The derived image remains available, so the next container has Kitty and fonts
+The shared image remains available, so the next container has Kitty and fonts
 without another apt or font installation. Remove disposable container state when
 needed:
 
@@ -344,6 +345,6 @@ container="$(scripts/cua-sandbox container aven-auto-update-a1)"
 docker rm -f "$container" 2>/dev/null || true
 ```
 
-Remove `aven-cuabot:latest` only when a full image rebuild is desired. OrbStack,
+Remove `cua-sandbox:latest` only when a full image rebuild is desired. OrbStack,
 Xpra, Playwright browsers, and npm caches can remain installed for later
 verification sessions.
