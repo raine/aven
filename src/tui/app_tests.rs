@@ -4301,6 +4301,92 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn detail_tab_focuses_epic_children_and_j_k_selects_and_opens() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        let first_index = create_and_select_task(&mut app, test_task_draft("First child")).await;
+        let first_id = app.store.tasks[first_index].task.id.clone();
+        let second_index = create_and_select_task(&mut app, test_task_draft("Second child")).await;
+        let second_id = app.store.tasks[second_index].task.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        crate::operations::add_task_to_epic(&mut conn, &first_id, &parent_id)
+            .await
+            .unwrap();
+        crate::operations::add_task_to_epic(&mut conn, &second_id, &parent_id)
+            .await
+            .unwrap();
+        drop(conn);
+        app.store.refresh(Some(&parent_id)).await.unwrap();
+        let parent_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == parent_id)
+            .unwrap();
+        app.widgets.table.select(Some(parent_index));
+        app.overlay = Some(OverlayState::Detail { scroll: 4 });
+        let child_ids = app.store.tasks[parent_index]
+            .epic_children
+            .iter()
+            .map(|child| child.task_id.clone())
+            .collect::<Vec<_>>();
+
+        app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.selected_detail_child_task_id.as_deref(),
+            Some(child_ids[0].as_str())
+        );
+        assert_eq!(
+            app.view().selected_detail_child_task_id.as_deref(),
+            Some(child_ids[0].as_str())
+        );
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+
+        app.dispatch_key(key(KeyCode::Char('j')), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.selected_detail_child_task_id.as_deref(),
+            Some(child_ids[1].as_str())
+        );
+
+        app.dispatch_key(key(KeyCode::Char('k')), (80, 24).into())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.selected_detail_child_task_id.as_deref(),
+            Some(child_ids[0].as_str())
+        );
+
+        app.dispatch_key(key(KeyCode::Char('j')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
+            .await
+            .unwrap();
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.id, child_ids[1]);
+        assert!(app.selected_detail_child_task_id.is_none());
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+    }
+
+    #[tokio::test]
     async fn detail_back_returns_from_epic_child_to_parent_detail() {
         let (_dir, pool, mut app) = test_app_with_pool().await;
         let parent_index = create_and_select_task(

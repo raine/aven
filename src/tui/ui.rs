@@ -76,6 +76,7 @@ pub(crate) struct ViewState {
     pub(crate) detail_underlay: bool,
     pub(crate) detail_underlay_scroll: u16,
     pub(crate) hovered_detail_child_task_id: Option<String>,
+    pub(crate) selected_detail_child_task_id: Option<String>,
     pub(crate) detail_text_selection: Option<crate::tui::detail_selection::DetailTextSelection>,
     pub(crate) notification: Option<Toast>,
     pub(crate) pending_shortcut: Vec<String>,
@@ -99,7 +100,9 @@ impl ViewState {
             self.overlay,
             Some(OverlayView::Detail { .. } | OverlayView::DetailHelp { .. })
         ) {
-            if self
+            if self.selected_detail_child_task_id.is_some() {
+                FooterMode::DetailChildren
+            } else if self
                 .detail_text_selection
                 .as_ref()
                 .is_some_and(|selection| selection.terminal_width == width)
@@ -197,6 +200,10 @@ pub(crate) fn render(
         footer,
     );
 
+    let active_detail_child_task_id = view
+        .selected_detail_child_task_id
+        .as_deref()
+        .or(view.hovered_detail_child_task_id.as_deref());
     if view.detail_underlay {
         render_detail_underlay(
             frame,
@@ -204,7 +211,7 @@ pub(crate) fn render(
             widgets,
             detail_underlay_scroll(view),
             inline_detail_title_editor,
-            view.hovered_detail_child_task_id.as_deref(),
+            active_detail_child_task_id,
             view.detail_text_selection.as_ref(),
         );
     }
@@ -215,7 +222,7 @@ pub(crate) fn render(
             widgets,
             overlay,
             inline_title_editor.is_some() || inline_detail_title_editor.is_some(),
-            view.hovered_detail_child_task_id.as_deref(),
+            active_detail_child_task_id,
             view.detail_text_selection.as_ref(),
         );
     }

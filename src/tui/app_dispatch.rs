@@ -52,6 +52,7 @@ impl App {
         } else if self.overlay_captures_input() {
             if key.code == KeyCode::Char('?')
                 && matches!(self.overlay, Some(OverlayState::Detail { .. }))
+                && self.selected_detail_child_task_id.is_none()
             {
                 self.toggle_help_at_height(terminal_size.height);
                 Ok(())
@@ -551,46 +552,93 @@ impl App {
         }
     }
 
+    fn detail_child_task_ids(&self) -> Vec<String> {
+        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
+            return Vec::new();
+        };
+        item.epic_children
+            .iter()
+            .filter(|child| child.unresolved)
+            .chain(item.epic_children.iter().filter(|child| !child.unresolved))
+            .map(|child| child.task_id.clone())
+            .collect()
+    }
+
+    fn focus_detail_children(&mut self, reverse: bool) -> bool {
+        let child_ids = self.detail_child_task_ids();
+        let task_id = if reverse {
+            child_ids.last()
+        } else {
+            child_ids.first()
+        };
+        let Some(task_id) = task_id else {
+            return false;
+        };
+        self.detail_text_selection = None;
+        self.detail_text_dragging = false;
+        self.selected_detail_child_task_id = Some(task_id.clone());
+        true
+    }
+
+    fn move_detail_child_selection(&mut self, delta: isize) -> bool {
+        let Some(selected_id) = self.selected_detail_child_task_id.as_ref() else {
+            return false;
+        };
+        let child_ids = self.detail_child_task_ids();
+        let Some(index) = child_ids.iter().position(|task_id| task_id == selected_id) else {
+            self.selected_detail_child_task_id = None;
+            return false;
+        };
+        let next = (index as isize + delta).rem_euclid(child_ids.len() as isize) as usize;
+        self.selected_detail_child_task_id = Some(child_ids[next].clone());
+        true
+    }
+
+    fn open_detail_child_task(&mut self, task_id: &str, scroll: u16) {
+        let current_task_id = self
+            .store
+            .selected_task(self.widgets.table.selected())
+            .map(|item| item.task.id.clone());
+        self.selected_detail_child_task_id = None;
+        self.hovered_detail_child_task_id = None;
+        self.last_task_click = None;
+        let Some(index) = self
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+        else {
+            self.set_warning("child task is hidden by the current view");
+            self.overlay = Some(OverlayState::Detail { scroll });
+            return;
+        };
+        if let Some(task_id) = current_task_id {
+            self.push_detail_navigation_state(DetailNavigationState { task_id, scroll });
+        }
+        self.widgets.table.select(Some(index));
+        self.detail_context = true;
+        self.detail_context_scroll = 0;
+        self.overlay = Some(OverlayState::Detail { scroll: 0 });
+    }
+
     fn handle_detail_mouse_click(
         &mut self,
         mouse: MouseEvent,
         terminal_size: Size,
         scroll: u16,
     ) -> bool {
-        if let Some(item) = self.store.selected_task(self.widgets.table.selected()) {
-            let current_task_id = item.task.id.clone();
-            if let Some(hit) = detail_child_task_at_position(
+        if let Some(item) = self.store.selected_task(self.widgets.table.selected())
+            && let Some(hit) = detail_child_task_at_position(
                 item,
                 terminal_size.width,
                 terminal_size.height,
                 mouse.column,
                 mouse.row,
                 scroll,
-            ) {
-                self.last_task_click = None;
-                self.detail_context = true;
-                self.detail_context_scroll = 0;
-                self.hovered_detail_child_task_id = Some(hit.task_id.clone());
-                if let Some(index) = self
-                    .store
-                    .tasks
-                    .iter()
-                    .position(|item| item.task.id == hit.task_id)
-                {
-                    self.push_detail_navigation_state(DetailNavigationState {
-                        task_id: current_task_id,
-                        scroll,
-                    });
-                    self.widgets.table.select(Some(index));
-                    self.overlay = Some(OverlayState::Detail { scroll: 0 });
-                } else {
-                    self.set_warning("child task is hidden by the current view");
-                    if self.overlay.is_none() {
-                        self.overlay = Some(OverlayState::Detail { scroll });
-                    }
-                }
-                return true;
-            }
+            )
+        {
+            self.open_detail_child_task(&hit.task_id, scroll);
+            return true;
         }
 
         let Some((target, _column, _row)) = crate::tui::ui::detail_metadata_target_at(
@@ -878,12 +926,42 @@ impl App {
                 self.overlay = Some(OverlayState::Detail { scroll });
                 return Ok(());
             }
+            if self.selected_detail_child_task_id.is_some() {
+                match (key.code, key.modifiers) {
+                    (KeyCode::Char('j') | KeyCode::Down, KeyModifiers::NONE) => {
+                        self.move_detail_child_selection(1);
+                    }
+                    (KeyCode::Char('k') | KeyCode::Up, KeyModifiers::NONE) => {
+                        self.move_detail_child_selection(-1);
+                    }
+                    (KeyCode::Enter, KeyModifiers::NONE) => {
+                        let task_id = self
+                            .selected_detail_child_task_id
+                            .clone()
+                            .expect("selected detail child");
+                        self.open_detail_child_task(&task_id, scroll);
+                        return Ok(());
+                    }
+                    (KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab, _) => {
+                        self.selected_detail_child_task_id = None;
+                    }
+                    _ => {}
+                }
+                self.overlay = Some(OverlayState::Detail { scroll });
+                return Ok(());
+            }
             let section_direction = match (key.code, key.modifiers) {
                 (KeyCode::Tab, KeyModifiers::NONE) => Some(false),
                 (KeyCode::BackTab, KeyModifiers::NONE | KeyModifiers::SHIFT)
                 | (KeyCode::Tab, KeyModifiers::SHIFT) => Some(true),
                 _ => None,
             };
+            if let Some(reverse) = section_direction
+                && self.focus_detail_children(reverse)
+            {
+                self.overlay = Some(OverlayState::Detail { scroll: 0 });
+                return Ok(());
+            }
             if let (Some(reverse), Some(task)) = (
                 section_direction,
                 self.store.selected_task(self.widgets.table.selected()),

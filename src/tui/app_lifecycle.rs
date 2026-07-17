@@ -136,6 +136,17 @@ impl App {
             detail_underlay: self.detail_underlay(),
             detail_underlay_scroll: self.detail_context_scroll,
             hovered_detail_child_task_id: self.hovered_detail_child_task_id.clone(),
+            selected_detail_child_task_id: self
+                .selected_detail_child_task_id
+                .as_ref()
+                .filter(|task_id| {
+                    selected_task.is_some_and(|task| {
+                        task.epic_children
+                            .iter()
+                            .any(|child| child.task_id == task_id.as_str())
+                    })
+                })
+                .cloned(),
             detail_text_selection: self
                 .detail_text_selection
                 .as_ref()

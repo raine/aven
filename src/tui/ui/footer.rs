@@ -9,6 +9,7 @@ pub(super) enum FooterMode {
     List,
     Columns,
     Detail,
+    DetailChildren,
     DetailSelection,
     StatusChoice,
     PriorityChoice,
@@ -111,6 +112,11 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("m", "lane"),
             ("?", "more"),
         ],
+        FooterMode::DetailChildren => &[
+            ("j/k", "select child"),
+            ("Enter", "open"),
+            ("Tab/Esc", "leave"),
+        ],
         FooterMode::DetailSelection if width >= 72 => &[
             ("y", "copy selection"),
             ("Esc", "clear selection"),
@@ -190,6 +196,7 @@ fn cmd(mode: FooterMode, label: &str) -> Span<'static> {
         FooterMode::List
         | FooterMode::Columns
         | FooterMode::Detail
+        | FooterMode::DetailChildren
         | FooterMode::DetailSelection => Style::new().fg(FG_DIM),
     };
     Span::styled(format!(" {label}  "), style)
@@ -251,6 +258,20 @@ mod tests {
         let rendered = buffer_text(terminal.backend());
 
         assert!(!rendered.contains("marked"));
+    }
+
+    #[test]
+    fn detail_children_footer_advertises_selection_controls() {
+        let hints = footer_hints(FooterMode::DetailChildren, 80);
+
+        assert_eq!(
+            hints,
+            &[
+                ("j/k", "select child"),
+                ("Enter", "open"),
+                ("Tab/Esc", "leave"),
+            ]
+        );
     }
 
     #[test]
