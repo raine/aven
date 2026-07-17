@@ -52,4 +52,5 @@ pub(super) async fn apply_remote_change(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) use task::set_field as apply_remote_set_field;

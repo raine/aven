@@ -10,33 +10,25 @@ mod sync_history;
 mod tasks;
 mod types;
 
-#[allow(unused_imports)]
 pub(crate) use dependencies::{TaskDependencyItem, TaskDependencySummary, task_dependency_summary};
-#[allow(unused_imports)]
-pub(crate) use hydration::build_task_list_items;
-#[allow(unused_imports)]
-pub(crate) use projects::{list_project_items, list_project_items_in_workspace};
-#[allow(unused_imports)]
+#[cfg(test)]
+pub(crate) use projects::list_project_items;
+pub(crate) use projects::list_project_items_in_workspace;
 pub(crate) use recent_actions::list_recent_actions_in_workspace;
-#[allow(unused_imports)]
 pub(crate) use search::{
-    SearchMatchedField, TaskSearchPreviewResult, TaskSearchPreviewResultSet, TaskSearchQuery,
-    TaskSearchResult, TaskSearchResultSet, search_task_item_set_in_workspace, search_task_items,
-    search_task_items_in_workspace, search_task_preview_set_in_workspace,
+    SearchMatchedField, TaskSearchPreviewResultSet, TaskSearchQuery, TaskSearchResult,
+    search_task_items, search_task_items_in_workspace, search_task_preview_set_in_workspace,
 };
-#[allow(unused_imports)]
-pub(crate) use sidebar::{
-    sidebar_counts, sidebar_counts_for_scope_in_workspace, sidebar_counts_in_workspace,
-};
-#[allow(unused_imports)]
+pub(crate) use sidebar::sidebar_counts_for_scope_in_workspace;
+#[cfg(test)]
+pub(crate) use sidebar::{sidebar_counts, sidebar_counts_in_workspace};
 pub(crate) use sync_history::{SyncHistoryStats, sync_history_stats};
-#[allow(unused_imports)]
 pub(crate) use tasks::{list_task_items, list_task_items_in_workspace};
-#[allow(unused_imports)]
+#[cfg(test)]
+pub(crate) use types::RecentActionTarget;
 pub(crate) use types::{
-    ProjectListItem, RecentActionItem, RecentActionTarget, SidebarCounts, SortDirection,
-    TaskAvailabilityFilter, TaskDependencyLink, TaskFilters, TaskListItem, TaskNote, TaskQueryMode,
-    TaskSort,
+    ProjectListItem, RecentActionItem, SidebarCounts, SortDirection, TaskAvailabilityFilter,
+    TaskDependencyLink, TaskFilters, TaskListItem, TaskNote, TaskQueryMode, TaskSort,
 };
 
 #[cfg(test)]
