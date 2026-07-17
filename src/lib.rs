@@ -54,32 +54,135 @@ use workspaces::resolve_active_workspace;
 
 pub async fn run_cli() -> Result<()> {
     let cli = cli::parse();
-    logging::init(cli.command.metadata().log_mode)?;
+    let metadata = cli.command.metadata();
+    logging::init(metadata.log_mode)?;
 
-    match cli.command {
-        Commands::Backup(backup)
-            if matches!(backup.command, Some(BackupSubcommand::Restore(_))) =>
-        {
+    match CliDispatch::from(cli.command) {
+        CliDispatch::Standalone(command) => dispatch_standalone(cli.db, command).await,
+        CliDispatch::Database(command) => {
+            dispatch_database(cli.db, cli.workspace, metadata, *command).await
+        }
+        CliDispatch::Tui(args) => dispatch_tui(cli.db, cli.workspace, args).await,
+    }
+}
+
+enum CliDispatch {
+    Standalone(StandaloneCommand),
+    Database(Box<DatabaseCommand>),
+    Tui(cli::TuiArgs),
+}
+
+enum StandaloneCommand {
+    BackupRestore(cli::BackupRestoreArgs),
+    Config(cli::ConfigCommand),
+    Daemon(cli::DaemonArgs),
+    Internal(cli::InternalCommand),
+    Server(cli::ServerArgs),
+    Skill(cli::SkillCommand),
+    Update(cli::SelfUpdateArgs),
+}
+
+enum DatabaseCommand {
+    Add(cli::AddArgs),
+    Backup { output: Option<std::path::PathBuf> },
+    BulkUpdate(cli::BulkUpdateArgs),
+    Conflict(cli::ConflictCommand),
+    Context(cli::ContextArgs),
+    Delete(cli::RefArgs),
+    Dep(cli::DepCommand),
+    Doctor(cli::DoctorArgs),
+    Edit(cli::TaskEditArgs),
+    Epic(cli::EpicCommand),
+    Export(cli::ExportArgs),
+    Import(cli::ImportArgs),
+    Label(cli::LabelCommand),
+    List(cli::ListArgs),
+    Note(cli::NoteArgs),
+    NoteDelete(cli::NoteDeleteArgs),
+    Prime(cli::PrimeArgs),
+    Project(cli::ProjectCommand),
+    Restore(cli::RefArgs),
+    Search(cli::TaskSearchArgs),
+    Show(cli::ShowArgs),
+    Sync(cli::SyncArgs),
+    Text(cli::TextCommand),
+    Workspace(cli::WorkspaceCommand),
+}
+
+impl CliDispatch {
+    fn database(command: DatabaseCommand) -> Self {
+        Self::Database(Box::new(command))
+    }
+}
+
+impl From<Commands> for CliDispatch {
+    fn from(command: Commands) -> Self {
+        match command {
+            Commands::Add(args) => Self::database(DatabaseCommand::Add(args)),
+            Commands::Dep(args) => Self::database(DatabaseCommand::Dep(args)),
+            Commands::Epic(args) => Self::database(DatabaseCommand::Epic(args)),
+            Commands::Context(args) => Self::database(DatabaseCommand::Context(args)),
+            Commands::Show(args) => Self::database(DatabaseCommand::Show(args)),
+            Commands::List(args) => Self::database(DatabaseCommand::List(args)),
+            Commands::Search(args) => Self::database(DatabaseCommand::Search(args)),
+            Commands::BulkUpdate(args) => Self::database(DatabaseCommand::BulkUpdate(args)),
+            Commands::Prime(args) => Self::database(DatabaseCommand::Prime(args)),
+            Commands::Edit(args) => Self::database(DatabaseCommand::Edit(args)),
+            Commands::Update(args) => Self::Standalone(StandaloneCommand::Update(args)),
+            Commands::Note(args) => Self::database(DatabaseCommand::Note(args)),
+            Commands::NoteDelete(args) => Self::database(DatabaseCommand::NoteDelete(args)),
+            Commands::Delete(args) => Self::database(DatabaseCommand::Delete(args)),
+            Commands::Restore(args) => Self::database(DatabaseCommand::Restore(args)),
+            Commands::Text(args) => Self::database(DatabaseCommand::Text(args)),
+            Commands::Label(args) => Self::database(DatabaseCommand::Label(args)),
+            Commands::Project(args) => Self::database(DatabaseCommand::Project(args)),
+            Commands::Workspace(args) => Self::database(DatabaseCommand::Workspace(args)),
+            Commands::Conflict(args) => Self::database(DatabaseCommand::Conflict(args)),
+            Commands::Config(args) => Self::Standalone(StandaloneCommand::Config(args)),
+            Commands::Backup(args) => match args.command {
+                Some(BackupSubcommand::Restore(args)) => {
+                    Self::Standalone(StandaloneCommand::BackupRestore(args))
+                }
+                None => Self::database(DatabaseCommand::Backup {
+                    output: args.output,
+                }),
+            },
+            Commands::Export(args) => Self::database(DatabaseCommand::Export(args)),
+            Commands::Import(args) => Self::database(DatabaseCommand::Import(args)),
+            Commands::Skill(args) => Self::Standalone(StandaloneCommand::Skill(args)),
+            Commands::Doctor(args) => Self::database(DatabaseCommand::Doctor(args)),
+            Commands::Daemon(args) => Self::Standalone(StandaloneCommand::Daemon(args)),
+            Commands::Server(args) => Self::Standalone(StandaloneCommand::Server(args)),
+            Commands::Sync(args) => Self::database(DatabaseCommand::Sync(args)),
+            Commands::Tui(args) => Self::Tui(args),
+            Commands::Internal(args) => Self::Standalone(StandaloneCommand::Internal(args)),
+        }
+    }
+}
+
+async fn dispatch_standalone(
+    db: Option<std::path::PathBuf>,
+    command: StandaloneCommand,
+) -> Result<()> {
+    match command {
+        StandaloneCommand::BackupRestore(args) => {
             let config = config::AppConfig::load()?;
-            let db_path = config::resolve_db_path(cli.db, &config)?;
-            let Some(BackupSubcommand::Restore(args)) = backup.command else {
-                unreachable!()
-            };
+            let db_path = config::resolve_db_path(db, &config)?;
             commands::cmd_backup_restore(&db_path, args).await
         }
-        Commands::Server(args) => {
+        StandaloneCommand::Server(args) => {
             let config = config::AppConfig::load()?;
             run_server(args, config).await
         }
-        Commands::Skill(args) => match args.command {
+        StandaloneCommand::Skill(args) => match args.command {
             None => cmd_skill().await,
             Some(SkillSubcommand::Install(args)) => cmd_skill_install(args),
         },
-        Commands::Config(args) => cmd_config(args).await,
-        Commands::Update(args) => cmd_self_update(args).await,
-        Commands::Internal(args) => {
+        StandaloneCommand::Config(args) => cmd_config(args).await,
+        StandaloneCommand::Update(args) => cmd_self_update(args).await,
+        StandaloneCommand::Internal(args) => {
             let config = config::AppConfig::load()?;
-            let db_path = config::resolve_db_path(cli.db, &config)?;
+            let db_path = config::resolve_db_path(db, &config)?;
             let pool = open_db(&db_path).await?;
             let mut conn = pool.acquire().await?;
             match args.command {
@@ -88,9 +191,9 @@ pub async fn run_cli() -> Result<()> {
                 }
             }
         }
-        Commands::Daemon(args) => {
+        StandaloneCommand::Daemon(args) => {
             let config = config::AppConfig::load()?;
-            let db_path = config::resolve_db_path(cli.db, &config)?;
+            let db_path = config::resolve_db_path(db, &config)?;
             match args.command {
                 None => daemon::run(daemon::DaemonRunArgs { db_path, config }).await,
                 Some(DaemonSubcommand::Install(args)) => {
@@ -110,125 +213,138 @@ pub async fn run_cli() -> Result<()> {
                 }),
             }
         }
-        command => {
-            let db_flag_set = cli.db.is_some();
-            let workspace = cli.workspace;
-            let config = load_config_for_command(db_flag_set, &command)?;
-            let db_path = config::resolve_db_path(cli.db, &config)?;
-            let pool = open_db(&db_path).await?;
-            let mut conn = pool.acquire().await?;
-            let metadata = command.metadata();
-            let resolved_workspace = if metadata.needs_workspace {
-                let cwd = std::env::current_dir()?;
-                Some(
-                    resolve_active_workspace(&mut conn, workspace.as_deref(), &config, &cwd)
-                        .await?,
-                )
-            } else {
-                None
-            };
-            drop(conn);
-            if let Commands::Tui(args) = &command {
-                let workspace = resolved_workspace
-                    .clone()
-                    .expect("TUI commands require workspace context");
-                if args.add_task_only {
-                    return tui::run_add_task(
-                        pool,
-                        workspace,
-                        args.project.as_deref(),
-                        args.natural,
-                        db_path,
-                        config,
-                    )
-                    .await;
-                }
-                return tui::run(
-                    pool,
-                    workspace,
-                    args.project.as_deref(),
-                    args.add_task,
-                    args.natural,
-                    db_path,
-                    config,
-                )
-                .await;
-            }
-            let mut conn = pool.acquire().await?;
-            let command_workspace = || {
-                resolved_workspace
-                    .as_ref()
-                    .expect("command requires workspace context")
-            };
-            let should_wake = metadata.wakes_daemon;
-            let result = match command {
-                Commands::Add(args) => cmd_add(&mut conn, command_workspace(), &config, args).await,
-                Commands::Context(args) => cmd_context(&mut conn, command_workspace(), args).await,
-                Commands::Show(args) => cmd_show(&mut conn, command_workspace(), args).await,
-                Commands::List(args) => cmd_list(&mut conn, command_workspace(), args).await,
-                Commands::Search(args) => cmd_search(&mut conn, command_workspace(), args).await,
-                Commands::Backup(args) => cmd_backup(&mut conn, &db_path, args).await,
-                Commands::Dep(args) => cmd_dep(&mut conn, command_workspace(), args).await,
-                Commands::Epic(args) => cmd_epic(&mut conn, command_workspace(), args).await,
-                Commands::BulkUpdate(args) => {
-                    cmd_bulk_update(&mut conn, command_workspace(), args).await
-                }
-                Commands::Prime(args) => cmd_prime(&mut conn, command_workspace(), args).await,
-                Commands::Edit(args) => cmd_edit(&mut conn, command_workspace(), args).await,
-                Commands::Note(args) => cmd_note(&mut conn, command_workspace(), args).await,
-                Commands::NoteDelete(args) => {
-                    cmd_note_delete(&mut conn, command_workspace(), args).await
-                }
-                Commands::Export(args) => cmd_export(&mut conn, args).await,
-                Commands::Import(args) => cmd_import(&mut conn, &db_path, args).await,
-                Commands::Label(args) => cmd_label(&mut conn, command_workspace(), args).await,
-                Commands::Project(args) => cmd_project(&mut conn, command_workspace(), args).await,
-                Commands::Delete(args) => {
-                    cmd_delete_restore(&mut conn, command_workspace(), args, true).await
-                }
-                Commands::Restore(args) => {
-                    cmd_delete_restore(&mut conn, command_workspace(), args, false).await
-                }
-                Commands::Conflict(args) => {
-                    cmd_conflict(&mut conn, command_workspace(), args).await
-                }
-                Commands::Sync(args) => sync_client(&mut conn, args, &config).await,
-                Commands::Workspace(args) => cmd_workspace(&mut conn, args).await,
-                Commands::Text(args) => cmd_text(&mut conn, command_workspace(), args).await,
-                Commands::Doctor(args) => {
-                    cmd_doctor(
-                        &mut conn,
-                        &config,
-                        &db_path,
-                        db_flag_set,
-                        workspace.as_deref(),
-                        args.integrity,
-                        args.json,
-                    )
-                    .await
-                }
-                Commands::Tui(_) => unreachable!(),
-                Commands::Config(_)
-                | Commands::Daemon(_)
-                | Commands::Server(_)
-                | Commands::Internal(_)
-                | Commands::Skill(_)
-                | Commands::Update(_) => unreachable!(),
-            };
-            if result.is_ok()
-                && should_wake
-                && config.sync.enabled
-                && let Ok(addr) = config.wake_addr()
-            {
-                tracing::debug!(wake_addr = %addr, "waking daemon after local mutation");
-                daemon::wake(addr);
-            }
-            result
-        }
     }
 }
 
-fn load_config_for_command(_db_flag_set: bool, _command: &Commands) -> Result<config::AppConfig> {
+async fn dispatch_tui(
+    db: Option<std::path::PathBuf>,
+    workspace: Option<String>,
+    args: cli::TuiArgs,
+) -> Result<()> {
+    let config = load_config_for_command(db.is_some())?;
+    let db_path = config::resolve_db_path(db, &config)?;
+    let pool = open_db(&db_path).await?;
+    let mut conn = pool.acquire().await?;
+    let cwd = std::env::current_dir()?;
+    let resolved_workspace =
+        resolve_active_workspace(&mut conn, workspace.as_deref(), &config, &cwd).await?;
+    drop(conn);
+
+    if args.add_task_only {
+        return tui::run_add_task(
+            pool,
+            resolved_workspace,
+            args.project.as_deref(),
+            args.natural,
+            db_path,
+            config,
+        )
+        .await;
+    }
+    tui::run(
+        pool,
+        resolved_workspace,
+        args.project.as_deref(),
+        args.add_task,
+        args.natural,
+        db_path,
+        config,
+    )
+    .await
+}
+
+async fn dispatch_database(
+    db: Option<std::path::PathBuf>,
+    workspace: Option<String>,
+    metadata: command_metadata::CommandMetadata,
+    command: DatabaseCommand,
+) -> Result<()> {
+    let db_flag_set = db.is_some();
+    let config = load_config_for_command(db_flag_set)?;
+    let db_path = config::resolve_db_path(db, &config)?;
+    let pool = open_db(&db_path).await?;
+    let mut conn = pool.acquire().await?;
+    let resolved_workspace = if metadata.needs_workspace {
+        let cwd = std::env::current_dir()?;
+        Some(resolve_active_workspace(&mut conn, workspace.as_deref(), &config, &cwd).await?)
+    } else {
+        None
+    };
+    drop(conn);
+    let mut conn = pool.acquire().await?;
+    let command_workspace = || {
+        resolved_workspace
+            .as_ref()
+            .expect("command requires workspace context")
+    };
+    let should_wake = metadata.wakes_daemon;
+    let result = match command {
+        DatabaseCommand::Add(args) => cmd_add(&mut conn, command_workspace(), &config, args).await,
+        DatabaseCommand::Context(args) => cmd_context(&mut conn, command_workspace(), args).await,
+        DatabaseCommand::Show(args) => cmd_show(&mut conn, command_workspace(), args).await,
+        DatabaseCommand::List(args) => cmd_list(&mut conn, command_workspace(), args).await,
+        DatabaseCommand::Search(args) => cmd_search(&mut conn, command_workspace(), args).await,
+        DatabaseCommand::Backup { output } => {
+            cmd_backup(
+                &mut conn,
+                &db_path,
+                cli::BackupCommand {
+                    command: None,
+                    output,
+                },
+            )
+            .await
+        }
+        DatabaseCommand::Dep(args) => cmd_dep(&mut conn, command_workspace(), args).await,
+        DatabaseCommand::Epic(args) => cmd_epic(&mut conn, command_workspace(), args).await,
+        DatabaseCommand::BulkUpdate(args) => {
+            cmd_bulk_update(&mut conn, command_workspace(), args).await
+        }
+        DatabaseCommand::Prime(args) => cmd_prime(&mut conn, command_workspace(), args).await,
+        DatabaseCommand::Edit(args) => cmd_edit(&mut conn, command_workspace(), args).await,
+        DatabaseCommand::Note(args) => cmd_note(&mut conn, command_workspace(), args).await,
+        DatabaseCommand::NoteDelete(args) => {
+            cmd_note_delete(&mut conn, command_workspace(), args).await
+        }
+        DatabaseCommand::Export(args) => cmd_export(&mut conn, args).await,
+        DatabaseCommand::Import(args) => cmd_import(&mut conn, &db_path, args).await,
+        DatabaseCommand::Label(args) => cmd_label(&mut conn, command_workspace(), args).await,
+        DatabaseCommand::Project(args) => cmd_project(&mut conn, command_workspace(), args).await,
+        DatabaseCommand::Delete(args) => {
+            cmd_delete_restore(&mut conn, command_workspace(), args, true).await
+        }
+        DatabaseCommand::Restore(args) => {
+            cmd_delete_restore(&mut conn, command_workspace(), args, false).await
+        }
+        DatabaseCommand::Conflict(args) => cmd_conflict(&mut conn, command_workspace(), args).await,
+        DatabaseCommand::Sync(args) => sync_client(&mut conn, args, &config).await,
+        DatabaseCommand::Workspace(args) => cmd_workspace(&mut conn, args).await,
+        DatabaseCommand::Text(args) => cmd_text(&mut conn, command_workspace(), args).await,
+        DatabaseCommand::Doctor(args) => {
+            cmd_doctor(
+                &mut conn,
+                &config,
+                &db_path,
+                db_flag_set,
+                workspace.as_deref(),
+                args.integrity,
+                args.json,
+            )
+            .await
+        }
+    };
+    if result.is_ok()
+        && should_wake
+        && config.sync.enabled
+        && let Ok(addr) = config.wake_addr()
+    {
+        tracing::debug!(wake_addr = %addr, "waking daemon after local mutation");
+        daemon::wake(addr);
+    }
+    result
+}
+
+fn load_config_for_command(_db_flag_set: bool) -> Result<config::AppConfig> {
     config::AppConfig::load()
 }
 

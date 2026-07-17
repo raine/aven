@@ -23,7 +23,7 @@
 
 1. `src/main.rs` starts Tokio and calls `aven::run_cli()`.
 2. `src/cli.rs` parses `Cli` and `Commands`.
-3. `src/lib.rs` initializes logging, handles commands that do not need the task database, resolves config and database path, opens SQLite, resolves workspace scope when needed, then dispatches to `src/commands.rs` and focused command-family modules under `src/commands/`. `aven update` dispatches directly to `src/commands/self_update.rs` without opening the task database.
+3. `src/lib.rs` classifies every parsed command into the explicit standalone, database, or TUI dispatch class through an exhaustive `Commands` match. Each typed dispatch path performs its required setup, then routes to `src/commands.rs` and focused command-family modules under `src/commands/`. `aven update` dispatches directly to `src/commands/self_update.rs` without opening the task database.
 4. Mutating commands call operations or mutation helpers and wake the daemon when sync is enabled.
 
 ### TUI flow
@@ -86,6 +86,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Keep workspace scope explicit on queries and mutations that operate on user data.
 - Keep config serialization and durable text writes in `src/config.rs`; keep managed-entry text transforms in `src/config_edit.rs`.
 - Keep CLI output formatting in command or render modules, not in persistence helpers. Use `src/render.rs` for shared quoting, changed flag text, multiline blocks, near-match errors, and text diffs. Use focused command-family modules such as `src/commands/context.rs` for command-local snapshots and formatting. Commands with text and JSON output should construct one typed report before selecting a renderer, as `src/commands/prime.rs` does.
+- Classify every `Commands` variant in the exhaustive `CliDispatch::from` match in `src/lib.rs`. Standalone commands own specialized setup, database commands use the shared SQLite path, and TUI commands use the TUI path.
 - Keep TUI database access in `src/tui/store/`; keep `src/tui/ui/` rendering-only. Keep tabular task-list view modeling and hit testing in `src/tui/ui/task_list/`. Keep column grouping and navigation in `src/tui/columns.rs`, and use one shared layout from `src/tui/ui/columns.rs` for column rendering and hit testing.
 - Keep release discovery, cache policy, install ownership, archive verification, and executable replacement in `src/update/`. Keep CLI update presentation in `src/commands/self_update.rs` and TUI update flow state, cancellation, and overlay coordination in `src/tui/app_update.rs`. Never replace package-manager-owned executables or request elevated privileges.
 - Treat TUI column names as presentation. Column configuration must partition the six fixed semantic statuses exactly once so tasks remain visible without changing CLI, queue, readiness, dependency, or sync semantics.
@@ -134,10 +135,11 @@ SQLite stores synced task data and local UI state. Config files store local rout
 ### Add a CLI command
 
 1. Add args and a `Commands` variant in `src/cli.rs`.
-2. Add dispatch, workspace needs, and daemon wake behavior in `src/lib.rs`.
-3. Add command handling and output formatting in `src/commands.rs` or a focused command module under `src/commands/`.
-4. Put transactional business logic in `src/operations/`.
-5. Add integration tests in `tests/`.
+2. Classify the variant in the exhaustive `CliDispatch::from` match in `src/lib.rs` and add its command metadata in `src/command_metadata.rs`.
+3. Add handling to the corresponding standalone, database, or TUI dispatch match in `src/lib.rs`.
+4. Add command handling and output formatting in `src/commands.rs` or a focused command module under `src/commands/`.
+5. Put transactional business logic in `src/operations/`.
+6. Add integration tests in `tests/`.
 
 ### Add a task scalar field
 
