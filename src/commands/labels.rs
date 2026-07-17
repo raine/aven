@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sqlx::SqliteConnection;
 
-use crate::cli::{LabelCommand, LabelSubcommand, SearchArgs};
+use crate::cli::{LabelCommand, LabelListArgs, LabelSubcommand};
 use crate::labels::list_labels_in_workspace;
 use crate::operations::{create_label_operation, delete_label_operation};
 use crate::render::{changed_text, print_json_pretty};
@@ -10,7 +10,7 @@ use crate::workspaces::Workspace;
 pub(crate) async fn cmd_labels(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    args: SearchArgs,
+    args: LabelListArgs,
 ) -> Result<()> {
     let mut labels = list_labels_in_workspace(conn, &workspace.id, args.search.as_deref()).await?;
     if let Some(limit) = args.limit {

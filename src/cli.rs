@@ -581,7 +581,17 @@ pub(crate) struct NoteDeleteArgs {
 }
 
 #[derive(Args)]
-pub(crate) struct SearchArgs {
+pub(crate) struct LabelListArgs {
+    #[arg(long)]
+    pub(crate) search: Option<String>,
+    #[arg(long)]
+    pub(crate) limit: Option<usize>,
+    #[arg(long, help = "Print machine-readable JSON")]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct ProjectListArgs {
     #[arg(long)]
     pub(crate) search: Option<String>,
     #[arg(long)]
@@ -611,7 +621,7 @@ pub(crate) enum LabelSubcommand {
         name: String,
     },
     /// List or search labels
-    List(SearchArgs),
+    List(LabelListArgs),
 }
 
 #[derive(Args)]
@@ -630,7 +640,7 @@ pub(crate) enum ProjectSubcommand {
     /// Delete a project
     Delete { project: String },
     /// List or search projects
-    List(SearchArgs),
+    List(ProjectListArgs),
     Rename {
         project: String,
         new_name: String,
@@ -888,6 +898,37 @@ mod tests {
         assert!(matches!(edit.command, Commands::Edit(_)));
         assert!(Cli::try_parse_from(["aven", "edit"]).is_err());
         assert!(Cli::try_parse_from(["aven", "update", "APP-1234"]).is_err());
+    }
+
+    #[test]
+    fn label_and_project_lists_parse_command_specific_arguments() {
+        let label = Cli::try_parse_from([
+            "aven", "label", "list", "--search", "bug", "--limit", "3", "--json",
+        ])
+        .unwrap();
+        let Commands::Label(LabelCommand {
+            command: LabelSubcommand::List(label_args),
+        }) = label.command
+        else {
+            panic!("expected label list command");
+        };
+        assert_eq!(label_args.search.as_deref(), Some("bug"));
+        assert_eq!(label_args.limit, Some(3));
+        assert!(label_args.json);
+
+        let project = Cli::try_parse_from([
+            "aven", "project", "list", "--search", "agent", "--limit", "5", "--json",
+        ])
+        .unwrap();
+        let Commands::Project(ProjectCommand {
+            command: ProjectSubcommand::List(project_args),
+        }) = project.command
+        else {
+            panic!("expected project list command");
+        };
+        assert_eq!(project_args.search.as_deref(), Some("agent"));
+        assert_eq!(project_args.limit, Some(5));
+        assert!(project_args.json);
     }
 
     #[test]

@@ -362,29 +362,42 @@ fn show_json_full_includes_description_dependencies_notes_conflicts() {
 }
 
 #[test]
-fn project_list_json_supports_limit() {
+fn project_list_json_supports_search_and_limit() {
     let env = TestEnv::new();
     let db = env.db("project-list-json.sqlite");
     ok(env.aven(&db, ["project", "create", "agent-offload"]));
-    ok(env.aven(&db, ["project", "create", "docs"]));
+    ok(env.aven(&db, ["project", "create", "docs-api"]));
+    ok(env.aven(&db, ["project", "create", "docs-site"]));
 
-    let output = ok(env.aven(&db, ["project", "list", "--json", "--limit", "1"]));
+    let output = ok(env.aven(
+        &db,
+        [
+            "project", "list", "--search", "docs", "--json", "--limit", "1",
+        ],
+    ));
     let items: serde_json::Value = serde_json::from_str(&output).unwrap();
     assert_eq!(items.as_array().unwrap().len(), 1);
-    assert!(items[0]["key"].is_string());
+    assert!(items[0]["key"].as_str().unwrap().starts_with("docs-"));
     assert!(items[0]["prefix"].is_string());
 }
 
 #[test]
-fn label_list_json_supports_limit() {
+fn label_list_json_supports_search_and_limit() {
     let env = TestEnv::new();
     let db = env.db("label-list-json.sqlite");
     ok(env.aven(&db, ["label", "create", "bug"]));
-    ok(env.aven(&db, ["label", "create", "sync"]));
+    ok(env.aven(&db, ["label", "create", "sync-api"]));
+    ok(env.aven(&db, ["label", "create", "sync-ui"]));
 
-    let output = ok(env.aven(&db, ["label", "list", "--json", "--limit", "1"]));
+    let output = ok(env.aven(
+        &db,
+        [
+            "label", "list", "--search", "sync", "--json", "--limit", "1",
+        ],
+    ));
     let items: serde_json::Value = serde_json::from_str(&output).unwrap();
     assert_eq!(items.as_array().unwrap().len(), 1);
+    assert!(items[0].as_str().unwrap().starts_with("sync-"));
 }
 
 #[test]

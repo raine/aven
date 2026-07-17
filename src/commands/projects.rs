@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::Serialize;
 use sqlx::SqliteConnection;
 
-use crate::cli::{ProjectCommand, ProjectPathSubcommand, ProjectSubcommand, SearchArgs};
+use crate::cli::{ProjectCommand, ProjectListArgs, ProjectPathSubcommand, ProjectSubcommand};
 use crate::operations::{
     add_project_path_operation, create_project_operation, delete_project_operation,
     list_project_paths_operation, remove_project_path_operation, rename_project_operation,
@@ -100,7 +100,7 @@ struct ProjectListJsonItem {
 async fn cmd_projects(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    args: SearchArgs,
+    args: ProjectListArgs,
 ) -> Result<()> {
     let mut projects =
         list_projects_in_workspace(conn, &workspace.id, args.search.as_deref()).await?;
