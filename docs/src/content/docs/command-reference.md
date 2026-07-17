@@ -662,7 +662,7 @@ aven prime [--project <project>] [--limit <number>] [--json]
 
 Without `--project`, aven infers the project from the current directory. Text output includes CLI conventions, an issue workflow, local title, status, and label conventions, top blockers, and open tasks partitioned into Active, Ready, and Blocked. Epic containers and done or canceled tasks are excluded.
 
-`--json` emits project context, conventions, top blockers, and the same task partitions. `--limit` bounds the task sample in JSON output. Text output includes the full open task set.
+`--json` emits project context, conventions, top blockers, and the same task partitions. `--limit` bounds the task sample in both text and JSON output.
 
 ```sh
 aven prime

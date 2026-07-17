@@ -288,13 +288,25 @@ fn prime_json_returns_unavailable_without_project() {
 }
 
 #[test]
-fn prime_json_supports_limit() {
+fn prime_renderers_share_limited_report() {
     let env = TestEnv::new();
     let db = env.db("prime-json-limit.sqlite");
     let _r1 = extract_ref(&ok(env.aven(&db, ["add", "task one", "--project", "app"])));
     let _r2 = extract_ref(&ok(env.aven(&db, ["add", "task two", "--project", "app"])));
 
+    let text = ok(env.aven(&db, ["prime", "--project", "app", "--limit", "1"]));
+    contains_all(
+        &text,
+        &[
+            "Open issue sample: 1",
+            "Summary: total=1 active=0 ready=1 blocked=0",
+        ],
+    );
+
     let output = ok(env.aven(&db, ["prime", "--project", "app", "--json", "--limit", "1"]));
     let json: serde_json::Value = serde_json::from_str(&output).unwrap();
     assert_eq!(json["open_issue_sample"], 1);
+    let issue = json["ready"].as_array().unwrap().first().unwrap();
+    let title = issue["title"].as_str().unwrap();
+    assert!(text.contains(&format!("title=\"{title}\"")));
 }
