@@ -729,19 +729,29 @@ fn detail_header_options(
     width: usize,
     inline_title_editor: Option<&TextInputView>,
 ) -> Vec<Line<'static>> {
+    let mut summary_spans = vec![Span::styled(
+        item.display_ref.clone(),
+        Style::new().fg(FG_DIM),
+    )];
+    if item.task.is_epic {
+        summary_spans.extend([
+            Span::styled("  ", Style::new().fg(FG_DIM)),
+            Span::styled(EPIC_MARKER, Style::new().fg(YELLOW)),
+        ]);
+    }
+    summary_spans.extend([
+        Span::styled("   ", Style::new().fg(FG_DIM)),
+        status_span(item.task.status.as_str()),
+        Span::styled("   ", Style::new().fg(FG_DIM)),
+        Span::styled(
+            priority_short(item.task.priority.as_str()),
+            theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
+        ),
+    ]);
     let mut lines = vec![
         detail_title_line(item, width, inline_title_editor),
         Line::from(Span::styled("─".repeat(width), Style::new().fg(BORDER))),
-        Line::from(vec![
-            Span::styled(item.display_ref.clone(), Style::new().fg(FG_DIM)),
-            Span::styled("   ", Style::new().fg(FG_DIM)),
-            status_span(item.task.status.as_str()),
-            Span::styled("   ", Style::new().fg(FG_DIM)),
-            Span::styled(
-                priority_short(item.task.priority.as_str()),
-                theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
-            ),
-        ]),
+        Line::from(summary_spans),
     ];
     if let Some(parent) = &item.epic_parent {
         lines.push(detail_epic_parent_line(parent, width));
@@ -1201,6 +1211,21 @@ mod tests {
         assert!(rendered.contains("Fix token refresh race"));
         assert!(rendered.contains("Confirmed race in useTokenRefresh.ts"));
         assert!(!rendered.contains("2026-06-20T12:00:00Z"));
+    }
+
+    #[test]
+    fn detail_header_marks_epics_with_star() {
+        let mut item = detail_test_item();
+        item.task.is_epic = true;
+
+        let lines = detail_header_options(&item, 60, None);
+        let marker = lines[2]
+            .spans
+            .iter()
+            .find(|span| span.content == EPIC_MARKER)
+            .expect("epic marker");
+
+        assert_eq!(marker.style.fg, Some(YELLOW));
     }
 
     #[test]
