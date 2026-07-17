@@ -1,18 +1,12 @@
 use anyhow::Result;
 use serde::Serialize;
-use sqlx::{Row, SqliteConnection};
+use sqlx::SqliteConnection;
 
 use crate::cli::ContextArgs;
-use crate::operations::{ConflictDetail, task_conflicts};
-use crate::query::{
-    self, SortDirection, TaskDependencyItem, TaskFilters, TaskQueryMode, TaskSort,
-    task_dependency_summary,
-};
+use crate::query::{self, TaskDependencyItem};
 use crate::refs::{display_ref, display_suffix, resolve_task_ref};
 use crate::render::{print_json_pretty, print_multiline_block, quote};
-use crate::task_render::{
-    TaskEpicLinkJson, conflict_display_value, labels_for_task_in_workspace, task_epic_link_json,
-};
+use crate::task_render::{TaskEpicLinkJson, conflict_display_value, task_epic_link_json};
 use crate::types::Task;
 use crate::workspaces::active_workspace;
 
@@ -123,30 +117,17 @@ async fn task_context_snapshot(
     let workspace = active_workspace();
     let display_ref = display_ref(conn, task).await?;
     let ref_suffix = display_suffix(conn, &task.id).await?;
-    let labels = labels_for_task_in_workspace(conn, &task.workspace_id, &task.id).await?;
-    let item = query::list_task_items(
-        conn,
-        TaskFilters {
-            task_ids: vec![task.id.clone()],
-            ..TaskFilters::default().include_deleted(task.deleted)
-        },
-        TaskQueryMode::Flat,
-        TaskSort::Updated,
-        SortDirection::Desc,
-    )
-    .await?
-    .into_iter()
-    .next();
-    let epic_parent = item
-        .as_ref()
-        .and_then(|item| item.epic_parent.as_ref().map(task_epic_link_json));
-    let epic_children = item
-        .as_ref()
-        .map(|item| item.epic_children.iter().map(task_epic_link_json).collect())
-        .unwrap_or_default();
-    let summary = task_dependency_summary(conn, &task.workspace_id, &task.id).await?;
-    let notes = load_context_notes(conn, &task.workspace_id, &task.id).await?;
-    let details = task_conflicts(conn, &task.id, None).await?;
+    let detail = query::task_detail(conn, task).await?;
+    let labels = detail.item.labels.clone();
+    let epic_parent = detail.item.epic_parent.as_ref().map(task_epic_link_json);
+    let epic_children = detail
+        .item
+        .epic_children
+        .iter()
+        .map(task_epic_link_json)
+        .collect();
+    let summary = detail.dependencies;
+    let details = detail.conflicts;
 
     let depends_on_open = summary
         .depends_on
@@ -179,7 +160,7 @@ async fn task_context_snapshot(
         project: ContextProject {
             id: task.project_id.clone(),
             key: task.project_key.clone(),
-            name: context_project_name(conn, &task.workspace_id, &task.project_id).await?,
+            name: detail.project_name,
             prefix: task.project_prefix.clone(),
         },
         workspace: ContextWorkspace {
@@ -204,7 +185,15 @@ async fn task_context_snapshot(
                 .map(context_dependency_task)
                 .collect(),
         },
-        notes,
+        notes: detail
+            .notes
+            .into_iter()
+            .map(|note| ContextNote {
+                id: note.id,
+                created_at: note.created_at,
+                body: note.body,
+            })
+            .collect(),
         conflicts: context_conflicts(conn, &task.workspace_id, details).await?,
         has_conflicts,
         is_blocked,
@@ -212,30 +201,6 @@ async fn task_context_snapshot(
         epic_parent,
         epic_children,
     })
-}
-
-async fn load_context_notes(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-    task_id: &str,
-) -> Result<Vec<ContextNote>> {
-    let rows = sqlx::query(
-        "SELECT id, body, created_at FROM notes
-         WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, id",
-    )
-    .bind(workspace_id)
-    .bind(task_id)
-    .fetch_all(&mut *conn)
-    .await?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| ContextNote {
-            id: row.get("id"),
-            created_at: row.get("created_at"),
-            body: row.get("body"),
-        })
-        .collect())
 }
 
 fn context_dependency_task(item: TaskDependencyItem) -> ContextDependencyTask {
@@ -251,24 +216,10 @@ fn context_dependency_task(item: TaskDependencyItem) -> ContextDependencyTask {
     }
 }
 
-async fn context_project_name(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-    project_id: &str,
-) -> Result<String> {
-    Ok(sqlx::query_scalar::<_, String>(
-        "SELECT name FROM projects WHERE workspace_id = ? AND id = ?",
-    )
-    .bind(workspace_id)
-    .bind(project_id)
-    .fetch_one(&mut *conn)
-    .await?)
-}
-
 async fn context_conflicts(
     conn: &mut SqliteConnection,
     workspace_id: &str,
-    details: Vec<ConflictDetail>,
+    details: Vec<query::TaskDetailConflict>,
 ) -> Result<Vec<ContextConflict>> {
     let mut conflicts = Vec::with_capacity(details.len());
     for detail in details {

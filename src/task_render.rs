@@ -1,15 +1,10 @@
 use anyhow::Result;
 use serde::Serialize;
-use sqlx::{Row, SqliteConnection};
+use sqlx::SqliteConnection;
 
-use crate::db::task_has_conflict;
-use crate::query::{
-    TaskDependencyLink, TaskDependencySummary, TaskListItem, task_dependency_summary,
-};
-use crate::refs::display_ref;
+use crate::query::{TaskDependencyLink, TaskDependencySummary, TaskListItem};
 use crate::render::{KvLine, print_multiline_block, quote};
 use crate::task_fields::TaskField;
-use crate::types::Task;
 
 #[allow(dead_code)]
 pub(crate) async fn labels_for_task(
@@ -32,43 +27,6 @@ pub(crate) async fn labels_for_task_in_workspace(
     .bind(task_id)
     .fetch_all(&mut *conn)
     .await?)
-}
-
-async fn print_task_line(conn: &mut SqliteConnection, task: &Task) -> Result<()> {
-    let labels = labels_for_task_in_workspace(conn, &task.workspace_id, &task.id)
-        .await?
-        .join(",");
-    let conflict = if task_has_conflict(conn, &task.workspace_id, &task.id).await? {
-        " conflicts=yes"
-    } else {
-        ""
-    };
-    let deleted = if task.deleted { " deleted=yes" } else { "" };
-    let epic = if task.is_epic { " epic=yes" } else { "" };
-    let available_at = if task.available_at.is_empty() {
-        String::new()
-    } else {
-        format!(" available_at={}", task.available_at)
-    };
-    let due_on = if task.due_on.is_empty() {
-        String::new()
-    } else {
-        format!(" due_on={}", task.due_on)
-    };
-    println!(
-        "{} status={} priority={} labels={}{}{}{}{}{} title={}",
-        display_ref(conn, task).await?,
-        task.status,
-        task.priority,
-        labels,
-        conflict,
-        deleted,
-        epic,
-        available_at,
-        due_on,
-        quote(&task.title)
-    );
-    Ok(())
 }
 
 pub(crate) async fn print_task_line_item(item: &TaskListItem) -> Result<()> {
@@ -102,39 +60,54 @@ pub(crate) async fn print_task_line_item(item: &TaskListItem) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn print_task(conn: &mut SqliteConnection, task: &Task, full: bool) -> Result<()> {
-    print_task_line(conn, task).await?;
-    if full {
-        println!("id={}", task.id);
-        println!(
-            "project={} prefix={}",
-            task.project_key, task.project_prefix
-        );
-        println!("created={} updated={}", task.created_at, task.updated_at);
-        if !task.description.is_empty() {
-            println!("description<<EOF");
-            print!("{}", task.description);
-            if !task.description.ends_with('\n') {
-                println!();
-            }
-            println!("EOF");
+pub(crate) async fn print_full_task_detail(
+    conn: &mut SqliteConnection,
+    detail: &crate::query::TaskDetail,
+) -> Result<()> {
+    print_task_line_item(&detail.item).await?;
+    let task = &detail.item.task;
+    println!("id={}", task.id);
+    println!(
+        "project={} prefix={}",
+        task.project_key, task.project_prefix
+    );
+    println!("created={} updated={}", task.created_at, task.updated_at);
+    if !task.description.is_empty() {
+        println!("description<<EOF");
+        print!("{}", task.description);
+        if !task.description.ends_with('\n') {
+            println!();
         }
-        print_task_dependencies(conn, task).await?;
-        let notes = sqlx::query(
-            "SELECT body, created_at FROM notes
-             WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, id",
+        println!("EOF");
+    }
+    print_task_dependency_summary(&detail.dependencies);
+    for note in &detail.notes {
+        println!("note created={}", note.created_at);
+        print_multiline_block("body", &note.body);
+    }
+    for conflict in &detail.conflicts {
+        let local_value = conflict_display_value(
+            conn,
+            &task.workspace_id,
+            &conflict.field,
+            &conflict.local_value,
         )
-        .bind(&task.workspace_id)
-        .bind(&task.id)
-        .fetch_all(&mut *conn)
         .await?;
-        for note in notes {
-            let created_at: String = note.get("created_at");
-            let body: String = note.get("body");
-            println!("note created={created_at}");
-            print_multiline_block("body", &body);
-        }
-        print_conflicts(conn, task, None).await?;
+        let remote_value = conflict_display_value(
+            conn,
+            &task.workspace_id,
+            &conflict.field,
+            &conflict.remote_value,
+        )
+        .await?;
+        println!(
+            "conflict {} field={}",
+            detail.item.display_ref, conflict.field
+        );
+        println!("variant {}", conflict.variant_a);
+        print_multiline_block("value", &local_value);
+        println!("variant {}", conflict.variant_b);
+        print_multiline_block("value", &remote_value);
     }
     Ok(())
 }
@@ -155,52 +128,6 @@ fn print_dependency_section(label: &str, items: &[crate::query::TaskDependencyIt
             quote(&item.task.title)
         );
     }
-}
-
-async fn print_task_dependencies(conn: &mut SqliteConnection, task: &Task) -> Result<()> {
-    let summary = task_dependency_summary(conn, &task.workspace_id, &task.id).await?;
-    print_task_dependency_summary(&summary);
-    Ok(())
-}
-
-pub(crate) async fn print_conflicts(
-    conn: &mut SqliteConnection,
-    task: &Task,
-    field: Option<&str>,
-) -> Result<()> {
-    let rows = sqlx::query(
-        "SELECT field, variant_a, local_value, variant_b, remote_value
-         FROM conflicts
-         WHERE workspace_id = ? AND task_id = ? AND resolved = 0 AND (? IS NULL OR field = ?)
-         ORDER BY field, id",
-    )
-    .bind(&task.workspace_id)
-    .bind(&task.id)
-    .bind(field)
-    .bind(field)
-    .fetch_all(&mut *conn)
-    .await?;
-    for row in rows {
-        let field: String = row.get("field");
-        let variant_a: String = row.get("variant_a");
-        let local_value: String = row.get("local_value");
-        let variant_b: String = row.get("variant_b");
-        let remote_value: String = row.get("remote_value");
-        let local_value =
-            conflict_display_value(conn, &task.workspace_id, &field, &local_value).await?;
-        let remote_value =
-            conflict_display_value(conn, &task.workspace_id, &field, &remote_value).await?;
-        println!(
-            "conflict {} field={}",
-            display_ref(conn, task).await?,
-            field
-        );
-        println!("variant {variant_a}");
-        print_multiline_block("value", &local_value);
-        println!("variant {variant_b}");
-        print_multiline_block("value", &remote_value);
-    }
-    Ok(())
 }
 
 // --- JSON DTOs ---

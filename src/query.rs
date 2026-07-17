@@ -1,4 +1,5 @@
 mod dependencies;
+mod details;
 pub(crate) mod fragments;
 mod hydration;
 mod projects;
@@ -11,6 +12,7 @@ mod tasks;
 mod types;
 
 pub(crate) use dependencies::{TaskDependencyItem, TaskDependencySummary, task_dependency_summary};
+pub(crate) use details::{TaskDetail, TaskDetailConflict, task_detail};
 #[cfg(test)]
 pub(crate) use projects::list_project_items;
 pub(crate) use projects::list_project_items_in_workspace;

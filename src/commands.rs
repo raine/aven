@@ -17,7 +17,6 @@ use anyhow::{Result, bail};
 use serde::Serialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use sqlx::Row;
 use sqlx::SqliteConnection;
 
 use crate::sync::sync_server_url_is_valid;
@@ -65,7 +64,7 @@ use crate::render::{
 };
 use crate::task_fields::TaskField;
 use crate::task_render::{
-    TaskConflictJson, TaskFullJson, TaskNoteJson, conflict_display_value, print_task,
+    TaskConflictJson, TaskFullJson, TaskNoteJson, conflict_display_value, print_full_task_detail,
     print_task_dependency_summary, print_task_line_item, task_dependency_summary_json,
     task_epic_link_json, task_line_json_item,
 };
@@ -231,7 +230,53 @@ fn due_on_display(due_on: &str) -> String {
 
 pub(crate) async fn cmd_show(conn: &mut SqliteConnection, args: ShowArgs) -> Result<()> {
     let task = resolve_task_ref(conn, &args.task_ref).await?;
-    if args.json {
+    if args.full {
+        let detail = query::task_detail(conn, &task).await?;
+        if args.json {
+            let mut conflict_items = Vec::with_capacity(detail.conflicts.len());
+            for conflict in &detail.conflicts {
+                let local_value = conflict_display_value(
+                    conn,
+                    &task.workspace_id,
+                    &conflict.field,
+                    &conflict.local_value,
+                )
+                .await?;
+                let remote_value = conflict_display_value(
+                    conn,
+                    &task.workspace_id,
+                    &conflict.field,
+                    &conflict.remote_value,
+                )
+                .await?;
+                conflict_items.push(TaskConflictJson {
+                    field: conflict.field.clone(),
+                    variant_a: conflict.variant_a.clone(),
+                    local_value,
+                    variant_b: conflict.variant_b.clone(),
+                    remote_value,
+                });
+            }
+            let full = TaskFullJson {
+                task: task_line_json_item(&detail.item),
+                project_prefix: task.project_prefix.clone(),
+                description: task.description.clone(),
+                dependencies: task_dependency_summary_json(&detail.dependencies),
+                notes: detail
+                    .notes
+                    .iter()
+                    .map(|note| TaskNoteJson {
+                        body: note.body.clone(),
+                        created_at: note.created_at.clone(),
+                    })
+                    .collect(),
+                conflicts: conflict_items,
+            };
+            print_json_pretty(&full)?;
+        } else {
+            print_full_task_detail(conn, &detail).await?;
+        }
+    } else {
         let item = query::list_task_items(
             conn,
             TaskFilters {
@@ -246,67 +291,11 @@ pub(crate) async fn cmd_show(conn: &mut SqliteConnection, args: ShowArgs) -> Res
         .into_iter()
         .next()
         .expect("task must exist after resolve");
-        if args.full {
-            let summary =
-                query::task_dependency_summary(conn, &task.workspace_id, &task.id).await?;
-            let notes = sqlx::query(
-                "SELECT body, created_at FROM notes
-                 WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, id",
-            )
-            .bind(&task.workspace_id)
-            .bind(&task.id)
-            .fetch_all(&mut *conn)
-            .await?;
-            let mut note_items = Vec::new();
-            for row in notes {
-                let created_at: String = row.get("created_at");
-                let body: String = row.get("body");
-                note_items.push(TaskNoteJson { body, created_at });
-            }
-            let conflict_rows = sqlx::query(
-                "SELECT field, variant_a, local_value, variant_b, remote_value
-                 FROM conflicts
-                 WHERE workspace_id = ? AND task_id = ? AND resolved = 0
-                 ORDER BY field, id",
-            )
-            .bind(&task.workspace_id)
-            .bind(&task.id)
-            .fetch_all(&mut *conn)
-            .await?;
-            let mut conflict_items = Vec::new();
-            for row in conflict_rows {
-                let field: String = row.get("field");
-                let variant_a: String = row.get("variant_a");
-                let local_value: String = row.get("local_value");
-                let variant_b: String = row.get("variant_b");
-                let remote_value: String = row.get("remote_value");
-                let local_value =
-                    conflict_display_value(conn, &task.workspace_id, &field, &local_value).await?;
-                let remote_value =
-                    conflict_display_value(conn, &task.workspace_id, &field, &remote_value).await?;
-                conflict_items.push(TaskConflictJson {
-                    field,
-                    variant_a,
-                    local_value,
-                    variant_b,
-                    remote_value,
-                });
-            }
-            let full = TaskFullJson {
-                task: task_line_json_item(&item),
-                project_prefix: task.project_prefix.clone(),
-                description: task.description.clone(),
-                dependencies: task_dependency_summary_json(&summary),
-                notes: note_items,
-                conflicts: conflict_items,
-            };
-            print_json_pretty(&full)?;
+        if args.json {
+            print_json_pretty(&task_line_json_item(&item))?;
         } else {
-            let line = task_line_json_item(&item);
-            print_json_pretty(&line)?;
+            print_task_line_item(&item).await?;
         }
-    } else {
-        print_task(conn, &task, args.full).await?;
     }
     Ok(())
 }

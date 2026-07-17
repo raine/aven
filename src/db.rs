@@ -369,21 +369,6 @@ pub(crate) async fn set_field_version(
     Ok(())
 }
 
-pub(crate) async fn task_has_conflict(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-    task_id: &str,
-) -> Result<bool> {
-    Ok(sqlx::query_scalar::<_, i64>(
-        "SELECT count(*) FROM conflicts WHERE workspace_id = ? AND task_id = ? AND resolved = 0 LIMIT 1",
-    )
-    .bind(workspace_id)
-    .bind(task_id)
-    .fetch_one(&mut *conn)
-    .await?
-        > 0)
-}
-
 pub(crate) async fn conflict_exists(
     conn: &mut SqliteConnection,
     workspace_id: &str,
