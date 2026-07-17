@@ -73,9 +73,10 @@ fn action_from_row(
     let project_prefix: Option<String> = row.try_get("project_prefix")?;
 
     let display_ref = if entity_type == "task" {
+        let task_id = entity_id.parse()?;
         project_prefix
             .as_deref()
-            .map(|prefix| display_refs.display_ref_for_id(workspace_id, prefix, &entity_id))
+            .map(|prefix| display_refs.display_ref_for_id(workspace_id, prefix, &task_id))
     } else {
         None
     };

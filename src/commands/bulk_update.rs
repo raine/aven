@@ -339,7 +339,7 @@ async fn ensure_bulk_field_clear(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     display_ref: &str,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     field: &str,
 ) -> Result<()> {
     if conflict_exists(conn, workspace_id, task_id, field).await? {

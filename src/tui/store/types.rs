@@ -15,7 +15,7 @@ impl MutationMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConflictTarget {
-    pub(crate) task_id: String,
+    pub(crate) task_id: crate::ids::TaskId,
     pub(crate) display_ref: String,
     pub(crate) field: String,
     pub(crate) variant_a: String,
@@ -60,7 +60,7 @@ pub(crate) struct TaskFilterModifiers {
     pub(crate) include_deleted: bool,
     pub(crate) deleted_only: bool,
     pub(crate) search: Option<String>,
-    pub(crate) task_ids: Vec<String>,
+    pub(crate) task_ids: Vec<crate::ids::TaskId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,8 +89,8 @@ pub(crate) struct TaskViewState {
     pub(crate) filter_modifiers: TaskFilterModifiers,
     pub(crate) order: TaskOrder,
     pub(crate) direction: SortDirection,
-    pub(crate) expanded_epic_ids: BTreeSet<String>,
-    pub(crate) collapsed_epic_ids: BTreeSet<String>,
+    pub(crate) expanded_epic_ids: BTreeSet<crate::ids::TaskId>,
+    pub(crate) collapsed_epic_ids: BTreeSet<crate::ids::TaskId>,
 }
 
 impl Default for TaskViewState {

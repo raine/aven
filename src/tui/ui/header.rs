@@ -583,7 +583,10 @@ mod tests {
                 include_deleted: true,
                 deleted_only: false,
                 search: Some("needle".to_string()),
-                task_ids: vec!["task-1".to_string(), "task-2".to_string()],
+                task_ids: vec![
+                    crate::test_support::task_id("task-1"),
+                    crate::test_support::task_id("task-2"),
+                ],
             },
             order: TaskOrder::Priority,
             direction: crate::query::SortDirection::Desc,

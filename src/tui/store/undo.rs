@@ -23,7 +23,7 @@ impl TuiStore {
 
     pub(super) async fn refresh_task_message(
         &mut self,
-        task_id: &str,
+        task_id: &crate::ids::TaskId,
         message: impl Into<String>,
     ) -> Result<MutationMessage> {
         let selected = self.refresh(Some(task_id)).await?;
@@ -65,7 +65,7 @@ impl TuiStore {
             self.refresh(None).await?;
             self.restored_task_selection_at_index(selected)
         } else {
-            self.refresh(outcome.task_id.as_deref()).await?
+            self.refresh(outcome.task_id.as_ref()).await?
         };
         Ok(Some(MutationMessage::new(
             format!("undid {}", outcome.summary),

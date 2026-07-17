@@ -87,7 +87,7 @@ pub(crate) async fn task_detail_with_display_refs(
 async fn task_detail_notes(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
 ) -> Result<Vec<TaskDetailNote>> {
     let rows = sqlx::query(
         "SELECT id, body, created_at FROM notes
@@ -111,7 +111,7 @@ async fn task_detail_notes(
 async fn task_detail_conflicts(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
 ) -> Result<Vec<TaskDetailConflict>> {
     let rows = sqlx::query(
         "SELECT field, variant_a, local_value, variant_b, remote_value

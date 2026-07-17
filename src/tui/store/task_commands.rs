@@ -513,7 +513,7 @@ impl TuiStore {
     pub(crate) async fn add_dependency(
         &mut self,
         index: Option<usize>,
-        depends_on_task_id: &str,
+        depends_on_task_id: &crate::ids::TaskId,
     ) -> Result<Option<MutationMessage>> {
         let Some(item) = self.selected_task(index).cloned() else {
             return Ok(None);
@@ -526,8 +526,8 @@ impl TuiStore {
 
     pub(crate) async fn add_dependency_to_task(
         &mut self,
-        task_id: &str,
-        depends_on_task_id: &str,
+        task_id: &crate::ids::TaskId,
+        depends_on_task_id: &crate::ids::TaskId,
     ) -> Result<MutationMessage> {
         let mut conn = self.pool.acquire().await?;
         let outcome = crate::operations::add_task_dependency(
@@ -564,7 +564,7 @@ impl TuiStore {
     pub(crate) async fn remove_dependency(
         &mut self,
         index: Option<usize>,
-        depends_on_task_id: &str,
+        depends_on_task_id: &crate::ids::TaskId,
     ) -> Result<Option<MutationMessage>> {
         let Some(item) = self.selected_task(index).cloned() else {
             return Ok(None);
@@ -605,7 +605,7 @@ impl TuiStore {
         ))
     }
 
-    pub(crate) fn union_labels_for_tasks(&self, task_ids: &[String]) -> Vec<String> {
+    pub(crate) fn union_labels_for_tasks(&self, task_ids: &[crate::ids::TaskId]) -> Vec<String> {
         let task_ids = task_ids.iter().collect::<BTreeSet<_>>();
         self.tasks
             .iter()
@@ -616,7 +616,7 @@ impl TuiStore {
             .collect()
     }
 
-    fn tasks_matching_ids(&self, task_ids: &[String]) -> Vec<TaskListItem> {
+    fn tasks_matching_ids(&self, task_ids: &[crate::ids::TaskId]) -> Vec<TaskListItem> {
         let task_ids = task_ids.iter().collect::<BTreeSet<_>>();
         self.tasks
             .iter()
@@ -636,7 +636,7 @@ impl TuiStore {
             .map(|item| item.task.id.clone());
         let fallback_id = targets.first().map(|item| item.task.id.clone());
         let selected = self
-            .refresh(selected_id.as_deref().or(fallback_id.as_deref()))
+            .refresh(selected_id.as_ref().or(fallback_id.as_ref()))
             .await?;
         Ok(MutationMessage::new(message, selected))
     }
@@ -644,7 +644,7 @@ impl TuiStore {
     pub(crate) async fn update_status_for_tasks(
         &mut self,
         current_selected_index: Option<usize>,
-        task_ids: &[String],
+        task_ids: &[crate::ids::TaskId],
         status: &str,
     ) -> Result<Option<MutationMessage>> {
         let targets = self.tasks_matching_ids(task_ids);
@@ -688,7 +688,7 @@ impl TuiStore {
     pub(crate) async fn update_status_changes_for_tasks(
         &mut self,
         current_selected_index: Option<usize>,
-        changes: &[(String, String)],
+        changes: &[(crate::ids::TaskId, String)],
     ) -> Result<Option<MutationMessage>> {
         let status_by_id = changes.iter().cloned().collect::<BTreeMap<_, _>>();
         let task_ids = status_by_id.keys().cloned().collect::<Vec<_>>();
@@ -739,7 +739,7 @@ impl TuiStore {
     pub(crate) async fn update_priority_for_tasks(
         &mut self,
         current_selected_index: Option<usize>,
-        task_ids: &[String],
+        task_ids: &[crate::ids::TaskId],
         reverse: bool,
     ) -> Result<Option<MutationMessage>> {
         let targets = self.tasks_matching_ids(task_ids);
@@ -778,7 +778,7 @@ impl TuiStore {
     pub(crate) async fn set_exact_priority_for_tasks(
         &mut self,
         current_selected_index: Option<usize>,
-        task_ids: &[String],
+        task_ids: &[crate::ids::TaskId],
         priority: &str,
     ) -> Result<Option<MutationMessage>> {
         let targets = self.tasks_matching_ids(task_ids);
@@ -823,7 +823,7 @@ impl TuiStore {
     pub(crate) async fn update_project_for_tasks(
         &mut self,
         current_selected_index: Option<usize>,
-        task_ids: &[String],
+        task_ids: &[crate::ids::TaskId],
         project: String,
     ) -> Result<Option<MutationMessage>> {
         let targets = self.tasks_matching_ids(task_ids);
@@ -876,7 +876,7 @@ impl TuiStore {
     pub(crate) async fn update_deleted_for_tasks(
         &mut self,
         current_selected_index: Option<usize>,
-        task_ids: &[String],
+        task_ids: &[crate::ids::TaskId],
         deleted: bool,
     ) -> Result<Option<MutationMessage>> {
         let targets = self.tasks_matching_ids(task_ids);
@@ -922,7 +922,7 @@ impl TuiStore {
     pub(crate) async fn update_labels_for_tasks(
         &mut self,
         current_selected_index: Option<usize>,
-        task_ids: &[String],
+        task_ids: &[crate::ids::TaskId],
         selected_labels: Vec<String>,
     ) -> Result<Option<MutationMessage>> {
         if task_ids.is_empty() {
@@ -986,7 +986,7 @@ impl TuiStore {
         }
         let fallback_id = targets.first().map(|item| item.task.id.clone());
         let selected = self
-            .refresh(selected_id.as_deref().or(fallback_id.as_deref()))
+            .refresh(selected_id.as_ref().or(fallback_id.as_ref()))
             .await?;
         let message = if changed == 0 {
             format!("labels unchanged on {} tasks", targets.len())

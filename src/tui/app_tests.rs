@@ -1597,7 +1597,7 @@ mod command_and_config_overlays {
             app.store
                 .tasks
                 .iter()
-                .find(|item| item.task.id == task_id)
+                .find(|item| item.task.id.as_str() == task_id)
                 .unwrap()
                 .task
                 .status
@@ -1638,7 +1638,7 @@ mod command_and_config_overlays {
             app.store
                 .tasks
                 .iter()
-                .find(|item| item.task.id == task_id)
+                .find(|item| item.task.id.as_str() == task_id)
                 .unwrap()
                 .task
                 .project_key
@@ -1667,7 +1667,7 @@ mod command_and_config_overlays {
             app.store
                 .tasks
                 .iter()
-                .find(|item| item.task.id == task_id)
+                .find(|item| item.task.id.as_str() == task_id)
                 .unwrap()
                 .task
                 .priority
@@ -1769,7 +1769,7 @@ mod command_and_config_overlays {
             app.store
                 .tasks
                 .iter()
-                .find(|item| item.task.id == task_id)
+                .find(|item| item.task.id.as_str() == task_id)
                 .unwrap()
                 .labels
                 .clone()
@@ -6640,7 +6640,7 @@ mod task_dependencies {
         };
         assert_eq!(state.route, OverlayRoute::RemoveDependency);
         assert_eq!(state.items.len(), 1);
-        assert_eq!(state.items[0].value, blocker_id);
+        assert_eq!(state.items[0].value, blocker_id.to_string());
     }
 
     #[tokio::test]
@@ -6793,7 +6793,7 @@ mod task_dependencies {
             app.store
                 .tasks
                 .iter()
-                .find(|item| item.task.id == task_id)
+                .find(|item| item.task.id.as_str() == task_id)
                 .unwrap()
                 .task
                 .status
@@ -6806,7 +6806,7 @@ mod task_dependencies {
             app.store
                 .tasks
                 .iter()
-                .find(|item| item.task.id == task_id)
+                .find(|item| item.task.id.as_str() == task_id)
                 .unwrap()
                 .task
                 .status
@@ -6851,7 +6851,7 @@ mod task_dependencies {
             app.store
                 .tasks
                 .iter()
-                .find(|item| item.task.id == task_id)
+                .find(|item| item.task.id.as_str() == task_id)
                 .unwrap()
                 .task
                 .status

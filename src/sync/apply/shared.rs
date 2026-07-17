@@ -1,4 +1,4 @@
-use crate::ids::WorkspaceId;
+use crate::ids::{TaskId, WorkspaceId};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use sqlx::{Row, SqliteConnection};
@@ -16,6 +16,13 @@ pub(super) fn str_payload(payload: &Value, key: &str) -> Result<String> {
 
 pub(super) fn optional_str_payload(payload: &Value, key: &str) -> Option<String> {
     payload.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
+pub(super) fn task_id(change: &ChangeWire) -> Result<TaskId> {
+    change
+        .entity_id
+        .parse()
+        .with_context(|| "change contains invalid task entity_id")
 }
 
 pub(super) async fn workspace_id_payload(

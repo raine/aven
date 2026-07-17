@@ -24,8 +24,8 @@ struct EpicPair {
 async fn load_epic_pair(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    child_id: &str,
-    epic_id: &str,
+    child_id: &crate::ids::TaskId,
+    epic_id: &crate::ids::TaskId,
 ) -> Result<EpicPair> {
     if child_id == epic_id {
         bail!("error epic-self task_id={child_id}");
@@ -97,8 +97,8 @@ async fn mark_task_as_epic(
 pub(crate) async fn add_task_to_epic(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    child_id: &str,
-    epic_id: &str,
+    child_id: &crate::ids::TaskId,
+    epic_id: &crate::ids::TaskId,
 ) -> Result<EpicLinkOutcome> {
     let mut tx = begin_immediate(conn).await?;
     let pair = load_epic_pair(&mut tx, workspace, child_id, epic_id).await?;
@@ -106,7 +106,7 @@ pub(crate) async fn add_task_to_epic(
     if !pair.epic.is_epic {
         mark_task_as_epic(&mut tx, workspace, &pair.epic).await?;
     }
-    let existing_epic_id = sqlx::query_scalar::<_, String>(
+    let existing_epic_id = sqlx::query_scalar::<_, crate::ids::TaskId>(
         "SELECT epic_task_id FROM task_epic_links WHERE workspace_id = ? AND child_task_id = ?",
     )
     .bind(&pair.child.workspace_id)
@@ -150,8 +150,8 @@ pub(crate) async fn add_task_to_epic(
 pub(crate) async fn remove_task_from_epic(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    child_id: &str,
-    epic_id: &str,
+    child_id: &crate::ids::TaskId,
+    epic_id: &crate::ids::TaskId,
 ) -> Result<EpicLinkOutcome> {
     let mut tx = begin_immediate(conn).await?;
     let pair = load_epic_pair(&mut tx, workspace, child_id, epic_id).await?;
@@ -182,7 +182,7 @@ pub(crate) async fn remove_task_from_epic(
 pub(crate) async fn task_has_epic_children(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
 ) -> Result<bool> {
     Ok(sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM task_epic_links WHERE workspace_id = ? AND epic_task_id = ? LIMIT 1",

@@ -1,5 +1,5 @@
 use super::*;
-use crate::ids::WorkspaceId;
+use crate::ids::{TaskId, WorkspaceId};
 
 use crate::choices::{PRIORITIES, TaskPriority, TaskStatus};
 use crate::operations::{TaskDraft, TaskUpdate};
@@ -35,7 +35,7 @@ async fn test_store_with_pool() -> (tempfile::TempDir, sqlx::SqlitePool, TuiStor
     (dir, pool, store)
 }
 
-async fn create_selected_task(store: &mut TuiStore, title: &str) -> (String, usize) {
+async fn create_selected_task(store: &mut TuiStore, title: &str) -> (TaskId, usize) {
     let (_, selected) = store
         .create_task(
             TaskDraft {
@@ -58,7 +58,7 @@ async fn create_selected_task(store: &mut TuiStore, title: &str) -> (String, usi
     (task_id, selected)
 }
 
-async fn seed_title_conflict(pool: &SqlitePool, task_id: &str) {
+async fn seed_title_conflict(pool: &SqlitePool, task_id: &TaskId) {
     let mut conn = pool.acquire().await.unwrap();
     sqlx::query(
         "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
@@ -91,7 +91,7 @@ fn task_draft(title: &str) -> TaskDraft {
 async fn set_task_timestamps(
     pool: &SqlitePool,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &TaskId,
     queue_activity_at: &str,
     updated_at: Option<&str>,
 ) {
@@ -118,7 +118,7 @@ async fn create_selected_task_with_stale_queue_activity(
     store: &mut TuiStore,
     pool: &SqlitePool,
     title: &str,
-) -> (String, usize) {
+) -> (TaskId, usize) {
     let (_, selected) = store.create_task(task_draft(title), None).await.unwrap();
     let selected = selected.unwrap();
     let task_id = store.tasks[selected].task.id.clone();
@@ -1223,7 +1223,7 @@ mod views_filters_and_sort {
         store.view_state.order = TaskOrder::Priority;
         store.view_state.direction = SortDirection::Desc;
         store.view_state.filter_modifiers.label = Some("backend".to_string());
-        store.view_state.filter_modifiers.task_ids = vec!["task-1".to_string()];
+        store.view_state.filter_modifiers.task_ids = vec![crate::test_support::task_id("task-1")];
 
         store.clear_filters().await.unwrap();
 
@@ -1369,7 +1369,7 @@ mod views_filters_and_sort {
         assert_eq!(store.tasks[0].task.title, "Finished");
     }
 
-    async fn create_search_task(store: &mut TuiStore, title: &str) -> String {
+    async fn create_search_task(store: &mut TuiStore, title: &str) -> TaskId {
         let (_, selected) = store.create_task(task_draft(title), None).await.unwrap();
         store.tasks[selected.unwrap()].task.id.clone()
     }
@@ -2500,7 +2500,7 @@ mod workspace_scoping {
         store.show_view(TaskView::Todo).await.unwrap();
         store.view_state.filter_modifiers.label = Some("default-label".to_string());
         store.view_state.filter_modifiers.priority = Some("urgent".to_string());
-        store.view_state.filter_modifiers.task_ids = vec!["task-1".to_string()];
+        store.view_state.filter_modifiers.task_ids = vec![crate::test_support::task_id("task-1")];
         store.view_state.filter_modifiers.include_deleted = true;
 
         let (message, selected) = store.switch_workspace(other.key.clone()).await.unwrap();
@@ -2622,7 +2622,7 @@ mod workspace_scoping {
 mod epics {
     use super::*;
 
-    async fn create_epic_child_pair(store: &mut TuiStore) -> (String, String, usize) {
+    async fn create_epic_child_pair(store: &mut TuiStore) -> (TaskId, TaskId, usize) {
         let (parent_id, _parent_index) = create_selected_task(store, "epic parent").await;
         let child_title = format!("child of {}", &parent_id[..4]);
         let (child_id, _) = create_selected_task(store, &child_title).await;

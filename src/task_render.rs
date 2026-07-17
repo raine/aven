@@ -148,7 +148,7 @@ pub(crate) struct TaskLineJson {
 pub(crate) fn task_line_json_item(item: &TaskListItem) -> TaskLineJson {
     TaskLineJson {
         r#ref: item.display_ref.clone(),
-        id: item.task.id.clone(),
+        id: item.task.id.to_string(),
         title: item.task.title.clone(),
         project: item.task.project_key.clone(),
         status: item.task.status.to_string(),
@@ -171,7 +171,7 @@ pub(crate) fn task_line_json_item(item: &TaskListItem) -> TaskLineJson {
 pub(crate) fn task_epic_link_json(link: &TaskDependencyLink) -> TaskEpicLinkJson {
     TaskEpicLinkJson {
         r#ref: link.display_ref.clone(),
-        id: link.task_id.clone(),
+        id: link.task_id.to_string(),
         title: link.title.clone(),
         status: link.status.clone(),
         priority: link.priority.clone(),
@@ -239,7 +239,7 @@ pub(crate) fn task_dependency_summary_json(
             .iter()
             .map(|d| TaskDependencyItemJson {
                 r#ref: d.display_ref.clone(),
-                id: d.task.id.clone(),
+                id: d.task.id.to_string(),
                 title: d.task.title.clone(),
                 status: d.task.status.to_string(),
                 priority: d.task.priority.to_string(),
@@ -253,7 +253,7 @@ pub(crate) fn task_dependency_summary_json(
             .iter()
             .map(|d| TaskDependencyItemJson {
                 r#ref: d.display_ref.clone(),
-                id: d.task.id.clone(),
+                id: d.task.id.to_string(),
                 title: d.task.title.clone(),
                 status: d.task.status.to_string(),
                 priority: d.task.priority.to_string(),

@@ -176,7 +176,7 @@ mod tests {
 
     fn test_conflict_target(field: &str) -> ConflictTarget {
         ConflictTarget {
-            task_id: "task-1".to_string(),
+            task_id: crate::test_support::task_id("task-1"),
             display_ref: "APP-1234".to_string(),
             field: field.to_string(),
             variant_a: "local".to_string(),

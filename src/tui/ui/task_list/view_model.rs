@@ -39,7 +39,7 @@ impl TaskListView {
     pub(super) fn from_tasks(
         render_mode: TaskListRenderMode,
         tasks: &[TaskListItem],
-        expanded_epic_ids: &BTreeSet<String>,
+        expanded_epic_ids: &BTreeSet<crate::ids::TaskId>,
     ) -> Self {
         let rows = match render_mode {
             TaskListRenderMode::Queue => queue_rows(tasks),
@@ -65,7 +65,7 @@ impl TaskListView {
 
 pub(super) fn epics_rows(
     tasks: &[TaskListItem],
-    expanded_epic_ids: &BTreeSet<String>,
+    expanded_epic_ids: &BTreeSet<crate::ids::TaskId>,
 ) -> Vec<TaskListRow> {
     let mut rows = Vec::new();
     for (parent_index, item) in tasks.iter().enumerate() {
@@ -235,7 +235,7 @@ mod tests {
     fn task_item(title: &str) -> TaskListItem {
         TaskListItem {
             task: crate::types::Task {
-                id: "task-1".to_string(),
+                id: crate::test_support::task_id("task-1"),
                 workspace_id: "0000000000000001".parse().unwrap(),
                 title: title.to_string(),
                 description: String::new(),
@@ -543,7 +543,7 @@ mod tests {
 
     fn make_task(title: &str, id: &str) -> TaskListItem {
         let mut item = task_item(title);
-        item.task.id = id.to_string();
+        item.task.id = crate::test_support::task_id(id);
         item
     }
 
@@ -558,7 +558,7 @@ mod tests {
         item.epic_children = child_ids
             .iter()
             .map(|child_id| crate::query::TaskDependencyLink {
-                task_id: child_id.to_string(),
+                task_id: crate::test_support::task_id(child_id),
                 display_ref: format!("APP-{}", &child_id[..4]),
                 title: "child".to_string(),
                 status: "todo".to_string(),
@@ -586,7 +586,7 @@ mod tests {
         let child = make_task("child", "child-1");
         let parent = make_epic_parent("parent", "parent-1", &["child-1"], true);
         let mut expanded = BTreeSet::new();
-        expanded.insert("parent-1".to_string());
+        expanded.insert(crate::test_support::task_id("parent-1"));
 
         let tasks = vec![parent, child];
 
@@ -612,7 +612,7 @@ mod tests {
         let mut parent = make_epic_parent("parent", "parent-1", &["child-1", "child-2"], true);
         parent.epic_children[0].unresolved = false;
         let mut expanded = BTreeSet::new();
-        expanded.insert("parent-1".to_string());
+        expanded.insert(crate::test_support::task_id("parent-1"));
 
         let tasks = vec![parent, resolved_child, open_child];
 
@@ -635,7 +635,7 @@ mod tests {
     fn expanded_epic_skips_missing_child_tasks() {
         let parent = make_epic_parent("parent", "parent-1", &["missing-child"], true);
         let mut expanded = BTreeSet::new();
-        expanded.insert("parent-1".to_string());
+        expanded.insert(crate::test_support::task_id("parent-1"));
 
         let tasks = vec![parent];
 
@@ -649,7 +649,7 @@ mod tests {
         let child = make_task("child", "child-1");
         let parent = make_epic_parent("parent", "parent-1", &["child-1"], true);
         let mut expanded = BTreeSet::new();
-        expanded.insert("parent-1".to_string());
+        expanded.insert(crate::test_support::task_id("parent-1"));
 
         let tasks = vec![parent, child];
 

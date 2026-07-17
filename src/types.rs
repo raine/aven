@@ -1,10 +1,10 @@
-use crate::ids::{ProjectId, WorkspaceId};
+use crate::ids::{ProjectId, TaskId, WorkspaceId};
 
 use crate::choices::{TaskPriority, TaskStatus};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Task {
-    pub(crate) id: String,
+    pub(crate) id: TaskId,
     pub(crate) workspace_id: WorkspaceId,
     pub(crate) title: String,
     pub(crate) description: String,

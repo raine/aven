@@ -21,11 +21,18 @@ pub(crate) struct WorkspaceId(String);
 #[serde(transparent)]
 pub(crate) struct ProjectId(String);
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub(crate) struct TaskId(String);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct InvalidWorkspaceId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct InvalidProjectId;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct InvalidTaskId;
 
 impl WorkspaceId {
     pub(crate) fn new() -> Self {
@@ -47,6 +54,36 @@ impl ProjectId {
     }
 }
 
+impl TaskId {
+    pub(crate) fn new() -> Self {
+        Self(new_id())
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for TaskId {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl AsRef<str> for TaskId {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl std::borrow::Borrow<str> for TaskId {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
 impl fmt::Display for WorkspaceId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
@@ -54,6 +91,12 @@ impl fmt::Display for WorkspaceId {
 }
 
 impl fmt::Display for ProjectId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl fmt::Display for TaskId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
     }
@@ -71,8 +114,15 @@ impl fmt::Display for InvalidProjectId {
     }
 }
 
+impl fmt::Display for InvalidTaskId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("task ID must be 16 Crockford Base32 characters")
+    }
+}
+
 impl std::error::Error for InvalidWorkspaceId {}
 impl std::error::Error for InvalidProjectId {}
+impl std::error::Error for InvalidTaskId {}
 
 impl FromStr for WorkspaceId {
     type Err = InvalidWorkspaceId;
@@ -98,6 +148,18 @@ impl FromStr for ProjectId {
     }
 }
 
+impl FromStr for TaskId {
+    type Err = InvalidTaskId;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value.len() == 16 && value.bytes().all(|byte| BASE32.contains(&byte)) {
+            Ok(Self(value.to_string()))
+        } else {
+            Err(InvalidTaskId)
+        }
+    }
+}
+
 impl TryFrom<String> for WorkspaceId {
     type Error = InvalidWorkspaceId;
 
@@ -108,6 +170,14 @@ impl TryFrom<String> for WorkspaceId {
 
 impl TryFrom<String> for ProjectId {
     type Error = InvalidProjectId;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+
+impl TryFrom<String> for TaskId {
+    type Error = InvalidTaskId;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         value.parse()
@@ -136,6 +206,17 @@ impl<'de> Deserialize<'de> for ProjectId {
     }
 }
 
+impl<'de> Deserialize<'de> for TaskId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 impl Type<Sqlite> for WorkspaceId {
     fn type_info() -> SqliteTypeInfo {
         <String as Type<Sqlite>>::type_info()
@@ -143,6 +224,12 @@ impl Type<Sqlite> for WorkspaceId {
 }
 
 impl Type<Sqlite> for ProjectId {
+    fn type_info() -> SqliteTypeInfo {
+        <String as Type<Sqlite>>::type_info()
+    }
+}
+
+impl Type<Sqlite> for TaskId {
     fn type_info() -> SqliteTypeInfo {
         <String as Type<Sqlite>>::type_info()
     }
@@ -166,6 +253,15 @@ impl Encode<'_, Sqlite> for ProjectId {
     }
 }
 
+impl Encode<'_, Sqlite> for TaskId {
+    fn encode_by_ref(
+        &self,
+        buffer: &mut <Sqlite as Database>::ArgumentBuffer,
+    ) -> Result<IsNull, BoxDynError> {
+        <String as Encode<Sqlite>>::encode_by_ref(&self.0, buffer)
+    }
+}
+
 impl<'row> Decode<'row, Sqlite> for WorkspaceId {
     fn decode(value: SqliteValueRef<'row>) -> Result<Self, BoxDynError> {
         String::decode(value)?.parse().map_err(Into::into)
@@ -173,6 +269,12 @@ impl<'row> Decode<'row, Sqlite> for WorkspaceId {
 }
 
 impl<'row> Decode<'row, Sqlite> for ProjectId {
+    fn decode(value: SqliteValueRef<'row>) -> Result<Self, BoxDynError> {
+        String::decode(value)?.parse().map_err(Into::into)
+    }
+}
+
+impl<'row> Decode<'row, Sqlite> for TaskId {
     fn decode(value: SqliteValueRef<'row>) -> Result<Self, BoxDynError> {
         String::decode(value)?.parse().map_err(Into::into)
     }
@@ -243,6 +345,38 @@ mod tests {
         let id: ProjectId = serde_json::from_str("\"0123456789ABCDEF\"").unwrap();
         assert_eq!(serde_json::to_string(&id).unwrap(), "\"0123456789ABCDEF\"");
         assert!(serde_json::from_str::<ProjectId>("\"invalid\"").is_err());
+    }
+
+    #[test]
+    fn task_ids_validate_domain_id_shape() {
+        assert!("0123456789ABCDEF".parse::<TaskId>().is_ok());
+        assert!("0123456789ABCDE".parse::<TaskId>().is_err());
+        assert!("0123456789abcdef".parse::<TaskId>().is_err());
+        assert!("0123456789ABCDEI".parse::<TaskId>().is_err());
+    }
+
+    #[test]
+    fn task_ids_serialize_as_validated_strings() {
+        let id: TaskId = serde_json::from_str("\"0123456789ABCDEF\"").unwrap();
+        assert_eq!(serde_json::to_string(&id).unwrap(), "\"0123456789ABCDEF\"");
+        assert!(serde_json::from_str::<TaskId>("\"invalid\"").is_err());
+    }
+
+    #[tokio::test]
+    async fn task_ids_bind_and_decode_as_sqlite_text() {
+        let (_temp, mut conn) = test_conn().await;
+        let id: TaskId = "0123456789ABCDEF".parse().unwrap();
+        let decoded = sqlx::query_scalar::<_, TaskId>("SELECT ?")
+            .bind(&id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(decoded, id);
+
+        let invalid = sqlx::query_scalar::<_, TaskId>("SELECT 'invalid'")
+            .fetch_one(&mut *conn)
+            .await;
+        assert!(invalid.is_err());
     }
 
     #[tokio::test]

@@ -40,7 +40,7 @@ pub(crate) enum OverlayState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SearchResultItem {
-    pub(crate) task_id: String,
+    pub(crate) task_id: crate::ids::TaskId,
     pub(crate) display_ref: String,
     pub(crate) title: String,
     pub(crate) description: String,
@@ -60,7 +60,7 @@ pub(crate) struct SearchResultItem {
 pub(crate) enum SearchPurpose {
     Navigate,
     AddDependency {
-        task_id: String,
+        task_id: crate::ids::TaskId,
         display_ref: String,
     },
 }

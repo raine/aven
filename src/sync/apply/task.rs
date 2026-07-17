@@ -12,14 +12,15 @@ use super::conflict;
 use super::label::create_or_update_task_label;
 use super::payload::CreateTaskPayload;
 use super::project::ensure_project_for_payload;
-use super::shared::{str_payload, task_field_workspace_id_payload, workspace_id_payload};
+use super::shared::{str_payload, task_field_workspace_id_payload, task_id, workspace_id_payload};
 
 pub(super) async fn create_task(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     let p = CreateTaskPayload::from_change(change)?;
+    let task_id = task_id(change)?;
     let workspace_id = workspace_id_payload(conn, change).await?;
     if sqlx::query_scalar::<_, i64>("SELECT count(*) FROM tasks WHERE workspace_id = ? AND id = ?")
         .bind(&workspace_id)
-        .bind(&change.entity_id)
+        .bind(&task_id)
         .fetch_one(&mut *conn)
         .await?
         > 0
@@ -51,7 +52,7 @@ pub(super) async fn create_task(conn: &mut SqliteConnection, change: &ChangeWire
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&workspace_id)
-    .bind(&change.entity_id)
+    .bind(&task_id)
     .bind(&title)
     .bind(&description)
     .bind(&project_id)
@@ -67,18 +68,12 @@ pub(super) async fn create_task(conn: &mut SqliteConnection, change: &ChangeWire
     .await?;
     if let Some(labels) = change.payload.get("labels").and_then(Value::as_array) {
         for label in labels.iter().filter_map(Value::as_str) {
-            create_or_update_task_label(
-                conn,
-                &workspace_id,
-                &change.entity_id,
-                label,
-                &change.created_at,
-            )
-            .await?;
+            create_or_update_task_label(conn, &workspace_id, &task_id, label, &change.created_at)
+                .await?;
         }
     }
     for field in TaskField::VERSIONED {
-        set_field_version(conn, &change.entity_id, field.as_str(), &change.change_id).await?;
+        set_field_version(conn, &task_id, field.as_str(), &change.change_id).await?;
     }
     Ok(())
 }
@@ -88,6 +83,7 @@ pub(crate) async fn set_field(
     change: &ChangeWire,
     force: bool,
 ) -> Result<()> {
+    let task_id = task_id(change)?;
     let field = change
         .field
         .as_deref()
@@ -110,11 +106,10 @@ pub(crate) async fn set_field(
         resolved_project_id = Some(local_project_id);
     }
     if !force {
-        let current = field_version(conn, &change.entity_id, field).await?;
+        let current = field_version(conn, &task_id, field).await?;
         if task_field == TaskField::IsEpic
             && value == "0"
-            && crate::operations::task_has_epic_children(conn, &workspace_id, &change.entity_id)
-                .await?
+            && crate::operations::task_has_epic_children(conn, &workspace_id, &task_id).await?
         {
             conflict::create_conflict(
                 conn,
@@ -143,7 +138,7 @@ pub(crate) async fn set_field(
     if force
         && task_field == TaskField::IsEpic
         && value == "0"
-        && crate::operations::task_has_epic_children(conn, &workspace_id, &change.entity_id).await?
+        && crate::operations::task_has_epic_children(conn, &workspace_id, &task_id).await?
     {
         anyhow::bail!("error epic-has-children task_id={}", change.entity_id);
     }
@@ -151,23 +146,22 @@ pub(crate) async fn set_field(
         apply_project_id_in_workspace(
             conn,
             &workspace_id,
-            &change.entity_id,
+            &task_id,
             resolved_project_id
                 .as_ref()
                 .context("project field missing resolved project ID")?,
         )
         .await?;
     } else {
-        apply_field_value_in_workspace(conn, &workspace_id, &change.entity_id, field, &value)
-            .await?;
+        apply_field_value_in_workspace(conn, &workspace_id, &task_id, field, &value).await?;
     }
-    set_field_version(conn, &change.entity_id, field, &change.change_id).await?;
+    set_field_version(conn, &task_id, field, &change.change_id).await?;
     if force {
         sqlx::query(
             "UPDATE conflicts SET resolved = 1 WHERE workspace_id = ? AND task_id = ? AND field = ? AND resolved = 0",
         )
         .bind(&workspace_id)
-        .bind(&change.entity_id)
+        .bind(&task_id)
         .bind(field)
         .execute(&mut *conn)
         .await?;

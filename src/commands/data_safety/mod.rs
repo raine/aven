@@ -1,4 +1,4 @@
-use crate::ids::{ProjectId, WorkspaceId};
+use crate::ids::{ProjectId, TaskId, WorkspaceId};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
@@ -101,7 +101,7 @@ struct LabelRow {
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct TaskRow {
     workspace_id: WorkspaceId,
-    id: String,
+    id: TaskId,
     title: String,
     description: String,
     project_id: ProjectId,
@@ -121,15 +121,15 @@ struct TaskRow {
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct TaskEpicLinkRow {
     workspace_id: WorkspaceId,
-    child_task_id: String,
-    epic_task_id: String,
+    child_task_id: TaskId,
+    epic_task_id: TaskId,
     created_at: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct TaskLabelRow {
     workspace_id: WorkspaceId,
-    task_id: String,
+    task_id: TaskId,
     label: String,
 }
 
@@ -137,7 +137,7 @@ struct TaskLabelRow {
 struct NoteRow {
     workspace_id: WorkspaceId,
     id: String,
-    task_id: String,
+    task_id: TaskId,
     body: String,
     created_at: String,
     change_id: String,
@@ -146,8 +146,8 @@ struct NoteRow {
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct TaskDependencyRow {
     workspace_id: WorkspaceId,
-    task_id: String,
-    depends_on_task_id: String,
+    task_id: TaskId,
+    depends_on_task_id: TaskId,
     created_at: String,
 }
 
@@ -177,7 +177,7 @@ struct FieldVersionRow {
 struct ConflictRow {
     id: i64,
     workspace_id: WorkspaceId,
-    task_id: String,
+    task_id: TaskId,
     field: String,
     base_version: Option<String>,
     local_value: String,
@@ -464,7 +464,7 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
         label_keys.insert((label.workspace_id.clone(), label.name.clone()));
     }
 
-    let mut task_ids: HashMap<WorkspaceId, HashSet<String>> = HashMap::new();
+    let mut task_ids: HashMap<WorkspaceId, HashSet<TaskId>> = HashMap::new();
     for task in &export.tables.tasks {
         if let Err(error) = crate::time_input::validate_due_on_value(&task.due_on) {
             bail!(

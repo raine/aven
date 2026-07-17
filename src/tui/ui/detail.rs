@@ -72,7 +72,7 @@ struct DetailSelectableDocument {
 }
 
 pub(crate) struct DetailChildHit {
-    pub(crate) task_id: String,
+    pub(crate) task_id: crate::ids::TaskId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1120,7 +1120,7 @@ fn detail_epic_child_task_id_at_body_line(
     item: &TaskListItem,
     width: usize,
     body_line_index: usize,
-) -> Option<String> {
+) -> Option<crate::ids::TaskId> {
     if !item.task.is_epic || body_line_index == 0 {
         return None;
     }
@@ -1232,7 +1232,7 @@ mod tests {
     fn detail_header_shows_epic_parent_context() {
         let mut item = detail_test_item();
         item.epic_parent = Some(crate::query::TaskDependencyLink {
-            task_id: "epic-task-id".to_string(),
+            task_id: crate::test_support::task_id("epic-task-id"),
             display_ref: "APP-EPIC".to_string(),
             title: "Ship authentication reliability".to_string(),
             status: "active".to_string(),
@@ -1253,7 +1253,7 @@ mod tests {
     fn detail_epic_parent_context_truncates_to_header_width() {
         let mut item = detail_test_item();
         item.epic_parent = Some(crate::query::TaskDependencyLink {
-            task_id: "epic-task-id".to_string(),
+            task_id: crate::test_support::task_id("epic-task-id"),
             display_ref: "APP-EPIC".to_string(),
             title: "A long epic title that must fit the sticky header".to_string(),
             status: "active".to_string(),
@@ -1289,7 +1289,7 @@ mod tests {
         let mut item = detail_test_item();
         item.depends_on = (0..5)
             .map(|index| crate::query::TaskDependencyLink {
-                task_id: format!("blocker-id-{index}"),
+                task_id: crate::test_support::task_id(&format!("blocker-id-{index}")),
                 display_ref: format!("APP-B{index}"),
                 title: format!("blocker {index}"),
                 status: "todo".to_string(),
@@ -1316,7 +1316,7 @@ mod tests {
         let mut item = detail_test_item();
         item.blocks = (0..5)
             .map(|index| crate::query::TaskDependencyLink {
-                task_id: format!("dependent-id-{index}"),
+                task_id: crate::test_support::task_id(&format!("dependent-id-{index}")),
                 display_ref: format!("APP-D{index}"),
                 title: format!("dependent {index}"),
                 status: "inbox".to_string(),
@@ -1613,13 +1613,17 @@ mod tests {
 
         let hit = detail_child_task_at_position(&item, 120, 30, 4, 8, 0).unwrap();
 
-        assert_eq!(hit.task_id, "child-task-id");
+        assert_eq!(
+            hit.task_id.as_str(),
+            crate::test_support::task_id("child-task-id").as_str()
+        );
     }
 
     #[test]
     fn hovered_detail_child_uses_link_style() {
         let item = detail_test_epic_item();
-        let lines = detail_body_lines(&item, 80, Some("child-task-id"));
+        let hovered = crate::test_support::task_id("child-task-id");
+        let lines = detail_body_lines(&item, 80, Some(hovered.as_str()));
         let line = lines
             .iter()
             .find(|line| line.to_string().contains("APP-CHLD"))
@@ -1671,7 +1675,7 @@ mod tests {
         item.task.is_epic = true;
         item.epic_children = vec![
             crate::query::TaskDependencyLink {
-                task_id: "child-task-id".to_string(),
+                task_id: crate::test_support::task_id("child-task-id"),
                 display_ref: "APP-CHLD".to_string(),
                 title: "Build the first child task".to_string(),
                 status: "todo".to_string(),
@@ -1679,7 +1683,7 @@ mod tests {
                 unresolved: true,
             },
             crate::query::TaskDependencyLink {
-                task_id: "done-child-task-id".to_string(),
+                task_id: crate::test_support::task_id("done-child-task-id"),
                 display_ref: "APP-DONE".to_string(),
                 title: "Finished child task".to_string(),
                 status: "done".to_string(),
@@ -1797,7 +1801,7 @@ mod tests {
         item.task.is_epic = true;
         item.epic_children = vec![
             crate::query::TaskDependencyLink {
-                task_id: "child-task-id".to_string(),
+                task_id: crate::test_support::task_id("child-task-id"),
                 display_ref: "APP-CHLD".to_string(),
                 title: "Build the first child task".to_string(),
                 status: "todo".to_string(),
@@ -1805,7 +1809,7 @@ mod tests {
                 unresolved: true,
             },
             crate::query::TaskDependencyLink {
-                task_id: "done-child-task-id".to_string(),
+                task_id: crate::test_support::task_id("done-child-task-id"),
                 display_ref: "APP-DONE".to_string(),
                 title: "Finished child task".to_string(),
                 status: "done".to_string(),
@@ -1819,7 +1823,7 @@ mod tests {
     fn detail_test_item() -> TaskListItem {
         TaskListItem {
             task: crate::types::Task {
-                id: "7KQ9A1X".to_string(),
+                id: crate::test_support::task_id("7KQ9A1X"),
                 workspace_id: "0000000000000001".parse().unwrap(),
                 title: "Fix token refresh race".to_string(),
                 description: "Two token refresh requests fire together.".to_string(),
@@ -1846,7 +1850,7 @@ mod tests {
             unresolved_blocker_count: 0,
             dependent_count: 0,
             depends_on: vec![crate::query::TaskDependencyLink {
-                task_id: "blocker-task-id".to_string(),
+                task_id: crate::test_support::task_id("blocker-task-id"),
                 display_ref: "APP-7KQ1".to_string(),
                 title: "Ship auth service".to_string(),
                 status: "todo".to_string(),
@@ -1854,7 +1858,7 @@ mod tests {
                 unresolved: true,
             }],
             blocks: vec![crate::query::TaskDependencyLink {
-                task_id: "dependent-task-id".to_string(),
+                task_id: crate::test_support::task_id("dependent-task-id"),
                 display_ref: "APP-7KQ2".to_string(),
                 title: "Write rollout notes".to_string(),
                 status: "inbox".to_string(),

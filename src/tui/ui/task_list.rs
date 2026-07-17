@@ -202,7 +202,7 @@ fn render_task_list(
     focus: Focus,
     area: Rect,
     inline_title_editor: Option<&TextInputView>,
-    marked_task_ids: &BTreeSet<String>,
+    marked_task_ids: &BTreeSet<crate::ids::TaskId>,
 ) {
     frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
     let model = build_task_list_render_model(
@@ -256,7 +256,7 @@ fn build_task_list_render_model(
     focus: Focus,
     area: Rect,
     inline_title_editor: Option<&TextInputView>,
-    marked_task_ids: &BTreeSet<String>,
+    marked_task_ids: &BTreeSet<crate::ids::TaskId>,
 ) -> TaskListRenderModel {
     let row_areas = Layout::vertical(vec![Constraint::Length(1); area.height as usize]).split(area);
     let columns = task_list_columns(store, area.width < 90);
@@ -1246,7 +1246,7 @@ mod tests {
     fn task_item(title: &str) -> TaskListItem {
         TaskListItem {
             task: crate::types::Task {
-                id: "task-1".to_string(),
+                id: crate::test_support::task_id("task-1"),
                 workspace_id: "0000000000000001".parse().unwrap(),
                 title: title.to_string(),
                 description: String::new(),
@@ -1870,7 +1870,7 @@ mod tests {
     fn metadata_cell_marks_children_of_selected_epic() {
         let mut item = task_item("child");
         item.epic_parent = Some(crate::query::TaskDependencyLink {
-            task_id: "epic-1".to_string(),
+            task_id: crate::test_support::task_id("epic-1"),
             display_ref: "APP-EPIC".to_string(),
             title: "Selected epic".to_string(),
             status: "todo".to_string(),
@@ -1878,7 +1878,8 @@ mod tests {
             unresolved: true,
         });
 
-        let line = metadata_cell(&item, Some("epic-1"), false);
+        let selected_epic = crate::test_support::task_id("epic-1");
+        let line = metadata_cell(&item, Some(selected_epic.as_str()), false);
 
         assert_eq!(line.to_string(), EPIC_CHILD_MARKER);
         assert_eq!(line.spans[0].style.fg, Some(ACCENT));
@@ -1887,7 +1888,7 @@ mod tests {
             ""
         );
         assert_eq!(
-            metadata_column_width_from_task_refs(&[&item], Some("epic-1"), false),
+            metadata_column_width_from_task_refs(&[&item], Some(selected_epic.as_str()), false,),
             3
         );
     }
@@ -2023,7 +2024,7 @@ mod tests {
     #[test]
     fn preview_marks_epic_parent_with_star() {
         let parent = crate::query::TaskDependencyLink {
-            task_id: "parent-task-id".to_string(),
+            task_id: crate::test_support::task_id("parent-task-id"),
             display_ref: "APP-EPIC".to_string(),
             title: "Build the epic container".to_string(),
             status: "inbox".to_string(),
@@ -2093,7 +2094,7 @@ mod tests {
         let mut item = task_item("epic");
         item.epic_children = vec![
             crate::query::TaskDependencyLink {
-                task_id: "child-1".to_string(),
+                task_id: crate::test_support::task_id("child-1"),
                 display_ref: "APP-C001".to_string(),
                 title: "first child".to_string(),
                 status: "todo".to_string(),
@@ -2101,7 +2102,7 @@ mod tests {
                 unresolved: true,
             },
             crate::query::TaskDependencyLink {
-                task_id: "child-2".to_string(),
+                task_id: crate::test_support::task_id("child-2"),
                 display_ref: "APP-C002".to_string(),
                 title: "second child".to_string(),
                 status: "active".to_string(),

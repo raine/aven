@@ -19,7 +19,7 @@ pub(crate) const TASK_ROW_DOUBLE_CLICK: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TaskRowClick {
-    pub(crate) task_id: String,
+    pub(crate) task_id: crate::ids::TaskId,
     pub(crate) viewport_row: u16,
     pub(crate) at: Instant,
 }
@@ -98,7 +98,7 @@ fn loading_frame(started_at: Instant) -> &'static str {
 pub(crate) struct WidgetState {
     pub(crate) sidebar: ListState,
     pub(crate) table: TableState,
-    pub(crate) marked_task_ids: BTreeSet<String>,
+    pub(crate) marked_task_ids: BTreeSet<crate::ids::TaskId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,7 +109,7 @@ pub(crate) enum FooterChoiceMode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct DetailNavigationState {
-    pub(super) task_id: String,
+    pub(super) task_id: crate::ids::TaskId,
     pub(super) scroll: u16,
 }
 
@@ -136,8 +136,8 @@ pub(crate) struct App {
     pub(super) update: crate::tui::app_update::UpdateController,
     pub(super) next_refresh_at: Instant,
     pub(crate) last_task_click: Option<TaskRowClick>,
-    pub(crate) hovered_detail_child_task_id: Option<String>,
-    pub(crate) selected_detail_child_task_id: Option<String>,
+    pub(crate) hovered_detail_child_task_id: Option<crate::ids::TaskId>,
+    pub(crate) selected_detail_child_task_id: Option<crate::ids::TaskId>,
     pub(crate) detail_text_selection: Option<crate::tui::detail_selection::DetailTextSelection>,
     pub(crate) detail_text_dragging: bool,
     pub(super) navigation_history: BoundedHistory<TaskViewState>,

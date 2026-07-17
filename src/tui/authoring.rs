@@ -89,7 +89,7 @@ impl Default for AddTaskDraftState {
 enum AuthoringFlow {
     AddTask(AddTaskDraftState),
     AddNote {
-        task_id: String,
+        task_id: crate::ids::TaskId,
         display_ref: String,
         return_to_detail: bool,
     },
@@ -122,7 +122,7 @@ pub(crate) enum AddTaskTitleSubmit {
 
 pub(crate) enum AddNoteSubmit {
     Create {
-        task_id: String,
+        task_id: crate::ids::TaskId,
         display_ref: String,
         body: String,
         return_to_detail: bool,
@@ -151,7 +151,7 @@ impl AuthoringState {
 
     pub(crate) fn begin_add_note(
         &mut self,
-        task_id: String,
+        task_id: crate::ids::TaskId,
         display_ref: String,
         return_to_detail: bool,
     ) {
@@ -481,7 +481,11 @@ mod tests {
     #[test]
     fn add_note_blank_submit_consumes_flow_and_returns_detail_flag() {
         let mut state = AuthoringState::default();
-        state.begin_add_note("task-1".to_string(), "APP-1234".to_string(), true);
+        state.begin_add_note(
+            crate::test_support::task_id("task-1"),
+            "APP-1234".to_string(),
+            true,
+        );
         assert!(matches!(
             state.submit_add_note("   ".to_string()),
             AddNoteSubmit::Blank {

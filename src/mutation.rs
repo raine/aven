@@ -71,7 +71,7 @@ pub(crate) async fn set_deleted(
 pub(crate) async fn set_task_field(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     field: &str,
     value: &str,
 ) -> Result<bool> {
@@ -88,7 +88,7 @@ pub(crate) async fn set_task_field(
 pub(crate) async fn set_task_project(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     project: &Project,
 ) -> Result<bool> {
     let field = TaskField::Project.as_str();
@@ -114,7 +114,7 @@ pub(crate) async fn set_task_project(
 async fn set_task_scalar_field(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     task_field: TaskField,
     value: &str,
 ) -> Result<bool> {
@@ -142,7 +142,7 @@ async fn set_task_scalar_field(
 
 async fn finish_task_field_change(
     conn: &mut SqliteConnection,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     field: &str,
     payload: serde_json::Value,
     base: Option<&str>,
@@ -170,7 +170,7 @@ async fn finish_task_field_change(
 async fn current_task(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
 ) -> Result<Task> {
     let row = sqlx::query(
         "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
@@ -199,7 +199,7 @@ async fn current_task(
 pub(crate) async fn apply_field_value(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     field: &str,
     value: &str,
 ) -> Result<()> {
@@ -209,7 +209,7 @@ pub(crate) async fn apply_field_value(
 pub(crate) async fn apply_project_id_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     project_id: &ProjectId,
 ) -> Result<()> {
     let project_exists = sqlx::query_scalar::<_, i64>(
@@ -246,7 +246,7 @@ pub(crate) async fn apply_project_id_in_workspace(
 pub(crate) async fn apply_field_value_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     field: &str,
     value: &str,
 ) -> Result<()> {
@@ -257,7 +257,7 @@ pub(crate) async fn apply_field_value_in_workspace(
 async fn apply_scalar_field_value_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     task_field: TaskField,
     value: &str,
 ) -> Result<()> {

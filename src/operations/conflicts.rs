@@ -4,6 +4,7 @@ use tracing::info;
 
 use crate::change_log::op_type;
 use crate::db::{begin_immediate, insert_change, set_field_version};
+use crate::ids::TaskId;
 use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
 use crate::projects::{resolve_existing_project_in_workspace, resolve_project_for_stored_value};
 use crate::refs::get_task_in_workspace;
@@ -12,7 +13,7 @@ use crate::types::Task;
 use crate::workspaces::Workspace;
 
 pub(crate) struct ConflictListItem {
-    pub(crate) task_id: String,
+    pub(crate) task_id: TaskId,
     pub(crate) title: String,
     pub(crate) project_key: String,
     pub(crate) project_prefix: String,
@@ -84,7 +85,7 @@ pub(crate) async fn list_conflicts(
 pub(crate) async fn task_conflicts(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     field: Option<&str>,
 ) -> Result<Vec<ConflictDetail>> {
     let workspace_id = &workspace.id;
@@ -115,7 +116,7 @@ pub(crate) async fn task_conflicts(
 pub(crate) async fn conflict_variant_value(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     field: &str,
     token: &str,
 ) -> Result<String> {
@@ -133,7 +134,7 @@ pub(crate) async fn conflict_variant_value(
 pub(crate) async fn resolve_conflict(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     field: &str,
     value: &str,
 ) -> Result<ConflictOutcome> {

@@ -552,7 +552,7 @@ impl App {
         }
     }
 
-    fn detail_child_task_ids(&self) -> Vec<String> {
+    fn detail_child_task_ids(&self) -> Vec<crate::ids::TaskId> {
         let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
             return Vec::new();
         };
@@ -594,7 +594,7 @@ impl App {
         true
     }
 
-    fn open_detail_child_task(&mut self, task_id: &str, scroll: u16) {
+    fn open_detail_child_task(&mut self, task_id: &crate::ids::TaskId, scroll: u16) {
         let current_task_id = self
             .store
             .selected_task(self.widgets.table.selected())
@@ -606,7 +606,7 @@ impl App {
             .store
             .tasks
             .iter()
-            .position(|item| item.task.id == task_id)
+            .position(|item| &item.task.id == task_id)
         else {
             self.set_warning("child task is hidden by the current view");
             self.overlay = Some(OverlayState::Detail { scroll });

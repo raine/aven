@@ -249,6 +249,29 @@ fn import_rejects_invalid_project_ids() {
 }
 
 #[test]
+fn import_rejects_invalid_task_ids() {
+    let env = TestEnv::new();
+    let db = env.db("invalid-import-task-id.sqlite");
+    seed_sample_data(&env, &db);
+    let export_path = env.path("invalid-import-task-id.json");
+    ok(env.aven(&db, ["export", "--output", export_path.to_str().unwrap()]));
+
+    let mut snapshot: Value =
+        serde_json::from_str(&fs::read_to_string(&export_path).unwrap()).unwrap();
+    snapshot["tables"]["tasks"][0]["id"] = Value::String("invalid".to_string());
+    fs::write(&export_path, serde_json::to_string(&snapshot).unwrap()).unwrap();
+
+    let output = fail(env.aven(&db, ["import", "--yes", export_path.to_str().unwrap()]));
+    contains_all(
+        &output,
+        &[
+            "could not parse",
+            "task ID must be 16 Crockford Base32 characters",
+        ],
+    );
+}
+
+#[test]
 fn import_rejects_invalid_project_record_ids() {
     let env = TestEnv::new();
     let db = env.db("invalid-import-project-record-ids.sqlite");

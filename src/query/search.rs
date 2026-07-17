@@ -1,4 +1,4 @@
-use crate::ids::WorkspaceId;
+use crate::ids::{TaskId, WorkspaceId};
 use anyhow::Result;
 use chrono::Local;
 use serde::Serialize;
@@ -81,7 +81,7 @@ pub(crate) struct TaskSearchResultSet {
 
 #[derive(Debug, Clone)]
 pub(crate) struct TaskSearchPreviewResult {
-    pub(crate) task_id: String,
+    pub(crate) task_id: TaskId,
     pub(crate) display_ref: String,
     pub(crate) title: String,
     pub(crate) project_key: String,
@@ -283,8 +283,8 @@ pub(crate) async fn search_task_preview_set_in_workspace(
 async fn labels_for_search_preview(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_ids: &[String],
-) -> Result<HashMap<String, Vec<String>>> {
+    task_ids: &[TaskId],
+) -> Result<HashMap<TaskId, Vec<String>>> {
     let mut labels_by_task = HashMap::new();
     if task_ids.is_empty() {
         return Ok(labels_by_task);
@@ -307,7 +307,7 @@ async fn labels_for_search_preview(
         query.push(") ORDER BY task_id, label");
 
         for row in query.build().fetch_all(&mut *conn).await? {
-            let task_id: String = row.get("task_id");
+            let task_id: TaskId = row.get("task_id");
             let label: String = row.get("label");
             labels_by_task
                 .entry(task_id)

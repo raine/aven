@@ -15,10 +15,11 @@ pub(super) async fn create_conflict(
     remote_value: &str,
     local_change_id: Option<&str>,
 ) -> Result<()> {
-    if conflict_exists(conn, workspace_id, &change.entity_id, field).await? {
+    let task_id = super::shared::task_id(change)?;
+    if conflict_exists(conn, workspace_id, &task_id, field).await? {
         return Ok(());
     }
-    let local_value = current_field_value(conn, workspace_id, &change.entity_id, field).await?;
+    let local_value = current_field_value(conn, workspace_id, &task_id, field).await?;
     let variant_a = format!(
         "v{}",
         local_change_id
@@ -34,7 +35,7 @@ pub(super) async fn create_conflict(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(workspace_id)
-    .bind(&change.entity_id)
+    .bind(&task_id)
     .bind(field)
     .bind(&change.base_version)
     .bind(&local_value)
@@ -57,7 +58,7 @@ pub(super) async fn create_conflict(
 async fn current_field_value(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     field: &str,
 ) -> Result<String> {
     let task_field = TaskField::parse_or_unknown(field)?;

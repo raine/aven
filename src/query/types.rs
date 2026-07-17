@@ -1,3 +1,4 @@
+use crate::ids::TaskId;
 use crate::queue::QueueMeta;
 use crate::types::Task;
 
@@ -59,7 +60,7 @@ pub(crate) struct TaskFilters {
     pub(crate) availability: TaskAvailabilityFilter,
     pub(crate) overdue_only: bool,
     pub(crate) search: Option<String>,
-    pub(crate) task_ids: Vec<String>,
+    pub(crate) task_ids: Vec<TaskId>,
 }
 
 impl TaskFilters {
@@ -113,7 +114,7 @@ pub(crate) struct TaskNote {
 
 #[derive(Debug, Clone)]
 pub(crate) struct TaskDependencyLink {
-    pub(crate) task_id: String,
+    pub(crate) task_id: TaskId,
     pub(crate) display_ref: String,
     pub(crate) title: String,
     pub(crate) status: String,

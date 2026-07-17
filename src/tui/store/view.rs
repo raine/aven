@@ -189,12 +189,15 @@ impl TuiStore {
         self.view_state.direction = self.view_state.direction.toggled();
     }
 
-    pub(super) fn restored_task_selection(&self, selected_id: Option<&str>) -> Option<usize> {
+    pub(super) fn restored_task_selection(
+        &self,
+        selected_id: Option<&crate::ids::TaskId>,
+    ) -> Option<usize> {
         if self.tasks.is_empty() {
             return None;
         }
         selected_id
-            .and_then(|id| self.tasks.iter().position(|item| item.task.id == id))
+            .and_then(|id| self.tasks.iter().position(|item| &item.task.id == id))
             .or(Some(0))
     }
 

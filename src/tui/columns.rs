@@ -240,7 +240,7 @@ mod tests {
     fn item(id: usize, status: &str) -> TaskListItem {
         TaskListItem {
             task: crate::types::Task {
-                id: id.to_string(),
+                id: crate::test_support::task_id(&id.to_string()),
                 workspace_id: "0000000000000001".parse().unwrap(),
                 title: format!("task {id}"),
                 description: String::new(),

@@ -24,8 +24,8 @@ struct DependencyPair {
 async fn load_dependency_pair(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    task_id: &str,
-    depends_on_id: &str,
+    task_id: &crate::ids::TaskId,
+    depends_on_id: &crate::ids::TaskId,
 ) -> Result<DependencyPair> {
     if task_id == depends_on_id {
         bail!("error dependency-self task_id={task_id}");
@@ -58,8 +58,8 @@ async fn record_dependency_change(
 pub(crate) async fn add_task_dependency(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    task_id: &str,
-    depends_on_id: &str,
+    task_id: &crate::ids::TaskId,
+    depends_on_id: &crate::ids::TaskId,
 ) -> Result<DependencyOutcome> {
     let mut tx = begin_immediate(conn).await?;
     let pair = load_dependency_pair(&mut tx, workspace, task_id, depends_on_id).await?;
@@ -104,8 +104,8 @@ pub(crate) async fn add_task_dependency(
 pub(crate) async fn remove_task_dependency(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    task_id: &str,
-    depends_on_id: &str,
+    task_id: &crate::ids::TaskId,
+    depends_on_id: &crate::ids::TaskId,
 ) -> Result<DependencyOutcome> {
     let mut tx = begin_immediate(conn).await?;
     let pair = load_dependency_pair(&mut tx, workspace, task_id, depends_on_id).await?;
@@ -137,19 +137,19 @@ pub(crate) async fn remove_task_dependency(
 pub(crate) async fn dependency_path_exists(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    from_task_id: &str,
-    to_task_id: &str,
+    from_task_id: &crate::ids::TaskId,
+    to_task_id: &crate::ids::TaskId,
 ) -> Result<bool> {
     let mut visited = HashSet::new();
-    let mut stack = vec![from_task_id.to_string()];
+    let mut stack = vec![from_task_id.clone()];
     while let Some(current) = stack.pop() {
         if !visited.insert(current.clone()) {
             continue;
         }
-        if current == to_task_id {
+        if &current == to_task_id {
             return Ok(true);
         }
-        let next = sqlx::query_scalar::<_, String>(
+        let next = sqlx::query_scalar::<_, crate::ids::TaskId>(
             "SELECT depends_on_task_id
              FROM task_dependencies
              WHERE workspace_id = ? AND task_id = ?",

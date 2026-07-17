@@ -148,7 +148,10 @@ impl TuiStore {
         }
     }
 
-    pub(crate) async fn refresh(&mut self, selected_id: Option<&str>) -> Result<Option<usize>> {
+    pub(crate) async fn refresh(
+        &mut self,
+        selected_id: Option<&crate::ids::TaskId>,
+    ) -> Result<Option<usize>> {
         Ok(self
             .refresh_with_scope_fallback(selected_id)
             .await?
@@ -157,7 +160,7 @@ impl TuiStore {
 
     pub(crate) async fn refresh_with_scope_fallback(
         &mut self,
-        selected_id: Option<&str>,
+        selected_id: Option<&crate::ids::TaskId>,
     ) -> Result<ScopeRefreshResult> {
         let mut conn = self.pool.acquire().await?;
         let workspace_id = self.active_workspace.id.clone();
@@ -293,7 +296,7 @@ impl TuiStore {
             .retain(|id| visible_parent_ids.contains(id));
     }
 
-    fn visible_epic_ids(&self) -> std::collections::BTreeSet<String> {
+    fn visible_epic_ids(&self) -> std::collections::BTreeSet<crate::ids::TaskId> {
         self.tasks
             .iter()
             .filter(|item| item.task.is_epic)

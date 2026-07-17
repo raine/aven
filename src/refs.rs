@@ -1,4 +1,4 @@
-use crate::ids::WorkspaceId;
+use crate::ids::{TaskId, WorkspaceId};
 use std::collections::HashMap;
 
 use anyhow::{Result, bail};
@@ -11,7 +11,7 @@ use crate::workspaces::Workspace;
 const DISPLAY_SUFFIX_FLOOR: usize = 4;
 
 pub(crate) struct DisplayRefContext {
-    task_ids_by_workspace: HashMap<WorkspaceId, Vec<String>>,
+    task_ids_by_workspace: HashMap<WorkspaceId, Vec<TaskId>>,
 }
 
 impl DisplayRefContext {
@@ -40,7 +40,7 @@ impl DisplayRefContext {
         &self,
         workspace_id: &WorkspaceId,
         project_prefix: &str,
-        id: &str,
+        id: &TaskId,
     ) -> String {
         format!(
             "{}-{}",
@@ -49,7 +49,7 @@ impl DisplayRefContext {
         )
     }
 
-    pub(crate) fn display_suffix(&self, workspace_id: &WorkspaceId, id: &str) -> String {
+    pub(crate) fn display_suffix(&self, workspace_id: &WorkspaceId, id: &TaskId) -> String {
         let ids = self
             .task_ids_by_workspace
             .get(workspace_id)
@@ -63,7 +63,7 @@ impl DisplayRefContext {
 pub(crate) async fn get_task_in_workspace(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    id: &str,
+    id: &TaskId,
 ) -> Result<Task> {
     get_task_scoped(conn, &workspace.id, id).await
 }
@@ -71,7 +71,7 @@ pub(crate) async fn get_task_in_workspace(
 async fn get_task_scoped(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    id: &str,
+    id: &TaskId,
 ) -> Result<Task> {
     let row = sqlx::query(
         "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
@@ -171,21 +171,22 @@ fn normalize_ref(input: &str) -> String {
         .collect()
 }
 
-async fn task_ids(conn: &mut SqliteConnection, workspace_id: &WorkspaceId) -> Result<Vec<String>> {
+async fn task_ids(conn: &mut SqliteConnection, workspace_id: &WorkspaceId) -> Result<Vec<TaskId>> {
     Ok(
-        sqlx::query_scalar::<_, String>("SELECT id FROM tasks WHERE workspace_id = ? ORDER BY id")
+        sqlx::query_scalar::<_, TaskId>("SELECT id FROM tasks WHERE workspace_id = ? ORDER BY id")
             .bind(workspace_id)
             .fetch_all(&mut *conn)
             .await?,
     )
 }
 
-fn display_suffix_for_id(id: &str, ids: &[String]) -> String {
+fn display_suffix_for_id(id: &TaskId, ids: &[TaskId]) -> String {
     let len = display_suffix_len(id, ids);
-    id[..len].to_string()
+    id.as_str()[..len].to_string()
 }
 
-fn display_suffix_len(id: &str, ids: &[String]) -> usize {
+fn display_suffix_len(id: &TaskId, ids: &[TaskId]) -> usize {
+    let id = id.as_str();
     let floor = DISPLAY_SUFFIX_FLOOR.min(id.len());
     let index = ids.partition_point(|candidate| candidate.as_str() < id);
     let exact_index = ids
@@ -260,25 +261,24 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            display_refs.display_suffix(&workspace_id, "ABCD000000000000"),
+            display_refs.display_suffix(&workspace_id, &"ABCD000000000000".parse().unwrap(),),
             "ABCD"
         );
         let refreshed = DisplayRefContext::for_workspace(&mut conn, &workspace_id)
             .await
             .unwrap();
         assert_eq!(
-            refreshed.display_suffix(&workspace_id, "ABCD000000000000"),
+            refreshed.display_suffix(&workspace_id, &"ABCD000000000000".parse().unwrap(),),
             "ABCD0"
         );
     }
 
     #[test]
     fn sorted_neighbors_determine_unique_display_suffix() {
-        let ids = vec![
-            "ABCD000000000000".to_string(),
-            "ABCD100000000000".to_string(),
-            "ABCE000000000000".to_string(),
-        ];
+        let ids: Vec<TaskId> = ["ABCD000000000000", "ABCD100000000000", "ABCE000000000000"]
+            .into_iter()
+            .map(|id| id.parse().unwrap())
+            .collect();
 
         assert_eq!(display_suffix_for_id(&ids[0], &ids), "ABCD0");
         assert_eq!(display_suffix_for_id(&ids[1], &ids), "ABCD1");

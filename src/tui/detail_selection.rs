@@ -10,14 +10,14 @@ pub(crate) struct TextCell {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DetailTextSelection {
-    pub(crate) task_id: String,
+    pub(crate) task_id: crate::ids::TaskId,
     pub(crate) terminal_width: u16,
     pub(crate) anchor: TextCell,
     pub(crate) focus: TextCell,
 }
 
 impl DetailTextSelection {
-    pub(crate) fn new(task_id: String, terminal_width: u16, cell: TextCell) -> Self {
+    pub(crate) fn new(task_id: crate::ids::TaskId, terminal_width: u16, cell: TextCell) -> Self {
         Self {
             task_id,
             terminal_width,
@@ -90,10 +90,10 @@ mod tests {
         let last = TextCell { start: 8, end: 10 };
 
         assert_eq!(
-            DetailTextSelection::new("task".to_string(), 80, first).range(),
+            DetailTextSelection::new(crate::test_support::task_id("task"), 80, first).range(),
             2..3
         );
-        let mut reverse = DetailTextSelection::new("task".to_string(), 80, last);
+        let mut reverse = DetailTextSelection::new(crate::test_support::task_id("task"), 80, last);
         reverse.focus = first;
         assert_eq!(reverse.range(), 2..10);
     }

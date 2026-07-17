@@ -172,7 +172,10 @@ impl App {
             .collect()
     }
 
-    async fn apply_column_moves(&mut self, changes: Vec<(String, String)>) -> Result<()> {
+    async fn apply_column_moves(
+        &mut self,
+        changes: Vec<(crate::ids::TaskId, String)>,
+    ) -> Result<()> {
         let result = self
             .store
             .update_status_changes_for_tasks(self.widgets.table.selected(), &changes)
@@ -632,7 +635,7 @@ impl App {
         Ok(())
     }
 
-    fn open_edit_labels_multi(&mut self, task_ids: Vec<String>) {
+    fn open_edit_labels_multi(&mut self, task_ids: Vec<crate::ids::TaskId>) {
         let labels = self.store.union_labels_for_tasks(&task_ids);
         let count = task_ids.len();
         self.overlay = Some(OverlayState::tag_combobox(
@@ -712,7 +715,7 @@ impl App {
         self.widgets.marked_task_ids.clear();
     }
 
-    pub(super) fn marked_task_ids_in_view(&self) -> Vec<String> {
+    pub(super) fn marked_task_ids_in_view(&self) -> Vec<crate::ids::TaskId> {
         self.store
             .tasks
             .iter()
@@ -733,7 +736,10 @@ impl App {
             .retain(|id| visible.contains(id));
     }
 
-    pub(super) async fn submit_add_dependency(&mut self, depends_on_task_id: String) -> Result<()> {
+    pub(super) async fn submit_add_dependency(
+        &mut self,
+        depends_on_task_id: crate::ids::TaskId,
+    ) -> Result<()> {
         match self
             .store
             .add_dependency(self.widgets.table.selected(), &depends_on_task_id)
@@ -751,7 +757,7 @@ impl App {
 
     pub(super) async fn submit_remove_dependency(
         &mut self,
-        depends_on_task_id: String,
+        depends_on_task_id: crate::ids::TaskId,
     ) -> Result<()> {
         match self
             .store

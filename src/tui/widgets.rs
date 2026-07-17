@@ -144,7 +144,7 @@ mod tests {
     fn task_item(title: &str) -> TaskListItem {
         TaskListItem {
             task: crate::types::Task {
-                id: "task-1".to_string(),
+                id: crate::test_support::task_id("task-1"),
                 workspace_id: "0000000000000001".parse().unwrap(),
                 title: title.to_string(),
                 description: String::new(),

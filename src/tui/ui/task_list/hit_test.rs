@@ -8,7 +8,7 @@ use super::view_model::{TaskListRow, TaskListView, task_list_scroll, task_list_v
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TaskListHit {
     pub(crate) task_index: usize,
-    pub(crate) task_id: String,
+    pub(crate) task_id: crate::ids::TaskId,
     pub(crate) viewport_row: u16,
 }
 
@@ -100,7 +100,7 @@ mod tests {
     fn task_item(title: &str) -> TaskListItem {
         TaskListItem {
             task: crate::types::Task {
-                id: "task-1".to_string(),
+                id: crate::test_support::task_id("task-1"),
                 workspace_id: "0000000000000001".parse().unwrap(),
                 title: title.to_string(),
                 description: String::new(),
@@ -140,7 +140,7 @@ mod tests {
     }
 
     fn task_id(task: &mut TaskListItem, id: &str) {
-        task.task.id = id.to_string();
+        task.task.id = crate::test_support::task_id(id);
     }
 
     use crate::query::TaskListItem;

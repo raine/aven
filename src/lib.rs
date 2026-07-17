@@ -397,11 +397,12 @@ mod tests {
         sync::apply_remote_set_field(&mut conn, &change, false)
             .await
             .unwrap();
+        let task_id = "7KQ9A1X4MV2P8D6R".parse().unwrap();
         assert!(
             conflict_exists(
                 &mut conn,
                 &crate::workspaces::default_workspace_id(),
-                "7KQ9A1X4MV2P8D6R",
+                &task_id,
                 "title"
             )
             .await

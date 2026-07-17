@@ -70,7 +70,7 @@ pub(crate) async fn cmd_conflict(
                             &item.project_prefix,
                             &item.task_id,
                         ),
-                        task_id: item.task_id,
+                        task_id: item.task_id.to_string(),
                         title: item.title,
                         project: item.project_key,
                         field: item.field,
@@ -110,7 +110,7 @@ pub(crate) async fn cmd_conflict(
                     .await?;
                     json_details.push(ConflictDetailJson {
                         r#ref: task_ref.clone(),
-                        task_id: task.id.clone(),
+                        task_id: task.id.to_string(),
                         field: detail.field,
                         variants: vec![
                             ConflictVariantJson {

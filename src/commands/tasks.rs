@@ -373,7 +373,7 @@ fn print_search_result(result: &TaskSearchResult) {
 fn search_json_item(result: &TaskSearchResult) -> SearchJsonItem {
     SearchJsonItem {
         r#ref: result.item.display_ref.clone(),
-        id: result.item.task.id.clone(),
+        id: result.item.task.id.to_string(),
         title: result.item.task.title.clone(),
         project: result.item.task.project_key.clone(),
         status: result.item.task.status.as_str().to_string(),

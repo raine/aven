@@ -1,4 +1,4 @@
-use crate::ids::WorkspaceId;
+use crate::ids::{TaskId, WorkspaceId};
 use std::collections::{HashMap, HashSet};
 
 use crate::query::fragments;
@@ -10,21 +10,21 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 const SQLITE_BIND_CHUNK_SIZE: usize = 900;
 
 pub(crate) struct TaskEnrichment {
-    pub(crate) labels_by_task: HashMap<String, Vec<String>>,
-    pub(crate) notes_by_task: HashMap<String, Vec<TaskNote>>,
-    pub(crate) conflicted_task_ids: HashSet<String>,
-    pub(crate) unresolved_blocker_counts_by_task: HashMap<String, i64>,
-    pub(crate) dependent_counts_by_task: HashMap<String, i64>,
-    pub(crate) depends_on_by_task: HashMap<String, Vec<TaskDependencyLink>>,
-    pub(crate) blocks_by_task: HashMap<String, Vec<TaskDependencyLink>>,
-    pub(crate) epic_children_by_task: HashMap<String, Vec<TaskDependencyLink>>,
-    pub(crate) epic_parent_by_task: HashMap<String, TaskDependencyLink>,
+    pub(crate) labels_by_task: HashMap<TaskId, Vec<String>>,
+    pub(crate) notes_by_task: HashMap<TaskId, Vec<TaskNote>>,
+    pub(crate) conflicted_task_ids: HashSet<TaskId>,
+    pub(crate) unresolved_blocker_counts_by_task: HashMap<TaskId, i64>,
+    pub(crate) dependent_counts_by_task: HashMap<TaskId, i64>,
+    pub(crate) depends_on_by_task: HashMap<TaskId, Vec<TaskDependencyLink>>,
+    pub(crate) blocks_by_task: HashMap<TaskId, Vec<TaskDependencyLink>>,
+    pub(crate) epic_children_by_task: HashMap<TaskId, Vec<TaskDependencyLink>>,
+    pub(crate) epic_parent_by_task: HashMap<TaskId, TaskDependencyLink>,
 }
 
 pub(crate) async fn load_task_enrichment(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_ids: &[String],
+    task_ids: &[TaskId],
     display_refs: &DisplayRefContext,
 ) -> Result<TaskEnrichment> {
     Ok(TaskEnrichment {
@@ -64,8 +64,8 @@ pub(crate) async fn load_task_enrichment(
 async fn notes_for_tasks(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_ids: &[String],
-) -> Result<HashMap<String, Vec<TaskNote>>> {
+    task_ids: &[TaskId],
+) -> Result<HashMap<TaskId, Vec<TaskNote>>> {
     let mut notes_by_task = HashMap::new();
     if task_ids.is_empty() {
         return Ok(notes_by_task);
@@ -88,7 +88,7 @@ async fn notes_for_tasks(
         query.push(") ORDER BY task_id, created_at DESC, id DESC");
 
         for row in query.build().fetch_all(&mut *conn).await? {
-            let task_id: String = row.get("task_id");
+            let task_id: TaskId = row.get("task_id");
             let note = TaskNote {
                 body: row.get("body"),
                 created_at: row.get("created_at"),
@@ -105,8 +105,8 @@ async fn notes_for_tasks(
 async fn labels_for_tasks(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_ids: &[String],
-) -> Result<HashMap<String, Vec<String>>> {
+    task_ids: &[TaskId],
+) -> Result<HashMap<TaskId, Vec<String>>> {
     let mut labels_by_task = HashMap::new();
     if task_ids.is_empty() {
         return Ok(labels_by_task);
@@ -129,7 +129,7 @@ async fn labels_for_tasks(
         query.push(") ORDER BY task_id, label");
 
         for row in query.build().fetch_all(&mut *conn).await? {
-            let task_id: String = row.get("task_id");
+            let task_id: TaskId = row.get("task_id");
             let label: String = row.get("label");
             labels_by_task
                 .entry(task_id)
@@ -143,8 +143,8 @@ async fn labels_for_tasks(
 async fn tasks_with_unresolved_conflicts(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_ids: &[String],
-) -> Result<HashSet<String>> {
+    task_ids: &[TaskId],
+) -> Result<HashSet<TaskId>> {
     let mut conflicted = HashSet::new();
     if task_ids.is_empty() {
         return Ok(conflicted);
@@ -176,8 +176,8 @@ async fn tasks_with_unresolved_conflicts(
 async fn unresolved_blocker_counts_for_tasks(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_ids: &[String],
-) -> Result<HashMap<String, i64>> {
+    task_ids: &[TaskId],
+) -> Result<HashMap<TaskId, i64>> {
     let mut counts = HashMap::new();
     if task_ids.is_empty() {
         return Ok(counts);
@@ -216,8 +216,8 @@ async fn unresolved_blocker_counts_for_tasks(
 async fn dependent_counts_for_tasks(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_ids: &[String],
-) -> Result<HashMap<String, i64>> {
+    task_ids: &[TaskId],
+) -> Result<HashMap<TaskId, i64>> {
     let mut counts = HashMap::new();
     if task_ids.is_empty() {
         return Ok(counts);
@@ -262,10 +262,10 @@ async fn dependent_counts_for_tasks(
 async fn dependency_links_for_tasks(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_ids: &[String],
+    task_ids: &[TaskId],
     blocks_only: bool,
     display_refs: &DisplayRefContext,
-) -> Result<HashMap<String, Vec<TaskDependencyLink>>> {
+) -> Result<HashMap<TaskId, Vec<TaskDependencyLink>>> {
     let mut links = HashMap::new();
     if task_ids.is_empty() {
         return Ok(links);
@@ -332,8 +332,8 @@ async fn dependency_links_for_tasks(
         query.push(") ORDER BY unresolved DESC, t.status, t.title, d.created_at, t.id");
 
         for row in query.build().fetch_all(&mut *conn).await? {
-            let source_task_id: String = row.get("source_task_id");
-            let task_id: String = row.get("id");
+            let source_task_id: TaskId = row.get("source_task_id");
+            let task_id: TaskId = row.get("id");
             let project_prefix: String = row.get("project_prefix");
             links
                 .entry(source_task_id)
@@ -358,9 +358,9 @@ async fn dependency_links_for_tasks(
 async fn epic_children_for_tasks(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_ids: &[String],
+    task_ids: &[TaskId],
     display_refs: &DisplayRefContext,
-) -> Result<HashMap<String, Vec<TaskDependencyLink>>> {
+) -> Result<HashMap<TaskId, Vec<TaskDependencyLink>>> {
     let mut links = HashMap::new();
     if task_ids.is_empty() {
         return Ok(links);
@@ -392,8 +392,8 @@ async fn epic_children_for_tasks(
         );
 
         for row in query.build().fetch_all(&mut *conn).await? {
-            let source_task_id: String = row.get("source_task_id");
-            let task_id: String = row.get("id");
+            let source_task_id: TaskId = row.get("source_task_id");
+            let task_id: TaskId = row.get("id");
             let project_prefix: String = row.get("project_prefix");
             links
                 .entry(source_task_id)
@@ -418,9 +418,9 @@ async fn epic_children_for_tasks(
 async fn epic_parents_for_tasks(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_ids: &[String],
+    task_ids: &[TaskId],
     display_refs: &DisplayRefContext,
-) -> Result<HashMap<String, TaskDependencyLink>> {
+) -> Result<HashMap<TaskId, TaskDependencyLink>> {
     let mut links = HashMap::new();
     if task_ids.is_empty() {
         return Ok(links);
@@ -450,8 +450,8 @@ async fn epic_parents_for_tasks(
         query.push(") AND t.deleted = 0 ORDER BY t.title, l.created_at, t.id");
 
         for row in query.build().fetch_all(&mut *conn).await? {
-            let source_task_id: String = row.get("source_task_id");
-            let task_id: String = row.get("id");
+            let source_task_id: TaskId = row.get("source_task_id");
+            let task_id: TaskId = row.get("id");
             let project_prefix: String = row.get("project_prefix");
             links.insert(
                 source_task_id,
@@ -482,13 +482,13 @@ mod tests {
         let (_temp, mut conn) = crate::test_support::test_conn().await;
         let workspace_id = crate::workspaces::default_workspace_id();
         let task_ids = (0..=SQLITE_BIND_CHUNK_SIZE)
-            .map(|index| format!("task-{index:04}"))
-            .collect::<Vec<_>>();
+            .map(|index| format!("{index:016}").parse().unwrap())
+            .collect::<Vec<TaskId>>();
 
         sqlx::query(
             "INSERT INTO notes(workspace_id, id, task_id, body, created_at, change_id)
-             VALUES (?, 'note-first-old', 'task-0000', 'older', '001', 'change-first-old'),
-                    (?, 'note-first-new', 'task-0000', 'newer', '002', 'change-first-new'),
+             VALUES (?, 'note-first-old', '0000000000000000', 'older', '001', 'change-first-old'),
+                    (?, 'note-first-new', '0000000000000000', 'newer', '002', 'change-first-new'),
                     (?, 'note-last', ?, 'last', '003', 'change-last')",
         )
         .bind(&workspace_id)
@@ -509,7 +509,7 @@ mod tests {
         assert_eq!(
             enrichment
                 .notes_by_task
-                .get("task-0000")
+                .get("0000000000000000")
                 .unwrap()
                 .iter()
                 .map(|note| note.body.as_str())

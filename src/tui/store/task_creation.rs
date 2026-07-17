@@ -69,14 +69,18 @@ impl TuiStore {
             return Ok((format!("created task {message_ref}"), created_index));
         }
 
-        let restored = self.restored_task_selection(previous_id.as_deref());
+        let restored = self.restored_task_selection(previous_id.as_ref());
         Ok((
             format!("created task {message_ref} hidden by current filters"),
             restored,
         ))
     }
 
-    pub(crate) async fn add_note_to_task(&mut self, task_id: &str, body: String) -> Result<String> {
+    pub(crate) async fn add_note_to_task(
+        &mut self,
+        task_id: &crate::ids::TaskId,
+        body: String,
+    ) -> Result<String> {
         let workspace_id = self.active_workspace.id.clone();
         let mut conn = self.pool.acquire().await?;
         let outcome = add_note_operation(&mut conn, &self.active_workspace, task_id, body).await?;
@@ -92,7 +96,7 @@ impl TuiStore {
         self.record_undo_commands(
             &format!("note {}", outcome.note_id),
             vec![UndoCommand::DeleteCreatedNote {
-                task_id: task_id.to_string(),
+                task_id: task_id.clone(),
                 note_id: outcome.note_id.clone(),
                 note_add_change_id: note_change_id,
             }],

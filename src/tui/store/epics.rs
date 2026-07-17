@@ -90,14 +90,14 @@ impl TuiStore {
         Ok(Some(MutationMessage::new(message, selected)))
     }
 
-    fn find_epic_child_pair(&self, selected: Option<usize>) -> Option<(String, String)> {
+    fn find_epic_child_pair(
+        &self,
+        selected: Option<usize>,
+    ) -> Option<(crate::ids::TaskId, crate::ids::TaskId)> {
         if self.view_state.render_mode() != TaskListRenderMode::Epics {
             return None;
         }
-        let selected_task_id = self
-            .tasks
-            .get(selected?)
-            .map(|task| task.task.id.as_str())?;
+        let selected_task_id = self.tasks.get(selected?).map(|task| task.task.id.clone())?;
         for item in &self.tasks {
             if !self.view_state.expanded_epic_ids.contains(&item.task.id) {
                 continue;

@@ -35,23 +35,23 @@ pub(crate) struct UndoPayload {
 #[serde(tag = "op", rename_all = "snake_case")]
 pub(crate) enum UndoCommand {
     SetTaskField {
-        task_id: String,
+        task_id: crate::ids::TaskId,
         field: String,
         before: String,
         after: String,
     },
     SetTaskLabels {
-        task_id: String,
+        task_id: crate::ids::TaskId,
         before: Vec<String>,
         after: Vec<String>,
     },
     DeleteCreatedTask {
-        task_id: String,
+        task_id: crate::ids::TaskId,
         create_change_id: Option<String>,
         expected: TaskUndoSnapshot,
     },
     DeleteCreatedNote {
-        task_id: String,
+        task_id: crate::ids::TaskId,
         note_id: String,
         note_add_change_id: String,
     },
@@ -75,19 +75,19 @@ pub(crate) enum UndoCommand {
         create_change_id: String,
     },
     RestoreConflictResolution {
-        task_id: String,
+        task_id: crate::ids::TaskId,
         field: String,
         before: String,
         after: String,
         conflict_id: i64,
     },
     AddTaskDependency {
-        task_id: String,
-        depends_on_task_id: String,
+        task_id: crate::ids::TaskId,
+        depends_on_task_id: crate::ids::TaskId,
     },
     RemoveTaskDependency {
-        task_id: String,
-        depends_on_task_id: String,
+        task_id: crate::ids::TaskId,
+        depends_on_task_id: crate::ids::TaskId,
     },
 }
 
@@ -108,7 +108,7 @@ pub(crate) struct TaskUndoSnapshot {
 
 pub(crate) struct UndoOutcome {
     pub(crate) summary: String,
-    pub(crate) task_id: Option<String>,
+    pub(crate) task_id: Option<crate::ids::TaskId>,
     pub(crate) include_deleted: Option<bool>,
     pub(crate) project_rename: Option<ProjectRenameUndoOutcome>,
 }
@@ -121,7 +121,7 @@ pub(crate) struct ProjectRenameUndoOutcome {
 pub(crate) async fn task_field_value(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     field: &str,
 ) -> Result<String> {
     let task_field = TaskField::parse_or_unknown(field)?;
@@ -131,7 +131,7 @@ pub(crate) async fn task_field_value(
 async fn task_field_value_for_field(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     task_field: TaskField,
 ) -> Result<String> {
     let row = sqlx::query(
@@ -151,7 +151,7 @@ async fn task_field_value_for_field(
 pub(crate) async fn task_labels(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
 ) -> Result<Vec<String>> {
     let rows = sqlx::query(
         "SELECT label FROM task_labels WHERE workspace_id = ? AND task_id = ? ORDER BY label",
@@ -166,7 +166,7 @@ pub(crate) async fn task_labels(
 pub(crate) async fn task_snapshot(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
 ) -> Result<TaskUndoSnapshot> {
     let row = sqlx::query(
         "SELECT t.title, t.description, t.project_id, p.key AS project_key, t.status, t.priority, t.available_at, t.due_on, t.deleted, t.is_epic
@@ -196,7 +196,7 @@ pub(crate) async fn task_snapshot(
 pub(crate) async fn conflict_row_id(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     field: &str,
 ) -> Result<i64> {
     sqlx::query_scalar(
@@ -360,7 +360,7 @@ pub(crate) async fn apply_latest_tui_undo(
 }
 
 struct CommandOutcome {
-    task_id: Option<String>,
+    task_id: Option<crate::ids::TaskId>,
     include_deleted: Option<bool>,
     project_rename: Option<ProjectRenameUndoOutcome>,
 }
@@ -649,7 +649,7 @@ async fn project_id_exists(
 async fn set_task_field_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     task_field: TaskField,
     value: &str,
 ) -> Result<()> {
@@ -742,7 +742,7 @@ async fn labels_match_create_change(
 async fn hard_delete_created_task(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     create_change_id: &str,
 ) -> Result<()> {
     sqlx::query("DELETE FROM task_labels WHERE workspace_id = ? AND task_id = ?")
@@ -769,7 +769,7 @@ async fn hard_delete_created_task(
 async fn delete_created_note(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     note_id: &str,
     note_add_change_id: &str,
 ) -> Result<()> {
@@ -958,7 +958,7 @@ async fn delete_created_label(
 async fn dependency_task_exists(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
 ) -> Result<bool> {
     Ok(
         sqlx::query_scalar::<_, i64>(
@@ -975,8 +975,8 @@ async fn dependency_task_exists(
 async fn dependency_edge_exists(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
-    depends_on_task_id: &str,
+    task_id: &crate::ids::TaskId,
+    depends_on_task_id: &crate::ids::TaskId,
 ) -> Result<bool> {
     ensure!(
         dependency_task_exists(conn, workspace_id, task_id).await?
@@ -998,8 +998,8 @@ async fn dependency_edge_exists(
 async fn add_dependency_for_undo(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
-    depends_on_task_id: &str,
+    task_id: &crate::ids::TaskId,
+    depends_on_task_id: &crate::ids::TaskId,
 ) -> Result<()> {
     let created_at = now();
     sqlx::query(
@@ -1025,8 +1025,8 @@ async fn add_dependency_for_undo(
 async fn remove_dependency_for_undo(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
-    depends_on_task_id: &str,
+    task_id: &crate::ids::TaskId,
+    depends_on_task_id: &crate::ids::TaskId,
 ) -> Result<()> {
     sqlx::query(
         "DELETE FROM task_dependencies
@@ -1050,8 +1050,8 @@ async fn remove_dependency_for_undo(
 async fn append_dependency_change(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
-    depends_on_task_id: &str,
+    task_id: &crate::ids::TaskId,
+    depends_on_task_id: &crate::ids::TaskId,
     op_type: &'static str,
 ) -> Result<()> {
     let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;

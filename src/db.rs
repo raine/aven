@@ -373,7 +373,7 @@ pub(crate) async fn set_field_version(
 pub(crate) async fn conflict_exists(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     field: &str,
 ) -> Result<bool> {
     Ok(sqlx::query_scalar::<_, i64>(

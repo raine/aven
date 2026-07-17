@@ -265,14 +265,14 @@ impl App {
                 }
             }
             Some(PickerSubmitRoute::AddDependency) => match values.first() {
-                Some(task_id) => self.submit_add_dependency(task_id.clone()).await?,
+                Some(task_id) => self.submit_add_dependency(task_id.parse()?).await?,
                 None => {
                     self.set_warning("no matching task");
                     self.begin_add_dependency().await?;
                 }
             },
             Some(PickerSubmitRoute::RemoveDependency) => match values.first() {
-                Some(task_id) => self.submit_remove_dependency(task_id.clone()).await?,
+                Some(task_id) => self.submit_remove_dependency(task_id.parse()?).await?,
                 None => {
                     self.set_warning("no matching dependency");
                     self.begin_remove_dependency();

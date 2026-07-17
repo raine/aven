@@ -3,16 +3,17 @@ use sqlx::SqliteConnection;
 
 use crate::sync::wire::ChangeWire;
 
-use super::shared::{str_payload, task_field_workspace_id_payload, workspace_id_payload};
+use super::shared::{str_payload, task_field_workspace_id_payload, task_id, workspace_id_payload};
 
 pub(super) async fn delete_note(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     let workspace_id = task_field_workspace_id_payload(conn, change).await?;
+    let task_id = task_id(change)?;
     let note_id = str_payload(&change.payload, "note_id")?;
     let deleted_at = str_payload(&change.payload, "deleted_at")?;
     let deleted =
         sqlx::query("DELETE FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?")
             .bind(&workspace_id)
-            .bind(&change.entity_id)
+            .bind(&task_id)
             .bind(&note_id)
             .execute(&mut *conn)
             .await?
@@ -21,7 +22,7 @@ pub(super) async fn delete_note(conn: &mut SqliteConnection, change: &ChangeWire
         sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
             .bind(&deleted_at)
             .bind(&workspace_id)
-            .bind(&change.entity_id)
+            .bind(&task_id)
             .execute(&mut *conn)
             .await?;
     }
@@ -30,6 +31,7 @@ pub(super) async fn delete_note(conn: &mut SqliteConnection, change: &ChangeWire
 
 pub(super) async fn add_note(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     let workspace_id = workspace_id_payload(conn, change).await?;
+    let task_id = task_id(change)?;
     let note_id = str_payload(&change.payload, "note_id")?;
     let body = str_payload(&change.payload, "body")?;
     let created_at =
@@ -40,7 +42,7 @@ pub(super) async fn add_note(conn: &mut SqliteConnection, change: &ChangeWire) -
     )
     .bind(&workspace_id)
     .bind(&note_id)
-    .bind(&change.entity_id)
+    .bind(&task_id)
     .bind(&body)
     .bind(&created_at)
     .bind(&change.change_id)
@@ -49,7 +51,7 @@ pub(super) async fn add_note(conn: &mut SqliteConnection, change: &ChangeWire) -
     sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
         .bind(&created_at)
         .bind(&workspace_id)
-        .bind(&change.entity_id)
+        .bind(&task_id)
         .execute(&mut *conn)
         .await?;
     Ok(())

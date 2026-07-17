@@ -94,7 +94,7 @@ impl TuiStore {
             .iter()
             .map(|link| PickerItem {
                 label: format!("{} {}", link.display_ref, link.title),
-                value: link.task_id.clone(),
+                value: link.task_id.to_string(),
                 selected: false,
             })
             .collect()

@@ -161,7 +161,7 @@ pub(super) fn render_columns(
     focus: Focus,
     area: Rect,
     inline_title_editor: Option<&TextInputView>,
-    marked_task_ids: &BTreeSet<String>,
+    marked_task_ids: &BTreeSet<crate::ids::TaskId>,
 ) {
     frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
     let board = ColumnBoard::new(&store.task_columns, &store.tasks);
@@ -539,7 +539,7 @@ mod tests {
     fn item(index: usize) -> TaskListItem {
         TaskListItem {
             task: crate::types::Task {
-                id: index.to_string(),
+                id: crate::test_support::task_id(&index.to_string()),
                 workspace_id: "0000000000000001".parse().unwrap(),
                 title: format!("task {index}"),
                 description: String::new(),

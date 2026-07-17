@@ -142,7 +142,7 @@ impl App {
                     selected_task.is_some_and(|task| {
                         task.epic_children
                             .iter()
-                            .any(|child| child.task_id == task_id.as_str())
+                            .any(|child| &child.task_id == *task_id)
                     })
                 })
                 .cloned(),
@@ -206,7 +206,7 @@ impl App {
             .flatten();
         let result = self
             .store
-            .refresh_with_scope_fallback(selected_id.as_deref())
+            .refresh_with_scope_fallback(selected_id.as_ref())
             .await?;
         let selected = recent_action_selection
             .map(|(selected, change_id)| {

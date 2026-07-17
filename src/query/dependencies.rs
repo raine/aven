@@ -25,7 +25,7 @@ pub(crate) struct TaskDependencySummary {
 pub(crate) async fn task_dependency_summary(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
 ) -> Result<TaskDependencySummary> {
     let display_refs = DisplayRefContext::for_workspace(conn, workspace_id).await?;
     task_dependency_summary_with_display_refs(conn, workspace_id, task_id, &display_refs).await
@@ -34,7 +34,7 @@ pub(crate) async fn task_dependency_summary(
 pub(crate) async fn task_dependency_summary_with_display_refs(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     display_refs: &DisplayRefContext,
 ) -> Result<TaskDependencySummary> {
     let depends_on = query_dependency_items(&mut *conn, workspace_id, task_id, false, display_refs)
@@ -51,7 +51,7 @@ pub(crate) async fn task_dependency_summary_with_display_refs(
 async fn query_dependency_items(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     blocks_only: bool,
     display_refs: &DisplayRefContext,
 ) -> Result<Vec<TaskDependencyItem>> {
@@ -126,7 +126,7 @@ async fn query_dependency_items(
 async fn subject_task_is_open(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
 ) -> Result<bool> {
     let sql = format!(
         "SELECT count(*) FROM tasks

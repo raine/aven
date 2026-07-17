@@ -130,7 +130,7 @@ impl App {
         };
         let (value, message_ref) = match kind {
             TaskRefKind::Short => (task.display_ref.clone(), task.display_ref.clone()),
-            TaskRefKind::Durable => (task.task.id.clone(), task.display_ref.clone()),
+            TaskRefKind::Durable => (task.task.id.to_string(), task.display_ref.clone()),
         };
         match copy_to_clipboard(&value) {
             Ok(()) => self.set_success(format!("copied {message_ref}")),

@@ -6,7 +6,7 @@ use tracing::info;
 use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
 use crate::choices::{TaskPriority, TaskStatus};
 use crate::db::{begin_immediate, set_field_version};
-use crate::ids::{new_id, now};
+use crate::ids::{TaskId, new_id, now};
 use crate::labels::resolve_labels_in_workspace;
 use crate::mutation::{set_task_field, set_task_project};
 use crate::projects::resolve_project_for_add_in_workspace;
@@ -53,7 +53,7 @@ pub(crate) struct TaskUpdateOutcome {
 
 pub(crate) struct NoteDeleteOutcome {
     #[allow(dead_code)]
-    pub(crate) task_id: String,
+    pub(crate) task_id: TaskId,
     #[allow(dead_code)]
     pub(crate) note_id: String,
     pub(crate) changed: bool,
@@ -61,7 +61,7 @@ pub(crate) struct NoteDeleteOutcome {
 
 pub(crate) struct NoteOutcome {
     #[allow(dead_code)]
-    pub(crate) task_id: String,
+    pub(crate) task_id: TaskId,
     pub(crate) note_id: String,
 }
 pub(crate) async fn create_task(
@@ -73,7 +73,7 @@ pub(crate) async fn create_task(
     let priority = TaskPriority::parse(&draft.priority)?;
     crate::time_input::validate_available_at_value(&draft.available_at)?;
     crate::time_input::validate_due_on_value(&draft.due_on)?;
-    let id = new_id();
+    let id = TaskId::new();
     let ts = now();
     let mut tx = begin_immediate(conn).await?;
     let project =
@@ -150,7 +150,7 @@ pub(crate) async fn create_task(
 pub(crate) async fn update_task(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     update: TaskUpdate,
 ) -> Result<TaskUpdateOutcome> {
     if let Some(status) = update.status.as_deref() {
@@ -230,7 +230,7 @@ pub(crate) async fn update_task(
 pub(crate) async fn update_task_field(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     field: &str,
     value: &str,
 ) -> Result<bool> {
@@ -240,7 +240,7 @@ pub(crate) async fn update_task_field(
 pub(crate) async fn update_task_labels_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     add_labels: &[String],
     remove_labels: &[String],
 ) -> Result<bool> {
@@ -306,7 +306,7 @@ pub(crate) async fn update_task_labels_in_workspace(
 pub(crate) async fn set_task_deleted(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     deleted: bool,
 ) -> Result<TaskOutcome> {
     set_task_field(
@@ -327,7 +327,7 @@ pub(crate) async fn set_task_deleted(
 pub(crate) async fn add_note(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     body: String,
 ) -> Result<NoteOutcome> {
     let note_id = new_id();
@@ -365,7 +365,7 @@ pub(crate) async fn add_note(
     tx.commit().await?;
     info!(task_id = %task_id, note_id = %note_id, "note added");
     Ok(NoteOutcome {
-        task_id: task_id.to_string(),
+        task_id: task_id.clone(),
         note_id,
     })
 }
@@ -373,7 +373,7 @@ pub(crate) async fn add_note(
 pub(crate) async fn delete_note(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     note_id: &str,
 ) -> Result<NoteDeleteOutcome> {
     let mut tx = begin_immediate(conn).await?;
@@ -410,7 +410,7 @@ pub(crate) async fn delete_note(
         info!(task_id = %task_id, note_id = %note_id, "note deleted");
     }
     Ok(NoteDeleteOutcome {
-        task_id: task_id.to_string(),
+        task_id: task_id.clone(),
         note_id: note_id.to_string(),
         changed: deleted > 0,
     })

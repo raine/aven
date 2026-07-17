@@ -265,7 +265,7 @@ mod tests {
 
     fn task(status: &str, priority: &str, queue_activity_at: &str) -> Task {
         Task {
-            id: format!("{status}-{priority}"),
+            id: crate::test_support::task_id(&format!("{status}-{priority}")),
             workspace_id: "0000000000000001".parse().unwrap(),
             title: "task".to_string(),
             description: String::new(),

@@ -182,7 +182,7 @@ fn project_picker_view() -> PickerView {
 
 fn search_result_item(title: &str) -> SearchResultItem {
     SearchResultItem {
-        task_id: "task-1".to_string(),
+        task_id: crate::test_support::task_id("task-1"),
         display_ref: "AVN-1".to_string(),
         title: title.to_string(),
         description: "Preview body".to_string(),
@@ -300,7 +300,7 @@ mod text_panel_and_search {
             stale: false,
             no_matches_cached: false,
             purpose: SearchPurpose::AddDependency {
-                task_id: "task-1".to_string(),
+                task_id: crate::test_support::task_id("task-1"),
                 display_ref: "AVN-1".to_string(),
             },
         });

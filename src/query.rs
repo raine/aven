@@ -936,7 +936,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(by_ref[0].item.task.id, "7KQ9A1X4MV2P8D6R");
+        assert_eq!(by_ref[0].item.task.id.as_str(), "7KQ9A1X4MV2P8D6R");
         assert_eq!(by_ref[0].matched_field, SearchMatchedField::Ref);
 
         let qualified_ref = search_task_items_in_workspace(
@@ -951,7 +951,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(qualified_ref.len(), 1);
-        assert_eq!(qualified_ref[0].item.task.id, "7KQ9A1X4MV2P8D6R");
+        assert_eq!(qualified_ref[0].item.task.id.as_str(), "7KQ9A1X4MV2P8D6R");
         assert_eq!(qualified_ref[0].matched_field, SearchMatchedField::Ref);
 
         let without_deleted = search_task_items_in_workspace(
@@ -1014,7 +1014,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(deleted_by_ref.len(), 1);
-        assert_eq!(deleted_by_ref[0].item.task.id, "9KQ9A1X4MV2P8D6R");
+        assert_eq!(deleted_by_ref[0].item.task.id.as_str(), "9KQ9A1X4MV2P8D6R");
         assert_eq!(deleted_by_ref[0].matched_field, SearchMatchedField::Ref);
         assert!(deleted_by_ref[0].item.task.deleted);
     }
@@ -1072,7 +1072,7 @@ mod tests {
         seed_workspace_task(
             &mut conn,
             &alpha_id,
-            "ALPHA0000000001",
+            "A1PHA00000000001",
             "alpha task",
             "app",
             "todo",
@@ -1083,7 +1083,7 @@ mod tests {
         seed_workspace_task(
             &mut conn,
             &beta.id,
-            "BETA00000000001",
+            "BETA000000000001",
             "beta task",
             "app",
             "done",
@@ -1091,9 +1091,9 @@ mod tests {
             "002",
         )
         .await;
-        seed_workspace_task_label(&mut conn, &alpha_id, "ALPHA0000000001", "shared").await;
-        seed_workspace_task_label(&mut conn, &beta.id, "BETA00000000001", "shared").await;
-        seed_workspace_conflict(&mut conn, &alpha_id, "ALPHA0000000001").await;
+        seed_workspace_task_label(&mut conn, &alpha_id, "A1PHA00000000001", "shared").await;
+        seed_workspace_task_label(&mut conn, &beta.id, "BETA000000000001", "shared").await;
+        seed_workspace_conflict(&mut conn, &alpha_id, "A1PHA00000000001").await;
 
         let alpha_tasks = list_task_items_in_workspace(
             &mut conn,
@@ -1568,7 +1568,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(durable[0].item.task.id, "7KQ9A1X4MV2P8D6R");
+        assert_eq!(durable[0].item.task.id.as_str(), "7KQ9A1X4MV2P8D6R");
         assert_eq!(durable[0].matched_field, SearchMatchedField::Ref);
 
         let punctuated = search_task_items_in_workspace(
@@ -1582,7 +1582,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(punctuated[0].item.task.id, "7KQ9A1X4MV2P8D6R");
+        assert_eq!(punctuated[0].item.task.id.as_str(), "7KQ9A1X4MV2P8D6R");
         assert_eq!(punctuated[0].matched_field, SearchMatchedField::Ref);
 
         let spaced = search_task_items_in_workspace(
@@ -1596,7 +1596,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(spaced[0].item.task.id, "7KQ9A1X4MV2P8D6R");
+        assert_eq!(spaced[0].item.task.id.as_str(), "7KQ9A1X4MV2P8D6R");
         assert_eq!(spaced[0].matched_field, SearchMatchedField::Ref);
 
         let wrong_prefix = search_task_items_in_workspace(
@@ -1747,7 +1747,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(by_ref[0].item.task.id, "7KQ9A1X4MV2P8D6R");
+        assert_eq!(by_ref[0].item.task.id.as_str(), "7KQ9A1X4MV2P8D6R");
         assert_eq!(by_ref[0].matched_field, SearchMatchedField::Ref);
     }
 
@@ -1823,7 +1823,7 @@ mod tests {
         // Parent task - open
         insert_test_task(
             &mut conn,
-            "EPIC00000000001",
+            "EP1C000000000001",
             "epic parent",
             "todo",
             "high",
@@ -1833,7 +1833,7 @@ mod tests {
         // Child task - open
         insert_test_task(
             &mut conn,
-            "EPIC00000000002",
+            "EP1C000000000002",
             "open child",
             "active",
             "none",
@@ -1843,7 +1843,7 @@ mod tests {
         // Another parent - done (should NOT match the filter)
         insert_test_task(
             &mut conn,
-            "EPIC00000000003",
+            "EP1C000000000003",
             "done parent",
             "done",
             "none",
@@ -1853,7 +1853,7 @@ mod tests {
         // A parent with a done child (should NOT match the filter)
         insert_test_task(
             &mut conn,
-            "EPIC00000000004",
+            "EP1C000000000004",
             "parent with done child",
             "todo",
             "none",
@@ -1862,7 +1862,7 @@ mod tests {
         .await;
         insert_test_task(
             &mut conn,
-            "EPIC00000000005",
+            "EP1C000000000005",
             "done child",
             "done",
             "none",
@@ -1872,7 +1872,7 @@ mod tests {
         // An open task with no dependents (should NOT match)
         insert_test_task(
             &mut conn,
-            "EPIC00000000006",
+            "EP1C000000000006",
             "lonely task",
             "todo",
             "none",
@@ -1881,7 +1881,7 @@ mod tests {
         .await;
 
         sqlx::query(
-            "UPDATE tasks SET is_epic = 1 WHERE id IN ('EPIC00000000001', 'EPIC00000000004')",
+            "UPDATE tasks SET is_epic = 1 WHERE id IN ('EP1C000000000001', 'EP1C000000000004')",
         )
         .execute(&mut *conn)
         .await
@@ -1890,7 +1890,7 @@ mod tests {
         // epic parent -> open child
         sqlx::query(
             "INSERT INTO task_epic_links(workspace_id, child_task_id, epic_task_id, created_at)
-             VALUES (?, 'EPIC00000000002', 'EPIC00000000001', '002')",
+             VALUES (?, 'EP1C000000000002', 'EP1C000000000001', '002')",
         )
         .bind(&workspace_id)
         .execute(&mut *conn)
@@ -1900,7 +1900,7 @@ mod tests {
         // done parent -> (no-op, parent is done)
         sqlx::query(
             "INSERT INTO task_dependencies(workspace_id, task_id, depends_on_task_id, created_at)
-             VALUES (?, 'EPIC00000000001', 'EPIC00000000003', '003')",
+             VALUES (?, 'EP1C000000000001', 'EP1C000000000003', '003')",
         )
         .bind(&workspace_id)
         .execute(&mut *conn)
@@ -1910,7 +1910,7 @@ mod tests {
         // parent with done child -> done child
         sqlx::query(
             "INSERT INTO task_epic_links(workspace_id, child_task_id, epic_task_id, created_at)
-             VALUES (?, 'EPIC00000000005', 'EPIC00000000004', '005')",
+             VALUES (?, 'EP1C000000000005', 'EP1C000000000004', '005')",
         )
         .bind(&workspace_id)
         .execute(&mut *conn)
@@ -1937,8 +1937,14 @@ mod tests {
             ["epic parent", "parent with done child"]
         );
         assert_eq!(items[0].epic_children.len(), 1);
-        assert_eq!(items[0].epic_children[0].task_id, "EPIC00000000002");
-        assert_eq!(items[0].epic_children[0].display_ref, "APP-EPIC00000000002");
+        assert_eq!(
+            items[0].epic_children[0].task_id.as_str(),
+            "EP1C000000000002"
+        );
+        assert_eq!(
+            items[0].epic_children[0].display_ref,
+            "APP-EP1C000000000002"
+        );
         assert!(items[0].epic_children[0].unresolved);
     }
 
@@ -1948,14 +1954,14 @@ mod tests {
         seed_default_project(&mut conn).await;
         insert_test_task(
             &mut conn,
-            "AVAIL00000000001",
+            "AVA1100000000001",
             "scheduled task",
             "inbox",
             "none",
             "2026-01-01T00:00:00Z",
         )
         .await;
-        sqlx::query("UPDATE tasks SET available_at = ? WHERE id = 'AVAIL00000000001'")
+        sqlx::query("UPDATE tasks SET available_at = ? WHERE id = 'AVA1100000000001'")
             .bind("2999-03-08T05:00:00Z")
             .execute(&mut *conn)
             .await
@@ -2010,7 +2016,7 @@ mod tests {
         assert_eq!(projects[0].open_count, 0);
         assert_eq!(projects[0].inbox_count, 0);
 
-        sqlx::query("UPDATE tasks SET available_at = ? WHERE id = 'AVAIL00000000001'")
+        sqlx::query("UPDATE tasks SET available_at = ? WHERE id = 'AVA1100000000001'")
             .bind("2026-03-08T05:00:00Z")
             .execute(&mut *conn)
             .await

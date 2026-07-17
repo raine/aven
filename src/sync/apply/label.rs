@@ -17,11 +17,12 @@ pub(super) async fn create_label(conn: &mut SqliteConnection, change: &ChangeWir
 
 pub(super) async fn add_label(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     let workspace_id = workspace_id_payload(conn, change).await?;
+    let task_id = super::shared::task_id(change)?;
     let label = str_payload(&change.payload, "label")?;
     insert_label(conn, &workspace_id, &label, &change.created_at).await?;
     sqlx::query("INSERT OR IGNORE INTO task_labels(workspace_id, task_id, label) VALUES (?, ?, ?)")
         .bind(&workspace_id)
-        .bind(&change.entity_id)
+        .bind(&task_id)
         .bind(&label)
         .execute(&mut *conn)
         .await?;
@@ -46,10 +47,11 @@ pub(super) async fn delete_label(conn: &mut SqliteConnection, change: &ChangeWir
 
 pub(super) async fn remove_label(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     let workspace_id = workspace_id_payload(conn, change).await?;
+    let task_id = super::shared::task_id(change)?;
     let label = str_payload(&change.payload, "label")?;
     sqlx::query("DELETE FROM task_labels WHERE workspace_id = ? AND task_id = ? AND label = ?")
         .bind(&workspace_id)
-        .bind(&change.entity_id)
+        .bind(&task_id)
         .bind(&label)
         .execute(&mut *conn)
         .await?;
@@ -59,7 +61,7 @@ pub(super) async fn remove_label(conn: &mut SqliteConnection, change: &ChangeWir
 pub(super) async fn create_or_update_task_label(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: &str,
+    task_id: &crate::ids::TaskId,
     label: &str,
     created_at: &str,
 ) -> Result<()> {

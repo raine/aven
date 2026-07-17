@@ -149,7 +149,7 @@ async fn task_context_snapshot(
 
     Ok(TaskContextSnapshot {
         task: ContextTask {
-            id: task.id.clone(),
+            id: task.id.to_string(),
             ref_suffix,
             display_ref,
             title: task.title.clone(),
@@ -211,7 +211,7 @@ async fn task_context_snapshot(
 
 fn context_dependency_task(item: TaskDependencyItem) -> ContextDependencyTask {
     ContextDependencyTask {
-        id: item.task.id,
+        id: item.task.id.to_string(),
         display_ref: item.display_ref,
         title: item.task.title,
         status: item.task.status.as_str().to_string(),

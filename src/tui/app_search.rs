@@ -240,7 +240,7 @@ impl App {
 
     fn reopen_add_dependency_search(
         &mut self,
-        task_id: String,
+        task_id: crate::ids::TaskId,
         display_ref: String,
         input: String,
     ) {
@@ -331,12 +331,12 @@ impl App {
         state.normalize_selection();
     }
 
-    fn select_task_by_id(&mut self, task_id: &str) {
+    fn select_task_by_id(&mut self, task_id: &crate::ids::TaskId) {
         if let Some(index) = self
             .store
             .tasks
             .iter()
-            .position(|item| item.task.id == task_id)
+            .position(|item| &item.task.id == task_id)
         {
             self.widgets.table.select(Some(index));
         }
