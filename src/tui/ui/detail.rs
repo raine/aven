@@ -9,6 +9,7 @@ use ratatui::widgets::{
 use super::input::clipped_input_line;
 use super::scroll::{clamp_scroll_start, scrollbar_thumb_position};
 use super::task_display::{description_or_placeholder, labels_display};
+use super::task_list::EPIC_MARKER;
 use super::timestamps::local_timestamp_display;
 use super::truncate::truncate_width;
 use crate::query::TaskListItem;
@@ -18,7 +19,7 @@ use crate::tui::markdown::render_markdown;
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::TuiStore;
 use crate::tui::theme::{
-    self, ACCENT, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, ORANGE, RED,
+    self, ACCENT, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, ORANGE, RED, YELLOW,
 };
 use crate::tui::widgets::{priority_short, status_chip, status_span};
 use unicode_width::UnicodeWidthStr;
@@ -728,7 +729,7 @@ fn detail_header_options(
     width: usize,
     inline_title_editor: Option<&TextInputView>,
 ) -> Vec<Line<'static>> {
-    vec![
+    let mut lines = vec![
         detail_title_line(item, width, inline_title_editor),
         Line::from(Span::styled("─".repeat(width), Style::new().fg(BORDER))),
         Line::from(vec![
@@ -741,8 +742,34 @@ fn detail_header_options(
                 theme::priority_style(item.task.priority.as_str()).add_modifier(Modifier::BOLD),
             ),
         ]),
-        Line::from(""),
-    ]
+    ];
+    if let Some(parent) = &item.epic_parent {
+        lines.push(detail_epic_parent_line(parent, width));
+    }
+    lines.push(Line::from(""));
+    lines
+}
+
+fn detail_epic_parent_line(
+    parent: &crate::query::TaskDependencyLink,
+    width: usize,
+) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled("part of ", Style::new().fg(FG_DIM)),
+        Span::styled(EPIC_MARKER, Style::new().fg(YELLOW)),
+        Span::styled(" ", Style::new().fg(FG_DIM)),
+        Span::styled(
+            parent.display_ref.clone(),
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ", Style::new().fg(FG_DIM)),
+    ];
+    let used_width = spans.iter().map(Span::width).sum::<usize>();
+    spans.push(Span::styled(
+        truncate_width(&parent.title, width.saturating_sub(used_width)),
+        Style::new().fg(FG_MUTED),
+    ));
+    Line::from(spans)
 }
 
 fn detail_title_line(
@@ -1174,6 +1201,45 @@ mod tests {
         assert!(rendered.contains("Fix token refresh race"));
         assert!(rendered.contains("Confirmed race in useTokenRefresh.ts"));
         assert!(!rendered.contains("2026-06-20T12:00:00Z"));
+    }
+
+    #[test]
+    fn detail_header_shows_epic_parent_context() {
+        let mut item = detail_test_item();
+        item.epic_parent = Some(crate::query::TaskDependencyLink {
+            task_id: "epic-task-id".to_string(),
+            display_ref: "APP-EPIC".to_string(),
+            title: "Ship authentication reliability".to_string(),
+            status: "active".to_string(),
+            priority: "high".to_string(),
+            unresolved: true,
+        });
+
+        let lines = detail_header_options(&item, 60, None);
+
+        assert_eq!(
+            lines[3].to_string(),
+            format!("part of {EPIC_MARKER} APP-EPIC Ship authentication reliability")
+        );
+        assert_eq!(lines[4].to_string(), "");
+    }
+
+    #[test]
+    fn detail_epic_parent_context_truncates_to_header_width() {
+        let mut item = detail_test_item();
+        item.epic_parent = Some(crate::query::TaskDependencyLink {
+            task_id: "epic-task-id".to_string(),
+            display_ref: "APP-EPIC".to_string(),
+            title: "A long epic title that must fit the sticky header".to_string(),
+            status: "active".to_string(),
+            priority: "high".to_string(),
+            unresolved: true,
+        });
+
+        let line = detail_header_options(&item, 32, None).remove(3);
+
+        assert!(line.width() <= 32);
+        assert!(line.to_string().ends_with('…'));
     }
 
     #[test]
