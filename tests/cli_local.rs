@@ -117,7 +117,8 @@ fn attachment_add_list_get_and_delete_work_locally() {
         "SELECT count(*) FROM changes WHERE field = 'description'",
     );
     let image = env.path("photo.png");
-    std::fs::write(&image, b"png bytes").unwrap();
+    let image_bytes = compressible_png_bytes();
+    std::fs::write(&image, &image_bytes).unwrap();
 
     let added = ok(env.aven(
         &db,
@@ -130,10 +131,8 @@ fn attachment_add_list_get_and_delete_work_locally() {
             "diagram",
         ],
     ));
-    contains_all(
-        &added,
-        &["attachment-added", "media_type=image/png", "byte_size=9"],
-    );
+    contains_all(&added, &["attachment-added", "media_type=image/png"]);
+    assert_eq!(extract_byte_size(&added), image_bytes.len() as i64);
     let attachment_id = extract_attachment_id(&added);
     let sha256 = extract_sha256(&added);
     let mut blob_root = db.as_os_str().to_os_string();
@@ -181,6 +180,9 @@ fn attachment_add_list_get_and_delete_work_locally() {
     let listed = ok(env.aven(&db, ["attachment", "list", &task_ref, "--json"]));
     let value: serde_json::Value = serde_json::from_str(&listed).unwrap();
     assert_eq!(value[0]["attachment_id"], attachment_id);
+    assert_eq!(value[0]["media_type"], "image/png");
+    assert_eq!(value[0]["width"], 16);
+    assert_eq!(value[0]["height"], 16);
     assert!(value[0].get("bytes").is_none());
 
     let output = env.path("copy.png");
@@ -194,7 +196,7 @@ fn attachment_add_list_get_and_delete_work_locally() {
             output.to_str().unwrap(),
         ],
     ));
-    assert_eq!(std::fs::read(output).unwrap(), b"png bytes");
+    assert_eq!(std::fs::read(output).unwrap(), image_bytes);
 
     ok(env.aven(&db, ["attachment", "delete", &attachment_id]));
     let hidden = ok(env.aven(&db, ["attachment", "list", &task_ref]));
@@ -335,7 +337,7 @@ daemon:
     let created = ok(env.aven(&db, ["add", "sync attachment", "--project", "app"]));
     let task_ref = extract_ref(&created);
     let image = env.path("sync-photo.png");
-    std::fs::write(&image, b"sync png bytes").unwrap();
+    std::fs::write(&image, compressible_png_bytes()).unwrap();
 
     let added = ok(env.aven(
         &db,
@@ -363,22 +365,36 @@ daemon:
 }
 
 #[test]
-fn attachment_get_refuses_existing_output_and_unknown_media_type() {
+fn attachment_get_refuses_existing_output_and_mime_mismatch() {
     let env = TestEnv::new();
     let db = env.db("attachment-errors.sqlite");
     let created = ok(env.aven(&db, ["add", "attach me", "--project", "app"]));
     let task_ref = extract_ref(&created);
 
     let unknown = env.path("photo.bin");
-    std::fs::write(&unknown, b"bytes").unwrap();
-    let error = fail(env.aven(
+    let image_bytes = compressible_png_bytes();
+    std::fs::write(&unknown, &image_bytes).unwrap();
+    let added = ok(env.aven(
         &db,
         ["attachment", "add", &task_ref, unknown.to_str().unwrap()],
     ));
-    contains_all(&error, &["error attachment-media-type-required"]);
+    contains_all(&added, &["media_type=image/png"]);
+
+    let error = fail(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &task_ref,
+            unknown.to_str().unwrap(),
+            "--media-type",
+            "image/jpeg",
+        ],
+    ));
+    contains_all(&error, &["error attachment-media-type-mismatch"]);
 
     let image = env.path("photo.png");
-    std::fs::write(&image, b"png bytes").unwrap();
+    std::fs::write(&image, image_bytes).unwrap();
     let added = ok(env.aven(
         &db,
         ["attachment", "add", &task_ref, image.to_str().unwrap()],
@@ -409,7 +425,7 @@ fn attachment_get_refuses_unavailable_imported_blob() {
         env.aven(&source_db, ["add", "attach me", "--project", "app"])
     ));
     let image = env.path("photo.png");
-    std::fs::write(&image, b"png bytes").unwrap();
+    std::fs::write(&image, compressible_png_bytes()).unwrap();
     let added = ok(env.aven(
         &source_db,
         ["attachment", "add", &task_ref, image.to_str().unwrap()],
@@ -447,7 +463,7 @@ fn attachment_delete_is_idempotent() {
     let created = ok(env.aven(&db, ["add", "attach me", "--project", "app"]));
     let task_ref = extract_ref(&created);
     let image = env.path("photo.png");
-    std::fs::write(&image, b"png bytes").unwrap();
+    std::fs::write(&image, compressible_png_bytes()).unwrap();
     let added = ok(env.aven(
         &db,
         ["attachment", "add", &task_ref, image.to_str().unwrap()],

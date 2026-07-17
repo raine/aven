@@ -66,11 +66,25 @@ pub(crate) fn validate_alt_text(value: Option<&str>) -> Result<()> {
 }
 
 pub(crate) fn validate_dimensions(width: Option<i64>, height: Option<i64>) -> Result<()> {
-    match (width, height) {
-        (None, None) => Ok(()),
-        (Some(width), Some(height)) if width > 0 && height > 0 => Ok(()),
-        _ => bail!("error invalid-attachment-dimensions"),
+    let (Some(width), Some(height)) = (width, height) else {
+        bail!("error invalid-attachment-dimensions");
+    };
+    let Ok(width_u32) = u32::try_from(width) else {
+        bail!("error invalid-attachment-dimensions");
+    };
+    let Ok(height_u32) = u32::try_from(height) else {
+        bail!("error invalid-attachment-dimensions");
+    };
+    if width_u32 == 0
+        || height_u32 == 0
+        || width_u32 > crate::attachments::decode::MAX_IMAGE_EDGE
+        || height_u32 > crate::attachments::decode::MAX_IMAGE_EDGE
+        || u64::from(width_u32) * u64::from(height_u32)
+            > crate::attachments::decode::MAX_FRAME_PIXELS
+    {
+        bail!("error invalid-attachment-dimensions");
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -135,7 +149,7 @@ mod tests {
 
     #[test]
     fn validates_dimensions() {
-        assert!(validate_dimensions(None, None).is_ok());
+        assert!(validate_dimensions(None, None).is_err());
         assert!(validate_dimensions(Some(1920), Some(1080)).is_ok());
         assert!(validate_dimensions(Some(0), Some(1080)).is_err());
         assert!(validate_dimensions(Some(1920), None).is_err());

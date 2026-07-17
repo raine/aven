@@ -10,9 +10,12 @@ use crate::attachments::validation::SUPPORTED_MEDIA_TYPES;
 
 use super::IntegrityCheck;
 
+type AttachmentImageMetadataRow = (String, i64, String, Option<i64>, Option<i64>);
+
 pub(crate) async fn attachment_integrity_checks(
     conn: &mut SqliteConnection,
     blob_dir: &Path,
+    deep: bool,
 ) -> Result<Vec<IntegrityCheck>> {
     let mut checks = Vec::new();
     checks.push(count_check(
@@ -54,7 +57,9 @@ pub(crate) async fn attachment_integrity_checks(
         .await?,
     );
     checks.push(missing_blob_check(conn, blob_dir).await?);
-    checks.push(mismatched_blob_check(conn, blob_dir).await?);
+    if deep {
+        checks.push(mismatched_blob_check(conn, blob_dir).await?);
+    }
     checks.push(orphan_blob_check(conn, blob_dir).await?);
     Ok(checks)
 }
@@ -95,29 +100,47 @@ async fn mismatched_blob_check(
     conn: &mut SqliteConnection,
     blob_dir: &Path,
 ) -> Result<IntegrityCheck> {
-    let rows: Vec<(String, i64, String)> = sqlx::query_as(
-        "SELECT sha256, byte_size, media_type FROM blob_inventory WHERE available = 1",
+    let rows: Vec<AttachmentImageMetadataRow> = sqlx::query_as(
+        "SELECT DISTINCT ta.sha256, ta.byte_size, ta.media_type, ta.width, ta.height
+         FROM task_attachments ta
+         JOIN blob_inventory bi ON bi.sha256 = ta.sha256
+         WHERE bi.available = 1",
     )
     .fetch_all(&mut *conn)
     .await?;
-    let mut count = 0_usize;
-    for (sha, byte_size, media_type) in rows {
-        if !SUPPORTED_MEDIA_TYPES.contains(&media_type.as_str()) {
-            continue;
+    let blob_dir = blob_dir.to_path_buf();
+    let count = crate::attachments::blocking::run(move || {
+        let mut count = 0_usize;
+        for (sha, byte_size, media_type, width, height) in rows {
+            if !SUPPORTED_MEDIA_TYPES.contains(&media_type.as_str()) {
+                continue;
+            }
+            let Ok(path) = object_path(&blob_dir, &sha) else {
+                count += 1;
+                continue;
+            };
+            if !path.exists() {
+                continue;
+            }
+            let bytes =
+                fs::read(&path).with_context(|| format!("could not read {}", path.display()))?;
+            if sha256_hex(&bytes) != sha || i64::try_from(bytes.len()).unwrap_or(-1) != byte_size {
+                count += 1;
+                continue;
+            }
+            let Ok(validated) =
+                crate::attachments::decode::validate_image_blocking(bytes, Some(&media_type))
+            else {
+                count += 1;
+                continue;
+            };
+            if (width, height) != (Some(validated.facts.width), Some(validated.facts.height)) {
+                count += 1;
+            }
         }
-        let Ok(path) = object_path(blob_dir, &sha) else {
-            count += 1;
-            continue;
-        };
-        if !path.exists() {
-            continue;
-        }
-        let bytes =
-            fs::read(&path).with_context(|| format!("could not read {}", path.display()))?;
-        if sha256_hex(&bytes) != sha || i64::try_from(bytes.len()).unwrap_or(-1) != byte_size {
-            count += 1;
-        }
-    }
+        Ok(count)
+    })
+    .await?;
     Ok(IntegrityCheck {
         label: "attachment object hashes",
         ok: count == 0,

@@ -554,9 +554,7 @@ mod tests {
             AttachmentAddInput {
                 filename: Some("chart.png".to_string()),
                 alt_text: Some("Chart".to_string()),
-                media_type: "image/png".to_string(),
-                width: None,
-                height: None,
+                declared_media_type: Some("image/png".to_string()),
                 bytes: vec![1, 2, 3],
                 optimization_policy: ImageOptimizationPolicy::Preserve,
                 dedupe_existing: false,
@@ -591,9 +589,7 @@ mod tests {
             AttachmentAddInput {
                 filename: Some("chart.png".to_string()),
                 alt_text: None,
-                media_type: "image/png".to_string(),
-                width: None,
-                height: None,
+                declared_media_type: Some("image/png".to_string()),
                 bytes: vec![1],
                 optimization_policy: ImageOptimizationPolicy::Preserve,
                 dedupe_existing: false,

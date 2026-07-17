@@ -233,8 +233,8 @@ async fn put_blob_handler(
         )
             .into_response(),
         Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "error blob-store-failed".to_string(),
+            StatusCode::BAD_REQUEST,
+            "error blob-validation-failed".to_string(),
         )
             .into_response(),
     }
@@ -467,7 +467,20 @@ async fn ensure_attachment_blobs_present(
             .get("media_type")
             .and_then(serde_json::Value::as_str)
             .context("error attachment-blob-missing")?;
-        ensure_attachment_blob_matches(conn, blob_dir, sha256, byte_size, media_type).await?;
+        let width = change
+            .payload
+            .get("width")
+            .and_then(serde_json::Value::as_i64)
+            .context("error attachment-blob-missing")?;
+        let height = change
+            .payload
+            .get("height")
+            .and_then(serde_json::Value::as_i64)
+            .context("error attachment-blob-missing")?;
+        ensure_attachment_blob_matches(
+            conn, blob_dir, sha256, byte_size, media_type, width, height,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -478,6 +491,8 @@ async fn ensure_attachment_blob_matches(
     sha256: &str,
     byte_size: i64,
     media_type: &str,
+    width: i64,
+    height: i64,
 ) -> Result<()> {
     let Some(row) = crate::attachments::blob_inventory_row(conn, sha256).await? else {
         bail!("error attachment-blob-missing");
@@ -486,6 +501,13 @@ async fn ensure_attachment_blob_matches(
         bail!("error attachment-blob-missing");
     }
     if row.byte_size != byte_size || row.media_type != media_type {
+        bail!("error blob-inventory-metadata-mismatch");
+    }
+    let path = crate::attachments::object_path(blob_dir, sha256)?;
+    let bytes = tokio::fs::read(path).await?;
+    let validated =
+        crate::attachments::decode::validate_image(bytes, Some(media_type.to_string())).await?;
+    if (validated.facts.width, validated.facts.height) != (width, height) {
         bail!("error blob-inventory-metadata-mismatch");
     }
     Ok(())

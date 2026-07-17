@@ -21,30 +21,6 @@ use crate::render::print_json_pretty;
 use crate::types::TaskAttachment;
 use crate::workspaces::Workspace;
 
-const EXT_MEDIA_TYPES: &[(&str, &str)] = &[
-    ("png", "image/png"),
-    ("jpg", "image/jpeg"),
-    ("jpeg", "image/jpeg"),
-    ("gif", "image/gif"),
-    ("webp", "image/webp"),
-];
-
-fn infer_attachment_media_type(path: &Path) -> Result<String> {
-    let ext = path
-        .extension()
-        .and_then(|v| v.to_str())
-        .map(str::to_ascii_lowercase);
-    let Some(ext) = ext else {
-        bail!("error attachment-media-type-required hint=\"pass --media-type\"");
-    };
-    for (key, mime) in EXT_MEDIA_TYPES {
-        if *key == ext {
-            return Ok(mime.to_string());
-        }
-    }
-    bail!("error attachment-media-type-required hint=\"pass --media-type\"");
-}
-
 fn default_attachment_filename(path: &Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -135,10 +111,7 @@ pub(crate) async fn cmd_attachment_add(
     args: AttachmentAddArgs,
 ) -> Result<()> {
     let task = resolve_task_ref_in_workspace(conn, workspace, &args.task_ref).await?;
-    let media_type = match args.media_type {
-        Some(ref mt) => mt.clone(),
-        None => infer_attachment_media_type(&args.path)?,
-    };
+    let declared_media_type = args.media_type;
     let filename = args
         .filename
         .or_else(|| Some(default_attachment_filename(&args.path)));
@@ -160,9 +133,7 @@ pub(crate) async fn cmd_attachment_add(
         AttachmentAddInput {
             filename,
             alt_text: args.alt,
-            media_type,
-            width: args.width,
-            height: args.height,
+            declared_media_type,
             bytes,
             optimization_policy,
             dedupe_existing: false,

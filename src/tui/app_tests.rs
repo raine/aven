@@ -1048,7 +1048,7 @@ mod attachment_paste {
         let selected = create_and_select_task(&mut app, test_task_draft("image target")).await;
         let task_id = app.store.tasks[selected].task.id.clone();
         let image = dir.path().join("photo.png");
-        std::fs::write(&image, b"png bytes").unwrap();
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
@@ -1164,7 +1164,7 @@ mod attachment_paste {
         let (dir, pool, mut app) = test_app_with_pool().await;
         app.set_add_task_db_path(dir.path().join("test.db"));
         let image = dir.path().join("composer.png");
-        std::fs::write(&image, b"png bytes").unwrap();
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
 
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
@@ -1206,7 +1206,7 @@ mod attachment_paste {
         app.set_add_task_db_path(dir.path().join("test.db"));
         configure_task_intake_success(&mut app, dir.path(), "parsed natural task", "model details");
         let image = dir.path().join("natural.webp");
-        std::fs::write(&image, b"webp bytes").unwrap();
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
 
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         app.begin_add_task_natural();

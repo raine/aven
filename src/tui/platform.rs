@@ -15,7 +15,6 @@ use crossterm::terminal::supports_keyboard_enhancement;
 
 pub(crate) struct ClipboardImage {
     pub(crate) filename: String,
-    pub(crate) media_type: String,
     pub(crate) bytes: Vec<u8>,
 }
 #[cfg(not(test))]
@@ -250,7 +249,6 @@ return "ok"
     }
     Ok(Some(ClipboardImage {
         filename: "pasted-image.png".to_string(),
-        media_type: "image/png".to_string(),
         bytes,
     }))
 }

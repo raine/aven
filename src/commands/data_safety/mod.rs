@@ -905,8 +905,9 @@ pub(crate) fn ensure_integrity_ok(report: &IntegrityReport) -> Result<()> {
 pub(crate) async fn attachment_integrity_checks(
     conn: &mut SqliteConnection,
     blob_dir: &Path,
+    deep: bool,
 ) -> Result<Vec<IntegrityCheck>> {
-    integrity::attachment_integrity_checks(conn, blob_dir).await
+    integrity::attachment_integrity_checks(conn, blob_dir, deep).await
 }
 
 async fn count_check(

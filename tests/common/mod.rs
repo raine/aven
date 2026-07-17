@@ -293,6 +293,14 @@ pub fn contains_none(text: &str, needles: &[&str]) {
     }
 }
 
+pub fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image::RgbaImage::new(width, height))
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .expect("encode PNG fixture");
+    bytes.into_inner()
+}
+
 pub struct TestProcess {
     child: Child,
     output: Arc<Mutex<String>>,

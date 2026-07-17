@@ -25,7 +25,7 @@ pub(crate) async fn optimize_image_bytes(
         });
     }
 
-    let optimized = tokio::task::spawn_blocking(move || optimize_png(bytes)).await?;
+    let optimized = crate::attachments::blocking::run(move || Ok(optimize_png(bytes))).await?;
     match optimized {
         Ok((original, optimized)) if optimized.len() < original.len() => Ok(OptimizedBytes {
             bytes: optimized,
@@ -44,7 +44,9 @@ fn optimize_png(bytes: Vec<u8>) -> PngOptimizationResult {
     let mut options = oxipng::Options::from_preset(4);
     options.strip = oxipng::StripChunks::Safe;
     options.timeout = Some(Duration::from_secs(10));
-    options.max_decompressed_size = Some(crate::attachments::validation::MAX_BLOB_BYTES * 16);
+    options.max_decompressed_size = Some(
+        usize::try_from(crate::attachments::decode::MAX_DECODER_ALLOCATION).unwrap_or(usize::MAX),
+    );
     match oxipng::optimize_from_memory(&bytes, &options) {
         Ok(optimized) => Ok((bytes, optimized)),
         Err(error) => Err((bytes, error)),

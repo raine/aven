@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use common::{
     TestEnv, TestProcess, TestServer, contains_all, contains_none, extract_ref, fail, meta_value,
-    ok, scalar_i64,
+    ok, png_bytes, scalar_i64,
 };
 use serde_json::{Value, json};
 
@@ -340,8 +340,8 @@ fn seed_available_blob_for_hash(db: &std::path::Path, sha256: &str) {
 fn seed_local_attachment_change(db: &std::path::Path, task_id: &str) {
     use sha2::{Digest, Sha256};
 
-    let bytes = b"attachment-bytes";
-    let sha256 = hex::encode(Sha256::digest(bytes));
+    let bytes = png_bytes(320, 240);
+    let sha256 = hex::encode(Sha256::digest(&bytes));
     let mut blob_dir = db.as_os_str().to_os_string();
     blob_dir.push(".blobs");
     let blob_path = std::path::PathBuf::from(blob_dir)
@@ -349,7 +349,7 @@ fn seed_local_attachment_change(db: &std::path::Path, task_id: &str) {
         .join("sha256")
         .join(&sha256);
     std::fs::create_dir_all(blob_path.parent().expect("blob parent")).expect("create blob dir");
-    std::fs::write(&blob_path, bytes).expect("write blob");
+    std::fs::write(&blob_path, &bytes).expect("write blob");
     let payload = json!({
         "workspace_id": DEFAULT_WORKSPACE_ID,
         "workspace_key": "default",

@@ -8,7 +8,9 @@ use serde_json::Value;
 use sqlx::ConnectOptions;
 use sqlx::sqlite::SqliteConnectOptions;
 
-use common::{TestEnv, contains_all, contains_none, extract_ref, fail, meta_value, ok, scalar_i64};
+use common::{
+    TestEnv, contains_all, contains_none, extract_ref, fail, meta_value, ok, png_bytes, scalar_i64,
+};
 
 #[test]
 fn backup_command_creates_archive() {
@@ -38,7 +40,8 @@ fn backup_archive_round_trips_attachment_blobs() {
     let db = env.db("backup-attachment.sqlite");
     let task_ref = extract_ref(&ok(env.aven(&db, ["add", "with image", "--project", "app"])));
     let image = env.path("photo.png");
-    fs::write(&image, b"small png bytes").unwrap();
+    let image_bytes = png_bytes(3, 2);
+    fs::write(&image, &image_bytes).unwrap();
 
     let add_output = ok(env.aven(
         &db,
@@ -68,7 +71,7 @@ fn backup_archive_round_trips_attachment_blobs() {
     ));
     contains_all(&output, &["restored-backup path=", "safety_backup="]);
     let object_path = blob_dir.join("objects").join("sha256").join(&sha);
-    assert_eq!(fs::read(object_path).unwrap(), b"small png bytes");
+    assert_eq!(fs::read(object_path).unwrap(), image_bytes);
     contains_all(
         &ok(env.aven(&db, ["attachment", "list", &task_ref])),
         &["attachment", &sha],
@@ -153,7 +156,7 @@ fn json_export_includes_attachment_metadata_without_bytes() {
     let db = env.db("export-attachments.sqlite");
     let task_ref = extract_ref(&ok(env.aven(&db, ["add", "with image", "--project", "app"])));
     let image = env.path("photo.png");
-    fs::write(&image, b"exported png bytes").unwrap();
+    fs::write(&image, png_bytes(3, 2)).unwrap();
     ok(env.aven(
         &db,
         ["attachment", "add", &task_ref, image.to_str().unwrap()],
@@ -179,7 +182,12 @@ fn json_export_includes_attachment_metadata_without_bytes() {
             .len(),
         1
     );
-    assert!(!text.contains("exported png bytes"));
+    assert!(
+        !snapshot["tables"]["task_attachments"][0]
+            .as_object()
+            .unwrap()
+            .contains_key("bytes")
+    );
 }
 
 #[test]
@@ -193,7 +201,7 @@ fn import_preserves_attachment_metadata_without_local_blobs() {
         env.aven(&source_db, ["add", "with image", "--project", "app"])
     ));
     let image = env.path("photo.png");
-    fs::write(&image, b"imported png bytes").unwrap();
+    fs::write(&image, png_bytes(3, 2)).unwrap();
     ok(env.aven(
         &source_db,
         ["attachment", "add", &task_ref, image.to_str().unwrap()],

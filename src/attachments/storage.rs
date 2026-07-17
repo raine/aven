@@ -10,11 +10,13 @@ use sqlx::SqliteConnection;
 use crate::ids::now;
 use crate::types::BlobInventoryRow;
 
-use super::validation::{validate_blob_size, validate_media_type, validate_sha256};
+use super::decode::{ImageFacts, ValidatedImage, validate_image};
+use super::validation::{validate_media_type, validate_sha256};
 
 pub(crate) struct StoredBlob {
     pub(crate) sha256: String,
     pub(crate) byte_size: i64,
+    pub(crate) facts: ImageFacts,
 }
 
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
@@ -34,22 +36,62 @@ pub(crate) async fn store_blob(
     media_type: &str,
     bytes: &[u8],
 ) -> Result<StoredBlob> {
-    validate_media_type(media_type)?;
-    validate_blob_size(bytes.len())?;
-    let sha256 = sha256_hex(bytes);
+    let validated = validate_image(bytes.to_vec(), Some(media_type.to_string())).await?;
+    store_validated_blob(conn, blob_dir, validated).await
+}
+
+pub(crate) async fn store_validated_blob(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    validated: ValidatedImage,
+) -> Result<StoredBlob> {
+    let sha256 = sha256_hex(&validated.bytes);
     let path = object_path(blob_dir, &sha256)?;
+    let bytes = validated.bytes;
+    let write_path = path.clone();
+    super::blocking::run(move || write_object_atomically(&write_path, &bytes)).await?;
+    let byte_size = fs::metadata(&path)
+        .with_context(|| format!("could not inspect {}", path.display()))?
+        .len();
+    let byte_size = i64::try_from(byte_size).context("attachment bytes exceed i64")?;
+    upsert_inventory_available(conn, &sha256, byte_size, &validated.facts.media_type).await?;
+    Ok(StoredBlob {
+        sha256,
+        byte_size,
+        facts: validated.facts,
+    })
+}
+
+fn write_object_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;
+        if path.exists() {
+            let existing =
+                fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
+            if sha256_hex(&existing) != sha256_hex(bytes) {
+                bail!("error attachment-object-content-mismatch");
+            }
+            return Ok(());
+        }
+        let mut temp = tempfile::NamedTempFile::new_in(parent)
+            .with_context(|| format!("could not create temporary file in {}", parent.display()))?;
+        std::io::Write::write_all(&mut temp, bytes)?;
+        temp.as_file().sync_all()?;
+        match temp.persist_noclobber(path) {
+            Ok(_) => return Ok(()),
+            Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let existing =
+                    fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
+                if sha256_hex(&existing) == sha256_hex(bytes) {
+                    return Ok(());
+                }
+                bail!("error attachment-object-content-mismatch");
+            }
+            Err(error) => return Err(error.error.into()),
+        }
     }
-    if !path.exists() {
-        let tmp = path.with_extension("tmp");
-        fs::write(&tmp, bytes).with_context(|| format!("could not write {}", tmp.display()))?;
-        fs::rename(&tmp, &path).with_context(|| format!("could not replace {}", path.display()))?;
-    }
-    let byte_size = i64::try_from(bytes.len()).context("attachment bytes exceed i64")?;
-    upsert_inventory_available(conn, &sha256, byte_size, media_type).await?;
-    Ok(StoredBlob { sha256, byte_size })
+    bail!("error attachment-object-path-invalid")
 }
 
 pub(crate) async fn upsert_inventory_available(
@@ -115,12 +157,23 @@ pub(crate) async fn blob_inventory_row(
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
     use std::path::PathBuf;
+
+    use image::{DynamicImage, ImageFormat, RgbaImage};
 
     use crate::config::{AppConfig, resolve_blob_dir};
     use crate::db::open_db;
 
     use super::*;
+
+    fn png_bytes() -> Vec<u8> {
+        let mut bytes = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(RgbaImage::new(2, 1))
+            .write_to(&mut bytes, ImageFormat::Png)
+            .unwrap();
+        bytes.into_inner()
+    }
 
     #[tokio::test]
     async fn stores_and_retrieves_blob() {
@@ -132,12 +185,12 @@ mod tests {
         let config = AppConfig::default();
         let blob_dir = resolve_blob_dir(&db_path, &config).unwrap();
 
-        let bytes = b"hello world from aven attachment";
-        let stored = store_blob(&mut conn, &blob_dir, "image/png", bytes)
+        let bytes = png_bytes();
+        let stored = store_blob(&mut conn, &blob_dir, "image/png", &bytes)
             .await
             .unwrap();
 
-        assert_eq!(stored.sha256, sha256_hex(bytes));
+        assert_eq!(stored.sha256, sha256_hex(&bytes));
         assert!(stored.byte_size > 0);
 
         let obj_path = object_path(&blob_dir, &stored.sha256).unwrap();
@@ -165,11 +218,11 @@ mod tests {
         let config = AppConfig::default();
         let blob_dir = resolve_blob_dir(&db_path, &config).unwrap();
 
-        let bytes = b"same content";
-        let stored1 = store_blob(&mut conn, &blob_dir, "image/jpeg", bytes)
+        let bytes = png_bytes();
+        let stored1 = store_blob(&mut conn, &blob_dir, "image/png", &bytes)
             .await
             .unwrap();
-        let stored2 = store_blob(&mut conn, &blob_dir, "image/jpeg", bytes)
+        let stored2 = store_blob(&mut conn, &blob_dir, "image/png", &bytes)
             .await
             .unwrap();
 

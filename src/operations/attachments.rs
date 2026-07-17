@@ -5,12 +5,10 @@ use sqlx::Row;
 use sqlx::SqliteConnection;
 
 use crate::attachments::AttachmentBytesState;
+use crate::attachments::decode::{ValidatedImage, validate_image};
 use crate::attachments::optimization::{ImageOptimizationPolicy, optimize_image_bytes};
-use crate::attachments::storage::{blob_inventory_row, store_blob};
-use crate::attachments::validation::{
-    validate_alt_text, validate_blob_size, validate_dimensions, validate_filename,
-    validate_media_type,
-};
+use crate::attachments::storage::{blob_inventory_row, store_validated_blob};
+use crate::attachments::validation::{validate_alt_text, validate_filename};
 use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
 use crate::db::begin_immediate;
 use crate::ids::{TaskId, new_id, now};
@@ -21,9 +19,7 @@ use crate::workspaces::Workspace;
 pub(crate) struct AttachmentAddInput {
     pub(crate) filename: Option<String>,
     pub(crate) alt_text: Option<String>,
-    pub(crate) media_type: String,
-    pub(crate) width: Option<i64>,
-    pub(crate) height: Option<i64>,
+    pub(crate) declared_media_type: Option<String>,
     pub(crate) bytes: Vec<u8>,
     pub(crate) optimization_policy: ImageOptimizationPolicy,
     pub(crate) dedupe_existing: bool,
@@ -142,17 +138,27 @@ async fn add_task_attachment_inner(
     attachment_id: Option<String>,
     input: AttachmentAddInput,
 ) -> Result<AttachmentAddOutcome> {
-    validate_media_type(&input.media_type)?;
-    validate_blob_size(input.bytes.len())?;
     validate_filename(input.filename.as_deref())?;
     validate_alt_text(input.alt_text.as_deref())?;
-    validate_dimensions(input.width, input.height)?;
 
-    let optimized =
-        optimize_image_bytes(&input.media_type, input.bytes, input.optimization_policy).await?;
-    validate_blob_size(optimized.bytes.len())?;
-
-    let stored = store_blob(conn, blob_dir, &input.media_type, &optimized.bytes).await?;
+    let source = validate_image(input.bytes, input.declared_media_type).await?;
+    let source_facts = source.facts.clone();
+    let optimized = optimize_image_bytes(
+        &source_facts.media_type,
+        source.bytes,
+        input.optimization_policy,
+    )
+    .await?;
+    let optimized_flag = optimized.optimized;
+    let stored_image = if optimized_flag {
+        validate_image(optimized.bytes, Some(source_facts.media_type.clone())).await?
+    } else {
+        ValidatedImage {
+            bytes: optimized.bytes,
+            facts: source_facts,
+        }
+    };
+    let stored = store_validated_blob(conn, blob_dir, stored_image).await?;
     let mut tx = begin_immediate(conn).await?;
     let task_exists = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM tasks WHERE workspace_id = ? AND id = ?)",
@@ -177,7 +183,7 @@ async fn add_task_attachment_inner(
         return Ok(AttachmentAddOutcome {
             outcome,
             created: false,
-            optimized: optimized.optimized,
+            optimized: optimized_flag,
         });
     }
 
@@ -194,11 +200,11 @@ async fn add_task_attachment_inner(
             .set("attachment_id", &attachment_id)
             .set("sha256", &stored.sha256)
             .set("byte_size", stored.byte_size)
-            .set("media_type", &input.media_type)
+            .set("media_type", &stored.facts.media_type)
             .set("filename", &input.filename)
             .set("alt_text", &input.alt_text)
-            .set("width", input.width)
-            .set("height", input.height)
+            .set("width", stored.facts.width)
+            .set("height", stored.facts.height)
             .set("created_at", &created_at),
     )
     .await?;
@@ -212,11 +218,11 @@ async fn add_task_attachment_inner(
     .bind(task_id)
     .bind(&stored.sha256)
     .bind(stored.byte_size)
-    .bind(&input.media_type)
+    .bind(&stored.facts.media_type)
     .bind(&input.filename)
     .bind(&input.alt_text)
-    .bind(input.width)
-    .bind(input.height)
+    .bind(stored.facts.width)
+    .bind(stored.facts.height)
     .bind(&created_at)
     .bind(&change_id)
     .execute(&mut *tx)
@@ -227,7 +233,7 @@ async fn add_task_attachment_inner(
     Ok(AttachmentAddOutcome {
         outcome,
         created: true,
-        optimized: optimized.optimized,
+        optimized: optimized_flag,
     })
 }
 

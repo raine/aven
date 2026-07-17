@@ -93,21 +93,23 @@ aven restore APP-7KQ9
   `attachment get <attachment-id> --output <path>` to write bytes to a file.
   File output requires a local available blob and refuses to overwrite an
   existing output path. `attachment add` accepts `--media-type`, `--filename`,
-  `--alt`, `--width`, and `--height`; extension inference covers png, jpg,
-  jpeg, gif, and webp.
+  and `--alt`. PNG, JPEG, GIF, and WebP formats are detected from decoded
+  content, and Aven derives canonical media type and dimensions from the stored
+  bytes. An explicit `--media-type` must match the detected format.
 - Task detail read surfaces include ordered attachment metadata and `has_blob`
   without embedding bytes. The TUI renders live attachments after the description
-  in a dedicated section, using text placeholders when previews or local bytes
-  are unavailable. Search matches attachment filename and alt text, not hashes,
-  sidecar paths, or bytes.
+  in a dedicated section and uses bounded, device-local previews when the terminal
+  backend supports them. Pending downloads, unavailable local bytes, and disabled
+  previews use text placeholders. Search matches attachment filename and alt text,
+  not hashes, sidecar paths, or bytes.
 - `aven backup` writes one archive containing SQLite data and local attachment
   objects. `aven backup restore <path> --yes` restores that archive and keeps a
   SQLite safety copy. `aven export` writes attachment metadata and blob
   inventory without bytes, and `aven import --yes <path>` imports that metadata
   with blob inventory marked unavailable.
-- `aven doctor --integrity` checks SQLite relationships and attachment sidecar
-  consistency, including missing objects, dangling metadata, unsupported media
-  types, and orphan objects.
+- `aven doctor` checks attachment metadata and local object presence.
+  `aven doctor --integrity` also decodes original images and compares their
+  format and dimensions with stored metadata.
 - Task descriptions remain scalar user-authored Markdown text. Attachment adds
   and deletes change attachment metadata without changing the description.
 - When creating follow-up tasks from a discussion, investigation, review, or

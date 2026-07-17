@@ -17,6 +17,8 @@ const BACKUP_VERSION: i64 = 1;
 const DATABASE_ENTRY: &str = "database.sqlite";
 const MANIFEST_ENTRY: &str = "manifest.json";
 
+type AttachmentImageMetadataRow = (String, i64, String, Option<i64>, Option<i64>);
+
 #[derive(Debug, Serialize, Deserialize)]
 struct BackupManifest {
     format: String,
@@ -70,7 +72,7 @@ pub(super) async fn create_backup_archive(
         }
         let bytes =
             fs::read(&source).with_context(|| format!("could not read {}", source.display()))?;
-        validate_object_bytes(&row.sha256, row.byte_size, &bytes)?;
+        validate_object_bytes(&row.sha256, row.byte_size, &row.media_type, &bytes).await?;
         fs::write(objects_dir.join(&row.sha256), &bytes)
             .with_context(|| format!("could not stage blob {}", row.sha256))?;
         objects.push(BackupObjectManifest {
@@ -136,8 +138,9 @@ pub(super) async fn restore_backup_archive(
             .join(&object.sha256);
         let bytes =
             fs::read(&path).with_context(|| format!("could not read {}", path.display()))?;
-        validate_object_bytes(&object.sha256, object.byte_size, &bytes)?;
+        validate_object_bytes(&object.sha256, object.byte_size, &object.media_type, &bytes).await?;
     }
+    validate_archive_attachment_metadata(&database_path, staging.path(), &manifest).await?;
 
     let safety = db::default_sqlite_backup_path(db_path, "before-restore")?;
     db::backup_database(db_path, &safety)?;
@@ -156,7 +159,13 @@ pub(super) async fn restore_backup_archive(
         if target.exists() {
             let existing = fs::read(&target)
                 .with_context(|| format!("could not read {}", target.display()))?;
-            validate_object_bytes(&object.sha256, object.byte_size, &existing)?;
+            validate_object_bytes(
+                &object.sha256,
+                object.byte_size,
+                &object.media_type,
+                &existing,
+            )
+            .await?;
             continue;
         }
         if let Some(parent) = target.parent() {
@@ -232,7 +241,27 @@ fn validate_manifest(manifest: &BackupManifest) -> Result<()> {
     Ok(())
 }
 
-fn validate_object_bytes(sha256: &str, byte_size: i64, bytes: &[u8]) -> Result<()> {
+async fn validate_object_bytes(
+    sha256: &str,
+    byte_size: i64,
+    media_type: &str,
+    bytes: &[u8],
+) -> Result<crate::attachments::decode::ImageFacts> {
+    let sha256 = sha256.to_string();
+    let media_type = media_type.to_string();
+    let bytes = bytes.to_vec();
+    crate::attachments::blocking::run(move || {
+        validate_object_bytes_blocking(&sha256, byte_size, &media_type, &bytes)
+    })
+    .await
+}
+
+fn validate_object_bytes_blocking(
+    sha256: &str,
+    byte_size: i64,
+    media_type: &str,
+    bytes: &[u8],
+) -> Result<crate::attachments::decode::ImageFacts> {
     let actual_size = i64::try_from(bytes.len()).context("blob size exceeds i64")?;
     if actual_size != byte_size {
         bail!("error backup-blob-size-mismatch sha256={sha256}");
@@ -240,6 +269,48 @@ fn validate_object_bytes(sha256: &str, byte_size: i64, bytes: &[u8]) -> Result<(
     let actual_sha = sha256_hex(bytes);
     if actual_sha != sha256 {
         bail!("error backup-blob-hash-mismatch sha256={sha256}");
+    }
+    let validated =
+        crate::attachments::decode::validate_image_blocking(bytes.to_vec(), Some(media_type))
+            .context("error backup-blob-image-invalid")?;
+    Ok(validated.facts)
+}
+
+async fn validate_archive_attachment_metadata(
+    database_path: &Path,
+    staging: &Path,
+    manifest: &BackupManifest,
+) -> Result<()> {
+    let mut conn = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(database_path)
+            .read_only(true)
+            .foreign_keys(true),
+    )
+    .await?;
+    let rows: Vec<AttachmentImageMetadataRow> = sqlx::query_as(
+        "SELECT DISTINCT ta.sha256, ta.byte_size, ta.media_type, ta.width, ta.height
+         FROM task_attachments ta
+         JOIN blob_inventory bi ON bi.sha256 = ta.sha256
+         WHERE bi.available = 1",
+    )
+    .fetch_all(&mut conn)
+    .await?;
+    for (sha256, byte_size, media_type, width, height) in rows {
+        let object = manifest
+            .objects
+            .iter()
+            .find(|object| object.sha256 == sha256)
+            .ok_or_else(|| anyhow::anyhow!("error backup-attachment-object-missing"))?;
+        if object.byte_size != byte_size || object.media_type != media_type {
+            bail!("error backup-attachment-metadata-mismatch sha256={sha256}");
+        }
+        let path = staging.join("objects").join("sha256").join(&sha256);
+        let bytes = fs::read(path)?;
+        let facts = validate_object_bytes(&sha256, byte_size, &media_type, &bytes).await?;
+        if (width, height) != (Some(facts.width), Some(facts.height)) {
+            bail!("error backup-attachment-dimensions-mismatch sha256={sha256}");
+        }
     }
     Ok(())
 }

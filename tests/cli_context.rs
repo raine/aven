@@ -2,6 +2,7 @@ mod common;
 
 use common::{
     TestEnv, TestServer, contains_all, contains_none, extract_attachment_id, extract_ref, ok,
+    png_bytes,
 };
 use serde_json::Value;
 
@@ -91,7 +92,7 @@ fn context_includes_attachment_metadata() {
     let created = ok(env.aven(&db, ["add", "context attach", "--project", "app"]));
     let task_ref = extract_ref(&created);
     let image = env.path("photo.png");
-    std::fs::write(&image, b"png bytes").unwrap();
+    std::fs::write(&image, png_bytes(3, 2)).unwrap();
     let added = ok(env.aven(
         &db,
         [
@@ -115,7 +116,7 @@ fn context_includes_attachment_metadata() {
             "alt_text=\"diagram\"",
         ],
     );
-    contains_none(&text, &["sha256=", "png bytes"]);
+    contains_none(&text, &["sha256="]);
 
     let json = ok(env.aven(&db, ["context", &task_ref, "--json"]));
     let value: Value = serde_json::from_str(&json).unwrap();

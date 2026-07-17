@@ -373,7 +373,7 @@ pub(crate) async fn cmd_doctor(
     if integrity {
         let integrity_report = database_integrity_report(conn).await?;
         let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
-        let attachment_checks = attachment_integrity_checks(conn, &blob_dir).await?;
+        let attachment_checks = attachment_integrity_checks(conn, &blob_dir, true).await?;
         let integrity_section = report.section("Integrity");
         integrity_section.check(
             "quick check",

@@ -391,6 +391,19 @@ async fn upload_blob(
     if row.byte_size != i64::try_from(bytes.len()).context("attachment bytes exceed i64")? {
         bail!("error attachment-blob-local-invalid");
     }
+    let validated =
+        crate::attachments::decode::validate_image(bytes.clone(), Some(row.media_type.clone()))
+            .await?;
+    let dimensions: Option<(Option<i64>, Option<i64>)> =
+        sqlx::query_as("SELECT width, height FROM task_attachments WHERE sha256 = ? LIMIT 1")
+            .bind(sha256)
+            .fetch_optional(&mut *conn)
+            .await?;
+    if dimensions.is_some_and(|dimensions| {
+        dimensions != (Some(validated.facts.width), Some(validated.facts.height))
+    }) {
+        bail!("error attachment-blob-local-invalid");
+    }
     let mut request = client
         .inner
         .put(format!(
@@ -412,6 +425,8 @@ struct MissingLocalBlob {
     sha256: String,
     byte_size: i64,
     media_type: String,
+    width: Option<i64>,
+    height: Option<i64>,
 }
 
 async fn download_missing_local_blobs(
@@ -436,7 +451,7 @@ async fn missing_local_blobs(
 ) -> Result<Vec<MissingLocalBlob>> {
     let mut missing = Vec::new();
     let rows = sqlx::query(
-        "SELECT DISTINCT ta.sha256, ta.byte_size, ta.media_type
+        "SELECT DISTINCT ta.sha256, ta.byte_size, ta.media_type, ta.width, ta.height
          FROM task_attachments ta
          LEFT JOIN blob_inventory bi ON bi.sha256 = ta.sha256
          WHERE ta.deleted = 0 AND COALESCE(bi.available, 0) = 0
@@ -453,13 +468,15 @@ async fn missing_local_blobs(
                 sha256,
                 byte_size: row.get("byte_size"),
                 media_type: row.get("media_type"),
+                width: row.get("width"),
+                height: row.get("height"),
             });
         }
     }
     if missing.len() < MAX_BLOB_TRANSFER_BATCH {
         let remaining = MAX_BLOB_TRANSFER_BATCH - missing.len();
         let rows = sqlx::query(
-            "SELECT DISTINCT ta.sha256, ta.byte_size, ta.media_type
+            "SELECT DISTINCT ta.sha256, ta.byte_size, ta.media_type, ta.width, ta.height
              FROM task_attachments ta
              JOIN blob_inventory bi ON bi.sha256 = ta.sha256
              WHERE ta.deleted = 0 AND bi.available = 1
@@ -479,6 +496,8 @@ async fn missing_local_blobs(
                     sha256,
                     byte_size: row.get("byte_size"),
                     media_type: row.get("media_type"),
+                    width: row.get("width"),
+                    height: row.get("height"),
                 });
             }
         }
@@ -509,7 +528,14 @@ async fn download_blob(
     if blob.byte_size != i64::try_from(bytes.len()).context("attachment bytes exceed i64")? {
         bail!("error attachment-blob-remote-invalid");
     }
-    crate::attachments::store_blob(conn, blob_dir, &blob.media_type, &bytes).await?;
+    let validated =
+        crate::attachments::decode::validate_image(bytes.to_vec(), Some(blob.media_type.clone()))
+            .await
+            .context("error attachment-blob-remote-invalid")?;
+    if (blob.width, blob.height) != (Some(validated.facts.width), Some(validated.facts.height)) {
+        bail!("error attachment-blob-remote-invalid");
+    }
+    crate::attachments::storage::store_validated_blob(conn, blob_dir, validated).await?;
     Ok(())
 }
 

@@ -804,15 +804,9 @@ pub(crate) struct AttachmentAddArgs {
     /// Override the filename stored in metadata
     #[arg(long)]
     pub(crate) filename: Option<String>,
-    /// Media type (default: inferred from extension)
+    /// Declared media type, checked against the image bytes
     #[arg(long = "media-type")]
     pub(crate) media_type: Option<String>,
-    /// Image width in pixels
-    #[arg(long)]
-    pub(crate) width: Option<i64>,
-    /// Image height in pixels
-    #[arg(long)]
-    pub(crate) height: Option<i64>,
     /// Optimize supported image formats before storing bytes
     #[arg(long, conflicts_with = "no_optimize")]
     pub(crate) optimize: bool,

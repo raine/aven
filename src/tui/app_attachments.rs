@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
 use crate::attachments::optimization::ImageOptimizationPolicy;
 use crate::config::resolve_blob_dir;
@@ -10,14 +10,6 @@ use crate::tui::app::App;
 use crate::tui::authoring::PendingTaskAttachment;
 use crate::tui::overlay::{MultilineInputState, OverlayRoute, OverlayState};
 use crate::tui::platform::{ClipboardImage, read_clipboard_image, read_clipboard_text};
-
-const IMAGE_EXTENSIONS: &[(&str, &str)] = &[
-    ("png", "image/png"),
-    ("jpg", "image/jpeg"),
-    ("jpeg", "image/jpeg"),
-    ("gif", "image/gif"),
-    ("webp", "image/webp"),
-];
 
 impl App {
     pub(super) async fn paste_detail_image_from_clipboard(&mut self) -> Result<()> {
@@ -46,14 +38,13 @@ impl App {
         let Some(path) = pasted_image_path(text) else {
             return Ok(false);
         };
-        let media_type = infer_image_media_type(&path)?;
         let bytes = std::fs::read(&path)?;
         let filename = path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("pasted-image")
             .to_string();
-        self.attach_image_bytes(filename, media_type, bytes).await?;
+        self.attach_image_bytes(filename, bytes).await?;
         Ok(true)
     }
 
@@ -63,9 +54,7 @@ impl App {
             return Ok(());
         }
         match read_clipboard_image()? {
-            Some(image) => {
-                self.attach_add_task_image_bytes(image.filename, image.media_type, image.bytes)?
-            }
+            Some(image) => self.attach_add_task_image_bytes(image.filename, image.bytes)?,
             None => {
                 if let Some(text) = read_clipboard_text()?
                     && self.paste_add_task_image_from_text(&text)?
@@ -85,14 +74,13 @@ impl App {
         let Some(path) = pasted_image_path(text) else {
             return Ok(false);
         };
-        let media_type = infer_image_media_type(&path)?;
         let bytes = std::fs::read(&path)?;
         let filename = path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("pasted-image")
             .to_string();
-        self.attach_add_task_image_bytes(filename, media_type, bytes)?;
+        self.attach_add_task_image_bytes(filename, bytes)?;
         Ok(true)
     }
 
@@ -108,20 +96,13 @@ impl App {
             && self.footer_choice_mode.is_none()
     }
 
-    fn attach_add_task_image_bytes(
-        &mut self,
-        filename: String,
-        media_type: String,
-        bytes: Vec<u8>,
-    ) -> Result<()> {
+    fn attach_add_task_image_bytes(&mut self, filename: String, bytes: Vec<u8>) -> Result<()> {
         let pending = PendingTaskAttachment::new(
             new_id(),
             AttachmentAddInput {
                 filename: Some(filename),
                 alt_text: Some("pasted image".to_string()),
-                media_type,
-                width: None,
-                height: None,
+                declared_media_type: None,
                 bytes,
                 optimization_policy: if self
                     .intake
@@ -156,16 +137,10 @@ impl App {
     }
 
     async fn attach_clipboard_image(&mut self, image: ClipboardImage) -> Result<()> {
-        self.attach_image_bytes(image.filename, image.media_type, image.bytes)
-            .await
+        self.attach_image_bytes(image.filename, image.bytes).await
     }
 
-    async fn attach_image_bytes(
-        &mut self,
-        filename: String,
-        media_type: String,
-        bytes: Vec<u8>,
-    ) -> Result<()> {
+    async fn attach_image_bytes(&mut self, filename: String, bytes: Vec<u8>) -> Result<()> {
         let db_path = self
             .intake
             .db_path()
@@ -190,9 +165,7 @@ impl App {
                 AttachmentAddInput {
                     filename: Some(filename),
                     alt_text: Some("pasted image".to_string()),
-                    media_type,
-                    width: None,
-                    height: None,
+                    declared_media_type: None,
                     bytes,
                     optimization_policy,
                     dedupe_existing: true,
@@ -211,22 +184,6 @@ impl App {
     }
 }
 
-fn infer_image_media_type(path: &Path) -> Result<String> {
-    let ext = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(str::to_ascii_lowercase);
-    let Some(ext) = ext else {
-        bail!("unsupported image type");
-    };
-    for (key, mime) in IMAGE_EXTENSIONS {
-        if *key == ext {
-            return Ok((*mime).to_string());
-        }
-    }
-    bail!("unsupported image type")
-}
-
 fn pasted_image_path(text: &str) -> Option<PathBuf> {
     let trimmed = text.trim();
     if trimmed.is_empty() || trimmed.lines().count() != 1 {
@@ -238,7 +195,7 @@ fn pasted_image_path(text: &str) -> Option<PathBuf> {
         .trim_matches('"')
         .trim_matches('\'');
     let path = PathBuf::from(trimmed);
-    if !path.is_file() || infer_image_media_type(&path).is_err() {
+    if !path.is_file() {
         return None;
     }
     Some(path)

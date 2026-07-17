@@ -92,7 +92,7 @@ impl App {
             if needs_redraw {
                 let view = self.view();
                 terminal.draw(|frame| ui::render(frame, &self.store, &mut self.widgets, &view))?;
-                let _ = self.render_inline_images_after_draw();
+                let _ = self.render_inline_images_after_draw().await;
                 needs_redraw = false;
             }
 
@@ -130,7 +130,7 @@ impl App {
         Ok(())
     }
 
-    fn render_inline_images_after_draw(&mut self) -> Result<()> {
+    async fn render_inline_images_after_draw(&mut self) -> Result<()> {
         let backend = active_backend_from_env(self.intake.config().local.inline_images);
         if backend == InlineImageBackend::None || self.widgets.inline_image_placements.is_empty() {
             self.erase_previous_inline_images()?;
@@ -145,14 +145,26 @@ impl App {
             .collect::<Vec<_>>();
         self.erase_inline_image_placements(&stale, backend)?;
 
+        let blob_dir = self
+            .intake
+            .db_path()
+            .map(|db_path| resolve_blob_dir(db_path, self.intake.config()))
+            .transpose()?
+            .ok_or_else(|| anyhow::anyhow!("database path is not available"))?;
         let mut stdout = std::io::stdout();
         for placement in current
             .iter()
             .filter(|placement| !self.previous_inline_image_placements.contains(placement))
         {
+            let source_hash = placement
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| anyhow::anyhow!("attachment object path has no hash"))?;
+            let preview =
+                crate::attachments::preview::ensure_preview(&blob_dir, source_hash).await?;
             queue!(stdout, MoveTo(placement.x, placement.y))?;
-            let escape =
-                inline_image_escape(&placement.path, placement.width, placement.height, backend)?;
+            let escape = inline_image_escape(&preview, placement.width, placement.height, backend)?;
             write!(stdout, "{escape}")?;
         }
         stdout.flush()?;

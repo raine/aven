@@ -3,7 +3,7 @@ mod common;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use common::{TestEnv, contains_all, contains_none, extract_ref, meta_value, ok};
+use common::{TestEnv, contains_all, contains_none, extract_ref, meta_value, ok, png_bytes};
 use sqlx::ConnectOptions;
 use sqlx::sqlite::SqliteConnectOptions;
 
@@ -395,7 +395,7 @@ fn doctor_with_integrity_reports_attachment_sidecar_issues() {
         env.aven(&db, ["add", "attachment check", "--project", "app"])
     ));
     let image = env.path("photo.png");
-    fs::write(&image, b"doctor png bytes").unwrap();
+    fs::write(&image, png_bytes(3, 2)).unwrap();
     ok(env.aven(
         &db,
         ["attachment", "add", &task_ref, image.to_str().unwrap()],
