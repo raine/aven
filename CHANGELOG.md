@@ -3,6 +3,13 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.12 (2026-07-17)
+
+- Search results and task details mark epics consistently, and child task
+  details show their parent epic for clearer context.
+- Navigate epic children from task details with `Tab`, `j`/`k` or the arrow
+  keys, and `Enter`.
+
 ## v0.1.11 (2026-07-16)
 
 - Due dates use compact labels in the task list so deadlines fit cleanly in the
