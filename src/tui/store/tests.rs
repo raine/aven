@@ -1413,7 +1413,10 @@ mod views_filters_and_sort {
     #[tokio::test]
     async fn search_view_preview_returns_rendered_fields_without_full_hydration() {
         let mut store = test_store().await;
-        let task_id = create_search_task(&mut store, "Preview needle").await;
+        let mut draft = task_draft("Preview needle");
+        draft.is_epic = true;
+        let (_, selected) = store.create_task(draft, None).await.unwrap();
+        let task_id = store.tasks[selected.unwrap()].task.id.clone();
         let index = store
             .tasks
             .iter()
@@ -1444,6 +1447,7 @@ mod views_filters_and_sort {
         );
         assert!(!result.created_at.is_empty());
         assert!(!result.deleted);
+        assert!(result.is_epic);
     }
 
     #[tokio::test]

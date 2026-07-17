@@ -241,6 +241,7 @@ impl App {
                 snippet: result.snippet,
                 score: result.score,
                 deleted: result.deleted,
+                is_epic: result.is_epic,
             })
             .collect();
         state.normalize_selection();

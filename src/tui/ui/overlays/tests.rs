@@ -195,6 +195,7 @@ fn search_result_item(title: &str) -> SearchResultItem {
         snippet: None,
         score: 100,
         deleted: false,
+        is_epic: false,
     }
 }
 
@@ -308,6 +309,24 @@ mod text_panel_and_search {
         assert!(rendered.contains("Search for the task that blocks this task"));
         assert!(rendered.contains("Enter add selected as blocker"));
         assert!(!rendered.contains("Tab open results"));
+    }
+
+    #[test]
+    fn search_overlay_marks_epic_results_with_star() {
+        let mut result = search_result_item("Query result");
+        result.is_epic = true;
+        let rendered = render_overlay_view(OverlayView::Search {
+            input: "query".to_string(),
+            cursor: 5,
+            results: vec![result],
+            selected: 0,
+            total_matches: 1,
+            stale: false,
+            no_matches_cached: false,
+            purpose: SearchPurpose::Navigate,
+        });
+
+        assert!(rendered.contains(crate::tui::ui::task_list::EPIC_MARKER));
     }
 
     #[test]

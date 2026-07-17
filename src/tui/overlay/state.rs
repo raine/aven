@@ -53,6 +53,7 @@ pub(crate) struct SearchResultItem {
     pub(crate) snippet: Option<String>,
     pub(crate) score: i64,
     pub(crate) deleted: bool,
+    pub(crate) is_epic: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

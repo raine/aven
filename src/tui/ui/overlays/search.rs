@@ -7,6 +7,7 @@ use ratatui::widgets::Paragraph;
 use super::super::dialog::Dialog;
 use super::super::input::{cursor_cell, input_line};
 use super::super::task_display::labels_display;
+use super::super::task_list::EPIC_MARKER;
 use super::super::truncate::truncate_chars;
 use crate::query::SearchMatchedField;
 use crate::queue::{now_seconds, unix_seconds};
@@ -200,13 +201,23 @@ fn result_line(
     let style = row_style(selected, stale);
     let marker = if selected { "▸" } else { " " };
     let ref_width = 10;
-    let title_width = width.saturating_sub(ref_width + 4).max(8);
+    let epic_marker_width = usize::from(result.is_epic) * 2;
+    let title_width = width
+        .saturating_sub(ref_width + 4 + epic_marker_width)
+        .max(8);
     let title = truncate_chars(&result.title, title_width);
-    let used_width = 2 + ref_width + 1 + title.chars().count();
+    let used_width = 2 + ref_width + 1 + title.chars().count() + epic_marker_width;
     let mut spans = vec![Span::styled(format!("{marker} "), style)];
     spans.extend(result_ref_spans(result, ref_width, style));
     spans.push(Span::styled(" ", style));
     spans.extend(title_spans(&title, input, result.matched_field, style));
+    if result.is_epic {
+        spans.push(Span::styled(" ", style));
+        spans.push(Span::styled(
+            EPIC_MARKER,
+            style.fg(theme::YELLOW).remove_modifier(Modifier::BOLD),
+        ));
+    }
     spans.push(Span::styled(
         " ".repeat(width.saturating_sub(used_width)),
         style,
