@@ -2,11 +2,12 @@ use anyhow::Result;
 
 use crate::labels::normalize_label;
 use crate::operations::TaskDraft;
-use crate::tui::app::{App, NaturalRetry, Notification, PendingTaskIntake, ReadyTaskIntake};
+use crate::tui::app::{App, Notification};
+use crate::tui::app_intake::{IntakeCompletion, IntakePoll, NaturalRetry};
 use crate::tui::authoring::{
     ADD_NOTE_TITLE, ADD_TASK_LABELS_TITLE, ADD_TASK_TITLE_PROJECT_TITLE, AddNoteSubmit, AddTaskStep,
 };
-use crate::tui::natural_add_runtime::{spawn_add_task_only_natural, task_intake_log_path};
+use crate::tui::natural_add_runtime::task_intake_log_path;
 use crate::tui::overlay::{
     AddTaskMode, AddTaskState, LineEdit, MultilineInputState, OverlayRoute, OverlayState,
     PickerState,
@@ -258,7 +259,7 @@ impl App {
         description: String,
     ) -> Result<()> {
         let value = add_task_natural_intake(&title, &description);
-        if self.add_task_only {
+        if self.intake.view().add_task_only {
             self.submit_add_task_only_natural(value, NaturalRetry::AddTask)
                 .await
         } else {
@@ -279,20 +280,19 @@ impl App {
             return Ok(());
         }
         let project = self.add_task_project_context();
-        spawn_add_task_only_natural(
+        self.intake.start_detached(
             raw,
             &self.store.active_workspace.id,
-            self.add_task_db_path.as_deref(),
             project.as_deref(),
             false,
         )?;
-        self.add_task_only_message = Some("adding task in background".to_string());
+        self.intake.set_message("adding task in background");
         self.should_quit = true;
         Ok(())
     }
 
     pub(super) async fn submit_add_task_natural(&mut self, value: String) -> Result<()> {
-        if self.add_task_only {
+        if self.intake.view().add_task_only {
             self.submit_add_task_only_natural(value, NaturalRetry::Dialog)
                 .await
         } else {
@@ -315,10 +315,9 @@ impl App {
         }
         let project = self.add_task_project_context();
         if create_on_success {
-            spawn_add_task_only_natural(
+            self.intake.start_detached(
                 raw,
                 &self.store.active_workspace.id,
-                self.add_task_db_path.as_deref(),
                 project.as_deref(),
                 true,
             )?;
@@ -326,48 +325,36 @@ impl App {
             self.set_info("adding task in background");
             return Ok(());
         }
-        let handle = self.store.spawn_task_intake(
-            self.add_task_config.agent.task_intake.clone(),
+        self.notification = Some(Notification::loading("parsing task with LLM"));
+        self.intake.start(
+            &self.store,
             raw.to_string(),
             project,
-        );
-        self.notification = Some(Notification::loading("parsing task with LLM"));
-        self.pending_task_intake = Some(PendingTaskIntake {
-            handle,
             retry,
-            value: value.clone(),
+            value.clone(),
             create_on_success,
-        });
+        );
         self.retry_add_task_natural(value, retry);
         Ok(())
     }
 
     pub(super) async fn poll_pending_task_intake(&mut self) -> Result<bool> {
-        if let Some(ready) = self.ready_task_intake.take() {
-            self.finish_ready_task_intake(ready).await?;
-            return Ok(true);
+        match self.intake.poll().await? {
+            IntakePoll::Unchanged => Ok(false),
+            IntakePoll::Ready { failed } => {
+                if failed {
+                    self.set_error("task intake failed");
+                }
+                Ok(true)
+            }
+            IntakePoll::Completed(completion) => {
+                self.finish_ready_task_intake(*completion).await?;
+                Ok(true)
+            }
         }
-
-        let Some(pending) = self
-            .pending_task_intake
-            .take_if(|pending| pending.handle.is_finished())
-        else {
-            return Ok(false);
-        };
-        let ready = ReadyTaskIntake {
-            outcome: pending.handle.await?,
-            retry: pending.retry,
-            value: pending.value,
-            create_on_success: pending.create_on_success,
-        };
-        if ready.outcome.is_err() {
-            self.set_error("task intake failed");
-        }
-        self.ready_task_intake = Some(ready);
-        Ok(true)
     }
 
-    async fn finish_ready_task_intake(&mut self, ready: ReadyTaskIntake) -> Result<()> {
+    async fn finish_ready_task_intake(&mut self, ready: IntakeCompletion) -> Result<()> {
         match ready.outcome {
             Ok(draft) if ready.create_on_success => {
                 self.submit_created_task(draft).await?;
@@ -418,8 +405,8 @@ impl App {
             self.restore_selection_after_mutation();
         }
         self.set_success(message.clone());
-        if self.add_task_only {
-            self.add_task_only_message = Some(message);
+        if self.intake.view().add_task_only {
+            self.intake.set_message(message);
             self.should_quit = true;
         }
         Ok(())
@@ -454,6 +441,7 @@ impl App {
 
     pub(super) fn cancel_authoring_overlay(&mut self) {
         self.pending_shortcut.clear();
+        self.intake.cancel();
         let return_to_detail = self.authoring.cancel() || self.detail_context;
         self.overlay = None;
         self.conflict_flow.clear();

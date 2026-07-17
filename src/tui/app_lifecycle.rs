@@ -37,13 +37,12 @@ impl App {
         natural: bool,
         config: AppConfig,
     ) -> Result<Option<String>> {
-        self.add_task_only = true;
-        self.add_task_config = config;
+        self.intake.enter_add_task_only(config);
         self.open_add_task_on_start(natural).await?;
         execute!(std::io::stdout(), EnableBracketedPaste)?;
         let result = self.run_loop(terminal).await;
         execute!(std::io::stdout(), DisableBracketedPaste)?;
-        result.map(|()| self.add_task_only_message)
+        result.map(|()| self.intake.take_message())
     }
 
     pub(crate) async fn open_add_task_on_start(&mut self, natural: bool) -> Result<()> {
@@ -166,7 +165,7 @@ impl App {
             footer_choice_mode: self.footer_choice_mode,
             sidebar_visible: self.sidebar_visible,
             update_badge: self.update.badge(),
-            surface: if self.add_task_only {
+            surface: if self.intake.view().add_task_only {
                 ViewSurface::AddTask
             } else {
                 ViewSurface::Main
@@ -289,8 +288,7 @@ impl App {
             None => {}
         }
 
-        if self.pending_task_intake.is_some()
-            || self.ready_task_intake.is_some()
+        if self.intake.work_pending()
             || self.search_preview_work_pending()
             || self.update.work_pending()
         {

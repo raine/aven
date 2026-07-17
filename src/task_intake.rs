@@ -163,6 +163,7 @@ pub(crate) async fn run_task_intake_command(
         .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .with_context(|| format!("could not start task intake command {command}"))?;
     if !prompt_arg {
@@ -351,5 +352,66 @@ mod tests {
             extract_json("```json\n{\"title\":\"x\"}\n```").unwrap(),
             "{\"title\":\"x\"}"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn aborting_task_intake_terminates_command() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("intake.sh");
+        let pid_file = dir.path().join("pid");
+        std::fs::write(&script, "#!/bin/sh\nprintf '%s' $$ > \"$1\"\nsleep 30\n").unwrap();
+        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&script, permissions).unwrap();
+
+        let config = TaskIntakeConfig {
+            command: Some(script.display().to_string()),
+            args: vec![pid_file.display().to_string()],
+            timeout_seconds: Some(30),
+            system_prompt: None,
+        };
+        let context = TaskIntakeContext {
+            workspace_id: Workspace::default().id,
+            inferred_project: None,
+            projects: Vec::new(),
+            labels: Vec::new(),
+        };
+        let worker =
+            tokio::spawn(
+                async move { run_task_intake_command(&config, &context, "pending").await },
+            );
+
+        let pid = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(pid) = std::fs::read_to_string(&pid_file) {
+                    break pid;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("task intake command should start");
+        worker.abort();
+        let _ = worker.await;
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let running = std::process::Command::new("kill")
+                    .args(["-0", pid.trim()])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .is_ok_and(|status| status.success());
+                if !running {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("aborted task intake command should terminate");
     }
 }

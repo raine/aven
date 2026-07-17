@@ -7,6 +7,7 @@ use crate::tui::app_edit::{
     EDIT_PROJECT_TITLE, EDIT_TITLE_TITLE,
 };
 use crate::tui::app_filters::{SCOPE_PROJECT_TITLE, SWITCH_WORKSPACE_TITLE};
+use crate::tui::app_intake::{IntakeWorkView, NaturalRetry};
 use crate::tui::app_projects::{DELETE_PROJECT_TITLE, DELETE_TASK_TITLE};
 use crate::tui::app_search::SearchControllerView;
 use crate::tui::authoring::{ADD_NOTE_TITLE, AddTaskStep};
@@ -2875,7 +2876,7 @@ mod authoring {
     #[tokio::test]
     async fn add_task_labels_escape_returns_to_add_task_only_dialog() {
         let mut app = test_app().await;
-        app.add_task_only = true;
+        app.intake.enter_add_task_only(AppConfig::default());
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
         app.handle_overlay_key(ctrl_l()).await.unwrap();
@@ -2902,7 +2903,7 @@ mod authoring {
     #[tokio::test]
     async fn add_task_only_view_uses_popup_surface() {
         let mut app = test_app().await;
-        app.add_task_only = true;
+        app.intake.enter_add_task_only(AppConfig::default());
         app.begin_add_task().await.unwrap();
 
         let view = app.view();
@@ -2914,7 +2915,7 @@ mod authoring {
     async fn add_task_only_render_skips_normal_tui() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Existing queue task")).await;
-        app.add_task_only = true;
+        app.intake.enter_add_task_only(AppConfig::default());
         app.begin_add_task().await.unwrap();
 
         let rendered = render_app_text(&mut app, 50, 12);
@@ -2928,7 +2929,7 @@ mod authoring {
     #[tokio::test]
     async fn add_task_only_natural_render_uses_popup_surface() {
         let mut app = test_app().await;
-        app.add_task_only = true;
+        app.intake.enter_add_task_only(AppConfig::default());
         app.begin_add_task().await.unwrap();
         app.begin_add_task_natural();
 
@@ -3028,7 +3029,7 @@ mod authoring {
     #[tokio::test]
     async fn add_task_picker_escape_returns_to_add_task_only_dialog() {
         let mut app = test_app().await;
-        app.add_task_only = true;
+        app.intake.enter_add_task_only(AppConfig::default());
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
         app.handle_overlay_key(ctrl_p()).await.unwrap();
@@ -3312,16 +3313,30 @@ mod authoring {
             Ok(test_task_draft("pending task"))
         });
         app.notification = Some(Notification::loading("adding task with LLM"));
-        app.pending_task_intake = Some(PendingTaskIntake {
+        app.intake.start_handle(
             handle,
-            retry: NaturalRetry::AddTask,
-            value: "pending task".to_string(),
-            create_on_success: true,
-        });
+            NaturalRetry::AddTask,
+            "pending task".to_string(),
+            true,
+        );
 
         assert!(!app.poll_pending_task_intake().await.unwrap());
-        let pending = app.pending_task_intake.take().unwrap();
-        pending.handle.abort();
+        app.intake.cancel();
+    }
+
+    #[tokio::test]
+    async fn canceling_authoring_aborts_pending_task_intake() {
+        let mut app = test_app().await;
+        app.intake.start_handle(
+            tokio::spawn(async { std::future::pending::<Result<TaskDraft>>().await }),
+            NaturalRetry::Dialog,
+            "pending task".to_string(),
+            false,
+        );
+
+        app.cancel_authoring_overlay();
+
+        assert!(!app.intake.work_pending());
     }
 
     #[tokio::test]
@@ -3329,36 +3344,28 @@ mod authoring {
         let mut app = test_app().await;
         let handle = tokio::spawn(async { Ok(test_task_draft("ready task")) });
         app.notification = Some(Notification::loading("adding task with LLM"));
-        app.pending_task_intake = Some(PendingTaskIntake {
+        app.intake.start_handle(
             handle,
-            retry: NaturalRetry::AddTask,
-            value: "ready task".to_string(),
-            create_on_success: true,
-        });
+            NaturalRetry::AddTask,
+            "ready task".to_string(),
+            true,
+        );
 
         for _ in 0..100 {
-            if app
-                .pending_task_intake
-                .as_ref()
-                .unwrap()
-                .handle
-                .is_finished()
-            {
+            if app.poll_pending_task_intake().await.unwrap() {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
 
-        assert!(app.poll_pending_task_intake().await.unwrap());
-        assert!(app.pending_task_intake.is_none());
-        assert!(app.ready_task_intake.is_some());
+        assert_eq!(app.intake.view().work, IntakeWorkView::Ready);
         assert!(matches!(
             app.notification.as_ref(),
             Some(Notification::Loading { message, .. }) if message == "adding task with LLM"
         ));
 
         assert!(app.poll_pending_task_intake().await.unwrap());
-        assert!(app.ready_task_intake.is_none());
+        assert_eq!(app.intake.view().work, IntakeWorkView::Idle);
         assert!(toast_message(&app).is_some_and(|message| message.starts_with("created task ")));
     }
 
@@ -3370,7 +3377,7 @@ mod authoring {
         type_chars(&mut app, "in slack-agent fix dispatch").await;
         app.handle_overlay_key(ctrl_n()).await.unwrap();
 
-        assert!(app.pending_task_intake.is_none());
+        assert!(!app.intake.work_pending());
         assert!(app.overlay.is_none());
         assert!(
             toast_message(&app).is_some_and(|message| { message == "adding task in background" })
@@ -3387,7 +3394,7 @@ mod authoring {
         type_chars(&mut app, "Include setup details").await;
         app.handle_overlay_key(ctrl_n()).await.unwrap();
 
-        assert!(app.pending_task_intake.is_none());
+        assert!(!app.intake.work_pending());
         assert!(app.overlay.is_none());
         assert!(
             toast_message(&app).is_some_and(|message| { message == "adding task in background" })
@@ -3397,25 +3404,22 @@ mod authoring {
     #[tokio::test]
     async fn add_task_only_ctrl_n_exits_immediately() {
         let mut app = test_app().await;
-        app.add_task_only = true;
+        app.intake.enter_add_task_only(AppConfig::default());
 
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "add from popup").await;
         app.handle_overlay_key(ctrl_n()).await.unwrap();
 
         assert!(app.should_quit);
-        assert!(app.pending_task_intake.is_none());
+        assert!(!app.intake.work_pending());
         assert!(app.overlay.is_none());
-        assert_eq!(
-            app.add_task_only_message.as_deref(),
-            Some("adding task in background")
-        );
+        assert_eq!(app.intake.view().message, Some("adding task in background"));
     }
 
     #[tokio::test]
     async fn add_task_only_natural_dialog_submit_exits_immediately() {
         let mut app = test_app().await;
-        app.add_task_only = true;
+        app.intake.enter_add_task_only(AppConfig::default());
 
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         app.begin_add_task_natural();
@@ -3423,12 +3427,9 @@ mod authoring {
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
         assert!(app.should_quit);
-        assert!(app.pending_task_intake.is_none());
+        assert!(!app.intake.work_pending());
         assert!(app.overlay.is_none());
-        assert_eq!(
-            app.add_task_only_message.as_deref(),
-            Some("adding task in background")
-        );
+        assert_eq!(app.intake.view().message, Some("adding task in background"));
     }
 
     #[tokio::test]
@@ -3469,9 +3470,11 @@ mod authoring {
         let command = dir.join(script_name);
         std::fs::write(&command, "#!/bin/sh\ncat >/dev/null\nexit 1\n").unwrap();
         set_executable(&command);
-        app.add_task_config.agent.task_intake.command = Some(command.display().to_string());
-        app.add_task_config.agent.task_intake.args = Vec::new();
-        app.add_task_config.agent.task_intake.timeout_seconds = Some(5);
+        let mut config = AppConfig::default();
+        config.agent.task_intake.command = Some(command.display().to_string());
+        config.agent.task_intake.args = Vec::new();
+        config.agent.task_intake.timeout_seconds = Some(5);
+        app.set_config(config);
     }
 
     #[cfg(unix)]

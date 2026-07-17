@@ -9,6 +9,7 @@ mod app_conflicts;
 mod app_dispatch;
 mod app_edit;
 mod app_filters;
+mod app_intake;
 mod app_lifecycle;
 mod app_navigation;
 mod app_overlay_submit;

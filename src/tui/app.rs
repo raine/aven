@@ -1,14 +1,12 @@
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use ratatui::widgets::{ListState, TableState};
 use sqlx::SqlitePool;
-use tokio::task::JoinHandle;
 
 use crate::config::AppConfig;
-use crate::operations::TaskDraft;
+use crate::tui::app_intake::IntakeController;
 use crate::tui::authoring::AuthoringState;
 use crate::tui::bounded_history::BoundedHistory;
 use crate::tui::conflict_flow::ConflictFlowState;
@@ -40,29 +38,9 @@ pub(super) enum TaskCopyKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum NaturalRetry {
-    AddTask,
-    Dialog,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Focus {
     Sidebar,
     Tasks,
-}
-
-pub(super) struct PendingTaskIntake {
-    pub(super) handle: JoinHandle<Result<TaskDraft>>,
-    pub(super) retry: NaturalRetry,
-    pub(super) value: String,
-    pub(super) create_on_success: bool,
-}
-
-pub(super) struct ReadyTaskIntake {
-    pub(super) outcome: Result<TaskDraft>,
-    pub(super) retry: NaturalRetry,
-    pub(super) value: String,
-    pub(super) create_on_success: bool,
 }
 
 pub(super) const SEARCH_PREVIEW_LIMIT: usize = 8;
@@ -139,7 +117,7 @@ pub(crate) struct App {
     pub(crate) store: TuiStore,
     pub(crate) should_quit: bool,
     pub(crate) focus: Focus,
-    pub(super) add_task_db_path: Option<PathBuf>,
+    pub(super) intake: IntakeController,
     pub(crate) widgets: WidgetState,
     pub(crate) overlay: Option<OverlayState>,
     pub(crate) notification: Option<Notification>,
@@ -154,11 +132,6 @@ pub(crate) struct App {
     pub(super) pending_rename_project: Option<String>,
     pub(super) pending_delete_project: Option<String>,
     pub(super) needs_terminal_clear: bool,
-    pub(super) add_task_only: bool,
-    pub(super) add_task_only_message: Option<String>,
-    pub(super) add_task_config: AppConfig,
-    pub(super) pending_task_intake: Option<PendingTaskIntake>,
-    pub(super) ready_task_intake: Option<ReadyTaskIntake>,
     pub(super) search: crate::tui::app_search::SearchController,
     pub(super) update: crate::tui::app_update::UpdateController,
     pub(super) next_refresh_at: Instant,
@@ -197,6 +170,7 @@ impl App {
             store,
             should_quit: false,
             focus: Focus::Tasks,
+            intake: IntakeController::new(),
             widgets: WidgetState {
                 sidebar: ListState::default(),
                 table: TableState::default(),
@@ -215,12 +189,6 @@ impl App {
             pending_rename_project: None,
             pending_delete_project: None,
             needs_terminal_clear: false,
-            add_task_only: false,
-            add_task_only_message: None,
-            add_task_db_path: None,
-            add_task_config: AppConfig::default(),
-            pending_task_intake: None,
-            ready_task_intake: None,
             search: crate::tui::app_search::SearchController::new(),
             update: crate::tui::app_update::UpdateController::new(),
             next_refresh_at,
@@ -241,11 +209,11 @@ impl App {
 
     pub(crate) fn set_config(&mut self, config: AppConfig) {
         self.store.task_columns = config.tui.columns.clone();
-        self.add_task_config = config;
+        self.intake.set_config(config);
     }
 
-    pub(crate) fn set_add_task_db_path(&mut self, db_path: PathBuf) {
-        self.add_task_db_path = Some(db_path);
+    pub(crate) fn set_add_task_db_path(&mut self, db_path: std::path::PathBuf) {
+        self.intake.set_db_path(db_path);
     }
 
     pub(crate) fn begin_command(&mut self) {

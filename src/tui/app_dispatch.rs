@@ -253,7 +253,7 @@ impl App {
             OverlayState::AddTask(state) if state.mode == AddTaskMode::Compose => {
                 crate::tui::ui::add_task_field_at(
                     Rect::new(0, 0, terminal_size.width, terminal_size.height),
-                    self.add_task_only,
+                    self.intake.view().add_task_only,
                     mouse.column,
                     mouse.row,
                 )
@@ -1164,7 +1164,7 @@ impl App {
 
         let scroll_cap = match &overlay {
             OverlayState::AddTask(state) if matches!(state.mode, AddTaskMode::Help { .. }) => {
-                composer_help_scroll_cap(terminal_size.height, self.add_task_only)
+                composer_help_scroll_cap(terminal_size.height, self.intake.view().add_task_only)
             }
             OverlayState::DetailHelp { .. } => detail_help_scroll_cap(terminal_size.height),
             OverlayState::DatabaseStats { .. } => database_stats_scroll_cap(terminal_size.height),
@@ -1211,7 +1211,9 @@ impl App {
             OverlayOutcome::Cancelled if was_add_task_description_editor || was_add_task_picker => {
                 self.begin_add_task_step()
             }
-            OverlayOutcome::Cancelled if self.add_task_only => self.should_quit = true,
+            OverlayOutcome::Cancelled if self.intake.view().add_task_only => {
+                self.should_quit = true
+            }
             OverlayOutcome::Cancelled => self.cancel_authoring_overlay(),
             OverlayOutcome::Submitted(submit) => self.handle_overlay_submit(submit).await?,
         }
