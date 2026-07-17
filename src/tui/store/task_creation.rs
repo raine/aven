@@ -5,8 +5,9 @@ use tokio::task::JoinHandle;
 
 use crate::config::TaskIntakeConfig;
 use crate::operations::{
-    TaskDraft, add_note as add_note_operation, add_task_attachment_with_id,
+    TaskAttachmentAddInput, TaskDraft, TaskOutcome, add_note as add_note_operation,
     create_task as create_task_operation,
+    create_task_with_attachments as create_task_with_attachments_operation,
 };
 use crate::refs::DisplayRefContext;
 use crate::tui::authoring::PendingTaskAttachment;
@@ -17,7 +18,35 @@ use super::TuiStore;
 struct CreatedTaskMessage {
     message: String,
     selected: Option<usize>,
-    task_id: crate::ids::TaskId,
+}
+
+#[derive(Debug)]
+pub(crate) struct TaskCreationCommittedError {
+    source: anyhow::Error,
+}
+
+impl std::fmt::Display for TaskCreationCommittedError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "task committed but TUI finalization failed: {}",
+            self.source
+        )
+    }
+}
+
+impl std::error::Error for TaskCreationCommittedError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+pub(crate) fn task_creation_committed(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<TaskCreationCommittedError>().is_some()
+}
+
+fn committed_error(source: anyhow::Error) -> anyhow::Error {
+    TaskCreationCommittedError { source }.into()
 }
 
 impl TuiStore {
@@ -51,9 +80,13 @@ impl TuiStore {
         draft: TaskDraft,
         current_selected_index: Option<usize>,
     ) -> Result<(String, Option<usize>)> {
+        let mut conn = self.pool.acquire().await?;
+        let outcome = create_task_operation(&mut conn, &self.active_workspace, draft).await?;
+        drop(conn);
         let created = self
-            .create_task_inner(draft, current_selected_index)
-            .await?;
+            .finish_task_creation(outcome, Vec::new(), current_selected_index)
+            .await
+            .map_err(committed_error)?;
         Ok((created.message, created.selected))
     }
 
@@ -64,40 +97,45 @@ impl TuiStore {
         blob_dir: &Path,
         attachments: Vec<PendingTaskAttachment>,
     ) -> Result<(String, Option<usize>)> {
+        let attachment_ids = attachments
+            .iter()
+            .map(|attachment| attachment.attachment_id.clone())
+            .collect();
+        let inputs = attachments
+            .into_iter()
+            .map(|attachment| TaskAttachmentAddInput {
+                attachment_id: attachment.attachment_id,
+                input: attachment.input,
+            })
+            .collect();
+        let mut conn = self.pool.acquire().await?;
+        let outcome = create_task_with_attachments_operation(
+            &mut conn,
+            &self.active_workspace,
+            blob_dir,
+            draft,
+            inputs,
+        )
+        .await?;
+        drop(conn);
         let created = self
-            .create_task_inner(draft, current_selected_index)
-            .await?;
-        if !attachments.is_empty() {
-            let workspace = self.active_workspace.clone();
-            let mut conn = self.pool.acquire().await?;
-            for attachment in attachments {
-                add_task_attachment_with_id(
-                    &mut conn,
-                    &workspace,
-                    blob_dir,
-                    &created.task_id,
-                    attachment.attachment_id,
-                    attachment.input,
-                )
-                .await?;
-            }
-            drop(conn);
-            self.refresh(Some(&created.task_id)).await?;
-        }
+            .finish_task_creation(outcome, attachment_ids, current_selected_index)
+            .await
+            .map_err(committed_error)?;
         Ok((created.message, created.selected))
     }
 
-    async fn create_task_inner(
+    async fn finish_task_creation(
         &mut self,
-        draft: TaskDraft,
+        outcome: TaskOutcome,
+        attachment_ids: Vec<String>,
         current_selected_index: Option<usize>,
     ) -> Result<CreatedTaskMessage> {
         let previous_id = self
             .selected_task(current_selected_index)
             .map(|item| item.task.id.clone());
-        let mut conn = self.pool.acquire().await?;
-        let outcome = create_task_operation(&mut conn, &self.active_workspace, draft).await?;
         let task_id = outcome.task.id.clone();
+        let mut conn = self.pool.acquire().await?;
         let display_refs =
             DisplayRefContext::for_workspace(&mut conn, &self.active_workspace.id).await?;
         let message_ref = display_refs.display_ref(&outcome.task);
@@ -110,6 +148,8 @@ impl TuiStore {
                 task_id: task_id.clone(),
                 create_change_id: outcome.create_change_id,
                 expected: snapshot,
+                attachment_ids,
+                attachment_change_ids: outcome.attachment_change_ids,
             }],
         )
         .await?;
@@ -120,7 +160,6 @@ impl TuiStore {
             return Ok(CreatedTaskMessage {
                 message: format!("created task {message_ref}"),
                 selected: created_index,
-                task_id,
             });
         }
 
@@ -128,7 +167,6 @@ impl TuiStore {
         Ok(CreatedTaskMessage {
             message: format!("created task {message_ref} hidden by current filters"),
             selected: restored,
-            task_id,
         })
     }
 

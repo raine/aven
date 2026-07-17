@@ -402,10 +402,10 @@ impl App {
     }
 
     pub(super) async fn submit_created_task(&mut self, draft: TaskDraft) -> Result<()> {
-        let attachments = self.authoring.take_add_task_attachments();
+        let attachments = self.authoring.add_task_attachments();
         let current_selected = self.widgets.table.selected();
-        let (message, selected) = if attachments.is_empty() {
-            self.store.create_task(draft, current_selected).await?
+        let result = if attachments.is_empty() {
+            self.store.create_task(draft, current_selected).await
         } else {
             let db_path = self
                 .intake
@@ -414,7 +414,16 @@ impl App {
             let blob_dir = resolve_blob_dir(db_path, self.intake.config())?;
             self.store
                 .create_task_with_attachments(draft, current_selected, &blob_dir, attachments)
-                .await?
+                .await
+        };
+        let (message, selected) = match result {
+            Ok(created) => created,
+            Err(error) => {
+                if crate::tui::store::task_creation_committed(&error) {
+                    self.authoring.clear_add_task();
+                }
+                return Err(error);
+            }
         };
         self.widgets.table.select(selected);
         self.preserve_or_restore_sidebar_selection();

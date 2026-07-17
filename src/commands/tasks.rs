@@ -111,6 +111,8 @@ pub(crate) async fn cmd_internal_natural_add(
                         task_id,
                         create_change_id: outcome.create_change_id.clone(),
                         expected: snapshot,
+                        attachment_ids: Vec::new(),
+                        attachment_change_ids: Vec::new(),
                     }],
                 },
             )

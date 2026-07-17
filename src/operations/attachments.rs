@@ -5,10 +5,12 @@ use sqlx::Row;
 use sqlx::SqliteConnection;
 
 use crate::attachments::AttachmentBytesState;
-use crate::attachments::decode::{ValidatedImage, validate_image};
+use crate::attachments::decode::{ImageFacts, ValidatedImage, validate_image};
 use crate::attachments::optimization::{ImageOptimizationPolicy, optimize_image_bytes};
-use crate::attachments::storage::{blob_inventory_row, store_validated_blob};
-use crate::attachments::validation::{validate_alt_text, validate_filename};
+use crate::attachments::storage::{blob_inventory_row, sha256_hex, store_validated_blob};
+use crate::attachments::validation::{
+    validate_alt_text, validate_attachment_id, validate_filename,
+};
 use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
 use crate::db::begin_immediate;
 use crate::ids::{TaskId, new_id, now};
@@ -23,6 +25,24 @@ pub(crate) struct AttachmentAddInput {
     pub(crate) bytes: Vec<u8>,
     pub(crate) optimization_policy: ImageOptimizationPolicy,
     pub(crate) dedupe_existing: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TaskAttachmentAddInput {
+    pub(crate) attachment_id: String,
+    pub(crate) input: AttachmentAddInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PreparedAttachment {
+    pub(crate) attachment_id: String,
+    pub(crate) filename: Option<String>,
+    pub(crate) alt_text: Option<String>,
+    pub(crate) sha256: String,
+    pub(crate) byte_size: i64,
+    pub(crate) facts: ImageFacts,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) optimized: bool,
 }
 
 pub(crate) struct AttachmentAddOutcome {
@@ -101,6 +121,90 @@ async fn existing_live_attachments_by_sha(
     Ok(rows.iter().map(attachment_from_row).collect())
 }
 
+pub(crate) async fn prepare_task_attachment(
+    input: TaskAttachmentAddInput,
+) -> Result<PreparedAttachment> {
+    validate_attachment_id(&input.attachment_id)?;
+    validate_filename(input.input.filename.as_deref())?;
+    validate_alt_text(input.input.alt_text.as_deref())?;
+
+    let source = validate_image(input.input.bytes, input.input.declared_media_type).await?;
+    let source_facts = source.facts.clone();
+    let optimized = optimize_image_bytes(
+        &source_facts.media_type,
+        source.bytes,
+        input.input.optimization_policy,
+    )
+    .await?;
+    let optimized_flag = optimized.optimized;
+    let stored_image = if optimized_flag {
+        validate_image(optimized.bytes, None).await?
+    } else {
+        ValidatedImage {
+            bytes: optimized.bytes,
+            facts: source_facts,
+        }
+    };
+    let sha256 = sha256_hex(&stored_image.bytes);
+    let byte_size = i64::try_from(stored_image.bytes.len())?;
+    Ok(PreparedAttachment {
+        attachment_id: input.attachment_id,
+        filename: input.input.filename,
+        alt_text: input.input.alt_text,
+        sha256,
+        byte_size,
+        facts: stored_image.facts,
+        bytes: stored_image.bytes,
+        optimized: optimized_flag,
+    })
+}
+
+pub(super) async fn insert_prepared_attachment(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    task_id: &TaskId,
+    prepared: &PreparedAttachment,
+    created_at: &str,
+) -> Result<String> {
+    let change_id = append_change(
+        conn,
+        ChangeEntity::Task,
+        task_id,
+        Some("attachments"),
+        op_type::ATTACHMENT_ADD,
+        ChangePayload::workspace(workspace)
+            .set("attachment_id", &prepared.attachment_id)
+            .set("sha256", &prepared.sha256)
+            .set("byte_size", prepared.byte_size)
+            .set("media_type", &prepared.facts.media_type)
+            .set("filename", &prepared.filename)
+            .set("alt_text", &prepared.alt_text)
+            .set("width", prepared.facts.width)
+            .set("height", prepared.facts.height)
+            .set("created_at", created_at),
+    )
+    .await?;
+    sqlx::query(
+        "INSERT INTO task_attachments(workspace_id, attachment_id, task_id, sha256, byte_size, media_type, filename, alt_text, width, height, created_at, created_by_change_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&workspace.id)
+    .bind(&prepared.attachment_id)
+    .bind(task_id)
+    .bind(&prepared.sha256)
+    .bind(prepared.byte_size)
+    .bind(&prepared.facts.media_type)
+    .bind(&prepared.filename)
+    .bind(&prepared.alt_text)
+    .bind(prepared.facts.width)
+    .bind(prepared.facts.height)
+    .bind(created_at)
+    .bind(&change_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(change_id)
+}
+
 pub(crate) async fn add_task_attachment(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
@@ -109,25 +213,6 @@ pub(crate) async fn add_task_attachment(
     input: AttachmentAddInput,
 ) -> Result<AttachmentAddOutcome> {
     add_task_attachment_inner(conn, workspace, blob_dir, task_id, None, input).await
-}
-
-pub(crate) async fn add_task_attachment_with_id(
-    conn: &mut SqliteConnection,
-    workspace: &Workspace,
-    blob_dir: &Path,
-    task_id: &TaskId,
-    attachment_id: String,
-    input: AttachmentAddInput,
-) -> Result<AttachmentAddOutcome> {
-    add_task_attachment_inner(
-        conn,
-        workspace,
-        blob_dir,
-        task_id,
-        Some(attachment_id),
-        input,
-    )
-    .await
 }
 
 async fn add_task_attachment_inner(

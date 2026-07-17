@@ -7,7 +7,7 @@ mod projects;
 mod tasks;
 
 pub(crate) use attachments::{
-    AttachmentAddInput, AttachmentReadItem, add_task_attachment, add_task_attachment_with_id,
+    AttachmentAddInput, AttachmentReadItem, TaskAttachmentAddInput, add_task_attachment,
     attachment_by_id, attachment_read_items_by_task, attachments_by_task, delete_task_attachment,
 };
 pub(crate) use config::{init_config, show_config, show_config_paths};
@@ -26,6 +26,6 @@ pub(crate) use projects::{
     rename_project_operation, set_project_metadata,
 };
 pub(crate) use tasks::{
-    TaskDraft, TaskUpdate, add_note, create_task, delete_note, set_task_deleted, update_task,
-    update_task_labels_in_workspace,
+    TaskDraft, TaskOutcome, TaskUpdate, add_note, create_task, create_task_with_attachments,
+    delete_note, set_task_deleted, update_task, update_task_labels_in_workspace,
 };

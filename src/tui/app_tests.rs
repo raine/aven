@@ -1201,6 +1201,98 @@ mod attachment_paste {
     }
 
     #[tokio::test]
+    async fn failed_attachment_task_submission_preserves_composer_for_retry() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        let image = dir.path().join("retry.png");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Retry attachment task").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        type_chars(&mut app, "Keep every field").await;
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "CREATE TRIGGER fail_attachment_insert BEFORE INSERT ON task_attachments
+             BEGIN SELECT RAISE(FAIL, 'injected attachment insert failure'); END",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        assert!(app.handle_overlay_key(ctrl_s()).await.is_err());
+        assert!(matches!(app.overlay, Some(OverlayState::AddTask(_))));
+        assert_eq!(app.authoring.add_task_attachments().len(), 1);
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_ref() else {
+            panic!("add task composer should remain open");
+        };
+        assert_eq!(state.title.as_str(), "Retry attachment task");
+        assert_eq!(state.description.lines.join("\n"), "Keep every field");
+        let mut conn = pool.acquire().await.unwrap();
+        let task_count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(task_count, 0);
+        sqlx::query("DROP TRIGGER fail_attachment_insert")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+        let selected = app.widgets.table.selected().unwrap();
+        let item = &app.store.tasks[selected];
+        assert_eq!(item.task.title, "Retry attachment task");
+        let mut conn = pool.acquire().await.unwrap();
+        let attachment_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM task_attachments WHERE task_id = ?")
+                .bind(&item.task.id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(attachment_count, 1);
+    }
+
+    #[tokio::test]
+    async fn committed_attachment_task_is_not_retained_for_retry() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        let image = dir.path().join("committed.png");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Committed attachment task").await;
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "CREATE TRIGGER fail_undo_insert BEFORE INSERT ON tui_undo_entries
+             BEGIN SELECT RAISE(FAIL, 'injected undo failure'); END",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        let error = app.handle_overlay_key(ctrl_s()).await.unwrap_err();
+        assert!(crate::tui::store::task_creation_committed(&error));
+        assert!(app.overlay.is_none());
+        assert!(app.authoring.add_task_attachments().is_empty());
+        let mut conn = pool.acquire().await.unwrap();
+        let task_count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        let attachment_count: i64 = sqlx::query_scalar("SELECT count(*) FROM task_attachments")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!((task_count, attachment_count), (1, 1));
+    }
+
+    #[tokio::test]
     async fn natural_add_paste_image_path_carries_attachment_into_created_task() {
         let (dir, pool, mut app) = test_app_with_pool().await;
         app.set_add_task_db_path(dir.path().join("test.db"));

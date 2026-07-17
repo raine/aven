@@ -25,6 +25,7 @@ use sqlx::SqlitePool;
 
 pub(crate) use crate::query::RecentActionItem;
 pub(crate) use pickers::deleted_picker_items;
+pub(crate) use task_creation::task_creation_committed;
 pub(crate) use types::{
     ConflictTarget, MutationMessage, SidebarEntry, SidebarEntryTarget, SyncStatusCheck,
     TaskFilterModifiers, TaskListRenderMode, TaskOrder, TaskScope, TaskScopeTarget, TaskView,

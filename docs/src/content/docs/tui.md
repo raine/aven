@@ -100,6 +100,8 @@ Press `a` to open the task composer. Project, status, priority, labels, availabi
 
 Use `Tab` and `Shift-Tab` to move through every field. Press `Enter` to edit the focused metadata field. `Enter` creates from the title field and inserts a newline in the description. `Ctrl-Enter` creates from any field when the terminal reports modified Enter keys. `Ctrl-s` is the portable create fallback. Press `F1` for complete composer help.
 
+Paste an image while the composer is open to add it as a structured attachment. Aven validates and stores every pending image before it commits the task and attachment metadata together. A failed submission keeps the complete draft and its pending attachments available for retry. Creating a task and its attachments produces one TUI undo action.
+
 :::note[Terminal compatibility]
 Aven negotiates progressive keyboard enhancement with compatible terminals and uses the xterm modified-key protocol as a fallback. In tmux, enable forwarding with `set -s extended-keys on`. The outer terminal must also support tmux's extended-key mode. Use `Ctrl-s` when that path does not distinguish `Ctrl-Enter` from `Enter`. See [Tips](/tips/#use-ctrl-enter-in-alacritty-and-tmux) for the complete Alacritty and tmux configuration.
 :::

@@ -251,6 +251,14 @@ impl AuthoringState {
         matches!(self.flow.as_ref(), Some(AuthoringFlow::AddTask(draft)) if !draft.attachments.is_empty())
     }
 
+    pub(crate) fn add_task_attachments(&self) -> Vec<PendingTaskAttachment> {
+        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_ref() else {
+            return Vec::new();
+        };
+        draft.attachments.clone()
+    }
+
+    #[cfg(test)]
     pub(crate) fn take_add_task_attachments(&mut self) -> Vec<PendingTaskAttachment> {
         let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
             return Vec::new();
@@ -577,6 +585,8 @@ mod tests {
             state.add_task_context().unwrap().description,
             "User-authored details"
         );
+        assert_eq!(state.add_task_attachments().len(), 1);
+        assert_eq!(state.add_task_attachments().len(), 1);
         assert_eq!(state.take_add_task_attachments().len(), 1);
     }
 

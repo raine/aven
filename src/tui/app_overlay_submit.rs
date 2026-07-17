@@ -108,7 +108,9 @@ impl App {
             is_epic: false,
         };
         if let Err(error) = self.submit_created_task(draft).await {
-            self.overlay = Some(OverlayState::AddTask(Box::new(state)));
+            if !crate::tui::store::task_creation_committed(&error) {
+                self.overlay = Some(OverlayState::AddTask(Box::new(state)));
+            }
             return Err(error);
         }
         self.authoring.clear();

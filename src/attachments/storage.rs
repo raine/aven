@@ -19,6 +19,13 @@ pub(crate) struct StoredBlob {
     pub(crate) facts: ImageFacts,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StagedBlob {
+    pub(crate) sha256: String,
+    pub(crate) byte_size: i64,
+    pub(crate) created: bool,
+}
+
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -46,23 +53,79 @@ pub(crate) async fn store_validated_blob(
     validated: ValidatedImage,
 ) -> Result<StoredBlob> {
     let sha256 = sha256_hex(&validated.bytes);
-    let path = object_path(blob_dir, &sha256)?;
     let bytes = validated.bytes;
-    let write_path = path.clone();
-    super::blocking::run(move || write_object_atomically(&write_path, &bytes)).await?;
-    let byte_size = fs::metadata(&path)
-        .with_context(|| format!("could not inspect {}", path.display()))?
-        .len();
-    let byte_size = i64::try_from(byte_size).context("attachment bytes exceed i64")?;
-    upsert_inventory_available(conn, &sha256, byte_size, &validated.facts.media_type).await?;
+    let staged = stage_blob(blob_dir, &sha256, &bytes).await?;
+    if let Err(error) = upsert_inventory_available(
+        conn,
+        &staged.sha256,
+        staged.byte_size,
+        &validated.facts.media_type,
+    )
+    .await
+    {
+        if staged.created {
+            remove_staged_blob_if_unreferenced(conn, blob_dir, &staged.sha256).await;
+        }
+        return Err(error);
+    }
     Ok(StoredBlob {
-        sha256,
-        byte_size,
+        sha256: staged.sha256,
+        byte_size: staged.byte_size,
         facts: validated.facts,
     })
 }
 
-fn write_object_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) async fn stage_blob(blob_dir: &Path, sha256: &str, bytes: &[u8]) -> Result<StagedBlob> {
+    validate_sha256(sha256)?;
+    if sha256_hex(bytes) != sha256 {
+        bail!("error attachment-prepared-hash-mismatch");
+    }
+    let path = object_path(blob_dir, sha256)?;
+    let bytes = bytes.to_vec();
+    let write_path = path.clone();
+    let created =
+        super::blocking::run(move || write_object_atomically(&write_path, &bytes)).await?;
+    let byte_size = fs::metadata(&path)
+        .with_context(|| format!("could not inspect {}", path.display()))?
+        .len();
+    let byte_size = i64::try_from(byte_size).context("attachment bytes exceed i64")?;
+    Ok(StagedBlob {
+        sha256: sha256.to_string(),
+        byte_size,
+        created,
+    })
+}
+
+pub(crate) async fn remove_staged_blob_if_unreferenced(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    sha256: &str,
+) {
+    let referenced = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM task_attachments WHERE sha256 = ?)",
+    )
+    .bind(sha256)
+    .fetch_one(&mut *conn)
+    .await;
+    let pending_upload = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(
+            SELECT 1 FROM changes
+            WHERE server_seq IS NULL AND op_type = 'attachment_add'
+              AND json_extract(payload, '$.sha256') = ?
+         )",
+    )
+    .bind(sha256)
+    .fetch_one(&mut *conn)
+    .await;
+    if matches!(referenced, Ok(false))
+        && matches!(pending_upload, Ok(false))
+        && let Ok(path) = object_path(blob_dir, sha256)
+    {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn write_object_atomically(path: &Path, bytes: &[u8]) -> Result<bool> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;
@@ -72,19 +135,29 @@ fn write_object_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
             if sha256_hex(&existing) != sha256_hex(bytes) {
                 bail!("error attachment-object-content-mismatch");
             }
-            return Ok(());
+            return Ok(false);
         }
-        let mut temp = tempfile::NamedTempFile::new_in(parent)
+        let mut temp = tempfile::Builder::new()
+            .prefix(".aven-stage-")
+            .tempfile_in(parent)
             .with_context(|| format!("could not create temporary file in {}", parent.display()))?;
         std::io::Write::write_all(&mut temp, bytes)?;
         temp.as_file().sync_all()?;
         match temp.persist_noclobber(path) {
-            Ok(_) => return Ok(()),
+            Ok(_) => {
+                if let Err(error) =
+                    fs::File::open(parent).and_then(|directory| directory.sync_all())
+                {
+                    let _ = fs::remove_file(path);
+                    return Err(error.into());
+                }
+                return Ok(true);
+            }
             Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
                 let existing =
                     fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
                 if sha256_hex(&existing) == sha256_hex(bytes) {
-                    return Ok(());
+                    return Ok(false);
                 }
                 bail!("error attachment-object-content-mismatch");
             }
@@ -257,6 +330,27 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert_eq!(error, "error blob-inventory-metadata-mismatch");
+    }
+
+    #[tokio::test]
+    async fn inventory_failure_removes_only_newly_staged_blob() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("test.sqlite");
+        let pool = open_db(&db_path).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let blob_dir = resolve_blob_dir(&db_path, &AppConfig::default()).unwrap();
+        let bytes = png_bytes();
+        let sha256 = sha256_hex(&bytes);
+        upsert_inventory_available(&mut conn, &sha256, 12, "image/png")
+            .await
+            .unwrap();
+
+        assert!(
+            store_blob(&mut conn, &blob_dir, "image/png", &bytes)
+                .await
+                .is_err()
+        );
+        assert!(!object_path(&blob_dir, &sha256).unwrap().exists());
     }
 
     #[test]
