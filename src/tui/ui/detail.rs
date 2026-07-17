@@ -15,7 +15,9 @@ use super::timestamps::local_timestamp_display;
 use super::truncate::truncate_width;
 use crate::attachments::storage::object_path;
 use crate::query::TaskListItem;
-use crate::task_render::AttachmentMetadataJson;
+use crate::task_render::{
+    AttachmentMetadataJson, attachment_placeholder, attachment_unavailable_placeholder,
+};
 use crate::tui::app::WidgetState;
 use crate::tui::detail_selection::{DetailTextSelection, TextCell, text_cell_at_column};
 use crate::tui::markdown::{
@@ -387,9 +389,14 @@ fn detail_body_lines_with_images(
         &description_or_placeholder(&item.task.description),
         width,
         Style::new().fg(FG_MUTED),
-        MarkdownRenderContext {
-            attachments: &item.attachments,
-        },
+        MarkdownRenderContext,
+        inline_images,
+    );
+    extend_attachment_section(
+        &mut lines,
+        &mut image_placements,
+        &item.attachments,
+        width,
         inline_images,
     );
     lines.push(Line::from(""));
@@ -418,9 +425,7 @@ fn detail_selectable_document(
         let blocks = detail_body_blocks(
             &item.task.description,
             content_width,
-            MarkdownRenderContext {
-                attachments: &item.attachments,
-            },
+            MarkdownRenderContext,
             inline_images,
         );
         for (index, block) in blocks.into_iter().enumerate() {
@@ -581,10 +586,9 @@ fn detail_description_lines(
         &description_or_placeholder(&item.task.description),
         width,
         Style::new().fg(FG_MUTED),
-        MarkdownRenderContext {
-            attachments: &item.attachments,
-        },
+        MarkdownRenderContext,
     ));
+    extend_attachment_section(&mut lines, &mut Vec::new(), &item.attachments, width, None);
     lines.push(Line::from(""));
     lines
 }
@@ -937,7 +941,7 @@ fn quoted_block_lines_with_context(
     body: &str,
     width: usize,
     style: Style,
-    context: MarkdownRenderContext<'_>,
+    context: MarkdownRenderContext,
 ) -> Vec<Line<'static>> {
     let content_width = width.saturating_sub(3).max(1);
     flatten_markdown_blocks(render_markdown_with_context(body, content_width, context))
@@ -952,7 +956,7 @@ fn extend_detail_body_blocks(
     body: &str,
     width: usize,
     style: Style,
-    context: MarkdownRenderContext<'_>,
+    context: MarkdownRenderContext,
     inline_images: Option<&DetailInlineImageContext>,
 ) {
     let content_width = width.saturating_sub(3).max(1);
@@ -985,53 +989,95 @@ fn extend_detail_body_blocks(
     }
 }
 
+fn extend_attachment_section(
+    lines: &mut Vec<Line<'static>>,
+    placements: &mut Vec<DetailBodyImagePlacement>,
+    attachments: &[AttachmentMetadataJson],
+    width: usize,
+    inline_images: Option<&DetailInlineImageContext>,
+) {
+    let live = attachments
+        .iter()
+        .filter(|attachment| !attachment.deleted)
+        .collect::<Vec<_>>();
+    if live.is_empty() {
+        return;
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "ATTACHMENTS",
+        Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+    )));
+    let content_width = width.saturating_sub(3).max(1);
+    for attachment in live {
+        match attachment_detail_block(attachment, content_width, inline_images) {
+            DetailBodyBlock::Line(line) => {
+                lines.push(quoted_line(line, Style::new().fg(FG_MUTED)));
+            }
+            DetailBodyBlock::Image {
+                placeholder,
+                path,
+                width,
+                height,
+            } => {
+                let line_index = lines.len().saturating_add(1);
+                lines.push(quoted_line(placeholder, Style::new().fg(FG_MUTED)));
+                for _ in 0..height {
+                    lines.push(Line::from(vec![Span::styled(
+                        "│ ",
+                        Style::new().fg(BORDER),
+                    )]));
+                }
+                placements.push(DetailBodyImagePlacement {
+                    path,
+                    line_index,
+                    width,
+                    height,
+                });
+            }
+        }
+    }
+}
+
+fn attachment_detail_block(
+    attachment: &AttachmentMetadataJson,
+    content_width: usize,
+    inline_images: Option<&DetailInlineImageContext>,
+) -> DetailBodyBlock {
+    let placeholder = Line::from(attachment_placeholder(attachment));
+    if !attachment.has_blob || !attachment.media_type.starts_with("image/") {
+        return DetailBodyBlock::Line(placeholder);
+    }
+    let Some(inline_images) = inline_images else {
+        return DetailBodyBlock::Line(placeholder);
+    };
+    let Ok(path) = object_path(&inline_images.blob_dir, &attachment.sha256) else {
+        return DetailBodyBlock::Line(Line::from(attachment_unavailable_placeholder(attachment)));
+    };
+    if !path.is_file() {
+        return DetailBodyBlock::Line(Line::from(attachment_unavailable_placeholder(attachment)));
+    }
+    let (width, height) = image_preview_size(attachment, content_width);
+    DetailBodyBlock::Image {
+        placeholder,
+        path,
+        width,
+        height,
+    }
+}
+
 fn detail_body_blocks(
     body: &str,
     content_width: usize,
-    context: MarkdownRenderContext<'_>,
-    inline_images: Option<&DetailInlineImageContext>,
+    context: MarkdownRenderContext,
+    _inline_images: Option<&DetailInlineImageContext>,
 ) -> Vec<DetailBodyBlock> {
     render_markdown_with_context(body, content_width, context)
         .into_iter()
-        .flat_map(|block| match block {
-            MarkdownBlock::Text(line) => vec![DetailBodyBlock::Line(line)],
-            MarkdownBlock::AttachmentImage(block) => {
-                let Some(inline_images) = inline_images else {
-                    return vec![DetailBodyBlock::Line(block.placeholder)];
-                };
-                let Some(attachment) = previewable_attachment(&block.attachment_ref, context)
-                else {
-                    return vec![DetailBodyBlock::Line(block.placeholder)];
-                };
-                let Ok(path) = object_path(&inline_images.blob_dir, &attachment.sha256) else {
-                    return vec![DetailBodyBlock::Line(block.placeholder)];
-                };
-                if !path.is_file() {
-                    return vec![DetailBodyBlock::Line(block.placeholder)];
-                }
-                let (width, height) = image_preview_size(attachment, content_width);
-                vec![DetailBodyBlock::Image {
-                    placeholder: block.placeholder,
-                    path,
-                    width,
-                    height,
-                }]
-            }
+        .map(|block| match block {
+            MarkdownBlock::Text(line) => DetailBodyBlock::Line(line),
         })
         .collect()
-}
-
-fn previewable_attachment<'a>(
-    attachment_ref: &str,
-    context: MarkdownRenderContext<'a>,
-) -> Option<&'a AttachmentMetadataJson> {
-    let attachment_id = crate::attachments::parse_attachment_ref(attachment_ref)?;
-    context.attachments.iter().find(|attachment| {
-        attachment.attachment_id == attachment_id
-            && attachment.has_blob
-            && !attachment.deleted
-            && attachment.media_type.starts_with("image/")
-    })
 }
 
 fn image_preview_size(attachment: &AttachmentMetadataJson, content_width: usize) -> (u16, u16) {
@@ -2054,9 +2100,9 @@ mod tests {
     }
 
     #[test]
-    fn detail_description_renders_attachment_placeholders() {
+    fn detail_empty_description_renders_attachment_section() {
         let mut item = detail_test_item();
-        item.task.description = "![Chart](aven-attachment:ATTACHMENT000001)".to_string();
+        item.task.description = String::new();
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
 
         let rendered = detail_content_lines(&item, 80, None)
@@ -2065,13 +2111,48 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(rendered.contains("│ [image: Chart]"));
+        assert!(rendered.contains("ATTACHMENTS\n│ [image: Chart]"));
+    }
+
+    #[test]
+    fn detail_attachment_section_renders_live_rows_once_in_order() {
+        let mut item = detail_test_item();
+        item.attachments = vec![
+            attachment_metadata("ATTACHMENT000001", false, true),
+            attachment_metadata("ATTACHMENT000002", false, false),
+            attachment_metadata("ATTACHMENT000003", false, false),
+            attachment_metadata("ATTACHMENT000004", true, true),
+        ];
+        item.attachments[0].alt_text = Some("First".to_string());
+        item.attachments[1].alt_text = Some("Second".to_string());
+        item.attachments[2].alt_text = Some("Third".to_string());
+        item.attachments[2].bytes_state = crate::attachments::AttachmentBytesState::Unavailable;
+        item.attachments[3].alt_text = Some("Deleted".to_string());
+
+        let rendered = detail_content_lines(&item, 80, None)
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(rendered.matches("ATTACHMENTS").count(), 1);
+        assert_eq!(rendered.matches("[image: First]").count(), 1);
+        assert_eq!(
+            rendered.matches("[image: pending download Second]").count(),
+            1
+        );
+        assert_eq!(
+            rendered.matches("[image: unavailable bytes Third]").count(),
+            1
+        );
+        assert!(rendered.find("First").unwrap() < rendered.find("Second").unwrap());
+        assert!(!rendered.contains("Deleted"));
     }
 
     #[test]
     fn detail_reserves_rows_for_previewable_attachment() {
         let mut item = detail_test_item();
-        item.task.description = "![Chart](aven-attachment:ATTACHMENT000001)".to_string();
+        item.task.description = String::new();
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
         let temp = tempfile::tempdir().unwrap();
         let context = DetailInlineImageContext {
@@ -2099,7 +2180,7 @@ mod tests {
     #[test]
     fn detail_preview_preserves_image_aspect_within_max_rows() {
         let mut item = detail_test_item();
-        item.task.description = "![Hotel](aven-attachment:ATTACHMENT000001)".to_string();
+        item.task.description = String::new();
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
         item.attachments[0].width = Some(646);
         item.attachments[0].height = Some(302);
@@ -2121,7 +2202,7 @@ mod tests {
     #[test]
     fn detail_falls_back_to_single_placeholder_when_previews_disabled() {
         let mut item = detail_test_item();
-        item.task.description = "![Chart](aven-attachment:ATTACHMENT000001)".to_string();
+        item.task.description = String::new();
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
 
         let (lines, placements) = detail_body_lines_with_images(&item, 80, None, None);
@@ -2143,7 +2224,7 @@ mod tests {
     #[test]
     fn detail_placements_only_include_visible_preview_rows() {
         let mut item = detail_test_item();
-        item.task.description = "intro\n![Chart](aven-attachment:ATTACHMENT000001)".to_string();
+        item.task.description = "intro".to_string();
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
         let temp = tempfile::tempdir().unwrap();
         let context = DetailInlineImageContext {
@@ -2185,6 +2266,11 @@ mod tests {
             created_at: "2026-06-20T12:00:00Z".to_string(),
             deleted,
             deleted_at: deleted.then(|| "2026-06-20T12:00:00Z".to_string()),
+            bytes_state: if has_blob {
+                crate::attachments::AttachmentBytesState::Present
+            } else {
+                crate::attachments::AttachmentBytesState::PendingDownload
+            },
             has_blob,
         }
     }

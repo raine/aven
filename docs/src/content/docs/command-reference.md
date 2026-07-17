@@ -236,6 +236,19 @@ aven show APP-7KQ9 --full
 aven show APP-7KQ9 --full --json
 ```
 
+### `aven attachment`
+
+Manage task image attachments without changing task descriptions.
+
+```sh
+aven attachment add <task-ref> <path> [--alt <text>] [--filename <name>] [--media-type <type>] [--width <pixels> --height <pixels>] [--optimize | --no-optimize] [--json]
+aven attachment list <task-ref> [--all] [--json]
+aven attachment get <attachment-id> [--output <path>] [--all] [--json]
+aven attachment delete <attachment-id> [--json]
+```
+
+Attachment metadata determines identity, display order, and search matches. Live attachments appear in `(created_at, attachment_id)` order. Default task and attachment views omit deleted attachments, while `--all` includes tombstoned metadata. `show --full`, `context`, and their JSON forms expose metadata without embedding bytes. Search matches live attachment filenames and alternative text.
+
 ### `aven edit`
 
 Update fields on one task.

@@ -1,7 +1,5 @@
 use crate::attachments::storage::sha256_hex;
-use crate::operations::{
-    AttachmentAddInput, TaskDraft, append_attachment_ref, markdown_attachment_ref,
-};
+use crate::operations::{AttachmentAddInput, TaskDraft};
 
 pub(crate) const ADD_NOTE_TITLE: &str = "Add note";
 pub(crate) const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: project";
@@ -72,10 +70,6 @@ impl PendingTaskAttachment {
             sha256,
             input,
         }
-    }
-
-    pub(crate) fn markdown_ref(&self) -> String {
-        markdown_attachment_ref(&self.attachment_id, self.input.alt_text.as_deref())
     }
 }
 
@@ -238,31 +232,19 @@ impl AuthoringState {
     pub(crate) fn add_pending_add_task_attachment(
         &mut self,
         attachment: PendingTaskAttachment,
-    ) -> Option<(String, bool)> {
+    ) -> Option<bool> {
         let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
             return None;
         };
-        if let Some(existing) = draft
+        if draft
             .attachments
             .iter()
-            .find(|existing| existing.sha256 == attachment.sha256)
+            .any(|existing| existing.sha256 == attachment.sha256)
         {
-            return Some((existing.markdown_ref(), false));
+            return Some(false);
         }
-        let ref_text = attachment.markdown_ref();
         draft.attachments.push(attachment);
-        Some((ref_text, true))
-    }
-
-    pub(crate) fn add_task_attachment_refs(&self) -> Vec<String> {
-        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_ref() else {
-            return Vec::new();
-        };
-        draft
-            .attachments
-            .iter()
-            .map(PendingTaskAttachment::markdown_ref)
-            .collect()
+        Some(true)
     }
 
     pub(crate) fn add_task_has_pending_attachments(&self) -> bool {
@@ -280,10 +262,6 @@ impl AuthoringState {
         if matches!(self.flow, Some(AuthoringFlow::AddTask(_))) {
             self.flow = None;
         }
-    }
-
-    pub(crate) fn append_missing_add_task_attachment_refs(&self, description: &str) -> String {
-        append_missing_refs(description, self.add_task_attachment_refs())
     }
 
     pub(crate) fn capture_add_task_fields(
@@ -360,13 +338,7 @@ impl AuthoringState {
             return false;
         };
         draft.title = task.title;
-        draft.description = append_missing_refs(
-            &task.description,
-            draft
-                .attachments
-                .iter()
-                .map(PendingTaskAttachment::markdown_ref),
-        );
+        draft.description = task.description;
         draft.project = task.project;
         draft.status = task.status;
         draft.priority = task.priority;
@@ -389,13 +361,7 @@ impl AuthoringState {
                 message: "task title is required",
             };
         }
-        let description = append_missing_refs(
-            draft.description.trim(),
-            draft
-                .attachments
-                .iter()
-                .map(PendingTaskAttachment::markdown_ref),
-        );
+        let description = draft.description.trim().to_string();
         AddTaskTitleSubmit::Create(AddTaskCreate {
             draft: TaskDraft {
                 title: trimmed.to_string(),
@@ -470,23 +436,10 @@ impl AuthoringState {
     }
 }
 
-fn append_missing_refs<I>(description: &str, refs: I) -> String
-where
-    I: IntoIterator<Item = String>,
-{
-    refs.into_iter()
-        .fold(description.to_string(), |description, ref_text| {
-            if description.contains(&ref_text) {
-                description
-            } else {
-                append_attachment_ref(&description, &ref_text)
-            }
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::attachments::optimization::ImageOptimizationPolicy;
 
     #[test]
     fn add_task_project_selection_retains_flow() {
@@ -590,6 +543,67 @@ mod tests {
             state.submit_add_task(),
             AddTaskTitleSubmit::Create(create) if create.draft.project.is_none()
         ));
+    }
+
+    #[test]
+    fn pending_attachment_survives_parsed_draft_without_entering_description() {
+        let mut state = AuthoringState::default();
+        state.begin_add_task(None, None);
+        let pending = PendingTaskAttachment::new(
+            "ATTACHMENT000001".to_string(),
+            AttachmentAddInput {
+                filename: Some("chart.png".to_string()),
+                alt_text: Some("Chart".to_string()),
+                media_type: "image/png".to_string(),
+                width: None,
+                height: None,
+                bytes: vec![1, 2, 3],
+                optimization_policy: ImageOptimizationPolicy::Preserve,
+                dedupe_existing: false,
+            },
+        );
+        assert_eq!(state.add_pending_add_task_attachment(pending), Some(true));
+        assert!(state.apply_add_task_draft(TaskDraft {
+            title: "Parsed".to_string(),
+            description: "User-authored details".to_string(),
+            project: None,
+            status: "inbox".to_string(),
+            priority: "none".to_string(),
+            labels: Vec::new(),
+            available_at: String::new(),
+            due_on: String::new(),
+            is_epic: false,
+        }));
+
+        assert_eq!(
+            state.add_task_context().unwrap().description,
+            "User-authored details"
+        );
+        assert_eq!(state.take_add_task_attachments().len(), 1);
+    }
+
+    #[test]
+    fn cancel_discards_pending_attachments() {
+        let mut state = AuthoringState::default();
+        state.begin_add_task(None, None);
+        let pending = PendingTaskAttachment::new(
+            "ATTACHMENT000001".to_string(),
+            AttachmentAddInput {
+                filename: Some("chart.png".to_string()),
+                alt_text: None,
+                media_type: "image/png".to_string(),
+                width: None,
+                height: None,
+                bytes: vec![1],
+                optimization_policy: ImageOptimizationPolicy::Preserve,
+                dedupe_existing: false,
+            },
+        );
+        assert_eq!(state.add_pending_add_task_attachment(pending), Some(true));
+        state.cancel();
+        state.begin_add_task(None, None);
+
+        assert!(!state.add_task_has_pending_attachments());
     }
 
     #[test]

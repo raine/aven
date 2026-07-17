@@ -1,5 +1,6 @@
 use serde::Serialize;
 
+use crate::attachments::AttachmentBytesState;
 use crate::operations::AttachmentReadItem;
 use crate::query::{TaskDependencyLink, TaskDependencySummary, TaskListItem};
 use crate::render::{KvLine, print_multiline_block, quote, yes_no};
@@ -52,9 +53,7 @@ pub(crate) fn print_full_task_report(report: &TaskFullReport) {
         }
         println!("EOF");
     }
-    for attachment in &report.attachments {
-        print_attachment_metadata_line(attachment);
-    }
+    print_attachment_section(&report.attachments);
     print_task_dependency_summary(&detail.dependencies);
     for note in &detail.notes {
         println!("note created={}", note.created_at);
@@ -125,7 +124,22 @@ pub(crate) fn attachment_metadata_json(item: AttachmentReadItem) -> AttachmentMe
         created_at: item.attachment.created_at,
         deleted: item.attachment.deleted,
         deleted_at: item.attachment.deleted_at,
+        bytes_state: item.bytes_state,
         has_blob: item.has_blob,
+    }
+}
+
+pub(crate) fn print_attachment_section(attachments: &[AttachmentMetadataJson]) {
+    let live = attachments
+        .iter()
+        .filter(|attachment| !attachment.deleted)
+        .collect::<Vec<_>>();
+    if live.is_empty() {
+        return;
+    }
+    println!("Attachments:");
+    for attachment in live {
+        print_attachment_metadata_line(attachment);
     }
 }
 
@@ -154,28 +168,26 @@ pub(crate) fn attachment_placeholder(attachment: &AttachmentMetadataJson) -> Str
         .unwrap_or("attachment");
     if attachment.deleted {
         format!("[image: deleted attachment {label}]")
-    } else if attachment.has_blob {
-        format!("[image: {label}]")
     } else {
-        format!("[image: pending download {label}]")
+        match attachment.bytes_state {
+            AttachmentBytesState::Present => format!("[image: {label}]"),
+            AttachmentBytesState::PendingDownload => {
+                format!("[image: pending download {label}]")
+            }
+            AttachmentBytesState::Unavailable => {
+                format!("[image: unavailable bytes {label}]")
+            }
+        }
     }
 }
 
-#[allow(dead_code)]
-pub(crate) fn attachment_placeholder_for_ref(
-    attachment_ref: &str,
-    attachments: &[AttachmentMetadataJson],
-) -> String {
-    let Some(attachment_id) = crate::attachments::parse_attachment_ref(attachment_ref) else {
-        return "[image: unsupported attachment reference]".to_string();
-    };
-    let Some(attachment) = attachments
-        .iter()
-        .find(|attachment| attachment.attachment_id == attachment_id)
-    else {
-        return "[image: missing attachment metadata]".to_string();
-    };
-    attachment_placeholder(attachment)
+pub(crate) fn attachment_unavailable_placeholder(attachment: &AttachmentMetadataJson) -> String {
+    let label = attachment
+        .alt_text
+        .as_deref()
+        .or(attachment.filename.as_deref())
+        .unwrap_or("attachment");
+    format!("[image: unavailable bytes {label}]")
 }
 
 // --- JSON DTOs ---
@@ -261,6 +273,8 @@ pub(crate) struct AttachmentMetadataJson {
     pub(crate) created_at: String,
     pub(crate) deleted: bool,
     pub(crate) deleted_at: Option<String>,
+    #[serde(skip)]
+    pub(crate) bytes_state: AttachmentBytesState,
     pub(crate) has_blob: bool,
 }
 
@@ -375,6 +389,11 @@ mod tests {
             created_at: "001".to_string(),
             deleted,
             deleted_at: deleted.then(|| "002".to_string()),
+            bytes_state: if has_blob {
+                AttachmentBytesState::Present
+            } else {
+                AttachmentBytesState::PendingDownload
+            },
             has_blob,
         }
     }
@@ -390,6 +409,10 @@ mod tests {
         );
         let pending =
             test_attachment_metadata("8KQ9A1X4MV2P8D6R", false, false, Some("photo.png"), None);
+        let unavailable =
+            test_attachment_metadata("AKQ9A1X4MV2P8D6R", false, false, Some("archive.png"), None);
+        let mut unavailable = unavailable;
+        unavailable.bytes_state = AttachmentBytesState::Unavailable;
         let deleted =
             test_attachment_metadata("9KQ9A1X4MV2P8D6R", true, true, None, Some("old screenshot"));
 
@@ -399,20 +422,16 @@ mod tests {
             "[image: pending download photo.png]"
         );
         assert_eq!(
+            attachment_placeholder(&unavailable),
+            "[image: unavailable bytes archive.png]"
+        );
+        assert_eq!(
             attachment_placeholder(&deleted),
             "[image: deleted attachment old screenshot]"
         );
         assert_eq!(
-            attachment_placeholder_for_ref("aven-attachment:7KQ9A1X4MV2P8D6R", &[present]),
-            "[image: diagram]"
-        );
-        assert_eq!(
-            attachment_placeholder_for_ref("aven-attachment:AAAAAAAAAAAAAAAA", &[]),
-            "[image: missing attachment metadata]"
-        );
-        assert_eq!(
-            attachment_placeholder_for_ref("not-a-ref", &[]),
-            "[image: unsupported attachment reference]"
+            attachment_unavailable_placeholder(&present),
+            "[image: unavailable bytes diagram]"
         );
     }
 }

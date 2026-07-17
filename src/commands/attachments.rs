@@ -16,7 +16,7 @@ use crate::operations::{
     AttachmentAddInput, add_task_attachment, attachment_by_id, attachments_by_task,
     delete_task_attachment,
 };
-use crate::refs::{DisplayRefContext, resolve_task_ref_in_workspace};
+use crate::refs::{DisplayRefContext, get_task_in_workspace, resolve_task_ref_in_workspace};
 use crate::render::print_json_pretty;
 use crate::types::TaskAttachment;
 use crate::workspaces::Workspace;
@@ -94,6 +94,18 @@ fn attachment_json_item(
     }
 }
 
+async fn attachment_task_ref(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    attachment: &TaskAttachment,
+) -> Result<String> {
+    let task_id = attachment.task_id.parse()?;
+    let task = get_task_in_workspace(conn, workspace, &task_id).await?;
+    Ok(DisplayRefContext::for_workspace(conn, &workspace.id)
+        .await?
+        .display_ref(&task))
+}
+
 pub(crate) async fn cmd_attachment(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
@@ -169,7 +181,7 @@ pub(crate) async fn cmd_attachment_add(
     } else {
         let ref_str = DisplayRefContext::for_workspace(conn, &workspace.id)
             .await?
-            .display_ref(&outcome.task);
+            .display_ref(&task);
         println!(
             "attachment-added {} attachment_id={} media_type={} byte_size={} sha256={} has_blob={} optimized={}",
             ref_str,
@@ -257,9 +269,7 @@ pub(crate) async fn cmd_attachment_get(
         let item = attachment_json_item(&outcome.attachment, outcome.has_blob, None);
         print_json_pretty(&item)?;
     } else if let Some(ref output_path) = args.output {
-        let ref_str = DisplayRefContext::for_workspace(conn, &workspace.id)
-            .await?
-            .display_ref(&outcome.task);
+        let ref_str = attachment_task_ref(conn, workspace, &outcome.attachment).await?;
         println!(
             "attachment-get attachment_id={} task={} media_type={} byte_size={} has_blob={} output={}",
             outcome.attachment.attachment_id,
@@ -270,9 +280,7 @@ pub(crate) async fn cmd_attachment_get(
             output_path.display(),
         );
     } else {
-        let ref_str = DisplayRefContext::for_workspace(conn, &workspace.id)
-            .await?
-            .display_ref(&outcome.task);
+        let ref_str = attachment_task_ref(conn, workspace, &outcome.attachment).await?;
         println!(
             "attachment attachment_id={} task={} media_type={} byte_size={} sha256={} has_blob={} deleted={}{}",
             outcome.attachment.attachment_id,
@@ -309,9 +317,7 @@ pub(crate) async fn cmd_attachment_delete(
         let item = attachment_json_item(&outcome.attachment, outcome.has_blob, None);
         print_json_pretty(&item)?;
     } else {
-        let ref_str = DisplayRefContext::for_workspace(conn, &workspace.id)
-            .await?
-            .display_ref(&outcome.task);
+        let ref_str = attachment_task_ref(conn, workspace, &outcome.attachment).await?;
         println!(
             "attachment-deleted {} attachment_id={} task={} deleted={}",
             ref_str,

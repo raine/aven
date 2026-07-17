@@ -5,7 +5,7 @@ use anyhow::{Result, bail};
 use crate::attachments::optimization::ImageOptimizationPolicy;
 use crate::config::resolve_blob_dir;
 use crate::ids::new_id;
-use crate::operations::{AttachmentAddInput, append_attachment_ref};
+use crate::operations::AttachmentAddInput;
 use crate::tui::app::App;
 use crate::tui::authoring::PendingTaskAttachment;
 use crate::tui::overlay::{MultilineInputState, OverlayRoute, OverlayState};
@@ -137,61 +137,16 @@ impl App {
                 dedupe_existing: false,
             },
         );
-        let Some((ref_text, is_new)) = self.authoring.add_pending_add_task_attachment(pending)
-        else {
+        let Some(is_new) = self.authoring.add_pending_add_task_attachment(pending) else {
             self.set_info("open add task composer to attach an image");
             return Ok(());
         };
-        let inserted = self.insert_add_task_attachment_ref(&ref_text);
-        if inserted {
-            let state = self.overlay.as_ref().cloned();
-            if let Some(OverlayState::AddTask(state)) = state.as_ref() {
-                self.capture_add_task_state(state);
-            }
-            self.set_success("attached image");
-        } else if is_new {
+        if is_new {
             self.set_success("attached image");
         } else {
             self.set_info("image already attached");
         }
         Ok(())
-    }
-
-    fn insert_add_task_attachment_ref(&mut self, ref_text: &str) -> bool {
-        let Some(overlay) = self.overlay.as_mut() else {
-            return false;
-        };
-        match overlay {
-            OverlayState::AddTask(state) => {
-                let description = state.description.lines.join("\n");
-                if description.contains(ref_text) {
-                    return false;
-                }
-                let description = append_attachment_ref(&description, ref_text);
-                state.description = MultilineInputState::from_value(
-                    OverlayRoute::AddTaskDescription,
-                    "Add task: description",
-                    "",
-                    description,
-                );
-                true
-            }
-            OverlayState::MultilineInput(state) if state.route == OverlayRoute::AddTaskNatural => {
-                let value = state.lines.join("\n");
-                if value.contains(ref_text) {
-                    return false;
-                }
-                let value = append_attachment_ref(&value, ref_text);
-                *state = MultilineInputState::from_value(
-                    OverlayRoute::AddTaskNatural,
-                    state.title.clone(),
-                    state.prompt.clone(),
-                    value,
-                );
-                true
-            }
-            _ => false,
-        }
     }
 
     fn detail_accepts_image_paste(&self) -> bool {

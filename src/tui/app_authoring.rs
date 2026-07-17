@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::config::resolve_blob_dir;
 use crate::labels::normalize_label;
-use crate::operations::{TaskDraft, append_attachment_ref};
+use crate::operations::TaskDraft;
 use crate::tui::app::{App, Notification};
 use crate::tui::app_intake::{IntakeCompletion, IntakePoll, NaturalRetry};
 use crate::tui::authoring::{
@@ -362,9 +362,8 @@ impl App {
     async fn finish_ready_task_intake(&mut self, ready: IntakeCompletion) -> Result<()> {
         match ready.outcome {
             Ok(draft) if ready.create_on_success => {
-                let attachments = self.authoring.take_add_task_attachments();
+                self.submit_created_task(draft).await?;
                 self.authoring.clear_add_task();
-                self.submit_created_task(draft, attachments).await?;
             }
             Ok(draft) => {
                 if self.authoring.apply_add_task_draft(draft) {
@@ -402,23 +401,9 @@ impl App {
             })
     }
 
-    pub(super) async fn submit_created_task(
-        &mut self,
-        mut draft: TaskDraft,
-        attachments: Vec<crate::tui::authoring::PendingTaskAttachment>,
-    ) -> Result<()> {
+    pub(super) async fn submit_created_task(&mut self, draft: TaskDraft) -> Result<()> {
+        let attachments = self.authoring.take_add_task_attachments();
         let current_selected = self.widgets.table.selected();
-        for ref_text in attachments
-            .iter()
-            .map(|attachment| attachment.markdown_ref())
-        {
-            if !draft.description.contains(&ref_text) {
-                draft.description = append_attachment_ref(&draft.description, &ref_text);
-            }
-        }
-        draft.description = self
-            .authoring
-            .append_missing_add_task_attachment_refs(&draft.description);
         let (message, selected) = if attachments.is_empty() {
             self.store.create_task(draft, current_selected).await?
         } else {

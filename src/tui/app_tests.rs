@@ -988,11 +988,7 @@ mod attachment_paste {
             .iter()
             .find(|item| item.task.id == task_id)
             .unwrap();
-        assert!(
-            item.task
-                .description
-                .contains("![pasted image](aven-attachment:")
-        );
+        assert!(item.task.description.is_empty());
         let mut conn = pool.acquire().await.unwrap();
         let attachments = crate::operations::attachment_read_items_by_task(
             &mut conn,
@@ -1009,7 +1005,6 @@ mod attachment_paste {
         );
         assert_eq!(attachments[0].attachment.media_type, "image/png");
         assert!(attachments[0].has_blob);
-        assert_eq!(item.task.description.matches("aven-attachment:").count(), 1);
     }
 
     #[tokio::test]
@@ -1069,7 +1064,7 @@ mod attachment_paste {
             .iter()
             .find(|item| item.task.id == task_id)
             .unwrap();
-        assert_eq!(item.task.description.matches("aven-attachment:").count(), 1);
+        assert!(item.task.description.is_empty());
         let mut conn = pool.acquire().await.unwrap();
         let attachments = crate::operations::attachment_read_items_by_task(
             &mut conn,
@@ -1183,13 +1178,7 @@ mod attachment_paste {
         let selected = app.widgets.table.selected().unwrap();
         let item = &app.store.tasks[selected];
         assert_eq!(item.task.title, "Write docs");
-        assert_eq!(item.task.description.matches("aven-attachment:").count(), 1);
-        assert!(item.task.description.contains("Include setup details"));
-        assert!(
-            item.task
-                .description
-                .contains("![pasted image](aven-attachment:")
-        );
+        assert_eq!(item.task.description, "Include setup details");
         let mut conn = pool.acquire().await.unwrap();
         let attachments = crate::operations::attachment_read_items_by_task(
             &mut conn,
@@ -1236,8 +1225,7 @@ mod attachment_paste {
         let selected = app.widgets.table.selected().unwrap();
         let item = &app.store.tasks[selected];
         assert_eq!(item.task.title, "parsed natural task");
-        assert!(item.task.description.contains("model details"));
-        assert_eq!(item.task.description.matches("aven-attachment:").count(), 1);
+        assert_eq!(item.task.description, "model details");
         let mut conn = pool.acquire().await.unwrap();
         let attachments = crate::operations::attachment_read_items_by_task(
             &mut conn,

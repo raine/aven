@@ -582,28 +582,6 @@ fn workspace_scoped_fts_match(workspace_id: &WorkspaceId, fts_match: &str) -> St
     )
 }
 
-fn attachment_refs_removed(text: &str) -> String {
-    let mut output = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find("](aven-attachment:") {
-        let prefix_start = rest[..start].rfind("![");
-        let Some(prefix_start) = prefix_start else {
-            output.push_str(&rest[..start + 2]);
-            rest = &rest[start + 2..];
-            continue;
-        };
-        let after_destination = &rest[start + 2..];
-        let Some(close_offset) = after_destination.find(')') else {
-            output.push_str(rest);
-            return output;
-        };
-        output.push_str(&rest[..prefix_start]);
-        rest = &after_destination[close_offset + 1..];
-    }
-    output.push_str(rest);
-    output
-}
-
 fn score_document(
     document: SearchDocument,
     query: &parser::ParsedTaskSearchQuery,
@@ -623,7 +601,6 @@ fn score_document(
             snippet: None,
         });
     }
-    let description_search_text = attachment_refs_removed(&document.task.description);
     for (field, text, weight) in [
         (
             SearchMatchedField::Title,
@@ -652,7 +629,7 @@ fn score_document(
         ),
         (
             SearchMatchedField::Description,
-            description_search_text.as_str(),
+            document.task.description.as_str(),
             DESCRIPTION_WEIGHT,
         ),
         (

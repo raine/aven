@@ -1,6 +1,7 @@
 use crate::ids::{TaskId, WorkspaceId};
 use std::collections::{HashMap, HashSet};
 
+use crate::attachments::AttachmentBytesState;
 use crate::query::fragments;
 use crate::query::{TaskDependencyLink, TaskNote};
 use crate::refs::DisplayRefContext;
@@ -81,6 +82,7 @@ async fn attachments_for_tasks(
             "SELECT ta.attachment_id, ta.task_id, ta.sha256, ta.media_type, ta.byte_size,
                     ta.filename, ta.alt_text, ta.width, ta.height, ta.created_at,
                     ta.deleted, ta.deleted_at,
+                    CASE WHEN bi.sha256 IS NULL THEN 0 ELSE 1 END AS has_inventory,
                     COALESCE(bi.available, 0) AS has_blob
              FROM task_attachments ta
              LEFT JOIN blob_inventory bi ON bi.sha256 = ta.sha256
@@ -94,10 +96,18 @@ async fn attachments_for_tasks(
                 separated.push_bind(task_id);
             }
         }
-        query.push(") ORDER BY ta.task_id, ta.created_at");
+        query.push(") AND ta.deleted = 0 ORDER BY ta.task_id, ta.created_at, ta.attachment_id");
 
         for row in query.build().fetch_all(&mut *conn).await? {
             let task_id: TaskId = row.get("task_id");
+            let has_blob = row.get::<i64, _>("has_blob") != 0;
+            let bytes_state = if has_blob {
+                AttachmentBytesState::Present
+            } else if row.get::<i64, _>("has_inventory") != 0 {
+                AttachmentBytesState::Unavailable
+            } else {
+                AttachmentBytesState::PendingDownload
+            };
             let attachment = AttachmentMetadataJson {
                 attachment_id: row.get("attachment_id"),
                 task_id: task_id.to_string(),
@@ -111,7 +121,8 @@ async fn attachments_for_tasks(
                 created_at: row.get("created_at"),
                 deleted: row.get::<i64, _>("deleted") != 0,
                 deleted_at: row.get("deleted_at"),
-                has_blob: row.get::<i64, _>("has_blob") != 0,
+                bytes_state,
+                has_blob,
             };
             attachments_by_task
                 .entry(task_id)
@@ -537,6 +548,62 @@ async fn epic_parents_for_tasks(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn attachment_enrichment_orders_live_rows_and_distinguishes_byte_states() {
+        let (_temp, mut conn) = crate::test_support::test_conn().await;
+        let workspace_id = crate::workspaces::DEFAULT_WORKSPACE_ID;
+        let task_id = "TASK000000000001";
+        sqlx::query(
+            "INSERT INTO task_attachments(workspace_id, attachment_id, task_id, sha256, byte_size, media_type, created_at, deleted, deleted_at)
+             VALUES (?, 'ATTACHMENT000002', ?, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 2, 'image/png', '001', 0, NULL),
+                    (?, 'ATTACHMENT000001', ?, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1, 'image/png', '001', 0, NULL),
+                    (?, 'ATTACHMENT000003', ?, 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', 3, 'image/png', '002', 0, NULL),
+                    (?, 'ATTACHMENT000004', ?, 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', 4, 'image/png', '003', 1, '004')",
+        )
+        .bind(workspace_id)
+        .bind(task_id)
+        .bind(workspace_id)
+        .bind(task_id)
+        .bind(workspace_id)
+        .bind(task_id)
+        .bind(workspace_id)
+        .bind(task_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blob_inventory(sha256, byte_size, media_type, available, first_seen_at)
+             VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1, 'image/png', 1, '001'),
+                    ('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 2, 'image/png', 0, '001')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let attachments = attachments_for_tasks(&mut conn, workspace_id, &[task_id.to_string()])
+            .await
+            .unwrap()
+            .remove(task_id)
+            .unwrap();
+
+        assert_eq!(
+            attachments
+                .iter()
+                .map(|attachment| attachment.attachment_id.as_str())
+                .collect::<Vec<_>>(),
+            ["ATTACHMENT000001", "ATTACHMENT000002", "ATTACHMENT000003"]
+        );
+        assert_eq!(attachments[0].bytes_state, AttachmentBytesState::Present);
+        assert_eq!(
+            attachments[1].bytes_state,
+            AttachmentBytesState::Unavailable
+        );
+        assert_eq!(
+            attachments[2].bytes_state,
+            AttachmentBytesState::PendingDownload
+        );
+    }
 
     #[tokio::test]
     async fn task_enrichment_loads_notes_across_bind_chunks() {

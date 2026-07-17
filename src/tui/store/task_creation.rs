@@ -5,7 +5,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::TaskIntakeConfig;
 use crate::operations::{
-    TaskDraft, add_note as add_note_operation, add_task_attachment_for_ref,
+    TaskDraft, add_note as add_note_operation, add_task_attachment_with_id,
     create_task as create_task_operation,
 };
 use crate::refs::DisplayRefContext;
@@ -71,7 +71,7 @@ impl TuiStore {
             let workspace = self.active_workspace.clone();
             let mut conn = self.pool.acquire().await?;
             for attachment in attachments {
-                add_task_attachment_for_ref(
+                add_task_attachment_with_id(
                     &mut conn,
                     &workspace,
                     blob_dir,

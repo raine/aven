@@ -8,8 +8,8 @@ use crate::query::{self, TaskDependencyItem, conflict_display_value};
 use crate::refs::{DisplayRefContext, resolve_task_ref_in_workspace};
 use crate::render::{print_json_pretty, print_multiline_block, quote};
 use crate::task_render::{
-    AttachmentMetadataJson, TaskEpicLinkJson, attachment_metadata_json,
-    print_attachment_metadata_line, task_epic_link_json,
+    AttachmentMetadataJson, TaskEpicLinkJson, attachment_metadata_json, print_attachment_section,
+    task_epic_link_json,
 };
 use crate::types::Task;
 use crate::workspaces::Workspace;
@@ -299,9 +299,7 @@ fn print_task_context(snapshot: &TaskContextSnapshot) {
     if !snapshot.task.description.is_empty() {
         print_multiline_block("description", &snapshot.task.description);
     }
-    for attachment in &snapshot.attachments {
-        print_attachment_metadata_line(attachment);
-    }
+    print_attachment_section(&snapshot.attachments);
     let deps = &snapshot.dependencies;
     println!(
         "depends_on open={} total={}",

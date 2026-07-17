@@ -108,6 +108,14 @@ fn attachment_add_list_get_and_delete_work_locally() {
         ],
     ));
     let task_ref = extract_ref(&created);
+    let description_versions_before = scalar_i64(
+        &db,
+        "SELECT count(*) FROM field_versions WHERE field = 'description'",
+    );
+    let description_changes_before = scalar_i64(
+        &db,
+        "SELECT count(*) FROM changes WHERE field = 'description'",
+    );
     let image = env.path("photo.png");
     std::fs::write(&image, b"png bytes").unwrap();
 
@@ -138,7 +146,7 @@ fn attachment_add_list_get_and_delete_work_locally() {
     contains_all(
         &full,
         &[
-            "![diagram](aven-attachment:",
+            "description<<EOF\nbefore\nEOF\nAttachments:",
             &attachment_id,
             "attachment attachment_id=",
             "has_blob=yes",
@@ -150,10 +158,25 @@ fn attachment_add_list_get_and_delete_work_locally() {
 
     let full_json = ok(env.aven(&db, ["show", &task_ref, "--full", "--json"]));
     let full_json: serde_json::Value = serde_json::from_str(&full_json).unwrap();
+    assert_eq!(full_json["description"], "before");
     assert_eq!(full_json["attachments"][0]["attachment_id"], attachment_id);
     assert_eq!(full_json["attachments"][0]["has_blob"], true);
     assert!(full_json["attachments"][0].get("sha256").is_none());
     assert!(full_json["attachments"][0].get("bytes").is_none());
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM field_versions WHERE field = 'description'",
+        ),
+        description_versions_before
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM changes WHERE field = 'description'",
+        ),
+        description_changes_before
+    );
 
     let listed = ok(env.aven(&db, ["attachment", "list", &task_ref, "--json"]));
     let value: serde_json::Value = serde_json::from_str(&listed).unwrap();
@@ -182,7 +205,22 @@ fn attachment_add_list_get_and_delete_work_locally() {
     assert!(value[0].get("bytes").is_none());
 
     let show = ok(env.aven(&db, ["show", &task_ref, "--full"]));
-    contains_all(&show, &["![diagram](aven-attachment:", &attachment_id]);
+    contains_all(&show, &["description<<EOF\nbefore\nEOF"]);
+    contains_none(&show, &["Attachments:", &attachment_id]);
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM field_versions WHERE field = 'description'",
+        ),
+        description_versions_before
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM changes WHERE field = 'description'",
+        ),
+        description_changes_before
+    );
 }
 
 #[test]

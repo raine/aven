@@ -798,7 +798,7 @@ pub(crate) enum AttachmentSubcommand {
 pub(crate) struct AttachmentAddArgs {
     pub(crate) task_ref: String,
     pub(crate) path: PathBuf,
-    /// Alternative text for the image reference
+    /// Alternative text for the image
     #[arg(long)]
     pub(crate) alt: Option<String>,
     /// Override the filename stored in metadata

@@ -95,11 +95,11 @@ aven restore APP-7KQ9
   existing output path. `attachment add` accepts `--media-type`, `--filename`,
   `--alt`, `--width`, and `--height`; extension inference covers png, jpg,
   jpeg, gif, and webp.
-- Task detail read surfaces include attachment metadata and `has_blob` without
-  embedding bytes. The TUI renders `aven-attachment:<id>` Markdown image refs as
-  text placeholders for present, pending download, deleted, or missing metadata
-  states. Search matches attachment filename and alt text, not hashes, sidecar
-  paths, bytes, or raw attachment refs.
+- Task detail read surfaces include ordered attachment metadata and `has_blob`
+  without embedding bytes. The TUI renders live attachments after the description
+  in a dedicated section, using text placeholders when previews or local bytes
+  are unavailable. Search matches attachment filename and alt text, not hashes,
+  sidecar paths, or bytes.
 - `aven backup` writes one archive containing SQLite data and local attachment
   objects. `aven backup restore <path> --yes` restores that archive and keeps a
   SQLite safety copy. `aven export` writes attachment metadata and blob
@@ -108,9 +108,8 @@ aven restore APP-7KQ9
 - `aven doctor --integrity` checks SQLite relationships and attachment sidecar
   consistency, including missing objects, dangling metadata, unsupported media
   types, and orphan objects.
-- Task descriptions remain scalar Markdown text. Attachment adds append an
-  `aven-attachment:<id>` image reference, and attachment deletes tombstone
-  metadata while leaving description text intact.
+- Task descriptions remain scalar user-authored Markdown text. Attachment adds
+  and deletes change attachment metadata without changing the description.
 - When creating follow-up tasks from a discussion, investigation, review, or
   plan, include enough detail in the task description for the task to stand
   alone. Capture rationale, scope, acceptance criteria, implementation notes,

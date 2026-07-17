@@ -148,7 +148,7 @@ Press `Enter` on a task to open its detail view. Double-clicking a task row also
 
 <p class="media-caption">The detail view keeps Markdown context, notes, relationships, and editable metadata together.</p>
 
-The detail view renders Markdown descriptions, notes, task metadata, availability, and due-date state. Overdue and due-today labels are highlighted while future deadlines remain visible as dates. Use `j/k`, arrows, `Ctrl-d`, `Ctrl-u`, `PageDown`, `PageUp`, or the mouse wheel to scroll. Use `[` and `]` to switch tasks while staying in detail. Press `Esc`, `Enter`, or `q` to return to the list. Clicking status or priority opens the matching menu and returns to detail after selection.
+The detail view renders Markdown descriptions, notes, task metadata, availability, and due-date state. Live image attachments appear once in an `ATTACHMENTS` section after the description, ordered by creation time and attachment ID. Supported terminals show inline previews when local bytes are available. Stable text placeholders identify attachments that are pending download or whose local bytes are unavailable. Ordinary Markdown images remain part of the description. Overdue and due-today labels are highlighted while future deadlines remain visible as dates. Use `j/k`, arrows, `Ctrl-d`, `Ctrl-u`, `PageDown`, `PageUp`, or the mouse wheel to scroll. Use `[` and `]` to switch tasks while staying in detail. Press `Esc`, `Enter`, or `q` to return to the list. Clicking status or priority opens the matching menu and returns to detail after selection.
 
 ### Select and copy text
 

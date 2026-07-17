@@ -2,7 +2,6 @@
 
 use anyhow::{Result, bail};
 
-pub(crate) const ATTACHMENT_REF_PREFIX: &str = "aven-attachment:";
 pub(crate) const MAX_BLOB_BYTES: usize = 25 * 1024 * 1024;
 pub(crate) const MAX_FILENAME_LEN: usize = 255;
 pub(crate) const MAX_ALT_TEXT_LEN: usize = 500;
@@ -74,12 +73,6 @@ pub(crate) fn validate_dimensions(width: Option<i64>, height: Option<i64>) -> Re
     }
 }
 
-pub(crate) fn parse_attachment_ref(value: &str) -> Option<&str> {
-    value
-        .strip_prefix(ATTACHMENT_REF_PREFIX)
-        .filter(|id| validate_attachment_id(id).is_ok())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,16 +140,5 @@ mod tests {
         assert!(validate_dimensions(Some(0), Some(1080)).is_err());
         assert!(validate_dimensions(Some(1920), None).is_err());
         assert!(validate_dimensions(None, Some(1080)).is_err());
-    }
-
-    #[test]
-    fn parses_attachment_ref() {
-        assert_eq!(
-            parse_attachment_ref("aven-attachment:7KQ9A1X4MV2P8D6R"),
-            Some("7KQ9A1X4MV2P8D6R")
-        );
-        assert_eq!(parse_attachment_ref("aven-attachment:short"), None);
-        assert_eq!(parse_attachment_ref("not-a-ref"), None);
-        assert_eq!(parse_attachment_ref(""), None);
     }
 }

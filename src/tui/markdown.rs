@@ -3,25 +3,15 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::task_render::{AttachmentMetadataJson, attachment_placeholder_for_ref};
 use crate::tui::theme::{ACCENT, BG_PANEL, BLUE, FG_DIM, GREEN};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum MarkdownBlock {
     Text(Line<'static>),
-    AttachmentImage(AttachmentImageBlock),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct AttachmentImageBlock {
-    pub(crate) attachment_ref: String,
-    pub(crate) placeholder: Line<'static>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct MarkdownRenderContext<'a> {
-    pub(crate) attachments: &'a [AttachmentMetadataJson],
-}
+pub(crate) struct MarkdownRenderContext;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Attrs {
@@ -78,7 +68,7 @@ impl TableState {
     }
 }
 
-struct MarkdownRenderer<'a> {
+struct MarkdownRenderer {
     max_width: usize,
     blocks: Vec<MarkdownBlock>,
     lines: Vec<LayoutLine>,
@@ -94,14 +84,12 @@ struct MarkdownRenderer<'a> {
     in_block_quote: bool,
     heading_level: Option<u8>,
     link_url: Option<String>,
-    attachment_image_ref: Option<String>,
     ordinary_image: bool,
     table_state: Option<TableState>,
-    context: MarkdownRenderContext<'a>,
 }
 
-impl<'a> MarkdownRenderer<'a> {
-    fn new(max_width: usize, context: MarkdownRenderContext<'a>) -> Self {
+impl MarkdownRenderer {
+    fn new(max_width: usize, _context: MarkdownRenderContext) -> Self {
         Self {
             max_width,
             blocks: Vec::new(),
@@ -118,10 +106,8 @@ impl<'a> MarkdownRenderer<'a> {
             in_block_quote: false,
             heading_level: None,
             link_url: None,
-            attachment_image_ref: None,
             ordinary_image: false,
             table_state: None,
-            context,
         }
     }
 
@@ -388,20 +374,13 @@ impl<'a> MarkdownRenderer<'a> {
                     ..Attrs::default()
                 });
             }
-            Tag::Image { dest_url, .. } => {
-                let dest_url = dest_url.to_string();
-                if dest_url.starts_with("aven-attachment:") {
-                    self.flush_line();
-                    self.flush_lines_to_blocks();
-                    self.attachment_image_ref = Some(dest_url);
-                } else {
-                    self.ordinary_image = true;
-                    self.attrs_stack.push(Attrs {
-                        link: true,
-                        underline: true,
-                        ..Attrs::default()
-                    });
-                }
+            Tag::Image { .. } => {
+                self.ordinary_image = true;
+                self.attrs_stack.push(Attrs {
+                    link: true,
+                    underline: true,
+                    ..Attrs::default()
+                });
             }
             Tag::Table(_) => {
                 self.ensure_blank_line();
@@ -491,15 +470,7 @@ impl<'a> MarkdownRenderer<'a> {
                 }
             }
             TagEnd::Image => {
-                if let Some(attachment_ref) = self.attachment_image_ref.take() {
-                    let placeholder =
-                        attachment_placeholder_for_ref(&attachment_ref, self.context.attachments);
-                    self.blocks
-                        .push(MarkdownBlock::AttachmentImage(AttachmentImageBlock {
-                            attachment_ref,
-                            placeholder: Line::from(placeholder),
-                        }));
-                } else if self.ordinary_image {
+                if self.ordinary_image {
                     self.attrs_stack.pop();
                     self.ordinary_image = false;
                 }
@@ -527,10 +498,6 @@ impl<'a> MarkdownRenderer<'a> {
     }
 
     fn text(&mut self, text: &str) {
-        if self.attachment_image_ref.is_some() {
-            return;
-        }
-
         let text = expand_tabs(text, self.current_width, 8);
 
         if let Some(state) = &mut self.table_state {
@@ -639,14 +606,14 @@ pub(crate) fn render_markdown(input: &str, max_width: usize) -> Vec<Line<'static
     flatten_markdown_blocks(render_markdown_with_context(
         input,
         max_width,
-        MarkdownRenderContext::default(),
+        MarkdownRenderContext,
     ))
 }
 
 pub(crate) fn render_markdown_with_context(
     input: &str,
     max_width: usize,
-    context: MarkdownRenderContext<'_>,
+    context: MarkdownRenderContext,
 ) -> Vec<MarkdownBlock> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
@@ -711,7 +678,6 @@ pub(crate) fn flatten_markdown_blocks(blocks: Vec<MarkdownBlock>) -> Vec<Line<'s
         .into_iter()
         .map(|block| match block {
             MarkdownBlock::Text(line) => line,
-            MarkdownBlock::AttachmentImage(block) => block.placeholder,
         })
         .collect()
 }
@@ -962,75 +928,10 @@ mod tests {
         }
     }
 
-    fn attachment_metadata(
-        attachment_id: &str,
-        deleted: bool,
-        has_blob: bool,
-    ) -> AttachmentMetadataJson {
-        AttachmentMetadataJson {
-            attachment_id: attachment_id.to_string(),
-            task_id: "task".to_string(),
-            sha256: "0".repeat(64),
-            media_type: "image/png".to_string(),
-            byte_size: 4,
-            filename: Some("chart.png".to_string()),
-            alt_text: Some("Chart".to_string()),
-            width: None,
-            height: None,
-            created_at: "t".to_string(),
-            deleted,
-            deleted_at: deleted.then(|| "t".to_string()),
-            has_blob,
-        }
-    }
-
-    fn attachment_placeholder_text(input: &str, attachments: &[AttachmentMetadataJson]) -> String {
-        let blocks = render_markdown_with_context(input, 80, MarkdownRenderContext { attachments });
-        let Some(MarkdownBlock::AttachmentImage(block)) = blocks
-            .iter()
-            .find(|block| matches!(block, MarkdownBlock::AttachmentImage(_)))
-        else {
-            panic!("attachment image block missing");
-        };
-        block.placeholder.to_string()
-    }
-
     #[test]
-    fn attachment_image_renders_present_placeholder() {
-        let attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
-
-        assert_eq!(
-            attachment_placeholder_text("![Chart](aven-attachment:ATTACHMENT000001)", &attachments,),
-            "[image: Chart]"
-        );
-    }
-
-    #[test]
-    fn attachment_image_renders_pending_download_placeholder() {
-        let attachments = vec![attachment_metadata("ATTACHMENT000001", false, false)];
-
-        assert_eq!(
-            attachment_placeholder_text("![Chart](aven-attachment:ATTACHMENT000001)", &attachments,),
-            "[image: pending download Chart]"
-        );
-    }
-
-    #[test]
-    fn attachment_image_renders_deleted_placeholder() {
-        let attachments = vec![attachment_metadata("ATTACHMENT000001", true, true)];
-
-        assert_eq!(
-            attachment_placeholder_text("![Chart](aven-attachment:ATTACHMENT000001)", &attachments,),
-            "[image: deleted attachment Chart]"
-        );
-    }
-
-    #[test]
-    fn attachment_image_renders_missing_metadata_placeholder() {
-        assert_eq!(
-            attachment_placeholder_text("![Chart](aven-attachment:ATTACHMENT000001)", &[]),
-            "[image: missing attachment metadata]"
-        );
+    fn ordinary_image_with_custom_destination_renders_alt_text() {
+        let rendered = render_to_text("![Chart](custom-image:chart)", 80);
+        assert_eq!(rendered, "Chart");
     }
 
     #[test]
