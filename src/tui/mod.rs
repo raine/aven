@@ -83,13 +83,14 @@ impl Drop for TerminalSession {
 
 pub(crate) async fn run(
     pool: SqlitePool,
+    workspace: crate::workspaces::Workspace,
     project: Option<&str>,
     add_task: bool,
     natural: bool,
     db_path: std::path::PathBuf,
     config: crate::config::AppConfig,
 ) -> Result<()> {
-    let mut app = app::App::new(pool, project).await?;
+    let mut app = app::App::new(pool, workspace, project).await?;
     app.set_add_task_db_path(db_path);
     app.set_config(config);
     app.start_update_check();
@@ -104,12 +105,13 @@ pub(crate) async fn run(
 
 pub(crate) async fn run_add_task(
     pool: SqlitePool,
+    workspace: crate::workspaces::Workspace,
     project: Option<&str>,
     natural: bool,
     db_path: std::path::PathBuf,
     config: crate::config::AppConfig,
 ) -> Result<()> {
-    let mut app = app::App::new(pool, project).await?;
+    let mut app = app::App::new(pool, workspace, project).await?;
     app.set_add_task_db_path(db_path);
     let mut terminal = TerminalSession::init()?;
     let result = app

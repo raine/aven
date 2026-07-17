@@ -6,9 +6,10 @@ use crate::change_log::op_type;
 use crate::db::{begin_immediate, insert_change, set_field_version};
 use crate::mutation::{apply_field_value_in_workspace, apply_project_id_in_workspace};
 use crate::projects::{resolve_existing_project_in_workspace, resolve_project_for_stored_value};
-use crate::refs::get_task;
+use crate::refs::get_task_in_workspace;
 use crate::task_fields::TaskField;
 use crate::types::Task;
+use crate::workspaces::Workspace;
 
 pub(crate) struct ConflictListItem {
     pub(crate) task_id: String,
@@ -34,13 +35,14 @@ pub(crate) struct ConflictOutcome {
 }
 pub(crate) async fn list_conflicts(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     project_key: Option<&str>,
     field: Option<&str>,
 ) -> Result<Vec<ConflictListItem>> {
-    let workspace_id = crate::workspaces::active_workspace_id();
+    let workspace_id = &workspace.id;
     let project_id = if let Some(project) = project_key {
         Some(
-            resolve_existing_project_in_workspace(conn, &workspace_id, project)
+            resolve_existing_project_in_workspace(conn, workspace_id, project)
                 .await?
                 .id,
         )
@@ -58,7 +60,7 @@ pub(crate) async fn list_conflicts(
                  AND (? IS NULL OR c.field = ?)
                  ORDER BY c.created_at"#,
     )
-    .bind(&workspace_id)
+    .bind(workspace_id)
     .bind(&project_id)
     .bind(&project_id)
     .bind(field)
@@ -81,17 +83,18 @@ pub(crate) async fn list_conflicts(
 
 pub(crate) async fn task_conflicts(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     task_id: &str,
     field: Option<&str>,
 ) -> Result<Vec<ConflictDetail>> {
-    let workspace_id = crate::workspaces::active_workspace_id();
+    let workspace_id = &workspace.id;
     let rows = sqlx::query(
         r#"SELECT field, variant_a, local_value, variant_b, remote_value
          FROM conflicts
          WHERE workspace_id = ? AND task_id = ? AND resolved = 0 AND (? IS NULL OR field = ?)
          ORDER BY field, id"#,
     )
-    .bind(&workspace_id)
+    .bind(workspace_id)
     .bind(task_id)
     .bind(field)
     .bind(field)
@@ -111,11 +114,12 @@ pub(crate) async fn task_conflicts(
 
 pub(crate) async fn conflict_variant_value(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     task_id: &str,
     field: &str,
     token: &str,
 ) -> Result<String> {
-    for detail in task_conflicts(conn, task_id, Some(field)).await? {
+    for detail in task_conflicts(conn, workspace, task_id, Some(field)).await? {
         if token == detail.variant_a {
             return Ok(detail.local_value);
         }
@@ -128,13 +132,13 @@ pub(crate) async fn conflict_variant_value(
 
 pub(crate) async fn resolve_conflict(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     task_id: &str,
     field: &str,
     value: &str,
 ) -> Result<ConflictOutcome> {
     let task_field = TaskField::parse_or_unknown(field)?;
     let field = task_field.as_str();
-    let workspace = crate::workspaces::active_workspace();
     if task_field == TaskField::IsEpic
         && value == "0"
         && crate::operations::task_has_epic_children(conn, &workspace.id, task_id).await?
@@ -175,7 +179,7 @@ pub(crate) async fn resolve_conflict(
     tx.commit().await?;
     info!(task_id = %task_id, field = %field, "conflict resolved");
     Ok(ConflictOutcome {
-        task: get_task(conn, task_id).await?,
+        task: get_task_in_workspace(conn, workspace, task_id).await?,
         field: field.to_string(),
     })
 }

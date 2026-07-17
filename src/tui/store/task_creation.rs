@@ -17,15 +17,14 @@ impl TuiStore {
         input: String,
         project: Option<String>,
     ) -> JoinHandle<Result<TaskDraft>> {
-        self.activate_workspace();
         let pool = self.pool.clone();
         let workspace = self.active_workspace.clone();
         tokio::spawn(async move {
-            crate::workspaces::set_active_workspace(workspace);
             let context = {
                 let mut conn = pool.acquire().await?;
                 crate::task_intake::TaskIntakeContext::load_with_project(
                     &mut conn,
+                    &workspace,
                     project.as_deref(),
                 )
                 .await?
@@ -45,9 +44,8 @@ impl TuiStore {
         let previous_id = self
             .selected_task(current_selected_index)
             .map(|item| item.task.id.clone());
-        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
-        let outcome = create_task_operation(&mut conn, draft).await?;
+        let outcome = create_task_operation(&mut conn, &self.active_workspace, draft).await?;
         let task_id = outcome.task.id.clone();
         let message_ref = display_ref(&mut conn, &outcome.task).await?;
         let workspace_id = self.active_workspace.id.clone();
@@ -77,10 +75,9 @@ impl TuiStore {
     }
 
     pub(crate) async fn add_note_to_task(&mut self, task_id: &str, body: String) -> Result<String> {
-        self.activate_workspace();
         let workspace_id = self.active_workspace.id.clone();
         let mut conn = self.pool.acquire().await?;
-        let outcome = add_note_operation(&mut conn, task_id, body).await?;
+        let outcome = add_note_operation(&mut conn, &self.active_workspace, task_id, body).await?;
         let note_change_id: String = sqlx::query_scalar(
             "SELECT change_id FROM notes WHERE workspace_id = ? AND id = ? AND task_id = ?",
         )

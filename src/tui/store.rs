@@ -40,7 +40,7 @@ use crate::query::{
     list_recent_actions_in_workspace, list_task_items_in_workspace,
     sidebar_counts_for_scope_in_workspace,
 };
-use crate::workspaces::{Workspace, active_workspace, list_workspaces, set_active_workspace};
+use crate::workspaces::{Workspace, list_workspaces};
 
 pub(crate) struct TuiStore {
     pool: SqlitePool,
@@ -67,30 +67,36 @@ pub(crate) struct ScopeRefreshResult {
 }
 
 impl TuiStore {
-    pub(crate) async fn new(pool: SqlitePool) -> Result<Self> {
-        Self::new_with_initial_project(pool, None).await
+    pub(crate) async fn new(pool: SqlitePool, workspace: Workspace) -> Result<Self> {
+        Self::new_with_initial_project(pool, workspace, None).await
     }
 
-    pub(crate) async fn new_for_inferred_project(pool: SqlitePool) -> Result<Self> {
-        let active_workspace = active_workspace();
+    pub(crate) async fn new_for_inferred_project(
+        pool: SqlitePool,
+        workspace: Workspace,
+    ) -> Result<Self> {
         let initial_project = {
             let mut conn = pool.acquire().await?;
-            inferred_existing_project_key_in_workspace(&mut conn, &active_workspace.id).await?
+            inferred_existing_project_key_in_workspace(&mut conn, &workspace.id).await?
         };
-        Self::new_with_initial_project(pool, initial_project).await
+        Self::new_with_initial_project(pool, workspace, initial_project).await
     }
 
-    pub(crate) async fn new_for_project(pool: SqlitePool, project: &str) -> Result<Self> {
-        let active_workspace = active_workspace();
+    pub(crate) async fn new_for_project(
+        pool: SqlitePool,
+        workspace: Workspace,
+        project: &str,
+    ) -> Result<Self> {
         let project = {
             let mut conn = pool.acquire().await?;
-            resolve_existing_project_in_workspace(&mut conn, &active_workspace.id, project).await?
+            resolve_existing_project_in_workspace(&mut conn, &workspace.id, project).await?
         };
-        Self::new_with_initial_project(pool, Some(project.key)).await
+        Self::new_with_initial_project(pool, workspace, Some(project.key)).await
     }
 
     async fn new_with_initial_project(
         pool: SqlitePool,
+        workspace: Workspace,
         initial_project: Option<String>,
     ) -> Result<Self> {
         let mut view_state = TaskViewState::default();
@@ -104,7 +110,7 @@ impl TuiStore {
             projects: Vec::new(),
             labels: Vec::new(),
             workspaces: Vec::new(),
-            active_workspace: active_workspace(),
+            active_workspace: workspace,
             counts: SidebarCounts::default(),
             sidebar_entries: Vec::new(),
             view_state,
@@ -139,10 +145,6 @@ impl TuiStore {
         } else {
             self.tasks.len()
         }
-    }
-
-    fn activate_workspace(&self) {
-        set_active_workspace(self.active_workspace.clone());
     }
 
     pub(crate) async fn refresh(&mut self, selected_id: Option<&str>) -> Result<Option<usize>> {

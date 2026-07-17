@@ -77,10 +77,9 @@ async fn test_app_with_pool() -> (tempfile::TempDir, SqlitePool, App) {
 
 async fn reset_default_workspace(pool: &SqlitePool) {
     let mut conn = pool.acquire().await.unwrap();
-    let default = crate::workspaces::ensure_default_workspace(&mut conn)
+    crate::workspaces::ensure_default_workspace(&mut conn)
         .await
         .unwrap();
-    crate::workspaces::set_active_workspace(default);
 }
 
 fn key(code: KeyCode) -> KeyEvent {
@@ -4313,12 +4312,22 @@ mod detail_mode {
         let second_index = create_and_select_task(&mut app, test_task_draft("Second child")).await;
         let second_id = app.store.tasks[second_index].task.id.clone();
         let mut conn = pool.acquire().await.unwrap();
-        crate::operations::add_task_to_epic(&mut conn, &first_id, &parent_id)
-            .await
-            .unwrap();
-        crate::operations::add_task_to_epic(&mut conn, &second_id, &parent_id)
-            .await
-            .unwrap();
+        crate::operations::add_task_to_epic(
+            &mut conn,
+            &app.store.active_workspace,
+            &first_id,
+            &parent_id,
+        )
+        .await
+        .unwrap();
+        crate::operations::add_task_to_epic(
+            &mut conn,
+            &app.store.active_workspace,
+            &second_id,
+            &parent_id,
+        )
+        .await
+        .unwrap();
         drop(conn);
         app.store.refresh(Some(&parent_id)).await.unwrap();
         let parent_index = app
@@ -4397,9 +4406,14 @@ mod detail_mode {
         let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
         let child_id = app.store.tasks[child_index].task.id.clone();
         let mut conn = pool.acquire().await.unwrap();
-        crate::operations::add_task_to_epic(&mut conn, &child_id, &parent_id)
-            .await
-            .unwrap();
+        crate::operations::add_task_to_epic(
+            &mut conn,
+            &crate::workspaces::Workspace::default(),
+            &child_id,
+            &parent_id,
+        )
+        .await
+        .unwrap();
         drop(conn);
         app.store.refresh(Some(&parent_id)).await.unwrap();
         let parent_index = app

@@ -53,9 +53,8 @@ impl TuiStore {
             .find(|t| t.task.id == parent_id)
             .map(|t| t.display_ref.clone())
             .unwrap_or_default();
-        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
-        remove_task_from_epic(&mut conn, &child_id, &parent_id).await?;
+        remove_task_from_epic(&mut conn, &self.active_workspace, &child_id, &parent_id).await?;
         drop(conn);
         let message = format!("detached {} from {}", child_display_ref, parent_display_ref);
         self.refresh(None).await?;
@@ -82,9 +81,8 @@ impl TuiStore {
             .find(|t| t.task.id == parent_id)
             .map(|t| t.display_ref.clone())
             .unwrap_or_default();
-        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
-        remove_task_from_epic(&mut conn, &child_id, &parent_id).await?;
+        remove_task_from_epic(&mut conn, &self.active_workspace, &child_id, &parent_id).await?;
         drop(conn);
         let message = format!("promoted {} from {}", child_display_ref, parent_display_ref);
         self.refresh(None).await?;

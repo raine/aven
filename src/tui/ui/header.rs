@@ -546,12 +546,13 @@ mod tests {
             .await
             .unwrap();
         let mut conn = pool.acquire().await.unwrap();
-        let default = crate::workspaces::ensure_default_workspace(&mut conn)
+        crate::workspaces::ensure_default_workspace(&mut conn)
             .await
             .unwrap();
-        crate::workspaces::set_active_workspace(default);
         drop(conn);
-        let mut store = TuiStore::new(pool).await.unwrap();
+        let mut store = TuiStore::new(pool, crate::workspaces::Workspace::default())
+            .await
+            .unwrap();
         store.counts = crate::query::SidebarCounts {
             open: 3,
             inbox: 1,

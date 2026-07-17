@@ -462,7 +462,7 @@ mod tests {
     #[tokio::test]
     async fn task_enrichment_loads_notes_across_bind_chunks() {
         let (_temp, mut conn) = crate::test_support::test_conn().await;
-        let workspace_id = crate::workspaces::active_workspace_id();
+        let workspace_id = crate::workspaces::DEFAULT_WORKSPACE_ID.to_string();
         let task_ids = (0..=SQLITE_BIND_CHUNK_SIZE)
             .map(|index| format!("task-{index:04}"))
             .collect::<Vec<_>>();

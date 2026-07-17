@@ -6,8 +6,8 @@ use sqlx::SqliteConnection;
 use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
 use crate::db::begin_immediate;
 use crate::ids::now;
-use crate::refs::get_task;
-use crate::workspaces::workspace_for_id;
+use crate::refs::get_task_in_workspace;
+use crate::workspaces::Workspace;
 
 pub(crate) struct DependencyOutcome {
     pub(crate) task: crate::types::Task,
@@ -22,6 +22,7 @@ struct DependencyPair {
 
 async fn load_dependency_pair(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     task_id: &str,
     depends_on_id: &str,
 ) -> Result<DependencyPair> {
@@ -29,31 +30,25 @@ async fn load_dependency_pair(
         bail!("error dependency-self task_id={task_id}");
     }
 
-    let task = get_task(conn, task_id).await?;
-    let depends_on = get_task(conn, depends_on_id).await?;
-
-    if task.workspace_id != depends_on.workspace_id {
-        bail!(
-            "error dependency-cross-workspace task_id={task_id} depends_on_task_id={depends_on_id}"
-        );
-    }
+    let task = get_task_in_workspace(conn, workspace, task_id).await?;
+    let depends_on = get_task_in_workspace(conn, workspace, depends_on_id).await?;
 
     Ok(DependencyPair { task, depends_on })
 }
 
 async fn record_dependency_change(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     pair: &DependencyPair,
     op_type: &'static str,
 ) -> Result<()> {
-    let workspace = workspace_for_id(conn, &pair.task.workspace_id).await?;
     append_change(
         conn,
         ChangeEntity::Task,
         &pair.task.id,
         Some("dependencies"),
         op_type,
-        ChangePayload::workspace(&workspace).set("depends_on_task_id", pair.depends_on.id.clone()),
+        ChangePayload::workspace(workspace).set("depends_on_task_id", pair.depends_on.id.clone()),
     )
     .await?;
     Ok(())
@@ -61,11 +56,12 @@ async fn record_dependency_change(
 
 pub(crate) async fn add_task_dependency(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     task_id: &str,
     depends_on_id: &str,
 ) -> Result<DependencyOutcome> {
     let mut tx = begin_immediate(conn).await?;
-    let pair = load_dependency_pair(&mut tx, task_id, depends_on_id).await?;
+    let pair = load_dependency_pair(&mut tx, workspace, task_id, depends_on_id).await?;
 
     if dependency_path_exists(
         &mut tx,
@@ -93,7 +89,7 @@ pub(crate) async fn add_task_dependency(
         > 0;
 
     if changed {
-        record_dependency_change(&mut tx, &pair, op_type::DEPENDENCY_ADD).await?;
+        record_dependency_change(&mut tx, workspace, &pair, op_type::DEPENDENCY_ADD).await?;
     }
 
     tx.commit().await?;
@@ -106,11 +102,12 @@ pub(crate) async fn add_task_dependency(
 
 pub(crate) async fn remove_task_dependency(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     task_id: &str,
     depends_on_id: &str,
 ) -> Result<DependencyOutcome> {
     let mut tx = begin_immediate(conn).await?;
-    let pair = load_dependency_pair(&mut tx, task_id, depends_on_id).await?;
+    let pair = load_dependency_pair(&mut tx, workspace, task_id, depends_on_id).await?;
 
     let changed = sqlx::query(
         "DELETE FROM task_dependencies
@@ -125,7 +122,7 @@ pub(crate) async fn remove_task_dependency(
         > 0;
 
     if changed {
-        record_dependency_change(&mut tx, &pair, op_type::DEPENDENCY_REMOVE).await?;
+        record_dependency_change(&mut tx, workspace, &pair, op_type::DEPENDENCY_REMOVE).await?;
     }
 
     tx.commit().await?;

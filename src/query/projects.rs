@@ -1,18 +1,8 @@
 use anyhow::Result;
 use sqlx::{Row, SqliteConnection};
 
-use crate::workspaces::active_workspace_id;
-
 use super::ProjectListItem;
 use super::fragments;
-
-#[allow(dead_code)]
-pub(crate) async fn list_project_items(
-    conn: &mut SqliteConnection,
-) -> Result<Vec<ProjectListItem>> {
-    let workspace_id = active_workspace_id();
-    list_project_items_in_workspace(conn, &workspace_id).await
-}
 
 pub(crate) async fn list_project_items_in_workspace(
     conn: &mut SqliteConnection,

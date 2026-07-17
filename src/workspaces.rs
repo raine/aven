@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result, bail};
 use serde_json::json;
@@ -12,8 +11,6 @@ use crate::projects::normalize_key;
 
 pub(crate) const DEFAULT_WORKSPACE_ID: &str = "0000000000000000";
 
-static ACTIVE_WORKSPACE: OnceLock<Mutex<Option<Workspace>>> = OnceLock::new();
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Workspace {
     pub(crate) id: String,
@@ -21,28 +18,14 @@ pub(crate) struct Workspace {
     pub(crate) name: String,
 }
 
-pub(crate) fn set_active_workspace(workspace: Workspace) {
-    *ACTIVE_WORKSPACE
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .expect("active workspace lock") = Some(workspace);
-}
-
-pub(crate) fn active_workspace() -> Workspace {
-    ACTIVE_WORKSPACE
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .expect("active workspace lock")
-        .clone()
-        .unwrap_or_else(|| Workspace {
+impl Default for Workspace {
+    fn default() -> Self {
+        Self {
             id: DEFAULT_WORKSPACE_ID.to_string(),
             key: "default".to_string(),
             name: "default".to_string(),
-        })
-}
-
-pub(crate) fn active_workspace_id() -> String {
-    active_workspace().id
+        }
+    }
 }
 
 pub(crate) async fn ensure_default_workspace(conn: &mut SqliteConnection) -> Result<Workspace> {

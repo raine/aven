@@ -14,9 +14,9 @@ use super::TuiStore;
 impl TuiStore {
     pub(crate) async fn create_project(&mut self, name: String) -> Result<String> {
         let name = name.trim().to_string();
-        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
-        let outcome = create_project_operation(&mut conn, &name, None).await?;
+        let outcome =
+            create_project_operation(&mut conn, &self.active_workspace, &name, None).await?;
         drop(conn);
         let commands = if outcome.created {
             vec![UndoCommand::DeleteCreatedProject {
@@ -35,7 +35,6 @@ impl TuiStore {
     }
 
     pub(crate) async fn delete_project(&mut self, project: &str) -> Result<MutationMessage> {
-        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
         let outcome = delete_project_operation(&mut conn, &self.active_workspace, project).await?;
         drop(conn);
@@ -56,7 +55,6 @@ impl TuiStore {
         project: &str,
         new_name: String,
     ) -> Result<MutationMessage> {
-        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
         let outcome =
             rename_project_operation(&mut conn, &self.active_workspace, project, &new_name, None)
@@ -95,9 +93,8 @@ impl TuiStore {
 
     pub(crate) async fn create_label(&mut self, name: String) -> Result<String> {
         let name = name.trim().to_string();
-        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
-        let outcome = create_label_operation(&mut conn, &name).await?;
+        let outcome = create_label_operation(&mut conn, &self.active_workspace, &name).await?;
         drop(conn);
         let commands = if outcome.created {
             vec![UndoCommand::DeleteCreatedLabel {
@@ -115,7 +112,6 @@ impl TuiStore {
     }
 
     pub(crate) async fn inferred_add_project(&self) -> Result<Option<String>> {
-        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
         inferred_project_key_for_add_in_workspace(&mut conn, &self.active_workspace.id).await
     }

@@ -13,9 +13,14 @@ use crate::query::{
     self, SortDirection, TaskAvailabilityFilter, TaskFilters, TaskQueryMode, TaskSort,
 };
 use crate::render::{print_json_pretty, quote};
+use crate::workspaces::Workspace;
 
-pub(crate) async fn run(conn: &mut SqliteConnection, args: PrimeArgs) -> Result<()> {
-    let report = build_report(conn, args.project.as_deref(), args.limit).await?;
+pub(crate) async fn run(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    args: PrimeArgs,
+) -> Result<()> {
+    let report = build_report(conn, workspace, args.project.as_deref(), args.limit).await?;
     if args.json {
         print_json_pretty(&report)?;
     } else {
@@ -80,18 +85,18 @@ impl PrimeReport {
 
 async fn build_report(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     project_arg: Option<&str>,
     limit: Option<usize>,
 ) -> Result<PrimeReport> {
-    let workspace_id = crate::workspaces::active_workspace_id();
     let project = if let Some(project) = project_arg {
         Some(
-            resolve_existing_project_in_workspace(conn, workspace_id.as_str(), project)
+            resolve_existing_project_in_workspace(conn, &workspace.id, project)
                 .await?
                 .key,
         )
     } else {
-        inferred_project_key_for_add_in_workspace(conn, workspace_id.as_str()).await?
+        inferred_project_key_for_add_in_workspace(conn, &workspace.id).await?
     };
 
     let Some(project) = project else {
@@ -101,15 +106,16 @@ async fn build_report(
         ));
     };
 
-    if find_project_in_workspace(conn, workspace_id.as_str(), &project)
+    if find_project_in_workspace(conn, &workspace.id, &project)
         .await?
         .is_none()
     {
         return Ok(PrimeReport::unavailable(Some(project), "No open issues."));
     }
 
-    let mut items = query::list_task_items(
+    let mut items = query::list_task_items_in_workspace(
         conn,
+        &workspace.id,
         prime_task_filters(project.clone()),
         TaskQueryMode::Flat,
         TaskSort::Updated,

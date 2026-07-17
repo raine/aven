@@ -10,15 +10,16 @@ async fn test_store() -> TuiStore {
         .await
         .unwrap();
     reset_default_workspace(&pool).await;
-    TuiStore::new(pool).await.unwrap()
+    TuiStore::new(pool, crate::workspaces::Workspace::default())
+        .await
+        .unwrap()
 }
 
 async fn reset_default_workspace(pool: &SqlitePool) {
     let mut conn = pool.acquire().await.unwrap();
-    let default = crate::workspaces::ensure_default_workspace(&mut conn)
+    crate::workspaces::ensure_default_workspace(&mut conn)
         .await
         .unwrap();
-    crate::workspaces::set_active_workspace(default);
 }
 
 async fn test_store_with_pool() -> (tempfile::TempDir, sqlx::SqlitePool, TuiStore) {
@@ -27,7 +28,9 @@ async fn test_store_with_pool() -> (tempfile::TempDir, sqlx::SqlitePool, TuiStor
         .await
         .unwrap();
     reset_default_workspace(&pool).await;
-    let store = TuiStore::new(pool.clone()).await.unwrap();
+    let store = TuiStore::new(pool.clone(), crate::workspaces::Workspace::default())
+        .await
+        .unwrap();
     (dir, pool, store)
 }
 
@@ -689,6 +692,7 @@ mod task_creation_and_updates {
 
         let outcome = crate::operations::update_task(
             &mut conn,
+            &crate::workspaces::Workspace::default(),
             &task_id,
             TaskUpdate {
                 title: Some("Stable".to_string()),
@@ -701,9 +705,14 @@ mod task_creation_and_updates {
         )
         .await
         .unwrap();
-        let deleted = crate::operations::set_task_deleted(&mut conn, &task_id, false)
-            .await
-            .unwrap();
+        let deleted = crate::operations::set_task_deleted(
+            &mut conn,
+            &crate::workspaces::Workspace::default(),
+            &task_id,
+            false,
+        )
+        .await
+        .unwrap();
         drop(conn);
 
         assert!(!outcome.changed);
@@ -720,6 +729,7 @@ mod task_creation_and_updates {
         let mut conn = pool.acquire().await.unwrap();
         crate::operations::update_task(
             &mut conn,
+            &crate::workspaces::Workspace::default(),
             &task_id,
             TaskUpdate {
                 add_labels: vec!["bug".to_string()],
@@ -734,6 +744,7 @@ mod task_creation_and_updates {
 
         let outcome = crate::operations::update_task(
             &mut conn,
+            &crate::workspaces::Workspace::default(),
             &task_id,
             TaskUpdate {
                 add_labels: vec!["bug".to_string()],
@@ -1006,7 +1017,9 @@ mod conflicts {
         let pool = crate::db::open_db(&dir.path().join("test.db"))
             .await
             .unwrap();
-        let mut store = TuiStore::new(pool.clone()).await.unwrap();
+        let mut store = TuiStore::new(pool.clone(), crate::workspaces::Workspace::default())
+            .await
+            .unwrap();
         let (_, selected) = store.create_task(task_draft("Before"), None).await.unwrap();
         let selected = selected.unwrap();
         let task_id = store.tasks[selected].task.id.clone();
@@ -1045,7 +1058,9 @@ mod conflicts {
         let pool = crate::db::open_db(&dir.path().join("test.db"))
             .await
             .unwrap();
-        let mut store = TuiStore::new(pool.clone()).await.unwrap();
+        let mut store = TuiStore::new(pool.clone(), crate::workspaces::Workspace::default())
+            .await
+            .unwrap();
         let (_, selected) = store
             .create_task(task_draft("Stable title"), None)
             .await
@@ -1078,7 +1093,9 @@ mod conflicts {
         let pool = crate::db::open_db(&dir.path().join("test.db"))
             .await
             .unwrap();
-        let mut store = TuiStore::new(pool.clone()).await.unwrap();
+        let mut store = TuiStore::new(pool.clone(), crate::workspaces::Workspace::default())
+            .await
+            .unwrap();
         let (_, selected) = store
             .create_task(task_draft("Conflict"), None)
             .await
@@ -1493,15 +1510,25 @@ mod views_filters_and_sort {
         store.refresh(Some(&task_id)).await.unwrap();
 
         let mut conn = store.pool.acquire().await.unwrap();
-        crate::operations::add_task_dependency(&mut conn, &task_id, &blocker_id)
-            .await
-            .unwrap();
+        crate::operations::add_task_dependency(
+            &mut conn,
+            &crate::workspaces::Workspace::default(),
+            &task_id,
+            &blocker_id,
+        )
+        .await
+        .unwrap();
         drop(conn);
 
         let mut conn = store.pool.acquire().await.unwrap();
-        crate::operations::add_task_dependency(&mut conn, &dependent_id, &task_id)
-            .await
-            .unwrap();
+        crate::operations::add_task_dependency(
+            &mut conn,
+            &crate::workspaces::Workspace::default(),
+            &dependent_id,
+            &task_id,
+        )
+        .await
+        .unwrap();
         drop(conn);
 
         store.refresh(Some(&task_id)).await.unwrap();
@@ -1642,30 +1669,24 @@ mod sync_workspace_payloads {
     use super::*;
 
     #[tokio::test]
-    async fn explicit_workspace_payloads_pair_id_and_key_when_active_differs() {
+    async fn explicit_workspace_payloads_pair_id_and_key() {
         let (_dir, pool, _store) = test_store_with_pool().await;
-        let default = crate::workspaces::active_workspace();
         let mut conn = pool.acquire().await.unwrap();
         let other = crate::workspaces::create_workspace(&mut conn, "Client Work")
             .await
             .unwrap();
-        crate::workspaces::set_active_workspace(default);
 
-        crate::operations::create_label_operation_in_workspace(
-            &mut conn,
-            &other.id,
-            "Needs Review",
-        )
-        .await
-        .unwrap();
+        crate::operations::create_label_operation(&mut conn, &other, "Needs Review")
+            .await
+            .unwrap();
         assert_workspace_payload(
             &latest_payload(&mut conn, "label", "create_label").await,
             &other,
         );
 
-        let task = crate::operations::create_task_in_workspace(
+        let task = crate::operations::create_task(
             &mut conn,
-            &other.id,
+            &other,
             TaskDraft {
                 title: "Scoped task".to_string(),
                 project: Some("Mobile App".to_string()),
@@ -1685,7 +1706,7 @@ mod sync_workspace_payloads {
             &other,
         );
 
-        crate::operations::create_label_operation_in_workspace(&mut conn, &other.id, "Docs")
+        crate::operations::create_label_operation(&mut conn, &other, "Docs")
             .await
             .unwrap();
         crate::operations::update_task_labels_in_workspace(
@@ -1727,7 +1748,9 @@ mod undo {
             .unwrap();
         assert_eq!(store.tasks[selected].task.title, "After");
 
-        let mut restarted = TuiStore::new(pool).await.unwrap();
+        let mut restarted = TuiStore::new(pool, crate::workspaces::Workspace::default())
+            .await
+            .unwrap();
         assert!(restarted.undo_last(None).await.unwrap().is_none());
         let index = restarted
             .tasks
@@ -1754,7 +1777,9 @@ mod undo {
         assert_eq!(pending_undo_count(&pool, &workspace_id).await, 1);
 
         drop(store);
-        let _restarted = TuiStore::new(pool.clone()).await.unwrap();
+        let _restarted = TuiStore::new(pool.clone(), crate::workspaces::Workspace::default())
+            .await
+            .unwrap();
 
         assert_eq!(pending_undo_count(&pool, &workspace_id).await, 0);
         assert_eq!(
@@ -2300,7 +2325,9 @@ mod workspace_scoping {
         create_mobile_project(&mut store).await;
         create_task_in_project(&mut store, "mobile task", "mobile-app").await;
 
-        let reopened = TuiStore::new(store.pool.clone()).await.unwrap();
+        let reopened = TuiStore::new(store.pool.clone(), store.active_workspace.clone())
+            .await
+            .unwrap();
 
         assert_eq!(reopened.view_state.view, TaskView::Queue);
         assert_eq!(reopened.view_state.scope, TaskScope::Workspace);
@@ -2324,12 +2351,13 @@ mod workspace_scoping {
             )
             .await
             .unwrap();
-
-        crate::workspaces::set_active_workspace(store.active_workspace.clone());
-        let reopened =
-            TuiStore::new_with_initial_project(store.pool.clone(), Some("mobile-app".to_string()))
-                .await
-                .unwrap();
+        let reopened = TuiStore::new_with_initial_project(
+            store.pool.clone(),
+            store.active_workspace.clone(),
+            Some("mobile-app".to_string()),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             reopened.view_state.scope,
@@ -2407,13 +2435,53 @@ mod workspace_scoping {
     }
 
     #[tokio::test]
+    async fn deferred_task_intake_retains_spawned_workspace() {
+        let mut store = test_store().await;
+        let mut conn = store.pool.acquire().await.unwrap();
+        crate::projects::create_project_in_workspace(
+            &mut conn,
+            &store.active_workspace.id,
+            "Default Only",
+        )
+        .await
+        .unwrap();
+        let other = crate::workspaces::create_workspace(&mut conn, "Client Work")
+            .await
+            .unwrap();
+        drop(conn);
+
+        let intake = store.spawn_task_intake(
+            crate::config::TaskIntakeConfig {
+                command: Some("sh".to_string()),
+                args: vec![
+                    "-c".to_string(),
+                    "sleep 0.1; printf '%s' '{\"title\":\"Deferred task\",\"project\":\"default-only\"}'"
+                        .to_string(),
+                ],
+                timeout_seconds: Some(5),
+                system_prompt: None,
+            },
+            "deferred task".to_string(),
+            None,
+        );
+        store.switch_workspace(other.key).await.unwrap();
+
+        let draft = intake.await.unwrap().unwrap();
+
+        assert_eq!(store.active_workspace.id, other.id);
+        assert_eq!(draft.project.as_deref(), Some("default-only"));
+    }
+
+    #[tokio::test]
     async fn switch_workspace_refreshes_workspace_scoped_state() {
         let dir = tempfile::tempdir().unwrap();
         let pool = crate::db::open_db(&dir.path().join("test.db"))
             .await
             .unwrap();
         reset_default_workspace(&pool).await;
-        let mut store = TuiStore::new(pool.clone()).await.unwrap();
+        let mut store = TuiStore::new(pool.clone(), crate::workspaces::Workspace::default())
+            .await
+            .unwrap();
         let (_, selected) = store
             .create_task(task_draft("Default workspace task"), None)
             .await
@@ -2463,7 +2531,9 @@ mod workspace_scoping {
             .await
             .unwrap();
         reset_default_workspace(&pool).await;
-        let mut store = TuiStore::new(pool.clone()).await.unwrap();
+        let mut store = TuiStore::new(pool.clone(), crate::workspaces::Workspace::default())
+            .await
+            .unwrap();
 
         let mut conn = pool.acquire().await.unwrap();
         crate::workspaces::create_workspace(&mut conn, "Client Work")
@@ -2487,14 +2557,15 @@ mod workspace_scoping {
     }
 
     #[tokio::test]
-    async fn refresh_reads_store_workspace_without_mutating_global_active_workspace() {
+    async fn refresh_reads_store_workspace() {
         let dir = tempfile::tempdir().unwrap();
         let pool = crate::db::open_db(&dir.path().join("test.db"))
             .await
             .unwrap();
         reset_default_workspace(&pool).await;
-        let default = crate::workspaces::active_workspace();
-        let mut store = TuiStore::new(pool.clone()).await.unwrap();
+        let mut store = TuiStore::new(pool.clone(), crate::workspaces::Workspace::default())
+            .await
+            .unwrap();
         let (_, selected) = store
             .create_task(task_draft("Default workspace task"), None)
             .await
@@ -2534,10 +2605,8 @@ mod workspace_scoping {
         drop(conn);
 
         store.active_workspace = other;
-        crate::workspaces::set_active_workspace(default.clone());
         store.refresh(None).await.unwrap();
 
-        assert_eq!(crate::workspaces::active_workspace_id(), default.id);
         assert_eq!(store.tasks.len(), 1);
         assert_eq!(store.tasks[0].task.title, "Client workspace task");
         assert!(store.projects.iter().any(|project| project.key == "client"));
@@ -2558,9 +2627,14 @@ mod epics {
         let (child_id, _) = create_selected_task(store, &child_title).await;
 
         let mut conn = store.pool.acquire().await.unwrap();
-        crate::operations::add_task_to_epic(&mut conn, &child_id, &parent_id)
-            .await
-            .unwrap();
+        crate::operations::add_task_to_epic(
+            &mut conn,
+            &crate::workspaces::Workspace::default(),
+            &child_id,
+            &parent_id,
+        )
+        .await
+        .unwrap();
         drop(conn);
 
         store.view_state.view = TaskView::Epics;

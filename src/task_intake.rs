@@ -46,10 +46,10 @@ pub(crate) struct TaskIntakeContext {
 impl TaskIntakeContext {
     pub(crate) async fn load_with_project(
         conn: &mut SqliteConnection,
+        workspace: &Workspace,
         project: Option<&str>,
     ) -> Result<Self> {
-        let workspace = crate::workspaces::active_workspace();
-        Self::load_for_workspace(conn, &workspace, project).await
+        Self::load_for_workspace(conn, workspace, project).await
     }
 
     pub(crate) async fn load_for_workspace(
@@ -80,28 +80,19 @@ pub(crate) async fn parse_task_intake(
     conn: &mut SqliteConnection,
     config: &TaskIntakeConfig,
     input: &str,
+    workspace: &Workspace,
 ) -> Result<TaskDraft> {
-    parse_task_intake_with_project(conn, config, input, None).await
+    parse_task_intake_with_project(conn, config, input, workspace, None).await
 }
 
 pub(crate) async fn parse_task_intake_with_project(
     conn: &mut SqliteConnection,
     config: &TaskIntakeConfig,
     input: &str,
-    project: Option<&str>,
-) -> Result<TaskDraft> {
-    let context = TaskIntakeContext::load_with_project(conn, project).await?;
-    parse_task_intake_with_context(conn, config, input, &context).await
-}
-
-pub(crate) async fn parse_task_intake_in_workspace(
-    conn: &mut SqliteConnection,
-    config: &TaskIntakeConfig,
-    input: &str,
     workspace: &Workspace,
     project: Option<&str>,
 ) -> Result<TaskDraft> {
-    let context = TaskIntakeContext::load_for_workspace(conn, workspace, project).await?;
+    let context = TaskIntakeContext::load_with_project(conn, workspace, project).await?;
     parse_task_intake_with_context(conn, config, input, &context).await
 }
 

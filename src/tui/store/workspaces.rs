@@ -19,7 +19,6 @@ impl TuiStore {
         self.active_workspace = workspace;
         self.view_state.scope = TaskScope::Workspace;
         self.view_state.filter_modifiers = TaskFilterModifiers::default();
-        self.activate_workspace();
         let selected = self.refresh(None).await?;
         Ok((format!("switched workspace to {key} ({name})"), selected))
     }

@@ -68,22 +68,9 @@ struct ProjectPathTarget {
 }
 pub(crate) async fn create_label_operation(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     name: &str,
 ) -> Result<LabelOutcome> {
-    create_label_operation_in_workspace(
-        conn,
-        crate::workspaces::active_workspace_id().as_str(),
-        name,
-    )
-    .await
-}
-
-pub(crate) async fn create_label_operation_in_workspace(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-    name: &str,
-) -> Result<LabelOutcome> {
-    let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
     let name = normalize_label(name);
     if name.is_empty() {
         bail!("error invalid-label");
@@ -112,7 +99,7 @@ pub(crate) async fn create_label_operation_in_workspace(
                 &name,
                 None,
                 op_type::CREATE_LABEL,
-                ChangePayload::workspace(&workspace)
+                ChangePayload::workspace(workspace)
                     .set("name", name.clone())
                     .set("created_at", created_at),
             )
@@ -133,9 +120,9 @@ pub(crate) async fn create_label_operation_in_workspace(
 
 pub(crate) async fn delete_label_operation(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     name: &str,
 ) -> Result<LabelDeleteOutcome> {
-    let workspace = crate::workspaces::active_workspace();
     let name = normalize_label(name);
     if name.is_empty() {
         bail!("error invalid-label");
@@ -162,7 +149,7 @@ pub(crate) async fn delete_label_operation(
             &name,
             None,
             op_type::LABEL_DELETE,
-            ChangePayload::workspace(&workspace)
+            ChangePayload::workspace(workspace)
                 .set("name", name.clone())
                 .set("deleted_at", deleted_at),
         )
@@ -177,14 +164,14 @@ pub(crate) async fn delete_label_operation(
 
 pub(crate) async fn create_project_operation(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     name: &str,
     path: Option<&Path>,
 ) -> Result<ProjectOutcome> {
-    let workspace = crate::workspaces::active_workspace();
     let path = path.map(canonicalize_project_path).transpose()?;
     let outcome = create_project_in_workspace(conn, &workspace.id, name).await?;
     if let Some(path) = path {
-        save_project_path_mapping(&workspace, &outcome.project, path)?;
+        save_project_path_mapping(workspace, &outcome.project, path)?;
     }
     if outcome.created {
         info!(project_key = %outcome.project.key, "project created");
@@ -484,14 +471,14 @@ fn project_path_remove_candidates(path: &Path) -> Vec<PathBuf> {
 
 async fn resolve_project_path_target(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     project: &str,
     path: &Path,
 ) -> Result<ProjectPathTarget> {
-    let workspace = crate::workspaces::active_workspace();
     let project = resolve_existing_project_in_workspace(conn, &workspace.id, project).await?;
     let path = canonicalize_project_path(path)?;
     Ok(ProjectPathTarget {
-        workspace,
+        workspace: workspace.clone(),
         project,
         path,
     })
@@ -521,19 +508,20 @@ fn save_project_path_mapping(
 
 pub(crate) async fn add_project_path_operation(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     project: &str,
     path: &Path,
 ) -> Result<ProjectPathOutcome> {
-    let target = resolve_project_path_target(conn, project, path).await?;
+    let target = resolve_project_path_target(conn, workspace, project, path).await?;
     save_project_path_mapping(&target.workspace, &target.project, target.path)
 }
 
 pub(crate) async fn remove_project_path_operation(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     project: &str,
     path: &Path,
 ) -> Result<ProjectPathOutcome> {
-    let workspace = crate::workspaces::active_workspace();
     let project = resolve_existing_project_in_workspace(conn, &workspace.id, project).await?;
     let config_path = config::config_file_path()?;
     let remove_paths = project_path_remove_candidates(path);
@@ -562,9 +550,9 @@ pub(crate) async fn remove_project_path_operation(
 
 pub(crate) async fn list_project_paths_operation(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     project: Option<&str>,
 ) -> Result<Vec<ProjectPathOutcome>> {
-    let workspace = crate::workspaces::active_workspace();
     let project = if let Some(project) = project {
         Some(resolve_existing_project_in_workspace(conn, &workspace.id, project).await?)
     } else {

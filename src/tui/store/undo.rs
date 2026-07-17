@@ -44,7 +44,6 @@ impl TuiStore {
         &mut self,
         selected: Option<usize>,
     ) -> Result<Option<MutationMessage>> {
-        self.activate_workspace();
         let workspace_id = self.active_workspace.id.clone();
         let mut conn = self.pool.acquire().await?;
         let Some(outcome) = crate::undo::apply_latest_tui_undo(&mut conn, &workspace_id).await?

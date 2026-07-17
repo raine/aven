@@ -11,10 +11,11 @@ use crate::operations::{
     ConflictDetail, conflict_variant_value, list_conflicts, resolve_conflict, task_conflicts,
 };
 use crate::projects::resolve_existing_project_in_workspace;
-use crate::refs::{display_ref, display_suffix, resolve_task_ref};
+use crate::refs::{display_ref, display_suffix_in_workspace, resolve_task_ref_in_workspace};
 use crate::render::{print_json_pretty, print_multiline_block, print_text_diff, quote};
 use crate::task_render::conflict_display_value;
 use crate::types::Task;
+use crate::workspaces::Workspace;
 
 #[derive(Serialize)]
 struct ConflictListJsonItem {
@@ -40,7 +41,11 @@ struct ConflictVariantJson {
     value: String,
 }
 
-pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictCommand) -> Result<()> {
+pub(crate) async fn cmd_conflict(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    args: ConflictCommand,
+) -> Result<()> {
     match args.command {
         ConflictSubcommand::List {
             project,
@@ -48,20 +53,17 @@ pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictComm
             limit,
             json,
         } => {
-            let project_key = resolve_conflict_project_filter(
-                conn,
-                crate::workspaces::active_workspace_id().as_str(),
-                project,
-            )
-            .await?;
-            let mut items = list_conflicts(conn, project_key.as_deref(), field.as_deref()).await?;
+            let project_key = resolve_conflict_project_filter(conn, &workspace.id, project).await?;
+            let mut items =
+                list_conflicts(conn, workspace, project_key.as_deref(), field.as_deref()).await?;
             if let Some(limit) = limit {
                 items.truncate(limit);
             }
             if json {
                 let mut json_items = Vec::new();
                 for item in items {
-                    let suffix = display_suffix(conn, &item.task_id).await?;
+                    let suffix =
+                        display_suffix_in_workspace(conn, workspace, &item.task_id).await?;
                     json_items.push(ConflictListJsonItem {
                         r#ref: format!("{}-{}", item.project_prefix, suffix),
                         task_id: item.task_id,
@@ -74,7 +76,7 @@ pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictComm
                 print_json_pretty(&json_items)?;
             } else {
                 for item in items {
-                    print_conflict_list_item(conn, item).await?;
+                    print_conflict_list_item(conn, workspace, item).await?;
                 }
             }
         }
@@ -83,8 +85,8 @@ pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictComm
             field,
             json,
         } => {
-            let task = resolve_task_ref(conn, &task_ref).await?;
-            let details = task_conflicts(conn, &task.id, field.as_deref()).await?;
+            let task = resolve_task_ref_in_workspace(conn, workspace, &task_ref).await?;
+            let details = task_conflicts(conn, workspace, &task.id, field.as_deref()).await?;
             if json {
                 let mut json_details = Vec::new();
                 for detail in details {
@@ -126,8 +128,8 @@ pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictComm
             }
         }
         ConflictSubcommand::Diff { task_ref, field } => {
-            let task = resolve_task_ref(conn, &task_ref).await?;
-            let detail = load_single_conflict_detail(conn, &task, &field).await?;
+            let task = resolve_task_ref_in_workspace(conn, workspace, &task_ref).await?;
+            let detail = load_single_conflict_detail(conn, workspace, &task, &field).await?;
             print_text_diff("local", &detail.local_value, "remote", &detail.remote_value);
         }
         ConflictSubcommand::Export {
@@ -135,9 +137,9 @@ pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictComm
             field,
             dir,
         } => {
-            let task = resolve_task_ref(conn, &task_ref).await?;
+            let task = resolve_task_ref_in_workspace(conn, workspace, &task_ref).await?;
             fs::create_dir_all(&dir)?;
-            let detail = load_single_conflict_detail(conn, &task, &field).await?;
+            let detail = load_single_conflict_detail(conn, workspace, &task, &field).await?;
             export_conflict_variant(&dir, &detail.field, &detail.variant_a, &detail.local_value)?;
             export_conflict_variant(&dir, &detail.field, &detail.variant_b, &detail.remote_value)?;
         }
@@ -149,13 +151,13 @@ pub(crate) async fn cmd_conflict(conn: &mut SqliteConnection, args: ConflictComm
             value_file,
             value_stdin,
         } => {
-            let task = resolve_task_ref(conn, &task_ref).await?;
+            let task = resolve_task_ref_in_workspace(conn, workspace, &task_ref).await?;
             let value = if let Some(token) = use_variant {
-                conflict_variant_value(conn, &task.id, &field, &token).await?
+                conflict_variant_value(conn, workspace, &task.id, &field, &token).await?
             } else {
                 read_required_text(value, value_file.as_deref(), value_stdin, "value")?
             };
-            let outcome = resolve_conflict(conn, &task.id, &field, &value).await?;
+            let outcome = resolve_conflict(conn, workspace, &task.id, &field, &value).await?;
             println!(
                 "resolved {} field={}",
                 display_ref(conn, &outcome.task).await?,
@@ -183,12 +185,13 @@ async fn resolve_conflict_project_filter(
 
 async fn print_conflict_list_item(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     item: crate::operations::ConflictListItem,
 ) -> Result<()> {
     let display = format!(
         "{}-{}",
         item.project_prefix,
-        display_suffix(conn, &item.task_id).await?
+        display_suffix_in_workspace(conn, workspace, &item.task_id).await?
     );
     println!(
         "{} conflict field={} variants={},{} title={}",
@@ -230,11 +233,12 @@ async fn print_conflict_detail(
 
 async fn load_single_conflict_detail(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     task: &Task,
     field: &str,
 ) -> Result<ConflictDetail> {
     single_conflict(
-        task_conflicts(conn, &task.id, Some(field)).await?,
+        task_conflicts(conn, workspace, &task.id, Some(field)).await?,
         &task.id,
         field,
     )

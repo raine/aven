@@ -7,31 +7,34 @@ use crate::choices::TaskPriority;
 use crate::db::{conflict_exists, field_version, insert_change, set_field_version, task_from_row};
 use crate::ids::now;
 use crate::projects::resolve_project_for_add_in_workspace;
-use crate::refs::get_task;
+use crate::refs::get_task_in_workspace;
 use crate::task_fields::TaskField;
 use crate::types::{Project, Task};
-use crate::workspaces::{active_workspace, active_workspace_id};
+use crate::workspaces::Workspace;
 
 pub(crate) async fn set_status(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     task: &Task,
     status: &str,
 ) -> Result<Task> {
-    set_task_field(conn, &task.id, "status", status).await?;
-    get_task(conn, &task.id).await
+    set_task_field(conn, workspace, &task.id, "status", status).await?;
+    get_task_in_workspace(conn, workspace, &task.id).await
 }
 
 pub(crate) async fn set_priority(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     task: &Task,
     priority: &str,
 ) -> Result<Task> {
-    set_task_field(conn, &task.id, "priority", priority).await?;
-    get_task(conn, &task.id).await
+    set_task_field(conn, workspace, &task.id, "priority", priority).await?;
+    get_task_in_workspace(conn, workspace, &task.id).await
 }
 
 pub(crate) async fn cycle_priority(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     task: &Task,
     reverse: bool,
 ) -> Result<Task> {
@@ -44,41 +47,49 @@ pub(crate) async fn cycle_priority(
     } else {
         (index + 1) % TaskPriority::ALL.len()
     };
-    set_priority(conn, task, TaskPriority::ALL[next].as_str()).await
+    set_priority(conn, workspace, task, TaskPriority::ALL[next].as_str()).await
 }
 
 pub(crate) async fn set_deleted(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     task: &Task,
     deleted: bool,
 ) -> Result<Task> {
-    set_task_field(conn, &task.id, "deleted", if deleted { "1" } else { "0" }).await?;
-    get_task(conn, &task.id).await
+    set_task_field(
+        conn,
+        workspace,
+        &task.id,
+        "deleted",
+        if deleted { "1" } else { "0" },
+    )
+    .await?;
+    get_task_in_workspace(conn, workspace, &task.id).await
 }
 
 pub(crate) async fn set_task_field(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     task_id: &str,
     field: &str,
     value: &str,
 ) -> Result<bool> {
     let task_field = TaskField::parse_or_unknown(field)?;
-    let workspace = active_workspace();
     if task_field.is_project() {
         let project =
             resolve_project_for_add_in_workspace(conn, &workspace.id, Some(value)).await?;
-        set_task_project(conn, task_id, &project).await
+        set_task_project(conn, workspace, task_id, &project).await
     } else {
-        set_task_scalar_field(conn, task_id, task_field, value).await
+        set_task_scalar_field(conn, workspace, task_id, task_field, value).await
     }
 }
 
 pub(crate) async fn set_task_project(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     task_id: &str,
     project: &Project,
 ) -> Result<bool> {
-    let workspace = active_workspace();
     let field = TaskField::Project.as_str();
     let current = current_task(conn, &workspace.id, task_id).await?;
     if current.project_id == project.id {
@@ -101,13 +112,13 @@ pub(crate) async fn set_task_project(
 
 async fn set_task_scalar_field(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     task_id: &str,
     task_field: TaskField,
     value: &str,
 ) -> Result<bool> {
     task_field.validate_value(value)?;
 
-    let workspace = active_workspace();
     let field = task_field.as_str();
     let current = current_task(conn, &workspace.id, task_id).await?;
     if task_field.current_value(&current) == value {
@@ -186,12 +197,12 @@ async fn current_task(
 #[allow(dead_code)]
 pub(crate) async fn apply_field_value(
     conn: &mut SqliteConnection,
+    workspace_id: &str,
     task_id: &str,
     field: &str,
     value: &str,
 ) -> Result<()> {
-    apply_field_value_in_workspace(conn, active_workspace_id().as_str(), task_id, field, value)
-        .await
+    apply_field_value_in_workspace(conn, workspace_id, task_id, field, value).await
 }
 
 pub(crate) async fn apply_project_id_in_workspace(

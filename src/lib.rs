@@ -50,7 +50,7 @@ use commands::{
 };
 use db::open_db;
 use sync::{run_server, sync_client};
-use workspaces::{resolve_active_workspace, set_active_workspace};
+use workspaces::resolve_active_workspace;
 
 pub async fn run_cli() -> Result<()> {
     let cli = cli::parse();
@@ -118,18 +118,24 @@ pub async fn run_cli() -> Result<()> {
             let pool = open_db(&db_path).await?;
             let mut conn = pool.acquire().await?;
             let metadata = command.metadata();
-            if metadata.needs_workspace {
+            let resolved_workspace = if metadata.needs_workspace {
                 let cwd = std::env::current_dir()?;
-                let workspace =
+                Some(
                     resolve_active_workspace(&mut conn, workspace.as_deref(), &config, &cwd)
-                        .await?;
-                set_active_workspace(workspace);
-            }
+                        .await?,
+                )
+            } else {
+                None
+            };
             drop(conn);
             if let Commands::Tui(args) = &command {
+                let workspace = resolved_workspace
+                    .clone()
+                    .expect("TUI commands require workspace context");
                 if args.add_task_only {
                     return tui::run_add_task(
                         pool,
+                        workspace,
                         args.project.as_deref(),
                         args.natural,
                         db_path,
@@ -139,6 +145,7 @@ pub async fn run_cli() -> Result<()> {
                 }
                 return tui::run(
                     pool,
+                    workspace,
                     args.project.as_deref(),
                     args.add_task,
                     args.natural,
@@ -148,31 +155,46 @@ pub async fn run_cli() -> Result<()> {
                 .await;
             }
             let mut conn = pool.acquire().await?;
+            let command_workspace = || {
+                resolved_workspace
+                    .as_ref()
+                    .expect("command requires workspace context")
+            };
             let should_wake = metadata.wakes_daemon;
             let result = match command {
-                Commands::Add(args) => cmd_add(&mut conn, &config, args).await,
-                Commands::Context(args) => cmd_context(&mut conn, args).await,
-                Commands::Show(args) => cmd_show(&mut conn, args).await,
-                Commands::List(args) => cmd_list(&mut conn, args).await,
-                Commands::Search(args) => cmd_search(&mut conn, args).await,
+                Commands::Add(args) => cmd_add(&mut conn, command_workspace(), &config, args).await,
+                Commands::Context(args) => cmd_context(&mut conn, command_workspace(), args).await,
+                Commands::Show(args) => cmd_show(&mut conn, command_workspace(), args).await,
+                Commands::List(args) => cmd_list(&mut conn, command_workspace(), args).await,
+                Commands::Search(args) => cmd_search(&mut conn, command_workspace(), args).await,
                 Commands::Backup(args) => cmd_backup(&mut conn, &db_path, args).await,
-                Commands::Dep(args) => cmd_dep(&mut conn, args).await,
-                Commands::Epic(args) => cmd_epic(&mut conn, args).await,
-                Commands::BulkUpdate(args) => cmd_bulk_update(&mut conn, args).await,
-                Commands::Prime(args) => cmd_prime(&mut conn, args).await,
-                Commands::Edit(args) => cmd_edit(&mut conn, args).await,
-                Commands::Note(args) => cmd_note(&mut conn, args).await,
-                Commands::NoteDelete(args) => cmd_note_delete(&mut conn, args).await,
+                Commands::Dep(args) => cmd_dep(&mut conn, command_workspace(), args).await,
+                Commands::Epic(args) => cmd_epic(&mut conn, command_workspace(), args).await,
+                Commands::BulkUpdate(args) => {
+                    cmd_bulk_update(&mut conn, command_workspace(), args).await
+                }
+                Commands::Prime(args) => cmd_prime(&mut conn, command_workspace(), args).await,
+                Commands::Edit(args) => cmd_edit(&mut conn, command_workspace(), args).await,
+                Commands::Note(args) => cmd_note(&mut conn, command_workspace(), args).await,
+                Commands::NoteDelete(args) => {
+                    cmd_note_delete(&mut conn, command_workspace(), args).await
+                }
                 Commands::Export(args) => cmd_export(&mut conn, args).await,
                 Commands::Import(args) => cmd_import(&mut conn, &db_path, args).await,
-                Commands::Label(args) => cmd_label(&mut conn, args).await,
-                Commands::Project(args) => cmd_project(&mut conn, args).await,
-                Commands::Delete(args) => cmd_delete_restore(&mut conn, args, true).await,
-                Commands::Restore(args) => cmd_delete_restore(&mut conn, args, false).await,
-                Commands::Conflict(args) => cmd_conflict(&mut conn, args).await,
+                Commands::Label(args) => cmd_label(&mut conn, command_workspace(), args).await,
+                Commands::Project(args) => cmd_project(&mut conn, command_workspace(), args).await,
+                Commands::Delete(args) => {
+                    cmd_delete_restore(&mut conn, command_workspace(), args, true).await
+                }
+                Commands::Restore(args) => {
+                    cmd_delete_restore(&mut conn, command_workspace(), args, false).await
+                }
+                Commands::Conflict(args) => {
+                    cmd_conflict(&mut conn, command_workspace(), args).await
+                }
                 Commands::Sync(args) => sync_client(&mut conn, args, &config).await,
                 Commands::Workspace(args) => cmd_workspace(&mut conn, args).await,
-                Commands::Text(args) => cmd_text(&mut conn, args).await,
+                Commands::Text(args) => cmd_text(&mut conn, command_workspace(), args).await,
                 Commands::Doctor(args) => {
                     cmd_doctor(
                         &mut conn,
@@ -238,7 +260,9 @@ mod tests {
     #[tokio::test]
     async fn creates_conflict_on_same_field_version_mismatch() {
         let (_temp, mut conn) = test_conn().await;
-        let project = create_project(&mut conn, "app").await.unwrap();
+        let project = create_project(&mut conn, &crate::workspaces::Workspace::default(), "app")
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO tasks(id, title, description, project_id, status, priority, created_at, updated_at)
              VALUES ('7KQ9A1X4MV2P8D6R', 'local', '', ?, 'inbox', 'none', 't', 't')",
@@ -269,7 +293,7 @@ mod tests {
         assert!(
             conflict_exists(
                 &mut conn,
-                crate::workspaces::active_workspace_id().as_str(),
+                crate::workspaces::DEFAULT_WORKSPACE_ID,
                 "7KQ9A1X4MV2P8D6R",
                 "title"
             )

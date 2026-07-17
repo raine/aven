@@ -9,22 +9,18 @@ use crate::workspaces::Workspace;
 
 const DISPLAY_SUFFIX_FLOOR: usize = 4;
 
-pub(crate) async fn get_task(conn: &mut SqliteConnection, id: &str) -> Result<Task> {
-    get_task_scoped(conn, None, id).await
-}
-
 #[allow(dead_code)]
 pub(crate) async fn get_task_in_workspace(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     id: &str,
 ) -> Result<Task> {
-    get_task_scoped(conn, Some(&workspace.id), id).await
+    get_task_scoped(conn, &workspace.id, id).await
 }
 
 async fn get_task_scoped(
     conn: &mut SqliteConnection,
-    workspace_id: Option<&str>,
+    workspace_id: &str,
     id: &str,
 ) -> Result<Task> {
     let row = sqlx::query(
@@ -32,19 +28,13 @@ async fn get_task_scoped(
          p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
          t.queue_activity_at, t.available_at, t.due_on, t.deleted, t.is_epic
          FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
-         WHERE t.id = ? AND (? IS NULL OR t.workspace_id = ?)",
+         WHERE t.workspace_id = ? AND t.id = ?",
     )
+    .bind(workspace_id)
     .bind(id)
-    .bind(workspace_id)
-    .bind(workspace_id)
     .fetch_one(&mut *conn)
     .await?;
     crate::db::task_from_row(&row)
-}
-
-pub(crate) async fn resolve_task_ref(conn: &mut SqliteConnection, input: &str) -> Result<Task> {
-    let workspace_id = crate::workspaces::active_workspace_id();
-    resolve_task_ref_scoped(conn, Some(&workspace_id), input).await
 }
 
 #[allow(dead_code)]
@@ -53,12 +43,12 @@ pub(crate) async fn resolve_task_ref_in_workspace(
     workspace: &Workspace,
     input: &str,
 ) -> Result<Task> {
-    resolve_task_ref_scoped(conn, Some(&workspace.id), input).await
+    resolve_task_ref_scoped(conn, &workspace.id, input).await
 }
 
 async fn resolve_task_ref_scoped(
     conn: &mut SqliteConnection,
-    workspace_id: Option<&str>,
+    workspace_id: &str,
     input: &str,
 ) -> Result<Task> {
     let (hint, suffix) = split_ref(input);
@@ -71,12 +61,11 @@ async fn resolve_task_ref_scoped(
          p.key AS project_key, p.prefix AS project_prefix, t.status, t.priority, t.created_at, t.updated_at,
          t.queue_activity_at, t.available_at, t.due_on, t.deleted, t.is_epic
          FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
-         WHERE t.id LIKE ? || '%' AND (? IS NULL OR t.workspace_id = ?)
+         WHERE t.workspace_id = ? AND t.id LIKE ? || '%'
          ORDER BY t.id",
     )
+    .bind(workspace_id)
     .bind(suffix)
-    .bind(workspace_id)
-    .bind(workspace_id)
     .fetch_all(&mut *conn)
     .await?;
     let matches = rows
@@ -166,9 +155,12 @@ pub(crate) async fn display_refs_for_tasks(
         .collect())
 }
 
-pub(crate) async fn display_suffix(conn: &mut SqliteConnection, id: &str) -> Result<String> {
-    let workspace_id = crate::workspaces::active_workspace_id();
-    display_suffix_for_workspace(conn, &workspace_id, id).await
+pub(crate) async fn display_suffix_in_workspace(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    id: &str,
+) -> Result<String> {
+    display_suffix_for_workspace(conn, &workspace.id, id).await
 }
 
 async fn display_suffix_for_workspace(

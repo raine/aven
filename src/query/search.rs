@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use crate::db::task_from_row;
 use crate::refs::display_refs_for_tasks;
 use crate::types::Task;
-use crate::workspaces::active_workspace_id;
 
 use super::TaskListItem;
 use super::hydration::build_task_list_items;
@@ -126,18 +125,6 @@ struct FieldEvidence {
     score: i64,
     matched_field: SearchMatchedField,
     snippet: Option<String>,
-}
-
-pub(crate) async fn search_task_items(
-    conn: &mut SqliteConnection,
-    query: TaskSearchQuery,
-) -> Result<Vec<TaskSearchResult>> {
-    let workspace_id = active_workspace_id();
-    Ok(
-        search_task_item_set_in_workspace(conn, &workspace_id, query)
-            .await?
-            .items,
-    )
 }
 
 pub(crate) async fn search_task_items_in_workspace(

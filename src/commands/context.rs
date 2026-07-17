@@ -4,15 +4,19 @@ use sqlx::SqliteConnection;
 
 use crate::cli::ContextArgs;
 use crate::query::{self, TaskDependencyItem};
-use crate::refs::{display_ref, display_suffix, resolve_task_ref};
+use crate::refs::{display_ref, display_suffix_in_workspace, resolve_task_ref_in_workspace};
 use crate::render::{print_json_pretty, print_multiline_block, quote};
 use crate::task_render::{TaskEpicLinkJson, conflict_display_value, task_epic_link_json};
 use crate::types::Task;
-use crate::workspaces::active_workspace;
+use crate::workspaces::Workspace;
 
-pub(crate) async fn cmd_context(conn: &mut SqliteConnection, args: ContextArgs) -> Result<()> {
-    let task = resolve_task_ref(conn, &args.task_ref).await?;
-    let snapshot = task_context_snapshot(conn, &task).await?;
+pub(crate) async fn cmd_context(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    args: ContextArgs,
+) -> Result<()> {
+    let task = resolve_task_ref_in_workspace(conn, workspace, &args.task_ref).await?;
+    let snapshot = task_context_snapshot(conn, workspace, &task).await?;
     if args.json {
         print_json_pretty(&snapshot)?;
     } else {
@@ -112,11 +116,11 @@ struct ContextConflictVariant {
 
 async fn task_context_snapshot(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     task: &Task,
 ) -> Result<TaskContextSnapshot> {
-    let workspace = active_workspace();
     let display_ref = display_ref(conn, task).await?;
-    let ref_suffix = display_suffix(conn, &task.id).await?;
+    let ref_suffix = display_suffix_in_workspace(conn, workspace, &task.id).await?;
     let detail = query::task_detail(conn, task).await?;
     let labels = detail.item.labels.clone();
     let epic_parent = detail.item.epic_parent.as_ref().map(task_epic_link_json);
@@ -164,9 +168,9 @@ async fn task_context_snapshot(
             prefix: task.project_prefix.clone(),
         },
         workspace: ContextWorkspace {
-            id: workspace.id,
-            key: workspace.key,
-            name: workspace.name,
+            id: workspace.id.clone(),
+            key: workspace.key.clone(),
+            name: workspace.name.clone(),
         },
         labels,
         dependencies: ContextDependencies {

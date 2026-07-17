@@ -2,7 +2,6 @@ use anyhow::Result;
 use sqlx::{Row, SqliteConnection};
 
 use crate::projects::resolve_existing_project_in_workspace;
-use crate::workspaces::active_workspace_id;
 
 use super::SidebarCounts;
 use super::fragments;
@@ -48,19 +47,6 @@ fn sidebar_counts_sql(project_scoped: bool) -> String {
          WHERE t.workspace_id = ?{task_project}",
         sidebar_task_count_columns(),
     )
-}
-
-#[allow(dead_code)]
-pub(crate) async fn sidebar_counts(conn: &mut SqliteConnection) -> Result<SidebarCounts> {
-    let workspace_id = active_workspace_id();
-    sidebar_counts_in_workspace(conn, &workspace_id).await
-}
-
-pub(crate) async fn sidebar_counts_in_workspace(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-) -> Result<SidebarCounts> {
-    sidebar_counts_for_scope_in_workspace(conn, workspace_id, None).await
 }
 
 pub(crate) async fn sidebar_counts_for_scope_in_workspace(

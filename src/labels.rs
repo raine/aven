@@ -3,7 +3,6 @@ use sqlx::SqliteConnection;
 
 use crate::fuzzy::is_near;
 use crate::projects::normalize_key;
-use crate::workspaces::active_workspace_id;
 
 pub(crate) fn normalize_label(input: &str) -> String {
     normalize_key(input)
@@ -20,13 +19,6 @@ async fn near_labels(
         .into_iter()
         .filter(|label| is_near(&needle, label))
         .collect())
-}
-
-pub(crate) async fn list_labels(
-    conn: &mut SqliteConnection,
-    search: Option<&str>,
-) -> Result<Vec<String>> {
-    list_labels_in_workspace(conn, active_workspace_id().as_str(), search).await
 }
 
 pub(crate) async fn list_labels_in_workspace(
@@ -49,14 +41,6 @@ pub(crate) async fn list_labels_in_workspace(
                 .is_none_or(|search| label.contains(search))
         })
         .collect())
-}
-
-#[allow(dead_code)]
-pub(crate) async fn ensure_label_exists(
-    conn: &mut SqliteConnection,
-    label: &str,
-) -> Result<String> {
-    ensure_label_exists_in_workspace(conn, active_workspace_id().as_str(), label).await
 }
 
 pub(crate) async fn ensure_label_exists_in_workspace(
@@ -84,14 +68,6 @@ pub(crate) async fn ensure_label_exists_in_workspace(
         eprintln!("hint \"create the label explicitly\"");
         bail!("unknown label");
     }
-}
-
-#[allow(dead_code)]
-pub(crate) async fn resolve_labels(
-    conn: &mut SqliteConnection,
-    labels: &[String],
-) -> Result<Vec<String>> {
-    resolve_labels_in_workspace(conn, active_workspace_id().as_str(), labels).await
 }
 
 pub(crate) async fn resolve_labels_in_workspace(

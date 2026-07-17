@@ -27,9 +27,8 @@ impl TuiStore {
         F: FnOnce(&TaskListItem) -> String,
     {
         if let Some(item) = self.selected_task(index).cloned() {
-            self.activate_workspace();
             let mut conn = self.pool.acquire().await?;
-            update_task_operation(&mut conn, &item.task.id, update).await?;
+            update_task_operation(&mut conn, &self.active_workspace, &item.task.id, update).await?;
             drop(conn);
             return Ok(Some(
                 self.refresh_task_message(&item.task.id, message(&item))
@@ -68,9 +67,8 @@ impl TuiStore {
         };
 
         let before = item.task.status.as_str().to_string();
-        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
-        let task = set_status(&mut conn, &item.task, status).await?;
+        let task = set_status(&mut conn, &self.active_workspace, &item.task, status).await?;
         drop(conn);
         self.record_undo_commands(
             &format!("status {}", item.display_ref),
@@ -125,9 +123,9 @@ impl TuiStore {
     ) -> Result<Option<MutationMessage>> {
         if let Some(item) = self.selected_task(index).cloned() {
             let before = item.task.priority.as_str().to_string();
-            self.activate_workspace();
             let mut conn = self.pool.acquire().await?;
-            let task = cycle_priority(&mut conn, &item.task, reverse).await?;
+            let task =
+                cycle_priority(&mut conn, &self.active_workspace, &item.task, reverse).await?;
             drop(conn);
             self.record_undo_commands(
                 &format!("priority {}", item.display_ref),
@@ -282,10 +280,10 @@ impl TuiStore {
             ));
         }
 
-        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
         let outcome = update_task_operation(
             &mut conn,
+            &self.active_workspace,
             &item.task.id,
             TaskUpdate {
                 available_at: Some(available_at.clone()),
@@ -339,10 +337,10 @@ impl TuiStore {
             ));
         }
 
-        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
         let outcome = update_task_operation(
             &mut conn,
+            &self.active_workspace,
             &item.task.id,
             TaskUpdate {
                 due_on: Some(due_on.clone()),
@@ -385,10 +383,10 @@ impl TuiStore {
             return Ok(None);
         };
         let before = item.task.project_id.clone();
-        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
         let outcome = update_task_operation(
             &mut conn,
+            &self.active_workspace,
             &item.task.id,
             TaskUpdate {
                 project: Some(project.clone()),
@@ -475,9 +473,8 @@ impl TuiStore {
             }
 
             let before = if item.task.deleted { "1" } else { "0" };
-            self.activate_workspace();
             let mut conn = self.pool.acquire().await?;
-            set_deleted(&mut conn, &item.task, deleted).await?;
+            set_deleted(&mut conn, &self.active_workspace, &item.task, deleted).await?;
             drop(conn);
             let summary = if deleted {
                 format!("delete {}", item.display_ref)
@@ -532,10 +529,14 @@ impl TuiStore {
         task_id: &str,
         depends_on_task_id: &str,
     ) -> Result<MutationMessage> {
-        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
-        let outcome =
-            crate::operations::add_task_dependency(&mut conn, task_id, depends_on_task_id).await?;
+        let outcome = crate::operations::add_task_dependency(
+            &mut conn,
+            &self.active_workspace,
+            task_id,
+            depends_on_task_id,
+        )
+        .await?;
         let task_ref = crate::refs::display_ref(&mut conn, &outcome.task).await?;
         let depends_on_ref = crate::refs::display_ref(&mut conn, &outcome.depends_on).await?;
         drop(conn);
@@ -565,11 +566,14 @@ impl TuiStore {
         let Some(item) = self.selected_task(index).cloned() else {
             return Ok(None);
         };
-        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
-        let outcome =
-            crate::operations::remove_task_dependency(&mut conn, &item.task.id, depends_on_task_id)
-                .await?;
+        let outcome = crate::operations::remove_task_dependency(
+            &mut conn,
+            &self.active_workspace,
+            &item.task.id,
+            depends_on_task_id,
+        )
+        .await?;
         let depends_on_ref = crate::refs::display_ref(&mut conn, &outcome.depends_on).await?;
         drop(conn);
         if outcome.changed {
@@ -642,7 +646,6 @@ impl TuiStore {
             return Ok(None);
         }
 
-        self.activate_workspace();
         let mut undo_commands = Vec::new();
         let mut conn = self.pool.acquire().await?;
         for item in &targets {
@@ -650,7 +653,7 @@ impl TuiStore {
             if before == status {
                 continue;
             }
-            set_status(&mut conn, &item.task, status).await?;
+            set_status(&mut conn, &self.active_workspace, &item.task, status).await?;
             undo_commands.push(UndoCommand::SetTaskField {
                 task_id: item.task.id.clone(),
                 field: "status".to_string(),
@@ -688,7 +691,6 @@ impl TuiStore {
             return Ok(None);
         }
 
-        self.activate_workspace();
         let mut undo_commands = Vec::new();
         let mut conn = self.pool.acquire().await?;
         for item in &targets {
@@ -699,7 +701,7 @@ impl TuiStore {
             if before == *status {
                 continue;
             }
-            set_status(&mut conn, &item.task, status).await?;
+            set_status(&mut conn, &self.active_workspace, &item.task, status).await?;
             undo_commands.push(UndoCommand::SetTaskField {
                 task_id: item.task.id.clone(),
                 field: "status".to_string(),
@@ -739,12 +741,12 @@ impl TuiStore {
             return Ok(None);
         }
 
-        self.activate_workspace();
         let mut undo_commands = Vec::new();
         let mut conn = self.pool.acquire().await?;
         for item in &targets {
             let before = item.task.priority.as_str().to_string();
-            let task = cycle_priority(&mut conn, &item.task, reverse).await?;
+            let task =
+                cycle_priority(&mut conn, &self.active_workspace, &item.task, reverse).await?;
             undo_commands.push(UndoCommand::SetTaskField {
                 task_id: item.task.id.clone(),
                 field: "priority".to_string(),
@@ -778,7 +780,6 @@ impl TuiStore {
             return Ok(None);
         }
 
-        self.activate_workspace();
         let mut undo_commands = Vec::new();
         let mut conn = self.pool.acquire().await?;
         for item in &targets {
@@ -786,7 +787,8 @@ impl TuiStore {
             if before == priority {
                 continue;
             }
-            let task = set_priority(&mut conn, &item.task, priority).await?;
+            let task =
+                set_priority(&mut conn, &self.active_workspace, &item.task, priority).await?;
             undo_commands.push(UndoCommand::SetTaskField {
                 task_id: item.task.id.clone(),
                 field: "priority".to_string(),
@@ -823,13 +825,13 @@ impl TuiStore {
             return Ok(None);
         }
 
-        self.activate_workspace();
         let mut undo_commands = Vec::new();
         let mut conn = self.pool.acquire().await?;
         for item in &targets {
             let before = item.task.project_id.clone();
             let outcome = update_task_operation(
                 &mut conn,
+                &self.active_workspace,
                 &item.task.id,
                 TaskUpdate {
                     project: Some(project.clone()),
@@ -876,7 +878,6 @@ impl TuiStore {
             return Ok(None);
         }
 
-        self.activate_workspace();
         let mut undo_commands = Vec::new();
         let mut conn = self.pool.acquire().await?;
         for item in &targets {
@@ -884,7 +885,7 @@ impl TuiStore {
                 continue;
             }
             let before = if item.task.deleted { "1" } else { "0" };
-            set_deleted(&mut conn, &item.task, deleted).await?;
+            set_deleted(&mut conn, &self.active_workspace, &item.task, deleted).await?;
             undo_commands.push(UndoCommand::SetTaskField {
                 task_id: item.task.id.clone(),
                 field: "deleted".to_string(),
@@ -936,7 +937,6 @@ impl TuiStore {
             return Ok(None);
         }
 
-        self.activate_workspace();
         let mut undo_commands = Vec::new();
         let mut conn = self.pool.acquire().await?;
         for item in &targets {
@@ -956,6 +956,7 @@ impl TuiStore {
             }
             update_task_operation(
                 &mut conn,
+                &self.active_workspace,
                 &item.task.id,
                 TaskUpdate {
                     add_labels,

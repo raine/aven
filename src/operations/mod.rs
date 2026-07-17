@@ -14,8 +14,6 @@ pub(crate) use dependencies::{
     add_task_dependency, dependency_path_exists, remove_task_dependency,
 };
 pub(crate) use epics::{add_task_to_epic, remove_task_from_epic, task_has_epic_children};
-#[cfg(test)]
-pub(crate) use projects::create_label_operation_in_workspace;
 pub(crate) use projects::{
     ProjectMetadata, add_project_path_operation, create_label_operation, create_project_operation,
     delete_label_operation, delete_project_operation, insert_project_metadata_change,
@@ -23,6 +21,6 @@ pub(crate) use projects::{
     rename_project_operation, set_project_metadata,
 };
 pub(crate) use tasks::{
-    TaskDraft, TaskUpdate, add_note, create_task, create_task_in_workspace, delete_note,
-    set_task_deleted, update_task, update_task_labels_in_workspace,
+    TaskDraft, TaskUpdate, add_note, create_task, delete_note, set_task_deleted, update_task,
+    update_task_labels_in_workspace,
 };

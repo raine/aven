@@ -4,10 +4,10 @@ use sqlx::SqliteConnection;
 use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
 use crate::db::{begin_immediate, field_version, insert_change, set_field_version};
 use crate::ids::now;
-use crate::refs::get_task;
+use crate::refs::get_task_in_workspace;
 use crate::task_fields::TaskField;
 use crate::types::Task;
-use crate::workspaces::workspace_for_id;
+use crate::workspaces::Workspace;
 
 pub(crate) struct EpicLinkOutcome {
     pub(crate) epic: Task,
@@ -22,6 +22,7 @@ struct EpicPair {
 
 async fn load_epic_pair(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     child_id: &str,
     epic_id: &str,
 ) -> Result<EpicPair> {
@@ -29,12 +30,8 @@ async fn load_epic_pair(
         bail!("error epic-self task_id={child_id}");
     }
 
-    let child = get_task(conn, child_id).await?;
-    let epic = get_task(conn, epic_id).await?;
-
-    if child.workspace_id != epic.workspace_id {
-        bail!("error epic-cross-workspace child_task_id={child_id} epic_task_id={epic_id}");
-    }
+    let child = get_task_in_workspace(conn, workspace, child_id).await?;
+    let epic = get_task_in_workspace(conn, workspace, epic_id).await?;
     if child.project_id != epic.project_id {
         bail!("error epic-cross-project child_task_id={child_id} epic_task_id={epic_id}");
     }
@@ -47,17 +44,17 @@ async fn load_epic_pair(
 
 async fn record_epic_change(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     pair: &EpicPair,
     op_type: &'static str,
 ) -> Result<()> {
-    let workspace = workspace_for_id(conn, &pair.child.workspace_id).await?;
     append_change(
         conn,
         ChangeEntity::Task,
         &pair.child.id,
         Some("epics"),
         op_type,
-        ChangePayload::workspace(&workspace)
+        ChangePayload::workspace(workspace)
             .set("epic_task_id", pair.epic.id.clone())
             .set("created_at", now()),
     )
@@ -65,11 +62,14 @@ async fn record_epic_change(
     Ok(())
 }
 
-async fn mark_task_as_epic(conn: &mut SqliteConnection, task: &Task) -> Result<()> {
+async fn mark_task_as_epic(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    task: &Task,
+) -> Result<()> {
     if task.is_epic {
         return Ok(());
     }
-    let workspace = workspace_for_id(conn, &task.workspace_id).await?;
     let field = TaskField::IsEpic.as_str();
     let base = field_version(conn, &task.id, field).await?;
     let ts = now();
@@ -95,14 +95,15 @@ async fn mark_task_as_epic(conn: &mut SqliteConnection, task: &Task) -> Result<(
 
 pub(crate) async fn add_task_to_epic(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     child_id: &str,
     epic_id: &str,
 ) -> Result<EpicLinkOutcome> {
     let mut tx = begin_immediate(conn).await?;
-    let pair = load_epic_pair(&mut tx, child_id, epic_id).await?;
+    let pair = load_epic_pair(&mut tx, workspace, child_id, epic_id).await?;
     let ts = now();
     if !pair.epic.is_epic {
-        mark_task_as_epic(&mut tx, &pair.epic).await?;
+        mark_task_as_epic(&mut tx, workspace, &pair.epic).await?;
     }
     let existing_epic_id = sqlx::query_scalar::<_, String>(
         "SELECT epic_task_id FROM task_epic_links WHERE workspace_id = ? AND child_task_id = ?",
@@ -134,12 +135,12 @@ pub(crate) async fn add_task_to_epic(
         > 0;
 
     if changed {
-        record_epic_change(&mut tx, &pair, op_type::EPIC_LINK_ADD).await?;
+        record_epic_change(&mut tx, workspace, &pair, op_type::EPIC_LINK_ADD).await?;
     }
 
     tx.commit().await?;
     Ok(EpicLinkOutcome {
-        epic: get_task(conn, &pair.epic.id).await?,
+        epic: get_task_in_workspace(conn, workspace, &pair.epic.id).await?,
         child: pair.child,
         changed,
     })
@@ -147,11 +148,12 @@ pub(crate) async fn add_task_to_epic(
 
 pub(crate) async fn remove_task_from_epic(
     conn: &mut SqliteConnection,
+    workspace: &Workspace,
     child_id: &str,
     epic_id: &str,
 ) -> Result<EpicLinkOutcome> {
     let mut tx = begin_immediate(conn).await?;
-    let pair = load_epic_pair(&mut tx, child_id, epic_id).await?;
+    let pair = load_epic_pair(&mut tx, workspace, child_id, epic_id).await?;
     let changed = sqlx::query(
         "DELETE FROM task_epic_links
          WHERE workspace_id = ? AND epic_task_id = ? AND child_task_id = ?",
@@ -165,7 +167,7 @@ pub(crate) async fn remove_task_from_epic(
         > 0;
 
     if changed {
-        record_epic_change(&mut tx, &pair, op_type::EPIC_LINK_REMOVE).await?;
+        record_epic_change(&mut tx, workspace, &pair, op_type::EPIC_LINK_REMOVE).await?;
     }
 
     tx.commit().await?;

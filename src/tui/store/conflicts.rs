@@ -14,9 +14,9 @@ impl TuiStore {
         let Some(item) = self.selected_task(index) else {
             return Ok(None);
         };
-        self.activate_workspace();
         let mut conn = self.pool.acquire().await?;
-        let details = task_conflicts(&mut conn, &item.task.id, None).await?;
+        let details =
+            task_conflicts(&mut conn, &self.active_workspace, &item.task.id, None).await?;
         Ok(Some(
             details
                 .into_iter()
@@ -38,7 +38,6 @@ impl TuiStore {
         target: ConflictTarget,
         value: String,
     ) -> Result<MutationMessage> {
-        self.activate_workspace();
         let workspace_id = self.active_workspace.id.clone();
         let mut conn = self.pool.acquire().await?;
         let before =
@@ -46,7 +45,14 @@ impl TuiStore {
         let conflict_id =
             crate::undo::conflict_row_id(&mut conn, &workspace_id, &target.task_id, &target.field)
                 .await?;
-        let outcome = resolve_conflict(&mut conn, &target.task_id, &target.field, &value).await?;
+        let outcome = resolve_conflict(
+            &mut conn,
+            &self.active_workspace,
+            &target.task_id,
+            &target.field,
+            &value,
+        )
+        .await?;
         let after =
             task_field_value(&mut conn, &workspace_id, &target.task_id, &target.field).await?;
         drop(conn);

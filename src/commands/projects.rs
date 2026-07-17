@@ -7,13 +7,18 @@ use crate::operations::{
     add_project_path_operation, create_project_operation, delete_project_operation,
     list_project_paths_operation, remove_project_path_operation, rename_project_operation,
 };
-use crate::projects::list_projects;
+use crate::projects::list_projects_in_workspace;
 use crate::render::{changed_text, quote};
+use crate::workspaces::Workspace;
 
-pub(crate) async fn cmd_project(conn: &mut SqliteConnection, args: ProjectCommand) -> Result<()> {
+pub(crate) async fn cmd_project(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    args: ProjectCommand,
+) -> Result<()> {
     match args.command {
         ProjectSubcommand::Create { name, path } => {
-            let outcome = create_project_operation(conn, &name, path.as_deref()).await?;
+            let outcome = create_project_operation(conn, workspace, &name, path.as_deref()).await?;
             let project = outcome.project;
             println!(
                 "created-project {} prefix={} name={}",
@@ -23,8 +28,7 @@ pub(crate) async fn cmd_project(conn: &mut SqliteConnection, args: ProjectComman
             );
         }
         ProjectSubcommand::Delete { project } => {
-            let workspace = crate::workspaces::active_workspace();
-            let outcome = delete_project_operation(conn, &workspace, &project).await?;
+            let outcome = delete_project_operation(conn, workspace, &project).await?;
             println!(
                 "deleted-project {} prefix={} name={}",
                 outcome.project.key,
@@ -32,15 +36,14 @@ pub(crate) async fn cmd_project(conn: &mut SqliteConnection, args: ProjectComman
                 quote(&outcome.project.name)
             );
         }
-        ProjectSubcommand::List(args) => cmd_projects(conn, args).await?,
+        ProjectSubcommand::List(args) => cmd_projects(conn, workspace, args).await?,
         ProjectSubcommand::Rename {
             project,
             new_name,
             prefix,
         } => {
-            let workspace = crate::workspaces::active_workspace();
             let outcome =
-                rename_project_operation(conn, &workspace, &project, &new_name, prefix.as_deref())
+                rename_project_operation(conn, workspace, &project, &new_name, prefix.as_deref())
                     .await?;
             println!(
                 "renamed-project {} changed={} old={} old_prefix={} prefix={} name={}",
@@ -57,7 +60,7 @@ pub(crate) async fn cmd_project(conn: &mut SqliteConnection, args: ProjectComman
         }
         ProjectSubcommand::Path { command } => match command {
             ProjectPathSubcommand::Add { project, path } => {
-                let outcome = add_project_path_operation(conn, &project, &path).await?;
+                let outcome = add_project_path_operation(conn, workspace, &project, &path).await?;
                 println!(
                     "added-project-path {} path={} config={}",
                     outcome.project.key,
@@ -66,7 +69,8 @@ pub(crate) async fn cmd_project(conn: &mut SqliteConnection, args: ProjectComman
                 );
             }
             ProjectPathSubcommand::Remove { project, path } => {
-                let outcome = remove_project_path_operation(conn, &project, &path).await?;
+                let outcome =
+                    remove_project_path_operation(conn, workspace, &project, &path).await?;
                 println!(
                     "removed-project-path {} path={} config={}",
                     outcome.project.key,
@@ -75,7 +79,8 @@ pub(crate) async fn cmd_project(conn: &mut SqliteConnection, args: ProjectComman
                 );
             }
             ProjectPathSubcommand::List { project } => {
-                let paths = list_project_paths_operation(conn, project.as_deref()).await?;
+                let paths =
+                    list_project_paths_operation(conn, workspace, project.as_deref()).await?;
                 for item in paths {
                     println!("{} path={}", item.project.key, quote(&item.path));
                 }
@@ -92,8 +97,13 @@ struct ProjectListJsonItem {
     prefix: String,
 }
 
-async fn cmd_projects(conn: &mut SqliteConnection, args: SearchArgs) -> Result<()> {
-    let mut projects = list_projects(conn, args.search.as_deref()).await?;
+async fn cmd_projects(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    args: SearchArgs,
+) -> Result<()> {
+    let mut projects =
+        list_projects_in_workspace(conn, &workspace.id, args.search.as_deref()).await?;
     if let Some(limit) = args.limit {
         projects.truncate(limit);
     }

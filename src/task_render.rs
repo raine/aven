@@ -6,29 +6,6 @@ use crate::query::{TaskDependencyLink, TaskDependencySummary, TaskListItem};
 use crate::render::{KvLine, print_multiline_block, quote};
 use crate::task_fields::TaskField;
 
-#[allow(dead_code)]
-pub(crate) async fn labels_for_task(
-    conn: &mut SqliteConnection,
-    task_id: &str,
-) -> Result<Vec<String>> {
-    let workspace_id = crate::workspaces::active_workspace_id();
-    labels_for_task_in_workspace(conn, &workspace_id, task_id).await
-}
-
-pub(crate) async fn labels_for_task_in_workspace(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-    task_id: &str,
-) -> Result<Vec<String>> {
-    Ok(sqlx::query_scalar::<_, String>(
-        "SELECT label FROM task_labels WHERE workspace_id = ? AND task_id = ? ORDER BY label",
-    )
-    .bind(workspace_id)
-    .bind(task_id)
-    .fetch_all(&mut *conn)
-    .await?)
-}
-
 pub(crate) async fn print_task_line_item(item: &TaskListItem) -> Result<()> {
     let labels = item.labels.join(",");
     let line = KvLine::new(item.display_ref.clone())

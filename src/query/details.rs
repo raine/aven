@@ -128,7 +128,8 @@ mod tests {
     #[tokio::test]
     async fn task_detail_loads_enriched_fields_in_stable_order() {
         let (_temp, mut conn) = crate::test_support::test_conn().await;
-        let workspace_id = crate::workspaces::active_workspace_id();
+        let workspace = crate::workspaces::Workspace::default();
+        let workspace_id = workspace.id.clone();
         sqlx::query(
             "INSERT INTO projects(id, key, name, prefix, created_at, updated_at)
              VALUES ('PROJECTDETAIL001', 'detail', 'Detail Project', 'DTL', 't', 't')",
@@ -183,9 +184,13 @@ mod tests {
             .unwrap();
         }
 
-        let task = crate::refs::resolve_task_ref(&mut conn, "D3TA100000000001")
-            .await
-            .unwrap();
+        let task = crate::refs::resolve_task_ref_in_workspace(
+            &mut conn,
+            &workspace,
+            "D3TA100000000001",
+        )
+        .await
+        .unwrap();
         let detail = task_detail(&mut conn, &task).await.unwrap();
 
         assert_eq!(detail.item.task.title, "detailed task");

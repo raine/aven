@@ -7,7 +7,6 @@ use crate::db::task_from_row;
 use crate::labels::ensure_label_exists_in_workspace;
 use crate::projects::resolve_existing_project_in_workspace;
 use crate::queue::{now_seconds, queue_order};
-use crate::workspaces::active_workspace_id;
 
 use super::fragments;
 use super::hydration::build_task_list_items;
@@ -15,17 +14,6 @@ use super::sorting::push_sort;
 use super::{
     SortDirection, TaskAvailabilityFilter, TaskFilters, TaskListItem, TaskQueryMode, TaskSort,
 };
-
-pub(crate) async fn list_task_items(
-    conn: &mut SqliteConnection,
-    filters: TaskFilters,
-    mode: TaskQueryMode,
-    sort: TaskSort,
-    direction: SortDirection,
-) -> Result<Vec<TaskListItem>> {
-    let workspace_id = active_workspace_id();
-    list_task_items_in_workspace(conn, &workspace_id, filters, mode, sort, direction).await
-}
 
 pub(crate) async fn list_task_items_in_workspace(
     conn: &mut SqliteConnection,

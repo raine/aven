@@ -13,19 +13,15 @@ mod types;
 
 pub(crate) use dependencies::{TaskDependencyItem, TaskDependencySummary, task_dependency_summary};
 pub(crate) use details::{TaskDetail, TaskDetailConflict, task_detail};
-#[cfg(test)]
-pub(crate) use projects::list_project_items;
 pub(crate) use projects::list_project_items_in_workspace;
 pub(crate) use recent_actions::list_recent_actions_in_workspace;
 pub(crate) use search::{
     SearchMatchedField, TaskSearchPreviewResultSet, TaskSearchQuery, TaskSearchResult,
-    search_task_items, search_task_items_in_workspace, search_task_preview_set_in_workspace,
+    search_task_items_in_workspace, search_task_preview_set_in_workspace,
 };
 pub(crate) use sidebar::sidebar_counts_for_scope_in_workspace;
-#[cfg(test)]
-pub(crate) use sidebar::{sidebar_counts, sidebar_counts_in_workspace};
 pub(crate) use sync_history::{SyncHistoryStats, sync_history_stats};
-pub(crate) use tasks::{list_task_items, list_task_items_in_workspace};
+pub(crate) use tasks::list_task_items_in_workspace;
 #[cfg(test)]
 pub(crate) use types::RecentActionTarget;
 pub(crate) use types::{
@@ -74,7 +70,7 @@ mod tests {
     }
 
     async fn insert_test_label(conn: &mut SqliteConnection, task_id: &str, label: &str) {
-        let workspace_id = crate::workspaces::active_workspace_id();
+        let workspace_id = crate::workspaces::DEFAULT_WORKSPACE_ID.to_string();
         sqlx::query(
             "INSERT OR IGNORE INTO labels(workspace_id, name, created_at) VALUES (?, ?, 't')",
         )
@@ -100,7 +96,7 @@ mod tests {
              local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
              VALUES (?, ?, 'title', NULL, 'local', 'remote', NULL, ?, 'a', 'b', ?, ?)",
         )
-        .bind(crate::workspaces::active_workspace_id())
+        .bind(crate::workspaces::DEFAULT_WORKSPACE_ID.to_string())
         .bind(task_id)
         .bind(crate::ids::new_id())
         .bind(crate::ids::now())
@@ -119,24 +115,6 @@ mod tests {
             .iter()
             .map(|item| item.item.task.title.as_str())
             .collect()
-    }
-
-    struct ActiveWorkspaceGuard {
-        previous: crate::workspaces::Workspace,
-    }
-
-    impl ActiveWorkspaceGuard {
-        fn set(workspace: crate::workspaces::Workspace) -> Self {
-            let previous = crate::workspaces::active_workspace();
-            crate::workspaces::set_active_workspace(workspace);
-            Self { previous }
-        }
-    }
-
-    impl Drop for ActiveWorkspaceGuard {
-        fn drop(&mut self) {
-            crate::workspaces::set_active_workspace(self.previous.clone());
-        }
     }
 
     async fn seed_workspace_project(
@@ -254,8 +232,9 @@ mod tests {
             insert_test_task(&mut conn, id, title, status, priority, created_at).await;
         }
 
-        let items = list_task_items(
+        let items = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskFilters {
                 hide_done: true,
                 ..TaskFilters::default()
@@ -285,8 +264,9 @@ mod tests {
             insert_test_task(&mut conn, id, title, status, "none", "001").await;
         }
 
-        let items = list_task_items(
+        let items = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskFilters {
                 hide_done: true,
                 ..TaskFilters::default()
@@ -299,7 +279,13 @@ mod tests {
         .unwrap();
         assert_eq!(listed_titles(&items), ["todo task"]);
 
-        let counts = sidebar_counts(&mut conn).await.unwrap();
+        let counts = sidebar_counts_for_scope_in_workspace(
+            &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(counts.open, 1);
         assert_eq!(counts.done, 2);
     }
@@ -318,8 +304,9 @@ mod tests {
             insert_test_task(&mut conn, id, title, "todo", priority, created_at).await;
         }
 
-        let items = list_task_items(
+        let items = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskFilters::default(),
             TaskQueryMode::Flat,
             TaskSort::Priority,
@@ -345,8 +332,9 @@ mod tests {
             insert_test_task(&mut conn, id, title, "todo", "none", created_at).await;
         }
 
-        let items = list_task_items(
+        let items = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskFilters::default(),
             TaskQueryMode::Flat,
             TaskSort::Created,
@@ -356,8 +344,9 @@ mod tests {
         .unwrap();
         assert_eq!(items[0].task.title, "second");
 
-        let items = list_task_items(
+        let items = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskFilters::default(),
             TaskQueryMode::Flat,
             TaskSort::Created,
@@ -391,8 +380,9 @@ mod tests {
         .await
         .unwrap();
 
-        let items = list_task_items(
+        let items = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskFilters {
                 conflicts_only: true,
                 ..TaskFilters::default()
@@ -449,13 +439,14 @@ mod tests {
             "INSERT INTO task_dependencies(workspace_id, task_id, depends_on_task_id, created_at)
              VALUES (?, '0000000000000302', '0000000000000301', '003')",
         )
-        .bind(crate::workspaces::active_workspace_id())
+        .bind(crate::workspaces::DEFAULT_WORKSPACE_ID.to_string())
         .execute(&mut *conn)
         .await
         .unwrap();
 
-        let items = list_task_items(
+        let items = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskFilters::default(),
             TaskQueryMode::Flat,
             TaskSort::Created,
@@ -480,7 +471,7 @@ mod tests {
     #[tokio::test]
     async fn list_items_include_description_and_note_metadata() {
         let (_temp, mut conn) = test_conn().await;
-        let workspace_id = crate::workspaces::active_workspace_id();
+        let workspace_id = crate::workspaces::DEFAULT_WORKSPACE_ID.to_string();
         seed_default_project(&mut conn).await;
         insert_test_task(
             &mut conn,
@@ -508,8 +499,9 @@ mod tests {
         .await
         .unwrap();
 
-        let items = list_task_items(
+        let items = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskFilters::default(),
             TaskQueryMode::Flat,
             TaskSort::Created,
@@ -545,8 +537,9 @@ mod tests {
         .await;
         insert_test_task(&mut conn, "ABCD999999999999", "done", "done", "none", "002").await;
 
-        let items = list_task_items(
+        let items = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskFilters {
                 hide_done: true,
                 ..TaskFilters::default()
@@ -597,8 +590,9 @@ mod tests {
             .unwrap();
         }
 
-        let items = list_task_items(
+        let items = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskFilters {
                 search: Some("needle".to_string()),
                 ..TaskFilters::default()
@@ -659,8 +653,9 @@ mod tests {
         .await
         .unwrap();
 
-        let done = search_task_items(
+        let done = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "release cleanup".to_string(),
                 include_deleted: false,
@@ -672,8 +667,9 @@ mod tests {
         assert_eq!(listed_titles_from_search(&done), ["Done release cleanup"]);
         assert_eq!(done[0].matched_field, SearchMatchedField::Title);
 
-        let label = search_task_items(
+        let label = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "security".to_string(),
                 include_deleted: false,
@@ -685,8 +681,9 @@ mod tests {
         assert_eq!(listed_titles_from_search(&label), ["Plain inbox"]);
         assert_eq!(label[0].matched_field, SearchMatchedField::Label);
 
-        let title_tokens = search_task_items(
+        let title_tokens = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "ios auth".to_string(),
                 include_deleted: false,
@@ -701,8 +698,9 @@ mod tests {
         );
         assert_eq!(title_tokens[0].matched_field, SearchMatchedField::Title);
 
-        let note = search_task_items(
+        let note = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "pager rotation".to_string(),
                 include_deleted: false,
@@ -726,8 +724,9 @@ mod tests {
                 .is_some_and(|value| value.contains("pager rotation"))
         );
 
-        let quoted_note = search_task_items(
+        let quoted_note = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "\"pager rotation\"".to_string(),
                 include_deleted: false,
@@ -751,8 +750,9 @@ mod tests {
                 .is_some_and(|value| value.contains("pager rotation"))
         );
 
-        let desc_phrase = search_task_items(
+        let desc_phrase = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "\"pager rotation handoff\"".to_string(),
                 include_deleted: false,
@@ -809,7 +809,7 @@ mod tests {
         )
         .await;
 
-        let workspace_id = crate::workspaces::active_workspace_id();
+        let workspace_id = crate::workspaces::DEFAULT_WORKSPACE_ID.to_string();
         sqlx::query(
             "UPDATE task_search_documents SET notes = 'obsolete pager phrase'
              WHERE workspace_id = ? AND task_id = ?",
@@ -862,8 +862,9 @@ mod tests {
         )
         .await;
 
-        let items = search_task_items(
+        let items = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "testing".to_string(),
                 include_deleted: false,
@@ -907,8 +908,9 @@ mod tests {
             .await
             .unwrap();
 
-        let by_ref = search_task_items(
+        let by_ref = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "7KQ9".to_string(),
                 include_deleted: false,
@@ -920,8 +922,9 @@ mod tests {
         assert_eq!(by_ref[0].item.task.id, "7KQ9A1X4MV2P8D6R");
         assert_eq!(by_ref[0].matched_field, SearchMatchedField::Ref);
 
-        let qualified_ref = search_task_items(
+        let qualified_ref = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "/APP-7KQ9".to_string(),
                 include_deleted: false,
@@ -934,8 +937,9 @@ mod tests {
         assert_eq!(qualified_ref[0].item.task.id, "7KQ9A1X4MV2P8D6R");
         assert_eq!(qualified_ref[0].matched_field, SearchMatchedField::Ref);
 
-        let without_deleted = search_task_items(
+        let without_deleted = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "deleted needle".to_string(),
                 include_deleted: false,
@@ -946,8 +950,9 @@ mod tests {
         .unwrap();
         assert!(without_deleted.is_empty());
 
-        let with_deleted = search_task_items(
+        let with_deleted = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "deleted needle".to_string(),
                 include_deleted: true,
@@ -959,8 +964,9 @@ mod tests {
         assert_eq!(listed_titles_from_search(&with_deleted), ["Deleted needle"]);
         assert!(with_deleted[0].item.task.deleted);
 
-        let single_token_without_deleted = search_task_items(
+        let single_token_without_deleted = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "needle".to_string(),
                 include_deleted: false,
@@ -979,8 +985,9 @@ mod tests {
                 .all(|result| !result.item.task.deleted)
         );
 
-        let deleted_by_ref = search_task_items(
+        let deleted_by_ref = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "9KQ9".to_string(),
                 include_deleted: false,
@@ -1020,8 +1027,9 @@ mod tests {
         .await;
         insert_test_conflict(&mut conn, "0000000000000402", false).await;
 
-        let items = list_task_items(
+        let items = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskFilters::default(),
             TaskQueryMode::RankedQueue,
             TaskSort::Created,
@@ -1069,7 +1077,6 @@ mod tests {
         seed_workspace_task_label(&mut conn, &alpha_id, "ALPHA0000000001", "shared").await;
         seed_workspace_task_label(&mut conn, &beta.id, "BETA00000000001", "shared").await;
         seed_workspace_conflict(&mut conn, &alpha_id, "ALPHA0000000001").await;
-        let _guard = ActiveWorkspaceGuard::set(beta.clone());
 
         let alpha_tasks = list_task_items_in_workspace(
             &mut conn,
@@ -1116,7 +1123,7 @@ mod tests {
         assert_eq!(beta_projects[0].key, "app");
         assert_eq!(beta_projects[0].open_count, 0);
 
-        let alpha_counts = sidebar_counts_in_workspace(&mut conn, &alpha_id)
+        let alpha_counts = sidebar_counts_for_scope_in_workspace(&mut conn, &alpha_id, None)
             .await
             .unwrap();
         assert_eq!(alpha_counts.open, 1);
@@ -1124,7 +1131,7 @@ mod tests {
         assert_eq!(alpha_counts.conflicts, 1);
         assert_eq!(alpha_counts.done, 0);
 
-        let beta_counts = sidebar_counts_in_workspace(&mut conn, &beta.id)
+        let beta_counts = sidebar_counts_for_scope_in_workspace(&mut conn, &beta.id, None)
             .await
             .unwrap();
         assert_eq!(beta_counts.open, 0);
@@ -1157,8 +1164,9 @@ mod tests {
             .await
             .unwrap();
 
-        let items = list_task_items(
+        let items = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskFilters {
                 project: Some("renamed-app".to_string()),
                 ..TaskFilters::default()
@@ -1172,67 +1180,6 @@ mod tests {
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].task.project_key, "renamed-app");
-    }
-
-    #[tokio::test]
-    async fn active_workspace_wrappers_delegate_to_active_workspace() {
-        let (_temp, mut conn) = test_conn().await;
-        let alpha_id = crate::workspaces::DEFAULT_WORKSPACE_ID.to_string();
-        let beta = crate::workspaces::create_workspace(&mut conn, "Beta")
-            .await
-            .unwrap();
-        seed_workspace_project(&mut conn, &alpha_id, "alpha", "Alpha", "ALP").await;
-        seed_workspace_project(&mut conn, &beta.id, "beta", "Beta", "BET").await;
-        seed_workspace_task(
-            &mut conn,
-            &alpha_id,
-            "ALPHA0000000001",
-            "alpha task",
-            "alpha",
-            "todo",
-            "none",
-            "001",
-        )
-        .await;
-        seed_workspace_task(
-            &mut conn,
-            &beta.id,
-            "BETA00000000001",
-            "beta task",
-            "beta",
-            "todo",
-            "none",
-            "002",
-        )
-        .await;
-        let _guard = ActiveWorkspaceGuard::set(beta.clone());
-
-        let wrapper_tasks = list_task_items(
-            &mut conn,
-            TaskFilters::default(),
-            TaskQueryMode::Flat,
-            TaskSort::Created,
-            SortDirection::Asc,
-        )
-        .await
-        .unwrap();
-        let explicit_tasks = list_task_items_in_workspace(
-            &mut conn,
-            &beta.id,
-            TaskFilters::default(),
-            TaskQueryMode::Flat,
-            TaskSort::Created,
-            SortDirection::Asc,
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            listed_titles(&wrapper_tasks),
-            listed_titles(&explicit_tasks)
-        );
-        assert_eq!(listed_titles(&wrapper_tasks), ["beta task"]);
-        assert_eq!(list_project_items(&mut conn).await.unwrap()[0].key, "beta");
-        assert_eq!(sidebar_counts(&mut conn).await.unwrap().open, 1);
     }
 
     #[tokio::test]
@@ -1265,8 +1212,9 @@ mod tests {
             "\"unfinished",
             "x OR y",
         ] {
-            search_task_items(
+            search_task_items_in_workspace(
                 &mut conn,
+                crate::workspaces::DEFAULT_WORKSPACE_ID,
                 TaskSearchQuery {
                     text: input.to_string(),
                     include_deleted: false,
@@ -1292,8 +1240,9 @@ mod tests {
         )
         .await;
 
-        let items = search_task_items(
+        let items = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "backfilled".to_string(),
                 include_deleted: false,
@@ -1325,8 +1274,9 @@ mod tests {
 
         // Use a multi-word query so it is NOT treated as a ref query by the parser.
         // Multi-word queries route through the FTS path.
-        let before = search_task_items(
+        let before = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "visible in".to_string(),
                 include_deleted: false,
@@ -1351,8 +1301,9 @@ mod tests {
 
         // After FTS entry is deleted, search should return nothing because
         // the FTS path is used for multi-word text queries.
-        let after = search_task_items(
+        let after = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "visible in".to_string(),
                 include_deleted: false,
@@ -1386,8 +1337,9 @@ mod tests {
         .unwrap();
         assert_eq!(
             listed_titles_from_search(
-                &search_task_items(
+                &search_task_items_in_workspace(
                     &mut conn,
+                    crate::workspaces::DEFAULT_WORKSPACE_ID,
                     TaskSearchQuery {
                         text: "orchard".to_string(),
                         include_deleted: false,
@@ -1401,8 +1353,9 @@ mod tests {
         );
         assert_eq!(
             listed_titles_from_search(
-                &search_task_items(
+                &search_task_items_in_workspace(
                     &mut conn,
+                    crate::workspaces::DEFAULT_WORKSPACE_ID,
                     TaskSearchQuery {
                         text: "lagoon".to_string(),
                         include_deleted: false,
@@ -1418,8 +1371,9 @@ mod tests {
         insert_test_label(&mut conn, "7KQ9A1X4MV2P8D6R", "garden").await;
         assert_eq!(
             listed_titles_from_search(
-                &search_task_items(
+                &search_task_items_in_workspace(
                     &mut conn,
+                    crate::workspaces::DEFAULT_WORKSPACE_ID,
                     TaskSearchQuery {
                         text: "garden".to_string(),
                         include_deleted: false,
@@ -1438,8 +1392,9 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            search_task_items(
+            search_task_items_in_workspace(
                 &mut conn,
+                crate::workspaces::DEFAULT_WORKSPACE_ID,
                 TaskSearchQuery {
                     text: "garden".to_string(),
                     include_deleted: false,
@@ -1459,8 +1414,9 @@ mod tests {
         .unwrap();
         assert_eq!(
             listed_titles_from_search(
-                &search_task_items(
+                &search_task_items_in_workspace(
                     &mut conn,
+                    crate::workspaces::DEFAULT_WORKSPACE_ID,
                     TaskSearchQuery {
                         text: "harbor".to_string(),
                         include_deleted: false,
@@ -1477,8 +1433,9 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            search_task_items(
+            search_task_items_in_workspace(
                 &mut conn,
+                crate::workspaces::DEFAULT_WORKSPACE_ID,
                 TaskSearchQuery {
                     text: "harbor".to_string(),
                     include_deleted: false,
@@ -1491,8 +1448,9 @@ mod tests {
         );
         assert_eq!(
             listed_titles_from_search(
-                &search_task_items(
+                &search_task_items_in_workspace(
                     &mut conn,
+                    crate::workspaces::DEFAULT_WORKSPACE_ID,
                     TaskSearchQuery {
                         text: "summit".to_string(),
                         include_deleted: false,
@@ -1511,8 +1469,9 @@ mod tests {
             .unwrap();
         assert_eq!(
             listed_titles_from_search(
-                &search_task_items(
+                &search_task_items_in_workspace(
                     &mut conn,
+                    crate::workspaces::DEFAULT_WORKSPACE_ID,
                     TaskSearchQuery {
                         text: "beacon".to_string(),
                         include_deleted: false,
@@ -1540,8 +1499,9 @@ mod tests {
         )
         .await;
 
-        let text = search_task_items(
+        let text = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "100king".to_string(),
                 include_deleted: false,
@@ -1580,8 +1540,9 @@ mod tests {
             .await
             .unwrap();
 
-        let durable = search_task_items(
+        let durable = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "7KQ9A1X4MV2P8D6R".to_string(),
                 include_deleted: false,
@@ -1593,8 +1554,9 @@ mod tests {
         assert_eq!(durable[0].item.task.id, "7KQ9A1X4MV2P8D6R");
         assert_eq!(durable[0].matched_field, SearchMatchedField::Ref);
 
-        let punctuated = search_task_items(
+        let punctuated = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "/APP.7KQ9".to_string(),
                 include_deleted: false,
@@ -1606,8 +1568,9 @@ mod tests {
         assert_eq!(punctuated[0].item.task.id, "7KQ9A1X4MV2P8D6R");
         assert_eq!(punctuated[0].matched_field, SearchMatchedField::Ref);
 
-        let spaced = search_task_items(
+        let spaced = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "APP 7KQ9".to_string(),
                 include_deleted: false,
@@ -1619,8 +1582,9 @@ mod tests {
         assert_eq!(spaced[0].item.task.id, "7KQ9A1X4MV2P8D6R");
         assert_eq!(spaced[0].matched_field, SearchMatchedField::Ref);
 
-        let wrong_prefix = search_task_items(
+        let wrong_prefix = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "/WRONG-7KQ9".to_string(),
                 include_deleted: false,
@@ -1631,8 +1595,9 @@ mod tests {
         .unwrap();
         assert!(wrong_prefix.is_empty());
 
-        let short_deleted = search_task_items(
+        let short_deleted = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "9KQ".to_string(),
                 include_deleted: false,
@@ -1643,8 +1608,9 @@ mod tests {
         .unwrap();
         assert!(short_deleted.is_empty());
 
-        let query_also_in_title = search_task_items(
+        let query_also_in_title = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "needle".to_string(),
                 include_deleted: false,
@@ -1722,8 +1688,9 @@ mod tests {
         .await
         .unwrap();
 
-        let items = search_task_items(
+        let items = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "orchard".to_string(),
                 include_deleted: true,
@@ -1752,8 +1719,9 @@ mod tests {
         assert_eq!(items[project].matched_field, SearchMatchedField::Project);
         assert_eq!(items[note].matched_field, SearchMatchedField::Note);
 
-        let by_ref = search_task_items(
+        let by_ref = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "7KQ9".to_string(),
                 include_deleted: false,
@@ -1807,8 +1775,9 @@ mod tests {
         .await
         .unwrap();
 
-        let items = search_task_items(
+        let items = search_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskSearchQuery {
                 text: "auth flow".to_string(),
                 include_deleted: false,
@@ -1832,7 +1801,7 @@ mod tests {
         let (_temp, mut conn) = test_conn().await;
         seed_default_project(&mut conn).await;
 
-        let workspace_id = crate::workspaces::active_workspace_id();
+        let workspace_id = crate::workspaces::DEFAULT_WORKSPACE_ID.to_string();
 
         // Parent task - open
         insert_test_task(
@@ -1931,8 +1900,9 @@ mod tests {
         .await
         .unwrap();
 
-        let items = list_task_items(
+        let items = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             TaskFilters {
                 epics_only: true,
                 hide_done: true,
@@ -1983,8 +1953,9 @@ mod tests {
             availability: TaskAvailabilityFilter::Upcoming,
             ..TaskFilters::default()
         };
-        let available = list_task_items(
+        let available = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             available_filters.clone(),
             TaskQueryMode::RankedQueue,
             TaskSort::Created,
@@ -1992,8 +1963,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let upcoming = list_task_items(
+        let upcoming = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             upcoming_filters.clone(),
             TaskQueryMode::Flat,
             TaskSort::AvailableAt,
@@ -2001,8 +1973,17 @@ mod tests {
         )
         .await
         .unwrap();
-        let counts = sidebar_counts(&mut conn).await.unwrap();
-        let projects = list_project_items(&mut conn).await.unwrap();
+        let counts = sidebar_counts_for_scope_in_workspace(
+            &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
+            None,
+        )
+        .await
+        .unwrap();
+        let projects =
+            list_project_items_in_workspace(&mut conn, crate::workspaces::DEFAULT_WORKSPACE_ID)
+                .await
+                .unwrap();
 
         assert!(available.is_empty());
         assert_eq!(listed_titles(&upcoming), ["scheduled task"]);
@@ -2018,8 +1999,9 @@ mod tests {
             .await
             .unwrap();
 
-        let available = list_task_items(
+        let available = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             available_filters,
             TaskQueryMode::RankedQueue,
             TaskSort::Created,
@@ -2027,8 +2009,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let upcoming = list_task_items(
+        let upcoming = list_task_items_in_workspace(
             &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
             upcoming_filters,
             TaskQueryMode::Flat,
             TaskSort::AvailableAt,
@@ -2036,8 +2019,17 @@ mod tests {
         )
         .await
         .unwrap();
-        let counts = sidebar_counts(&mut conn).await.unwrap();
-        let projects = list_project_items(&mut conn).await.unwrap();
+        let counts = sidebar_counts_for_scope_in_workspace(
+            &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
+            None,
+        )
+        .await
+        .unwrap();
+        let projects =
+            list_project_items_in_workspace(&mut conn, crate::workspaces::DEFAULT_WORKSPACE_ID)
+                .await
+                .unwrap();
 
         assert_eq!(listed_titles(&available), ["scheduled task"]);
         assert_eq!(available[0].queue.band, crate::queue::QueueBand::Available);
@@ -2079,7 +2071,13 @@ mod tests {
             .await
             .unwrap();
 
-        let counts = sidebar_counts(&mut conn).await.unwrap();
+        let counts = sidebar_counts_for_scope_in_workspace(
+            &mut conn,
+            crate::workspaces::DEFAULT_WORKSPACE_ID,
+            None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(counts.open, 3);
         assert_eq!(counts.epics, 1);

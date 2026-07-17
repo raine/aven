@@ -12,7 +12,7 @@ use crate::fuzzy::is_near;
 use crate::ids::{new_id, now};
 use crate::render::{print_near_error, quote};
 use crate::types::Project;
-use crate::workspaces::{Workspace, active_workspace_id};
+use crate::workspaces::Workspace;
 
 pub(crate) fn normalize_key(input: &str) -> String {
     let mut out = String::new();
@@ -27,14 +27,6 @@ pub(crate) fn normalize_key(input: &str) -> String {
         }
     }
     out.trim_matches('-').to_string()
-}
-
-#[allow(dead_code)]
-pub(crate) async fn resolve_project_for_add(
-    conn: &mut SqliteConnection,
-    project: Option<&str>,
-) -> Result<Project> {
-    resolve_project_for_add_in_workspace(conn, active_workspace_id().as_str(), project).await
 }
 
 pub(crate) async fn resolve_project_for_add_in_workspace(
@@ -56,14 +48,6 @@ pub(crate) async fn resolve_project_for_add_in_workspace(
         return resolve_or_create_project(conn, workspace_id, &root_name).await;
     }
     bail!("error project-required");
-}
-
-#[allow(dead_code)]
-pub(crate) async fn resolve_existing_project(
-    conn: &mut SqliteConnection,
-    project: &str,
-) -> Result<Project> {
-    resolve_existing_project_in_workspace(conn, active_workspace_id().as_str(), project).await
 }
 
 pub(crate) async fn resolve_existing_project_in_workspace(
@@ -88,7 +72,7 @@ pub(crate) async fn inferred_project_key_for_add_in_workspace(
     workspace_id: &str,
 ) -> Result<Option<String>> {
     let config = AppConfig::load()?;
-    let workspace = crate::workspaces::active_workspace();
+    let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
     if let Some(project) =
         matching_project_override(&config, Some(&workspace.id), Some(&workspace.key))?
     {
@@ -105,7 +89,7 @@ pub(crate) async fn inferred_existing_project_key_in_workspace(
     workspace_id: &str,
 ) -> Result<Option<String>> {
     let config = AppConfig::load()?;
-    let workspace = crate::workspaces::active_workspace();
+    let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
     if let Some(project) =
         matching_project_override(&config, Some(&workspace.id), Some(&workspace.key))?
         && let Some(project) = find_project_in_workspace(conn, workspace_id, &project).await?
@@ -121,14 +105,6 @@ pub(crate) async fn inferred_existing_project_key_in_workspace(
     Ok(find_project_in_workspace(conn, workspace_id, &root_name)
         .await?
         .map(|project| project.key))
-}
-
-#[allow(dead_code)]
-pub(crate) async fn find_project(
-    conn: &mut SqliteConnection,
-    input: &str,
-) -> Result<Option<Project>> {
-    find_project_in_workspace(conn, active_workspace_id().as_str(), input).await
 }
 
 pub(crate) async fn find_project_in_workspace(
@@ -151,14 +127,7 @@ pub(crate) async fn find_project_in_workspace(
 }
 
 #[allow(dead_code)]
-pub(crate) async fn create_project(conn: &mut SqliteConnection, name: &str) -> Result<Project> {
-    create_project_in_workspace(conn, active_workspace_id().as_str(), name)
-        .await
-        .map(|outcome| outcome.project)
-}
-
-#[allow(dead_code)]
-pub(crate) async fn create_project_for_workspace(
+pub(crate) async fn create_project(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     name: &str,
@@ -431,7 +400,7 @@ async fn project_from_config_override(
     workspace_id: &str,
     config: &AppConfig,
 ) -> Result<Option<Project>> {
-    let workspace = crate::workspaces::active_workspace();
+    let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
     let Some(project) =
         matching_project_override(config, Some(&workspace.id), Some(&workspace.key))?
     else {
@@ -650,36 +619,6 @@ fn common_git_dir(git_dir: &Path) -> Result<Option<PathBuf>> {
     Ok(Some(common_dir))
 }
 
-#[allow(dead_code)]
-pub(crate) async fn add_project_path(
-    conn: &mut SqliteConnection,
-    project_key: &str,
-    path: &Path,
-) -> Result<()> {
-    add_project_path_in_workspace(conn, active_workspace_id().as_str(), project_key, path).await
-}
-
-pub(crate) async fn add_project_path_in_workspace(
-    conn: &mut SqliteConnection,
-    workspace_id: &str,
-    project_key: &str,
-    path: &Path,
-) -> Result<()> {
-    let project = resolve_existing_project_in_workspace(conn, workspace_id, project_key).await?;
-    let path =
-        fs::canonicalize(path).with_context(|| format!("could not resolve {}", path.display()))?;
-    let path = path.display().to_string();
-    sqlx::query(
-        "INSERT OR IGNORE INTO project_paths(workspace_id, project_id, path) VALUES (?, ?, ?)",
-    )
-    .bind(workspace_id)
-    .bind(&project.id)
-    .bind(path)
-    .execute(&mut *conn)
-    .await?;
-    Ok(())
-}
-
 async fn near_projects_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &str,
@@ -699,13 +638,6 @@ async fn near_projects_in_workspace(
             )
         })
         .collect())
-}
-
-pub(crate) async fn list_projects(
-    conn: &mut SqliteConnection,
-    search: Option<&str>,
-) -> Result<Vec<Project>> {
-    list_projects_in_workspace(conn, active_workspace_id().as_str(), search).await
 }
 
 pub(crate) async fn list_projects_in_workspace(

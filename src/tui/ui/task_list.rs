@@ -1336,9 +1336,8 @@ mod tests {
         let workspace = crate::workspaces::ensure_default_workspace(&mut conn)
             .await
             .unwrap();
-        crate::workspaces::set_active_workspace(workspace);
         drop(conn);
-        let mut store = TuiStore::new(pool).await.unwrap();
+        let mut store = TuiStore::new(pool, workspace).await.unwrap();
         let labels = tasks
             .iter()
             .flat_map(|item| item.labels.iter().cloned())
