@@ -162,6 +162,7 @@ impl App {
             .add_attachment(
                 self.widgets.table.selected(),
                 &blob_dir,
+                self.intake.config().local.attachment_lifecycle.policy(),
                 AttachmentAddInput {
                     filename: Some(filename),
                     alt_text: Some("pasted image".to_string()),

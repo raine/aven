@@ -123,6 +123,7 @@ pub(crate) async fn create_task_with_attachments(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     blob_dir: &Path,
+    lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
     draft: TaskDraft,
     attachments: Vec<super::attachments::TaskAttachmentAddInput>,
 ) -> Result<TaskOutcome> {
@@ -139,6 +140,59 @@ pub(crate) async fn create_task_with_attachments(
             .or_insert_with(|| attachment.clone());
     }
 
+    let mut additional_bytes = 0_i64;
+    let mut capacity_hash = None;
+    for attachment in unique.values() {
+        let available: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM blob_inventory WHERE sha256 = ? AND available = 1)",
+        )
+        .bind(&attachment.sha256)
+        .fetch_one(&mut *conn)
+        .await?;
+        if !available {
+            capacity_hash.get_or_insert_with(|| attachment.sha256.clone());
+            additional_bytes = additional_bytes.saturating_add(attachment.byte_size);
+        }
+    }
+    let capacity_reservation = if let Some(capacity_hash) = capacity_hash {
+        crate::attachments::lifecycle::ensure_local_capacity(
+            conn,
+            blob_dir,
+            &capacity_hash,
+            additional_bytes,
+            lifecycle_policy,
+            &crate::attachments::lifecycle::SystemClock,
+        )
+        .await?
+    } else {
+        None
+    };
+
+    let mut staging_leases = Vec::with_capacity(unique.len());
+    for attachment in unique.values() {
+        match crate::attachments::lifecycle::acquire_lease(
+            conn,
+            &attachment.sha256,
+            "staging",
+            &crate::attachments::lifecycle::SystemClock,
+        )
+        .await
+        {
+            Ok(lease_id) => staging_leases.push(lease_id),
+            Err(error) => {
+                for lease_id in staging_leases {
+                    let _ = crate::attachments::lifecycle::release_lease(conn, &lease_id).await;
+                }
+                if let Some(reservation_id) = capacity_reservation.as_deref() {
+                    let _ =
+                        crate::attachments::lifecycle::release_reservation(conn, reservation_id)
+                            .await;
+                }
+                return Err(error);
+            }
+        }
+    }
+
     let mut created_hashes = Vec::new();
     for attachment in unique.values() {
         match crate::attachments::storage::stage_blob(
@@ -151,6 +205,16 @@ pub(crate) async fn create_task_with_attachments(
             Ok(staged) => {
                 if staged.byte_size != attachment.byte_size {
                     cleanup_created_objects(conn, blob_dir, &created_hashes).await;
+                    for lease_id in &staging_leases {
+                        let _ = crate::attachments::lifecycle::release_lease(conn, lease_id).await;
+                    }
+                    if let Some(reservation_id) = capacity_reservation.as_deref() {
+                        let _ = crate::attachments::lifecycle::release_reservation(
+                            conn,
+                            reservation_id,
+                        )
+                        .await;
+                    }
                     bail!("error attachment-staged-size-mismatch");
                 }
                 if staged.created {
@@ -159,6 +223,14 @@ pub(crate) async fn create_task_with_attachments(
             }
             Err(error) => {
                 cleanup_created_objects(conn, blob_dir, &created_hashes).await;
+                for lease_id in &staging_leases {
+                    let _ = crate::attachments::lifecycle::release_lease(conn, lease_id).await;
+                }
+                if let Some(reservation_id) = capacity_reservation.as_deref() {
+                    let _ =
+                        crate::attachments::lifecycle::release_reservation(conn, reservation_id)
+                            .await;
+                }
                 return Err(error);
             }
         }
@@ -203,9 +275,27 @@ pub(crate) async fn create_task_with_attachments(
         Ok(value) => value,
         Err(error) => {
             cleanup_created_objects(conn, blob_dir, &created_hashes).await;
+            for lease_id in staging_leases {
+                let _ = crate::attachments::lifecycle::release_lease(conn, &lease_id).await;
+            }
+            if let Some(reservation_id) = capacity_reservation {
+                let _ =
+                    crate::attachments::lifecycle::release_reservation(conn, &reservation_id).await;
+            }
             return Err(error);
         }
     };
+    for lease_id in staging_leases {
+        crate::attachments::lifecycle::release_lease(conn, &lease_id).await?;
+    }
+    if let Some(reservation_id) = capacity_reservation {
+        crate::attachments::lifecycle::release_reservation(conn, &reservation_id).await?;
+    }
+    crate::attachments::lifecycle::reconcile_liveness(
+        conn,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
     info!(
         task_id = %inserted.id,
         project_key = %inserted.project_key,
@@ -498,6 +588,11 @@ pub(crate) async fn set_task_deleted(
         if deleted { "1" } else { "0" },
     )
     .await?;
+    crate::attachments::lifecycle::reconcile_liveness(
+        conn,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
     info!(task_id = %task_id, deleted, "task deleted flag changed");
     Ok(TaskOutcome {
         task: get_task_in_workspace(conn, workspace, task_id).await?,
@@ -690,6 +785,7 @@ mod tests {
                 &mut conn,
                 &workspace,
                 &blob_dir,
+                crate::attachments::lifecycle::LifecyclePolicy::default(),
                 task_draft("atomic"),
                 inputs,
             )
@@ -724,6 +820,7 @@ mod tests {
             &mut conn,
             &workspace,
             &blob_dir,
+            crate::attachments::lifecycle::LifecyclePolicy::default(),
             task_draft("duplicates"),
             vec![
                 attachment("ATTACHMENT000002", bytes.clone()),
@@ -769,6 +866,7 @@ mod tests {
                 &mut conn,
                 &workspace,
                 &blob_dir,
+                crate::attachments::lifecycle::LifecyclePolicy::default(),
                 task_draft("retry"),
                 inputs.clone(),
             )
@@ -786,6 +884,7 @@ mod tests {
             &mut conn,
             &workspace,
             &blob_dir,
+            crate::attachments::lifecycle::LifecyclePolicy::default(),
             task_draft("retry"),
             inputs,
         )
@@ -842,6 +941,7 @@ mod tests {
                 &mut conn,
                 &workspace,
                 &blob_dir,
+                crate::attachments::lifecycle::LifecyclePolicy::default(),
                 task_draft(name),
                 vec![attachment("ATTACHMENT000001", png_bytes(1))],
             )
@@ -866,6 +966,7 @@ mod tests {
                     &mut conn,
                     &workspace,
                     &blob_dir,
+                    crate::attachments::lifecycle::LifecyclePolicy::default(),
                     task_draft("commit failure"),
                     vec![attachment("ATTACHMENT000001", bytes)],
                 ),
@@ -898,6 +999,7 @@ mod tests {
                 &mut conn,
                 &workspace,
                 &blob_dir,
+                crate::attachments::lifecycle::LifecyclePolicy::default(),
                 task_draft("shared"),
                 vec![attachment("ATTACHMENT000001", bytes)],
             )
@@ -917,6 +1019,7 @@ mod tests {
                 &mut conn,
                 &workspace,
                 &dir.path().join("blobs"),
+                crate::attachments::lifecycle::LifecyclePolicy::default(),
                 task_draft("invalid"),
                 vec![attachment("ATTACHMENT000001", b"not an image".to_vec())],
             )
@@ -932,6 +1035,7 @@ mod tests {
                 &mut conn,
                 &workspace,
                 &blocked,
+                crate::attachments::lifecycle::LifecyclePolicy::default(),
                 task_draft("staging"),
                 vec![attachment("ATTACHMENT000001", png_bytes(1))],
             )

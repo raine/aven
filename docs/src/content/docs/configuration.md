@@ -18,6 +18,14 @@ Use `aven doctor` to inspect the active config, database path, workspace, projec
 ```yaml
 local:
   db_path: "/path/to/aven.sqlite"
+  blob_dir: "/path/to/aven-blobs"
+  attachment_lifecycle:
+    grace_days: 7
+    server_grace_days: 30
+    quota_bytes: 10737418240
+    server_workspace_quota_bytes: 10737418240
+    preview_quota_bytes: 536870912
+    maintenance_limit: 128
 
 workspace:
   default: "personal"
@@ -69,6 +77,19 @@ Use `local.db_path` when you want an explicit database location:
 local:
   db_path: "~/tasks/aven.sqlite"
 ```
+
+## Attachment lifecycle
+
+Attachment originals use content-addressed storage under `local.blob_dir`, or beside the database when the setting is omitted. `local.attachment_lifecycle` configures retention and capacity:
+
+- `grace_days` controls local retention after the final live reference disappears. The default is 7 days.
+- `server_grace_days` controls server retention. The default is 30 days.
+- `quota_bytes` limits local unique original bytes. The default is 10 GiB.
+- `server_workspace_quota_bytes` limits distinct original hashes per server workspace. The default is 10 GiB.
+- `preview_quota_bytes` independently bounds disposable preview cache bytes. Preview bytes do not count toward original quotas.
+- `maintenance_limit` bounds objects processed in one maintenance run. The default is 128.
+
+A hash with a live task attachment, pending add, staging operation, reservation, transfer, read, or backup lease remains protected. `aven attachment prune` performs a dry run by default and requires `--apply` for deletion.
 
 ## Workspace routes
 

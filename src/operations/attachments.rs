@@ -209,16 +209,18 @@ pub(crate) async fn add_task_attachment(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     blob_dir: &Path,
+    policy: crate::attachments::lifecycle::LifecyclePolicy,
     task_id: &TaskId,
     input: AttachmentAddInput,
 ) -> Result<AttachmentAddOutcome> {
-    add_task_attachment_inner(conn, workspace, blob_dir, task_id, None, input).await
+    add_task_attachment_inner(conn, workspace, blob_dir, policy, task_id, None, input).await
 }
 
 async fn add_task_attachment_inner(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     blob_dir: &Path,
+    policy: crate::attachments::lifecycle::LifecyclePolicy,
     task_id: &TaskId,
     attachment_id: Option<String>,
     input: AttachmentAddInput,
@@ -243,81 +245,117 @@ async fn add_task_attachment_inner(
             facts: source_facts,
         }
     };
-    let stored = store_validated_blob(conn, blob_dir, stored_image).await?;
-    let mut tx = begin_immediate(conn).await?;
-    let task_exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM tasks WHERE workspace_id = ? AND id = ?)",
+    let sha256 = sha256_hex(&stored_image.bytes);
+    let byte_size = i64::try_from(stored_image.bytes.len())?;
+    let capacity_reservation = crate::attachments::lifecycle::ensure_local_capacity(
+        conn,
+        blob_dir,
+        &sha256,
+        byte_size,
+        policy,
+        &crate::attachments::lifecycle::SystemClock,
     )
-    .bind(&workspace.id)
-    .bind(task_id)
-    .fetch_one(&mut *tx)
     .await?;
-    if !task_exists {
-        bail!("error task-not-found task_id={task_id}");
+    let staging_lease = crate::attachments::lifecycle::acquire_lease(
+        conn,
+        &sha256,
+        "staging",
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
+    let stored = match store_validated_blob(conn, blob_dir, stored_image).await {
+        Ok(stored) => stored,
+        Err(error) => {
+            let _ = crate::attachments::lifecycle::release_lease(conn, &staging_lease).await;
+            if let Some(reservation_id) = capacity_reservation.as_deref() {
+                let _ =
+                    crate::attachments::lifecycle::release_reservation(conn, reservation_id).await;
+            }
+            return Err(error);
+        }
+    };
+    if let Some(reservation_id) = capacity_reservation {
+        crate::attachments::lifecycle::release_reservation(conn, &reservation_id).await?;
     }
+    let database_result = async {
+        let mut tx = begin_immediate(conn).await?;
+        let task_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM tasks WHERE workspace_id = ? AND id = ?)",
+        )
+        .bind(&workspace.id)
+        .bind(task_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !task_exists {
+            bail!("error task-not-found task_id={task_id}");
+        }
 
-    if input.dedupe_existing
-        && let Some(existing) =
-            existing_live_attachments_by_sha(&mut tx, &workspace.id, task_id, &stored.sha256)
-                .await?
-                .first()
-    {
-        let attachment_id = existing.attachment_id.clone();
+        if input.dedupe_existing
+            && let Some(existing) =
+                existing_live_attachments_by_sha(&mut tx, &workspace.id, task_id, &stored.sha256)
+                    .await?
+                    .first()
+        {
+            let attachment_id = existing.attachment_id.clone();
+            tx.commit().await?;
+            return Ok::<_, anyhow::Error>((attachment_id, false));
+        }
+
+        let attachment_id = attachment_id.unwrap_or_else(new_id);
+        let created_at = now();
+        let change_id = append_change(
+            &mut tx,
+            ChangeEntity::Task,
+            task_id,
+            Some("attachments"),
+            op_type::ATTACHMENT_ADD,
+            ChangePayload::workspace(workspace)
+                .set("attachment_id", &attachment_id)
+                .set("sha256", &stored.sha256)
+                .set("byte_size", stored.byte_size)
+                .set("media_type", &stored.facts.media_type)
+                .set("filename", &input.filename)
+                .set("alt_text", &input.alt_text)
+                .set("width", stored.facts.width)
+                .set("height", stored.facts.height)
+                .set("created_at", &created_at),
+        )
+        .await?;
+
+        sqlx::query(
+            "INSERT INTO task_attachments(workspace_id, attachment_id, task_id, sha256, byte_size, media_type, filename, alt_text, width, height, created_at, created_by_change_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&workspace.id)
+        .bind(&attachment_id)
+        .bind(task_id)
+        .bind(&stored.sha256)
+        .bind(stored.byte_size)
+        .bind(&stored.facts.media_type)
+        .bind(&input.filename)
+        .bind(&input.alt_text)
+        .bind(stored.facts.width)
+        .bind(stored.facts.height)
+        .bind(&created_at)
+        .bind(&change_id)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
-        let outcome = attachment_by_id(conn, workspace, &attachment_id).await?;
-        return Ok(AttachmentAddOutcome {
-            outcome,
-            created: false,
-            optimized: optimized_flag,
-        });
+        Ok((attachment_id, true))
     }
-
-    let attachment_id = attachment_id.unwrap_or_else(new_id);
-    let created_at = now();
-
-    let change_id = append_change(
-        &mut tx,
-        ChangeEntity::Task,
-        task_id,
-        Some("attachments"),
-        op_type::ATTACHMENT_ADD,
-        ChangePayload::workspace(workspace)
-            .set("attachment_id", &attachment_id)
-            .set("sha256", &stored.sha256)
-            .set("byte_size", stored.byte_size)
-            .set("media_type", &stored.facts.media_type)
-            .set("filename", &input.filename)
-            .set("alt_text", &input.alt_text)
-            .set("width", stored.facts.width)
-            .set("height", stored.facts.height)
-            .set("created_at", &created_at),
+    .await;
+    let release_result = crate::attachments::lifecycle::release_lease(conn, &staging_lease).await;
+    let (attachment_id, created) = database_result?;
+    release_result?;
+    crate::attachments::lifecycle::reconcile_liveness(
+        conn,
+        &crate::attachments::lifecycle::SystemClock,
     )
     .await?;
-
-    sqlx::query(
-        "INSERT INTO task_attachments(workspace_id, attachment_id, task_id, sha256, byte_size, media_type, filename, alt_text, width, height, created_at, created_by_change_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&workspace.id)
-    .bind(&attachment_id)
-    .bind(task_id)
-    .bind(&stored.sha256)
-    .bind(stored.byte_size)
-    .bind(&stored.facts.media_type)
-    .bind(&input.filename)
-    .bind(&input.alt_text)
-    .bind(stored.facts.width)
-    .bind(stored.facts.height)
-    .bind(&created_at)
-    .bind(&change_id)
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
     let outcome = attachment_by_id(conn, workspace, &attachment_id).await?;
     Ok(AttachmentAddOutcome {
         outcome,
-        created: true,
+        created,
         optimized: optimized_flag,
     })
 }
@@ -410,6 +448,11 @@ pub(crate) async fn delete_task_attachment(
     .await?;
 
     tx.commit().await?;
+    crate::attachments::lifecycle::reconcile_liveness(
+        conn,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
 
     attachment_by_id(conn, workspace, attachment_id).await
 }

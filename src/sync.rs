@@ -6,7 +6,7 @@ pub(crate) mod wire;
 #[cfg(test)]
 pub(crate) use apply::apply_remote_set_field;
 pub(crate) use client::{
-    SyncHttpClient, SyncSummary, run_sync_with_page_budget_using_client, sync_client,
+    SyncHttpClient, SyncSummary, run_sync_with_page_budget_using_client_and_policy, sync_client,
 };
 pub(crate) use server::run_server;
 #[cfg(test)]

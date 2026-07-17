@@ -78,6 +78,7 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
     run_loop(DaemonLoop {
         pool,
         blob_dir,
+        lifecycle_policy: args.config.local.attachment_lifecycle.policy(),
         server,
         socket,
         interval_seconds,
@@ -91,6 +92,7 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
 struct DaemonLoop {
     pool: SqlitePool,
     blob_dir: PathBuf,
+    lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
     server: String,
     socket: UdpSocket,
     interval_seconds: u64,
@@ -103,6 +105,7 @@ async fn run_loop(args: DaemonLoop) -> Result<()> {
     let DaemonLoop {
         pool,
         blob_dir,
+        lifecycle_policy,
         server,
         socket,
         interval_seconds,
@@ -141,7 +144,14 @@ async fn run_loop(args: DaemonLoop) -> Result<()> {
             _ = sleep_until(next_sync) => {
                 match timeout(
                     Duration::from_secs(35),
-                    sync_once(&pool, &blob_dir, &server, auth_token.as_deref(), &client),
+                    sync_once(
+                        &pool,
+                        &blob_dir,
+                        lifecycle_policy,
+                        &server,
+                        auth_token.as_deref(),
+                        &client,
+                    ),
                 )
                 .await
                 {
@@ -208,20 +218,33 @@ fn drain_wakes(socket: &UdpSocket, wake_buf: &mut [u8]) {
 async fn sync_once(
     pool: &SqlitePool,
     blob_dir: &Path,
+    lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
     server: &str,
     auth_token: Option<&str>,
     client: &SyncHttpClient,
 ) -> Result<crate::sync::SyncSummary> {
     let mut conn = pool.acquire().await?;
-    let summary = crate::sync::run_sync_with_page_budget_using_client(
+    let summary = crate::sync::run_sync_with_page_budget_using_client_and_policy(
         &mut conn,
         blob_dir,
         server,
         auth_token,
         Some(DAEMON_SYNC_PAGE_BUDGET),
         client,
+        lifecycle_policy,
     )
     .await?;
+    if let Err(err) = crate::attachments::lifecycle::prune(
+        &mut conn,
+        blob_dir,
+        lifecycle_policy,
+        true,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await
+    {
+        warn!(error = %err, "attachment maintenance failed");
+    }
     info!(
         pushed = summary.pushed,
         pulled = summary.pulled,

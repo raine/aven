@@ -9,7 +9,7 @@ use crate::attachments::optimization::ImageOptimizationPolicy;
 use crate::attachments::storage::object_path;
 use crate::cli::{
     AttachmentAddArgs, AttachmentCommand, AttachmentDeleteArgs, AttachmentGetArgs,
-    AttachmentListArgs, AttachmentSubcommand,
+    AttachmentListArgs, AttachmentPruneArgs, AttachmentSubcommand,
 };
 use crate::config::{self as app_config, AppConfig};
 use crate::operations::{
@@ -100,6 +100,9 @@ pub(crate) async fn cmd_attachment(
         AttachmentSubcommand::Delete(args) => {
             cmd_attachment_delete(conn, workspace, config, args).await
         }
+        AttachmentSubcommand::Prune(args) => {
+            cmd_attachment_prune(conn, config, db_path, args).await
+        }
     }
 }
 
@@ -129,6 +132,7 @@ pub(crate) async fn cmd_attachment_add(
         conn,
         workspace,
         &blob_dir,
+        config.local.attachment_lifecycle.policy(),
         &task.id,
         AttachmentAddInput {
             filename,
@@ -232,8 +236,17 @@ pub(crate) async fn cmd_attachment_get(
             );
         }
         let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
+        let lease_id = crate::attachments::lifecycle::acquire_lease(
+            conn,
+            &outcome.attachment.sha256,
+            "read",
+            &crate::attachments::lifecycle::SystemClock,
+        )
+        .await?;
         let obj_path = object_path(&blob_dir, &outcome.attachment.sha256)?;
-        fs::copy(&obj_path, output_path)?;
+        let copy_result = fs::copy(&obj_path, output_path);
+        crate::attachments::lifecycle::release_lease(conn, &lease_id).await?;
+        copy_result?;
     }
 
     if args.json {
@@ -299,6 +312,52 @@ pub(crate) async fn cmd_attachment_delete(
             } else {
                 "no"
             },
+        );
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct AttachmentPruneReport {
+    mode: &'static str,
+    eligible_count: u64,
+    eligible_bytes: u64,
+    pruned_count: u64,
+    pruned_bytes: u64,
+}
+
+pub(crate) async fn cmd_attachment_prune(
+    conn: &mut SqliteConnection,
+    config: &AppConfig,
+    db_path: &Path,
+    args: AttachmentPruneArgs,
+) -> Result<()> {
+    let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
+    let summary = crate::attachments::lifecycle::prune(
+        conn,
+        &blob_dir,
+        config.local.attachment_lifecycle.policy(),
+        args.apply,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
+    let report = AttachmentPruneReport {
+        mode: if args.apply { "apply" } else { "dry-run" },
+        eligible_count: summary.eligible.count,
+        eligible_bytes: summary.eligible.bytes,
+        pruned_count: summary.pruned.count,
+        pruned_bytes: summary.pruned.bytes,
+    };
+    if args.json {
+        print_json_pretty(&report)?;
+    } else {
+        println!(
+            "attachment-prune mode={} eligible_count={} eligible_bytes={} pruned_count={} pruned_bytes={}",
+            report.mode,
+            report.eligible_count,
+            report.eligible_bytes,
+            report.pruned_count,
+            report.pruned_bytes,
         );
     }
     Ok(())

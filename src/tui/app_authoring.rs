@@ -413,7 +413,13 @@ impl App {
                 .ok_or_else(|| anyhow::anyhow!("database path is not available"))?;
             let blob_dir = resolve_blob_dir(db_path, self.intake.config())?;
             self.store
-                .create_task_with_attachments(draft, current_selected, &blob_dir, attachments)
+                .create_task_with_attachments(
+                    draft,
+                    current_selected,
+                    &blob_dir,
+                    self.intake.config().local.attachment_lifecycle.policy(),
+                    attachments,
+                )
                 .await
         };
         let (message, selected) = match result {

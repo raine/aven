@@ -792,6 +792,8 @@ pub(crate) enum AttachmentSubcommand {
     Get(AttachmentGetArgs),
     /// Delete (tombstone) an attachment
     Delete(AttachmentDeleteArgs),
+    /// Inspect or prune eligible attachment blobs
+    Prune(AttachmentPruneArgs),
 }
 
 #[derive(Args)]
@@ -846,6 +848,19 @@ pub(crate) struct AttachmentGetArgs {
 #[derive(Args)]
 pub(crate) struct AttachmentDeleteArgs {
     pub(crate) attachment_id: String,
+    /// Print machine-readable JSON
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct AttachmentPruneArgs {
+    /// Apply deletion. The default is a dry run.
+    #[arg(long, conflicts_with = "dry_run")]
+    pub(crate) apply: bool,
+    /// Inspect eligible blobs without deleting them
+    #[arg(long)]
+    pub(crate) dry_run: bool,
     /// Print machine-readable JSON
     #[arg(long)]
     pub(crate) json: bool,

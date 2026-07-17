@@ -76,7 +76,17 @@ pub(crate) async fn sync_client(
 ) -> Result<()> {
     let server = config::resolve_sync_server(args.server.as_deref(), config)?;
     let blob_dir = config::resolve_blob_dir(db_path, config)?;
-    let summary = run_sync_once(conn, &blob_dir, &server, config.sync_auth_token()).await?;
+    let client = SyncHttpClient::new()?;
+    let summary = run_sync_with_page_budget_using_client_and_policy(
+        conn,
+        &blob_dir,
+        &server,
+        config.sync_auth_token(),
+        None,
+        &client,
+        config.local.attachment_lifecycle.policy(),
+    )
+    .await?;
     println!(
         "synced pushed={} pulled={} blob_uploaded={} blob_downloaded={} cursor={}",
         summary.pushed,
@@ -88,33 +98,28 @@ pub(crate) async fn sync_client(
     Ok(())
 }
 
-pub(crate) async fn run_sync_once(
-    conn: &mut SqliteConnection,
-    blob_dir: &Path,
-    server: &str,
-    auth_token: Option<&str>,
-) -> Result<SyncSummary> {
-    run_sync_with_page_budget(conn, blob_dir, server, auth_token, None).await
-}
-
-pub(crate) async fn run_sync_with_page_budget_using_client(
+pub(crate) async fn run_sync_with_page_budget_using_client_and_policy(
     conn: &mut SqliteConnection,
     blob_dir: &Path,
     server: &str,
     auth_token: Option<&str>,
     page_budget: Option<usize>,
     client: &SyncHttpClient,
+    lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
 ) -> Result<SyncSummary> {
     let attempted_at = now();
     set_meta(conn, "sync_last_attempt_at", &attempted_at).await?;
     match run_sync_once_inner(
         conn,
-        blob_dir,
-        server,
-        auth_token,
-        &attempted_at,
-        page_budget,
-        client,
+        SyncRunContext {
+            blob_dir,
+            server,
+            auth_token,
+            attempted_at: &attempted_at,
+            page_budget,
+            client,
+            lifecycle_policy,
+        },
     )
     .await
     {
@@ -127,27 +132,29 @@ pub(crate) async fn run_sync_with_page_budget_using_client(
     }
 }
 
-pub(crate) async fn run_sync_with_page_budget(
-    conn: &mut SqliteConnection,
-    blob_dir: &Path,
-    server: &str,
-    auth_token: Option<&str>,
+struct SyncRunContext<'a> {
+    blob_dir: &'a Path,
+    server: &'a str,
+    auth_token: Option<&'a str>,
+    attempted_at: &'a str,
     page_budget: Option<usize>,
-) -> Result<SyncSummary> {
-    let client = SyncHttpClient::new()?;
-    run_sync_with_page_budget_using_client(conn, blob_dir, server, auth_token, page_budget, &client)
-        .await
+    client: &'a SyncHttpClient,
+    lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
 }
 
 async fn run_sync_once_inner(
     conn: &mut SqliteConnection,
-    blob_dir: &Path,
-    server: &str,
-    auth_token: Option<&str>,
-    attempted_at: &str,
-    page_budget: Option<usize>,
-    client: &SyncHttpClient,
+    context: SyncRunContext<'_>,
 ) -> Result<SyncSummary> {
+    let SyncRunContext {
+        blob_dir,
+        server,
+        auth_token,
+        attempted_at,
+        page_budget,
+        client,
+        lifecycle_policy,
+    } = context;
     let mut last_response_compression: Option<String>;
     validate_sync_server(conn, server).await?;
     let client_id = get_meta(conn, "client_id")
@@ -223,8 +230,16 @@ async fn run_sync_once_inner(
         let apply_started = Instant::now();
         let applied =
             apply_sync_response(conn, &response, attempted_at, total_pushed, total_pulled).await?;
-        let downloaded =
-            download_missing_local_blobs(conn, blob_dir, client, server, auth_token).await?;
+        let download_outcome = download_missing_local_blobs(
+            conn,
+            blob_dir,
+            client,
+            server,
+            auth_token,
+            lifecycle_policy,
+        )
+        .await?;
+        let downloaded = download_outcome.downloaded;
         let apply_ms = apply_started.elapsed().as_millis();
         total_pushed += pending as i64;
         total_pulled += applied;
@@ -239,7 +254,8 @@ async fn run_sync_once_inner(
 
         let local_more = pending == MAX_PUSH_BATCH;
         let blob_more = downloaded == MAX_BLOB_TRANSFER_BATCH;
-        let page_complete = !local_more && !response.has_more && !blob_more;
+        let page_complete =
+            !local_more && !response.has_more && !blob_more && !download_outcome.quota_blocked;
         let budget_exhausted = page_budget.is_some_and(|budget| pages >= budget);
         info!(
             server = %server,
@@ -260,7 +276,7 @@ async fn run_sync_once_inner(
             local_more,
             "sync client page completed"
         );
-        if page_complete || budget_exhausted {
+        if page_complete || budget_exhausted || download_outcome.quota_blocked {
             complete = page_complete;
             break;
         }
@@ -381,6 +397,12 @@ async fn upload_blob(
         .await?
         .filter(|row| row.available)
         .context("error attachment-blob-local-missing")?;
+    let workspace_id: String = sqlx::query_scalar(
+        "SELECT workspace_id FROM task_attachments WHERE sha256 = ? ORDER BY workspace_id LIMIT 1",
+    )
+    .bind(sha256)
+    .fetch_one(&mut *conn)
+    .await?;
     let path = crate::attachments::object_path(blob_dir, sha256)?;
     let bytes = tokio::fs::read(path)
         .await
@@ -404,6 +426,13 @@ async fn upload_blob(
     }) {
         bail!("error attachment-blob-local-invalid");
     }
+    let lease_id = crate::attachments::lifecycle::acquire_lease(
+        conn,
+        sha256,
+        "transfer",
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
     let mut request = client
         .inner
         .put(format!(
@@ -412,11 +441,17 @@ async fn upload_blob(
             sha256
         ))
         .header(reqwest::header::CONTENT_TYPE, row.media_type.as_str())
+        .header("x-aven-workspace-id", workspace_id)
         .body(bytes);
     if let Some(token) = auth_token {
         request = request.bearer_auth(token);
     }
-    request.send().await?.error_for_status()?;
+    let send_result = request
+        .send()
+        .await
+        .and_then(|response| response.error_for_status());
+    crate::attachments::lifecycle::release_lease(conn, &lease_id).await?;
+    send_result?;
     Ok(())
 }
 
@@ -429,20 +464,51 @@ struct MissingLocalBlob {
     height: Option<i64>,
 }
 
+#[derive(Debug, Default)]
+struct DownloadOutcome {
+    downloaded: usize,
+    quota_blocked: bool,
+}
+
 async fn download_missing_local_blobs(
     conn: &mut SqliteConnection,
     blob_dir: &Path,
     client: &SyncHttpClient,
     server: &str,
     auth_token: Option<&str>,
-) -> Result<usize> {
+    lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
+) -> Result<DownloadOutcome> {
     let missing = missing_local_blobs(conn, blob_dir).await?;
-    let mut downloaded = 0_usize;
+    let mut outcome = DownloadOutcome::default();
     for blob in missing {
-        download_blob(conn, blob_dir, client, server, auth_token, blob).await?;
-        downloaded += 1;
+        match crate::attachments::lifecycle::ensure_local_capacity(
+            conn,
+            blob_dir,
+            &blob.sha256,
+            blob.byte_size,
+            lifecycle_policy,
+            &crate::attachments::lifecycle::SystemClock,
+        )
+        .await
+        {
+            Ok(capacity_reservation) => {
+                let download_result =
+                    download_blob(conn, blob_dir, client, server, auth_token, blob).await;
+                if let Some(reservation_id) = capacity_reservation {
+                    crate::attachments::lifecycle::release_reservation(conn, &reservation_id)
+                        .await?;
+                }
+                download_result?;
+                outcome.downloaded += 1;
+            }
+            Err(error) if error.to_string().contains("attachment-quota-exceeded") => {
+                outcome.quota_blocked = true;
+                break;
+            }
+            Err(error) => return Err(error),
+        }
     }
-    Ok(downloaded)
+    Ok(outcome)
 }
 
 async fn missing_local_blobs(

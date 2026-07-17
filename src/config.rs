@@ -79,6 +79,79 @@ pub struct LocalConfig {
     pub inline_images: InlineImagesConfig,
     #[serde(default)]
     pub image_optimization: ImageOptimizationConfig,
+    #[serde(default)]
+    pub attachment_lifecycle: AttachmentLifecycleConfig,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct AttachmentLifecycleConfig {
+    #[serde(default = "default_attachment_grace_days")]
+    pub grace_days: u64,
+    #[serde(default = "default_server_attachment_grace_days")]
+    pub server_grace_days: u64,
+    #[serde(default = "default_attachment_quota_bytes")]
+    pub quota_bytes: i64,
+    #[serde(default = "default_attachment_quota_bytes")]
+    pub server_workspace_quota_bytes: i64,
+    #[serde(default = "default_preview_quota_bytes")]
+    pub preview_quota_bytes: u64,
+    #[serde(default = "default_attachment_maintenance_limit")]
+    pub maintenance_limit: usize,
+}
+
+fn default_attachment_grace_days() -> u64 {
+    7
+}
+
+fn default_server_attachment_grace_days() -> u64 {
+    30
+}
+
+fn default_attachment_quota_bytes() -> i64 {
+    crate::attachments::lifecycle::DEFAULT_ORIGINAL_QUOTA_BYTES
+}
+
+fn default_preview_quota_bytes() -> u64 {
+    crate::attachments::lifecycle::DEFAULT_PREVIEW_QUOTA_BYTES
+}
+
+fn default_attachment_maintenance_limit() -> usize {
+    crate::attachments::lifecycle::DEFAULT_MAINTENANCE_LIMIT
+}
+
+impl Default for AttachmentLifecycleConfig {
+    fn default() -> Self {
+        Self {
+            grace_days: default_attachment_grace_days(),
+            server_grace_days: default_server_attachment_grace_days(),
+            quota_bytes: default_attachment_quota_bytes(),
+            server_workspace_quota_bytes: default_attachment_quota_bytes(),
+            preview_quota_bytes: default_preview_quota_bytes(),
+            maintenance_limit: default_attachment_maintenance_limit(),
+        }
+    }
+}
+
+impl AttachmentLifecycleConfig {
+    pub(crate) fn policy(self) -> crate::attachments::lifecycle::LifecyclePolicy {
+        crate::attachments::lifecycle::LifecyclePolicy {
+            grace: std::time::Duration::from_secs(self.grace_days.saturating_mul(24 * 60 * 60)),
+            quota_bytes: self.quota_bytes,
+            preview_quota_bytes: self.preview_quota_bytes,
+            maintenance_limit: self.maintenance_limit,
+        }
+    }
+
+    pub(crate) fn server_policy(self) -> crate::attachments::lifecycle::LifecyclePolicy {
+        crate::attachments::lifecycle::LifecyclePolicy {
+            grace: std::time::Duration::from_secs(
+                self.server_grace_days.saturating_mul(24 * 60 * 60),
+            ),
+            quota_bytes: self.server_workspace_quota_bytes,
+            preview_quota_bytes: self.preview_quota_bytes,
+            maintenance_limit: self.maintenance_limit,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

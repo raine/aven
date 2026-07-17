@@ -67,6 +67,8 @@ aven attachment add APP-7KQ9 ./diagram.png --alt "architecture diagram"
 aven attachment list APP-7KQ9
 aven attachment get 7KQ9A1X4MV2P8D6R --output diagram.png
 aven attachment delete 7KQ9A1X4MV2P8D6R
+aven attachment prune --dry-run
+aven attachment prune --apply
 aven delete APP-7KQ9
 aven restore APP-7KQ9
 ```
@@ -96,6 +98,10 @@ aven restore APP-7KQ9
   and `--alt`. PNG, JPEG, GIF, and WebP formats are detected from decoded
   content, and Aven derives canonical media type and dimensions from the stored
   bytes. An explicit `--media-type` must match the detected format.
+- `attachment prune` reports privacy-safe eligible counts and bytes. It is a dry
+  run unless `--apply` is passed. Grace periods, live references, unsynced adds,
+  staging, transfers, reads, backups, and upload reservations protect blobs from
+  pruning. Quota-blocked downloads stay pending and make sync incomplete.
 - Task detail read surfaces include ordered attachment metadata and `has_blob`
   without embedding bytes. The TUI renders live attachments after the description
   in a dedicated section and uses bounded, device-local previews when the terminal
@@ -107,9 +113,11 @@ aven restore APP-7KQ9
   SQLite safety copy. `aven export` writes attachment metadata and blob
   inventory without bytes, and `aven import --yes <path>` imports that metadata
   with blob inventory marked unavailable.
-- `aven doctor` checks attachment metadata and local object presence.
-  `aven doctor --integrity` also decodes original images and compares their
-  format and dimensions with stored metadata.
+- `aven doctor` checks attachment metadata and local object presence and reports
+  referenced, protected, grace-period, eligible, staging, trash, quota, and
+  lifecycle inconsistency counts and bytes. `aven doctor --integrity` also
+  decodes original images and compares their format and dimensions with stored
+  metadata.
 - Task descriptions remain scalar user-authored Markdown text. Attachment adds
   and deletes change attachment metadata without changing the description.
 - When creating follow-up tasks from a discussion, investigation, review, or
@@ -168,7 +176,7 @@ aven restore APP-7KQ9
 - Human-readable output is the default and preferred for agent use.
 - `--json` is available on `context`, `search`, `list`, `show`,
   `attachment list`, `attachment get`, `attachment add`, `attachment delete`,
-  `dep list`,
+  `attachment prune`, `dep list`,
   `epic list`, `project list`, `label list`, `conflict list`, `conflict show`,
   `prime`, and `doctor`.
 - JSON task objects include `available_at`, `due_on`, `is_epic`, `epic_parent`,

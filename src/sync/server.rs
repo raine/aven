@@ -33,6 +33,7 @@ struct ServerState {
     pool: SqlitePool,
     auth_token: Option<String>,
     blob_dir: PathBuf,
+    lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,10 +111,12 @@ pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> R
     validate_bind_policy(scope, args.unsafe_public_bind, auth_token.as_deref())?;
     let pool = open_db(&args.data).await?;
     let blob_dir = config::resolve_blob_dir(&args.data, &config)?;
+    let lifecycle_policy = config.local.attachment_lifecycle.server_policy();
     let state = ServerState {
         pool,
         auth_token,
         blob_dir,
+        lifecycle_policy,
     };
     info!(
         bind = %args.bind,
@@ -168,8 +171,22 @@ async fn sync_handler(
     State(state): State<ServerState>,
     Json(request): Json<SyncRequest>,
 ) -> Response {
-    match handle_sync(state, request).await {
-        Ok(response) => Json(response).into_response(),
+    match handle_sync(state.clone(), request).await {
+        Ok(response) => {
+            if let Ok(mut conn) = state.pool.acquire().await
+                && let Err(err) = crate::attachments::lifecycle::prune(
+                    &mut conn,
+                    &state.blob_dir,
+                    state.lifecycle_policy,
+                    true,
+                    &crate::attachments::lifecycle::SystemClock,
+                )
+                .await
+            {
+                warn!(error = %err, "attachment maintenance failed");
+            }
+            Json(response).into_response()
+        }
         Err(err) => {
             if err.0.is_server_error() {
                 error!(status = %err.0, error = %err.1, "sync request failed");
@@ -221,11 +238,65 @@ async fn put_blob_handler(
         )
             .into_response();
     }
+    let workspace_id = match headers
+        .get("x-aven-workspace-id")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => value,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "error blob-workspace-required".to_string(),
+            )
+                .into_response();
+        }
+    };
     let mut conn = match state.pool.acquire().await {
         Ok(conn) => conn,
         Err(err) => return internal_error(err).into_response(),
     };
-    match crate::attachments::store_blob(&mut conn, &state.blob_dir, media_type, &body).await {
+    if let Err(err) = crate::attachments::lifecycle::prune(
+        &mut conn,
+        &state.blob_dir,
+        state.lifecycle_policy,
+        true,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await
+    {
+        return internal_error(err).into_response();
+    }
+    let reservation_id = match crate::attachments::lifecycle::reserve_upload(
+        &mut conn,
+        workspace_id,
+        &sha256,
+        i64::try_from(body.len()).unwrap_or(i64::MAX),
+        state.lifecycle_policy.quota_bytes,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await
+    {
+        Ok(reservation_id) => reservation_id,
+        Err(err) if err.to_string().contains("attachment-quota-exceeded") => {
+            return (
+                StatusCode::INSUFFICIENT_STORAGE,
+                "error attachment-quota-exceeded".to_string(),
+            )
+                .into_response();
+        }
+        Err(err) => return internal_error(err).into_response(),
+    };
+    let store_result =
+        crate::attachments::store_blob(&mut conn, &state.blob_dir, media_type, &body).await;
+    if store_result.is_err()
+        && let Some(reservation_id) = reservation_id
+        && let Err(err) =
+            crate::attachments::lifecycle::release_reservation(&mut conn, &reservation_id).await
+    {
+        return internal_error(err).into_response();
+    }
+    match store_result {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(err) if err.to_string().contains("blob-inventory-metadata-mismatch") => (
             StatusCode::BAD_REQUEST,
@@ -256,11 +327,26 @@ async fn get_blob_handler(
         Ok(false) => return StatusCode::NOT_FOUND.into_response(),
         Err(err) => return internal_error(err).into_response(),
     }
+    let lease_id = match crate::attachments::lifecycle::acquire_lease(
+        &mut conn,
+        &sha256,
+        "transfer",
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await
+    {
+        Ok(lease_id) => lease_id,
+        Err(err) => return internal_error(err).into_response(),
+    };
     let path = match crate::attachments::object_path(&state.blob_dir, &sha256) {
         Ok(path) => path,
         Err(err) => return (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
     };
-    match tokio::fs::read(path).await {
+    let read_result = tokio::fs::read(path).await;
+    if let Err(err) = crate::attachments::lifecycle::release_lease(&mut conn, &lease_id).await {
+        return internal_error(err).into_response();
+    }
+    match read_result {
         Ok(bytes) => (
             [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
             bytes,
@@ -299,6 +385,104 @@ fn validate_auth(state: &ServerState, headers: &HeaderMap) -> std::result::Resul
     } else {
         Err(StatusCode::UNAUTHORIZED)
     }
+}
+
+async fn apply_server_blob_reference(
+    conn: &mut SqliteConnection,
+    change: &ChangeWire,
+) -> Result<()> {
+    match change.op_type.as_str() {
+        op_type::ATTACHMENT_ADD => {
+            let workspace_id = change
+                .payload
+                .get("workspace_id")
+                .and_then(serde_json::Value::as_str)
+                .context("payload missing workspace_id")?;
+            let attachment_id = change
+                .payload
+                .get("attachment_id")
+                .and_then(serde_json::Value::as_str)
+                .context("payload missing attachment_id")?;
+            let sha256 = change
+                .payload
+                .get("sha256")
+                .and_then(serde_json::Value::as_str)
+                .context("payload missing sha256")?;
+            let byte_size = change
+                .payload
+                .get("byte_size")
+                .and_then(serde_json::Value::as_i64)
+                .context("payload missing byte_size")?;
+            sqlx::query(
+                "INSERT INTO server_blob_references(
+                   workspace_id, attachment_id, task_id, sha256, byte_size, deleted
+                 ) VALUES (?, ?, ?, ?, ?, 0)
+                 ON CONFLICT(workspace_id, attachment_id) DO UPDATE SET
+                   task_id = excluded.task_id,
+                   sha256 = excluded.sha256,
+                   byte_size = excluded.byte_size,
+                   deleted = 0",
+            )
+            .bind(workspace_id)
+            .bind(attachment_id)
+            .bind(&change.entity_id)
+            .bind(sha256)
+            .bind(byte_size)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query(
+                "DELETE FROM blob_upload_reservations WHERE workspace_id = ? AND sha256 = ?",
+            )
+            .bind(workspace_id)
+            .bind(sha256)
+            .execute(&mut *conn)
+            .await?;
+        }
+        op_type::ATTACHMENT_DELETE => {
+            let workspace_id = change
+                .payload
+                .get("workspace_id")
+                .and_then(serde_json::Value::as_str)
+                .context("payload missing workspace_id")?;
+            let attachment_id = change
+                .payload
+                .get("attachment_id")
+                .and_then(serde_json::Value::as_str)
+                .context("payload missing attachment_id")?;
+            sqlx::query(
+                "UPDATE server_blob_references SET deleted = 1
+                 WHERE workspace_id = ? AND attachment_id = ?",
+            )
+            .bind(workspace_id)
+            .bind(attachment_id)
+            .execute(&mut *conn)
+            .await?;
+        }
+        op_type::SET_FIELD if change.field.as_deref() == Some("deleted") => {
+            let workspace_id = change
+                .payload
+                .get("workspace_id")
+                .and_then(serde_json::Value::as_str)
+                .context("payload missing workspace_id")?;
+            let deleted = change
+                .payload
+                .get("value")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| value == "1");
+            sqlx::query(
+                "INSERT INTO server_task_tombstones(workspace_id, task_id, deleted)
+                 VALUES (?, ?, ?)
+                 ON CONFLICT(workspace_id, task_id) DO UPDATE SET deleted = excluded.deleted",
+            )
+            .bind(workspace_id)
+            .bind(&change.entity_id)
+            .bind(i64::from(deleted))
+            .execute(&mut *conn)
+            .await?;
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 async fn handle_sync(
@@ -364,6 +548,9 @@ async fn handle_sync(
                 .execute(&mut *tx)
                 .await
                 .map_err(internal_error)?;
+                apply_server_blob_reference(&mut tx, &change)
+                    .await
+                    .map_err(internal_error)?;
                 accepted_count += 1;
                 server_seq
             };

@@ -2026,6 +2026,7 @@ mod undo {
                 task_draft("Temporary attachment task"),
                 None,
                 &dir.path().join("blobs"),
+                crate::attachments::lifecycle::LifecyclePolicy::default(),
                 vec![pending],
             )
             .await

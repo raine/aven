@@ -245,9 +245,12 @@ aven attachment add <task-ref> <path> [--alt <text>] [--filename <name>] [--medi
 aven attachment list <task-ref> [--all] [--json]
 aven attachment get <attachment-id> [--output <path>] [--all] [--json]
 aven attachment delete <attachment-id> [--json]
+aven attachment prune [--dry-run | --apply] [--json]
 ```
 
 Attachment metadata determines identity, display order, and search matches. Live attachments appear in `(created_at, attachment_id)` order. Default task and attachment views omit deleted attachments, while `--all` includes tombstoned metadata. `show --full`, `context`, and their JSON forms expose metadata without embedding bytes. Search matches live attachment filenames and alternative text.
+
+`attachment prune` reports eligible unique-object counts and bytes without exposing attachment identifiers, filenames, hashes, or paths. Dry-run is the default. Pass `--apply` to remove eligible objects after the configured grace period. Live references, unsynced adds, staging operations, upload reservations, active transfers, reads, and backups protect objects from pruning. Original-object quotas count each physical hash once locally and each hash once per server workspace. Preview cache bytes use an independent disposable-cache limit.
 
 ### `aven edit`
 
@@ -728,7 +731,7 @@ Diagnose active configuration, routing, storage, sync, and daemon state.
 aven doctor [--integrity] [--json]
 ```
 
-The report includes config and database paths and their sources, current directory, workspace and project routing, database and workspace counts, client and sequence metadata, sync configuration and recent sync state, unresolved conflict count, daemon wake settings, and macOS service status.
+The report includes config and database paths and their sources, current directory, workspace and project routing, database and workspace counts, client and sequence metadata, sync configuration and recent sync state, unresolved conflict count, daemon wake settings, and macOS service status. Attachment lifecycle rows report referenced, protected, grace-period, eligible, staging, trash, quota, and inconsistency counts and bytes.
 
 `--integrity` also runs SQLite quick-check and referential consistency checks across task, project, path, label, note, dependency, epic, conflict, field-version, and metadata records. `--json` emits the report as structured data.
 

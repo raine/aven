@@ -245,7 +245,34 @@ pub(crate) async fn cmd_backup(
         None => db::default_backup_path(db_path, "manual")?,
     };
     let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
-    archive::create_backup_archive(conn, db_path, &blob_dir, &output).await?;
+    let hashes: Vec<String> =
+        sqlx::query_scalar("SELECT sha256 FROM blob_inventory WHERE available = 1 ORDER BY sha256")
+            .fetch_all(&mut *conn)
+            .await?;
+    let mut leases = Vec::with_capacity(hashes.len());
+    for hash in hashes {
+        match crate::attachments::lifecycle::acquire_lease(
+            conn,
+            &hash,
+            "backup",
+            &crate::attachments::lifecycle::SystemClock,
+        )
+        .await
+        {
+            Ok(lease) => leases.push(lease),
+            Err(error) => {
+                for lease in leases {
+                    let _ = crate::attachments::lifecycle::release_lease(conn, &lease).await;
+                }
+                return Err(error);
+            }
+        }
+    }
+    let backup_result = archive::create_backup_archive(conn, db_path, &blob_dir, &output).await;
+    for lease in leases {
+        crate::attachments::lifecycle::release_lease(conn, &lease).await?;
+    }
+    backup_result?;
     let bytes = fs::metadata(&output)
         .with_context(|| format!("could not stat {}", output.display()))?
         .len();

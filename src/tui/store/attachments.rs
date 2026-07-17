@@ -12,6 +12,7 @@ impl TuiStore {
         &mut self,
         index: Option<usize>,
         blob_dir: &Path,
+        lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
         input: AttachmentAddInput,
     ) -> Result<Option<MutationMessage>> {
         let Some(item) = self.selected_task(index).cloned() else {
@@ -19,8 +20,15 @@ impl TuiStore {
         };
         let workspace = self.active_workspace.clone();
         let mut conn = self.pool.acquire().await?;
-        let add_outcome =
-            add_task_attachment(&mut conn, &workspace, blob_dir, &item.task.id, input).await?;
+        let add_outcome = add_task_attachment(
+            &mut conn,
+            &workspace,
+            blob_dir,
+            lifecycle_policy,
+            &item.task.id,
+            input,
+        )
+        .await?;
         drop(conn);
         let message = if add_outcome.created {
             "attached image"

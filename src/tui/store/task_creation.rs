@@ -95,6 +95,7 @@ impl TuiStore {
         draft: TaskDraft,
         current_selected_index: Option<usize>,
         blob_dir: &Path,
+        lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
         attachments: Vec<PendingTaskAttachment>,
     ) -> Result<(String, Option<usize>)> {
         let attachment_ids = attachments
@@ -113,6 +114,7 @@ impl TuiStore {
             &mut conn,
             &self.active_workspace,
             blob_dir,
+            lifecycle_policy,
             draft,
             inputs,
         )
