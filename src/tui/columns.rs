@@ -244,7 +244,7 @@ mod tests {
                 workspace_id: "0000000000000001".parse().unwrap(),
                 title: format!("task {id}"),
                 description: String::new(),
-                project_id: "project".into(),
+                project_id: "0000000000000001".parse().unwrap(),
                 project_key: "app".into(),
                 project_prefix: "APP".into(),
                 status: TaskStatus::parse(status).unwrap(),

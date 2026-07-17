@@ -269,7 +269,7 @@ mod tests {
             workspace_id: "0000000000000001".parse().unwrap(),
             title: "task".to_string(),
             description: String::new(),
-            project_id: "project-id".to_string(),
+            project_id: "0000000000000001".parse().unwrap(),
             project_key: "app".to_string(),
             project_prefix: "APP".to_string(),
             status: TaskStatus::parse(status).expect("valid status"),

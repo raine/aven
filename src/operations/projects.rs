@@ -1,4 +1,4 @@
-use crate::ids::WorkspaceId;
+use crate::ids::{ProjectId, WorkspaceId};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -227,7 +227,7 @@ pub(crate) async fn delete_project_operation(
     append_change(
         &mut tx,
         ChangeEntity::Project,
-        &project.id,
+        project.id.as_str(),
         None,
         op_type::PROJECT_DELETE,
         ChangePayload::workspace(workspace).set("deleted_at", deleted_at),
@@ -315,7 +315,7 @@ pub(crate) async fn rename_project_operation(
 pub(crate) async fn set_project_metadata(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    project_id: &str,
+    project_id: &ProjectId,
     metadata: ProjectMetadata<'_>,
     record_change: bool,
 ) -> Result<Project> {
@@ -339,7 +339,7 @@ pub(crate) async fn set_project_metadata(
         insert_project_metadata_change(conn, workspace, project_id, metadata, &ts).await?;
     }
     Ok(Project {
-        id: project_id.to_string(),
+        id: project_id.clone(),
         workspace_id: workspace.id.clone(),
         key: metadata.key.to_string(),
         name: metadata.name.to_string(),
@@ -350,14 +350,14 @@ pub(crate) async fn set_project_metadata(
 pub(crate) async fn insert_project_metadata_change(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
-    project_id: &str,
+    project_id: &ProjectId,
     metadata: ProjectMetadata<'_>,
     updated_at: &str,
 ) -> Result<String> {
     append_change(
         conn,
         ChangeEntity::Project,
-        project_id,
+        project_id.as_str(),
         None,
         op_type::SET_PROJECT_METADATA,
         ChangePayload::workspace(workspace)
@@ -405,7 +405,7 @@ async fn unique_project_prefix_excluding(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     key: &str,
-    exclude_project_id: Option<&str>,
+    exclude_project_id: Option<&ProjectId>,
 ) -> Result<String> {
     let base = crate::projects::prefix_base(key);
     let mut candidate = base.clone();
@@ -421,7 +421,7 @@ async fn project_prefix_exists(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     prefix: &str,
-    exclude_project_id: Option<&str>,
+    exclude_project_id: Option<&ProjectId>,
 ) -> Result<bool> {
     Ok(sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM projects

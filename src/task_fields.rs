@@ -129,7 +129,7 @@ impl TaskField {
         match self {
             Self::Title => task.title.clone(),
             Self::Description => task.description.clone(),
-            Self::Project => task.project_id.clone(),
+            Self::Project => task.project_id.to_string(),
             Self::Status => task.status.as_str().to_string(),
             Self::Priority => task.priority.as_str().to_string(),
             Self::AvailableAt => task.available_at.clone(),
@@ -234,7 +234,7 @@ mod tests {
     fn project_payload_shape() {
         let workspace_id: WorkspaceId = "0000000000000001".parse().unwrap();
         let project = Project {
-            id: "prj1".to_string(),
+            id: "0000000000000001".parse().unwrap(),
             workspace_id: workspace_id.clone(),
             key: "proj".to_string(),
             name: "Project".to_string(),
@@ -245,8 +245,8 @@ mod tests {
             serde_json::json!({
                 "workspace_id": "0000000000000001",
                 "workspace_key": "key",
-                "value": "prj1",
-                "project_id": "prj1",
+                "value": "0000000000000001",
+                "project_id": "0000000000000001",
                 "project_key": "proj",
                 "project_name": "Project",
                 "project_prefix": "pp",

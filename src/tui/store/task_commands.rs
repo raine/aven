@@ -400,8 +400,8 @@ impl TuiStore {
             vec![UndoCommand::SetTaskField {
                 task_id: item.task.id.clone(),
                 field: "project".to_string(),
-                before,
-                after: outcome.task.project_id.clone(),
+                before: before.to_string(),
+                after: outcome.task.project_id.to_string(),
             }],
         )
         .await?;
@@ -851,8 +851,8 @@ impl TuiStore {
             undo_commands.push(UndoCommand::SetTaskField {
                 task_id: item.task.id.clone(),
                 field: "project".to_string(),
-                before,
-                after: outcome.task.project_id.clone(),
+                before: before.to_string(),
+                after: outcome.task.project_id.to_string(),
             });
         }
         drop(conn);

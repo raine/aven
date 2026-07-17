@@ -1,4 +1,4 @@
-use crate::ids::WorkspaceId;
+use crate::ids::{ProjectId, WorkspaceId};
 use anyhow::{Result, bail, ensure};
 use sqlx::SqliteConnection;
 use tracing::{debug, info};
@@ -210,7 +210,7 @@ pub(crate) async fn apply_project_id_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     task_id: &str,
-    project_id: &str,
+    project_id: &ProjectId,
 ) -> Result<()> {
     let project_exists = sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 0",

@@ -1,4 +1,4 @@
-use crate::ids::WorkspaceId;
+use crate::ids::{ProjectId, WorkspaceId};
 use std::collections::BTreeSet;
 
 use anyhow::{Result, bail, ensure};
@@ -62,7 +62,7 @@ pub(crate) enum UndoCommand {
         expected_prefix: String,
     },
     SetProjectMetadata {
-        project_id: String,
+        project_id: ProjectId,
         before_key: String,
         before_name: String,
         before_prefix: String,
@@ -95,7 +95,7 @@ pub(crate) enum UndoCommand {
 pub(crate) struct TaskUndoSnapshot {
     pub(crate) title: String,
     pub(crate) description: String,
-    pub(crate) project_id: String,
+    pub(crate) project_id: ProjectId,
     pub(crate) project_key: String,
     pub(crate) status: String,
     pub(crate) priority: String,
@@ -411,10 +411,13 @@ async fn apply_undo_command(
                 bail!("error undo-state-changed task_id={task_id} field={field}");
             }
             if before != after {
-                if task_field == TaskField::Project
-                    && !project_id_exists(conn, workspace_id, before).await?
-                {
-                    bail!("error undo-state-changed task_id={task_id} field={field}");
+                if task_field == TaskField::Project {
+                    let project_id = before.parse().map_err(|_| {
+                        anyhow::anyhow!("error undo-state-changed task_id={task_id} field={field}")
+                    })?;
+                    if !project_id_exists(conn, workspace_id, &project_id).await? {
+                        bail!("error undo-state-changed task_id={task_id} field={field}");
+                    }
                 }
                 set_task_field_in_workspace(conn, workspace_id, task_id, task_field, before)
                     .await?;
@@ -630,7 +633,7 @@ async fn apply_undo_command(
 async fn project_id_exists(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    project_id: &str,
+    project_id: &ProjectId,
 ) -> Result<bool> {
     Ok(sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM projects
@@ -819,7 +822,7 @@ async fn delete_created_project(
     let Some(row) = row else {
         bail!("error undo-state-changed project_key={project_key}");
     };
-    let project_id: String = row.get("id");
+    let project_id: ProjectId = row.get("id");
     let name: String = row.get("name");
     let prefix: String = row.get("prefix");
     if name != expected_name || prefix != expected_prefix {
@@ -863,7 +866,7 @@ async fn delete_created_project(
 async fn set_project_metadata_for_undo(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    project_id: &str,
+    project_id: &ProjectId,
     before: ProjectMetadata<'_>,
     after: ProjectMetadata<'_>,
 ) -> Result<()> {

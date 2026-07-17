@@ -96,13 +96,18 @@ pub(crate) async fn set_field(
     let field = task_field.as_str();
     let mut value = str_payload(&change.payload, "value")?;
     let workspace_id = task_field_workspace_id_payload(conn, change).await?;
+    let mut resolved_project_id = None;
     if task_field.is_project() {
         let project_id = str_payload(&change.payload, "project_id")?;
         ensure!(
             value == project_id,
             "error invalid-sync-change project-value-mismatch"
         );
-        value = ensure_project_for_payload(conn, &workspace_id, &project_id, change).await?;
+        let project_id = project_id.parse()?;
+        let local_project_id =
+            ensure_project_for_payload(conn, &workspace_id, &project_id, change).await?;
+        value = local_project_id.to_string();
+        resolved_project_id = Some(local_project_id);
     }
     if !force {
         let current = field_version(conn, &change.entity_id, field).await?;
@@ -143,7 +148,15 @@ pub(crate) async fn set_field(
         anyhow::bail!("error epic-has-children task_id={}", change.entity_id);
     }
     if task_field.is_project() {
-        apply_project_id_in_workspace(conn, &workspace_id, &change.entity_id, &value).await?;
+        apply_project_id_in_workspace(
+            conn,
+            &workspace_id,
+            &change.entity_id,
+            resolved_project_id
+                .as_ref()
+                .context("project field missing resolved project ID")?,
+        )
+        .await?;
     } else {
         apply_field_value_in_workspace(conn, &workspace_id, &change.entity_id, field, &value)
             .await?;

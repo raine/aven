@@ -512,7 +512,9 @@ fn display_suffix_ignores_other_workspaces() {
     let beta_id = "ABCDE00000000000";
     let sql = "
         INSERT INTO projects(id, workspace_id, key, name, prefix, created_at, updated_at)
-        SELECT 'PROJECT' || key || '000000', id, 'app', 'app', 'APP', 't', 't' FROM workspaces WHERE key IN ('alpha', 'beta');
+        SELECT CASE key WHEN 'alpha' THEN '0000000000000001' ELSE '0000000000000002' END,
+               id, 'app', 'app', 'APP', 't', 't'
+        FROM workspaces WHERE key IN ('alpha', 'beta');
         INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at)
         SELECT w.id, 'ABCD000000000000', 'alpha task', '', p.id, 'inbox', 'none', 't', 't' FROM workspaces w JOIN projects p ON p.workspace_id = w.id WHERE w.key = 'alpha';
         INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at)

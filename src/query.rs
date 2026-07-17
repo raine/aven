@@ -44,7 +44,7 @@ mod tests {
     async fn seed_default_project(conn: &mut SqliteConnection) {
         sqlx::query(
             "INSERT INTO projects(id, key, name, prefix, created_at, updated_at)
-             VALUES ('PROJECT000000001', 'app', 'app', 'APP', 't', 't')",
+             VALUES ('0000000000000001', 'app', 'app', 'APP', 't', 't')",
         )
         .execute(&mut *conn)
         .await
@@ -61,7 +61,7 @@ mod tests {
     ) {
         sqlx::query(
             "INSERT INTO tasks(id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at)
-             VALUES (?, ?, '', 'PROJECT000000001', ?, ?, ?, ?, ?)",
+             VALUES (?, ?, '', '0000000000000001', ?, ?, ?, ?, ?)",
         )
         .bind(id)
         .bind(title)
@@ -587,7 +587,7 @@ mod tests {
         ] {
             sqlx::query(
                 "INSERT INTO tasks(id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at)
-                 VALUES (?, ?, ?, 'PROJECT000000001', 'todo', 'none', ?, ?, ?)",
+                 VALUES (?, ?, ?, '0000000000000001', 'todo', 'none', ?, ?, ?)",
             )
             .bind(id)
             .bind(title)
@@ -1690,13 +1690,13 @@ mod tests {
         .unwrap();
         sqlx::query(
             "INSERT INTO projects(id, key, name, prefix, created_at, updated_at)
-             VALUES ('PROJECT000000002', 'meta', 'Orchard Metadata', 'MET', 't', 't')",
+             VALUES ('0000000000000002', 'meta', 'Orchard Metadata', 'MET', 't', 't')",
         )
         .execute(&mut *conn)
         .await
         .unwrap();
         sqlx::query(
-            "UPDATE tasks SET project_id = 'PROJECT000000002' WHERE id = '9KQ9A1X4MV2P8D6R'",
+            "UPDATE tasks SET project_id = '0000000000000002' WHERE id = '9KQ9A1X4MV2P8D6R'",
         )
         .execute(&mut *conn)
         .await

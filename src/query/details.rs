@@ -146,7 +146,7 @@ mod tests {
         let workspace_id = workspace.id.clone();
         sqlx::query(
             "INSERT INTO projects(id, key, name, prefix, created_at, updated_at)
-             VALUES ('PROJECTDETAIL001', 'detail', 'Detail Project', 'DTL', 't', 't')",
+             VALUES ('00000000000000D1', 'detail', 'Detail Project', 'DTL', 't', 't')",
         )
         .execute(&mut *conn)
         .await
@@ -157,7 +157,7 @@ mod tests {
         ] {
             sqlx::query(
                 "INSERT INTO tasks(id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at)
-                 VALUES (?, ?, 'description', 'PROJECTDETAIL001', 'todo', 'high', 't', 't', 't')",
+                 VALUES (?, ?, 'description', '00000000000000D1', 'todo', 'high', 't', 't', 't')",
             )
             .bind(id)
             .bind(title)

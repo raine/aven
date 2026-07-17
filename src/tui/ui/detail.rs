@@ -1823,7 +1823,7 @@ mod tests {
                 workspace_id: "0000000000000001".parse().unwrap(),
                 title: "Fix token refresh race".to_string(),
                 description: "Two token refresh requests fire together.".to_string(),
-                project_id: "project-id".to_string(),
+                project_id: "0000000000000001".parse().unwrap(),
                 project_key: "app".to_string(),
                 project_prefix: "APP".to_string(),
                 status: TaskStatus::Active,

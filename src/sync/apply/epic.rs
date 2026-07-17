@@ -1,4 +1,4 @@
-use crate::ids::WorkspaceId;
+use crate::ids::{ProjectId, WorkspaceId};
 use anyhow::{Result, bail};
 use sqlx::SqliteConnection;
 
@@ -103,7 +103,7 @@ async fn ensure_epic_tasks_can_link(
     for row in rows {
         use sqlx::Row;
         let id: String = row.get("id");
-        let project_id: String = row.get("project_id");
+        let project_id: ProjectId = row.get("project_id");
         let is_epic = row.get::<i64, _>("is_epic") != 0;
         if id == child_task_id {
             if is_epic {

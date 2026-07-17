@@ -521,6 +521,12 @@ fn renames_project_and_display_prefix() {
         ["add", "move project metadata", "--project", "agent-offload"],
     ));
     let task_ref = extract_ref(&created);
+    let before_context = ok(env.aven(&db, ["context", &task_ref, "--json"]));
+    let before_context: serde_json::Value = serde_json::from_str(&before_context).unwrap();
+    let project_id = before_context["project"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     contains_all(&created, &["project=agent-offload", "AO-"]);
 
     let renamed = ok(env.aven(
@@ -549,6 +555,9 @@ fn renames_project_and_display_prefix() {
     let shown = ok(env.aven(&db, ["show", &task_ref]));
     contains_all(&shown, &["SIDE-"]);
     contains_none(&shown, &["agent-offload"]);
+    let after_context = ok(env.aven(&db, ["context", &task_ref, "--json"]));
+    let after_context: serde_json::Value = serde_json::from_str(&after_context).unwrap();
+    assert_eq!(after_context["project"]["id"], project_id);
 
     let filtered = ok(env.aven(&db, ["list", "--project", "sideagent"]));
     contains_all(&filtered, &[&suffix(&task_ref), "move project metadata"]);

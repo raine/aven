@@ -164,7 +164,7 @@ async fn task_context_snapshot(
             updated_at: task.updated_at.clone(),
         },
         project: ContextProject {
-            id: task.project_id.clone(),
+            id: task.project_id.to_string(),
             key: task.project_key.clone(),
             name: detail.project_name,
             prefix: task.project_prefix.clone(),

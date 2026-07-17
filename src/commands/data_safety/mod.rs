@@ -1,4 +1,4 @@
-use crate::ids::WorkspaceId;
+use crate::ids::{ProjectId, WorkspaceId};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
@@ -67,7 +67,7 @@ struct WorkspaceRow {
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct ProjectRow {
-    id: String,
+    id: ProjectId,
     workspace_id: WorkspaceId,
     key: String,
     name: String,
@@ -80,15 +80,15 @@ struct ProjectRow {
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct ProjectPathRow {
     workspace_id: WorkspaceId,
-    project_id: String,
+    project_id: ProjectId,
     path: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct ProjectIdAliasRow {
     workspace_id: WorkspaceId,
-    remote_project_id: String,
-    local_project_id: String,
+    remote_project_id: ProjectId,
+    local_project_id: ProjectId,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
@@ -104,7 +104,7 @@ struct TaskRow {
     id: String,
     title: String,
     description: String,
-    project_id: String,
+    project_id: ProjectId,
     status: String,
     priority: String,
     created_at: String,
@@ -423,7 +423,7 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
         workspace_ids.insert(workspace.id.clone());
     }
 
-    let mut project_ids: HashMap<WorkspaceId, HashSet<String>> = HashMap::new();
+    let mut project_ids: HashMap<WorkspaceId, HashSet<ProjectId>> = HashMap::new();
     for project in &export.tables.projects {
         if !workspace_ids.contains(&project.workspace_id) {
             bail!(
@@ -571,12 +571,6 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
             bail!(
                 "error invalid-export-snapshot local_project_id={} is missing in workspace {}",
                 alias.local_project_id,
-                alias.workspace_id
-            );
-        }
-        if alias.remote_project_id.is_empty() {
-            bail!(
-                "error invalid-export-snapshot remote_project_id empty in workspace {}",
                 alias.workspace_id
             );
         }

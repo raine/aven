@@ -1,4 +1,4 @@
-use crate::ids::WorkspaceId;
+use crate::ids::{ProjectId, WorkspaceId};
 use anyhow::{Context, Result};
 use sqlx::SqliteConnection;
 
@@ -31,20 +31,21 @@ async fn resolve_project_for_delete(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     change: &ChangeWire,
-) -> Result<Option<String>> {
-    if let Some(local_id) = project_id_alias(conn, workspace_id, &change.entity_id).await? {
+) -> Result<Option<ProjectId>> {
+    let remote_project_id: ProjectId = change.entity_id.parse()?;
+    if let Some(local_id) = project_id_alias(conn, workspace_id, &remote_project_id).await? {
         return Ok(Some(local_id));
     }
     let exists = sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM projects WHERE workspace_id = ? AND id = ?",
     )
     .bind(workspace_id)
-    .bind(&change.entity_id)
+    .bind(&remote_project_id)
     .fetch_one(&mut *conn)
     .await?
         > 0;
     if exists {
-        return Ok(Some(change.entity_id.to_string()));
+        return Ok(Some(remote_project_id));
     }
     Ok(None)
 }
@@ -52,10 +53,11 @@ pub(super) async fn create_project(conn: &mut SqliteConnection, change: &ChangeW
     let p = CreateProjectPayload::from_change(change)?;
     let workspace_id = super::shared::workspace_id_payload(conn, change).await?;
     let created_at = p.created_at.unwrap_or_else(crate::ids::now);
+    let project_id: ProjectId = change.entity_id.parse()?;
     ensure_remote_project(
         conn,
         &workspace_id,
-        &change.entity_id,
+        &project_id,
         &p.key,
         &p.name,
         &p.prefix,
@@ -120,11 +122,12 @@ async fn ensure_project_for_metadata(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     change: &ChangeWire,
-) -> Result<String> {
-    if let Some(local_id) = project_id_alias(conn, workspace_id, &change.entity_id).await? {
+) -> Result<ProjectId> {
+    let remote_project_id: ProjectId = change.entity_id.parse()?;
+    if let Some(local_id) = project_id_alias(conn, workspace_id, &remote_project_id).await? {
         return Ok(local_id);
     }
-    if let Some(existing_id) = live_project_by_id(conn, workspace_id, &change.entity_id).await? {
+    if let Some(existing_id) = live_project_by_id(conn, workspace_id, &remote_project_id).await? {
         return Ok(existing_id);
     }
     let key = str_payload(&change.payload, "key")?;
@@ -133,7 +136,7 @@ async fn ensure_project_for_metadata(
     ensure_remote_project(
         conn,
         workspace_id,
-        &change.entity_id,
+        &remote_project_id,
         &key,
         &name,
         &prefix,
@@ -145,9 +148,9 @@ async fn ensure_project_for_metadata(
 pub(super) async fn ensure_project_for_payload(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    project_id: &str,
+    project_id: &ProjectId,
     change: &ChangeWire,
-) -> Result<String> {
+) -> Result<ProjectId> {
     let key = str_payload(&change.payload, "project_key")?;
     let name = str_payload(&change.payload, "project_name").unwrap_or_else(|_| key.clone());
     let prefix =
@@ -167,12 +170,12 @@ pub(super) async fn ensure_project_for_payload(
 async fn ensure_remote_project(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    remote_project_id: &str,
+    remote_project_id: &ProjectId,
     key: &str,
     name: &str,
     prefix: &str,
     created_at: &str,
-) -> Result<String> {
+) -> Result<ProjectId> {
     if let Some(local_id) = project_id_alias(conn, workspace_id, remote_project_id).await? {
         return Ok(local_id);
     }
@@ -194,7 +197,7 @@ async fn ensure_remote_project(
             created_at,
         )
         .await?;
-        return Ok(remote_project_id.to_string());
+        return Ok(remote_project_id.clone());
     }
     if let Some(local_id) = deleted_project_by_key(conn, workspace_id, key).await? {
         restore_remote_project(conn, workspace_id, &local_id, key, name, prefix, created_at)
@@ -216,15 +219,15 @@ async fn ensure_remote_project(
     .bind(created_at)
     .execute(&mut *conn)
     .await?;
-    Ok(remote_project_id.to_string())
+    Ok(remote_project_id.clone())
 }
 
 async fn live_project_by_id(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    project_id: &str,
-) -> Result<Option<String>> {
-    sqlx::query_scalar::<_, String>(
+    project_id: &ProjectId,
+) -> Result<Option<ProjectId>> {
+    sqlx::query_scalar::<_, ProjectId>(
         "SELECT id FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 0",
     )
     .bind(workspace_id)
@@ -237,7 +240,7 @@ async fn live_project_by_id(
 async fn live_project_key_by_id(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    project_id: &str,
+    project_id: &ProjectId,
 ) -> Result<Option<String>> {
     sqlx::query_scalar::<_, String>(
         "SELECT key FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 0",
@@ -253,8 +256,8 @@ async fn live_project_by_key(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     key: &str,
-) -> Result<Option<String>> {
-    sqlx::query_scalar::<_, String>(
+) -> Result<Option<ProjectId>> {
+    sqlx::query_scalar::<_, ProjectId>(
         "SELECT id FROM projects WHERE workspace_id = ? AND key = ? AND deleted = 0",
     )
     .bind(workspace_id)
@@ -267,7 +270,7 @@ async fn live_project_by_key(
 async fn deleted_project_by_id(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    project_id: &str,
+    project_id: &ProjectId,
 ) -> Result<bool> {
     Ok(sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 1",
@@ -283,8 +286,8 @@ async fn deleted_project_by_key(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     key: &str,
-) -> Result<Option<String>> {
-    sqlx::query_scalar::<_, String>(
+) -> Result<Option<ProjectId>> {
+    sqlx::query_scalar::<_, ProjectId>(
         "SELECT id FROM projects WHERE workspace_id = ? AND key = ? AND deleted = 1",
     )
     .bind(workspace_id)
@@ -297,7 +300,7 @@ async fn deleted_project_by_key(
 async fn restore_remote_project(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    project_id: &str,
+    project_id: &ProjectId,
     key: &str,
     name: &str,
     prefix: &str,
@@ -321,8 +324,8 @@ async fn restore_remote_project(
 async fn insert_project_alias(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    remote_project_id: &str,
-    local_project_id: &str,
+    remote_project_id: &ProjectId,
+    local_project_id: &ProjectId,
 ) -> Result<()> {
     sqlx::query(
         "INSERT OR IGNORE INTO project_id_aliases(workspace_id, remote_project_id, local_project_id)
@@ -340,7 +343,7 @@ async fn unique_remote_key(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     preferred: &str,
-    ignore_project_id: Option<&str>,
+    ignore_project_id: Option<&ProjectId>,
 ) -> Result<String> {
     let mut candidate = preferred.to_string();
     let mut n = 2;
@@ -367,7 +370,7 @@ async fn unique_remote_prefix(
     workspace_id: &WorkspaceId,
     preferred: &str,
     key: &str,
-    ignore_project_id: Option<&str>,
+    ignore_project_id: Option<&ProjectId>,
 ) -> Result<String> {
     let base = if preferred.trim().is_empty() {
         prefix_base(key)
@@ -397,9 +400,9 @@ async fn unique_remote_prefix(
 async fn project_id_alias(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    remote_project_id: &str,
-) -> Result<Option<String>> {
-    Ok(sqlx::query_scalar::<_, String>(
+    remote_project_id: &ProjectId,
+) -> Result<Option<ProjectId>> {
+    Ok(sqlx::query_scalar::<_, ProjectId>(
         "SELECT a.local_project_id
          FROM project_id_aliases a
          JOIN projects p ON p.workspace_id = a.workspace_id

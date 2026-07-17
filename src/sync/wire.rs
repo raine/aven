@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::change_log::op_type;
-use crate::ids::{BASE32, WorkspaceId};
+use crate::ids::{BASE32, ProjectId, WorkspaceId};
 use crate::task_fields::TaskField;
 
 pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 7;
@@ -255,7 +255,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
         }
         op_type::CREATE_PROJECT => {
             ensure_entity_type(change, "project")?;
-            ensure_sync_id("entity_id", &change.entity_id)?;
+            ensure_project_id("entity_id", &change.entity_id)?;
             optional_workspace_payload(&change.payload)?;
             required_string_payload("key", &change.payload)?;
             required_string_payload("name", &change.payload)?;
@@ -264,7 +264,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
         }
         op_type::SET_PROJECT_METADATA => {
             ensure_entity_type(change, "project")?;
-            ensure_sync_id("entity_id", &change.entity_id)?;
+            ensure_project_id("entity_id", &change.entity_id)?;
             optional_workspace_payload(&change.payload)?;
             required_string_payload("key", &change.payload)?;
             required_string_payload("name", &change.payload)?;
@@ -283,7 +283,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             optional_workspace_payload(&change.payload)?;
             required_string_payload("title", &change.payload)?;
             let project_id = required_string_payload("project_id", &change.payload)?;
-            ensure_sync_id("project_id", &project_id)?;
+            ensure_project_id("project_id", &project_id)?;
             required_string_payload("project_key", &change.payload)?;
             optional_string_payload("description", &change.payload)?;
             required_string_payload("project_name", &change.payload)?;
@@ -320,7 +320,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             validate_sync_task_field_value(task_field, &value)?;
             if task_field == TaskField::Project {
                 let project_id = required_string_payload("project_id", &change.payload)?;
-                ensure_sync_id("project_id", &project_id)?;
+                ensure_project_id("project_id", &project_id)?;
                 if value != project_id {
                     bail!("error invalid-sync-change project-value-mismatch");
                 }
@@ -370,7 +370,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
         }
         op_type::PROJECT_DELETE => {
             ensure_entity_type(change, "project")?;
-            ensure_sync_id("entity_id", &change.entity_id)?;
+            ensure_project_id("entity_id", &change.entity_id)?;
             required_workspace_payload(&change.payload)?;
             required_timestamp_payload("deleted_at", &change.payload)?;
         }
@@ -553,6 +553,14 @@ fn ensure_non_empty(name: &str, value: &str) -> Result<()> {
 
 fn ensure_sync_id(name: &str, value: &str) -> Result<()> {
     if value.len() == 16 && value.bytes().all(|byte| BASE32.contains(&byte)) {
+        Ok(())
+    } else {
+        bail!("error invalid-sync-change {name} invalid-id");
+    }
+}
+
+fn ensure_project_id(name: &str, value: &str) -> Result<()> {
+    if value.parse::<ProjectId>().is_ok() {
         Ok(())
     } else {
         bail!("error invalid-sync-change {name} invalid-id");
@@ -796,6 +804,69 @@ mod tests {
         );
         validate_pushed_change(&change)
             .expect("create_project payload built with ChangePayload should be wire-valid");
+    }
+
+    #[test]
+    fn project_changes_reject_invalid_project_ids() {
+        let ws = test_workspace();
+        let project_payload = ChangePayload::workspace(&ws)
+            .set("key", "app")
+            .set("name", "App")
+            .set("prefix", "APP")
+            .set("created_at", "2026-06-01T00:00:00Z")
+            .into_value();
+        let create_project = make_change_wire(
+            op_type::CREATE_PROJECT,
+            "project",
+            "invalid",
+            project_payload,
+        );
+        assert_eq!(
+            validate_pushed_change(&create_project)
+                .unwrap_err()
+                .to_string(),
+            "error invalid-sync-change entity_id invalid-id"
+        );
+
+        let task_payload = ChangePayload::workspace(&ws)
+            .set("title", "test task")
+            .set("project_id", "invalid")
+            .set("project_key", "app")
+            .set("project_name", "App")
+            .set("project_prefix", "APP")
+            .set("created_at", "2026-06-01T00:00:00Z")
+            .into_value();
+        let create_task = make_change_wire(
+            op_type::CREATE_TASK,
+            "task",
+            "BBBBBBBBBBBBBBBB",
+            task_payload,
+        );
+        assert_eq!(
+            validate_pushed_change(&create_task)
+                .unwrap_err()
+                .to_string(),
+            "error invalid-sync-change project_id invalid-id"
+        );
+
+        let field_payload = ChangePayload::workspace(&ws)
+            .set("value", "invalid")
+            .set("project_id", "invalid")
+            .set("project_key", "app")
+            .set("project_name", "App")
+            .set("project_prefix", "APP")
+            .into_value();
+        let mut set_field = make_change_wire(
+            op_type::SET_FIELD,
+            "task",
+            "BBBBBBBBBBBBBBBB",
+            field_payload,
+        );
+        set_field.field = Some("project".to_string());
+        assert_eq!(
+            validate_pushed_change(&set_field).unwrap_err().to_string(),
+            "error invalid-sync-change project_id invalid-id"
+        );
     }
 
     #[test]

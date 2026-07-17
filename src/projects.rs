@@ -1,4 +1,4 @@
-use crate::ids::WorkspaceId;
+use crate::ids::{ProjectId, WorkspaceId};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,7 +10,7 @@ use sqlx::{Row, SqliteConnection};
 use crate::config::{AppConfig, ProjectOverrideConfig};
 use crate::db::insert_change;
 use crate::fuzzy::is_near;
-use crate::ids::{new_id, now};
+use crate::ids::now;
 use crate::render::{print_near_error, quote};
 use crate::types::Project;
 use crate::workspaces::Workspace;
@@ -172,7 +172,7 @@ pub(crate) async fn create_project_in_workspace(
         });
     }
     let prefix = unique_project_prefix(conn, &workspace.id, &key).await?;
-    let id = new_id();
+    let id = ProjectId::new();
     let ts = now();
     sqlx::query(
         "INSERT INTO projects(id, workspace_id, key, name, prefix, created_at, updated_at)
@@ -190,7 +190,7 @@ pub(crate) async fn create_project_in_workspace(
     let change_id = insert_change(
         conn,
         "project",
-        &id,
+        id.as_str(),
         None,
         "create_project",
         json!({
@@ -235,11 +235,11 @@ async fn restore_deleted_project(
     else {
         return Ok(None);
     };
-    let id: String = row.get("id");
+    let id: ProjectId = row.get("id");
     let workspace_id: WorkspaceId = row.get("workspace_id");
     let key: String = row.get("key");
     let prefix: String = row.get("prefix");
-    let prefix = if prefix == id {
+    let prefix = if prefix == id.as_str() {
         unique_project_prefix(conn, &workspace_id, &key).await?
     } else {
         prefix
@@ -259,7 +259,7 @@ async fn restore_deleted_project(
     let change_id = insert_change(
         conn,
         "project",
-        &id,
+        id.as_str(),
         None,
         "create_project",
         json!({
@@ -677,14 +677,15 @@ pub(crate) async fn resolve_project_for_stored_value(
     workspace_id: &WorkspaceId,
     value: &str,
 ) -> Result<Project> {
-    if let Some(row) = sqlx::query(
-        "SELECT id, workspace_id, key, name, prefix
-         FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 0",
-    )
-    .bind(workspace_id)
-    .bind(value)
-    .fetch_optional(&mut *conn)
-    .await?
+    if let Ok(project_id) = value.parse::<ProjectId>()
+        && let Some(row) = sqlx::query(
+            "SELECT id, workspace_id, key, name, prefix
+             FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 0",
+        )
+        .bind(workspace_id)
+        .bind(&project_id)
+        .fetch_optional(&mut *conn)
+        .await?
     {
         return Ok(project_from_row(row));
     }

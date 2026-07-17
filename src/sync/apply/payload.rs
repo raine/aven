@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serde_json::Value;
 
+use crate::ids::ProjectId;
 use crate::sync::wire::ChangeWire;
 
 use super::shared::{optional_str_payload, str_payload};
@@ -13,7 +14,7 @@ use super::shared::{optional_str_payload, str_payload};
 pub(crate) struct CreateTaskPayload {
     pub(crate) title: String,
     pub(crate) description: Option<String>,
-    pub(crate) project_id: String,
+    pub(crate) project_id: ProjectId,
     pub(crate) status: Option<String>,
     pub(crate) priority: Option<String>,
     pub(crate) available_at: Option<String>,
@@ -28,7 +29,7 @@ impl CreateTaskPayload {
         Ok(Self {
             title: str_payload(payload, "title")?,
             description: optional_str_payload(payload, "description"),
-            project_id: str_payload(payload, "project_id")?,
+            project_id: str_payload(payload, "project_id")?.parse()?,
             status: optional_str_payload(payload, "status"),
             priority: optional_str_payload(payload, "priority"),
             available_at: optional_str_payload(payload, "available_at"),
