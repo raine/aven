@@ -134,12 +134,16 @@ pub(super) fn upcoming_rows(tasks: &[TaskListItem], now_seconds: i64) -> Vec<Tas
     let mut rows = Vec::new();
     let mut index = 0;
     while index < tasks.len() {
-        let label =
-            crate::tui::time::available_day_label(&tasks[index].task.available_at, now_seconds);
+        let label = crate::tui::time::available_day_label(
+            tasks[index].task.available_at.as_deref().unwrap_or(""),
+            now_seconds,
+        );
         let start = index;
         while index < tasks.len()
-            && crate::tui::time::available_day_label(&tasks[index].task.available_at, now_seconds)
-                == label
+            && crate::tui::time::available_day_label(
+                tasks[index].task.available_at.as_deref().unwrap_or(""),
+                now_seconds,
+            ) == label
         {
             index += 1;
         }
@@ -247,8 +251,8 @@ mod tests {
                 created_at: "2026-06-20T00:00:00Z".to_string(),
                 updated_at: "2026-06-20T00:00:00Z".to_string(),
                 queue_activity_at: "2026-06-20T00:00:00Z".to_string(),
-                available_at: String::new(),
-                due_on: String::new(),
+                available_at: None,
+                due_on: None,
                 deleted: false,
                 is_epic: false,
             },

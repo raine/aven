@@ -299,16 +299,14 @@ pub(crate) async fn parsed_output_to_draft(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(crate::time_input::parse_available_at_input)
-        .transpose()?
-        .unwrap_or_default();
+        .transpose()?;
     let due_on = parsed
         .due_on
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(crate::time_input::parse_due_on_input)
-        .transpose()?
-        .unwrap_or_default();
+        .transpose()?;
     Ok(TaskDraft {
         title: title.to_string(),
         description,

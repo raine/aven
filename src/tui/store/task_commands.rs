@@ -269,7 +269,7 @@ impl TuiStore {
         let Some(mut item) = self.selected_task(index).cloned() else {
             return Ok(None);
         };
-        let before = item.task.available_at.clone();
+        let before = item.task.available_at.clone().unwrap_or_default();
         if available_at == before {
             return Ok(Some(
                 self.refresh_task_message(
@@ -286,7 +286,7 @@ impl TuiStore {
             &self.active_workspace,
             &item.task.id,
             TaskUpdate {
-                available_at: Some(available_at.clone()),
+                available_at: Some((!available_at.is_empty()).then(|| available_at.clone())),
                 ..TaskUpdate::default()
             },
         )
@@ -326,7 +326,7 @@ impl TuiStore {
         let Some(mut item) = self.selected_task(index).cloned() else {
             return Ok(None);
         };
-        let before = item.task.due_on.clone();
+        let before = item.task.due_on.clone().unwrap_or_default();
         if due_on == before {
             return Ok(Some(
                 self.refresh_task_message(
@@ -343,7 +343,7 @@ impl TuiStore {
             &self.active_workspace,
             &item.task.id,
             TaskUpdate {
-                due_on: Some(due_on.clone()),
+                due_on: Some((!due_on.is_empty()).then(|| due_on.clone())),
                 ..TaskUpdate::default()
             },
         )

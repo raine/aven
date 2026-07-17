@@ -71,6 +71,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Workspace identity uses `WorkspaceId` from `src/ids.rs` throughout domain records, queries, and mutations. CLI, config, sync payload, and export conversions validate the 16-character Crockford Base32 representation, while SQLx binds and decodes the type as SQLite text.
 - Project identity uses `ProjectId` from `src/ids.rs` throughout domain records, queries, and mutations. CLI, config, sync payload, and export conversions validate the 16-character Crockford Base32 representation, while SQLx binds and decodes the type as SQLite text.
 - Task identity uses `TaskId` from `src/ids.rs` throughout domain records, queries, mutations, relationships, and undo snapshots. CLI refs, sync payloads, and exports preserve validated 16-character Crockford Base32 strings, while SQLx binds and decodes the type as SQLite text.
+- `Task` represents absent `available_at` and `due_on` values with `None`. SQLite, sync payloads, exports, and JSON output encode absence as an empty string at their compatibility boundaries.
 - Project keys and names are lookup and display fields.
 - Project renames update key, name, and prefix on the same stable project ID.
 - Projects normalize names into keys with lowercase words joined by `-`.

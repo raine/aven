@@ -714,7 +714,11 @@ fn build_task_row_cells(
 }
 
 fn is_deferred(item: &TaskListItem, now_seconds: i64) -> bool {
-    unix_seconds(&item.task.available_at).is_some_and(|available_at| available_at > now_seconds)
+    item.task
+        .available_at
+        .as_deref()
+        .and_then(unix_seconds)
+        .is_some_and(|available_at| available_at > now_seconds)
 }
 
 fn task_time_cell(
@@ -723,10 +727,14 @@ fn task_time_cell(
     render_mode: TaskListRenderMode,
     due_order: bool,
 ) -> Line<'static> {
-    let due_state = crate::tui::time::due_state_at(&item.task.due_on, now_seconds);
+    let due_state =
+        crate::tui::time::due_state_at(item.task.due_on.as_deref().unwrap_or(""), now_seconds);
     if render_mode != TaskListRenderMode::Upcoming
         && (due_order || item.task.status.is_open() && due_state.needs_action())
-        && let Some(label) = crate::tui::time::compact_due_label(&item.task.due_on, now_seconds)
+        && let Some(label) = crate::tui::time::compact_due_label(
+            item.task.due_on.as_deref().unwrap_or(""),
+            now_seconds,
+        )
     {
         let color = if !item.task.status.is_open() {
             FG_DIM
@@ -745,13 +753,16 @@ fn task_time_cell(
     }
     match render_mode {
         TaskListRenderMode::Upcoming => Line::from(Span::styled(
-            crate::tui::time::available_in_label(&item.task.available_at, now_seconds)
-                .unwrap_or_default(),
+            crate::tui::time::available_in_label(
+                item.task.available_at.as_deref().unwrap_or(""),
+                now_seconds,
+            )
+            .unwrap_or_default(),
             Style::new().fg(ACCENT),
         )),
         TaskListRenderMode::Queue => {
             let style_input = if item.queue.band == crate::queue::QueueBand::Available {
-                &item.task.available_at
+                item.task.available_at.as_deref().unwrap_or("")
             } else {
                 &item.task.queue_activity_at
             };
@@ -764,8 +775,11 @@ fn task_time_cell(
             ))
         }
         TaskListRenderMode::Flat if is_deferred(item, now_seconds) => Line::from(Span::styled(
-            crate::tui::time::available_in_label(&item.task.available_at, now_seconds)
-                .unwrap_or_default(),
+            crate::tui::time::available_in_label(
+                item.task.available_at.as_deref().unwrap_or(""),
+                now_seconds,
+            )
+            .unwrap_or_default(),
             Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
         )),
         _ => Line::from(Span::styled(
@@ -891,7 +905,8 @@ fn metadata_cell(
         ));
     }
     if item.task.status.is_open()
-        && crate::tui::time::due_state_at(&item.task.due_on, now_seconds()).needs_action()
+        && crate::tui::time::due_state_at(item.task.due_on.as_deref().unwrap_or(""), now_seconds())
+            .needs_action()
     {
         if !spans.is_empty() {
             spans.push(Span::raw(" "));
@@ -1077,8 +1092,11 @@ fn availability_preview_line(
     if !is_deferred(item, now_seconds) {
         return None;
     }
-    let [relative, local] =
-        crate::tui::time::availability_summary_lines(&item.task.available_at, false, now_seconds)?;
+    let [relative, local] = crate::tui::time::availability_summary_lines(
+        item.task.available_at.as_deref().unwrap_or(""),
+        false,
+        now_seconds,
+    )?;
     let countdown = relative.strip_prefix("available ").unwrap_or(&relative);
     let fixed_width = "available ".len() + countdown.len() + " · ".len();
     let local = truncate_chars(&local, width.saturating_sub(fixed_width));
@@ -1258,8 +1276,8 @@ mod tests {
                 created_at: "2026-06-20T00:00:00Z".to_string(),
                 updated_at: "2026-06-20T00:00:00Z".to_string(),
                 queue_activity_at: "2026-06-20T00:00:00Z".to_string(),
-                available_at: String::new(),
-                due_on: String::new(),
+                available_at: None,
+                due_on: None,
                 deleted: false,
                 is_epic: false,
             },
@@ -1354,7 +1372,7 @@ mod tests {
                 priority: item.task.priority.as_str().to_string(),
                 labels: item.labels,
                 available_at: item.task.available_at,
-                due_on: String::new(),
+                due_on: None,
                 is_epic: false,
             };
             store.create_task(draft, None).await.unwrap();
@@ -1465,7 +1483,7 @@ mod tests {
     #[test]
     fn flat_row_marks_deferred_task_and_shows_availability_time() {
         let mut item = task_item("deferred");
-        item.task.available_at = "200".to_string();
+        item.task.available_at = Some("200".to_string());
 
         let cells = build_task_row_cells(
             &item,
@@ -1578,7 +1596,7 @@ mod tests {
         assert!(buffer_text(terminal.backend().buffer()).contains("DUE"));
 
         let mut item = task_item("future deadline");
-        item.task.due_on = "2999-01-01".to_string();
+        item.task.due_on = Some("2999-01-01".to_string());
         let cell = task_time_cell(&item, 0, TaskListRenderMode::Flat, true);
         assert_eq!(cell.to_string(), "Jan1");
         assert_eq!(cell.spans[0].style.fg, Some(ACCENT));
@@ -1615,7 +1633,7 @@ mod tests {
     #[test]
     fn metadata_column_width_reserves_lane_for_deferred_marker() {
         let mut task = task_item("deferred");
-        task.task.available_at = "2999-01-01T00:00:00Z".to_string();
+        task.task.available_at = Some("2999-01-01T00:00:00Z".to_string());
 
         assert_eq!(
             metadata_column_width_from_task_refs(&[&task], None, true),
@@ -1921,7 +1939,7 @@ mod tests {
     #[test]
     fn task_preview_shows_future_availability() {
         let mut item = task_item("preview");
-        item.task.available_at = "200".to_string();
+        item.task.available_at = Some("200".to_string());
 
         let line = availability_preview_line(&item, 100, 80).unwrap();
 
@@ -1935,7 +1953,7 @@ mod tests {
     #[test]
     fn task_preview_omits_elapsed_availability() {
         let mut item = task_item("preview");
-        item.task.available_at = "100".to_string();
+        item.task.available_at = Some("100".to_string());
 
         assert!(availability_preview_line(&item, 200, 80).is_none());
     }

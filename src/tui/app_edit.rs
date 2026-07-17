@@ -397,7 +397,8 @@ impl App {
             .unwrap()
             .task
             .available_at
-            .clone();
+            .clone()
+            .unwrap_or_default();
         self.open_edit_availability_overlay(available_at);
     }
 
@@ -420,7 +421,8 @@ impl App {
             .unwrap()
             .task
             .due_on
-            .clone();
+            .clone()
+            .unwrap_or_default();
         self.open_edit_due_overlay(due_on);
     }
 

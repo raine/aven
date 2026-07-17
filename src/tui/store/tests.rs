@@ -45,8 +45,8 @@ async fn create_selected_task(store: &mut TuiStore, title: &str) -> (TaskId, usi
                 status: "inbox".to_string(),
                 priority: "none".to_string(),
                 labels: Vec::new(),
-                available_at: String::new(),
-                due_on: String::new(),
+                available_at: None,
+                due_on: None,
                 is_epic: false,
             },
             None,
@@ -82,8 +82,8 @@ fn task_draft(title: &str) -> TaskDraft {
         status: "inbox".to_string(),
         priority: "none".to_string(),
         labels: Vec::new(),
-        available_at: String::new(),
-        due_on: String::new(),
+        available_at: None,
+        due_on: None,
         is_epic: false,
     }
 }
@@ -620,8 +620,8 @@ mod task_creation_and_updates {
         assert_eq!(store.counts.upcoming, 1);
         let selected = set.selected.unwrap();
         assert_eq!(
-            store.tasks[selected].task.available_at,
-            "2099-01-01T00:00:00Z"
+            store.tasks[selected].task.available_at.as_deref(),
+            Some("2099-01-01T00:00:00Z")
         );
 
         let cleared = store
@@ -634,7 +634,7 @@ mod task_creation_and_updates {
         assert_eq!(store.counts.inbox, 1);
         assert_eq!(store.counts.upcoming, 0);
         let selected = cleared.selected.unwrap();
-        assert!(store.tasks[selected].task.available_at.is_empty());
+        assert!(store.tasks[selected].task.available_at.is_none());
     }
 
     #[tokio::test]
@@ -1136,8 +1136,8 @@ mod views_filters_and_sort {
             .create_task(
                 TaskDraft {
                     title: "Scheduled store task".to_string(),
-                    available_at: "2999-03-08T05:00:00Z".to_string(),
-                    due_on: String::new(),
+                    available_at: Some("2999-03-08T05:00:00Z".to_string()),
+                    due_on: None,
                     ..task_draft("")
                 },
                 None,

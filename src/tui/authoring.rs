@@ -281,8 +281,8 @@ impl AuthoringState {
         draft.status = task.status;
         draft.priority = task.priority;
         draft.labels = task.labels;
-        draft.available_at = task.available_at;
-        draft.due_on = task.due_on;
+        draft.available_at = task.available_at.unwrap_or_default();
+        draft.due_on = task.due_on.unwrap_or_default();
         draft.step = AddTaskStep::Title;
         true
     }
@@ -306,8 +306,8 @@ impl AuthoringState {
             status: draft.status,
             priority: draft.priority,
             labels: draft.labels,
-            available_at: draft.available_at,
-            due_on: draft.due_on,
+            available_at: (!draft.available_at.is_empty()).then_some(draft.available_at),
+            due_on: (!draft.due_on.is_empty()).then_some(draft.due_on),
             is_epic: false,
         })
     }

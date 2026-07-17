@@ -899,7 +899,7 @@ fn detail_metadata_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>
     ];
     let now_seconds = crate::queue::now_seconds();
     if let Some([relative, local]) = crate::tui::time::availability_summary_lines(
-        &item.task.available_at,
+        item.task.available_at.as_deref().unwrap_or(""),
         item.queue.band == crate::queue::QueueBand::Available,
         now_seconds,
     ) {
@@ -912,12 +912,15 @@ fn detail_metadata_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>
         ]);
     }
     if let Some([relative, date]) =
-        crate::tui::time::due_summary_lines(&item.task.due_on, now_seconds)
+        crate::tui::time::due_summary_lines(item.task.due_on.as_deref().unwrap_or(""), now_seconds)
     {
         let color = if !item.task.status.is_open() {
             FG_MUTED
         } else {
-            match crate::tui::time::due_state_at(&item.task.due_on, now_seconds) {
+            match crate::tui::time::due_state_at(
+                item.task.due_on.as_deref().unwrap_or(""),
+                now_seconds,
+            ) {
                 crate::due::DueState::Overdue(_) => RED,
                 crate::due::DueState::Today => ORANGE,
                 crate::due::DueState::Future(_) => ACCENT,
@@ -1656,7 +1659,7 @@ mod tests {
     #[test]
     fn detail_metadata_splits_availability_across_bounded_lines() {
         let mut item = detail_test_item();
-        item.task.available_at = "2999-07-17T12:30:00Z".to_string();
+        item.task.available_at = Some("2999-07-17T12:30:00Z".to_string());
 
         let lines = detail_metadata_lines(&item, 20);
         let availability = lines
@@ -1835,8 +1838,8 @@ mod tests {
                 created_at: "2026-06-19T12:00:00Z".to_string(),
                 updated_at: "2026-06-20T12:00:00Z".to_string(),
                 queue_activity_at: "2026-06-20T12:00:00Z".to_string(),
-                available_at: String::new(),
-                due_on: String::new(),
+                available_at: None,
+                due_on: None,
                 deleted: false,
                 is_epic: false,
             },

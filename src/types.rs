@@ -16,8 +16,8 @@ pub(crate) struct Task {
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
     pub(crate) queue_activity_at: String,
-    pub(crate) available_at: String,
-    pub(crate) due_on: String,
+    pub(crate) available_at: Option<String>,
+    pub(crate) due_on: Option<String>,
     pub(crate) deleted: bool,
     pub(crate) is_epic: bool,
 }

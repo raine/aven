@@ -132,8 +132,8 @@ impl TaskField {
             Self::Project => task.project_id.to_string(),
             Self::Status => task.status.as_str().to_string(),
             Self::Priority => task.priority.as_str().to_string(),
-            Self::AvailableAt => task.available_at.clone(),
-            Self::DueOn => task.due_on.clone(),
+            Self::AvailableAt => task.available_at.clone().unwrap_or_default(),
+            Self::DueOn => task.due_on.clone().unwrap_or_default(),
             Self::Deleted => {
                 if task.deleted {
                     "1".to_string()

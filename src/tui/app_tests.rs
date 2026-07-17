@@ -53,8 +53,8 @@ fn test_task_draft(title: &str) -> TaskDraft {
         status: "inbox".to_string(),
         priority: "none".to_string(),
         labels: Vec::new(),
-        available_at: String::new(),
-        due_on: String::new(),
+        available_at: None,
+        due_on: None,
         is_epic: false,
     }
 }
@@ -1452,8 +1452,8 @@ mod command_and_config_overlays {
                 status: "inbox".to_string(),
                 priority: "urgent".to_string(),
                 labels: Vec::new(),
-                available_at: String::new(),
-                due_on: String::new(),
+                available_at: None,
+                due_on: None,
                 is_epic: false,
             },
         )
@@ -1874,8 +1874,8 @@ mod filters_and_workspaces {
                         status: "inbox".to_string(),
                         priority: "none".to_string(),
                         labels: Vec::new(),
-                        available_at: String::new(),
-                        due_on: String::new(),
+                        available_at: None,
+                        due_on: None,
                         is_epic: false,
                     },
                     None,
@@ -1917,8 +1917,8 @@ mod filters_and_workspaces {
                 status: "inbox".to_string(),
                 priority: "urgent".to_string(),
                 labels: vec!["backend".to_string()],
-                available_at: String::new(),
-                due_on: String::new(),
+                available_at: None,
+                due_on: None,
                 is_epic: false,
             },
         )
@@ -3223,8 +3223,8 @@ mod authoring {
             .create_task(
                 TaskDraft {
                     title: "Scheduled refresh task".to_string(),
-                    available_at: "2999-11-01T04:00:00Z".to_string(),
-                    due_on: String::new(),
+                    available_at: Some("2999-11-01T04:00:00Z".to_string()),
+                    due_on: None,
                     ..test_task_draft("")
                 },
                 None,
@@ -3670,7 +3670,7 @@ mod authoring {
         app.store.show_view(TaskView::Upcoming).await.unwrap();
 
         assert_eq!(app.store.tasks.len(), 1);
-        assert!(!app.store.tasks[0].task.available_at.is_empty());
+        assert!(app.store.tasks[0].task.available_at.is_some());
     }
 
     #[tokio::test]
@@ -3689,9 +3689,10 @@ mod authoring {
 
         assert_eq!(app.store.tasks.len(), 1);
         let task = &app.store.tasks[0].task;
-        assert!(!task.available_at.is_empty());
-        assert_eq!(task.due_on.len(), 10);
-        assert!(task.due_on.as_str() > &task.available_at[..10]);
+        let available_at = task.available_at.as_deref().unwrap();
+        let due_on = task.due_on.as_deref().unwrap();
+        assert_eq!(due_on.len(), 10);
+        assert!(due_on > &available_at[..10]);
     }
 
     #[tokio::test]
@@ -4519,7 +4520,7 @@ mod detail_mode {
             .iter()
             .find(|item| item.task.id == task_id)
             .unwrap();
-        assert!(!task.task.available_at.is_empty());
+        assert!(task.task.available_at.is_some());
     }
 
     #[tokio::test]
@@ -4560,7 +4561,10 @@ mod detail_mode {
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
         let selected = app.widgets.table.selected().unwrap();
-        assert_eq!(app.store.tasks[selected].task.due_on, "2099-01-01");
+        assert_eq!(
+            app.store.tasks[selected].task.due_on.as_deref(),
+            Some("2099-01-01")
+        );
 
         app.begin_edit_due();
         app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
@@ -4568,11 +4572,14 @@ mod detail_mode {
             .unwrap();
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         let selected = app.widgets.table.selected().unwrap();
-        assert!(app.store.tasks[selected].task.due_on.is_empty());
+        assert!(app.store.tasks[selected].task.due_on.is_none());
 
         app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
         let selected = app.widgets.table.selected().unwrap();
-        assert_eq!(app.store.tasks[selected].task.due_on, "2099-01-01");
+        assert_eq!(
+            app.store.tasks[selected].task.due_on.as_deref(),
+            Some("2099-01-01")
+        );
     }
 
     #[tokio::test]
@@ -4602,7 +4609,10 @@ mod detail_mode {
                 Some(OverlayState::Detail { scroll: 2 })
             ));
             let selected = app.widgets.table.selected().unwrap();
-            assert_eq!(app.store.tasks[selected].task.available_at, expected);
+            assert_eq!(
+                app.store.tasks[selected].task.available_at.as_deref(),
+                Some(expected.as_str())
+            );
 
             app.refresh().await.unwrap();
             let selected = app.widgets.table.selected().unwrap();
@@ -4633,7 +4643,7 @@ mod detail_mode {
             Some(OverlayState::Detail { scroll: 2 })
         ));
         let selected = app.widgets.table.selected().unwrap();
-        assert!(app.store.tasks[selected].task.available_at.is_empty());
+        assert!(app.store.tasks[selected].task.available_at.is_none());
     }
 
     #[tokio::test]
@@ -4682,11 +4692,9 @@ mod detail_mode {
 
         app.show_view(TaskView::Queue).await.unwrap();
         assert!(
-            app.store
-                .tasks
-                .iter()
-                .any(|item| item.task.title == "Clear from list"
-                    && item.task.available_at.is_empty())
+            app.store.tasks.iter().any(
+                |item| item.task.title == "Clear from list" && item.task.available_at.is_none()
+            )
         );
     }
 
@@ -4808,8 +4816,8 @@ mod detail_mode {
                 status: "inbox".to_string(),
                 priority: "none".to_string(),
                 labels: vec!["bug".to_string()],
-                available_at: String::new(),
-                due_on: String::new(),
+                available_at: None,
+                due_on: None,
                 is_epic: false,
             },
         )

@@ -315,6 +315,10 @@ pub(crate) async fn insert_change(
     Ok(change_id)
 }
 
+fn optional_task_date(value: String) -> Option<String> {
+    (!value.is_empty()).then_some(value)
+}
+
 pub(crate) fn task_from_row(row: &SqliteRow) -> Result<Task> {
     Ok(Task {
         id: row.try_get("id")?,
@@ -329,8 +333,8 @@ pub(crate) fn task_from_row(row: &SqliteRow) -> Result<Task> {
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
         queue_activity_at: row.try_get("queue_activity_at")?,
-        available_at: row.try_get("available_at")?,
-        due_on: row.try_get("due_on")?,
+        available_at: optional_task_date(row.try_get("available_at")?),
+        due_on: optional_task_date(row.try_get("due_on")?),
         deleted: row.try_get::<i64, _>("deleted")? != 0,
         is_epic: row.try_get::<i64, _>("is_epic")? != 0,
     })
@@ -390,6 +394,51 @@ pub(crate) async fn conflict_exists(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn task_from_row_maps_empty_dates_to_absence() {
+        let mut conn = SqliteConnection::connect(":memory:")
+            .await
+            .expect("open db");
+        let row = sqlx::query(
+            "SELECT 'TASK000000000001' AS id,
+                    '0000000000000000' AS workspace_id,
+                    'optional dates' AS title,
+                    '' AS description,
+                    '0000000000000001' AS project_id,
+                    'app' AS project_key,
+                    'APP' AS project_prefix,
+                    'todo' AS status,
+                    'none' AS priority,
+                    't' AS created_at,
+                    't' AS updated_at,
+                    't' AS queue_activity_at,
+                    '' AS available_at,
+                    '' AS due_on,
+                    0 AS deleted,
+                    0 AS is_epic",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .expect("row");
+
+        let task = task_from_row(&row).unwrap();
+
+        assert_eq!(task.available_at, None);
+        assert_eq!(task.due_on, None);
+    }
+
+    #[test]
+    fn task_date_boundary_preserves_present_values() {
+        assert_eq!(
+            optional_task_date("2099-01-01T00:00:00Z".to_string()).as_deref(),
+            Some("2099-01-01T00:00:00Z")
+        );
+        assert_eq!(
+            optional_task_date("2099-01-01".to_string()).as_deref(),
+            Some("2099-01-01")
+        );
+    }
 
     #[tokio::test]
     async fn task_from_row_rejects_invalid_status_and_priority() {

@@ -65,9 +65,9 @@ pub(crate) fn queue_meta_on(
 ) -> QueueMeta {
     let available = available_since_defer(task, now_seconds);
     let visible = work_visible(task, now_seconds);
-    let due = crate::due::due_state(&task.due_on, local_today);
+    let due = crate::due::due_state(task.due_on.as_deref().unwrap_or(""), local_today);
     let activity_at = if available {
-        &task.available_at
+        task.available_at.as_deref().unwrap_or("")
     } else {
         &task.queue_activity_at
     };
@@ -156,16 +156,16 @@ pub(crate) fn unix_seconds(value: &str) -> Option<i64> {
 pub(crate) fn work_visible(task: &Task, now_seconds: i64) -> bool {
     !task.deleted
         && task.status.is_open()
-        && (task.available_at.is_empty()
-            || unix_seconds(&task.available_at)
-                .is_some_and(|available_at| available_at <= now_seconds))
+        && task.available_at.as_deref().is_none_or(|available_at| {
+            unix_seconds(available_at).is_some_and(|available_at| available_at <= now_seconds)
+        })
 }
 
 pub(crate) fn available_since_defer(task: &Task, now_seconds: i64) -> bool {
     if task.deleted || !task.status.is_open() {
         return false;
     }
-    let Some(available_at) = unix_seconds(&task.available_at) else {
+    let Some(available_at) = task.available_at.as_deref().and_then(unix_seconds) else {
         return false;
     };
     if available_at > now_seconds {
@@ -277,8 +277,8 @@ mod tests {
             created_at: queue_activity_at.to_string(),
             updated_at: queue_activity_at.to_string(),
             queue_activity_at: queue_activity_at.to_string(),
-            available_at: String::new(),
-            due_on: String::new(),
+            available_at: None,
+            due_on: None,
             deleted: false,
             is_epic: false,
         }
@@ -370,7 +370,7 @@ mod tests {
     #[test]
     fn deferred_task_surfaces_when_it_becomes_available() {
         let mut deferred = task("inbox", "none", "1000");
-        deferred.available_at = "2000".to_string();
+        deferred.available_at = Some("2000".to_string());
 
         let meta = queue_meta(&deferred, false, false, 0, 2000);
 
@@ -381,7 +381,7 @@ mod tests {
     #[test]
     fn activity_after_availability_acknowledges_resurfacing() {
         let mut deferred = task("inbox", "none", "1000");
-        deferred.available_at = "2000".to_string();
+        deferred.available_at = Some("2000".to_string());
         deferred.updated_at = "2001".to_string();
         deferred.queue_activity_at = "2001".to_string();
 
@@ -394,7 +394,7 @@ mod tests {
     #[test]
     fn blocked_deferred_task_remains_blocked_when_available() {
         let mut deferred = task("todo", "none", "1000");
-        deferred.available_at = "2000".to_string();
+        deferred.available_at = Some("2000".to_string());
 
         assert_eq!(
             queue_meta(&deferred, false, true, 0, 2000).band,
@@ -406,9 +406,9 @@ mod tests {
     fn due_today_and_overdue_visible_tasks_need_action() {
         let today = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
         let mut due_today = task("todo", "none", "1000");
-        due_today.due_on = "2026-07-16".to_string();
+        due_today.due_on = Some("2026-07-16".to_string());
         let mut overdue = task("inbox", "none", "1000");
-        overdue.due_on = "2026-07-15".to_string();
+        overdue.due_on = Some("2026-07-15".to_string());
 
         assert_eq!(
             queue_meta_on(&due_today, false, false, 0, 2000, today).band,
@@ -424,7 +424,7 @@ mod tests {
     fn due_does_not_override_blockers_epics_or_future_availability() {
         let today = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
         let mut due = task("todo", "none", "1000");
-        due.due_on = "2026-07-15".to_string();
+        due.due_on = Some("2026-07-15".to_string());
         assert_eq!(
             queue_meta_on(&due, false, true, 0, 2000, today).band,
             QueueBand::Blocked
@@ -433,15 +433,15 @@ mod tests {
         due.is_epic = true;
         let epic_with_due = queue_meta_on(&due, false, false, 0, 2000, today);
         assert_eq!(epic_with_due.band, QueueBand::Epics);
-        due.due_on.clear();
+        due.due_on = None;
         assert_eq!(
             epic_with_due.score,
             queue_meta_on(&due, false, false, 0, 2000, today).score
         );
 
         due.is_epic = false;
-        due.due_on = "2026-07-15".to_string();
-        due.available_at = "3000".to_string();
+        due.due_on = Some("2026-07-15".to_string());
+        due.available_at = Some("3000".to_string());
         assert_eq!(
             queue_meta_on(&due, false, false, 0, 2000, today).band,
             QueueBand::Later
@@ -452,9 +452,9 @@ mod tests {
     fn due_week_adds_bounded_queue_weight() {
         let today = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
         let mut near = task("todo", "medium", "1000");
-        near.due_on = "2026-07-17".to_string();
+        near.due_on = Some("2026-07-17".to_string());
         let mut far = near.clone();
-        far.due_on = "2026-07-23".to_string();
+        far.due_on = Some("2026-07-23".to_string());
 
         let near_score = queue_meta_on(&near, false, false, 0, 2000, today).score;
         let far_score = queue_meta_on(&far, false, false, 0, 2000, today).score;

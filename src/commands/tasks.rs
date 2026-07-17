@@ -67,14 +67,12 @@ pub(crate) async fn cmd_add(
                 .available_at
                 .as_deref()
                 .map(crate::time_input::parse_available_at_input)
-                .transpose()?
-                .unwrap_or_default(),
+                .transpose()?,
             due_on: args
                 .due
                 .as_deref()
                 .map(crate::time_input::parse_due_on_input)
-                .transpose()?
-                .unwrap_or_default(),
+                .transpose()?,
             is_epic: args.epic,
         }
     };
@@ -154,26 +152,22 @@ fn print_created_task(task: &Task, workspace: &Workspace, display_refs: &Display
         task.project_key,
         task.status,
         task.priority,
-        available_at_display(&task.available_at),
-        due_on_display(&task.due_on),
+        available_at_display(task.available_at.as_deref()),
+        due_on_display(task.due_on.as_deref()),
         quote(&task.title)
     );
 }
 
-fn available_at_display(available_at: &str) -> String {
-    if available_at.is_empty() {
-        String::new()
-    } else {
-        format!(" available_at={available_at}")
-    }
+fn available_at_display(available_at: Option<&str>) -> String {
+    available_at
+        .map(|available_at| format!(" available_at={available_at}"))
+        .unwrap_or_default()
 }
 
-fn due_on_display(due_on: &str) -> String {
-    if due_on.is_empty() {
-        String::new()
-    } else {
-        format!(" due_on={due_on}")
-    }
+fn due_on_display(due_on: Option<&str>) -> String {
+    due_on
+        .map(|due_on| format!(" due_on={due_on}"))
+        .unwrap_or_default()
 }
 
 async fn build_full_task_report(
@@ -442,23 +436,25 @@ pub(crate) async fn cmd_edit(
         );
     }
     let available_at = if args.clear_available_at {
-        Some(String::new())
+        Some(None)
     } else {
         args.available_at
             .as_deref()
             .map(crate::time_input::parse_available_at_input)
             .transpose()?
+            .map(Some)
     };
     let due_on = if args.clear_due {
         if args.due.is_some() {
             bail!("error due-conflict hint=\"use --due or --clear-due, not both\"");
         }
-        Some(String::new())
+        Some(None)
     } else {
         args.due
             .as_deref()
             .map(crate::time_input::parse_due_on_input)
             .transpose()?
+            .map(Some)
     };
     let is_epic = parse_epic_switch(args.epic)?;
     let outcome = update_task(
@@ -487,8 +483,8 @@ pub(crate) async fn cmd_edit(
         changed_text(outcome.changed),
         task.status,
         task.priority,
-        available_at_display(&task.available_at),
-        due_on_display(&task.due_on),
+        available_at_display(task.available_at.as_deref()),
+        due_on_display(task.due_on.as_deref()),
         quote(&task.title)
     );
     Ok(())

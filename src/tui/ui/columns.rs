@@ -459,8 +459,11 @@ fn card_marker_spans(item: &crate::query::TaskListItem, marked: bool) -> Vec<Spa
         ));
     }
     if item.task.status.is_open()
-        && crate::tui::time::due_state_at(&item.task.due_on, crate::queue::now_seconds())
-            .needs_action()
+        && crate::tui::time::due_state_at(
+            item.task.due_on.as_deref().unwrap_or(""),
+            crate::queue::now_seconds(),
+        )
+        .needs_action()
     {
         spans.push(Span::styled(
             " !",
@@ -551,8 +554,8 @@ mod tests {
                 created_at: String::new(),
                 updated_at: String::new(),
                 queue_activity_at: String::new(),
-                available_at: String::new(),
-                due_on: String::new(),
+                available_at: None,
+                due_on: None,
                 deleted: false,
                 is_epic: false,
             },
@@ -658,7 +661,7 @@ mod tests {
     #[test]
     fn overdue_cards_show_deadline_marker() {
         let mut task = item(0);
-        task.task.due_on = "2000-01-01".to_string();
+        task.task.due_on = Some("2000-01-01".to_string());
         let markers = card_marker_spans(&task, false);
 
         assert!(markers.iter().any(|span| span.content == " !"));

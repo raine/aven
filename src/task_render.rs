@@ -12,14 +12,8 @@ pub(crate) fn print_task_line_item(item: &TaskListItem) {
         .optional("conflicts", item.has_conflict.then(|| "yes".to_string()))
         .optional("deleted", item.task.deleted.then(|| "yes".to_string()))
         .optional("epic", item.task.is_epic.then(|| "yes".to_string()))
-        .optional(
-            "available_at",
-            (!item.task.available_at.is_empty()).then(|| item.task.available_at.clone()),
-        )
-        .optional(
-            "due_on",
-            (!item.task.due_on.is_empty()).then(|| item.task.due_on.clone()),
-        )
+        .optional("available_at", item.task.available_at.clone())
+        .optional("due_on", item.task.due_on.clone())
         .optional(
             "blocked_by",
             (item.unresolved_blocker_count > 0).then(|| item.unresolved_blocker_count.to_string()),
@@ -161,8 +155,8 @@ pub(crate) fn task_line_json_item(item: &TaskListItem) -> TaskLineJson {
         has_conflict: item.has_conflict,
         blocked_by: item.unresolved_blocker_count,
         blocks: item.dependent_count,
-        available_at: item.task.available_at.clone(),
-        due_on: item.task.due_on.clone(),
+        available_at: item.task.available_at.clone().unwrap_or_default(),
+        due_on: item.task.due_on.clone().unwrap_or_default(),
         created_at: item.task.created_at.clone(),
         updated_at: item.task.updated_at.clone(),
     }

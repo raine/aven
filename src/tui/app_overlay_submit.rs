@@ -69,10 +69,10 @@ impl App {
         }
 
         let available_at = if state.available_at.text.trim().is_empty() {
-            String::new()
+            None
         } else {
             match crate::time_input::parse_available_at_input(&state.available_at.text) {
-                Ok(value) => value,
+                Ok(value) => Some(value),
                 Err(error) => {
                     state.focus = AddTaskStep::AvailableAt;
                     state.mode = AddTaskMode::Compose;
@@ -83,10 +83,10 @@ impl App {
             }
         };
         let due_on = if state.due_on.text.trim().is_empty() {
-            String::new()
+            None
         } else {
             match crate::time_input::parse_due_on_input(&state.due_on.text) {
-                Ok(value) => value,
+                Ok(value) => Some(value),
                 Err(error) => {
                     state.focus = AddTaskStep::Due;
                     state.mode = AddTaskMode::Compose;
