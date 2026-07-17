@@ -91,6 +91,14 @@ When `sync.server_url` is configured, `aven sync` can omit `--server`:
 aven sync
 ```
 
+When tasks have image attachments, metadata travels in the operation log while blob bytes use authenticated attachment endpoints. A sync round transfers at most 16 unique blobs and 64 MiB across uploads and downloads. A round that has completed no transfer may take one otherwise valid blob beyond its remaining byte budget so large backlogs keep progressing.
+
+Sync output includes uploaded and downloaded blob counts and byte totals, remaining upload and download counts and bytes, the cursor, and completion state. `complete=false` means metadata or live attachment bytes remain. Interactive sync runs additional bounded rounds while progress is possible. Only attachments on live tasks are downloaded, and duplicate references to one content hash transfer one physical blob.
+
+:::note[Attachment ordering]
+Aven confirms attachment bytes and workspace quota capacity on the server before pushing dependent attachment metadata. Pulled metadata and cursor progress commit before local blob downloads, so a failed download remains pending for a later round without replaying applied metadata.
+:::
+
 :::note[Server pinning]
 A local database pins the sync server it has used. Use a fresh database for a different server.
 :::

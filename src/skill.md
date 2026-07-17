@@ -194,9 +194,14 @@ aven daemon
 aven daemon restart
 ```
 
-- Sync output reports pushed and pulled counts, attachment blob upload and
-  download counts, a cursor, and completion state. Blob counts are separate from
+- Sync output reports pushed and pulled metadata counts, attachment blob upload and
+  download counts and byte totals, remaining blob counts and bytes, a cursor, and
+  completion state. Blob counts are unique by content hash and stay separate from
   metadata change counts.
+- Each attachment transfer round allows up to 16 unique blobs and 64 MiB across
+  uploads and downloads. `complete=false` means metadata or live attachment bytes
+  remain, and interactive sync continues through bounded rounds while progress is
+  possible.
 - Sync transfers attachment bytes through authenticated blob endpoints and keeps
   bytes out of `/sync` JSON payloads.
 - `aven daemon restart` restarts the macOS LaunchAgent service.

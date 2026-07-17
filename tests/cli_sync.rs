@@ -19,7 +19,19 @@ const SYNC_OPPOSITE_DEP_CHANGE_ID: &str = "FFFFFFFFFFFFFFFF";
 const SYNC_CLIENT_ID: &str = "GGGGGGGGGGGGGGGG";
 const MAX_PUSH_BATCH: usize = 256;
 const MAX_PULL_BATCH: usize = 512;
-const SYNC_PROTOCOL_VERSION: u32 = 8;
+const SYNC_PROTOCOL_VERSION: u32 = 9;
+
+fn sync_round_values(output: &str, key: &str) -> Vec<u64> {
+    output
+        .lines()
+        .filter(|line| line.starts_with("synced "))
+        .filter_map(|line| {
+            line.split_whitespace()
+                .find_map(|field| field.strip_prefix(&format!("{key}=")))
+                .and_then(|value| value.parse().ok())
+        })
+        .collect()
+}
 
 fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
     let output = ok(env.aven(db, ["sync", "--server", &server.url]));
@@ -2396,7 +2408,7 @@ fn missing_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=0 server=8",
+        "error sync-protocol-unsupported client=0 server=9",
     );
 }
 
@@ -2405,7 +2417,7 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let body = serde_json::json!({
-        "protocol_version": 7,
+        "protocol_version": 8,
         "client_id": "old-client",
         "after": 0,
         "changes": [project_change_json("old-version-change", "old-version")]
@@ -2416,7 +2428,7 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=7 server=8",
+        "error sync-protocol-unsupported client=8 server=9",
     );
 }
 
@@ -2425,7 +2437,7 @@ fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let body = serde_json::json!({
-        "protocol_version": 9,
+        "protocol_version": 10,
         "client_id": "new-client",
         "after": 0,
         "changes": [project_change_json("new-version-change", "new-version")]
@@ -2436,7 +2448,7 @@ fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=9 server=8",
+        "error sync-protocol-unsupported client=10 server=9",
     );
 }
 
@@ -2458,7 +2470,7 @@ fn wrong_response_protocol_version_is_rejected() {
     let error = fail(env.aven(&db, ["sync", "--server", &url]));
     contains_all(
         &error,
-        &["error sync-protocol-unsupported client=8 server=0"],
+        &["error sync-protocol-unsupported client=9 server=0"],
     );
     assert_eq!(
         scalar_i64(&db, "SELECT count(*) FROM changes"),
@@ -3010,6 +3022,193 @@ fn attachment_metadata_and_blobs_round_trip_through_real_sync_server() {
     let json_output = ok(env.aven(&b, ["attachment", "list", &task_ref, "--json"]));
     contains_all(&json_output, &["attachment_id", "has_blob"]);
     contains_none(&json_output, &["attachment-bytes"]);
+}
+
+#[test]
+fn attachment_backlog_syncs_in_bounded_unique_hash_rounds() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("bounded-attachment-client-a.sqlite");
+    let b = env.db("bounded-attachment-client-b.sqlite");
+    let task_ref = extract_ref(&ok(
+        env.aven(&a, ["add", "bounded attachments", "--project", "app"])
+    ));
+
+    let mut first_image = None;
+    for index in 0..17 {
+        let image = env.path(&format!("bounded-{index}.png"));
+        std::fs::write(&image, png_bytes(index + 1, 1)).expect("write attachment image");
+        ok(env.aven(
+            &a,
+            ["attachment", "add", &task_ref, image.to_str().unwrap()],
+        ));
+        if index == 0 {
+            first_image = Some(image);
+        }
+    }
+    ok(env.aven(
+        &a,
+        [
+            "attachment",
+            "add",
+            &task_ref,
+            first_image.unwrap().to_str().unwrap(),
+        ],
+    ));
+
+    let push_output = ok(env.aven(&a, ["sync", "--server", &server.url]));
+    let uploads = sync_round_values(&push_output, "blob_uploaded");
+    assert_eq!(uploads.iter().sum::<u64>(), 17, "{push_output}");
+    assert!(uploads.iter().all(|count| *count <= 16), "{push_output}");
+    contains_all(
+        &push_output,
+        &["blob_upload_remaining=1", "complete=false", "complete=true"],
+    );
+    contains_none(&push_output, &["bounded attachments", "bounded-0.png"]);
+
+    let pull_output = ok(env.aven(&b, ["sync", "--server", &server.url]));
+    let downloads = sync_round_values(&pull_output, "blob_downloaded");
+    assert_eq!(downloads.iter().sum::<u64>(), 17, "{pull_output}");
+    assert!(downloads.iter().all(|count| *count <= 16), "{pull_output}");
+    contains_all(
+        &pull_output,
+        &[
+            "blob_download_remaining=1",
+            "complete=false",
+            "complete=true",
+        ],
+    );
+    contains_none(&pull_output, &["bounded attachments", "bounded-0.png"]);
+    assert_eq!(scalar_i64(&b, "SELECT count(*) FROM task_attachments"), 18);
+    assert_eq!(scalar_i64(&b, "SELECT count(*) FROM blob_inventory"), 17);
+}
+
+#[test]
+fn server_workspace_quota_rejects_blob_before_attachment_metadata() {
+    let env = TestEnv::new();
+    env.write_config("local:\n  attachment_lifecycle:\n    server_workspace_quota_bytes: 1\n");
+    let server = TestServer::start_configured(&env, "quota-server.sqlite");
+    let db = env.db("quota-client.sqlite");
+    let task_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "quota attachment", "--project", "app"])
+    ));
+    let image = env.path("quota.png");
+    std::fs::write(&image, png_bytes(2, 2)).expect("write quota image");
+    ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+
+    let error = fail(env.aven(&db, ["sync", "--server", &server.url]));
+
+    contains_all(&error, &["attachment-quota-exceeded"]);
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM changes WHERE op_type = 'attachment_add' AND server_seq IS NULL",
+        ),
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            &env.path("quota-server.sqlite"),
+            "SELECT count(*) FROM server_blob_references",
+        ),
+        0
+    );
+}
+
+#[test]
+fn pulled_attachment_on_deleted_task_does_not_schedule_blob_download() {
+    let env = TestEnv::new();
+    let db = env.db("deleted-task-attachment.sqlite");
+    ok(env.aven(&db, ["add", "deleted attachment task", "--project", "app"]));
+    let task_id = local_task_id(&db, "deleted attachment task");
+    exec_sql(
+        &db,
+        "UPDATE tasks SET deleted = 1; UPDATE changes SET server_seq = local_seq",
+    );
+    let change = remote_attachment_add("ATTACHMENTADD001", &task_id, 1);
+    let (url, server) = start_fake_sync_server(sync_response(1, [change]));
+
+    let output = ok(env.aven(&db, ["sync", "--server", &url]));
+
+    contains_all(
+        &output,
+        &[
+            "blob_downloaded=0",
+            "blob_download_remaining=0",
+            "complete=true",
+        ],
+    );
+    assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("1"));
+    assert_eq!(scalar_i64(&db, "SELECT count(*) FROM blob_inventory"), 0);
+    server.join().expect("fake sync server exits");
+}
+
+#[test]
+fn download_failure_preserves_applied_metadata_and_cursor() {
+    use sha2::{Digest, Sha256};
+    use std::io::{BufRead as _, BufReader, Write as _};
+    use std::net::TcpListener;
+
+    let env = TestEnv::new();
+    let db = env.db("download-failure-cursor.sqlite");
+    ok(env.aven(&db, ["add", "download failure task", "--project", "app"]));
+    exec_sql(&db, "UPDATE changes SET server_seq = local_seq");
+    let task_id = local_task_id(&db, "download failure task");
+    let bytes = png_bytes(2, 2);
+    let sha256 = hex::encode(Sha256::digest(&bytes));
+    let mut change = remote_attachment_add("ATTACHMENTADD001", &task_id, 1);
+    change["payload"]["sha256"] = json!(sha256);
+    change["payload"]["byte_size"] = json!(bytes.len());
+    change["payload"]["width"] = json!(2);
+    change["payload"]["height"] = json!(2);
+    let response = sync_response(1, [change]).to_string();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake blob server");
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut sync_stream, _) = listener.accept().expect("accept sync request");
+        let mut reader = BufReader::new(sync_stream.try_clone().unwrap());
+        let mut line = String::new();
+        loop {
+            line.clear();
+            reader.read_line(&mut line).expect("read sync request");
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+        }
+        write!(
+            sync_stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            response.len(),
+            response
+        )
+        .expect("write sync response");
+
+        let (mut blob_stream, _) = listener.accept().expect("accept blob request");
+        let mut reader = BufReader::new(blob_stream.try_clone().unwrap());
+        loop {
+            line.clear();
+            reader.read_line(&mut line).expect("read blob request");
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+        }
+        write!(
+            blob_stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/octet-stream\r\ncontent-length: 3\r\nconnection: close\r\n\r\nbad"
+        )
+        .expect("write malformed blob response");
+    });
+
+    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+
+    contains_all(&error, &["error attachment-blob-remote-invalid"]);
+    assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("1"));
+    assert_eq!(scalar_i64(&db, "SELECT count(*) FROM task_attachments"), 1);
+    assert_eq!(scalar_i64(&db, "SELECT count(*) FROM blob_inventory"), 0);
+    server.join().expect("fake blob server exits");
 }
 
 #[tokio::test]

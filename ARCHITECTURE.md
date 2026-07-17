@@ -33,7 +33,7 @@
 2. `src/operations/attachments.rs` validates decoded content, derives canonical media type and dimensions, canonicalizes bytes for optimization-enabled sources, stores bytes through `src/attachments/storage.rs`, and records `attachment_add` or `attachment_delete` change rows with `field = "attachments"`. Task creation with pending attachments is sequenced by `src/operations/tasks.rs`: it prepares and durably stages every distinct object before opening one immediate transaction for task rows, inventory, attachment metadata, field versions, and change rows. Staging reports physical-object ownership so failed operations can remove only invocation-created, freshly unreferenced objects.
 3. `src/config.rs` resolves `local.blob_dir`: absolute paths are used directly, relative paths are rooted beside the active SQLite database, and omitted values use `<resolved-db-path>.blobs`.
 4. `src/task_enrichment.rs` and query hydration load attachment metadata with `has_blob`; show, context, JSON, search, and TUI surfaces consume that read model without reading bytes.
-5. `src/sync/client.rs` uploads missing local blobs before pushing attachment metadata, posts JSON metadata through `/sync`, downloads missing pulled blobs after page apply, and reports `blob_uploaded` and `blob_downloaded` counts separately from change counts.
+5. `src/sync/planner.rs` deterministically selects unique blob hashes under the shared object and byte budget. `src/sync/client.rs` uploads the selected missing local blobs before pushing the largest admissible attachment-metadata prefix, applies pulled metadata and cursor progress before local downloads, and drains interactive work through repeated bounded rounds.
 6. `src/sync/server.rs` serves `/sync/blobs/missing`, `PUT /sync/blobs/<sha256>`, and `GET /sync/blobs/<sha256>` behind the same auth path as sync metadata.
 7. `src/commands/data_safety/` packages the database and sidecar objects in backup archives, keeps JSON export metadata-only with `blobs_included: false`, marks imported blob inventory unavailable, and exposes attachment consistency checks for `doctor`.
 8. `src/attachments/lifecycle.rs` persists final-reference transitions, classifies live and protected hashes, enforces unique-original quotas, coordinates staging, transfer, read, backup, and upload leases, and prunes through recoverable `trash/` moves with an immediate policy recheck. Daemon sync, server sync work, explicit prune, and quota admission run bounded maintenance. `aven doctor` consumes the same classification policy. Preview cache eviction has an independent byte bound.
@@ -54,13 +54,13 @@
 
 1. Local mutations append operation-log rows in `changes`.
 2. Unsynced rows have `server_seq IS NULL`.
-3. `src/sync/client.rs` posts at most `MAX_PUSH_BATCH` unsynced rows, the current `sync_cursor` as `after`, and `MAX_PULL_BATCH` as `pull_limit` to `/sync`.
+3. `src/sync/client.rs` selects the largest deterministic unsynced change prefix whose unique missing attachment blobs fit the round's remaining transfer budget, uploads those blobs under workspace quota reservations, then posts at most `MAX_PUSH_BATCH` rows with the current `sync_cursor` as `after` and `MAX_PULL_BATCH` as `pull_limit`.
 4. `src/sync/wire.rs` owns the protocol version, request limits, cursor validation, response validation, and daemon sync budget constants.
 5. `src/sync/server.rs` validates operation names, entity types, protocol version, batch bounds, pull limits, cursors, and payload shapes before assigning server sequence numbers.
 6. The server assigns strictly increasing `server_seq` values to accepted changes, reuses existing values for duplicate pushed change IDs, returns one bounded pull page, and sets `has_more` when rows remain after the page.
 7. Remote apply updates local tables transactionally, records conflicts for scalar field version mismatches, applies push acknowledgements, then advances `sync_cursor` to the response cursor.
-8. `src/sync/client.rs` validates each response before applying it. Response changes must fit the requested pull limit, have strictly increasing `server_seq` values after the cursor, match the response cursor, and include one push acknowledgement for each pushed change.
-9. The CLI sync path drains bounded push and pull pages until local unsynced backlog and remote `has_more` are both empty.
+8. `src/sync/client.rs` validates each response before applying it. Response changes must fit the requested pull limit, have strictly increasing `server_seq` values after the cursor, match the response cursor, and include one push acknowledgement for each pushed change. Pulled attachment metadata and cursor advancement commit independently of subsequent blob download success.
+9. The CLI sync path drains metadata pages and attachment bytes through repeated rounds. Each round shares one 16-object, 64 MiB budget across uploads and live-attachment downloads, with a one-object progress allowance when the round has completed no transfer.
 10. `src/daemon.rs` calls `run_sync_with_page_budget` with `DAEMON_SYNC_PAGE_BUDGET`; incomplete daemon rounds report counts, cursor, completion, and page count, then schedule prompt follow-up sync work.
 
 ## Data ownership
@@ -113,7 +113,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Keep attachment bytes outside SQLite task descriptions, JSON sync change payloads, JSON export files, and default command output. Only `attachment get --output <path>` writes bytes to a caller-chosen file.
 - Keep attachment metadata and byte availability separate. `task_attachments` is synced domain metadata; `blob_inventory` and sidecar files describe local byte availability.
 - Keep attachment validation centralized in `src/attachments/validation.rs` and byte persistence centralized in `src/attachments/storage.rs`.
-- Keep sync attachment privacy-safe. Logs and stdout include counts such as `blob_uploaded` and `blob_downloaded`, not filenames, alt text, hashes, sidecar paths, raw payloads, or bytes.
+- Keep sync attachment privacy-safe. Logs and stdout include change counts, unique blob counts, byte totals, remaining counts and bytes, cursor, and completion state, not filenames, alt text, hashes, sidecar paths, raw payloads, or bytes.
 - Keep backup archives as the data-safety path for local bytes. JSON export/import remains metadata-only, with imported blob inventory unavailable until bytes arrive through backup restore or sync.
 - Derive TUI task list filters, query mode, and render mode from `TaskViewState`; do not keep parallel project, status, view, or queue-sort state.
 - Keep live search preview state transitions and worker ownership in `SearchController` in `src/tui/app_search.rs`; keep search overlay coordination in `App` helpers, search read-model behavior in `src/query/`, and overlay rendering in `src/tui/ui/overlays/search.rs`.
@@ -127,7 +127,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Do not log auth tokens, raw sync payloads, task descriptions, note bodies, user-authored labels or project names, or secret config values.
 - Keep epic membership represented by `tasks.is_epic` and `task_epic_links`. Dependency read models represent ordering only. JSON task surfaces include `is_epic`, `epic_parent`, and `epic_children` so agents can keep membership separate from blockers.
 - Keep sync protocol changes aligned across `src/sync/wire.rs`, `src/sync/client.rs`, `src/sync/server.rs`, `src/sync/apply.rs`, and `src/daemon.rs`. Request and response validation must match the client page loop and server page construction.
-- Keep bounded sync limits explicit: `MAX_PUSH_BATCH` bounds client push pages, `MAX_PULL_BATCH` bounds server pull pages, and `DAEMON_SYNC_PAGE_BUDGET` bounds daemon work per wake.
+- Keep bounded sync limits explicit: `MAX_PUSH_BATCH` bounds client push pages, `MAX_PULL_BATCH` bounds server pull pages, `MAX_BLOB_TRANSFER_OBJECTS` and `MAX_BLOB_TRANSFER_BYTES` bound each shared upload and download round, and `DAEMON_SYNC_PAGE_BUDGET` bounds daemon metadata work per wake.
 - Keep cursor semantics based on `server_seq`. Pull pages are ordered by increasing `server_seq`; response cursors equal the last returned `server_seq` or the request cursor for an empty page; local `sync_cursor` advances only after a validated page applies successfully.
 - Keep daemon sync privacy-safe and budget-aware. Daemon logs and stdout include counts, cursor, completion, and page count without user content, and incomplete rounds schedule prompt follow-up sync work.
 - Route successful local mutation wake attempts through `daemon::wake_if_enabled`, which owns the sync-enabled condition, wake-address resolution, and wake logging.

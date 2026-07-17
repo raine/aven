@@ -12,7 +12,7 @@ use crate::change_log::op_type;
 use crate::ids::{BASE32, ProjectId, WorkspaceId};
 use crate::task_fields::TaskField;
 
-pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 8;
+pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 9;
 pub(crate) fn sync_server_url_is_valid(server: &str) -> bool {
     let Ok(url) = reqwest::Url::parse(server) else {
         return false;
@@ -26,7 +26,8 @@ pub(crate) fn sync_server_url_is_valid(server: &str) -> bool {
 }
 pub(crate) const MAX_PUSH_BATCH: usize = 256;
 pub(crate) const MAX_PULL_BATCH: u32 = 512;
-pub(crate) const MAX_BLOB_TRANSFER_BATCH: usize = 32;
+pub(crate) const MAX_BLOB_TRANSFER_OBJECTS: usize = 16;
+pub(crate) const MAX_BLOB_TRANSFER_BYTES: u64 = 64 * 1024 * 1024;
 pub(crate) const DAEMON_SYNC_PAGE_BUDGET: usize = 8;
 pub(crate) const DAEMON_INCOMPLETE_RESCHEDULE_MS: u64 = 100;
 
@@ -105,9 +106,19 @@ pub(super) struct SyncResponse {
     pub(super) changes: Vec<ChangeWire>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct BlobUploadContract {
+    pub(crate) workspace_id: String,
+    pub(crate) sha256: String,
+    pub(crate) byte_size: i64,
+    pub(crate) media_type: String,
+    pub(crate) width: i64,
+    pub(crate) height: i64,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct MissingBlobsRequest {
-    pub(crate) hashes: Vec<String>,
+    pub(crate) blobs: Vec<BlobUploadContract>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -115,11 +126,42 @@ pub(crate) struct MissingBlobsResponse {
     pub(crate) missing: Vec<String>,
 }
 
-pub(crate) fn validate_blob_hashes(hashes: &[String]) -> Result<()> {
-    if hashes.len() > MAX_BLOB_TRANSFER_BATCH {
+pub(crate) fn validate_blob_contracts(blobs: &[BlobUploadContract]) -> Result<()> {
+    if blobs.len() > MAX_PUSH_BATCH {
         bail!(
             "error blob-batch-too-large limit={} got={}",
-            MAX_BLOB_TRANSFER_BATCH,
+            MAX_PUSH_BATCH,
+            blobs.len()
+        );
+    }
+    let mut seen = HashSet::with_capacity(blobs.len());
+    let mut hashes = HashSet::with_capacity(blobs.len());
+    for blob in blobs {
+        ensure_sync_id("workspace_id", &blob.workspace_id)?;
+        validate_sha256_for_sync(&blob.sha256)?;
+        validate_blob_size_for_sync(blob.byte_size)?;
+        map_attachment_validation(validate_media_type(&blob.media_type))?;
+        map_attachment_validation(validate_dimensions(Some(blob.width), Some(blob.height)))?;
+        if !seen.insert((blob.workspace_id.as_str(), blob.sha256.as_str())) {
+            bail!("error duplicate-blob-contract");
+        }
+        hashes.insert(blob.sha256.as_str());
+    }
+    if hashes.len() > MAX_BLOB_TRANSFER_OBJECTS {
+        bail!(
+            "error blob-batch-too-large limit={} got={}",
+            MAX_BLOB_TRANSFER_OBJECTS,
+            hashes.len()
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_blob_hashes(hashes: &[String]) -> Result<()> {
+    if hashes.len() > MAX_BLOB_TRANSFER_OBJECTS {
+        bail!(
+            "error blob-batch-too-large limit={} got={}",
+            MAX_BLOB_TRANSFER_OBJECTS,
             hashes.len()
         );
     }

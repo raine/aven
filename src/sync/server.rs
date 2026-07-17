@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
@@ -18,9 +19,9 @@ use tower_http::decompression::RequestDecompressionLayer;
 use tracing::{error, info, warn};
 
 use super::wire::{
-    ChangeRow, ChangeWire, MissingBlobsRequest, MissingBlobsResponse, PushAck,
-    SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse, validate_blob_hashes, validate_pushed_change,
-    validate_sync_request_envelope,
+    BlobUploadContract, ChangeRow, ChangeWire, MissingBlobsRequest, MissingBlobsResponse, PushAck,
+    SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse, validate_blob_contracts,
+    validate_blob_hashes, validate_pushed_change, validate_sync_request_envelope,
 };
 use crate::change_log::op_type;
 use crate::cli::ServerArgs;
@@ -202,11 +203,16 @@ async fn missing_blobs_handler(
     State(state): State<ServerState>,
     Json(request): Json<MissingBlobsRequest>,
 ) -> Response {
-    if let Err(err) = validate_blob_hashes(&request.hashes) {
+    if let Err(err) = validate_blob_contracts(&request.blobs) {
         return (StatusCode::BAD_REQUEST, err.to_string()).into_response();
     }
-    match missing_blob_hashes(&state.pool, &state.blob_dir, &request.hashes).await {
+    match prepare_blob_uploads(&state, &request.blobs).await {
         Ok(missing) => Json(MissingBlobsResponse { missing }).into_response(),
+        Err(err) if err.to_string().contains("attachment-quota-exceeded") => (
+            StatusCode::INSUFFICIENT_STORAGE,
+            "error attachment-quota-exceeded".to_string(),
+        )
+            .into_response(),
         Err(err) => internal_error(err).into_response(),
     }
 }
@@ -252,6 +258,53 @@ async fn put_blob_handler(
                 .into_response();
         }
     };
+    let contract = BlobUploadContract {
+        workspace_id: workspace_id.to_string(),
+        sha256: sha256.clone(),
+        byte_size: match required_i64_header(&headers, "x-aven-byte-size") {
+            Ok(value) => value,
+            Err(response) => return response.into_response(),
+        },
+        media_type: media_type.to_string(),
+        width: match required_i64_header(&headers, "x-aven-width") {
+            Ok(value) => value,
+            Err(response) => return response.into_response(),
+        },
+        height: match required_i64_header(&headers, "x-aven-height") {
+            Ok(value) => value,
+            Err(response) => return response.into_response(),
+        },
+    };
+    if let Err(err) = validate_blob_contracts(std::slice::from_ref(&contract)) {
+        return (StatusCode::BAD_REQUEST, err.to_string()).into_response();
+    }
+    if usize::try_from(contract.byte_size).ok() != Some(body.len()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "error blob-size-mismatch".to_string(),
+        )
+            .into_response();
+    }
+    let validated = match crate::attachments::decode::validate_image(
+        body.to_vec(),
+        Some(contract.media_type.clone()),
+    )
+    .await
+    {
+        Ok(validated)
+            if (validated.facts.width, validated.facts.height)
+                == (contract.width, contract.height) =>
+        {
+            validated
+        }
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "error blob-validation-failed".to_string(),
+            )
+                .into_response();
+        }
+    };
     let mut conn = match state.pool.acquire().await {
         Ok(conn) => conn,
         Err(err) => return internal_error(err).into_response(),
@@ -269,9 +322,9 @@ async fn put_blob_handler(
     }
     let reservation_id = match crate::attachments::lifecycle::reserve_upload(
         &mut conn,
-        workspace_id,
-        &sha256,
-        i64::try_from(body.len()).unwrap_or(i64::MAX),
+        &contract.workspace_id,
+        &contract.sha256,
+        contract.byte_size,
         state.lifecycle_policy.quota_bytes,
         &crate::attachments::lifecycle::SystemClock,
     )
@@ -288,7 +341,8 @@ async fn put_blob_handler(
         Err(err) => return internal_error(err).into_response(),
     };
     let store_result =
-        crate::attachments::store_blob(&mut conn, &state.blob_dir, media_type, &body).await;
+        crate::attachments::storage::store_validated_blob(&mut conn, &state.blob_dir, validated)
+            .await;
     if store_result.is_err()
         && let Some(reservation_id) = reservation_id
         && let Err(err) =
@@ -358,6 +412,22 @@ async fn get_blob_handler(
         )
             .into_response(),
     }
+}
+
+fn required_i64_header(
+    headers: &HeaderMap,
+    name: &str,
+) -> std::result::Result<i64, (StatusCode, String)> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<i64>().ok())
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("error blob-header-invalid name={name}"),
+            )
+        })
 }
 
 fn internal_error(_err: impl std::fmt::Display) -> (StatusCode, String) {
@@ -601,16 +671,34 @@ async fn next_available_server_seq(conn: &mut SqliteConnection) -> Result<i64> {
     .await?)
 }
 
-async fn missing_blob_hashes(
-    pool: &SqlitePool,
-    blob_dir: &Path,
-    hashes: &[String],
+async fn prepare_blob_uploads(
+    state: &ServerState,
+    blobs: &[BlobUploadContract],
 ) -> Result<Vec<String>> {
-    let mut conn = pool.acquire().await?;
+    let mut conn = state.pool.acquire().await?;
+    crate::attachments::lifecycle::prune(
+        &mut conn,
+        &state.blob_dir,
+        state.lifecycle_policy,
+        true,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
     let mut missing = Vec::new();
-    for hash in hashes {
-        if !blob_available(&mut conn, blob_dir, hash).await? {
-            missing.push(hash.clone());
+    let mut missing_hashes = HashSet::new();
+    for blob in blobs {
+        if blob_available(&mut conn, &state.blob_dir, &blob.sha256).await? {
+            crate::attachments::lifecycle::reserve_upload(
+                &mut conn,
+                &blob.workspace_id,
+                &blob.sha256,
+                blob.byte_size,
+                state.lifecycle_policy.quota_bytes,
+                &crate::attachments::lifecycle::SystemClock,
+            )
+            .await?;
+        } else if missing_hashes.insert(blob.sha256.as_str()) {
+            missing.push(blob.sha256.clone());
         }
     }
     Ok(missing)
@@ -668,6 +756,34 @@ async fn ensure_attachment_blobs_present(
             conn, blob_dir, sha256, byte_size, media_type, width, height,
         )
         .await?;
+        let workspace_id = change
+            .payload
+            .get("workspace_id")
+            .and_then(serde_json::Value::as_str)
+            .context("error attachment-blob-missing")?;
+        let admitted: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+               SELECT 1 FROM server_blob_references sbr
+               LEFT JOIN server_task_tombstones st
+                 ON st.workspace_id = sbr.workspace_id AND st.task_id = sbr.task_id
+               WHERE sbr.workspace_id = ? AND sbr.sha256 = ? AND sbr.deleted = 0
+                 AND COALESCE(st.deleted, 0) = 0
+             ) OR EXISTS(
+               SELECT 1 FROM blob_upload_reservations
+               WHERE workspace_id = ? AND sha256 = ? AND byte_size = ? AND expires_at > ?
+             )",
+        )
+        .bind(workspace_id)
+        .bind(sha256)
+        .bind(workspace_id)
+        .bind(sha256)
+        .bind(byte_size)
+        .bind(crate::ids::now())
+        .fetch_one(&mut *conn)
+        .await?;
+        if !admitted {
+            bail!("error attachment-blob-unreserved");
+        }
     }
     Ok(())
 }

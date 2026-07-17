@@ -249,7 +249,13 @@ async fn sync_once(
         pushed = summary.pushed,
         pulled = summary.pulled,
         blob_uploaded = summary.blob_uploaded,
+        blob_uploaded_bytes = summary.blob_uploaded_bytes,
         blob_downloaded = summary.blob_downloaded,
+        blob_downloaded_bytes = summary.blob_downloaded_bytes,
+        blob_upload_remaining = summary.blob_upload_remaining,
+        blob_upload_remaining_bytes = summary.blob_upload_remaining_bytes,
+        blob_download_remaining = summary.blob_download_remaining,
+        blob_download_remaining_bytes = summary.blob_download_remaining_bytes,
         cursor = summary.cursor,
         complete = summary.complete,
         pages = summary.pages,
@@ -261,11 +267,17 @@ async fn sync_once(
         "daemon sync completed"
     );
     println!(
-        "daemon-synced pushed={} pulled={} blob_uploaded={} blob_downloaded={} cursor={} complete={} pages={}",
+        "daemon-synced pushed={} pulled={} blob_uploaded={} blob_uploaded_bytes={} blob_downloaded={} blob_downloaded_bytes={} blob_upload_remaining={} blob_upload_remaining_bytes={} blob_download_remaining={} blob_download_remaining_bytes={} cursor={} complete={} pages={}",
         summary.pushed,
         summary.pulled,
         summary.blob_uploaded,
+        summary.blob_uploaded_bytes,
         summary.blob_downloaded,
+        summary.blob_downloaded_bytes,
+        summary.blob_upload_remaining,
+        summary.blob_upload_remaining_bytes,
+        summary.blob_download_remaining,
+        summary.blob_download_remaining_bytes,
         summary.cursor,
         summary.complete,
         summary.pages

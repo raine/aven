@@ -15,7 +15,7 @@ pub(crate) enum AttachmentBytesState {
 
 #[allow(unused_imports)]
 pub(crate) use optimization::{ImageOptimizationPolicy, OptimizedBytes, optimize_image_bytes};
-pub(crate) use storage::{blob_inventory_row, object_path, sha256_hex, store_blob};
+pub(crate) use storage::{blob_inventory_row, object_path, sha256_hex};
 #[allow(unused_imports)]
 pub(crate) use validation::{
     MAX_ALT_TEXT_LEN, MAX_BLOB_BYTES, MAX_FILENAME_LEN, SUPPORTED_MEDIA_TYPES, validate_alt_text,

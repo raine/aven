@@ -1,5 +1,6 @@
 mod apply;
 mod client;
+mod planner;
 mod server;
 pub(crate) mod wire;
 

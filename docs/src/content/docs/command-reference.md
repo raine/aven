@@ -542,7 +542,7 @@ aven sync [--server <url>]
 
 The server URL resolves from `--server`, then `AVEN_SYNC_SERVER`, then `sync.server_url`. When configured, `sync.auth_token` is sent as bearer authentication. Aven pins the normalized server URL in database metadata and rejects accidental reuse of one database with a different server.
 
-Output reports pushed and pulled change counts and the resulting server cursor.
+Output reports pushed and pulled change counts, uploaded and downloaded attachment blob counts and byte totals, remaining blob counts and bytes, the resulting server cursor, and completion state. Attachment transfers run in bounded rounds of up to 16 unique blobs and 64 MiB across uploads and downloads.
 
 ```sh
 aven sync
