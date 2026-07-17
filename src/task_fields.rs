@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::{Result, anyhow, ensure};
 use serde_json::{Value, json};
 
@@ -96,7 +97,7 @@ impl TaskField {
 
     pub(crate) fn scalar_payload(
         self,
-        workspace_id: &str,
+        workspace_id: &WorkspaceId,
         workspace_key: &str,
         value: &str,
     ) -> Result<Value> {
@@ -109,7 +110,7 @@ impl TaskField {
     }
 
     pub(crate) fn project_payload(
-        workspace_id: &str,
+        workspace_id: &WorkspaceId,
         workspace_key: &str,
         project: &Project,
     ) -> Value {
@@ -154,6 +155,7 @@ impl TaskField {
 #[cfg(test)]
 mod tests {
     use super::TaskField;
+    use crate::ids::WorkspaceId;
     use crate::types::Project;
 
     #[test]
@@ -209,33 +211,39 @@ mod tests {
 
     #[test]
     fn scalar_payload_shape() {
+        let workspace_id: WorkspaceId = "0000000000000001".parse().unwrap();
         let payload = TaskField::Title
-            .scalar_payload("wk", "key", "v")
+            .scalar_payload(&workspace_id, "key", "v")
             .expect("valid scalar field");
         assert_eq!(
             payload,
             serde_json::json!({
-                "workspace_id": "wk",
+                "workspace_id": "0000000000000001",
                 "workspace_key": "key",
                 "value": "v",
             })
         );
-        assert!(TaskField::Project.scalar_payload("wk", "key", "v").is_err());
+        assert!(
+            TaskField::Project
+                .scalar_payload(&workspace_id, "key", "v")
+                .is_err()
+        );
     }
 
     #[test]
     fn project_payload_shape() {
+        let workspace_id: WorkspaceId = "0000000000000001".parse().unwrap();
         let project = Project {
             id: "prj1".to_string(),
-            workspace_id: "wk".to_string(),
+            workspace_id: workspace_id.clone(),
             key: "proj".to_string(),
             name: "Project".to_string(),
             prefix: "pp".to_string(),
         };
         assert_eq!(
-            TaskField::project_payload("wk", "key", &project),
+            TaskField::project_payload(&workspace_id, "key", &project),
             serde_json::json!({
-                "workspace_id": "wk",
+                "workspace_id": "0000000000000001",
                 "workspace_key": "key",
                 "value": "prj1",
                 "project_id": "prj1",

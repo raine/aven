@@ -66,7 +66,7 @@ impl ChangePayload {
         let mut map = serde_json::Map::new();
         map.insert(
             "workspace_id".to_string(),
-            Value::String(workspace.id.clone()),
+            Value::String(workspace.id.to_string()),
         );
         map.insert(
             "workspace_key".to_string(),

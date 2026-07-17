@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -379,7 +380,7 @@ pub(crate) fn rename_config_project_mapping(
 
 async fn resolve_project_key(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     key: &str,
 ) -> Result<Option<Project>> {
     let row = sqlx::query(
@@ -402,7 +403,7 @@ async fn resolve_project_key(
 
 async fn unique_project_prefix_excluding(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     key: &str,
     exclude_project_id: Option<&str>,
 ) -> Result<String> {
@@ -418,7 +419,7 @@ async fn unique_project_prefix_excluding(
 
 async fn project_prefix_exists(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     prefix: &str,
     exclude_project_id: Option<&str>,
 ) -> Result<bool> {

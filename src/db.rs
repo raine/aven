@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -371,7 +372,7 @@ pub(crate) async fn set_field_version(
 
 pub(crate) async fn conflict_exists(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     field: &str,
 ) -> Result<bool> {

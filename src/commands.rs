@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 mod config;
 mod conflicts;
 mod context;
@@ -696,7 +697,7 @@ struct PlannedBulkUpdate {
 
 async fn resolve_bulk_label_mutations(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     args: &BulkUpdateArgs,
 ) -> Result<BulkLabelMutations> {
     let add = dedup_labels(resolve_labels_in_workspace(conn, workspace_id, &args.label).await?);
@@ -707,7 +708,7 @@ async fn resolve_bulk_label_mutations(
 
 async fn resolve_bulk_project_mutation(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     args: &BulkUpdateArgs,
 ) -> Result<Option<String>> {
     if let Some(project) = args.set_project.as_deref() {
@@ -734,7 +735,7 @@ fn bulk_update_filters(args: &BulkUpdateArgs) -> TaskFilters {
 
 async fn plan_bulk_updates(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     items: Vec<query::TaskListItem>,
     args: &BulkUpdateArgs,
     labels: &BulkLabelMutations,
@@ -856,7 +857,7 @@ fn bulk_update_has_changes(update: &TaskUpdate) -> bool {
 
 async fn preflight_bulk_update_item(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     item: &query::TaskListItem,
     update: &TaskUpdate,
 ) -> Result<()> {
@@ -905,7 +906,7 @@ async fn preflight_bulk_update_item(
 
 async fn ensure_bulk_field_clear(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     display_ref: &str,
     task_id: &str,
     field: &str,

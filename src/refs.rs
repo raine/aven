@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use std::collections::HashMap;
 
 use anyhow::{Result, bail};
@@ -20,7 +21,7 @@ pub(crate) async fn get_task_in_workspace(
 
 async fn get_task_scoped(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     id: &str,
 ) -> Result<Task> {
     let row = sqlx::query(
@@ -48,7 +49,7 @@ pub(crate) async fn resolve_task_ref_in_workspace(
 
 async fn resolve_task_ref_scoped(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     input: &str,
 ) -> Result<Task> {
     let (hint, suffix) = split_ref(input);
@@ -132,7 +133,7 @@ pub(crate) async fn display_refs_for_tasks(
     conn: &mut SqliteConnection,
     tasks: &[Task],
 ) -> Result<HashMap<String, String>> {
-    let mut by_workspace = HashMap::<String, Vec<String>>::new();
+    let mut by_workspace = HashMap::<WorkspaceId, Vec<String>>::new();
     for task in tasks {
         by_workspace
             .entry(task.workspace_id.clone())
@@ -165,14 +166,14 @@ pub(crate) async fn display_suffix_in_workspace(
 
 async fn display_suffix_for_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     id: &str,
 ) -> Result<String> {
     let ids = task_ids(conn, workspace_id).await?;
     Ok(display_suffix_for_id(id, &ids))
 }
 
-async fn task_ids(conn: &mut SqliteConnection, workspace_id: &str) -> Result<Vec<String>> {
+async fn task_ids(conn: &mut SqliteConnection, workspace_id: &WorkspaceId) -> Result<Vec<String>> {
     Ok(
         sqlx::query_scalar::<_, String>("SELECT id FROM tasks WHERE workspace_id = ? ORDER BY id")
             .bind(workspace_id)

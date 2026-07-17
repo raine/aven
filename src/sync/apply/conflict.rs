@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::{Result, anyhow};
 use sqlx::SqliteConnection;
 use tracing::info;
@@ -9,7 +10,7 @@ use crate::task_fields::TaskField;
 pub(super) async fn create_conflict(
     conn: &mut SqliteConnection,
     change: &ChangeWire,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     field: &str,
     remote_value: &str,
     local_change_id: Option<&str>,
@@ -55,7 +56,7 @@ pub(super) async fn create_conflict(
 
 async fn current_field_value(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     field: &str,
 ) -> Result<String> {

@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::{Result, bail};
 use sqlx::SqliteConnection;
 
@@ -180,7 +181,7 @@ pub(crate) async fn remove_task_from_epic(
 
 pub(crate) async fn task_has_epic_children(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
 ) -> Result<bool> {
     Ok(sqlx::query_scalar::<_, i64>(

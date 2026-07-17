@@ -1,9 +1,11 @@
+use crate::ids::WorkspaceId;
+
 use crate::choices::{TaskPriority, TaskStatus};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Task {
     pub(crate) id: String,
-    pub(crate) workspace_id: String,
+    pub(crate) workspace_id: WorkspaceId,
     pub(crate) title: String,
     pub(crate) description: String,
     pub(crate) project_id: String,
@@ -23,7 +25,7 @@ pub(crate) struct Task {
 #[derive(Debug, Clone)]
 pub(crate) struct Project {
     pub(crate) id: String,
-    pub(crate) workspace_id: String,
+    pub(crate) workspace_id: WorkspaceId,
     pub(crate) key: String,
     pub(crate) name: String,
     pub(crate) prefix: String,

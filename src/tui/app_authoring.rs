@@ -281,7 +281,7 @@ impl App {
         let project = self.add_task_project_context();
         spawn_add_task_only_natural(
             raw,
-            self.store.active_workspace.id.as_str(),
+            &self.store.active_workspace.id,
             self.add_task_db_path.as_deref(),
             project.as_deref(),
             false,
@@ -317,7 +317,7 @@ impl App {
         if create_on_success {
             spawn_add_task_only_natural(
                 raw,
-                self.store.active_workspace.id.as_str(),
+                &self.store.active_workspace.id,
                 self.add_task_db_path.as_deref(),
                 project.as_deref(),
                 true,

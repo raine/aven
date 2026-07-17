@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use std::fs;
 use std::path::Path;
 
@@ -170,7 +171,7 @@ pub(crate) async fn cmd_conflict(
 
 async fn resolve_conflict_project_filter(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     project: Option<String>,
 ) -> Result<Option<String>> {
     if let Some(project) = project {

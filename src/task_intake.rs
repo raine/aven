@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -37,7 +38,7 @@ struct ParsedTaskPayload {
 }
 
 pub(crate) struct TaskIntakeContext {
-    pub(crate) workspace_id: String,
+    pub(crate) workspace_id: WorkspaceId,
     pub(crate) inferred_project: Option<String>,
     pub(crate) projects: Vec<ProjectListItem>,
     pub(crate) labels: Vec<String>,
@@ -63,7 +64,7 @@ impl TaskIntakeContext {
                     .await?
                     .key,
             ),
-            None => inferred_project_key_for_add_in_workspace(conn, workspace.id.as_str()).await?,
+            None => inferred_project_key_for_add_in_workspace(conn, &workspace.id).await?,
         };
         let projects = list_project_items_in_workspace(conn, &workspace.id).await?;
         let labels = list_labels_in_workspace(conn, &workspace.id, None).await?;
@@ -282,15 +283,14 @@ pub(crate) async fn parsed_output_to_draft(
         .filter(|value| !value.is_empty())
     {
         Some(
-            resolve_existing_project_in_workspace(conn, context.workspace_id.as_str(), project)
+            resolve_existing_project_in_workspace(conn, &context.workspace_id, project)
                 .await?
                 .key,
         )
     } else {
         context.inferred_project.clone()
     };
-    let labels =
-        resolve_labels_in_workspace(conn, context.workspace_id.as_str(), &parsed.labels).await?;
+    let labels = resolve_labels_in_workspace(conn, &context.workspace_id, &parsed.labels).await?;
     let description = parsed.description.trim().to_string();
     let available_at = parsed
         .available_at

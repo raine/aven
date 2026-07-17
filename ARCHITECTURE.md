@@ -68,6 +68,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Priority values are `none`, `low`, `medium`, `high`, and `urgent`.
 - New entity IDs come from `crate::ids::new_id()`, which returns 16 Crockford Base32 characters from 80 random bits.
 - Timestamps come from `crate::ids::now()` and are UTC strings.
+- Workspace identity uses `WorkspaceId` from `src/ids.rs` throughout domain records, queries, and mutations. CLI, config, sync payload, and export conversions validate the 16-character Crockford Base32 representation, while SQLx binds and decodes the type as SQLite text.
 - Project IDs are stable identity. Project keys and names are lookup and display fields.
 - Project renames update key, name, and prefix on the same stable project ID.
 - Projects normalize names into keys with lowercase words joined by `-`.

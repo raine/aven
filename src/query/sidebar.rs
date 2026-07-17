@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::Result;
 use sqlx::{Row, SqliteConnection};
 
@@ -51,7 +52,7 @@ fn sidebar_counts_sql(project_scoped: bool) -> String {
 
 pub(crate) async fn sidebar_counts_for_scope_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     project_key: Option<&str>,
 ) -> Result<SidebarCounts> {
     let project_id = if let Some(project_key) = project_key {

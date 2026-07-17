@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::Result;
 use sqlx::{Row, SqliteConnection};
 
@@ -71,7 +72,7 @@ pub(crate) async fn task_detail(conn: &mut SqliteConnection, task: &Task) -> Res
 
 async fn task_detail_notes(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
 ) -> Result<Vec<TaskDetailNote>> {
     let rows = sqlx::query(
@@ -95,7 +96,7 @@ async fn task_detail_notes(
 
 async fn task_detail_conflicts(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
 ) -> Result<Vec<TaskDetailConflict>> {
     let rows = sqlx::query(
@@ -184,13 +185,10 @@ mod tests {
             .unwrap();
         }
 
-        let task = crate::refs::resolve_task_ref_in_workspace(
-            &mut conn,
-            &workspace,
-            "D3TA100000000001",
-        )
-        .await
-        .unwrap();
+        let task =
+            crate::refs::resolve_task_ref_in_workspace(&mut conn, &workspace, "D3TA100000000001")
+                .await
+                .unwrap();
         let detail = task_detail(&mut conn, &task).await.unwrap();
 
         assert_eq!(detail.item.task.title, "detailed task");

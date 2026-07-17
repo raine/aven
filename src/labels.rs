@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::{Result, bail};
 use sqlx::SqliteConnection;
 
@@ -10,7 +11,7 @@ pub(crate) fn normalize_label(input: &str) -> String {
 
 async fn near_labels(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     input: &str,
 ) -> Result<Vec<String>> {
     let needle = normalize_label(input);
@@ -23,7 +24,7 @@ async fn near_labels(
 
 pub(crate) async fn list_labels_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     search: Option<&str>,
 ) -> Result<Vec<String>> {
     let search = search.map(normalize_label);
@@ -45,7 +46,7 @@ pub(crate) async fn list_labels_in_workspace(
 
 pub(crate) async fn ensure_label_exists_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     label: &str,
 ) -> Result<String> {
     let label = normalize_label(label);
@@ -72,7 +73,7 @@ pub(crate) async fn ensure_label_exists_in_workspace(
 
 pub(crate) async fn resolve_labels_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     labels: &[String],
 ) -> Result<Vec<String>> {
     let mut resolved = Vec::with_capacity(labels.len());

@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::Result;
 use serde_json::Value;
 use sqlx::{Row, SqliteConnection};
@@ -10,7 +11,7 @@ const RECENT_ACTION_LIMIT: i64 = 80;
 
 pub(crate) async fn list_recent_actions_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     project_scope: Option<&str>,
 ) -> Result<Vec<RecentActionItem>> {
     let task_ids =

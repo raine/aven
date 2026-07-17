@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use std::collections::BTreeSet;
 
 use anyhow::{Result, bail, ensure};
@@ -119,7 +120,7 @@ pub(crate) struct ProjectRenameUndoOutcome {
 
 pub(crate) async fn task_field_value(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     field: &str,
 ) -> Result<String> {
@@ -129,7 +130,7 @@ pub(crate) async fn task_field_value(
 
 async fn task_field_value_for_field(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     task_field: TaskField,
 ) -> Result<String> {
@@ -149,7 +150,7 @@ async fn task_field_value_for_field(
 
 pub(crate) async fn task_labels(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
 ) -> Result<Vec<String>> {
     let rows = sqlx::query(
@@ -164,7 +165,7 @@ pub(crate) async fn task_labels(
 
 pub(crate) async fn task_snapshot(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
 ) -> Result<TaskUndoSnapshot> {
     let row = sqlx::query(
@@ -194,7 +195,7 @@ pub(crate) async fn task_snapshot(
 
 pub(crate) async fn conflict_row_id(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     field: &str,
 ) -> Result<i64> {
@@ -213,7 +214,7 @@ pub(crate) async fn conflict_row_id(
 
 pub(crate) async fn record_tui_undo(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     summary: &str,
     payload: UndoPayload,
 ) -> Result<()> {
@@ -278,7 +279,7 @@ fn empty_command_outcome() -> CommandOutcome {
 
 async fn prune_consumed_undo_entries(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
 ) -> Result<()> {
     sqlx::query(
         "DELETE FROM tui_undo_entries
@@ -305,7 +306,7 @@ pub(crate) async fn clear_pending_tui_undo_entries(conn: &mut SqliteConnection) 
 
 pub(crate) async fn apply_latest_tui_undo(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
 ) -> Result<Option<UndoOutcome>> {
     let mut tx = begin_immediate(conn).await?;
     let row = sqlx::query(
@@ -366,7 +367,7 @@ struct CommandOutcome {
 
 async fn apply_undo_commands(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     commands: &[UndoCommand],
 ) -> Result<CommandOutcome> {
     let mut task_id = None;
@@ -393,7 +394,7 @@ async fn apply_undo_commands(
 
 async fn apply_undo_command(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     command: &UndoCommand,
 ) -> Result<CommandOutcome> {
     match command {
@@ -628,7 +629,7 @@ async fn apply_undo_command(
 
 async fn project_id_exists(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     project_id: &str,
 ) -> Result<bool> {
     Ok(sqlx::query_scalar::<_, i64>(
@@ -644,7 +645,7 @@ async fn project_id_exists(
 
 async fn set_task_field_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     task_field: TaskField,
     value: &str,
@@ -737,7 +738,7 @@ async fn labels_match_create_change(
 
 async fn hard_delete_created_task(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     create_change_id: &str,
 ) -> Result<()> {
@@ -764,7 +765,7 @@ async fn hard_delete_created_task(
 
 async fn delete_created_note(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     note_id: &str,
     note_add_change_id: &str,
@@ -802,7 +803,7 @@ async fn delete_created_note(
 
 async fn delete_created_project(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     project_key: &str,
     create_change_id: &str,
     expected_name: &str,
@@ -861,7 +862,7 @@ async fn delete_created_project(
 
 async fn set_project_metadata_for_undo(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     project_id: &str,
     before: ProjectMetadata<'_>,
     after: ProjectMetadata<'_>,
@@ -917,7 +918,7 @@ async fn set_project_metadata_for_undo(
 
 async fn delete_created_label(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     label: &str,
     create_change_id: &str,
 ) -> Result<()> {
@@ -953,7 +954,7 @@ async fn delete_created_label(
 
 async fn dependency_task_exists(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
 ) -> Result<bool> {
     Ok(
@@ -970,7 +971,7 @@ async fn dependency_task_exists(
 
 async fn dependency_edge_exists(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     depends_on_task_id: &str,
 ) -> Result<bool> {
@@ -993,7 +994,7 @@ async fn dependency_edge_exists(
 
 async fn add_dependency_for_undo(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     depends_on_task_id: &str,
 ) -> Result<()> {
@@ -1020,7 +1021,7 @@ async fn add_dependency_for_undo(
 
 async fn remove_dependency_for_undo(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     depends_on_task_id: &str,
 ) -> Result<()> {
@@ -1045,7 +1046,7 @@ async fn remove_dependency_for_undo(
 
 async fn append_dependency_change(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     depends_on_task_id: &str,
     op_type: &'static str,

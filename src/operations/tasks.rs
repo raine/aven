@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::{Result, bail};
 use sqlx::SqliteConnection;
 use tracing::info;
@@ -238,7 +239,7 @@ pub(crate) async fn update_task_field(
 
 pub(crate) async fn update_task_labels_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     add_labels: &[String],
     remove_labels: &[String],

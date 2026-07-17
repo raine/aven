@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::Result;
 use chrono::NaiveDate;
 use sqlx::SqliteConnection;
@@ -15,7 +16,7 @@ use super::TaskListItem;
 /// such as sorting, filtering, or truncation.
 pub(crate) async fn build_task_list_items(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     tasks: Vec<Task>,
     now_seconds: i64,
     local_today: NaiveDate,

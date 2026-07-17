@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::Result;
 use tokio::task::JoinHandle;
 
@@ -10,7 +11,7 @@ use super::{
 
 async fn search_preview_with_pool(
     pool: sqlx::SqlitePool,
-    workspace_id: String,
+    workspace_id: WorkspaceId,
     input: String,
     limit: usize,
 ) -> Result<query::TaskSearchPreviewResultSet> {
@@ -24,7 +25,7 @@ async fn search_preview_with_pool(
     let mut conn = pool.acquire().await?;
     query::search_task_preview_set_in_workspace(
         &mut conn,
-        workspace_id.as_str(),
+        &workspace_id,
         TaskSearchQuery {
             text,
             include_deleted: false,
@@ -150,7 +151,7 @@ impl TuiStore {
         let mut conn = self.pool.acquire().await?;
         let results = query::search_task_items_in_workspace(
             &mut conn,
-            self.active_workspace.id.as_str(),
+            &self.active_workspace.id,
             TaskSearchQuery {
                 text: text.to_string(),
                 include_deleted: false,

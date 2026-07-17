@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::Result;
 use chrono::Local;
 use serde::Serialize;
@@ -129,7 +130,7 @@ struct FieldEvidence {
 
 pub(crate) async fn search_task_items_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     query: TaskSearchQuery,
 ) -> Result<Vec<TaskSearchResult>> {
     Ok(search_task_item_set_in_workspace(conn, workspace_id, query)
@@ -139,7 +140,7 @@ pub(crate) async fn search_task_items_in_workspace(
 
 pub(crate) async fn search_task_item_set_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     query: TaskSearchQuery,
 ) -> Result<TaskSearchResultSet> {
     let scored = scored_search_documents(conn, workspace_id, &query).await?;
@@ -181,7 +182,7 @@ pub(crate) async fn search_task_item_set_in_workspace(
 
 async fn scored_search_documents(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     query: &TaskSearchQuery,
 ) -> Result<ScoredSearchResults> {
     let limit = if query.limit == 0 {
@@ -236,7 +237,7 @@ async fn scored_search_documents(
 
 pub(crate) async fn search_task_preview_set_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     query: TaskSearchQuery,
 ) -> Result<TaskSearchPreviewResultSet> {
     let scored = scored_search_documents(conn, workspace_id, &query).await?;
@@ -276,7 +277,7 @@ pub(crate) async fn search_task_preview_set_in_workspace(
 
 async fn labels_for_search_preview(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_ids: &[String],
 ) -> Result<HashMap<String, Vec<String>>> {
     let mut labels_by_task = HashMap::new();
@@ -314,7 +315,7 @@ async fn labels_for_search_preview(
 
 async fn load_candidate_search_documents(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     include_deleted: bool,
     parsed: &parser::ParsedTaskSearchQuery,
 ) -> Result<Vec<SearchDocument>> {
@@ -333,7 +334,7 @@ async fn load_candidate_search_documents(
 
 async fn load_ref_search_documents(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     include_deleted: bool,
     ref_query: &parser::ParsedRefSearchQuery,
 ) -> Result<Vec<SearchDocument>> {
@@ -367,7 +368,7 @@ fn merge_search_documents(documents: &mut Vec<SearchDocument>, incoming: Vec<Sea
 
 async fn load_fts_search_documents(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     include_deleted: bool,
     raw_fts_match: &str,
 ) -> Result<Vec<SearchDocument>> {
@@ -432,8 +433,12 @@ fn fts_phrase(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
 
-fn workspace_scoped_fts_match(workspace_id: &str, fts_match: &str) -> String {
-    format!("workspace_token:{} {}", fts_phrase(workspace_id), fts_match)
+fn workspace_scoped_fts_match(workspace_id: &WorkspaceId, fts_match: &str) -> String {
+    format!(
+        "workspace_token:{} {}",
+        fts_phrase(workspace_id.as_str()),
+        fts_match
+    )
 }
 
 fn score_document(

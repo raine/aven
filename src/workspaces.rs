@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
@@ -6,14 +7,21 @@ use sqlx::{Row, SqliteConnection};
 
 use crate::config::{AppConfig, WorkspaceRouteConfig};
 use crate::db::insert_change;
-use crate::ids::{new_id, now};
+use crate::ids::now;
 use crate::projects::normalize_key;
 
 pub(crate) const DEFAULT_WORKSPACE_ID: &str = "0000000000000000";
 
+#[cfg(test)]
+pub(crate) fn default_workspace_id() -> WorkspaceId {
+    DEFAULT_WORKSPACE_ID
+        .parse()
+        .expect("valid default workspace ID")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Workspace {
-    pub(crate) id: String,
+    pub(crate) id: WorkspaceId,
     pub(crate) key: String,
     pub(crate) name: String,
 }
@@ -21,7 +29,9 @@ pub(crate) struct Workspace {
 impl Default for Workspace {
     fn default() -> Self {
         Self {
-            id: DEFAULT_WORKSPACE_ID.to_string(),
+            id: DEFAULT_WORKSPACE_ID
+                .parse()
+                .expect("valid default workspace ID"),
             key: "default".to_string(),
             name: "default".to_string(),
         }
@@ -40,7 +50,9 @@ pub(crate) async fn ensure_default_workspace(conn: &mut SqliteConnection) -> Res
             name: row.get("name"),
         });
     }
-    let id = DEFAULT_WORKSPACE_ID.to_string();
+    let id: WorkspaceId = DEFAULT_WORKSPACE_ID
+        .parse()
+        .expect("valid default workspace ID");
     let ts = now();
     sqlx::query("INSERT INTO workspaces(id, name, key, created_at, updated_at) VALUES (?, 'default', 'default', ?, ?)")
         .bind(&id)
@@ -87,7 +99,7 @@ pub(crate) async fn find_workspace(
 
 pub(crate) async fn workspace_for_id(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
 ) -> Result<Workspace> {
     let row = sqlx::query("SELECT id, key, name FROM workspaces WHERE id = ? AND archived = 0")
         .bind(workspace_id)
@@ -101,7 +113,7 @@ pub(crate) async fn workspace_for_id(
 
 pub(crate) async fn workspace_key_for_id(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
 ) -> Result<String> {
     Ok(workspace_for_id(conn, workspace_id).await?.key)
 }
@@ -206,7 +218,7 @@ pub(crate) async fn create_workspace(conn: &mut SqliteConnection, name: &str) ->
     if find_workspace(conn, &key).await?.is_some() {
         bail!("error workspace-exists key={key}");
     }
-    let id = new_id();
+    let id = WorkspaceId::new();
     let ts = now();
     sqlx::query(
         "INSERT INTO workspaces(id, name, key, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -221,7 +233,7 @@ pub(crate) async fn create_workspace(conn: &mut SqliteConnection, name: &str) ->
     insert_change(
         conn,
         "workspace",
-        &id,
+        id.as_str(),
         None,
         "create_workspace",
         json!({ "key": key, "name": name, "created_at": ts }),
@@ -260,7 +272,7 @@ pub(crate) async fn rename_workspace(
         insert_change(
             conn,
             "workspace",
-            &workspace.id,
+            workspace.id.as_str(),
             Some("name"),
             "set_workspace_field",
             json!({ "value": new_name }),
@@ -272,7 +284,7 @@ pub(crate) async fn rename_workspace(
         insert_change(
             conn,
             "workspace",
-            &workspace.id,
+            workspace.id.as_str(),
             Some("key"),
             "set_workspace_field",
             json!({ "value": new_key }),

@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -9,7 +10,7 @@ const MANAGED_MARKER: &str = "# aven-managed project path mapping";
 
 #[derive(Debug, Clone)]
 pub(crate) struct ProjectPathMappingEdit<'a> {
-    pub(crate) workspace_id: &'a str,
+    pub(crate) workspace_id: &'a WorkspaceId,
     pub(crate) workspace: &'a str,
     pub(crate) project: &'a str,
     pub(crate) path: PathBuf,
@@ -17,7 +18,7 @@ pub(crate) struct ProjectPathMappingEdit<'a> {
 
 #[derive(Debug, Clone)]
 struct ManagedProjectOverride {
-    workspace_id: String,
+    workspace_id: WorkspaceId,
     workspace: String,
     project: String,
     paths: Vec<PathBuf>,
@@ -27,19 +28,19 @@ pub(crate) fn add_project_path(path: &Path, edit: ProjectPathMappingEdit<'_>) ->
     let text = read_config_text(path)?;
     let (text, mut entries) = remove_managed_entries(&text);
     for entry in &mut entries {
-        if entry.workspace_id == edit.workspace_id {
+        if &entry.workspace_id == edit.workspace_id {
             entry.paths.retain(|path| path != &edit.path);
         }
     }
     entries.retain(|entry| !entry.paths.is_empty());
     if let Some(entry) = entries
         .iter_mut()
-        .find(|entry| entry.workspace_id == edit.workspace_id && entry.project == edit.project)
+        .find(|entry| &entry.workspace_id == edit.workspace_id && entry.project == edit.project)
     {
         entry.paths.push(edit.path);
     } else {
         entries.push(ManagedProjectOverride {
-            workspace_id: edit.workspace_id.to_string(),
+            workspace_id: edit.workspace_id.clone(),
             workspace: edit.workspace.to_string(),
             project: edit.project.to_string(),
             paths: vec![edit.path],
@@ -50,14 +51,14 @@ pub(crate) fn add_project_path(path: &Path, edit: ProjectPathMappingEdit<'_>) ->
 
 pub(crate) fn remove_project_path(
     path: &Path,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     project: &str,
     remove_paths: &[PathBuf],
 ) -> Result<()> {
     let text = read_config_text(path)?;
     let (text, mut entries) = remove_managed_entries(&text);
     for entry in &mut entries {
-        if entry.workspace_id == workspace_id && entry.project == project {
+        if &entry.workspace_id == workspace_id && entry.project == project {
             entry
                 .paths
                 .retain(|path| !remove_paths.iter().any(|remove_path| path == remove_path));
@@ -69,7 +70,7 @@ pub(crate) fn remove_project_path(
 
 pub(crate) fn rename_project_path(
     path: &Path,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     old_project: &str,
     new_project: &str,
 ) -> Result<bool> {
@@ -77,7 +78,7 @@ pub(crate) fn rename_project_path(
     let (text, mut entries) = remove_managed_entries(&text);
     let mut changed = false;
     for entry in &mut entries {
-        if entry.workspace_id == workspace_id && entry.project == old_project {
+        if &entry.workspace_id == workspace_id && entry.project == old_project {
             entry.project = new_project.to_string();
             changed = true;
         }
@@ -207,7 +208,7 @@ fn parse_managed_entry(lines: &[String]) -> Option<ManagedProjectOverride> {
         }
     }
     Some(ManagedProjectOverride {
-        workspace_id: workspace_id?,
+        workspace_id: workspace_id?.parse().ok()?,
         workspace: workspace?,
         project: project?,
         paths,
@@ -221,7 +222,7 @@ fn render_managed_entries(entries: &[ManagedProjectOverride]) -> Vec<String> {
         lines.push(format!("    {MANAGED_MARKER}"));
         lines.push(format!(
             "    - workspace_id: {}",
-            yaml_scalar(&entry.workspace_id)
+            yaml_scalar(entry.workspace_id.as_str())
         ));
         lines.push(format!(
             "      workspace: {}",

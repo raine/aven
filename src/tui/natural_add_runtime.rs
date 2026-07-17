@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -6,7 +7,7 @@ use anyhow::Result;
 #[cfg(not(test))]
 pub(crate) fn spawn_add_task_only_natural(
     input: &str,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     db_path: Option<&Path>,
     project: Option<&str>,
     tui_undo: bool,
@@ -26,7 +27,7 @@ pub(crate) fn spawn_add_task_only_natural(
         .arg("internal")
         .arg("natural-add")
         .arg("--workspace-id")
-        .arg(workspace_id)
+        .arg(workspace_id.as_str())
         .arg("--input")
         .arg(input);
     if let Some(project) = project {
@@ -66,7 +67,7 @@ pub(crate) fn spawn_add_task_only_natural(
 #[cfg(test)]
 pub(crate) fn spawn_add_task_only_natural(
     _input: &str,
-    _workspace_id: &str,
+    _workspace_id: &WorkspaceId,
     _db_path: Option<&Path>,
     _project: Option<&str>,
     _tui_undo: bool,

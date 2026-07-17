@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::Result;
 use sqlx::{Row, SqliteConnection};
 
@@ -6,7 +7,7 @@ use super::fragments;
 
 pub(crate) async fn list_project_items_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
 ) -> Result<Vec<ProjectListItem>> {
     let sql = format!(
         "SELECT p.key, p.name, p.prefix,

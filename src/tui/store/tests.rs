@@ -1,4 +1,5 @@
 use super::*;
+use crate::ids::WorkspaceId;
 
 use crate::choices::{PRIORITIES, TaskPriority, TaskStatus};
 use crate::operations::{TaskDraft, TaskUpdate};
@@ -89,7 +90,7 @@ fn task_draft(title: &str) -> TaskDraft {
 
 async fn set_task_timestamps(
     pool: &SqlitePool,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     queue_activity_at: &str,
     updated_at: Option<&str>,
@@ -135,7 +136,7 @@ async fn pending_change_count(pool: &sqlx::SqlitePool) -> i64 {
         .unwrap()
 }
 
-async fn pending_undo_count(pool: &sqlx::SqlitePool, workspace_id: &str) -> i64 {
+async fn pending_undo_count(pool: &sqlx::SqlitePool, workspace_id: &WorkspaceId) -> i64 {
     let mut conn = pool.acquire().await.unwrap();
     sqlx::query_scalar(
         "SELECT count(*) FROM tui_undo_entries WHERE workspace_id = ? AND undone_at IS NULL",
@@ -146,7 +147,7 @@ async fn pending_undo_count(pool: &sqlx::SqlitePool, workspace_id: &str) -> i64 
     .unwrap()
 }
 
-async fn consumed_undo_count(pool: &sqlx::SqlitePool, workspace_id: &str) -> i64 {
+async fn consumed_undo_count(pool: &sqlx::SqlitePool, workspace_id: &WorkspaceId) -> i64 {
     let mut conn = pool.acquire().await.unwrap();
     sqlx::query_scalar(
         "SELECT count(*) FROM tui_undo_entries WHERE workspace_id = ? AND undone_at IS NOT NULL",

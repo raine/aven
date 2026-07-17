@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::{Context, Result};
 use sqlx::SqliteConnection;
 
@@ -28,7 +29,7 @@ pub(super) async fn delete_project(conn: &mut SqliteConnection, change: &ChangeW
 
 async fn resolve_project_for_delete(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     change: &ChangeWire,
 ) -> Result<Option<String>> {
     if let Some(local_id) = project_id_alias(conn, workspace_id, &change.entity_id).await? {
@@ -117,7 +118,7 @@ fn validate_project_metadata_payload(key: &str, name: &str, prefix: &str) -> Res
 
 async fn ensure_project_for_metadata(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     change: &ChangeWire,
 ) -> Result<String> {
     if let Some(local_id) = project_id_alias(conn, workspace_id, &change.entity_id).await? {
@@ -143,7 +144,7 @@ async fn ensure_project_for_metadata(
 
 pub(super) async fn ensure_project_for_payload(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     project_id: &str,
     change: &ChangeWire,
 ) -> Result<String> {
@@ -165,7 +166,7 @@ pub(super) async fn ensure_project_for_payload(
 
 async fn ensure_remote_project(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     remote_project_id: &str,
     key: &str,
     name: &str,
@@ -220,7 +221,7 @@ async fn ensure_remote_project(
 
 async fn live_project_by_id(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     project_id: &str,
 ) -> Result<Option<String>> {
     sqlx::query_scalar::<_, String>(
@@ -235,7 +236,7 @@ async fn live_project_by_id(
 
 async fn live_project_key_by_id(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     project_id: &str,
 ) -> Result<Option<String>> {
     sqlx::query_scalar::<_, String>(
@@ -250,7 +251,7 @@ async fn live_project_key_by_id(
 
 async fn live_project_by_key(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     key: &str,
 ) -> Result<Option<String>> {
     sqlx::query_scalar::<_, String>(
@@ -265,7 +266,7 @@ async fn live_project_by_key(
 
 async fn deleted_project_by_id(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     project_id: &str,
 ) -> Result<bool> {
     Ok(sqlx::query_scalar::<_, i64>(
@@ -280,7 +281,7 @@ async fn deleted_project_by_id(
 
 async fn deleted_project_by_key(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     key: &str,
 ) -> Result<Option<String>> {
     sqlx::query_scalar::<_, String>(
@@ -295,7 +296,7 @@ async fn deleted_project_by_key(
 
 async fn restore_remote_project(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     project_id: &str,
     key: &str,
     name: &str,
@@ -319,7 +320,7 @@ async fn restore_remote_project(
 
 async fn insert_project_alias(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     remote_project_id: &str,
     local_project_id: &str,
 ) -> Result<()> {
@@ -337,7 +338,7 @@ async fn insert_project_alias(
 
 async fn unique_remote_key(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     preferred: &str,
     ignore_project_id: Option<&str>,
 ) -> Result<String> {
@@ -363,7 +364,7 @@ async fn unique_remote_key(
 
 async fn unique_remote_prefix(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     preferred: &str,
     key: &str,
     ignore_project_id: Option<&str>,
@@ -395,7 +396,7 @@ async fn unique_remote_prefix(
 
 async fn project_id_alias(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     remote_project_id: &str,
 ) -> Result<Option<String>> {
     Ok(sqlx::query_scalar::<_, String>(

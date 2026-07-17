@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::change_log::op_type;
-use crate::ids::BASE32;
+use crate::ids::{BASE32, WorkspaceId};
 use crate::task_fields::TaskField;
 
 pub(crate) const SYNC_PROTOCOL_VERSION: u32 = 7;
@@ -588,8 +588,10 @@ fn required_timestamp_payload(key: &str, payload: &Value) -> Result<String> {
 }
 
 fn required_workspace_payload(payload: &Value) -> Result<()> {
-    required_string_payload("workspace_id", payload)
-        .and_then(|id| ensure_sync_id("workspace_id", &id))?;
+    let id = required_string_payload("workspace_id", payload)?;
+    if id.parse::<WorkspaceId>().is_err() {
+        bail!("error invalid-sync-change workspace_id invalid-id");
+    }
     required_string_payload("workspace_key", payload)?;
     Ok(())
 }
@@ -631,7 +633,7 @@ mod tests {
 
     fn test_workspace() -> Workspace {
         Workspace {
-            id: "0000000000000000".to_string(),
+            id: "0000000000000000".parse().unwrap(),
             key: "default".to_string(),
             name: "default".to_string(),
         }

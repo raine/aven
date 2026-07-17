@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::Result;
 use serde::Serialize;
 use sqlx::SqliteConnection;
@@ -177,7 +178,7 @@ pub(crate) fn task_epic_link_json(link: &TaskDependencyLink) -> TaskEpicLinkJson
 
 pub(crate) async fn conflict_display_value(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     field: &str,
     value: &str,
 ) -> Result<String> {
@@ -194,7 +195,7 @@ pub(crate) async fn conflict_display_value(
 
 async fn display_project_conflict_value(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     value: &str,
 ) -> Result<String> {
     if let Some((key, prefix)) = sqlx::query_as::<_, (String, String)>(

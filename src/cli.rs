@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use std::fmt::Write as _;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -331,7 +332,7 @@ pub(crate) enum InternalSubcommand {
 #[derive(Args)]
 pub(crate) struct InternalNaturalAddArgs {
     #[arg(long)]
-    pub(crate) workspace_id: String,
+    pub(crate) workspace_id: WorkspaceId,
     #[arg(long)]
     pub(crate) project: Option<String>,
     #[arg(long, allow_hyphen_values = true)]
@@ -887,5 +888,39 @@ mod tests {
         assert!(matches!(edit.command, Commands::Edit(_)));
         assert!(Cli::try_parse_from(["aven", "edit"]).is_err());
         assert!(Cli::try_parse_from(["aven", "update", "APP-1234"]).is_err());
+    }
+
+    #[test]
+    fn internal_workspace_ids_are_validated_by_clap() {
+        let parsed = Cli::try_parse_from([
+            "aven",
+            "internal",
+            "natural-add",
+            "--workspace-id",
+            "0123456789ABCDEF",
+            "--input",
+            "task",
+        ])
+        .unwrap();
+        let Commands::Internal(InternalCommand {
+            command: InternalSubcommand::NaturalAdd(args),
+        }) = parsed.command
+        else {
+            panic!("expected internal natural-add command");
+        };
+        assert_eq!(args.workspace_id.as_str(), "0123456789ABCDEF");
+
+        assert!(
+            Cli::try_parse_from([
+                "aven",
+                "internal",
+                "natural-add",
+                "--workspace-id",
+                "invalid",
+                "--input",
+                "task",
+            ])
+            .is_err()
+        );
     }
 }

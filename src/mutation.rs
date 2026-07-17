@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::{Result, bail, ensure};
 use sqlx::SqliteConnection;
 use tracing::{debug, info};
@@ -168,7 +169,7 @@ async fn finish_task_field_change(
 
 async fn current_task(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
 ) -> Result<Task> {
     let row = sqlx::query(
@@ -197,7 +198,7 @@ async fn current_task(
 #[allow(dead_code)]
 pub(crate) async fn apply_field_value(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     field: &str,
     value: &str,
@@ -207,7 +208,7 @@ pub(crate) async fn apply_field_value(
 
 pub(crate) async fn apply_project_id_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     project_id: &str,
 ) -> Result<()> {
@@ -244,7 +245,7 @@ pub(crate) async fn apply_project_id_in_workspace(
 
 pub(crate) async fn apply_field_value_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     field: &str,
     value: &str,
@@ -255,7 +256,7 @@ pub(crate) async fn apply_field_value_in_workspace(
 
 async fn apply_scalar_field_value_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     task_field: TaskField,
     value: &str,

@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::Result;
 use sqlx::SqliteConnection;
 
@@ -57,7 +58,7 @@ pub(super) async fn remove_label(conn: &mut SqliteConnection, change: &ChangeWir
 
 pub(super) async fn create_or_update_task_label(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     label: &str,
     created_at: &str,
@@ -74,7 +75,7 @@ pub(super) async fn create_or_update_task_label(
 
 async fn insert_label(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     name: &str,
     created_at: &str,
 ) -> Result<()> {

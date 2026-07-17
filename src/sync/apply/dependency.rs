@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::{Result, bail};
 use sqlx::SqliteConnection;
 
@@ -62,7 +63,7 @@ pub(super) async fn remove_dependency(
 
 async fn ensure_dependency_tasks_exist(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     depends_on_task_id: &str,
 ) -> Result<()> {

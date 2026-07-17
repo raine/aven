@@ -1820,7 +1820,7 @@ mod tests {
         TaskListItem {
             task: crate::types::Task {
                 id: "7KQ9A1X".to_string(),
-                workspace_id: "workspace-1".to_string(),
+                workspace_id: "0000000000000001".parse().unwrap(),
                 title: "Fix token refresh race".to_string(),
                 description: "Two token refresh requests fire together.".to_string(),
                 project_id: "project-id".to_string(),

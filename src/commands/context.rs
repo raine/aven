@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::Result;
 use serde::Serialize;
 use sqlx::SqliteConnection;
@@ -168,7 +169,7 @@ async fn task_context_snapshot(
             prefix: task.project_prefix.clone(),
         },
         workspace: ContextWorkspace {
-            id: workspace.id.clone(),
+            id: workspace.id.to_string(),
             key: workspace.key.clone(),
             name: workspace.name.clone(),
         },
@@ -222,7 +223,7 @@ fn context_dependency_task(item: TaskDependencyItem) -> ContextDependencyTask {
 
 async fn context_conflicts(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     details: Vec<query::TaskDetailConflict>,
 ) -> Result<Vec<ContextConflict>> {
     let mut conflicts = Vec::with_capacity(details.len());

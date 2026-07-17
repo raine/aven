@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 mod config;
 mod conflicts;
 mod domain;
@@ -161,29 +162,26 @@ impl TuiStore {
         let mut conn = self.pool.acquire().await?;
         let workspace_id = self.active_workspace.id.clone();
         self.workspaces = list_workspaces(&mut conn).await?;
-        self.projects = list_project_items_in_workspace(&mut conn, workspace_id.as_str()).await?;
-        self.labels = list_labels_in_workspace(&mut conn, workspace_id.as_str(), None).await?;
+        self.projects = list_project_items_in_workspace(&mut conn, &workspace_id).await?;
+        self.labels = list_labels_in_workspace(&mut conn, &workspace_id, None).await?;
         let fallback_scope = self.ensure_valid_scope();
         let project_scope = self.scope_project().map(str::to_string);
         self.counts = sidebar_counts_for_scope_in_workspace(
             &mut conn,
-            workspace_id.as_str(),
+            &workspace_id,
             project_scope.as_deref(),
         )
         .await?;
-        self.recent_actions = list_recent_actions_in_workspace(
-            &mut conn,
-            workspace_id.as_str(),
-            project_scope.as_deref(),
-        )
-        .await?;
+        self.recent_actions =
+            list_recent_actions_in_workspace(&mut conn, &workspace_id, project_scope.as_deref())
+                .await?;
         if self.view_state.view == TaskView::RecentActions {
             self.tasks.clear();
         } else {
             let filters = self.view_state.filters();
             self.tasks = list_task_items_in_workspace(
                 &mut conn,
-                workspace_id.as_str(),
+                &workspace_id,
                 filters,
                 self.view_state.query_mode(),
                 self.view_state.sort(),
@@ -225,7 +223,7 @@ impl TuiStore {
     async fn load_epic_child_tasks(
         &mut self,
         conn: &mut sqlx::SqliteConnection,
-        workspace_id: &str,
+        workspace_id: &WorkspaceId,
     ) -> Result<()> {
         if self.view_state.render_mode() != TaskListRenderMode::Epics {
             return Ok(());

@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
@@ -56,7 +57,7 @@ struct ExportTables {
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct WorkspaceRow {
-    id: String,
+    id: WorkspaceId,
     name: String,
     key: String,
     created_at: String,
@@ -67,7 +68,7 @@ struct WorkspaceRow {
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct ProjectRow {
     id: String,
-    workspace_id: String,
+    workspace_id: WorkspaceId,
     key: String,
     name: String,
     prefix: String,
@@ -78,28 +79,28 @@ struct ProjectRow {
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct ProjectPathRow {
-    workspace_id: String,
+    workspace_id: WorkspaceId,
     project_id: String,
     path: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct ProjectIdAliasRow {
-    workspace_id: String,
+    workspace_id: WorkspaceId,
     remote_project_id: String,
     local_project_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct LabelRow {
-    workspace_id: String,
+    workspace_id: WorkspaceId,
     name: String,
     created_at: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct TaskRow {
-    workspace_id: String,
+    workspace_id: WorkspaceId,
     id: String,
     title: String,
     description: String,
@@ -119,7 +120,7 @@ struct TaskRow {
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct TaskEpicLinkRow {
-    workspace_id: String,
+    workspace_id: WorkspaceId,
     child_task_id: String,
     epic_task_id: String,
     created_at: String,
@@ -127,14 +128,14 @@ struct TaskEpicLinkRow {
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct TaskLabelRow {
-    workspace_id: String,
+    workspace_id: WorkspaceId,
     task_id: String,
     label: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct NoteRow {
-    workspace_id: String,
+    workspace_id: WorkspaceId,
     id: String,
     task_id: String,
     body: String,
@@ -144,7 +145,7 @@ struct NoteRow {
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct TaskDependencyRow {
-    workspace_id: String,
+    workspace_id: WorkspaceId,
     task_id: String,
     depends_on_task_id: String,
     created_at: String,
@@ -175,7 +176,7 @@ struct FieldVersionRow {
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct ConflictRow {
     id: i64,
-    workspace_id: String,
+    workspace_id: WorkspaceId,
     task_id: String,
     field: String,
     base_version: Option<String>,
@@ -416,16 +417,13 @@ async fn ensure_supported_export(conn: &mut SqliteConnection, export: &AvenExpor
 fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
     let mut workspace_ids = HashSet::new();
     for workspace in &export.tables.workspaces {
-        if workspace.id.is_empty() {
-            bail!("error invalid-export-snapshot workspace id is empty");
-        }
         if workspace_ids.contains(&workspace.id) {
             continue;
         }
         workspace_ids.insert(workspace.id.clone());
     }
 
-    let mut project_ids: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut project_ids: HashMap<WorkspaceId, HashSet<String>> = HashMap::new();
     for project in &export.tables.projects {
         if !workspace_ids.contains(&project.workspace_id) {
             bail!(
@@ -455,7 +453,7 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
         }
     }
 
-    let mut label_keys: HashSet<(String, String)> = HashSet::new();
+    let mut label_keys: HashSet<(WorkspaceId, String)> = HashSet::new();
     for label in &export.tables.labels {
         if !workspace_ids.contains(&label.workspace_id) {
             bail!(
@@ -466,7 +464,7 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
         label_keys.insert((label.workspace_id.clone(), label.name.clone()));
     }
 
-    let mut task_ids: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut task_ids: HashMap<WorkspaceId, HashSet<String>> = HashMap::new();
     for task in &export.tables.tasks {
         if let Err(error) = crate::time_input::validate_due_on_value(&task.due_on) {
             bail!(

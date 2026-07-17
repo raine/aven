@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::{Result, bail};
 use sqlx::SqliteConnection;
 
@@ -79,7 +80,7 @@ pub(super) async fn remove_epic_link(
 
 async fn ensure_epic_tasks_can_link(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     child_task_id: &str,
     epic_task_id: &str,
 ) -> Result<()> {

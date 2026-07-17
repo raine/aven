@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::Result;
 use sqlx::{Row, SqliteConnection};
 
@@ -23,7 +24,7 @@ pub(crate) struct TaskDependencySummary {
 
 pub(crate) async fn task_dependency_summary(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
 ) -> Result<TaskDependencySummary> {
     let depends_on = query_dependency_items(&mut *conn, workspace_id, task_id, false)
@@ -39,7 +40,7 @@ pub(crate) async fn task_dependency_summary(
 
 async fn query_dependency_items(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
     blocks_only: bool,
 ) -> Result<Vec<TaskDependencyItem>> {
@@ -117,7 +118,7 @@ async fn query_dependency_items(
 
 async fn subject_task_is_open(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_id: &str,
 ) -> Result<bool> {
     let sql = format!(

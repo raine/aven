@@ -293,7 +293,7 @@ mod tests {
         assert!(
             conflict_exists(
                 &mut conn,
-                crate::workspaces::DEFAULT_WORKSPACE_ID,
+                &crate::workspaces::default_workspace_id(),
                 "7KQ9A1X4MV2P8D6R",
                 "title"
             )

@@ -241,7 +241,7 @@ mod tests {
         TaskListItem {
             task: crate::types::Task {
                 id: id.to_string(),
-                workspace_id: "workspace".into(),
+                workspace_id: "0000000000000001".parse().unwrap(),
                 title: format!("task {id}"),
                 description: String::new(),
                 project_id: "project".into(),

@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,7 +32,7 @@ pub(crate) fn normalize_key(input: &str) -> String {
 
 pub(crate) async fn resolve_project_for_add_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     project: Option<&str>,
 ) -> Result<Project> {
     if let Some(project) = project {
@@ -52,7 +53,7 @@ pub(crate) async fn resolve_project_for_add_in_workspace(
 
 pub(crate) async fn resolve_existing_project_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     project: &str,
 ) -> Result<Project> {
     if let Some(project) = find_project_in_workspace(conn, workspace_id, project).await? {
@@ -69,7 +70,7 @@ pub(crate) async fn resolve_existing_project_in_workspace(
 
 pub(crate) async fn inferred_project_key_for_add_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
 ) -> Result<Option<String>> {
     let config = AppConfig::load()?;
     let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
@@ -86,7 +87,7 @@ pub(crate) async fn inferred_project_key_for_add_in_workspace(
 
 pub(crate) async fn inferred_existing_project_key_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
 ) -> Result<Option<String>> {
     let config = AppConfig::load()?;
     let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
@@ -109,7 +110,7 @@ pub(crate) async fn inferred_existing_project_key_in_workspace(
 
 pub(crate) async fn find_project_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     input: &str,
 ) -> Result<Option<Project>> {
     let key = normalize_key(input);
@@ -146,7 +147,7 @@ pub(crate) struct ProjectCreateOutcome {
 
 pub(crate) async fn create_project_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     name: &str,
 ) -> Result<ProjectCreateOutcome> {
     let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
@@ -235,7 +236,7 @@ async fn restore_deleted_project(
         return Ok(None);
     };
     let id: String = row.get("id");
-    let workspace_id: String = row.get("workspace_id");
+    let workspace_id: WorkspaceId = row.get("workspace_id");
     let key: String = row.get("key");
     let prefix: String = row.get("prefix");
     let prefix = if prefix == id {
@@ -286,7 +287,7 @@ async fn restore_deleted_project(
 
 async fn unique_project_prefix(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     key: &str,
 ) -> Result<String> {
     let base = prefix_base(key);
@@ -347,7 +348,7 @@ pub(crate) fn prefix_base(key: &str) -> String {
 
 async fn resolve_or_create_project(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     project: &str,
 ) -> Result<Project> {
     if let Some(existing) = find_project_in_workspace(conn, workspace_id, project).await? {
@@ -365,7 +366,7 @@ async fn resolve_or_create_project(
 
 async fn project_from_path_mapping(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
 ) -> Result<Option<Project>> {
     let cwd = fs::canonicalize(env::current_dir()?)?;
     let root = git_root(&cwd)?.unwrap_or_else(|| cwd.clone());
@@ -397,7 +398,7 @@ async fn project_from_path_mapping(
 
 async fn project_from_config_override(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     config: &AppConfig,
 ) -> Result<Option<Project>> {
     let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
@@ -412,7 +413,7 @@ async fn project_from_config_override(
 }
 
 pub(crate) fn project_has_config_mapping(
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     workspace_key: &str,
     project_key: &str,
 ) -> Result<bool> {
@@ -427,7 +428,7 @@ pub(crate) fn project_has_config_mapping(
 
 fn project_has_config_mapping_in_config(
     config: &AppConfig,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     workspace_key: &str,
     project_key: &str,
 ) -> bool {
@@ -455,13 +456,13 @@ mod tests {
 
         assert!(project_has_config_mapping_in_config(
             &config,
-            "workspace-id",
+            &"0000000000000001".parse().unwrap(),
             "client-work",
             "mobile-app",
         ));
         assert!(!project_has_config_mapping_in_config(
             &config,
-            "workspace-id",
+            &"0000000000000001".parse().unwrap(),
             "default",
             "mobile-app",
         ));
@@ -483,7 +484,7 @@ mod tests {
 
         assert!(project_has_config_mapping_in_config(
             &config,
-            "workspace-id",
+            &"0000000000000001".parse().unwrap(),
             "client-work",
             "mobile-app",
         ));
@@ -492,7 +493,7 @@ mod tests {
 
 fn matching_project_override(
     config: &AppConfig,
-    workspace_id: Option<&str>,
+    workspace_id: Option<&WorkspaceId>,
     workspace: Option<&str>,
 ) -> Result<Option<String>> {
     let cwd = fs::canonicalize(env::current_dir()?)?;
@@ -501,7 +502,7 @@ fn matching_project_override(
     for project_override in &config.project.overrides {
         let scoped =
             project_override.workspace_id.is_some() || project_override.workspace.is_some();
-        let matches_workspace = match project_override.workspace_id.as_deref() {
+        let matches_workspace = match project_override.workspace_id.as_ref() {
             Some(id) => Some(id) == workspace_id,
             None => project_override
                 .workspace
@@ -621,7 +622,7 @@ fn common_git_dir(git_dir: &Path) -> Result<Option<PathBuf>> {
 
 async fn near_projects_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     input: &str,
 ) -> Result<Vec<String>> {
     let needle = normalize_key(input);
@@ -642,7 +643,7 @@ async fn near_projects_in_workspace(
 
 pub(crate) async fn list_projects_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     search: Option<&str>,
 ) -> Result<Vec<Project>> {
     let search = search.map(normalize_key);
@@ -673,7 +674,7 @@ pub(crate) async fn list_projects_in_workspace(
 /// path mapping, or create).
 pub(crate) async fn resolve_project_for_stored_value(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     value: &str,
 ) -> Result<Project> {
     if let Some(row) = sqlx::query(

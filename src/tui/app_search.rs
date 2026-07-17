@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tokio::task::JoinHandle;
@@ -8,7 +9,7 @@ use crate::tui::overlay::{LineEdit, OverlayState, SearchPurpose, SearchResultIte
 
 struct PendingSearchPreview {
     query: String,
-    workspace_id: String,
+    workspace_id: WorkspaceId,
     handle: JoinHandle<Result<TaskSearchPreviewResultSet>>,
 }
 
@@ -25,7 +26,7 @@ pub(super) enum SearchControllerView<'a> {
 
 struct CompletedSearchPreview {
     query: String,
-    workspace_id: String,
+    workspace_id: WorkspaceId,
     result_set: TaskSearchPreviewResultSet,
 }
 
@@ -43,7 +44,7 @@ impl SearchController {
     pub(super) fn start(
         &mut self,
         query: String,
-        workspace_id: String,
+        workspace_id: WorkspaceId,
         handle: JoinHandle<Result<TaskSearchPreviewResultSet>>,
     ) {
         self.cancel();

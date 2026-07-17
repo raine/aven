@@ -7,6 +7,8 @@ use std::str::FromStr;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::ids::WorkspaceId;
+
 const APP_DIR: &str = "aven";
 const DEFAULT_WAKE_ADDR: &str = "127.0.0.1:47631";
 const DEFAULT_SYNC_INTERVAL_SECONDS: u64 = 30;
@@ -96,7 +98,7 @@ pub struct ProjectConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProjectOverrideConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_id: Option<String>,
+    pub workspace_id: Option<WorkspaceId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
     pub project: String,
@@ -181,10 +183,10 @@ impl ProjectOverrideConfig {
 
     pub(crate) fn matches_workspace(
         &self,
-        workspace_id: Option<&str>,
+        workspace_id: Option<&WorkspaceId>,
         workspace: Option<&str>,
     ) -> bool {
-        match self.workspace_id.as_deref() {
+        match self.workspace_id.as_ref() {
             Some(id) => Some(id) == workspace_id,
             None => self
                 .workspace
@@ -250,7 +252,7 @@ impl AppConfig {
 
     pub fn has_project_override(
         &self,
-        workspace_id: Option<&str>,
+        workspace_id: Option<&WorkspaceId>,
         workspace: Option<&str>,
         project_key: &str,
     ) -> bool {
@@ -487,6 +489,28 @@ mod tests {
         let no_statuses =
             load_config("tui:\n  columns:\n    - name: Empty\n      statuses: []\n").unwrap_err();
         assert!(format!("{no_statuses:#}").contains("must include at least one status"));
+    }
+
+    #[test]
+    fn project_override_workspace_ids_are_validated() {
+        let valid = load_config(
+            "project:\n  overrides:\n    - workspace_id: 0123456789ABCDEF\n      project: app\n      paths: []\n",
+        )
+        .unwrap();
+        assert_eq!(
+            valid.project.overrides[0]
+                .workspace_id
+                .as_ref()
+                .unwrap()
+                .as_str(),
+            "0123456789ABCDEF"
+        );
+
+        let invalid = load_config(
+            "project:\n  overrides:\n    - workspace_id: invalid\n      project: app\n      paths: []\n",
+        )
+        .unwrap_err();
+        assert!(format!("{invalid:#}").contains("workspace ID must be"));
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use anyhow::Result;
 use chrono::Local;
 use sqlx::{QueryBuilder, Sqlite, SqliteConnection};
@@ -17,7 +18,7 @@ use super::{
 
 pub(crate) async fn list_task_items_in_workspace(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     filters: TaskFilters,
     mode: TaskQueryMode,
     sort: TaskSort,

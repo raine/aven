@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use std::collections::HashSet;
 
 use anyhow::{Result, bail};
@@ -135,7 +136,7 @@ pub(crate) async fn remove_task_dependency(
 
 pub(crate) async fn dependency_path_exists(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     from_task_id: &str,
     to_task_id: &str,
 ) -> Result<bool> {

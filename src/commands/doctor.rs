@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use std::io::{self, IsTerminal};
 
 use anyhow::Result;
@@ -6,7 +7,7 @@ use sqlx::SqliteConnection;
 
 pub(super) async fn workspace_counts(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
 ) -> Result<(i64, i64)> {
     let active =
         sqlx::query_scalar("SELECT count(*) FROM tasks WHERE workspace_id = ? AND deleted = 0")

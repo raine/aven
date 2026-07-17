@@ -1,3 +1,4 @@
+use crate::ids::WorkspaceId;
 use std::collections::{HashMap, HashSet};
 
 use crate::query::fragments;
@@ -22,7 +23,7 @@ pub(crate) struct TaskEnrichment {
 
 pub(crate) async fn load_task_enrichment(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_ids: &[String],
 ) -> Result<TaskEnrichment> {
     Ok(TaskEnrichment {
@@ -45,7 +46,7 @@ pub(crate) async fn load_task_enrichment(
 
 async fn notes_for_tasks(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_ids: &[String],
 ) -> Result<HashMap<String, Vec<TaskNote>>> {
     let mut notes_by_task = HashMap::new();
@@ -86,7 +87,7 @@ async fn notes_for_tasks(
 
 async fn labels_for_tasks(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_ids: &[String],
 ) -> Result<HashMap<String, Vec<String>>> {
     let mut labels_by_task = HashMap::new();
@@ -124,7 +125,7 @@ async fn labels_for_tasks(
 
 async fn tasks_with_unresolved_conflicts(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_ids: &[String],
 ) -> Result<HashSet<String>> {
     let mut conflicted = HashSet::new();
@@ -157,7 +158,7 @@ async fn tasks_with_unresolved_conflicts(
 
 async fn unresolved_blocker_counts_for_tasks(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_ids: &[String],
 ) -> Result<HashMap<String, i64>> {
     let mut counts = HashMap::new();
@@ -197,7 +198,7 @@ async fn unresolved_blocker_counts_for_tasks(
 
 async fn dependent_counts_for_tasks(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_ids: &[String],
 ) -> Result<HashMap<String, i64>> {
     let mut counts = HashMap::new();
@@ -243,7 +244,7 @@ async fn dependent_counts_for_tasks(
 
 async fn dependency_links_for_tasks(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_ids: &[String],
     blocks_only: bool,
 ) -> Result<HashMap<String, Vec<TaskDependencyLink>>> {
@@ -335,7 +336,7 @@ async fn dependency_links_for_tasks(
 
 async fn epic_children_for_tasks(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_ids: &[String],
 ) -> Result<HashMap<String, Vec<TaskDependencyLink>>> {
     let mut links = HashMap::new();
@@ -391,7 +392,7 @@ async fn epic_children_for_tasks(
 
 async fn epic_parents_for_tasks(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
     task_ids: &[String],
 ) -> Result<HashMap<String, TaskDependencyLink>> {
     let mut links = HashMap::new();
@@ -445,7 +446,7 @@ async fn epic_parents_for_tasks(
 
 async fn workspace_task_ids(
     conn: &mut SqliteConnection,
-    workspace_id: &str,
+    workspace_id: &WorkspaceId,
 ) -> Result<Vec<String>> {
     Ok(
         sqlx::query_scalar::<_, String>("SELECT id FROM tasks WHERE workspace_id = ? ORDER BY id")
@@ -462,7 +463,7 @@ mod tests {
     #[tokio::test]
     async fn task_enrichment_loads_notes_across_bind_chunks() {
         let (_temp, mut conn) = crate::test_support::test_conn().await;
-        let workspace_id = crate::workspaces::DEFAULT_WORKSPACE_ID.to_string();
+        let workspace_id = crate::workspaces::default_workspace_id();
         let task_ids = (0..=SQLITE_BIND_CHUNK_SIZE)
             .map(|index| format!("task-{index:04}"))
             .collect::<Vec<_>>();
