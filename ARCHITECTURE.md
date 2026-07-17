@@ -6,12 +6,12 @@
 
 | Layer | Owns | Start here | Rules |
 | --- | --- | --- | --- |
-| CLI entry and dispatch | argument parsing, command routing, config load, database open, daemon wake, coding-agent skill installation | `src/main.rs`, `src/lib.rs`, `src/cli.rs`, `src/commands.rs`, `src/commands/`, `src/commands/context.rs`, `src/commands/prime.rs`, `src/commands/skill.rs` | Command-family modules own command orchestration and command-local formatting. Business writes belong in operations or mutation helpers. |
+| CLI entry and dispatch | argument parsing, command routing, config load, database open, daemon wake dispatch, coding-agent skill installation | `src/main.rs`, `src/lib.rs`, `src/cli.rs`, `src/commands.rs`, `src/commands/`, `src/commands/context.rs`, `src/commands/prime.rs`, `src/commands/skill.rs` | Command-family modules own command orchestration and command-local formatting. Business writes belong in operations or mutation helpers. |
 | Write model | transactional task, project, label, conflict, config, and workspace changes | `src/operations/`, `src/mutation.rs`, `src/task_fields.rs` | Synced scalar task writes must update tasks, `changes`, and `field_versions` together. |
 | Read model | task lists, task details, task search, project lists, sidebar counts, filters, sorting, refs, and enrichment | `src/query.rs`, `src/query/`, `src/query/details.rs`, `src/task_enrichment.rs`, `src/refs.rs`, `src/queue.rs` | Use the task-detail model for enriched single-task reads. Keep list and search reads batch-oriented, and avoid per-row queries on list paths. Keep retrieval-style task search separate from scoped list filters. |
 | Persistence | SQLite setup, migrations, sync metadata, conflict helpers, SQLx metadata | `src/db.rs`, `migrations/`, `.sqlx/` | Create migrations with `just migration-new <lower_snake_name>`. Refresh SQLx metadata after query or schema changes. |
 | Config and routing | config files, managed config text edits, path mappings, workspace resolution, project inference | `src/config.rs`, `src/config_edit.rs`, `src/workspaces.rs`, `src/projects.rs` | `src/config.rs` owns durable config text writes. Managed entry text surgery belongs in `src/config_edit.rs`. Workspace-scoped commands must resolve an active workspace before domain lookup. |
-| Sync and daemon | HTTP sync client/server, wire DTOs, remote apply, launchd service management, wake loop | `src/sync.rs`, `src/sync/`, `src/sync/apply/`, `src/daemon.rs`, `src/daemon/service.rs` | Wire shapes, protocol version, server validation, and remote apply semantics must evolve together. LaunchAgent ownership and plist rendering live in the daemon service module. |
+| Sync and daemon | HTTP sync client/server, wire DTOs, remote apply, launchd service management, wake-if-enabled policy, wake loop | `src/sync.rs`, `src/sync/`, `src/sync/apply/`, `src/daemon.rs`, `src/daemon/service.rs` | Wire shapes, protocol version, server validation, and remote apply semantics must evolve together. LaunchAgent ownership and plist rendering live in the daemon service module. |
 | TUI app | event loop, actions, overlays, store, rendering, undo, natural add runtime, platform helpers | `src/tui/` | Store modules own DB access. UI modules render view models. Overlay routes drive behavior, not titles. Natural add worker setup belongs in `src/tui/natural_add_runtime.rs`. |
 | Update delivery | cached GitHub release discovery, semantic version comparison, install ownership classification, verified direct replacement | `src/update.rs`, `src/update/` | Background checks are fail-silent and rate-limited. CLI and TUI flows own their presentation and confirmation behavior. Package-manager installations receive manager-specific guidance rather than binary replacement. |
 | Shared domain helpers | IDs, choices, labels, input loading, text rendering, CLI render output, logging, fuzzy matching | `src/ids.rs`, `src/choices.rs`, `src/labels.rs`, `src/input.rs`, `src/render.rs`, `src/task_render.rs`, `src/logging.rs`, `src/fuzzy.rs`, `src/types.rs` | Reuse canonical helpers instead of duplicating validation, display, diff, or parsing rules. |
@@ -24,7 +24,7 @@
 1. `src/main.rs` starts Tokio and calls `aven::run_cli()`.
 2. `src/cli.rs` parses `Cli` and `Commands`.
 3. `src/lib.rs` classifies every parsed command into the explicit standalone, database, or TUI dispatch class through an exhaustive `Commands` match. Each typed dispatch path performs its required setup, then routes to `src/commands.rs` and focused command-family modules under `src/commands/`. `aven update` dispatches directly to `src/commands/self_update.rs` without opening the task database.
-4. Mutating commands call operations or mutation helpers and wake the daemon when sync is enabled.
+4. Mutating commands call operations or mutation helpers, then dispatch through the daemon wake-if-enabled policy.
 
 ### TUI flow
 
@@ -104,6 +104,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Keep bounded sync limits explicit: `MAX_PUSH_BATCH` bounds client push pages, `MAX_PULL_BATCH` bounds server pull pages, and `DAEMON_SYNC_PAGE_BUDGET` bounds daemon work per wake.
 - Keep cursor semantics based on `server_seq`. Pull pages are ordered by increasing `server_seq`; response cursors equal the last returned `server_seq` or the request cursor for an empty page; local `sync_cursor` advances only after a validated page applies successfully.
 - Keep daemon sync privacy-safe and budget-aware. Daemon logs and stdout include counts, cursor, completion, and page count without user content, and incomplete rounds schedule prompt follow-up sync work.
+- Route successful local mutation wake attempts through `daemon::wake_if_enabled`, which owns the sync-enabled condition, wake-address resolution, and wake logging.
 
 ## Change routing
 

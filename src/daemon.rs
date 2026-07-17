@@ -225,7 +225,18 @@ async fn sync_once(
     Ok(summary)
 }
 
-pub fn wake(addr: SocketAddr) {
+pub(crate) fn wake_if_enabled(config: &AppConfig) {
+    if !config.sync.enabled {
+        return;
+    }
+    let Ok(addr) = config.wake_addr() else {
+        return;
+    };
+    debug!(wake_addr = %addr, "waking daemon after local mutation");
+    wake(addr);
+}
+
+fn wake(addr: SocketAddr) {
     let bind_addr = SocketAddr::new(addr.ip(), 0);
     match std::net::UdpSocket::bind(bind_addr).and_then(|socket| socket.send_to(b"1", addr)) {
         Ok(_) => debug!(wake_addr = %addr, "daemon wake sent"),
@@ -236,6 +247,51 @@ pub fn wake(addr: SocketAddr) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wake_if_enabled_sends_to_configured_address() {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let mut config = AppConfig::default();
+        config.sync.enabled = true;
+        config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
+
+        wake_if_enabled(&config);
+
+        let mut buf = [0_u8; 1];
+        assert_eq!(socket.recv(&mut buf).unwrap(), 1);
+        assert_eq!(buf, [b'1']);
+    }
+
+    #[test]
+    fn wake_if_enabled_skips_when_sync_is_disabled() {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_millis(25)))
+            .unwrap();
+        let mut config = AppConfig::default();
+        config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
+
+        wake_if_enabled(&config);
+
+        let mut buf = [0_u8; 1];
+        let error = socket.recv(&mut buf).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ));
+    }
+
+    #[test]
+    fn wake_if_enabled_skips_invalid_address() {
+        let mut config = AppConfig::default();
+        config.sync.enabled = true;
+        config.daemon.wake_addr = Some("not-an-address".to_string());
+
+        wake_if_enabled(&config);
+    }
 
     #[test]
     fn binary_fingerprint_changes_when_file_changes() {

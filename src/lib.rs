@@ -221,7 +221,7 @@ async fn dispatch_tui(
     workspace: Option<String>,
     args: cli::TuiArgs,
 ) -> Result<()> {
-    let config = load_config_for_command(db.is_some())?;
+    let config = config::AppConfig::load()?;
     let db_path = config::resolve_db_path(db, &config)?;
     let pool = open_db(&db_path).await?;
     let mut conn = pool.acquire().await?;
@@ -260,7 +260,7 @@ async fn dispatch_database(
     command: DatabaseCommand,
 ) -> Result<()> {
     let db_flag_set = db.is_some();
-    let config = load_config_for_command(db_flag_set)?;
+    let config = config::AppConfig::load()?;
     let db_path = config::resolve_db_path(db, &config)?;
     let pool = open_db(&db_path).await?;
     let mut conn = pool.acquire().await?;
@@ -333,19 +333,10 @@ async fn dispatch_database(
             .await
         }
     };
-    if result.is_ok()
-        && should_wake
-        && config.sync.enabled
-        && let Ok(addr) = config.wake_addr()
-    {
-        tracing::debug!(wake_addr = %addr, "waking daemon after local mutation");
-        daemon::wake(addr);
+    if result.is_ok() && should_wake {
+        daemon::wake_if_enabled(&config);
     }
     result
-}
-
-fn load_config_for_command(_db_flag_set: bool) -> Result<config::AppConfig> {
-    config::AppConfig::load()
 }
 
 #[cfg(test)]

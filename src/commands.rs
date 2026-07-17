@@ -207,12 +207,7 @@ pub(crate) async fn cmd_internal_natural_add(
         due_on_display(&task.due_on),
         quote(&task.title)
     );
-    if config.sync.enabled
-        && let Ok(addr) = config.wake_addr()
-    {
-        tracing::debug!(wake_addr = %addr, "waking daemon after internal natural add");
-        crate::daemon::wake(addr);
-    }
+    crate::daemon::wake_if_enabled(config);
     Ok(())
 }
 
