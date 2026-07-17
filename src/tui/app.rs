@@ -10,6 +10,7 @@ use tokio::task::JoinHandle;
 use crate::config::AppConfig;
 use crate::operations::TaskDraft;
 use crate::tui::authoring::AuthoringState;
+use crate::tui::bounded_history::BoundedHistory;
 use crate::tui::conflict_flow::ConflictFlowState;
 use crate::tui::overlay::OverlayState;
 use crate::tui::shortcut_buffer::ShortcutBuffer;
@@ -166,8 +167,8 @@ pub(crate) struct App {
     pub(crate) selected_detail_child_task_id: Option<String>,
     pub(crate) detail_text_selection: Option<crate::tui::detail_selection::DetailTextSelection>,
     pub(crate) detail_text_dragging: bool,
-    pub(super) navigation_history: Vec<TaskViewState>,
-    pub(super) detail_navigation_history: Vec<DetailNavigationState>,
+    pub(super) navigation_history: BoundedHistory<TaskViewState>,
+    pub(super) detail_navigation_history: BoundedHistory<DetailNavigationState>,
 }
 
 impl App {
@@ -228,8 +229,8 @@ impl App {
             selected_detail_child_task_id: None,
             detail_text_selection: None,
             detail_text_dragging: false,
-            navigation_history: Vec::new(),
-            detail_navigation_history: Vec::new(),
+            navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
+            detail_navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
         };
         app.restore_sidebar_selection();
         app.widgets
@@ -258,12 +259,6 @@ impl App {
         if previous == self.store.view_state {
             return;
         }
-        if self.navigation_history.last() == Some(&previous) {
-            return;
-        }
-        if self.navigation_history.len() >= NAVIGATION_HISTORY_LIMIT {
-            self.navigation_history.remove(0);
-        }
         self.navigation_history.push(previous);
     }
 
@@ -272,12 +267,6 @@ impl App {
     }
 
     pub(super) fn push_detail_navigation_state(&mut self, previous: DetailNavigationState) {
-        if self.detail_navigation_history.last() == Some(&previous) {
-            return;
-        }
-        if self.detail_navigation_history.len() >= NAVIGATION_HISTORY_LIMIT {
-            self.detail_navigation_history.remove(0);
-        }
         self.detail_navigation_history.push(previous);
     }
 

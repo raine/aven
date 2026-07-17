@@ -16,6 +16,7 @@ mod app_projects;
 mod app_search;
 mod app_update;
 mod authoring;
+mod bounded_history;
 mod columns;
 mod config_overlay;
 mod conflict_flow;
