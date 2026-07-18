@@ -2051,6 +2051,66 @@ mod undo {
     }
 
     #[tokio::test]
+    async fn undo_atomic_attachment_task_removes_all_database_rows() {
+        let (dir, pool, mut store) = test_store_with_pool().await;
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::new(2, 1))
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        let pending = crate::tui::authoring::PendingTaskAttachment::new(
+            "ATTACHMENT000001".to_string(),
+            crate::operations::AttachmentAddInput {
+                filename: Some("image.png".to_string()),
+                alt_text: None,
+                declared_media_type: Some("image/png".to_string()),
+                bytes: bytes.into_inner(),
+                optimization_policy:
+                    crate::attachments::optimization::ImageOptimizationPolicy::Preserve,
+                dedupe_existing: false,
+            },
+        );
+        store
+            .create_task_with_attachments(
+                task_draft("Temporary attachment task"),
+                None,
+                &dir.path().join("blobs"),
+                crate::attachments::lifecycle::LifecyclePolicy::default(),
+                vec![pending],
+            )
+            .await
+            .unwrap();
+        let task_id = store.tasks[0].task.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        let undo_count: i64 = sqlx::query_scalar("SELECT count(*) FROM tui_undo_entries")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(undo_count, 1);
+        drop(conn);
+
+        store.undo_last(None).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let task_count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks WHERE id = ?")
+            .bind(&task_id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        let attachment_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM task_attachments WHERE task_id = ?")
+                .bind(&task_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        let change_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM changes WHERE entity_id = ?")
+                .bind(&task_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!((task_count, attachment_count, change_count), (0, 0, 0));
+    }
+
+    #[tokio::test]
     async fn undo_labels_uses_set_comparison() {
         let mut store = test_store().await;
         store.create_label("bug".to_string()).await.unwrap();

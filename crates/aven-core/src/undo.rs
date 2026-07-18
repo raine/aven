@@ -49,6 +49,10 @@ pub enum UndoCommand {
         task_id: crate::ids::TaskId,
         create_change_id: Option<String>,
         expected: TaskUndoSnapshot,
+        #[serde(default)]
+        attachment_ids: Vec<String>,
+        #[serde(default)]
+        attachment_change_ids: Vec<String>,
     },
     DeleteCreatedNote {
         task_id: crate::ids::TaskId,
@@ -524,16 +528,40 @@ async fn apply_undo_command(
             task_id,
             create_change_id,
             expected,
+            attachment_ids,
+            attachment_change_ids,
         } => {
             let current = task_snapshot(conn, workspace_id, task_id).await?;
             if current != *expected {
                 bail!("error undo-state-changed task_id={task_id} field=task");
             }
+            let current_attachment_ids: Vec<String> = sqlx::query_scalar(
+                "SELECT attachment_id FROM task_attachments
+                 WHERE workspace_id = ? AND task_id = ? AND deleted = 0
+                 ORDER BY created_at, attachment_id",
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .fetch_all(&mut *conn)
+            .await?;
             if let Some(change_id) = create_change_id {
                 let labels_clear = expected.labels.is_empty()
                     || labels_match_create_change(conn, change_id, &expected.labels).await?;
-                if change_is_unsynced(conn, change_id).await? && labels_clear {
-                    hard_delete_created_task(conn, workspace_id, task_id, change_id).await?;
+                let attachment_changes_clear =
+                    all_changes_unsynced(conn, attachment_change_ids).await?;
+                if change_is_unsynced(conn, change_id).await?
+                    && labels_clear
+                    && attachment_changes_clear
+                    && current_attachment_ids == *attachment_ids
+                {
+                    hard_delete_created_task(
+                        conn,
+                        workspace_id,
+                        task_id,
+                        change_id,
+                        attachment_change_ids,
+                    )
+                    .await?;
                     return Ok(CommandOutcome {
                         task_id: Some(task_id.clone()),
                         include_deleted: None,
@@ -779,6 +807,15 @@ async fn change_is_unsynced(conn: &mut SqliteConnection, change_id: &str) -> Res
     Ok(matches!(server_seq, Some(None)))
 }
 
+async fn all_changes_unsynced(conn: &mut SqliteConnection, change_ids: &[String]) -> Result<bool> {
+    for change_id in change_ids {
+        if !change_is_unsynced(conn, change_id).await? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 async fn labels_match_create_change(
     conn: &mut SqliteConnection,
     change_id: &str,
@@ -807,7 +844,13 @@ async fn hard_delete_created_task(
     workspace_id: &WorkspaceId,
     task_id: &crate::ids::TaskId,
     create_change_id: &str,
+    attachment_change_ids: &[String],
 ) -> Result<()> {
+    sqlx::query("DELETE FROM task_attachments WHERE workspace_id = ? AND task_id = ?")
+        .bind(workspace_id)
+        .bind(task_id)
+        .execute(&mut *conn)
+        .await?;
     sqlx::query("DELETE FROM task_labels WHERE workspace_id = ? AND task_id = ?")
         .bind(workspace_id)
         .bind(task_id)
@@ -822,10 +865,21 @@ async fn hard_delete_created_task(
         .bind(task_id)
         .execute(&mut *conn)
         .await?;
+    for change_id in attachment_change_ids {
+        sqlx::query("DELETE FROM changes WHERE change_id = ?")
+            .bind(change_id)
+            .execute(&mut *conn)
+            .await?;
+    }
     sqlx::query("DELETE FROM changes WHERE change_id = ?")
         .bind(create_change_id)
         .execute(&mut *conn)
         .await?;
+    crate::attachments::lifecycle::reconcile_liveness_in_transaction(
+        conn,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
     Ok(())
 }
 

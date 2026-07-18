@@ -1,9 +1,16 @@
+mod attachments;
 mod conflicts;
 mod dependencies;
 mod epics;
 mod projects;
 mod tasks;
 
+#[cfg(feature = "test-support")]
+pub use attachments::attachment_read_items_by_task;
+pub use attachments::{
+    AttachmentAddInput, AttachmentAddOutcome, AttachmentOutcome, AttachmentReadItem,
+    PreparedAttachment, TaskAttachmentAddInput,
+};
 pub use conflicts::{ConflictDetail, ConflictListItem, ConflictOutcome, ConflictResolutionOutcome};
 pub(crate) use conflicts::{ConflictNotFoundError, ConflictValueChoice, resolve_conflict_choice};
 pub use dependencies::DependencyOutcome;

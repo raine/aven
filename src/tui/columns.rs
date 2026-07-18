@@ -267,6 +267,7 @@ mod tests {
             blocks: Vec::new(),
             epic_children: Vec::new(),
             epic_parent: None,
+            attachments: Vec::new(),
             queue: Default::default(),
         }
     }

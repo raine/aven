@@ -26,6 +26,10 @@ pub fn changed_text(changed: bool) -> &'static str {
     if changed { "yes" } else { "none" }
 }
 
+pub fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
+}
+
 pub struct KvLine {
     parts: Vec<String>,
 }

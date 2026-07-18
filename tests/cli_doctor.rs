@@ -1,8 +1,9 @@
 mod common;
 
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 
-use common::{TestEnv, contains_all, contains_none, meta_value, ok};
+use common::{TestEnv, contains_all, contains_none, extract_ref, meta_value, ok, png_bytes};
 use sqlx::ConnectOptions;
 use sqlx::sqlite::SqliteConnectOptions;
 
@@ -387,6 +388,66 @@ fn doctor_with_integrity_reports_invalid_due_dates() {
 }
 
 #[test]
+fn doctor_with_integrity_reports_attachment_sidecar_issues() {
+    let env = TestEnv::new();
+    let db = env.db("integrity-attachment-doctor.sqlite");
+    let task_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "attachment check", "--project", "app"])
+    ));
+    let image = env.path("photo.png");
+    fs::write(&image, png_bytes(3, 2)).unwrap();
+    ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+    let sha = query_string(&db, "SELECT sha256 FROM blob_inventory LIMIT 1");
+    let blob_dir = default_blob_dir(&db);
+    fs::remove_file(blob_dir.join("objects").join("sha256").join(&sha)).unwrap();
+    fs::write(
+        blob_dir
+            .join("objects")
+            .join("sha256")
+            .join("orphan-object"),
+        b"orphan",
+    )
+    .unwrap();
+
+    let output = ok(env.aven(&db, ["doctor", "--integrity"]));
+    contains_all(
+        &output,
+        &[
+            "Integrity",
+            "!! attachment objects",
+            "!! attachment orphan objects",
+            "!! result",
+        ],
+    );
+}
+
+#[test]
+fn doctor_with_integrity_decodes_unattached_available_objects() {
+    let env = TestEnv::new();
+    let db = env.db("integrity-unattached-attachment.sqlite");
+    ok(env.aven(&db, ["doctor"]));
+    let sha = "a".repeat(64);
+    run_sql(
+        &db,
+        "INSERT INTO blob_inventory(sha256, byte_size, media_type, available, first_seen_at)
+         VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 7, 'image/png', 1, '2026-07-18T00:00:00Z')",
+    );
+    let path = default_blob_dir(&db)
+        .join("objects")
+        .join("sha256")
+        .join(sha);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, b"corrupt").unwrap();
+
+    let output = ok(env.aven(&db, ["doctor", "--integrity"]));
+    contains_all(&output, &["!! attachment object hashes", "1 mismatched"]);
+    contains_none(&output, &["aaaaaaaaaaaaaaaa"]);
+}
+
+#[test]
 fn doctor_json_reports_default_database_health() {
     let env = TestEnv::new();
     let db = env.db("doctor-json.sqlite");
@@ -439,4 +500,30 @@ fn run_sql(db: &Path, sql: &'static str) {
             .expect("open test db");
         sqlx::query(sql).execute(&mut conn).await.expect("run sql");
     });
+}
+
+fn query_string(db: &Path, sql: &'static str) -> String {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create runtime");
+    runtime.block_on(async {
+        let mut conn = SqliteConnectOptions::new()
+            .filename(db)
+            .create_if_missing(false)
+            .foreign_keys(true)
+            .connect()
+            .await
+            .expect("open test db");
+        sqlx::query_scalar::<_, String>(sql)
+            .fetch_one(&mut conn)
+            .await
+            .expect("read string")
+    })
+}
+
+fn default_blob_dir(db: &Path) -> PathBuf {
+    let mut blob_dir = db.as_os_str().to_os_string();
+    blob_dir.push(".blobs");
+    PathBuf::from(blob_dir)
 }

@@ -1,7 +1,10 @@
+use std::collections::BTreeMap;
+use std::path::Path;
+
 use crate::ids::WorkspaceId;
 use anyhow::{Result, bail};
 use sqlx::SqliteConnection;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
 use crate::choices::{TaskPriority, TaskStatus};
@@ -27,9 +30,18 @@ pub struct TaskDraft {
     pub is_epic: bool,
 }
 
+#[derive(Debug)]
 pub struct TaskOutcome {
     pub task: Task,
     pub create_change_id: Option<String>,
+    pub attachment_change_ids: Vec<String>,
+}
+
+struct InsertedTask {
+    id: TaskId,
+    change_id: String,
+    project_key: String,
+    label_count: usize,
 }
 
 #[derive(Default)]
@@ -73,6 +85,26 @@ impl Database {
     ) -> Result<TaskOutcome> {
         let mut conn = self.acquire().await?;
         create_task(&mut conn, workspace, draft).await
+    }
+
+    pub async fn create_task_with_attachments(
+        &self,
+        workspace: &Workspace,
+        blob_dir: &Path,
+        lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
+        draft: TaskDraft,
+        attachments: Vec<super::attachments::TaskAttachmentAddInput>,
+    ) -> Result<TaskOutcome> {
+        let mut conn = self.acquire().await?;
+        create_task_with_attachments(
+            &mut conn,
+            workspace,
+            blob_dir,
+            lifecycle_policy,
+            draft,
+            attachments,
+        )
+        .await
     }
 
     pub async fn update_task(
@@ -134,25 +166,225 @@ pub async fn create_task(
     workspace: &Workspace,
     draft: TaskDraft,
 ) -> Result<TaskOutcome> {
-    let status = TaskStatus::parse(&draft.status)?;
-    let priority = TaskPriority::parse(&draft.priority)?;
+    validate_task_draft(&draft)?;
+    let mut tx = begin_immediate(conn).await?;
+    let inserted = insert_task(&mut tx, workspace, draft).await?;
+    tx.commit().await?;
+    info!(
+        task_id = %inserted.id,
+        project_key = %inserted.project_key,
+        label_count = inserted.label_count,
+        "task created"
+    );
+    Ok(TaskOutcome {
+        task: get_task_in_workspace(conn, workspace, &inserted.id).await?,
+        create_change_id: Some(inserted.change_id),
+        attachment_change_ids: Vec::new(),
+    })
+}
+
+pub async fn create_task_with_attachments(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    blob_dir: &Path,
+    lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
+    draft: TaskDraft,
+    attachments: Vec<super::attachments::TaskAttachmentAddInput>,
+) -> Result<TaskOutcome> {
+    validate_task_draft(&draft)?;
+    let mut prepared = Vec::with_capacity(attachments.len());
+    for attachment in attachments {
+        prepared.push(super::attachments::prepare_task_attachment(attachment).await?);
+    }
+
+    let mut unique = BTreeMap::new();
+    for attachment in &prepared {
+        unique
+            .entry(attachment.sha256.clone())
+            .or_insert_with(|| attachment.clone());
+    }
+
+    let mut capacity_reservations = Vec::new();
+    for attachment in unique.values() {
+        let available: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM blob_inventory WHERE sha256 = ? AND available = 1)",
+        )
+        .bind(&attachment.sha256)
+        .fetch_one(&mut *conn)
+        .await?;
+        if available {
+            continue;
+        }
+        match crate::attachments::lifecycle::ensure_local_capacity(
+            conn,
+            blob_dir,
+            &attachment.sha256,
+            attachment.byte_size,
+            lifecycle_policy,
+            &crate::attachments::lifecycle::SystemClock,
+        )
+        .await
+        {
+            Ok(Some(reservation_id)) => capacity_reservations.push(reservation_id),
+            Ok(None) => {}
+            Err(error) => {
+                for reservation_id in capacity_reservations {
+                    let _ =
+                        crate::attachments::lifecycle::release_reservation(conn, &reservation_id)
+                            .await;
+                }
+                return Err(error);
+            }
+        }
+    }
+
+    let mut staging_leases = Vec::with_capacity(unique.len());
+    for attachment in unique.values() {
+        match crate::attachments::lifecycle::acquire_lease(
+            conn,
+            &attachment.sha256,
+            "staging",
+            &crate::attachments::lifecycle::SystemClock,
+        )
+        .await
+        {
+            Ok(lease_id) => staging_leases.push(lease_id),
+            Err(error) => {
+                for lease_id in staging_leases {
+                    let _ = crate::attachments::lifecycle::release_lease(conn, &lease_id).await;
+                }
+                for reservation_id in capacity_reservations {
+                    let _ =
+                        crate::attachments::lifecycle::release_reservation(conn, &reservation_id)
+                            .await;
+                }
+                return Err(error);
+            }
+        }
+    }
+
+    let mut created_hashes = Vec::new();
+    for attachment in unique.values() {
+        match crate::attachments::storage::stage_blob(
+            blob_dir,
+            &attachment.sha256,
+            &attachment.bytes,
+        )
+        .await
+        {
+            Ok(staged) if staged.byte_size == attachment.byte_size => {
+                if staged.created {
+                    created_hashes.push(staged.sha256);
+                }
+            }
+            Ok(_) => {
+                cleanup_created_objects(conn, blob_dir, &created_hashes).await;
+                cleanup_attachment_guards(conn, &staging_leases, &capacity_reservations).await;
+                bail!("error attachment-staged-size-mismatch");
+            }
+            Err(error) => {
+                cleanup_created_objects(conn, blob_dir, &created_hashes).await;
+                cleanup_attachment_guards(conn, &staging_leases, &capacity_reservations).await;
+                return Err(error);
+            }
+        }
+    }
+
+    let database_result = async {
+        let mut tx = begin_immediate(conn).await?;
+        for attachment in unique.values() {
+            crate::attachments::storage::upsert_inventory_available(
+                &mut tx,
+                &attachment.sha256,
+                attachment.byte_size,
+                &attachment.facts.media_type,
+            )
+            .await?;
+        }
+        let inserted = insert_task(&mut tx, workspace, draft).await?;
+        let mut attachment_change_ids = Vec::with_capacity(prepared.len());
+        let attachment_base = chrono::DateTime::parse_from_rfc3339(&now())?.to_utc();
+        for (index, attachment) in prepared.iter().enumerate() {
+            let created_at = (attachment_base
+                + chrono::TimeDelta::microseconds(i64::try_from(index)?))
+            .to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+            attachment_change_ids.push(
+                super::attachments::insert_prepared_attachment(
+                    &mut tx,
+                    workspace,
+                    &inserted.id,
+                    attachment,
+                    &created_at,
+                )
+                .await?,
+            );
+        }
+        let task = get_task_in_workspace(&mut tx, workspace, &inserted.id).await?;
+        tx.commit().await?;
+        Ok::<_, anyhow::Error>((inserted, attachment_change_ids, task))
+    }
+    .await;
+
+    let (inserted, attachment_change_ids, task) = match database_result {
+        Ok(value) => value,
+        Err(error) => {
+            cleanup_created_objects(conn, blob_dir, &created_hashes).await;
+            cleanup_attachment_guards(conn, &staging_leases, &capacity_reservations).await;
+            return Err(error);
+        }
+    };
+    cleanup_attachment_guards(conn, &staging_leases, &capacity_reservations).await;
+    if let Err(error) = crate::attachments::lifecycle::reconcile_liveness(
+        conn,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await
+    {
+        warn!(%error, "failed to reconcile attachment liveness");
+    }
+    info!(
+        task_id = %inserted.id,
+        project_key = %inserted.project_key,
+        label_count = inserted.label_count,
+        attachment_count = prepared.len(),
+        "task created"
+    );
+    Ok(TaskOutcome {
+        task,
+        create_change_id: Some(inserted.change_id),
+        attachment_change_ids,
+    })
+}
+
+fn validate_task_draft(draft: &TaskDraft) -> Result<()> {
+    TaskStatus::parse(&draft.status)?;
+    TaskPriority::parse(&draft.priority)?;
     if let Some(available_at) = draft.available_at.as_deref() {
         crate::time_validation::validate_available_at_value(available_at)?;
     }
     if let Some(due_on) = draft.due_on.as_deref() {
         crate::time_validation::validate_due_on_value(due_on)?;
     }
+    Ok(())
+}
+
+async fn insert_task(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    draft: TaskDraft,
+) -> Result<InsertedTask> {
+    let status = TaskStatus::parse(&draft.status)?;
+    let priority = TaskPriority::parse(&draft.priority)?;
     let available_at = draft.available_at.as_deref().unwrap_or("");
     let due_on = draft.due_on.as_deref().unwrap_or("");
     let id = TaskId::new();
     let ts = now();
-    let mut tx = begin_immediate(conn).await?;
     let project = draft
         .project
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("error project-required"))?;
-    let project = resolve_or_create_project_in_workspace(&mut tx, &workspace.id, project).await?;
-    let labels = resolve_labels_in_workspace(&mut tx, &workspace.id, &draft.labels).await?;
+    let project = resolve_or_create_project_in_workspace(conn, &workspace.id, project).await?;
+    let labels = resolve_labels_in_workspace(conn, &workspace.id, &draft.labels).await?;
     sqlx::query(
         "INSERT INTO tasks(workspace_id, id, title, description, project_id, status, priority, created_at, updated_at, queue_activity_at, available_at, due_on, is_epic)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -170,7 +402,7 @@ pub async fn create_task(
     .bind(available_at)
     .bind(due_on)
     .bind(i64::from(draft.is_epic))
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
     for label in &labels {
         sqlx::query(
@@ -179,11 +411,11 @@ pub async fn create_task(
         .bind(&workspace.id)
         .bind(&id)
         .bind(label)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
     }
     let change_id = append_change(
-        &mut tx,
+        conn,
         ChangeEntity::Task,
         &id,
         None,
@@ -205,19 +437,40 @@ pub async fn create_task(
     )
     .await?;
     for field in TaskField::VERSIONED {
-        set_field_version(&mut tx, &id, field.as_str(), &change_id).await?;
+        set_field_version(conn, &id, field.as_str(), &change_id).await?;
     }
-    tx.commit().await?;
-    info!(
-        task_id = %id,
-        project_key = %project.key,
-        label_count = labels.len(),
-        "task created"
-    );
-    Ok(TaskOutcome {
-        task: get_task_in_workspace(conn, workspace, &id).await?,
-        create_change_id: Some(change_id),
+    Ok(InsertedTask {
+        id,
+        change_id,
+        project_key: project.key,
+        label_count: labels.len(),
     })
+}
+
+async fn cleanup_attachment_guards(
+    conn: &mut SqliteConnection,
+    leases: &[String],
+    reservations: &[String],
+) {
+    for lease_id in leases {
+        if let Err(error) = crate::attachments::lifecycle::release_lease(conn, lease_id).await {
+            warn!(%error, "failed to release attachment staging lease");
+        }
+    }
+    for reservation_id in reservations {
+        if let Err(error) =
+            crate::attachments::lifecycle::release_reservation(conn, reservation_id).await
+        {
+            warn!(%error, "failed to release attachment capacity reservation");
+        }
+    }
+}
+
+async fn cleanup_created_objects(conn: &mut SqliteConnection, blob_dir: &Path, hashes: &[String]) {
+    for sha256 in hashes {
+        crate::attachments::storage::remove_staged_blob_if_unreferenced(conn, blob_dir, sha256)
+            .await;
+    }
 }
 
 pub async fn update_task(
@@ -403,10 +656,16 @@ pub async fn set_task_deleted(
         if deleted { "1" } else { "0" },
     )
     .await?;
+    crate::attachments::lifecycle::reconcile_liveness(
+        conn,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
     info!(task_id = %task_id, deleted, "task deleted flag changed");
     Ok(TaskOutcome {
         task: get_task_in_workspace(conn, workspace, task_id).await?,
         create_change_id: None,
+        attachment_change_ids: Vec::new(),
     })
 }
 

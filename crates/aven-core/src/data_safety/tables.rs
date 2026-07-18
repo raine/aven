@@ -191,6 +191,53 @@ pub(super) async fn import_task_epic_links(
     Ok(())
 }
 
+pub(super) async fn import_task_attachments(
+    tx: &mut SqliteConnection,
+    rows: &[super::TaskAttachmentRow],
+) -> Result<()> {
+    for row in rows {
+        sqlx::query(
+            "INSERT INTO task_attachments(workspace_id, attachment_id, task_id, sha256, byte_size, media_type, filename, alt_text, width, height, created_at, created_by_change_id, deleted, deleted_at, deleted_by_change_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&row.workspace_id)
+        .bind(&row.attachment_id)
+        .bind(&row.task_id)
+        .bind(&row.sha256)
+        .bind(row.byte_size)
+        .bind(&row.media_type)
+        .bind(&row.filename)
+        .bind(&row.alt_text)
+        .bind(row.width)
+        .bind(row.height)
+        .bind(&row.created_at)
+        .bind(&row.created_by_change_id)
+        .bind(row.deleted)
+        .bind(&row.deleted_at)
+        .bind(&row.deleted_by_change_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
+pub(super) async fn import_blob_inventory(
+    tx: &mut SqliteConnection,
+    rows: &[super::BlobInventoryExportRow],
+) -> Result<()> {
+    for row in rows {
+        sqlx::query(
+            "INSERT INTO blob_inventory(sha256, byte_size, media_type, available, first_seen_at, last_verified_at) VALUES (?, ?, ?, 0, ?, NULL)",
+        )
+        .bind(&row.sha256)
+        .bind(row.byte_size)
+        .bind(&row.media_type)
+        .bind(&row.first_seen_at)
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
 pub(super) async fn import_changes(
     tx: &mut SqliteConnection,
     rows: &[super::ChangeRow],

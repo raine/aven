@@ -6,7 +6,9 @@ use serde::Serialize;
 use crate::cli::ContextArgs;
 use crate::query::{self, TaskDependencyItem};
 use crate::render::{print_json_pretty, print_multiline_block, quote};
-use crate::task_render::{TaskEpicLinkJson, task_epic_link_json};
+use crate::task_render::{
+    AttachmentMetadataJson, TaskEpicLinkJson, print_attachment_section, task_epic_link_json,
+};
 use crate::types::Task;
 use crate::workspaces::Workspace;
 
@@ -39,6 +41,7 @@ struct TaskContextSnapshot {
     has_open_dependents: bool,
     epic_parent: Option<TaskEpicLinkJson>,
     epic_children: Vec<TaskEpicLinkJson>,
+    attachments: Vec<AttachmentMetadataJson>,
 }
 
 #[derive(Serialize)]
@@ -135,6 +138,7 @@ async fn task_context_snapshot(
         .collect();
     let summary = detail.dependencies;
     let details = detail.conflicts;
+    let attachments = detail.item.attachments.clone();
 
     let depends_on_open = summary
         .depends_on
@@ -207,6 +211,7 @@ async fn task_context_snapshot(
         has_open_dependents,
         epic_parent,
         epic_children,
+        attachments,
     })
 }
 
@@ -287,6 +292,7 @@ fn print_task_context(snapshot: &TaskContextSnapshot) {
     if !snapshot.task.description.is_empty() {
         print_multiline_block("description", &snapshot.task.description);
     }
+    print_attachment_section(&snapshot.attachments);
     let deps = &snapshot.dependencies;
     println!(
         "depends_on open={} total={}",

@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use aven_core::db::Database;
 use tokio::net::UdpSocket;
-use tokio::time::{Instant, sleep_until, timeout};
+use tokio::time::{Instant, sleep_until};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -70,6 +70,8 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         wake_addr
     );
 
+    let blob_dir = crate::config::resolve_blob_dir(&args.db_path, &args.config)?;
+    let lifecycle_policy = args.config.local.attachment_lifecycle.policy();
     let binary_fingerprint = current_binary_fingerprint()?;
     let client = SyncHttpClient::new().context("build daemon sync HTTP client")?;
     info!(server = %server, http_client_id = %client.id(), "daemon sync client ready");
@@ -79,18 +81,23 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         socket,
         interval_seconds,
         args.config.sync_auth_token().map(str::to_string),
+        blob_dir,
+        lifecycle_policy,
         client,
         binary_fingerprint,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_loop(
     database: Database,
     server: String,
     socket: UdpSocket,
     interval_seconds: u64,
     auth_token: Option<String>,
+    blob_dir: PathBuf,
+    lifecycle_policy: aven_core::attachments::LifecyclePolicy,
     client: SyncHttpClient,
     binary_fingerprint: BinaryFingerprint,
 ) -> Result<()> {
@@ -123,13 +130,17 @@ async fn run_loop(
                 next_binary_check = Instant::now() + BINARY_CHECK_INTERVAL;
             }
             _ = sleep_until(next_sync) => {
-                match timeout(
-                    Duration::from_secs(35),
-                    sync_once(&database, &server, auth_token.as_deref(), &client),
+                match sync_once(
+                    &database,
+                    &blob_dir,
+                    lifecycle_policy,
+                    &server,
+                    auth_token.as_deref(),
+                    &client,
                 )
                 .await
                 {
-                    Ok(Ok(summary)) => {
+                    Ok(summary) => {
                         backoff_seconds = 1;
                         next_sync = if summary.complete {
                             Instant::now() + Duration::from_secs(interval_seconds)
@@ -137,15 +148,9 @@ async fn run_loop(
                             Instant::now() + Duration::from_millis(DAEMON_INCOMPLETE_RESCHEDULE_MS)
                         };
                     }
-                    Ok(Err(err)) => {
+                    Err(err) => {
                         warn!(error = %err, backoff_seconds, "daemon sync failed");
                         eprintln!("daemon sync failed: {err}");
-                        next_sync = Instant::now() + Duration::from_secs(backoff_seconds);
-                        backoff_seconds = (backoff_seconds * 2).min(300);
-                    }
-                    Err(_) => {
-                        warn!(backoff_seconds, "daemon sync timed out");
-                        eprintln!("daemon sync failed: timed out");
                         next_sync = Instant::now() + Duration::from_secs(backoff_seconds);
                         backoff_seconds = (backoff_seconds * 2).min(300);
                     }
@@ -191,16 +196,20 @@ fn drain_wakes(socket: &UdpSocket, wake_buf: &mut [u8]) {
 
 async fn sync_once(
     database: &Database,
+    blob_dir: &Path,
+    lifecycle_policy: aven_core::attachments::LifecyclePolicy,
     server: &str,
     auth_token: Option<&str>,
     client: &SyncHttpClient,
 ) -> Result<crate::sync::SyncSummary> {
-    let summary = crate::sync::run_sync_with_page_budget_using_client(
+    let summary = crate::sync::run_sync_with_page_budget_using_client_and_policy(
         database,
+        blob_dir,
         server,
         auth_token,
         Some(DAEMON_SYNC_PAGE_BUDGET),
         client,
+        lifecycle_policy,
     )
     .await?;
     info!(
@@ -217,8 +226,20 @@ async fn sync_once(
         "daemon sync completed"
     );
     println!(
-        "daemon-synced pushed={} pulled={} cursor={} complete={} pages={}",
-        summary.pushed, summary.pulled, summary.cursor, summary.complete, summary.pages
+        "daemon-synced pushed={} pulled={} blob_uploaded={} blob_uploaded_bytes={} blob_downloaded={} blob_downloaded_bytes={} blob_upload_remaining={} blob_upload_remaining_bytes={} blob_download_remaining={} blob_download_remaining_bytes={} cursor={} complete={} pages={}",
+        summary.pushed,
+        summary.pulled,
+        summary.blob_uploaded,
+        summary.blob_uploaded_bytes,
+        summary.blob_downloaded,
+        summary.blob_downloaded_bytes,
+        summary.blob_upload_remaining,
+        summary.blob_upload_remaining_bytes,
+        summary.blob_download_remaining,
+        summary.blob_download_remaining_bytes,
+        summary.cursor,
+        summary.complete,
+        summary.pages,
     );
     Ok(summary)
 }

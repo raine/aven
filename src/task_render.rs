@@ -1,7 +1,8 @@
 use serde::Serialize;
 
+use crate::attachments::AttachmentBytesState;
 use crate::query::{TaskDependencyLink, TaskDependencySummary, TaskListItem};
-use crate::render::{KvLine, print_multiline_block, quote};
+use crate::render::{KvLine, print_multiline_block, quote, yes_no};
 
 pub(crate) fn print_task_line_item(item: &TaskListItem) {
     let labels = item.labels.join(",");
@@ -30,6 +31,7 @@ pub(crate) fn print_task_line_item(item: &TaskListItem) {
 pub(crate) struct TaskFullReport {
     pub(crate) detail: crate::query::TaskDetail,
     pub(crate) conflicts: Vec<TaskConflictReport>,
+    pub(crate) attachments: Vec<AttachmentMetadataJson>,
 }
 
 pub(crate) fn print_full_task_report(report: &TaskFullReport) {
@@ -50,6 +52,7 @@ pub(crate) fn print_full_task_report(report: &TaskFullReport) {
         }
         println!("EOF");
     }
+    print_attachment_section(&report.attachments);
     print_task_dependency_summary(&detail.dependencies);
     for note in &detail.notes {
         println!("note created={}", note.created_at);
@@ -84,6 +87,7 @@ pub(crate) fn task_full_json(report: &TaskFullReport) -> TaskFullJson {
             })
             .collect(),
         conflicts: report.conflicts.clone(),
+        attachments: report.attachments.clone(),
     }
 }
 
@@ -103,6 +107,48 @@ fn print_dependency_section(label: &str, items: &[crate::query::TaskDependencyIt
             quote(&item.task.title)
         );
     }
+}
+
+pub(crate) fn print_attachment_section(attachments: &[AttachmentMetadataJson]) {
+    let live = attachments
+        .iter()
+        .filter(|attachment| !attachment.deleted)
+        .collect::<Vec<_>>();
+    if live.is_empty() {
+        return;
+    }
+    println!("Attachments:");
+    for attachment in live {
+        print_attachment_metadata_line(attachment);
+    }
+}
+
+pub(crate) fn print_attachment_metadata_line(attachment: &AttachmentMetadataJson) {
+    let line = KvLine::new("attachment")
+        .field("attachment_id", &attachment.attachment_id)
+        .field("media_type", &attachment.media_type)
+        .field("byte_size", attachment.byte_size)
+        .field("deleted", yes_no(attachment.deleted))
+        .field("has_blob", yes_no(attachment.has_blob));
+    println!("{}", line.finish());
+}
+
+#[allow(dead_code)]
+pub(crate) fn attachment_placeholder(attachment: &AttachmentMetadataJson) -> String {
+    if attachment.deleted {
+        "[image: deleted attachment]".to_string()
+    } else {
+        match attachment.bytes_state {
+            AttachmentBytesState::Present => "[image: attachment]".to_string(),
+            AttachmentBytesState::PendingDownload => "[image: pending download]".to_string(),
+            AttachmentBytesState::Unavailable => "[image: unavailable bytes]".to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn attachment_unavailable_placeholder(_attachment: &AttachmentMetadataJson) -> String {
+    "[image: unavailable bytes]".to_string()
 }
 
 // --- JSON DTOs ---
@@ -173,6 +219,8 @@ pub(crate) fn task_epic_link_json(link: &TaskDependencyLink) -> TaskEpicLinkJson
     }
 }
 
+pub(crate) type AttachmentMetadataJson = crate::query::AttachmentMetadata;
+
 #[derive(Serialize)]
 pub(crate) struct TaskFullJson {
     pub(crate) task: TaskLineJson,
@@ -181,6 +229,7 @@ pub(crate) struct TaskFullJson {
     pub(crate) dependencies: TaskDependencySummaryJson,
     pub(crate) notes: Vec<TaskNoteJson>,
     pub(crate) conflicts: Vec<TaskConflictReport>,
+    pub(crate) attachments: Vec<AttachmentMetadataJson>,
 }
 
 #[derive(Serialize)]
@@ -256,5 +305,76 @@ pub(crate) fn task_dependency_summary_json(
                 created_at: d.task.created_at.clone(),
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_attachment_metadata(
+        attachment_id: &str,
+        has_blob: bool,
+        deleted: bool,
+        filename: Option<&str>,
+        alt_text: Option<&str>,
+    ) -> AttachmentMetadataJson {
+        AttachmentMetadataJson {
+            attachment_id: attachment_id.to_string(),
+            task_id: "TASK000000000000".to_string(),
+            sha256: "0".repeat(64),
+            media_type: "image/png".to_string(),
+            byte_size: 9,
+            filename: filename.map(str::to_string),
+            alt_text: alt_text.map(str::to_string),
+            width: None,
+            height: None,
+            created_at: "001".to_string(),
+            deleted,
+            deleted_at: deleted.then(|| "002".to_string()),
+            bytes_state: if has_blob {
+                AttachmentBytesState::Present
+            } else {
+                AttachmentBytesState::PendingDownload
+            },
+            has_blob,
+        }
+    }
+
+    #[test]
+    fn attachment_placeholders_describe_attachment_states() {
+        let present = test_attachment_metadata(
+            "7KQ9A1X4MV2P8D6R",
+            true,
+            false,
+            Some("diagram.png"),
+            Some("diagram"),
+        );
+        let pending =
+            test_attachment_metadata("8KQ9A1X4MV2P8D6R", false, false, Some("photo.png"), None);
+        let unavailable =
+            test_attachment_metadata("AKQ9A1X4MV2P8D6R", false, false, Some("archive.png"), None);
+        let mut unavailable = unavailable;
+        unavailable.bytes_state = AttachmentBytesState::Unavailable;
+        let deleted =
+            test_attachment_metadata("9KQ9A1X4MV2P8D6R", true, true, None, Some("old screenshot"));
+
+        assert_eq!(attachment_placeholder(&present), "[image: attachment]");
+        assert_eq!(
+            attachment_placeholder(&pending),
+            "[image: pending download]"
+        );
+        assert_eq!(
+            attachment_placeholder(&unavailable),
+            "[image: unavailable bytes]"
+        );
+        assert_eq!(
+            attachment_placeholder(&deleted),
+            "[image: deleted attachment]"
+        );
+        assert_eq!(
+            attachment_unavailable_placeholder(&present),
+            "[image: unavailable bytes]"
+        );
     }
 }

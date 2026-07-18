@@ -6,12 +6,14 @@ use aven_core::data_safety::{AvenExport, IntegrityReport};
 use aven_core::db::Database;
 
 use crate::cli::{BackupCommand, BackupRestoreArgs, ExportArgs, ImportArgs};
+use crate::config::{self as app_config, AppConfig};
 use crate::db;
 use crate::ids::now;
 use crate::render::quote;
 
 pub(crate) async fn cmd_backup(
-    _database: &Database,
+    database: &Database,
+    config: &AppConfig,
     db_path: &Path,
     args: BackupCommand,
 ) -> Result<()> {
@@ -19,7 +21,10 @@ pub(crate) async fn cmd_backup(
         Some(path) => path,
         None => db::default_backup_path(db_path, "manual")?,
     };
-    db::backup_database(db_path, &output)?;
+    let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
+    database
+        .create_backup_archive(db_path, &blob_dir, &output)
+        .await?;
     let bytes = fs::metadata(&output)
         .with_context(|| format!("could not stat {}", output.display()))?
         .len();
@@ -30,13 +35,22 @@ pub(crate) async fn cmd_backup(
     Ok(())
 }
 
-pub(crate) async fn cmd_backup_restore(db_path: &Path, args: BackupRestoreArgs) -> Result<()> {
+pub(crate) async fn cmd_backup_restore(
+    config: &AppConfig,
+    db_path: &Path,
+    args: BackupRestoreArgs,
+) -> Result<()> {
     if !args.yes {
         bail!(
             "error backup-restore-requires-confirmation hint=\"pass --yes to replace local data\""
         );
     }
-    let safety = db::restore_database_file(db_path, &args.path).await?;
+    let safety = if aven_core::data_safety::is_backup_archive(&args.path)? {
+        let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
+        aven_core::data_safety::restore_backup_archive(db_path, &blob_dir, &args.path).await?
+    } else {
+        db::restore_database_file(db_path, &args.path).await?
+    };
     println!(
         "restored-backup path={} safety_backup={}",
         quote(&args.path.display().to_string()),
@@ -79,7 +93,10 @@ pub(crate) async fn cmd_import(
     let export: AvenExport = serde_json::from_str(&text)
         .with_context(|| format!("could not parse {}", args.path.display()))?;
     database.validate_import_data(&export).await?;
-    let safety = db::default_backup_path(db_path, "before-import")?;
+    if export.blobs_included {
+        bail!("error import-blobs-included-unsupported");
+    }
+    let safety = db::default_sqlite_backup_path(db_path, "before-import")?;
     db::backup_database(db_path, &safety)?;
     database.import_data(&export).await?;
     println!(
@@ -94,6 +111,14 @@ pub(crate) async fn cmd_import(
 
 pub(crate) async fn database_integrity_report(database: &Database) -> Result<IntegrityReport> {
     database.database_integrity_report().await
+}
+
+pub(crate) async fn attachment_integrity_checks(
+    database: &Database,
+    blob_dir: &Path,
+    deep: bool,
+) -> Result<Vec<aven_core::data_safety::IntegrityCheck>> {
+    database.attachment_integrity_checks(blob_dir, deep).await
 }
 
 pub(crate) fn ensure_integrity_ok(report: &IntegrityReport) -> Result<()> {

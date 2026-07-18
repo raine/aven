@@ -34,7 +34,7 @@ public struct URLSessionTransport: Sendable {
             throw URLSessionTransportError.invalidStatus(response.statusCode)
         }
 
-        let headers = ["content-type"].compactMap { name in
+        let headers = ["content-encoding", "content-length", "content-type"].compactMap { name in
             response.value(forHTTPHeaderField: name).map {
                 SyncHttpHeader(name: name, value: $0)
             }

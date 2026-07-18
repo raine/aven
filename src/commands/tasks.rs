@@ -137,6 +137,8 @@ pub(crate) async fn cmd_internal_natural_add(
                         commands: vec![crate::undo::UndoCommand::DeleteCreatedTask {
                             task_id,
                             create_change_id: outcome.create_change_id.clone(),
+                            attachment_ids: Vec::new(),
+                            attachment_change_ids: Vec::new(),
                             expected: snapshot,
                         }],
                     },
@@ -218,7 +220,12 @@ async fn build_full_task_report(
             remote_value,
         });
     }
-    Ok(TaskFullReport { detail, conflicts })
+    let attachments = detail.item.attachments.clone();
+    Ok(TaskFullReport {
+        detail,
+        conflicts,
+        attachments,
+    })
 }
 
 pub(crate) async fn cmd_show(

@@ -43,10 +43,10 @@ aven list --overdue
 aven search "auth bug"
 aven context APP-7KQ9
 aven show APP-7KQ9 --full
-aven add "fix conflict display" --priority high --label bug
-aven add "test rollout" --available-at tomorrow
-aven add "submit report" --due "next monday"
-aven add "add due dates" --epic
+aven add "Fix conflict display" --priority high --label bug
+aven add "Test rollout" --available-at tomorrow
+aven add "Submit report" --due "next monday"
+aven add "Add due dates" --epic
 aven epic add APP-7KQ9 APP-7KQ0
 aven epic remove APP-7KQ9 APP-7KQ0
 aven epic list APP-7KQ0
@@ -54,7 +54,7 @@ aven dep add APP-7KQ9 APP-7KQ0
 aven dep remove APP-7KQ9 APP-7KQ0
 aven dep list APP-7KQ9
 aven edit APP-7KQ9 --status active
-aven edit APP-7KQ9 --title "clearer title" --priority medium
+aven edit APP-7KQ9 --title "Clearer title" --priority medium
 aven edit APP-7KQ9 --available-at tomorrow
 aven edit APP-7KQ9 --clear-available-at
 aven edit APP-7KQ9 --due "in 2 weeks"
@@ -63,6 +63,12 @@ aven update
 aven project list --search app
 aven label list --search bug
 aven note APP-7KQ9 "durable handoff context"
+aven attachment add APP-7KQ9 ./diagram.png --alt "architecture diagram"
+aven attachment list APP-7KQ9
+aven attachment get 7KQ9A1X4MV2P8D6R --output diagram.png
+aven attachment delete 7KQ9A1X4MV2P8D6R
+aven attachment prune --dry-run
+aven attachment prune --apply
 aven delete APP-7KQ9
 aven restore APP-7KQ9
 ```
@@ -83,6 +89,51 @@ aven restore APP-7KQ9
   script, MCP server, bot, web UI, or other structured integration.
 - After `aven add`, capture and report the printed ref so future agents can use
   it.
+- Attachment commands keep bytes outside text and JSON output. Use
+  `attachment add <ref> <path>` to store image bytes, `attachment list <ref>
+  --json` to inspect complete metadata, and `attachment get <attachment-id>
+  --output <path>` to write bytes to a file. Attachment IDs are exact
+  workspace-scoped identifiers. File output requires a local available blob and
+  refuses to overwrite an existing output path. `attachment add` accepts
+  `--media-type`, `--filename`, and `--alt`. PNG, JPEG, GIF, and WebP formats are
+  detected from decoded content, and Aven derives canonical media type and
+  dimensions from the stored bytes. An explicit `--media-type` must match the
+  detected format.
+- Attachment command JSON contains `attachment_id`, `task_id`, `sha256`,
+  `byte_size`, `media_type`, `filename`, `alt_text`, `width`, `height`,
+  `created_at`, `deleted`, `deleted_at`, and `has_blob`. Add output also contains
+  `optimized`. Live attachment objects in `context --json` and `show --full --json`
+  omit `sha256` and contain the other metadata fields. Attachment deletion is an
+  idempotent tombstone operation. There is no attachment restore command.
+- `attachment prune` reports one privacy-safe batch of eligible counts and bytes,
+  capped by `local.attachment_lifecycle.maintenance_limit`. Repeated runs may be
+  needed. Original objects are deleted only with `--apply`; disposable preview
+  cache eviction to `preview_quota_bytes` also runs in dry-run mode. Grace
+  periods, live references, unsynced adds, staging, transfers, reads, backups,
+  and upload reservations protect original blobs from pruning.
+- Local add or download capacity and server workspace upload capacity enforce
+  attachment quotas with `error attachment-quota-exceeded`. Sync exits before a
+  completion summary on this error. Pulled metadata and cursor progress remain
+  committed when a local download is blocked. Increase the relevant quota or
+  free eligible originals, then retry.
+- Task detail read surfaces include ordered attachment metadata and `has_blob`
+  without embedding bytes. The TUI renders live attachments after the description
+  in a dedicated section and uses bounded, device-local previews when the terminal
+  backend supports them. Pending downloads, unavailable local bytes, and disabled
+  previews use text placeholders. Search matches attachment filename and alt text,
+  not hashes, sidecar paths, or bytes.
+- `aven backup` writes one archive containing SQLite data and local attachment
+  objects. `aven backup restore <path> --yes` restores that archive and keeps a
+  SQLite safety copy. `aven export` writes attachment metadata and blob
+  inventory without bytes, and `aven import --yes <path>` imports that metadata
+  with blob inventory marked unavailable.
+- `aven doctor` checks attachment metadata and local object presence and reports
+  referenced, protected, grace-period, eligible, staging, trash, quota, and
+  lifecycle inconsistency counts and bytes. `aven doctor --integrity` also
+  decodes original images and compares their format and dimensions with stored
+  metadata.
+- Task descriptions remain scalar user-authored Markdown text. Attachment adds
+  and deletes change attachment metadata without changing the description.
 - When creating follow-up tasks from a discussion, investigation, review, or
   plan, include enough detail in the task description for the task to stand
   alone. Capture rationale, scope, acceptance criteria, implementation notes,
@@ -137,7 +188,9 @@ aven restore APP-7KQ9
 ## Structured output
 
 - Human-readable output is the default and preferred for agent use.
-- `--json` is available on `context`, `search`, `list`, `show`, `dep list`,
+- `--json` is available on `context`, `search`, `list`, `show`,
+  `attachment list`, `attachment get`, `attachment add`, `attachment delete`,
+  `attachment prune`, `dep list`,
   `epic list`, `project list`, `label list`, `conflict list`, `conflict show`,
   `prime`, and `doctor`.
 - JSON task objects include `available_at`, `due_on`, `is_epic`, `epic_parent`,
@@ -155,7 +208,18 @@ aven daemon
 aven daemon restart
 ```
 
-- Sync output reports pushed and pulled counts, a cursor, and completion state.
+- Sync output reports pushed and pulled metadata counts, attachment blob upload and
+  download counts and byte totals, remaining blob counts and bytes, a cursor, and
+  completion state. Blob counts are unique by content hash and stay separate from
+  metadata change counts.
+- Each attachment transfer round allows up to 16 unique blobs and 64 MiB across
+  uploads and downloads. `complete=false` means metadata or required blob
+  transfers remain. Remaining uploads can be prerequisites for unsynced
+  attachment-add operations, while downloads are limited to attachments on live
+  tasks. Interactive sync continues through bounded rounds while progress is
+  possible.
+- Sync transfers attachment bytes through authenticated blob endpoints and keeps
+  bytes out of `/sync` JSON payloads.
 - `aven daemon restart` restarts the macOS LaunchAgent service.
 
 ## Long input and secrets

@@ -73,6 +73,113 @@ fn default_task_columns() -> Vec<TaskColumnConfig> {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LocalConfig {
     pub db_path: Option<PathBuf>,
+    #[serde(default)]
+    pub blob_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub inline_images: InlineImagesConfig,
+    #[serde(default)]
+    pub image_optimization: ImageOptimizationConfig,
+    #[serde(default)]
+    pub attachment_lifecycle: AttachmentLifecycleConfig,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct AttachmentLifecycleConfig {
+    #[serde(default = "default_attachment_grace_days")]
+    pub grace_days: u64,
+    #[serde(default = "default_server_attachment_grace_days")]
+    pub server_grace_days: u64,
+    #[serde(default = "default_attachment_quota_bytes")]
+    pub quota_bytes: i64,
+    #[serde(default = "default_attachment_quota_bytes")]
+    pub server_workspace_quota_bytes: i64,
+    #[serde(default = "default_preview_quota_bytes")]
+    pub preview_quota_bytes: u64,
+    #[serde(default = "default_attachment_maintenance_limit")]
+    pub maintenance_limit: usize,
+}
+
+fn default_attachment_grace_days() -> u64 {
+    7
+}
+
+fn default_server_attachment_grace_days() -> u64 {
+    30
+}
+
+fn default_attachment_quota_bytes() -> i64 {
+    crate::attachments::lifecycle::DEFAULT_ORIGINAL_QUOTA_BYTES
+}
+
+fn default_preview_quota_bytes() -> u64 {
+    crate::attachments::lifecycle::DEFAULT_PREVIEW_QUOTA_BYTES
+}
+
+fn default_attachment_maintenance_limit() -> usize {
+    crate::attachments::lifecycle::DEFAULT_MAINTENANCE_LIMIT
+}
+
+impl Default for AttachmentLifecycleConfig {
+    fn default() -> Self {
+        Self {
+            grace_days: default_attachment_grace_days(),
+            server_grace_days: default_server_attachment_grace_days(),
+            quota_bytes: default_attachment_quota_bytes(),
+            server_workspace_quota_bytes: default_attachment_quota_bytes(),
+            preview_quota_bytes: default_preview_quota_bytes(),
+            maintenance_limit: default_attachment_maintenance_limit(),
+        }
+    }
+}
+
+impl AttachmentLifecycleConfig {
+    pub(crate) fn policy(self) -> crate::attachments::lifecycle::LifecyclePolicy {
+        crate::attachments::lifecycle::LifecyclePolicy {
+            grace: std::time::Duration::from_secs(self.grace_days.saturating_mul(24 * 60 * 60)),
+            quota_bytes: self.quota_bytes,
+            preview_quota_bytes: self.preview_quota_bytes,
+            maintenance_limit: self.maintenance_limit,
+        }
+    }
+
+    pub(crate) fn server_policy(self) -> crate::attachments::lifecycle::LifecyclePolicy {
+        crate::attachments::lifecycle::LifecyclePolicy {
+            grace: std::time::Duration::from_secs(
+                self.server_grace_days.saturating_mul(24 * 60 * 60),
+            ),
+            quota_bytes: self.server_workspace_quota_bytes,
+            preview_quota_bytes: self.preview_quota_bytes,
+            maintenance_limit: self.maintenance_limit,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum InlineImagesConfig {
+    Off,
+    #[default]
+    Auto,
+    On,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageOptimizationConfig {
+    Off,
+    #[default]
+    Paste,
+    On,
+}
+
+impl ImageOptimizationConfig {
+    pub(crate) fn optimizes_pasted_images(self) -> bool {
+        matches!(self, Self::Paste | Self::On)
+    }
+
+    pub(crate) fn optimizes_file_attachments(self) -> bool {
+        matches!(self, Self::On)
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -339,6 +446,23 @@ pub fn resolve_db_path(flag: Option<PathBuf>, config: &AppConfig) -> Result<Path
     default_db_path()
 }
 
+#[allow(dead_code)]
+pub fn resolve_blob_dir(db_path: &Path, config: &AppConfig) -> Result<PathBuf> {
+    let base = db_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    match &config.local.blob_dir {
+        Some(path) if path.is_absolute() => Ok(path.clone()),
+        Some(path) => Ok(base.join(path)),
+        None => {
+            let mut blob_dir = db_path.as_os_str().to_os_string();
+            blob_dir.push(".blobs");
+            Ok(PathBuf::from(blob_dir))
+        }
+    }
+}
+
 pub fn resolve_sync_server(flag: Option<&str>, config: &AppConfig) -> Result<String> {
     if let Some(server) = flag {
         return Ok(server.to_string());
@@ -521,5 +645,47 @@ mod tests {
 
         loaded.validate().unwrap();
         assert_eq!(loaded.tui.columns, config.tui.columns);
+    }
+
+    #[test]
+    fn resolves_blob_dir_from_db_path_and_config() {
+        let db_path = PathBuf::from("/tmp/aven/db.sqlite");
+        let config = AppConfig::default();
+        assert_eq!(
+            resolve_blob_dir(&db_path, &config).unwrap(),
+            PathBuf::from("/tmp/aven/db.sqlite.blobs")
+        );
+
+        let mut config = AppConfig::default();
+        config.local.blob_dir = Some(PathBuf::from("blobs"));
+        assert_eq!(
+            resolve_blob_dir(&db_path, &config).unwrap(),
+            PathBuf::from("/tmp/aven/blobs")
+        );
+
+        config.local.blob_dir = Some(PathBuf::from("/var/aven/blobs"));
+        assert_eq!(
+            resolve_blob_dir(&db_path, &config).unwrap(),
+            PathBuf::from("/var/aven/blobs")
+        );
+    }
+
+    #[test]
+    fn local_inline_images_defaults_to_auto() {
+        let config = AppConfig::default();
+
+        assert_eq!(config.local.inline_images, InlineImagesConfig::Auto);
+    }
+
+    #[test]
+    fn local_image_optimization_defaults_to_paste() {
+        let config = AppConfig::default();
+
+        assert_eq!(
+            config.local.image_optimization,
+            ImageOptimizationConfig::Paste
+        );
+        assert!(config.local.image_optimization.optimizes_pasted_images());
+        assert!(!config.local.image_optimization.optimizes_file_attachments());
     }
 }

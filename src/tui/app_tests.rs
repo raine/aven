@@ -922,6 +922,377 @@ mod keyboard_dispatch {
     }
 }
 
+mod attachment_paste {
+    use super::*;
+
+    fn compressible_png_bytes() -> Vec<u8> {
+        let width = 16u32;
+        let height = 16u32;
+        let mut raw = Vec::new();
+        for _ in 0..height {
+            raw.push(0);
+            raw.extend(std::iter::repeat_n(255, width as usize * 4));
+        }
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut encoder, &raw).unwrap();
+        let idat = encoder.finish().unwrap();
+
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        let mut ihdr = Vec::new();
+        ihdr.extend(width.to_be_bytes());
+        ihdr.extend(height.to_be_bytes());
+        ihdr.extend([8, 6, 0, 0, 0]);
+        append_png_chunk(&mut png, b"IHDR", &ihdr);
+        append_png_chunk(&mut png, b"tEXt", &vec![b'a'; 4096]);
+        append_png_chunk(&mut png, b"IDAT", &idat);
+        append_png_chunk(&mut png, b"IEND", &[]);
+        png
+    }
+
+    fn append_png_chunk(png: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
+        png.extend((data.len() as u32).to_be_bytes());
+        png.extend(name);
+        png.extend(data);
+        let mut crc_data = Vec::with_capacity(name.len() + data.len());
+        crc_data.extend(name);
+        crc_data.extend(data);
+        png.extend(crc32(&crc_data).to_be_bytes());
+    }
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = 0xffff_ffffu32;
+        for byte in bytes {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                let mask = 0u32.wrapping_sub(crc & 1);
+                crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+            }
+        }
+        !crc
+    }
+
+    #[tokio::test]
+    async fn detail_paste_image_path_attaches_to_selected_task() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        let selected = create_and_select_task(&mut app, test_task_draft("image target")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        let image = dir.path().join("photo.png");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("image already attached")
+        );
+        let item = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == task_id)
+            .unwrap();
+        assert!(item.task.description.is_empty());
+        let mut conn = pool.acquire().await.unwrap();
+        let attachments = crate::operations::attachment_read_items_by_task(
+            &mut conn,
+            app.store.active_workspace.id.as_str(),
+            &task_id,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(
+            attachments[0].attachment.filename.as_deref(),
+            Some("photo.png")
+        );
+        assert_eq!(attachments[0].attachment.media_type, "image/png");
+        assert!(attachments[0].has_blob);
+    }
+
+    #[tokio::test]
+    async fn detail_paste_image_path_obeys_optimization_config() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        let mut config = crate::config::AppConfig::default();
+        config.local.image_optimization = crate::config::ImageOptimizationConfig::Off;
+        app.set_config(config);
+        let selected = create_and_select_task(&mut app, test_task_draft("image target")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        let image = dir.path().join("photo.png");
+        let bytes = compressible_png_bytes();
+        std::fs::write(&image, &bytes).unwrap();
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("image already attached")
+        );
+        let mut conn = pool.acquire().await.unwrap();
+        let attachments = crate::operations::attachment_read_items_by_task(
+            &mut conn,
+            app.store.active_workspace.id.as_str(),
+            &task_id,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].attachment.byte_size, bytes.len() as i64);
+    }
+
+    #[tokio::test]
+    async fn detail_paste_image_path_ignores_existing_image() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        let selected = create_and_select_task(&mut app, test_task_draft("image target")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        let image = dir.path().join("photo.png");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("image already attached")
+        );
+        let item = app
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == task_id)
+            .unwrap();
+        assert!(item.task.description.is_empty());
+        let mut conn = pool.acquire().await.unwrap();
+        let attachments = crate::operations::attachment_read_items_by_task(
+            &mut conn,
+            app.store.active_workspace.id.as_str(),
+            &task_id,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(attachments.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn add_task_paste_image_path_attaches_to_created_task_once() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        let image = dir.path().join("composer.png");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Write docs").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        type_chars(&mut app, "Include setup details").await;
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        assert!(toast_message(&app).is_some_and(|message| message.starts_with("created task ")));
+        let selected = app.widgets.table.selected().unwrap();
+        let item = &app.store.tasks[selected];
+        assert_eq!(item.task.title, "Write docs");
+        assert_eq!(item.task.description, "Include setup details");
+        let mut conn = pool.acquire().await.unwrap();
+        let attachments = crate::operations::attachment_read_items_by_task(
+            &mut conn,
+            app.store.active_workspace.id.as_str(),
+            &item.task.id,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(
+            attachments[0].attachment.filename.as_deref(),
+            Some("composer.png")
+        );
+        assert_eq!(
+            attachments[0].attachment.alt_text.as_deref(),
+            Some("pasted image")
+        );
+        assert!(attachments[0].has_blob);
+    }
+
+    #[tokio::test]
+    async fn failed_attachment_task_submission_preserves_composer_for_retry() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        let image = dir.path().join("retry.png");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Retry attachment task").await;
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        type_chars(&mut app, "Keep every field").await;
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "CREATE TRIGGER fail_attachment_insert BEFORE INSERT ON task_attachments
+             BEGIN SELECT RAISE(FAIL, 'injected attachment insert failure'); END",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        assert!(app.handle_overlay_key(ctrl_s()).await.is_err());
+        assert!(matches!(app.overlay, Some(OverlayState::AddTask(_))));
+        assert_eq!(app.authoring.add_task_attachments().len(), 1);
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_ref() else {
+            panic!("add task composer should remain open");
+        };
+        assert_eq!(state.title.as_str(), "Retry attachment task");
+        assert_eq!(state.description.lines.join("\n"), "Keep every field");
+        let mut conn = pool.acquire().await.unwrap();
+        let task_count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(task_count, 0);
+        sqlx::query("DROP TRIGGER fail_attachment_insert")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+        let selected = app.widgets.table.selected().unwrap();
+        let item = &app.store.tasks[selected];
+        assert_eq!(item.task.title, "Retry attachment task");
+        let mut conn = pool.acquire().await.unwrap();
+        let attachment_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM task_attachments WHERE task_id = ?")
+                .bind(&item.task.id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(attachment_count, 1);
+    }
+
+    #[tokio::test]
+    async fn committed_attachment_task_is_not_retained_for_retry() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        let image = dir.path().join("committed.png");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Committed attachment task").await;
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "CREATE TRIGGER fail_undo_insert BEFORE INSERT ON tui_undo_entries
+             BEGIN SELECT RAISE(FAIL, 'injected undo failure'); END",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        let error = app.handle_overlay_key(ctrl_s()).await.unwrap_err();
+        assert!(crate::tui::store::task_creation_committed(&error));
+        assert!(app.overlay.is_none());
+        assert!(app.authoring.add_task_attachments().is_empty());
+        let mut conn = pool.acquire().await.unwrap();
+        let task_count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        let attachment_count: i64 = sqlx::query_scalar("SELECT count(*) FROM task_attachments")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!((task_count, attachment_count), (1, 1));
+    }
+
+    #[tokio::test]
+    async fn natural_add_paste_image_path_carries_attachment_into_created_task() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        configure_task_intake_success(&mut app, dir.path(), "parsed natural task", "model details");
+        let image = dir.path().join("natural.webp");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.begin_add_task_natural();
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        type_chars(&mut app, "make a task from this").await;
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+        for _ in 0..100 {
+            app.poll_pending_task_intake().await.unwrap();
+            if matches!(app.overlay, Some(OverlayState::AddTask(_))) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        let item = &app.store.tasks[selected];
+        assert_eq!(item.task.title, "parsed natural task");
+        assert_eq!(item.task.description, "model details");
+        let mut conn = pool.acquire().await.unwrap();
+        let attachments = crate::operations::attachment_read_items_by_task(
+            &mut conn,
+            app.store.active_workspace.id.as_str(),
+            &item.task.id,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(
+            attachments[0].attachment.filename.as_deref(),
+            Some("natural.webp")
+        );
+    }
+
+    fn configure_task_intake_success(
+        app: &mut App,
+        dir: &std::path::Path,
+        title: &str,
+        description: &str,
+    ) {
+        let command = dir.join("task-intake-success.sh");
+        std::fs::write(
+            &command,
+            format!(
+                "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{{\"title\":\"{}\",\"description\":\"{}\",\"project\":null,\"priority\":\"none\",\"labels\":[]}}'\n",
+                title, description
+            ),
+        )
+        .unwrap();
+        set_executable(&command);
+        let mut config = app.intake.config().clone();
+        config.agent.task_intake.command = Some(command.display().to_string());
+        config.agent.task_intake.args = Vec::new();
+        config.agent.task_intake.timeout_seconds = Some(5);
+        app.set_config(config);
+    }
+
+    #[cfg(unix)]
+    fn set_executable(path: &std::path::Path) {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[cfg(not(unix))]
+    fn set_executable(_path: &std::path::Path) {}
+}
+
 mod command_and_config_overlays {
     use super::*;
 

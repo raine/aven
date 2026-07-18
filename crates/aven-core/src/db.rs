@@ -21,13 +21,19 @@ const MIGRATION_BACKUP_KEEP: usize = 20;
 #[derive(Clone)]
 pub struct Database {
     pool: SqlitePool,
+    path: PathBuf,
 }
 
 impl Database {
     pub async fn open(path: &Path) -> Result<Self> {
         Ok(Self {
             pool: open_db(path).await?,
+            path: path.to_path_buf(),
         })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     pub async fn meta(&self, key: &str) -> Result<Option<String>> {
@@ -116,10 +122,18 @@ async fn has_pending_migrations(pool: &SqlitePool) -> Result<bool> {
 }
 
 fn migration_backup_path(path: &Path) -> Result<PathBuf> {
-    default_backup_path(path, "before-migrate")
+    default_sqlite_backup_path(path, "before-migrate")
 }
 
 pub fn default_backup_path(path: &Path, reason: &str) -> Result<PathBuf> {
+    backup_path_with_extension(path, reason, "aven-backup.tar.zst")
+}
+
+pub fn default_sqlite_backup_path(path: &Path, reason: &str) -> Result<PathBuf> {
+    backup_path_with_extension(path, reason, "sqlite")
+}
+
+fn backup_path_with_extension(path: &Path, reason: &str, extension: &str) -> Result<PathBuf> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let backup_dir = parent.join("backups");
     fs::create_dir_all(&backup_dir)
@@ -128,7 +142,11 @@ pub fn default_backup_path(path: &Path, reason: &str) -> Result<PathBuf> {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("db.sqlite");
-    Ok(backup_dir.join(format!("{stem}.{reason}-{}.sqlite", backup_timestamp()?)))
+    Ok(backup_dir.join(format!(
+        "{stem}.{reason}-{}.{}",
+        backup_timestamp()?,
+        extension
+    )))
 }
 
 pub fn backup_database(source: &Path, backup: &Path) -> Result<()> {
@@ -149,7 +167,7 @@ pub fn shm_path(path: &Path) -> PathBuf {
 
 pub async fn restore_database_file(target: &Path, source: &Path) -> Result<PathBuf> {
     validate_sqlite_source(source).await?;
-    let safety = default_backup_path(target, "before-restore")?;
+    let safety = default_sqlite_backup_path(target, "before-restore")?;
     backup_database(target, &safety)?;
     let staging = target.with_extension("restore-staging");
     if staging.exists() {

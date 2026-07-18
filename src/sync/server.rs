@@ -1,15 +1,17 @@
 use std::fmt;
 use std::net::IpAddr;
+use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 use aven_core::db::Database;
 use aven_core::sync::ServerSyncPage;
-use axum::body::Body;
-use axum::extract::State;
+use aven_core::sync::wire::{BlobUploadContract, MissingBlobsRequest, MissingBlobsResponse};
+use axum::body::{Body, Bytes};
+use axum::extract::{DefaultBodyLimit, Path as AxumPath, State};
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{post, put};
 use axum::{Json, Router};
 use tokio::net::TcpListener;
 use tower_http::compression::CompressionLayer;
@@ -28,6 +30,8 @@ use crate::signals::shutdown_signal;
 struct ServerState {
     database: Database,
     auth_token: Option<String>,
+    blob_dir: PathBuf,
+    lifecycle_policy: aven_core::attachments::LifecyclePolicy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,9 +108,13 @@ pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> R
     let auth_enabled = auth_token.is_some();
     validate_bind_policy(scope, args.unsafe_public_bind, auth_token.as_deref())?;
     let database = Database::open(&args.data).await?;
+    let blob_dir = config::resolve_blob_dir(&args.data, &config)?;
+    let lifecycle_policy = config.local.attachment_lifecycle.server_policy();
     let state = ServerState {
         database,
         auth_token,
+        blob_dir,
+        lifecycle_policy,
     };
     info!(
         bind = %args.bind,
@@ -116,6 +124,15 @@ pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> R
     );
     let app = Router::new()
         .route("/sync", post(sync_handler))
+        .route("/sync/blobs/missing", post(missing_blobs_handler))
+        .route(
+            "/sync/blobs/{sha256}",
+            put(put_blob_handler)
+                .get(get_blob_handler)
+                .layer(DefaultBodyLimit::max(
+                    aven_core::attachments::MAX_BLOB_BYTES,
+                )),
+        )
         .layer(RequestDecompressionLayer::new())
         .layer(middleware::from_fn_with_state(state.clone(), verify_auth))
         .layer(CompressionLayer::new())
@@ -154,8 +171,17 @@ async fn sync_handler(
     State(state): State<ServerState>,
     Json(request): Json<SyncRequest>,
 ) -> Response {
-    match handle_sync(state, request).await {
-        Ok(response) => Json(response).into_response(),
+    match handle_sync(state.clone(), request).await {
+        Ok(response) => {
+            if let Err(err) = state
+                .database
+                .maintain_server_blobs(&state.blob_dir, state.lifecycle_policy)
+                .await
+            {
+                warn!(error = %err, "attachment maintenance failed");
+            }
+            Json(response).into_response()
+        }
         Err(err) => {
             if err.0.is_server_error() {
                 error!(status = %err.0, error = %err.1, "sync request failed");
@@ -167,8 +193,155 @@ async fn sync_handler(
     }
 }
 
+async fn missing_blobs_handler(
+    State(state): State<ServerState>,
+    Json(request): Json<MissingBlobsRequest>,
+) -> Response {
+    match state
+        .database
+        .prepare_server_blob_uploads(&state.blob_dir, state.lifecycle_policy, &request.blobs)
+        .await
+    {
+        Ok(missing) => Json(MissingBlobsResponse { missing }).into_response(),
+        Err(err) if err.to_string().contains("attachment-quota-exceeded") => (
+            StatusCode::INSUFFICIENT_STORAGE,
+            "error attachment-quota-exceeded".to_string(),
+        )
+            .into_response(),
+        Err(err)
+            if err.to_string().contains("invalid-sync-change")
+                || err.to_string().contains("blob-batch")
+                || err.to_string().contains("duplicate-blob") =>
+        {
+            (StatusCode::BAD_REQUEST, err.to_string()).into_response()
+        }
+        Err(err) => internal_error(err).into_response(),
+    }
+}
+
+async fn put_blob_handler(
+    State(state): State<ServerState>,
+    AxumPath(sha256): AxumPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let Some(workspace_id) = header_text(&headers, "x-aven-workspace-id") else {
+        return (StatusCode::BAD_REQUEST, "error blob-workspace-required").into_response();
+    };
+    let Some(media_type) = header_text(&headers, "content-type") else {
+        return (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "error unsupported-attachment-media-type",
+        )
+            .into_response();
+    };
+    let contract = BlobUploadContract {
+        workspace_id: workspace_id.to_string(),
+        sha256,
+        byte_size: match required_i64_header(&headers, "x-aven-byte-size") {
+            Ok(value) => value,
+            Err(response) => return response.into_response(),
+        },
+        media_type: media_type.to_string(),
+        width: match required_i64_header(&headers, "x-aven-width") {
+            Ok(value) => value,
+            Err(response) => return response.into_response(),
+        },
+        height: match required_i64_header(&headers, "x-aven-height") {
+            Ok(value) => value,
+            Err(response) => return response.into_response(),
+        },
+    };
+    match state
+        .database
+        .store_server_blob(
+            &state.blob_dir,
+            state.lifecycle_policy,
+            &contract,
+            body.to_vec(),
+        )
+        .await
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) if err.to_string().contains("attachment-quota-exceeded") => (
+            StatusCode::INSUFFICIENT_STORAGE,
+            "error attachment-quota-exceeded",
+        )
+            .into_response(),
+        Err(err)
+            if err
+                .to_string()
+                .contains("unsupported-attachment-media-type") =>
+        {
+            (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "error unsupported-attachment-media-type".to_string(),
+            )
+                .into_response()
+        }
+        Err(err)
+            if err.to_string().contains("blob-hash-or-size-mismatch")
+                || err.to_string().contains("blob-validation-failed")
+                || err.to_string().contains("invalid-sync-change") =>
+        {
+            (StatusCode::BAD_REQUEST, err.to_string()).into_response()
+        }
+        Err(err) => internal_error(err).into_response(),
+    }
+}
+
+async fn get_blob_handler(
+    State(state): State<ServerState>,
+    AxumPath(sha256): AxumPath<String>,
+) -> Response {
+    match state
+        .database
+        .read_server_blob(&state.blob_dir, &sha256)
+        .await
+    {
+        Ok(Some(blob)) => (
+            [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+            blob.bytes,
+        )
+            .into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(err) if err.to_string().contains("invalid") => {
+            (StatusCode::BAD_REQUEST, err.to_string()).into_response()
+        }
+        Err(err) => internal_error(err).into_response(),
+    }
+}
+
+fn header_text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|value| value.to_str().ok())
+}
+
+fn required_i64_header(headers: &HeaderMap, name: &str) -> Result<i64, (StatusCode, String)> {
+    header_text(headers, name)
+        .and_then(|value| value.parse::<i64>().ok())
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("error blob-header-invalid name={name}"),
+            )
+        })
+}
+
 fn internal_error(err: impl std::fmt::Display) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+    error!(error = %err, "sync server request failed");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "error internal-server-error".to_string(),
+    )
+}
+
+fn server_sync_error(err: anyhow::Error) -> (StatusCode, String) {
+    let message = err.to_string();
+    if message.contains("attachment-blob") || message.contains("blob-inventory-metadata-mismatch") {
+        (StatusCode::BAD_REQUEST, message)
+    } else {
+        internal_error(err)
+    }
 }
 
 fn invalid_sync_change(err: anyhow::Error) -> (StatusCode, String) {
@@ -208,9 +381,9 @@ async fn handle_sync(
 
     let persisted = state
         .database
-        .persist_server_sync_page(ServerSyncPage { request })
+        .persist_server_sync_page_with_blobs(ServerSyncPage { request }, &state.blob_dir)
         .await
-        .map_err(internal_error)?;
+        .map_err(server_sync_error)?;
     let cursor = persisted
         .changes
         .last()

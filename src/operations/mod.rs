@@ -1,7 +1,12 @@
 mod config;
 mod projects;
 
-pub use aven_core::operations::{ConflictDetail, ConflictListItem, TaskDraft, TaskUpdate};
+#[cfg(test)]
+pub use aven_core::operations::attachment_read_items_by_task;
+pub use aven_core::operations::{
+    AttachmentAddInput, ConflictDetail, ConflictListItem, TaskAttachmentAddInput, TaskDraft,
+    TaskOutcome, TaskUpdate,
+};
 #[cfg(test)]
 pub use aven_core::test_support::{
     add_task_dependency, add_task_to_epic, create_label_operation, set_task_deleted, update_task,

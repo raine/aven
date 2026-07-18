@@ -4,7 +4,9 @@ use std::path::Path;
 use anyhow::Result;
 use crossterm::style::{Color, Stylize};
 
-use super::data_safety::{database_integrity_report, ensure_integrity_ok};
+use super::data_safety::{
+    attachment_integrity_checks, database_integrity_report, ensure_integrity_ok,
+};
 use crate::config::{self as app_config, AppConfig};
 use crate::render::print_json_pretty;
 use crate::sync::sync_server_url_is_valid;
@@ -366,6 +368,87 @@ pub(crate) async fn cmd_doctor(
         None => daemon_section.info("program match", "unknown"),
     }
 
+    let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
+    let lifecycle = database
+        .attachment_lifecycle_report(&blob_dir, config.local.attachment_lifecycle.policy())
+        .await?;
+    let lifecycle_section = report.section("Attachment lifecycle");
+    lifecycle_section.info(
+        "referenced",
+        format!(
+            "count={} bytes={}",
+            lifecycle.referenced.count, lifecycle.referenced.bytes
+        ),
+    );
+    lifecycle_section.info(
+        "protected",
+        format!(
+            "count={} bytes={}",
+            lifecycle.protected.count, lifecycle.protected.bytes
+        ),
+    );
+    lifecycle_section.info(
+        "grace period",
+        format!(
+            "count={} bytes={}",
+            lifecycle.grace_period.count, lifecycle.grace_period.bytes
+        ),
+    );
+    lifecycle_section.info(
+        "eligible",
+        format!(
+            "count={} bytes={}",
+            lifecycle.eligible.count, lifecycle.eligible.bytes
+        ),
+    );
+    lifecycle_section.info(
+        "staging",
+        format!(
+            "count={} bytes={}",
+            lifecycle.staging.count, lifecycle.staging.bytes
+        ),
+    );
+    lifecycle_section.info(
+        "trash",
+        format!(
+            "count={} bytes={}",
+            lifecycle.trash.count, lifecycle.trash.bytes
+        ),
+    );
+    lifecycle_section.info(
+        "reservations",
+        format!(
+            "count={} bytes={}",
+            lifecycle.reservations.count, lifecycle.reservations.bytes
+        ),
+    );
+    lifecycle_section.check(
+        "quota",
+        lifecycle.quota.bytes
+            <= u64::try_from(config.local.attachment_lifecycle.quota_bytes).unwrap_or(0),
+        format!(
+            "count={} bytes={} limit={}",
+            lifecycle.quota.count,
+            lifecycle.quota.bytes,
+            config.local.attachment_lifecycle.quota_bytes,
+        ),
+    );
+    lifecycle_section.check(
+        "inconsistencies",
+        lifecycle.inconsistencies.count == 0,
+        format!(
+            "count={} bytes={}",
+            lifecycle.inconsistencies.count, lifecycle.inconsistencies.bytes
+        ),
+    );
+    let attachment_checks = attachment_integrity_checks(database, &blob_dir, integrity).await?;
+    if !integrity {
+        let attachment_section = report.section("Attachments");
+        for check in &attachment_checks {
+            attachment_section.check(check.label, check.ok, &check.value);
+        }
+    }
+
     if integrity {
         let integrity_report = database_integrity_report(database).await?;
         let integrity_section = report.section("Integrity");
@@ -377,7 +460,12 @@ pub(crate) async fn cmd_doctor(
         for check in &integrity_report.checks {
             integrity_section.check(check.label, check.ok, &check.value);
         }
-        if let Err(error) = ensure_integrity_ok(&integrity_report) {
+        for check in &attachment_checks {
+            integrity_section.check(check.label, check.ok, &check.value);
+        }
+        let mut combined_report = integrity_report.clone();
+        combined_report.checks.extend(attachment_checks);
+        if let Err(error) = ensure_integrity_ok(&combined_report) {
             integrity_section.check("result", false, format!("{error:#}"));
         }
     }

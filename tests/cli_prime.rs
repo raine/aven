@@ -89,7 +89,7 @@ fn prime_prints_skill_primer_and_inferred_project_open_issues() {
             "## Local Conventions",
             "Project: prime-app",
             "Open issue sample: 2",
-            "Task titles: mixed lower-case and capitalized starts.",
+            "Use capitalized task titles.",
             "Common statuses: active=1, inbox=1.",
             "Common labels: bug=2.",
             "## Open Issues",
@@ -159,6 +159,7 @@ fn prime_handles_no_open_issues() {
             "## Local Conventions",
             "Project: empty-app",
             "Open issue sample: 0",
+            "Use capitalized task titles.",
             "No open issues are available for convention summaries.",
             "## Open Issues",
             "No open issues.",
@@ -256,7 +257,7 @@ fn prime_json_returns_structured_output_with_explicit_project() {
     assert!(json["open_issue_sample"].as_u64().unwrap_or(0) >= 2);
     assert!(!json["active"].as_array().unwrap().is_empty());
     assert!(!json["ready"].as_array().unwrap().is_empty());
-    assert!(json["conventions"]["title_style"].is_string());
+    assert_eq!(json["conventions"]["title_style"], "capitalized");
     assert!(json["conventions"]["statuses"].is_string());
     let ready = json["ready"].as_array().unwrap();
     let inbox_item = ready

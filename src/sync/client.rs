@@ -1,7 +1,10 @@
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use aven_core::attachments::LifecyclePolicy;
 use aven_core::db::Database;
+use aven_core::sync::wire::MAX_BLOB_TRANSFER_BYTES;
 use aven_core::sync::{SyncHttpHeader, SyncHttpResponse, SyncSession};
 use tracing::info;
 
@@ -38,34 +41,62 @@ pub(crate) async fn sync_client(
     config: &config::AppConfig,
 ) -> Result<()> {
     let server = config::resolve_sync_server(args.server.as_deref(), config)?;
-    let summary = run_sync_once(database, &server, config.sync_auth_token()).await?;
-    println!(
-        "synced pushed={} pulled={} cursor={}",
-        summary.pushed, summary.pulled, summary.cursor
-    );
+    let blob_dir = config::resolve_blob_dir(database.path(), config)?;
+    let client = SyncHttpClient::new()?;
+    loop {
+        let summary = run_sync_with_page_budget_using_client_and_policy(
+            database,
+            &blob_dir,
+            &server,
+            config.sync_auth_token(),
+            None,
+            &client,
+            config.local.attachment_lifecycle.policy(),
+        )
+        .await?;
+        println!(
+            "synced pushed={} pulled={} blob_uploaded={} blob_uploaded_bytes={} blob_downloaded={} blob_downloaded_bytes={} blob_upload_remaining={} blob_upload_remaining_bytes={} blob_download_remaining={} blob_download_remaining_bytes={} cursor={} complete={}",
+            summary.pushed,
+            summary.pulled,
+            summary.blob_uploaded,
+            summary.blob_uploaded_bytes,
+            summary.blob_downloaded,
+            summary.blob_downloaded_bytes,
+            summary.blob_upload_remaining,
+            summary.blob_upload_remaining_bytes,
+            summary.blob_download_remaining,
+            summary.blob_download_remaining_bytes,
+            summary.cursor,
+            summary.complete,
+        );
+        if summary.complete
+            || (summary.pushed == 0
+                && summary.pulled == 0
+                && summary.blob_uploaded == 0
+                && summary.blob_downloaded == 0)
+        {
+            break;
+        }
+    }
     Ok(())
 }
 
-pub(crate) async fn run_sync_once(
+pub(crate) async fn run_sync_with_page_budget_using_client_and_policy(
     database: &Database,
-    server: &str,
-    auth_token: Option<&str>,
-) -> Result<SyncSummary> {
-    run_sync_with_page_budget(database, server, auth_token, None).await
-}
-
-pub(crate) async fn run_sync_with_page_budget_using_client(
-    database: &Database,
+    blob_dir: &Path,
     server: &str,
     auth_token: Option<&str>,
     page_budget: Option<usize>,
     client: &SyncHttpClient,
+    lifecycle_policy: LifecyclePolicy,
 ) -> Result<SyncSummary> {
-    let mut session = SyncSession::start(
+    let mut session = SyncSession::start_with_attachment_storage(
         database.clone(),
         server.to_string(),
         auth_token.map(str::to_string),
         page_budget,
+        blob_dir.to_path_buf(),
+        lifecycle_policy,
     )
     .await?;
     match drive_sync_session(&mut session, server, client).await {
@@ -77,16 +108,6 @@ pub(crate) async fn run_sync_with_page_budget_using_client(
     }
 }
 
-pub(crate) async fn run_sync_with_page_budget(
-    database: &Database,
-    server: &str,
-    auth_token: Option<&str>,
-    page_budget: Option<usize>,
-) -> Result<SyncSummary> {
-    let client = SyncHttpClient::new()?;
-    run_sync_with_page_budget_using_client(database, server, auth_token, page_budget, &client).await
-}
-
 async fn drive_sync_session(
     session: &mut SyncSession,
     server: &str,
@@ -94,32 +115,65 @@ async fn drive_sync_session(
 ) -> Result<SyncSummary> {
     info!(server = %server, http_client_id = %client.id(), "sync client starting");
     while let Some(prepared) = session.prepare_request().await? {
-        let method = reqwest::Method::from_bytes(prepared.method.as_bytes())
-            .context("invalid prepared sync HTTP method")?;
-        let mut request = client
-            .inner
-            .request(method, &prepared.url)
-            .body(prepared.body.clone());
-        for header in &prepared.headers {
-            request = request.header(&header.name, &header.value);
-        }
-
         let http_started = Instant::now();
-        let response = request.send().await?;
-        let http_ms = http_started.elapsed().as_millis();
-        let status = response.status().as_u16();
-        let headers = response
-            .headers()
-            .get(reqwest::header::CONTENT_ENCODING)
-            .and_then(|value| value.to_str().ok())
-            .map(|value| SyncHttpHeader {
-                name: "content-encoding".to_string(),
-                value: value.to_string(),
-            })
+        let transport = async {
+            let method = reqwest::Method::from_bytes(prepared.method.as_bytes())
+                .context("invalid prepared sync HTTP method")?;
+            let mut request = client
+                .inner
+                .request(method, &prepared.url)
+                .body(prepared.body.clone());
+            for header in &prepared.headers {
+                request = request.header(&header.name, &header.value);
+            }
+            let mut response = request.send().await?;
+            let status = response.status().as_u16();
+            let headers = [
+                reqwest::header::CONTENT_ENCODING,
+                reqwest::header::CONTENT_LENGTH,
+                reqwest::header::CONTENT_TYPE,
+            ]
             .into_iter()
+            .filter_map(|name| {
+                response
+                    .headers()
+                    .get(&name)
+                    .and_then(|value| value.to_str().ok())
+                    .map(|value| SyncHttpHeader {
+                        name: name.as_str().to_string(),
+                        value: value.to_string(),
+                    })
+            })
             .collect();
-        let body = response.bytes().await?.to_vec();
-        let outcome = session
+            let response_limit = usize::try_from(MAX_BLOB_TRANSFER_BYTES)
+                .context("sync response limit exceeds usize")?;
+            if response
+                .content_length()
+                .is_some_and(|length| length > MAX_BLOB_TRANSFER_BYTES)
+            {
+                anyhow::bail!("error sync-response-too-large");
+            }
+            let mut body = Vec::new();
+            while let Some(chunk) = response.chunk().await? {
+                if body.len().saturating_add(chunk.len()) > response_limit {
+                    anyhow::bail!("error sync-response-too-large");
+                }
+                body.extend_from_slice(&chunk);
+            }
+            Ok::<_, anyhow::Error>((status, headers, body))
+        }
+        .await;
+        let (status, headers, body) = match transport {
+            Ok(response) => response,
+            Err(error) => {
+                session
+                    .fail_request(&prepared.context, format!("{error:#}"))
+                    .await?;
+                return Err(error);
+            }
+        };
+        let http_ms = http_started.elapsed().as_millis();
+        let outcome = match session
             .accept_response(
                 &prepared.context,
                 SyncHttpResponse {
@@ -128,7 +182,16 @@ async fn drive_sync_session(
                     body,
                 },
             )
-            .await?;
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                session
+                    .fail_request(&prepared.context, format!("{error:#}"))
+                    .await?;
+                return Err(error);
+            }
+        };
         info!(
             server = %server,
             page = outcome.page,

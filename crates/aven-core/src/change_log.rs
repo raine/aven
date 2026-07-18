@@ -17,6 +17,8 @@ pub mod op_type {
     pub const DEPENDENCY_REMOVE: &str = "dependency_remove";
     pub const EPIC_LINK_ADD: &str = "epic_link_add";
     pub const EPIC_LINK_REMOVE: &str = "epic_link_remove";
+    pub const ATTACHMENT_ADD: &str = "attachment_add";
+    pub const ATTACHMENT_DELETE: &str = "attachment_delete";
     pub const CREATE_PROJECT: &str = "create_project";
     pub const SET_PROJECT_METADATA: &str = "set_project_metadata";
     pub const PROJECT_DELETE: &str = "project_delete";

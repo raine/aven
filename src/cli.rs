@@ -63,6 +63,10 @@ const HELP_SECTIONS: &[HelpSection] = &[
         commands: &["config", "doctor", "update"],
     },
     HelpSection {
+        heading: "ATTACHMENTS",
+        commands: &["attachment"],
+    },
+    HelpSection {
         heading: "DATA SAFETY",
         commands: &["backup", "export", "import"],
     },
@@ -267,6 +271,8 @@ pub(crate) enum Commands {
     Skill(SkillCommand),
     /// Diagnose configuration and workspace state
     Doctor(DoctorArgs),
+    /// Manage task attachments
+    Attachment(AttachmentCommand),
     /// Run or manage the background daemon
     Daemon(DaemonArgs),
     /// Run the sync server
@@ -768,6 +774,102 @@ pub(crate) enum ConflictSubcommand {
 pub(crate) struct ConfigCommand {
     #[command(subcommand)]
     pub(crate) command: ConfigSubcommand,
+}
+
+#[derive(Args)]
+pub(crate) struct AttachmentCommand {
+    #[command(subcommand)]
+    pub(crate) command: AttachmentSubcommand,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum AttachmentSubcommand {
+    /// Attach a file to a task
+    Add(AttachmentAddArgs),
+    /// List attachments for a task
+    List(AttachmentListArgs),
+    /// Get attachment metadata and optionally write bytes
+    Get(AttachmentGetArgs),
+    /// Delete (tombstone) an attachment
+    Delete(AttachmentDeleteArgs),
+    /// Inspect or prune eligible attachment blobs
+    Prune(AttachmentPruneArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct AttachmentAddArgs {
+    pub(crate) task_ref: String,
+    pub(crate) path: PathBuf,
+    /// Alternative text for the image
+    #[arg(long)]
+    pub(crate) alt: Option<String>,
+    /// Override the filename stored in metadata
+    #[arg(long)]
+    pub(crate) filename: Option<String>,
+    /// Declared media type, checked against the image bytes
+    #[arg(long = "media-type")]
+    pub(crate) media_type: Option<String>,
+    /// Optimize supported image formats before storing bytes
+    #[arg(long, conflicts_with = "no_optimize")]
+    pub(crate) optimize: bool,
+    /// Preserve attachment bytes exactly
+    #[arg(long)]
+    pub(crate) no_optimize: bool,
+    /// Print machine-readable JSON
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct AttachmentListArgs {
+    pub(crate) task_ref: String,
+    /// Include deleted (tombstoned) attachments
+    #[arg(long)]
+    pub(crate) all: bool,
+    /// Print machine-readable JSON
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct AttachmentGetArgs {
+    pub(crate) attachment_id: String,
+    /// Write bytes to this path
+    #[arg(long)]
+    pub(crate) output: Option<PathBuf>,
+    /// Include deleted attachments
+    #[arg(long)]
+    pub(crate) all: bool,
+    /// Print machine-readable JSON
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct AttachmentDeleteArgs {
+    pub(crate) attachment_id: String,
+    /// Print machine-readable JSON
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct AttachmentPruneArgs {
+    /// Apply deletion. The default is a dry run.
+    #[arg(long, conflicts_with = "dry_run")]
+    pub(crate) apply: bool,
+    /// Inspect eligible blobs without deleting them
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+    /// Print machine-readable JSON
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+impl AttachmentSubcommand {
+    pub(crate) fn wakes_daemon(&self) -> bool {
+        matches!(self, Self::Add(_) | Self::Delete(_))
+    }
 }
 
 #[derive(Args)]

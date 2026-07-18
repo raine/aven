@@ -1,4 +1,5 @@
-use crate::operations::TaskDraft;
+use crate::attachments::storage::sha256_hex;
+use crate::operations::{AttachmentAddInput, TaskDraft};
 
 pub(crate) const ADD_NOTE_TITLE: &str = "Add note";
 pub(crate) const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: project";
@@ -55,6 +56,24 @@ impl AddTaskStep {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingTaskAttachment {
+    pub(crate) attachment_id: String,
+    pub(crate) sha256: String,
+    pub(crate) input: AttachmentAddInput,
+}
+
+impl PendingTaskAttachment {
+    pub(crate) fn new(attachment_id: String, input: AttachmentAddInput) -> Self {
+        let sha256 = sha256_hex(&input.bytes);
+        Self {
+            attachment_id,
+            sha256,
+            input,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct AddTaskDraftState {
     title: String,
     description: String,
@@ -65,6 +84,7 @@ struct AddTaskDraftState {
     labels: Vec<String>,
     available_at: String,
     due_on: String,
+    attachments: Vec<PendingTaskAttachment>,
     step: AddTaskStep,
 }
 
@@ -80,6 +100,7 @@ impl Default for AddTaskDraftState {
             labels: Vec::new(),
             available_at: String::new(),
             due_on: String::new(),
+            attachments: Vec::new(),
             step: AddTaskStep::Title,
         }
     }
@@ -114,8 +135,14 @@ pub(crate) struct AddTaskContext {
 }
 
 #[cfg(test)]
+pub(crate) struct AddTaskCreate {
+    pub(crate) draft: TaskDraft,
+    pub(crate) attachments: Vec<PendingTaskAttachment>,
+}
+
+#[cfg(test)]
 pub(crate) enum AddTaskTitleSubmit {
-    Create(TaskDraft),
+    Create(Box<AddTaskCreate>),
     ReopenTitle { message: &'static str },
     Inactive,
 }
@@ -200,6 +227,41 @@ impl AuthoringState {
         }
         draft.status = status.to_string();
         Some(draft.status.clone())
+    }
+
+    pub(crate) fn add_pending_add_task_attachment(
+        &mut self,
+        attachment: PendingTaskAttachment,
+    ) -> Option<bool> {
+        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
+            return None;
+        };
+        if draft
+            .attachments
+            .iter()
+            .any(|existing| existing.sha256 == attachment.sha256)
+        {
+            return Some(false);
+        }
+        draft.attachments.push(attachment);
+        Some(true)
+    }
+
+    pub(crate) fn add_task_has_pending_attachments(&self) -> bool {
+        matches!(self.flow.as_ref(), Some(AuthoringFlow::AddTask(draft)) if !draft.attachments.is_empty())
+    }
+
+    pub(crate) fn add_task_attachments(&self) -> Vec<PendingTaskAttachment> {
+        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_ref() else {
+            return Vec::new();
+        };
+        draft.attachments.clone()
+    }
+
+    pub(crate) fn clear_add_task(&mut self) {
+        if matches!(self.flow, Some(AuthoringFlow::AddTask(_))) {
+            self.flow = None;
+        }
     }
 
     pub(crate) fn capture_add_task_fields(
@@ -299,17 +361,21 @@ impl AuthoringState {
                 message: "task title is required",
             };
         }
-        AddTaskTitleSubmit::Create(TaskDraft {
-            title: trimmed.to_string(),
-            description: draft.description.trim().to_string(),
-            project: draft.project,
-            status: draft.status,
-            priority: draft.priority,
-            labels: draft.labels,
-            available_at: (!draft.available_at.is_empty()).then_some(draft.available_at),
-            due_on: (!draft.due_on.is_empty()).then_some(draft.due_on),
-            is_epic: false,
-        })
+        let description = draft.description.trim().to_string();
+        AddTaskTitleSubmit::Create(Box::new(AddTaskCreate {
+            draft: TaskDraft {
+                title: trimmed.to_string(),
+                description,
+                project: draft.project,
+                status: draft.status,
+                priority: draft.priority,
+                labels: draft.labels,
+                available_at: (!draft.available_at.is_empty()).then_some(draft.available_at),
+                due_on: (!draft.due_on.is_empty()).then_some(draft.due_on),
+                is_epic: false,
+            },
+            attachments: draft.attachments,
+        }))
     }
 
     pub(crate) fn submit_add_note(&mut self, body: String) -> AddNoteSubmit {
@@ -373,6 +439,7 @@ impl AuthoringState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::attachments::optimization::ImageOptimizationPolicy;
 
     #[test]
     fn add_task_project_selection_retains_flow() {
@@ -412,8 +479,8 @@ mod tests {
         ));
         assert!(matches!(
             state.submit_add_task(),
-            AddTaskTitleSubmit::Create(draft)
-                if draft.description == "Details\nfor handoff"
+            AddTaskTitleSubmit::Create(create)
+                if create.draft.description == "Details\nfor handoff"
         ));
     }
 
@@ -429,8 +496,8 @@ mod tests {
         assert!(state.apply_add_task_labels(vec!["feature".to_string(), "ui".to_string()]));
         assert!(matches!(
             state.submit_add_task(),
-            AddTaskTitleSubmit::Create(draft)
-                if draft.labels == vec!["feature".to_string(), "ui".to_string()]
+            AddTaskTitleSubmit::Create(create)
+                if create.draft.labels == vec!["feature".to_string(), "ui".to_string()]
         ));
     }
 
@@ -474,8 +541,69 @@ mod tests {
         assert!(state.apply_add_task_project(vec![String::new()]));
         assert!(matches!(
             state.submit_add_task(),
-            AddTaskTitleSubmit::Create(draft) if draft.project.is_none()
+            AddTaskTitleSubmit::Create(create) if create.draft.project.is_none()
         ));
+    }
+
+    #[test]
+    fn pending_attachment_survives_parsed_draft_without_entering_description() {
+        let mut state = AuthoringState::default();
+        state.begin_add_task(None, None);
+        let pending = PendingTaskAttachment::new(
+            "ATTACHMENT000001".to_string(),
+            AttachmentAddInput {
+                filename: Some("chart.png".to_string()),
+                alt_text: Some("Chart".to_string()),
+                declared_media_type: Some("image/png".to_string()),
+                bytes: vec![1, 2, 3],
+                optimization_policy: ImageOptimizationPolicy::Preserve,
+                dedupe_existing: false,
+            },
+        );
+        assert_eq!(state.add_pending_add_task_attachment(pending), Some(true));
+        assert!(state.apply_add_task_draft(TaskDraft {
+            title: "Parsed".to_string(),
+            description: "User-authored details".to_string(),
+            project: None,
+            status: "inbox".to_string(),
+            priority: "none".to_string(),
+            labels: Vec::new(),
+            available_at: None,
+            due_on: None,
+            is_epic: false,
+        }));
+
+        assert_eq!(
+            state.add_task_context().unwrap().description,
+            "User-authored details"
+        );
+        assert_eq!(state.add_task_attachments().len(), 1);
+        let AddTaskTitleSubmit::Create(create) = state.submit_add_task() else {
+            panic!("pending attachment task should be ready to create");
+        };
+        assert_eq!(create.attachments.len(), 1);
+    }
+
+    #[test]
+    fn cancel_discards_pending_attachments() {
+        let mut state = AuthoringState::default();
+        state.begin_add_task(None, None);
+        let pending = PendingTaskAttachment::new(
+            "ATTACHMENT000001".to_string(),
+            AttachmentAddInput {
+                filename: Some("chart.png".to_string()),
+                alt_text: None,
+                declared_media_type: Some("image/png".to_string()),
+                bytes: vec![1],
+                optimization_policy: ImageOptimizationPolicy::Preserve,
+                dedupe_existing: false,
+            },
+        );
+        assert_eq!(state.add_pending_add_task_attachment(pending), Some(true));
+        state.cancel();
+        state.begin_add_task(None, None);
+
+        assert!(!state.add_task_has_pending_attachments());
     }
 
     #[test]

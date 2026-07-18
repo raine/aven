@@ -197,6 +197,14 @@ impl IntakeController {
         !matches!(self.state, IntakeState::Idle)
     }
 
+    pub(super) fn config(&self) -> &AppConfig {
+        &self.config
+    }
+
+    pub(super) fn db_path(&self) -> Option<&std::path::Path> {
+        self.db_path.as_deref()
+    }
+
     pub(super) fn view(&self) -> IntakeViewState<'_> {
         IntakeViewState {
             add_task_only: self.add_task_only,

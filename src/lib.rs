@@ -3,6 +3,7 @@ use anyhow::Result;
 use aven_core::{
     change_log, choices, db, ids, labels, query, queue, refs, task_fields, types, undo,
 };
+mod attachments;
 mod cli;
 mod command_metadata;
 mod commands;
@@ -32,7 +33,7 @@ pub use cli::Cli;
 
 use cli::{BackupSubcommand, Commands, DaemonSubcommand, InternalSubcommand, SkillSubcommand};
 use commands::{
-    cmd_add, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
+    cmd_add, cmd_attachment, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
     cmd_delete_restore, cmd_dep, cmd_doctor, cmd_edit, cmd_epic, cmd_export, cmd_import,
     cmd_internal_natural_add, cmd_label, cmd_list, cmd_note, cmd_note_delete, cmd_prime,
     cmd_project, cmd_search, cmd_self_update, cmd_show, cmd_skill, cmd_skill_install, cmd_text,
@@ -73,6 +74,7 @@ enum StandaloneCommand {
 
 enum DatabaseCommand {
     Add(cli::AddArgs),
+    Attachment(cli::AttachmentCommand),
     Backup { output: Option<std::path::PathBuf> },
     BulkUpdate(cli::BulkUpdateArgs),
     Conflict(cli::ConflictCommand),
@@ -108,6 +110,7 @@ impl From<Commands> for CliDispatch {
     fn from(command: Commands) -> Self {
         match command {
             Commands::Add(args) => Self::database(DatabaseCommand::Add(args)),
+            Commands::Attachment(args) => Self::database(DatabaseCommand::Attachment(args)),
             Commands::Dep(args) => Self::database(DatabaseCommand::Dep(args)),
             Commands::Epic(args) => Self::database(DatabaseCommand::Epic(args)),
             Commands::Context(args) => Self::database(DatabaseCommand::Context(args)),
@@ -157,7 +160,7 @@ async fn dispatch_standalone(
         StandaloneCommand::BackupRestore(args) => {
             let config = config::AppConfig::load()?;
             let db_path = config::resolve_db_path(db, &config)?;
-            commands::cmd_backup_restore(&db_path, args).await
+            commands::cmd_backup_restore(&config, &db_path, args).await
         }
         StandaloneCommand::Server(args) => {
             let config = config::AppConfig::load()?;
@@ -267,6 +270,9 @@ async fn dispatch_database(
     let should_wake = metadata.wakes_daemon;
     let result = match command {
         DatabaseCommand::Add(args) => cmd_add(&database, command_workspace(), &config, args).await,
+        DatabaseCommand::Attachment(args) => {
+            cmd_attachment(&database, command_workspace(), &config, &db_path, args).await
+        }
         DatabaseCommand::Context(args) => cmd_context(&database, command_workspace(), args).await,
         DatabaseCommand::Show(args) => cmd_show(&database, command_workspace(), args).await,
         DatabaseCommand::List(args) => cmd_list(&database, command_workspace(), args).await,
@@ -274,6 +280,7 @@ async fn dispatch_database(
         DatabaseCommand::Backup { output } => {
             cmd_backup(
                 &database,
+                &config,
                 &db_path,
                 cli::BackupCommand {
                     command: None,

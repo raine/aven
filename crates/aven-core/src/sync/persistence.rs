@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::Path;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
@@ -6,6 +7,7 @@ use sqlx::{QueryBuilder, Sqlite, SqliteConnection};
 
 use super::apply::apply_remote_change;
 use super::wire::{ChangeRow, ChangeWire, PushAck, SyncRequest, SyncResponse};
+use crate::change_log::op_type;
 use crate::db::{Database, begin_immediate, get_meta, set_meta};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -88,6 +90,23 @@ impl Database {
         set_meta(&mut conn, "sync_last_error", &error).await
     }
 
+    pub(super) async fn pending_sync_change_count(&self) -> Result<i64> {
+        let mut conn = self.acquire().await?;
+        Ok(
+            sqlx::query_scalar("SELECT COUNT(*) FROM changes WHERE server_seq IS NULL")
+                .fetch_one(&mut *conn)
+                .await?,
+        )
+    }
+
+    pub(super) async fn pending_blob_contracts(
+        &self,
+    ) -> Result<Vec<super::wire::BlobUploadContract>> {
+        let mut conn = self.acquire().await?;
+        let changes = load_unsynced_changes(&mut conn, i64::MAX as usize).await?;
+        super::blob::unique_blob_contracts(&changes)
+    }
+
     pub async fn prepare_client_sync_page(
         &self,
         server: String,
@@ -133,6 +152,23 @@ impl Database {
     }
 
     pub async fn persist_server_sync_page(&self, page: ServerSyncPage) -> Result<ServerSyncResult> {
+        self.persist_server_sync_page_inner(page, None).await
+    }
+
+    pub async fn persist_server_sync_page_with_blobs(
+        &self,
+        page: ServerSyncPage,
+        blob_dir: &Path,
+    ) -> Result<ServerSyncResult> {
+        self.persist_server_sync_page_inner(page, Some(blob_dir))
+            .await
+    }
+
+    async fn persist_server_sync_page_inner(
+        &self,
+        page: ServerSyncPage,
+        blob_dir: Option<&Path>,
+    ) -> Result<ServerSyncResult> {
         let envelope = super::wire::validate_sync_request_envelope(&page.request)?;
         for change in &page.request.changes {
             super::wire::validate_pushed_change(change)?;
@@ -140,7 +176,7 @@ impl Database {
         let mut conn = self.acquire().await?;
         let assign_started = Instant::now();
         let (accepted_count, push_acks) =
-            assign_server_sequences(&mut conn, page.request.changes).await?;
+            assign_server_sequences(&mut conn, page.request.changes, blob_dir).await?;
         let assign_ms = assign_started.elapsed().as_millis();
         let pull_query_started = Instant::now();
         let (changes, has_more) =
@@ -329,11 +365,28 @@ async fn insert_wire_change(conn: &mut SqliteConnection, change: &ChangeWire) ->
 async fn assign_server_sequences(
     conn: &mut SqliteConnection,
     changes: Vec<ChangeWire>,
+    blob_dir: Option<&Path>,
 ) -> Result<(i64, Vec<PushAck>)> {
     if changes.is_empty() {
         return Ok((0, Vec::new()));
     }
     let mut tx = begin_immediate(conn).await?;
+    let existing_change_ids = load_existing_change_ids(&mut tx, &changes).await?;
+    let unassigned_changes = changes
+        .iter()
+        .filter(|change| !existing_change_ids.contains(&change.change_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    if unassigned_changes
+        .iter()
+        .any(|change| change.op_type == op_type::ATTACHMENT_ADD)
+        && blob_dir.is_none()
+    {
+        bail!("error attachment-blob-storage-required");
+    }
+    if let Some(blob_dir) = blob_dir {
+        ensure_attachment_blobs_present(&mut tx, blob_dir, &unassigned_changes).await?;
+    }
     let mut next_server_seq = next_available_server_seq(&mut tx).await?;
     let mut accepted_count = 0_i64;
     let mut push_acks = Vec::with_capacity(changes.len());
@@ -369,6 +422,7 @@ async fn assign_server_sequences(
             .bind(server_seq)
             .execute(&mut *tx)
             .await?;
+            apply_server_blob_reference(&mut tx, &change).await?;
             accepted_count += 1;
             server_seq
         };
@@ -387,6 +441,152 @@ async fn next_available_server_seq(conn: &mut SqliteConnection) -> Result<i64> {
     )
     .fetch_one(&mut *conn)
     .await?)
+}
+
+async fn apply_server_blob_reference(
+    conn: &mut SqliteConnection,
+    change: &ChangeWire,
+) -> Result<()> {
+    match change.op_type.as_str() {
+        op_type::ATTACHMENT_ADD => {
+            let workspace_id = change.payload["workspace_id"]
+                .as_str()
+                .context("payload missing workspace_id")?;
+            let attachment_id = change.payload["attachment_id"]
+                .as_str()
+                .context("payload missing attachment_id")?;
+            let sha256 = change.payload["sha256"]
+                .as_str()
+                .context("payload missing sha256")?;
+            let byte_size = change.payload["byte_size"]
+                .as_i64()
+                .context("payload missing byte_size")?;
+            sqlx::query(
+                "INSERT INTO server_blob_references(
+                   workspace_id, attachment_id, task_id, sha256, byte_size, deleted
+                 ) VALUES (?, ?, ?, ?, ?, 0)
+                 ON CONFLICT(workspace_id, attachment_id) DO UPDATE SET
+                   task_id = excluded.task_id, sha256 = excluded.sha256,
+                   byte_size = excluded.byte_size, deleted = 0",
+            )
+            .bind(workspace_id)
+            .bind(attachment_id)
+            .bind(&change.entity_id)
+            .bind(sha256)
+            .bind(byte_size)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query(
+                "DELETE FROM blob_upload_reservations WHERE workspace_id = ? AND sha256 = ?",
+            )
+            .bind(workspace_id)
+            .bind(sha256)
+            .execute(&mut *conn)
+            .await?;
+        }
+        op_type::ATTACHMENT_DELETE => {
+            sqlx::query(
+                "UPDATE server_blob_references SET deleted = 1
+                 WHERE workspace_id = ? AND attachment_id = ?",
+            )
+            .bind(
+                change.payload["workspace_id"]
+                    .as_str()
+                    .context("payload missing workspace_id")?,
+            )
+            .bind(
+                change.payload["attachment_id"]
+                    .as_str()
+                    .context("payload missing attachment_id")?,
+            )
+            .execute(&mut *conn)
+            .await?;
+        }
+        op_type::SET_FIELD if change.field.as_deref() == Some("deleted") => {
+            let deleted = change.payload["value"]
+                .as_str()
+                .is_some_and(|value| value == "1");
+            sqlx::query(
+                "INSERT INTO server_task_tombstones(workspace_id, task_id, deleted)
+                 VALUES (?, ?, ?)
+                 ON CONFLICT(workspace_id, task_id) DO UPDATE SET deleted = excluded.deleted",
+            )
+            .bind(
+                change.payload["workspace_id"]
+                    .as_str()
+                    .context("payload missing workspace_id")?,
+            )
+            .bind(&change.entity_id)
+            .bind(i64::from(deleted))
+            .execute(&mut *conn)
+            .await?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn ensure_attachment_blobs_present(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    changes: &[ChangeWire],
+) -> Result<()> {
+    for change in changes {
+        if change.op_type != op_type::ATTACHMENT_ADD {
+            continue;
+        }
+        let contract = super::blob::attachment_blob_contract(change)?
+            .context("error attachment-blob-missing")?;
+        let Some(row) =
+            crate::attachments::storage::blob_inventory_row(conn, &contract.sha256).await?
+        else {
+            bail!("error attachment-blob-missing");
+        };
+        if !row.available || !crate::attachments::object_path(blob_dir, &contract.sha256)?.exists()
+        {
+            bail!("error attachment-blob-missing");
+        }
+        if row.byte_size != contract.byte_size || row.media_type != contract.media_type {
+            bail!("error blob-inventory-metadata-mismatch");
+        }
+        let bytes =
+            tokio::fs::read(crate::attachments::object_path(blob_dir, &contract.sha256)?).await?;
+        if i64::try_from(bytes.len()).ok() != Some(contract.byte_size)
+            || crate::attachments::storage::sha256_hex(&bytes) != contract.sha256
+        {
+            bail!("error attachment-blob-content-mismatch");
+        }
+        let validated =
+            crate::attachments::decode::validate_image(bytes, Some(contract.media_type.clone()))
+                .await?;
+        if (validated.facts.width, validated.facts.height) != (contract.width, contract.height) {
+            bail!("error blob-inventory-metadata-mismatch");
+        }
+        let admitted: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+               SELECT 1 FROM server_blob_references sbr
+               LEFT JOIN server_task_tombstones st
+                 ON st.workspace_id = sbr.workspace_id AND st.task_id = sbr.task_id
+               WHERE sbr.workspace_id = ? AND sbr.sha256 = ? AND sbr.deleted = 0
+                 AND COALESCE(st.deleted, 0) = 0
+             ) OR EXISTS(
+               SELECT 1 FROM blob_upload_reservations
+               WHERE workspace_id = ? AND sha256 = ? AND byte_size = ? AND expires_at > ?
+             )",
+        )
+        .bind(&contract.workspace_id)
+        .bind(&contract.sha256)
+        .bind(&contract.workspace_id)
+        .bind(&contract.sha256)
+        .bind(contract.byte_size)
+        .bind(crate::ids::now())
+        .fetch_one(&mut *conn)
+        .await?;
+        if !admitted {
+            bail!("error attachment-blob-unreserved");
+        }
+    }
+    Ok(())
 }
 
 async fn load_server_changes_after(

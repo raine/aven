@@ -121,7 +121,11 @@ final class LocalProofTests: XCTestCase {
         XCTAssertEqual(response.body, Data([0x01, 0x02, 0x03]))
         XCTAssertEqual(
             response.headers,
-            [SyncHttpHeader(name: "content-type", value: "application/octet-stream")]
+            [
+                SyncHttpHeader(name: "content-encoding", value: "gzip"),
+                SyncHttpHeader(name: "content-length", value: "99"),
+                SyncHttpHeader(name: "content-type", value: "application/octet-stream"),
+            ]
         )
     }
 }

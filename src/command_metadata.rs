@@ -80,6 +80,11 @@ impl Commands {
             Self::NoteDelete(_) => CommandMetadata::cli_workspace_wake(),
             Self::Delete(_) => CommandMetadata::cli_workspace_wake(),
             Self::Restore(_) => CommandMetadata::cli_workspace_wake(),
+            Self::Attachment(args) => CommandMetadata {
+                log_mode: logging::LogMode::Cli,
+                needs_workspace: true,
+                wakes_daemon: args.command.wakes_daemon(),
+            },
             Self::Text(args) => CommandMetadata {
                 log_mode: logging::LogMode::Cli,
                 needs_workspace: true,

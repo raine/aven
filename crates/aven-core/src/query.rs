@@ -41,8 +41,9 @@ pub(crate) use sync_history::sync_history_stats;
 pub(crate) use tasks::{list_task_items_in_workspace, list_task_items_with_display_refs};
 pub use types::RecentActionTarget;
 pub use types::{
-    ProjectListItem, RecentActionItem, SidebarCounts, SortDirection, TaskAvailabilityFilter,
-    TaskDependencyLink, TaskFilters, TaskListItem, TaskNote, TaskQueryMode, TaskSort,
+    AttachmentMetadata, ProjectListItem, RecentActionItem, SidebarCounts, SortDirection,
+    TaskAvailabilityFilter, TaskDependencyLink, TaskFilters, TaskListItem, TaskNote, TaskQueryMode,
+    TaskSort,
 };
 
 impl Database {

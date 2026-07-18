@@ -30,3 +30,32 @@ pub struct Project {
     pub name: String,
     pub prefix: String,
 }
+
+#[derive(Debug, Clone)]
+pub struct TaskAttachment {
+    pub workspace_id: WorkspaceId,
+    pub attachment_id: String,
+    pub task_id: TaskId,
+    pub sha256: String,
+    pub byte_size: i64,
+    pub media_type: String,
+    pub filename: Option<String>,
+    pub alt_text: Option<String>,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub created_at: String,
+    pub created_by_change_id: Option<String>,
+    pub deleted: bool,
+    pub deleted_at: Option<String>,
+    pub deleted_by_change_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlobInventoryRow {
+    pub sha256: String,
+    pub byte_size: i64,
+    pub media_type: String,
+    pub available: bool,
+    pub first_seen_at: String,
+    pub last_verified_at: Option<String>,
+}

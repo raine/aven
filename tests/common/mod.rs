@@ -263,6 +263,14 @@ pub fn extract_ref(output: &str) -> String {
         .to_string()
 }
 
+pub fn extract_attachment_id(output: &str) -> String {
+    output
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("attachment_id="))
+        .expect("attachment id in output")
+        .to_string()
+}
+
 pub fn suffix(task_ref: &str) -> String {
     task_ref
         .split_once('-')
@@ -283,6 +291,14 @@ pub fn contains_none(text: &str, needles: &[&str]) {
             "unexpected {needle:?}\ntext:\n{text}"
         );
     }
+}
+
+pub fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image::RgbaImage::new(width, height))
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .expect("encode PNG fixture");
+    bytes.into_inner()
 }
 
 pub struct TestProcess {

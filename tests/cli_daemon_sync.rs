@@ -254,10 +254,11 @@ fn daemon_syncs_large_backlog_across_budgeted_rounds() {
     let daemon = TestProcess::start_daemon_with_env(&env, [("AVEN_LOG", "aven=debug")]);
     let first_pushed = MAX_PUSH_BATCH * DAEMON_SYNC_PAGE_BUDGET;
     let incomplete = format!(
-        "daemon-synced pushed={first_pushed} pulled=0 cursor={first_pushed} complete=false pages={DAEMON_SYNC_PAGE_BUDGET}"
+        "daemon-synced pushed={first_pushed} pulled=0 blob_uploaded=0 blob_uploaded_bytes=0 blob_downloaded=0 blob_downloaded_bytes=0 blob_upload_remaining=0 blob_upload_remaining_bytes=0 blob_download_remaining=0 blob_download_remaining_bytes=0 cursor={first_pushed} complete=false pages={DAEMON_SYNC_PAGE_BUDGET}"
     );
-    let complete =
-        format!("daemon-synced pushed=1 pulled=0 cursor={task_count} complete=true pages=1");
+    let complete = format!(
+        "daemon-synced pushed=1 pulled=0 blob_uploaded=0 blob_uploaded_bytes=0 blob_downloaded=0 blob_downloaded_bytes=0 blob_upload_remaining=0 blob_upload_remaining_bytes=0 blob_download_remaining=0 blob_download_remaining_bytes=0 cursor={task_count} complete=true pages=1"
+    );
 
     daemon.wait_for_log(&incomplete, Duration::from_secs(10));
     daemon.wait_for_log(&complete, Duration::from_secs(10));

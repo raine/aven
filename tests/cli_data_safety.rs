@@ -1,32 +1,163 @@
 mod common;
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde_json::Value;
 use sqlx::ConnectOptions;
 use sqlx::sqlite::SqliteConnectOptions;
 
-use common::{TestEnv, contains_all, contains_none, extract_ref, fail, meta_value, ok, scalar_i64};
+use common::{
+    TestEnv, contains_all, contains_none, extract_ref, fail, meta_value, ok, png_bytes, scalar_i64,
+};
 
 #[test]
-fn backup_command_creates_sqlite_copy() {
+fn backup_command_creates_archive() {
     let env = TestEnv::new();
     let db = env.db("backup-copy.sqlite");
     ok(env.aven(&db, ["label", "create", "safety"]));
 
-    let task_ref = extract_ref(&ok(env.aven(
+    let _task_ref = extract_ref(&ok(env.aven(
         &db,
         ["add", "base task", "--project", "app", "--label", "safety"],
     )));
 
-    let backup_path = env.path("backup-copy.sqlite.backup");
+    let backup_path = env.path("backup-copy.aven-backup.tar.zst");
     let output = ok(env.aven(&db, ["backup", "--output", backup_path.to_str().unwrap()]));
     contains_all(&output, &["backup path=", "bytes="]);
     assert!(backup_path.exists());
+    assert!(
+        !fs::read(&backup_path)
+            .unwrap()
+            .starts_with(b"SQLite format 3")
+    );
+}
 
-    let listed = ok(env.aven(&backup_path, ["list"]));
-    contains_all(&listed, &[&task_ref, "base task"]);
+#[test]
+fn backup_archive_round_trips_attachment_blobs() {
+    let env = TestEnv::new();
+    let db = env.db("backup-attachment.sqlite");
+    let task_ref = extract_ref(&ok(env.aven(&db, ["add", "with image", "--project", "app"])));
+    let image = env.path("photo.png");
+    let image_bytes = png_bytes(3, 2);
+    fs::write(&image, &image_bytes).unwrap();
+
+    let add_output = ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &task_ref,
+            image.to_str().unwrap(),
+            "--alt",
+            "sample image",
+        ],
+    ));
+    contains_all(&add_output, &["attachment-added", "has_blob=true"]);
+    let sha = query_string(&db, "SELECT sha256 FROM task_attachments LIMIT 1");
+
+    let backup_path = env.path("backup.aven-backup.tar.zst");
+    let output = ok(env.aven(&db, ["backup", "--output", backup_path.to_str().unwrap()]));
+    contains_all(&output, &["backup path=", "bytes="]);
+
+    fs::remove_file(&db).unwrap();
+    let blob_dir = default_blob_dir(&db);
+    fs::remove_dir_all(&blob_dir).unwrap();
+
+    let output = ok(env.aven(
+        &db,
+        ["backup", "restore", backup_path.to_str().unwrap(), "--yes"],
+    ));
+    contains_all(&output, &["restored-backup path=", "safety_backup="]);
+    let object_path = blob_dir.join("objects").join("sha256").join(&sha);
+    assert_eq!(fs::read(object_path).unwrap(), image_bytes);
+    let listed = ok(env.aven(&db, ["attachment", "list", &task_ref, "--json"]));
+    let listed: Value = serde_json::from_str(&listed).unwrap();
+    assert_eq!(listed[0]["sha256"], sha);
+}
+
+#[test]
+fn backup_restore_replaces_attachment_objects_and_repairs_bytes() {
+    let env = TestEnv::new();
+    let db = env.db("backup-replace-objects.sqlite");
+    let first_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "first image", "--project", "app"])
+    ));
+    let first_image = env.path("first.png");
+    let first_bytes = png_bytes(3, 2);
+    fs::write(&first_image, &first_bytes).unwrap();
+    ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &first_ref,
+            first_image.to_str().unwrap(),
+        ],
+    ));
+    let first_sha = query_string(&db, "SELECT sha256 FROM task_attachments LIMIT 1");
+    let backup_path = env.path("replace-objects.aven-backup.tar.zst");
+    ok(env.aven(&db, ["backup", "--output", backup_path.to_str().unwrap()]));
+
+    let second_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "second image", "--project", "app"])
+    ));
+    let second_image = env.path("second.png");
+    fs::write(&second_image, png_bytes(4, 3)).unwrap();
+    ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &second_ref,
+            second_image.to_str().unwrap(),
+        ],
+    ));
+    let second_sha = query_strings(&db, "SELECT sha256 FROM task_attachments")
+        .into_iter()
+        .find(|sha| sha != &first_sha)
+        .unwrap();
+    let objects = default_blob_dir(&db).join("objects").join("sha256");
+    fs::write(objects.join(&first_sha), b"corrupt").unwrap();
+
+    ok(env.aven(
+        &db,
+        ["backup", "restore", backup_path.to_str().unwrap(), "--yes"],
+    ));
+    assert_eq!(fs::read(objects.join(&first_sha)).unwrap(), first_bytes);
+    assert!(!objects.join(second_sha).exists());
+    contains_all(
+        &ok(env.aven(&db, ["doctor", "--integrity"])),
+        &[
+            "ok attachment objects 0 missing",
+            "ok attachment object hashes 0 mismatched",
+            "ok attachment orphan objects 0 orphaned",
+        ],
+    );
+}
+
+#[test]
+fn backup_archive_excludes_disposable_and_incomplete_attachment_files() {
+    let env = TestEnv::new();
+    let db = env.db("backup-exclusions.sqlite");
+    ok(env.aven(&db, ["add", "backup exclusions", "--project", "app"]));
+    let blob_dir = default_blob_dir(&db);
+    for relative in [
+        "cache/previews/profile/preview.png",
+        "trash/trashed-object",
+        "objects/sha256/.aven-stage-incomplete",
+        "staging/incomplete",
+    ] {
+        let path = blob_dir.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"private disposable bytes").unwrap();
+    }
+
+    let backup_path = env.path("exclusions.aven-backup.tar.zst");
+    ok(env.aven(&db, ["backup", "--output", backup_path.to_str().unwrap()]));
+    let entries = backup_entries(&backup_path);
+    assert_eq!(entries, vec!["manifest.json", "database.sqlite"]);
 }
 
 #[test]
@@ -54,6 +185,35 @@ fn backup_restore_replaces_database_and_keeps_safety_copy() {
         ["add", "kept task", "--project", "app", "--label", "safety"],
     ));
     let source = env.path("restore-source.sqlite");
+    sqlite_backup(&db, &source);
+    ok(env.aven(&db, ["add", "local-only task", "--project", "app"]));
+
+    let before = backup_count(&db, "before-restore");
+    let output = ok(env.aven(
+        &db,
+        ["backup", "restore", source.to_str().unwrap(), "--yes"],
+    ));
+    contains_all(&output, &["restored-backup path=", "safety_backup="]);
+
+    let list = ok(env.aven(&db, ["list", "--all"]));
+    contains_all(&list, &["kept task"]);
+    contains_none(&list, &["local-only task"]);
+
+    let after = backup_count(&db, "before-restore");
+    assert!(after > before);
+}
+
+#[test]
+fn backup_restore_archive_replaces_database_and_keeps_safety_copy() {
+    let env = TestEnv::new();
+    let db = env.db("restore-with-archive.sqlite");
+    ok(env.aven(&db, ["label", "create", "safety"]));
+
+    ok(env.aven(
+        &db,
+        ["add", "kept task", "--project", "app", "--label", "safety"],
+    ));
+    let source = env.path("restore-source.aven-backup.tar.zst");
     ok(env.aven(&db, ["backup", "--output", source.to_str().unwrap()]));
     ok(env.aven(&db, ["add", "local-only task", "--project", "app"]));
 
@@ -70,6 +230,134 @@ fn backup_restore_replaces_database_and_keeps_safety_copy() {
 
     let after = backup_count(&db, "before-restore");
     assert!(after > before);
+}
+
+#[test]
+fn json_export_includes_attachment_metadata_without_bytes() {
+    let env = TestEnv::new();
+    let db = env.db("export-attachments.sqlite");
+    let task_ref = extract_ref(&ok(env.aven(&db, ["add", "with image", "--project", "app"])));
+    let image = env.path("photo.png");
+    fs::write(&image, png_bytes(3, 2)).unwrap();
+    ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+
+    let output_path = env.path("attachments-export.json");
+    ok(env.aven(&db, ["export", "--output", output_path.to_str().unwrap()]));
+    let text = fs::read_to_string(&output_path).unwrap();
+    let snapshot: Value = serde_json::from_str(&text).unwrap();
+
+    assert_eq!(snapshot["blobs_included"], false);
+    assert_eq!(
+        snapshot["tables"]["task_attachments"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        snapshot["tables"]["blob_inventory"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        !snapshot["tables"]["task_attachments"][0]
+            .as_object()
+            .unwrap()
+            .contains_key("bytes")
+    );
+}
+
+#[test]
+fn import_preserves_attachment_metadata_without_local_blobs() {
+    let env = TestEnv::new();
+    let source_db = env.db("import-attachments-source.sqlite");
+    let target_dir = env.path("target");
+    fs::create_dir_all(&target_dir).unwrap();
+    let target_db = target_dir.join("import-attachments-target.sqlite");
+    let task_ref = extract_ref(&ok(
+        env.aven(&source_db, ["add", "with image", "--project", "app"])
+    ));
+    let image = env.path("photo.png");
+    fs::write(&image, png_bytes(3, 2)).unwrap();
+    ok(env.aven(
+        &source_db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+
+    let output_path = env.path("attachments-import.json");
+    ok(env.aven(
+        &source_db,
+        ["export", "--output", output_path.to_str().unwrap()],
+    ));
+    ok(env.aven(
+        &target_db,
+        ["import", "--yes", output_path.to_str().unwrap()],
+    ));
+
+    assert_eq!(
+        scalar_i64(&target_db, "SELECT count(*) FROM task_attachments"),
+        1
+    );
+    assert_eq!(
+        scalar_i64(&target_db, "SELECT available FROM blob_inventory LIMIT 1"),
+        0
+    );
+    assert_eq!(
+        scalar_i64(
+            &target_db,
+            "SELECT count(*) FROM changes WHERE server_seq IS NULL AND field = 'attachments'",
+        ),
+        0
+    );
+    assert_eq!(
+        scalar_i64(
+            &target_db,
+            "SELECT count(*) FROM task_attachments WHERE created_by_change_id IS NOT NULL OR deleted_by_change_id IS NOT NULL",
+        ),
+        0
+    );
+    let sha = query_string(&target_db, "SELECT sha256 FROM blob_inventory LIMIT 1");
+    assert!(
+        !default_blob_dir(&target_db)
+            .join("objects")
+            .join("sha256")
+            .join(sha)
+            .exists()
+    );
+}
+
+#[test]
+fn import_rejects_attachment_inventory_metadata_mismatch() {
+    let env = TestEnv::new();
+    let db = env.db("import-attachment-mismatch.sqlite");
+    let task_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "attachment mismatch", "--project", "app"])
+    ));
+    let image = env.path("mismatch.png");
+    fs::write(&image, png_bytes(3, 2)).unwrap();
+    ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+    let export = env.path("attachment-mismatch.json");
+    ok(env.aven(&db, ["export", "--output", export.to_str().unwrap()]));
+    let mut snapshot: Value = serde_json::from_str(&fs::read_to_string(&export).unwrap()).unwrap();
+    let size = snapshot["tables"]["blob_inventory"][0]["byte_size"]
+        .as_i64()
+        .unwrap();
+    snapshot["tables"]["blob_inventory"][0]["byte_size"] = Value::from(size + 1);
+    fs::write(&export, serde_json::to_string(&snapshot).unwrap()).unwrap();
+
+    let output = fail(env.aven(&db, ["import", "--yes", export.to_str().unwrap()]));
+    contains_all(
+        &output,
+        &["error invalid-export-snapshot attachment inventory metadata mismatch"],
+    );
 }
 
 #[test]
@@ -402,4 +690,82 @@ fn backup_count(db: &Path, reason: &str) -> usize {
         .filter_map(|entry| entry.file_name().to_str().map(|name| name.to_string()))
         .filter(|name| name.starts_with(&prefix) && name.ends_with(".sqlite"))
         .count()
+}
+
+fn query_strings(db: &Path, sql: &'static str) -> Vec<String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create runtime");
+    runtime.block_on(async {
+        let mut conn = SqliteConnectOptions::new()
+            .filename(db)
+            .create_if_missing(false)
+            .foreign_keys(true)
+            .connect()
+            .await
+            .expect("open test db");
+        sqlx::query_scalar::<_, String>(sql)
+            .fetch_all(&mut conn)
+            .await
+            .expect("read strings")
+    })
+}
+
+fn query_string(db: &Path, sql: &'static str) -> String {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create runtime");
+    runtime.block_on(async {
+        let mut conn = SqliteConnectOptions::new()
+            .filename(db)
+            .create_if_missing(false)
+            .foreign_keys(true)
+            .connect()
+            .await
+            .expect("open test db");
+        sqlx::query_scalar::<_, String>(sql)
+            .fetch_one(&mut conn)
+            .await
+            .expect("read string")
+    })
+}
+
+fn backup_entries(path: &Path) -> Vec<String> {
+    let file = fs::File::open(path).unwrap();
+    let decoder = zstd::stream::read::Decoder::new(file).unwrap();
+    let mut archive = tar::Archive::new(decoder);
+    archive
+        .entries()
+        .unwrap()
+        .map(|entry| {
+            entry
+                .unwrap()
+                .path()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect()
+}
+
+fn default_blob_dir(db: &Path) -> PathBuf {
+    let mut blob_dir = db.as_os_str().to_os_string();
+    blob_dir.push(".blobs");
+    PathBuf::from(blob_dir)
+}
+
+fn sqlite_backup(source: &Path, target: &Path) {
+    let backup_sql = format!(".backup '{}'", target.display());
+    let output = Command::new("sqlite3")
+        .arg(source)
+        .arg(backup_sql)
+        .output()
+        .expect("run sqlite3");
+    assert!(
+        output.status.success(),
+        "sqlite backup failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

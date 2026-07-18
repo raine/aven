@@ -1,8 +1,484 @@
 mod common;
 
+use std::io::Write;
+use std::path::PathBuf;
+
 use common::{
-    TestEnv, command, command_with_db, contains_all, contains_none, extract_ref, fail, ok, suffix,
+    TestEnv, command, command_with_db, contains_all, contains_none, extract_ref, fail, ok,
+    scalar_i64, suffix,
 };
+
+fn extract_attachment_id(output: &str) -> String {
+    output
+        .split_whitespace()
+        .find(|word| word.starts_with("attachment_id="))
+        .and_then(|word| word.strip_prefix("attachment_id="))
+        .expect("attachment_id in output")
+        .to_string()
+}
+
+fn extract_byte_size(output: &str) -> i64 {
+    output
+        .split_whitespace()
+        .find(|word| word.starts_with("byte_size="))
+        .and_then(|word| word.strip_prefix("byte_size="))
+        .expect("byte_size in output")
+        .parse()
+        .unwrap()
+}
+
+fn compressible_png_bytes() -> Vec<u8> {
+    let width = 16u32;
+    let height = 16u32;
+    let mut raw = Vec::new();
+    for _ in 0..height {
+        raw.push(0);
+        raw.extend(std::iter::repeat_n(255, width as usize * 4));
+    }
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(&raw).unwrap();
+    let idat = encoder.finish().unwrap();
+
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut ihdr = Vec::new();
+    ihdr.extend(width.to_be_bytes());
+    ihdr.extend(height.to_be_bytes());
+    ihdr.extend([8, 6, 0, 0, 0]);
+    append_png_chunk(&mut png, b"IHDR", &ihdr);
+    append_png_chunk(&mut png, b"tEXt", &vec![b'a'; 4096]);
+    append_png_chunk(&mut png, b"IDAT", &idat);
+    append_png_chunk(&mut png, b"IEND", &[]);
+    png
+}
+
+fn append_png_chunk(png: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
+    png.extend((data.len() as u32).to_be_bytes());
+    png.extend(name);
+    png.extend(data);
+    let mut crc_data = Vec::with_capacity(name.len() + data.len());
+    crc_data.extend(name);
+    crc_data.extend(data);
+    png.extend(crc32(&crc_data).to_be_bytes());
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffffu32;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            let mask = 0u32.wrapping_sub(crc & 1);
+            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+#[test]
+fn generated_png_fixture_is_compressible() {
+    let png = compressible_png_bytes();
+    let mut options = oxipng::Options::from_preset(4);
+    options.strip = oxipng::StripChunks::Safe;
+    let optimized = oxipng::optimize_from_memory(&png, &options).unwrap();
+
+    assert!(optimized.len() < png.len());
+}
+
+#[test]
+fn attachment_add_list_get_and_delete_work_locally() {
+    let env = TestEnv::new();
+    let db = env.db("attachments.sqlite");
+    let created = ok(env.aven(
+        &db,
+        [
+            "add",
+            "attach me",
+            "--description",
+            "before",
+            "--project",
+            "app",
+        ],
+    ));
+    let task_ref = extract_ref(&created);
+    let description_versions_before = scalar_i64(
+        &db,
+        "SELECT count(*) FROM field_versions WHERE field = 'description'",
+    );
+    let description_changes_before = scalar_i64(
+        &db,
+        "SELECT count(*) FROM changes WHERE field = 'description'",
+    );
+    let image = env.path("photo.png");
+    let image_bytes = compressible_png_bytes();
+    std::fs::write(&image, &image_bytes).unwrap();
+
+    let added = ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &task_ref,
+            image.to_str().unwrap(),
+            "--alt",
+            "diagram",
+        ],
+    ));
+    contains_all(&added, &["attachment-added", "media_type=image/png"]);
+    assert_eq!(extract_byte_size(&added), image_bytes.len() as i64);
+    let attachment_id = extract_attachment_id(&added);
+    contains_none(&added, &["sha256=", "photo.png", "diagram"]);
+    let listed = ok(env.aven(&db, ["attachment", "list", &task_ref, "--json"]));
+    let listed_json: serde_json::Value = serde_json::from_str(&listed).unwrap();
+    let sha256 = listed_json[0]["sha256"].as_str().unwrap();
+    let mut blob_root = db.as_os_str().to_os_string();
+    blob_root.push(".blobs");
+    let blob_root = PathBuf::from(blob_root);
+    let blob_path = blob_root.join("objects").join("sha256").join(sha256);
+    assert!(blob_path.exists(), "sidecar blob should exist");
+
+    let full = ok(env.aven(&db, ["show", &task_ref, "--full"]));
+    contains_all(
+        &full,
+        &[
+            "description<<EOF\nbefore\nEOF\nAttachments:",
+            &attachment_id,
+            "attachment attachment_id=",
+            "has_blob=yes",
+        ],
+    );
+    contains_none(
+        &full,
+        &[
+            "sha256=",
+            "filename=",
+            "alt_text=",
+            "photo.png",
+            "diagram",
+            "png bytes",
+        ],
+    );
+
+    let full_json = ok(env.aven(&db, ["show", &task_ref, "--full", "--json"]));
+    let full_json: serde_json::Value = serde_json::from_str(&full_json).unwrap();
+    assert_eq!(full_json["description"], "before");
+    assert_eq!(full_json["attachments"][0]["attachment_id"], attachment_id);
+    assert_eq!(full_json["attachments"][0]["has_blob"], true);
+    assert!(full_json["attachments"][0].get("sha256").is_none());
+    assert!(full_json["attachments"][0].get("bytes").is_none());
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM field_versions WHERE field = 'description'",
+        ),
+        description_versions_before
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM changes WHERE field = 'description'",
+        ),
+        description_changes_before
+    );
+
+    let listed = ok(env.aven(&db, ["attachment", "list", &task_ref, "--json"]));
+    let value: serde_json::Value = serde_json::from_str(&listed).unwrap();
+    assert_eq!(value[0]["attachment_id"], attachment_id);
+    assert_eq!(value[0]["media_type"], "image/png");
+    assert_eq!(value[0]["width"], 16);
+    assert_eq!(value[0]["height"], 16);
+    assert!(value[0].get("bytes").is_none());
+
+    let output = env.path("copy.png");
+    ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "get",
+            &attachment_id,
+            "--output",
+            output.to_str().unwrap(),
+        ],
+    ));
+    assert_eq!(std::fs::read(output).unwrap(), image_bytes);
+
+    ok(env.aven(&db, ["attachment", "delete", &attachment_id]));
+    let hidden = ok(env.aven(&db, ["attachment", "list", &task_ref]));
+    contains_none(&hidden, &[&attachment_id]);
+    let all = ok(env.aven(&db, ["attachment", "list", &task_ref, "--all", "--json"]));
+    let value: serde_json::Value = serde_json::from_str(&all).unwrap();
+    assert_eq!(value[0]["deleted"], true);
+    assert!(value[0].get("bytes").is_none());
+
+    let show = ok(env.aven(&db, ["show", &task_ref, "--full"]));
+    contains_all(&show, &["description<<EOF\nbefore\nEOF"]);
+    contains_none(&show, &["Attachments:", &attachment_id]);
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM field_versions WHERE field = 'description'",
+        ),
+        description_versions_before
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM changes WHERE field = 'description'",
+        ),
+        description_changes_before
+    );
+}
+
+#[test]
+fn attachment_add_preserves_png_by_default_and_optimizes_when_requested() {
+    let env = TestEnv::new();
+    let db = env.db("attachment-optimize.sqlite");
+    let task_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "optimize attachment", "--project", "app"])
+    ));
+    let image = env.path("compressible.png");
+    let bytes = compressible_png_bytes();
+    std::fs::write(&image, &bytes).unwrap();
+
+    let preserved = ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+    contains_all(&preserved, &["attachment-added", "optimized=false"]);
+    assert_eq!(extract_byte_size(&preserved), bytes.len() as i64);
+    let preserved_id = extract_attachment_id(&preserved);
+    let preserved_output = env.path("preserved.png");
+    ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "get",
+            &preserved_id,
+            "--output",
+            preserved_output.to_str().unwrap(),
+        ],
+    ));
+    assert_eq!(std::fs::read(preserved_output).unwrap(), bytes);
+
+    let optimized = ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &task_ref,
+            image.to_str().unwrap(),
+            "--optimize",
+        ],
+    ));
+    contains_all(&optimized, &["attachment-added", "optimized=true"]);
+    assert!(extract_byte_size(&optimized) < bytes.len() as i64);
+
+    let conflict = fail(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &task_ref,
+            image.to_str().unwrap(),
+            "--optimize",
+            "--no-optimize",
+        ],
+    ));
+    contains_all(&conflict, &["cannot be used with"]);
+}
+#[test]
+fn attachment_add_obeys_image_optimization_config() {
+    let env = TestEnv::new();
+    env.write_config(
+        r#"
+local:
+  image_optimization: on
+"#,
+    );
+    let db = env.db("attachment-config-optimize.sqlite");
+    let task_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "configured attachment", "--project", "app"])
+    ));
+    let image = env.path("configured-compressible.png");
+    let bytes = compressible_png_bytes();
+    std::fs::write(&image, &bytes).unwrap();
+
+    let optimized = ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+    contains_all(&optimized, &["attachment-added", "optimized=true"]);
+    assert!(extract_byte_size(&optimized) < bytes.len() as i64);
+
+    let preserved = ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &task_ref,
+            image.to_str().unwrap(),
+            "--no-optimize",
+        ],
+    ));
+    contains_all(&preserved, &["attachment-added", "optimized=false"]);
+    assert_eq!(extract_byte_size(&preserved), bytes.len() as i64);
+}
+
+#[test]
+fn attachment_add_and_delete_work_when_sync_enabled() {
+    let env = TestEnv::new();
+    let db = env.db("attachment-sync-enabled.sqlite");
+    env.write_config(&format!(
+        r#"
+sync:
+  enabled: true
+  server_url: "http://127.0.0.1:9"
+daemon:
+  wake_addr: "{}"
+"#,
+        env.free_loopback_addr()
+    ));
+    let created = ok(env.aven(&db, ["add", "sync attachment", "--project", "app"]));
+    let task_ref = extract_ref(&created);
+    let image = env.path("sync-photo.png");
+    std::fs::write(&image, compressible_png_bytes()).unwrap();
+
+    let added = ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+    contains_all(&added, &["attachment-added", "has_blob=true"]);
+    let attachment_id = extract_attachment_id(&added);
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM changes WHERE op_type = 'attachment_add'"
+        ),
+        1
+    );
+
+    let deleted = ok(env.aven(&db, ["attachment", "delete", &attachment_id]));
+    contains_all(&deleted, &["attachment-deleted", "deleted=yes"]);
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM changes WHERE op_type = 'attachment_delete'",
+        ),
+        1
+    );
+}
+
+#[test]
+fn attachment_get_refuses_existing_output_and_mime_mismatch() {
+    let env = TestEnv::new();
+    let db = env.db("attachment-errors.sqlite");
+    let created = ok(env.aven(&db, ["add", "attach me", "--project", "app"]));
+    let task_ref = extract_ref(&created);
+
+    let unknown = env.path("photo.bin");
+    let image_bytes = compressible_png_bytes();
+    std::fs::write(&unknown, &image_bytes).unwrap();
+    let added = ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, unknown.to_str().unwrap()],
+    ));
+    contains_all(&added, &["media_type=image/png"]);
+
+    let error = fail(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &task_ref,
+            unknown.to_str().unwrap(),
+            "--media-type",
+            "image/jpeg",
+        ],
+    ));
+    contains_all(&error, &["error attachment-media-type-mismatch"]);
+
+    let image = env.path("photo.png");
+    std::fs::write(&image, image_bytes).unwrap();
+    let added = ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+    let attachment_id = extract_attachment_id(&added);
+    let output = env.path("copy.png");
+    std::fs::write(&output, b"existing").unwrap();
+    let error = fail(env.aven(
+        &db,
+        [
+            "attachment",
+            "get",
+            &attachment_id,
+            "--output",
+            output.to_str().unwrap(),
+        ],
+    ));
+    contains_all(&error, &["error output-exists"]);
+    assert_eq!(std::fs::read(output).unwrap(), b"existing");
+}
+
+#[test]
+fn attachment_get_refuses_unavailable_imported_blob() {
+    let env = TestEnv::new();
+    let source_db = env.db("attachment-import-source.sqlite");
+    let target_db = env.db("attachment-import-target.sqlite");
+    let task_ref = extract_ref(&ok(
+        env.aven(&source_db, ["add", "attach me", "--project", "app"])
+    ));
+    let image = env.path("photo.png");
+    std::fs::write(&image, compressible_png_bytes()).unwrap();
+    let added = ok(env.aven(
+        &source_db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+    let attachment_id = extract_attachment_id(&added);
+    let export_path = env.path("attachment-export.json");
+    ok(env.aven(
+        &source_db,
+        ["export", "--output", export_path.to_str().unwrap()],
+    ));
+    ok(env.aven(
+        &target_db,
+        ["import", "--yes", export_path.to_str().unwrap()],
+    ));
+
+    let output = env.path("copy.png");
+    let error = fail(env.aven(
+        &target_db,
+        [
+            "attachment",
+            "get",
+            &attachment_id,
+            "--output",
+            output.to_str().unwrap(),
+        ],
+    ));
+    contains_all(&error, &["error attachment-blob-unavailable"]);
+    assert!(!output.exists());
+}
+
+#[test]
+fn attachment_delete_is_idempotent() {
+    let env = TestEnv::new();
+    let db = env.db("attachment-delete-idempotent.sqlite");
+    let created = ok(env.aven(&db, ["add", "attach me", "--project", "app"]));
+    let task_ref = extract_ref(&created);
+    let image = env.path("photo.png");
+    std::fs::write(&image, compressible_png_bytes()).unwrap();
+    let added = ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+    let attachment_id = extract_attachment_id(&added);
+
+    ok(env.aven(&db, ["attachment", "delete", &attachment_id]));
+    ok(env.aven(&db, ["attachment", "delete", &attachment_id]));
+    let all = ok(env.aven(&db, ["attachment", "list", &task_ref, "--all", "--json"]));
+    let value: serde_json::Value = serde_json::from_str(&all).unwrap();
+    assert_eq!(value.as_array().unwrap().len(), 1);
+    assert_eq!(value[0]["deleted"], true);
+}
 
 #[test]
 fn version_flag_prints_package_version() {

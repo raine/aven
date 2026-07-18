@@ -99,6 +99,7 @@ pub(crate) struct WidgetState {
     pub(crate) sidebar: ListState,
     pub(crate) table: TableState,
     pub(crate) marked_task_ids: BTreeSet<crate::ids::TaskId>,
+    pub(crate) inline_image_placements: Vec<crate::tui::ui::DetailInlineImagePlacement>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,6 +141,9 @@ pub(crate) struct App {
     pub(crate) selected_detail_child_task_id: Option<crate::ids::TaskId>,
     pub(crate) detail_text_selection: Option<crate::tui::detail_selection::DetailTextSelection>,
     pub(crate) detail_text_dragging: bool,
+    pub(super) previous_inline_image_placements: Vec<crate::tui::ui::DetailInlineImagePlacement>,
+    pub(super) previous_inline_image_backend: crate::tui::inline_images::InlineImageBackend,
+    pub(super) preview_controller: crate::tui::preview_controller::PreviewController,
     pub(super) navigation_history: BoundedHistory<TaskViewState>,
     pub(super) detail_navigation_history: BoundedHistory<DetailNavigationState>,
 }
@@ -175,6 +179,7 @@ impl App {
                 sidebar: ListState::default(),
                 table: TableState::default(),
                 marked_task_ids: BTreeSet::new(),
+                inline_image_placements: Vec::new(),
             },
             overlay: None,
             notification: None,
@@ -197,6 +202,9 @@ impl App {
             selected_detail_child_task_id: None,
             detail_text_selection: None,
             detail_text_dragging: false,
+            previous_inline_image_placements: Vec::new(),
+            previous_inline_image_backend: crate::tui::inline_images::InlineImageBackend::None,
+            preview_controller: crate::tui::preview_controller::PreviewController::new(),
             navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
             detail_navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
         };

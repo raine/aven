@@ -5,6 +5,14 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::tui::theme::{ACCENT, BG_PANEL, BLUE, FG_DIM, GREEN};
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum MarkdownBlock {
+    Text(Line<'static>),
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct MarkdownRenderContext;
+
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Attrs {
     bold: bool,
@@ -62,6 +70,7 @@ impl TableState {
 
 struct MarkdownRenderer {
     max_width: usize,
+    blocks: Vec<MarkdownBlock>,
     lines: Vec<LayoutLine>,
     current_line: Vec<Run>,
     current_width: usize,
@@ -75,13 +84,15 @@ struct MarkdownRenderer {
     in_block_quote: bool,
     heading_level: Option<u8>,
     link_url: Option<String>,
+    ordinary_image: bool,
     table_state: Option<TableState>,
 }
 
 impl MarkdownRenderer {
-    fn new(max_width: usize) -> Self {
+    fn new(max_width: usize, _context: MarkdownRenderContext) -> Self {
         Self {
             max_width,
+            blocks: Vec::new(),
             lines: Vec::new(),
             current_line: Vec::new(),
             current_width: 0,
@@ -95,6 +106,7 @@ impl MarkdownRenderer {
             in_block_quote: false,
             heading_level: None,
             link_url: None,
+            ordinary_image: false,
             table_state: None,
         }
     }
@@ -204,6 +216,15 @@ impl MarkdownRenderer {
         if self.lines.last().is_some_and(|line| !line.runs.is_empty()) {
             self.lines.push(LayoutLine { runs: vec![] });
         }
+    }
+
+    fn flush_lines_to_blocks(&mut self) {
+        let lines = std::mem::take(&mut self.lines);
+        self.blocks.extend(
+            layout_lines_to_ratatui(lines)
+                .into_iter()
+                .map(MarkdownBlock::Text),
+        );
     }
 
     fn start_tag(&mut self, tag: Tag) {
@@ -353,6 +374,14 @@ impl MarkdownRenderer {
                     ..Attrs::default()
                 });
             }
+            Tag::Image { .. } => {
+                self.ordinary_image = true;
+                self.attrs_stack.push(Attrs {
+                    link: true,
+                    underline: true,
+                    ..Attrs::default()
+                });
+            }
             Tag::Table(_) => {
                 self.ensure_blank_line();
                 self.table_state = Some(TableState::new());
@@ -438,6 +467,12 @@ impl MarkdownRenderer {
                             ..Attrs::default()
                         },
                     );
+                }
+            }
+            TagEnd::Image => {
+                if self.ordinary_image {
+                    self.attrs_stack.pop();
+                    self.ordinary_image = false;
                 }
             }
             TagEnd::Table => {
@@ -554,25 +589,38 @@ impl MarkdownRenderer {
         self.flush_line();
     }
 
-    fn finish(mut self) -> Vec<Line<'static>> {
+    fn finish(mut self) -> Vec<MarkdownBlock> {
         self.flush_line();
         while self.lines.last().is_some_and(|line| line.runs.is_empty()) {
             self.lines.pop();
         }
-        if self.lines.is_empty() {
-            return vec![Line::from("")];
+        if self.lines.is_empty() && self.blocks.is_empty() {
+            return vec![MarkdownBlock::Text(Line::from(""))];
         }
-        layout_lines_to_ratatui(self.lines)
+        self.flush_lines_to_blocks();
+        self.blocks
     }
 }
 
 pub(crate) fn render_markdown(input: &str, max_width: usize) -> Vec<Line<'static>> {
+    flatten_markdown_blocks(render_markdown_with_context(
+        input,
+        max_width,
+        MarkdownRenderContext,
+    ))
+}
+
+pub(crate) fn render_markdown_with_context(
+    input: &str,
+    max_width: usize,
+    context: MarkdownRenderContext,
+) -> Vec<MarkdownBlock> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
 
     let parser = Parser::new_ext(input, options);
-    let mut renderer = MarkdownRenderer::new(max_width.max(1));
+    let mut renderer = MarkdownRenderer::new(max_width.max(1), context);
     for event in parser {
         renderer.handle_event(event);
     }
@@ -623,6 +671,15 @@ fn line_with_ellipsis(line: &Line<'_>, max_width: usize) -> Line<'static> {
     }
     spans.push(Span::styled("…", Style::new().fg(FG_DIM)));
     Line::from(spans)
+}
+
+pub(crate) fn flatten_markdown_blocks(blocks: Vec<MarkdownBlock>) -> Vec<Line<'static>> {
+    blocks
+        .into_iter()
+        .map(|block| match block {
+            MarkdownBlock::Text(line) => line,
+        })
+        .collect()
 }
 
 fn layout_lines_to_ratatui(lines: Vec<LayoutLine>) -> Vec<Line<'static>> {
@@ -869,6 +926,18 @@ mod tests {
         for line in rendered.lines() {
             assert!(line.width() <= 16, "line too wide: {line:?}");
         }
+    }
+
+    #[test]
+    fn ordinary_image_with_custom_destination_renders_alt_text() {
+        let rendered = render_to_text("![Chart](custom-image:chart)", 80);
+        assert_eq!(rendered, "Chart");
+    }
+
+    #[test]
+    fn ordinary_image_renders_alt_text_without_url_suffix() {
+        let rendered = render_to_text("![Chart](https://example.com/chart.png)", 80);
+        assert_eq!(rendered, "Chart");
     }
 
     #[test]

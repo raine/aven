@@ -114,8 +114,11 @@ fn sync_session_carries_opaque_context_and_accepts_response_bytes() {
             SyncHttpResponse {
                 status: 200,
                 headers: Vec::new(),
-                body: br#"{"protocol_version":7,"cursor":0,"has_more":false,"push_acks":[],"changes":[]}"#
-                    .to_vec(),
+                body: format!(
+                    r#"{{"protocol_version":{},"cursor":0,"has_more":false,"push_acks":[],"changes":[]}}"#,
+                    aven_core::sync::wire::SYNC_PROTOCOL_VERSION
+                )
+                .into_bytes(),
             },
         )
         .unwrap();

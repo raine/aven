@@ -1,6 +1,8 @@
+use crate::attachments::AttachmentBytesState;
 use crate::ids::TaskId;
 use crate::queue::QueueMeta;
 use crate::types::Task;
+use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskQueryMode {
@@ -96,6 +98,7 @@ pub struct TaskListItem {
     pub display_ref: String,
     pub labels: Vec<String>,
     pub notes: Vec<TaskNote>,
+    pub attachments: Vec<AttachmentMetadata>,
     pub has_conflict: bool,
     pub unresolved_blocker_count: i64,
     pub dependent_count: i64,
@@ -104,6 +107,26 @@ pub struct TaskListItem {
     pub epic_children: Vec<TaskDependencyLink>,
     pub epic_parent: Option<TaskDependencyLink>,
     pub queue: QueueMeta,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct AttachmentMetadata {
+    pub attachment_id: String,
+    pub task_id: String,
+    #[serde(skip)]
+    pub sha256: String,
+    pub media_type: String,
+    pub byte_size: i64,
+    pub filename: Option<String>,
+    pub alt_text: Option<String>,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub created_at: String,
+    pub deleted: bool,
+    pub deleted_at: Option<String>,
+    #[serde(skip)]
+    pub bytes_state: AttachmentBytesState,
+    pub has_blob: bool,
 }
 
 #[derive(Debug, Clone)]

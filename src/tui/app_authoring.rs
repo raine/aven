@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+use crate::config::resolve_blob_dir;
 use crate::labels::normalize_label;
 use crate::operations::TaskDraft;
 use crate::tui::app::{App, Notification};
@@ -259,7 +260,7 @@ impl App {
         description: String,
     ) -> Result<()> {
         let value = add_task_natural_intake(&title, &description);
-        if self.intake.view().add_task_only {
+        if self.intake.view().add_task_only && !self.authoring.add_task_has_pending_attachments() {
             self.submit_add_task_only_natural(value, NaturalRetry::AddTask)
                 .await
         } else {
@@ -292,7 +293,7 @@ impl App {
     }
 
     pub(super) async fn submit_add_task_natural(&mut self, value: String) -> Result<()> {
-        if self.intake.view().add_task_only {
+        if self.intake.view().add_task_only && !self.authoring.add_task_has_pending_attachments() {
             self.submit_add_task_only_natural(value, NaturalRetry::Dialog)
                 .await
         } else {
@@ -314,7 +315,7 @@ impl App {
             return Ok(());
         }
         let project = self.add_task_project_context();
-        if create_on_success {
+        if create_on_success && !self.authoring.add_task_has_pending_attachments() {
             self.intake.start_detached(
                 raw,
                 &self.store.active_workspace.id,
@@ -358,6 +359,7 @@ impl App {
         match ready.outcome {
             Ok(draft) if ready.create_on_success => {
                 self.submit_created_task(draft).await?;
+                self.authoring.clear_add_task();
             }
             Ok(draft) => {
                 if self.authoring.apply_add_task_draft(draft) {
@@ -396,8 +398,35 @@ impl App {
     }
 
     pub(super) async fn submit_created_task(&mut self, draft: TaskDraft) -> Result<()> {
+        let attachments = self.authoring.add_task_attachments();
         let current_selected = self.widgets.table.selected();
-        let (message, selected) = self.store.create_task(draft, current_selected).await?;
+        let result = if attachments.is_empty() {
+            self.store.create_task(draft, current_selected).await
+        } else {
+            let db_path = self
+                .intake
+                .db_path()
+                .ok_or_else(|| anyhow::anyhow!("database path is not available"))?;
+            let blob_dir = resolve_blob_dir(db_path, self.intake.config())?;
+            self.store
+                .create_task_with_attachments(
+                    draft,
+                    current_selected,
+                    &blob_dir,
+                    self.intake.config().local.attachment_lifecycle.policy(),
+                    attachments,
+                )
+                .await
+        };
+        let (message, selected) = match result {
+            Ok(created) => created,
+            Err(error) => {
+                if crate::tui::store::task_creation_committed(&error) {
+                    self.authoring.clear_add_task();
+                }
+                return Err(error);
+            }
+        };
         self.widgets.table.select(selected);
         self.preserve_or_restore_sidebar_selection();
         self.prune_task_marks();

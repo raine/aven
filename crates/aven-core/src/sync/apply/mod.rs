@@ -1,3 +1,4 @@
+mod attachment;
 mod conflict;
 mod dependency;
 mod epic;
@@ -9,7 +10,7 @@ mod shared;
 mod task;
 mod workspace;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use sqlx::SqliteConnection;
 use tracing::debug;
 
@@ -44,7 +45,9 @@ pub async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWir
         op_type::EPIC_LINK_REMOVE => epic::remove_epic_link(conn, change).await?,
         op_type::PROJECT_DELETE => project::delete_project(conn, change).await?,
         op_type::LABEL_DELETE => label::delete_label(conn, change).await?,
-        _ => {}
+        op_type::ATTACHMENT_ADD => attachment::add_attachment(conn, change).await?,
+        op_type::ATTACHMENT_DELETE => attachment::delete_attachment(conn, change).await?,
+        _ => bail!("error unsupported-remote-change op_type={}", change.op_type),
     }
     Ok(())
 }

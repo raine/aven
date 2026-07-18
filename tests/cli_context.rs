@@ -1,6 +1,9 @@
 mod common;
 
-use common::{TestEnv, TestServer, contains_all, extract_ref, ok};
+use common::{
+    TestEnv, TestServer, contains_all, contains_none, extract_attachment_id, extract_ref, ok,
+    png_bytes,
+};
 use serde_json::Value;
 
 fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
@@ -80,6 +83,43 @@ fn context_json_contains_structured_snapshot() {
     let deleted = ok(env.aven(&db, ["context", &middle, "--json"]));
     let deleted: Value = serde_json::from_str(&deleted).unwrap();
     assert_eq!(deleted["task"]["deleted"], true);
+}
+
+#[test]
+fn context_includes_attachment_metadata() {
+    let env = TestEnv::new();
+    let db = env.db("context-attachments.sqlite");
+    let created = ok(env.aven(&db, ["add", "context attach", "--project", "app"]));
+    let task_ref = extract_ref(&created);
+    let image = env.path("photo.png");
+    std::fs::write(&image, png_bytes(3, 2)).unwrap();
+    let added = ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &task_ref,
+            image.to_str().unwrap(),
+            "--alt",
+            "diagram",
+        ],
+    ));
+    let attachment_id = extract_attachment_id(&added);
+
+    let text = ok(env.aven(&db, ["context", &task_ref]));
+    contains_all(&text, &["attachment attachment_id=", "has_blob=yes"]);
+    contains_none(
+        &text,
+        &["sha256=", "filename=", "alt_text=", "photo.png", "diagram"],
+    );
+
+    let json = ok(env.aven(&db, ["context", &task_ref, "--json"]));
+    let value: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["attachments"][0]["attachment_id"], attachment_id);
+    assert_eq!(value["attachments"][0]["has_blob"], true);
+    assert!(value["attachments"][0]["deleted_at"].is_null());
+    assert!(value["attachments"][0].get("sha256").is_none());
+    assert!(value["attachments"][0].get("bytes").is_none());
 }
 
 #[test]
