@@ -43,10 +43,10 @@ aven list --overdue
 aven search "auth bug"
 aven context APP-7KQ9
 aven show APP-7KQ9 --full
-aven add "fix conflict display" --priority high --label bug
-aven add "test rollout" --available-at tomorrow
-aven add "submit report" --due "next monday"
-aven add "add due dates" --epic
+aven add "Fix conflict display" --priority high --label bug
+aven add "Test rollout" --available-at tomorrow
+aven add "Submit report" --due "next monday"
+aven add "Add due dates" --epic
 aven epic add APP-7KQ9 APP-7KQ0
 aven epic remove APP-7KQ9 APP-7KQ0
 aven epic list APP-7KQ0
@@ -54,7 +54,7 @@ aven dep add APP-7KQ9 APP-7KQ0
 aven dep remove APP-7KQ9 APP-7KQ0
 aven dep list APP-7KQ9
 aven edit APP-7KQ9 --status active
-aven edit APP-7KQ9 --title "clearer title" --priority medium
+aven edit APP-7KQ9 --title "Clearer title" --priority medium
 aven edit APP-7KQ9 --available-at tomorrow
 aven edit APP-7KQ9 --clear-available-at
 aven edit APP-7KQ9 --due "in 2 weeks"
