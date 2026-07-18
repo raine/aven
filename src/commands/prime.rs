@@ -174,7 +174,7 @@ fn report_from_items(project: String, items: &[query::TaskListItem]) -> PrimeRep
         unavailable_reason: None,
         open_issue_sample: items.len(),
         conventions: PrimeConventions {
-            title_style: compute_title_style(items),
+            title_style: "capitalized".to_string(),
             statuses: format_counts(&status_counts, 4),
             labels: format_counts(&label_counts, 6),
         },
@@ -213,40 +213,6 @@ fn unresolved_refs(links: &[query::TaskDependencyLink]) -> Vec<String> {
         .filter(|link| link.unresolved)
         .map(|link| link.display_ref.clone())
         .collect()
-}
-
-fn compute_title_style(items: &[query::TaskListItem]) -> String {
-    let lowercase = items
-        .iter()
-        .filter(|item| starts_with_lowercase(&item.task.title))
-        .count();
-    let uppercase = items
-        .iter()
-        .filter(|item| starts_with_uppercase(&item.task.title))
-        .count();
-    if lowercase > uppercase {
-        "mostly lower-case starts".to_string()
-    } else if uppercase > lowercase {
-        "mostly capitalized starts".to_string()
-    } else if lowercase > 0 {
-        "mixed lower-case and capitalized starts".to_string()
-    } else {
-        "no alphabetic title starts in sample".to_string()
-    }
-}
-
-fn starts_with_lowercase(value: &str) -> bool {
-    value
-        .chars()
-        .find(|ch| ch.is_alphabetic())
-        .is_some_and(char::is_lowercase)
-}
-
-fn starts_with_uppercase(value: &str) -> bool {
-    value
-        .chars()
-        .find(|ch| ch.is_alphabetic())
-        .is_some_and(char::is_uppercase)
 }
 
 fn count_values<'a>(values: impl Iterator<Item = &'a str>) -> Vec<(String, usize)> {
@@ -321,10 +287,10 @@ impl PrimeTextRenderer {
                 .expect("available report has project")
         );
         println!("Open issue sample: {}", report.open_issue_sample);
+        println!("Use {} task titles.", report.conventions.title_style);
         if report.open_issue_sample == 0 {
             println!("No open issues are available for convention summaries.");
         } else {
-            println!("Task titles: {}.", report.conventions.title_style);
             println!("Common statuses: {}.", report.conventions.statuses);
             if report.conventions.labels.is_empty() {
                 println!("Common labels: none in open issue sample.");

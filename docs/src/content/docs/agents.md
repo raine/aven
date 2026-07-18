@@ -114,6 +114,14 @@ This gives each agent session a current view of what is active, what can be pick
 A prime output includes the full skill first. The open-task part looks like this:
 
 ```txt
+## Local Conventions
+
+Project: aven
+Open issue sample: 5
+Use capitalized task titles.
+Common statuses: active=2, inbox=3.
+Common labels: keybindings=1, ux=1.
+
 ## Open Issues
 
 Summary: total=5 active=2 ready=3 blocked=0
