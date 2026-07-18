@@ -8,6 +8,7 @@
 | --- | --- | --- | --- |
 | CLI entry and dispatch | argument parsing, command routing, config load, core database open, daemon wake dispatch, coding-agent skill installation | `src/main.rs`, `src/lib.rs`, `src/cli.rs`, `src/commands.rs`, `src/commands/` | `src/commands.rs` is the module and re-export facade. Command-family modules own command orchestration and command-local formatting. Domain reads and writes go through `aven_core::db::Database`. |
 | Core facade | owned database handle and application-facing domain operations | `crates/aven-core/src/db.rs`, `crates/aven-core/src/operations/`, `crates/aven-core/src/query.rs` | `Database` owns the SQLx pool and complete transaction boundaries. Application code passes owned domain inputs and receives owned records or reports. |
+| Core consumer API | workspace discovery, basic task creation, updates, listing and fetching, conflict inspection and resolution, and consumer-facing records and errors | `crates/aven-core/src/api.rs`, `crates/aven-core/tests/consumer_api.rs` | `api::Store` wraps `Database` and exposes owned consumer DTOs and typed error codes. SQLx handles, transactions, internal operation types, and query implementation remain behind the facade. |
 | Write model | transactional task, project, label, conflict, workspace, undo, and remote changes | `crates/aven-core/src/operations/`, `crates/aven-core/src/mutation.rs`, `crates/aven-core/src/task_fields.rs`, `crates/aven-core/src/undo.rs` | Synced scalar task writes update tasks, `changes`, and `field_versions` together. Conflict resolution emits the canonical synced operation. |
 | Read model | task lists, task details, task search, project lists, sidebar counts, filters, sorting, refs, and enrichment | `crates/aven-core/src/query.rs`, `crates/aven-core/src/query/`, `crates/aven-core/src/task_enrichment.rs`, `crates/aven-core/src/refs.rs`, `crates/aven-core/src/queue.rs` | Use the task-detail model for enriched single-task reads. Keep list and search reads batch-oriented, and avoid per-row queries on list paths. |
 | Persistence | SQLite setup, embedded migrations, data safety, sync metadata, conflicts, and SQLx metadata | `crates/aven-core/src/db.rs`, `crates/aven-core/src/data_safety.rs`, `crates/aven-core/migrations/`, `.sqlx/` | Create migrations with `just migration-new <lower_snake_name>`. Core APIs own SQLx handles and transaction lifetimes. Refresh SQLx metadata after query or schema changes. |
@@ -85,6 +86,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 ## Architectural guardrails
 
 - Use owned `aven_core::db::Database` methods for persisted domain reads and writes from the application package.
+- Use `aven_core::api::Store` at reusable consumer boundaries. Keep the root application on `aven_core::db::Database`, and keep UniFFI bindings and language-specific conversions outside `aven-core`.
 - Keep SQLx pools, connections, transactions, rows, migrations, and query implementation inside `crates/aven-core`.
 - Use `crates/aven-core/src/operations/` or `crates/aven-core/src/mutation.rs` for writes that affect synced domain data.
 - Use `crates/aven-core/src/query.rs`, `crates/aven-core/src/query/`, and core enrichment helpers for read models.
@@ -117,6 +119,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 
 | Change | Start here | Also check | Tests |
 | --- | --- | --- | --- |
+| Add or change the reusable core consumer API | `crates/aven-core/src/api.rs` | underlying core operations, queries, refs, shared IDs and choices, and error translation | `crates/aven-core/tests/consumer_api.rs` and focused `aven-core` tests |
 | Add or change a CLI command | `src/cli.rs`, `src/lib.rs`, the relevant `src/commands/` family module | `src/commands.rs` facade exports, `src/operations/` for writes, `src/input.rs` for text input, `src/render.rs` for shared output helpers, `src/task_render.rs` for task output | focused `tests/cli_*.rs` |
 | Change task detail or context output | `crates/aven-core/src/query/details.rs`, `src/commands/context.rs`, `src/task_render.rs` | `crates/aven-core/src/refs.rs`, `crates/aven-core/src/query/dependencies.rs`, `src/commands.rs` exports | focused context and show CLI tests, query detail tests, or `cargo check` |
 | Add a task scalar field | core migration, `crates/aven-core/src/types.rs`, `crates/aven-core/src/task_fields.rs`, `crates/aven-core/src/mutation.rs` | `crates/aven-core/src/operations/tasks.rs`, `crates/aven-core/src/sync/apply/task.rs`, `crates/aven-core/src/sync/apply/conflict.rs`, `crates/aven-core/src/sync/wire.rs`, core queries, CLI and TUI renderers | sync, conflict, CLI, and TUI tests |

@@ -204,6 +204,29 @@ pub async fn conflict_variant_value(
     bail!("error unknown-variant token={token}")
 }
 
+pub(crate) enum ConflictValueChoice {
+    Local,
+    Remote,
+}
+
+#[derive(Debug)]
+pub(crate) struct ConflictNotFoundError {
+    task_id: TaskId,
+    field: &'static str,
+}
+
+impl std::fmt::Display for ConflictNotFoundError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "error conflict-not-found task_id={} field={}",
+            self.task_id, self.field
+        )
+    }
+}
+
+impl std::error::Error for ConflictNotFoundError {}
+
 pub async fn resolve_conflict(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
@@ -211,15 +234,78 @@ pub async fn resolve_conflict(
     field: &str,
     value: &str,
 ) -> Result<ConflictOutcome> {
+    resolve_conflict_value(
+        conn,
+        workspace,
+        task_id,
+        field,
+        ResolutionValue::Explicit(value),
+    )
+    .await
+}
+
+pub(crate) async fn resolve_conflict_choice(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    task_id: &crate::ids::TaskId,
+    field: &str,
+    choice: ConflictValueChoice,
+) -> Result<ConflictOutcome> {
+    resolve_conflict_value(
+        conn,
+        workspace,
+        task_id,
+        field,
+        ResolutionValue::Choice(choice),
+    )
+    .await
+}
+
+enum ResolutionValue<'a> {
+    Explicit(&'a str),
+    Choice(ConflictValueChoice),
+}
+
+async fn resolve_conflict_value(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    task_id: &crate::ids::TaskId,
+    field: &str,
+    resolution: ResolutionValue<'_>,
+) -> Result<ConflictOutcome> {
     let task_field = TaskField::parse_or_unknown(field)?;
     let field = task_field.as_str();
+    let mut tx = begin_immediate(conn).await?;
+    let value = match resolution {
+        ResolutionValue::Explicit(value) => value.to_string(),
+        ResolutionValue::Choice(choice) => {
+            let values = sqlx::query_as::<_, (String, String)>(
+                "SELECT local_value, remote_value FROM conflicts
+                 WHERE workspace_id = ? AND task_id = ? AND field = ? AND resolved = 0",
+            )
+            .bind(&workspace.id)
+            .bind(task_id)
+            .bind(field)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| {
+                anyhow::Error::new(ConflictNotFoundError {
+                    task_id: task_id.clone(),
+                    field,
+                })
+            })?;
+            match choice {
+                ConflictValueChoice::Local => values.0,
+                ConflictValueChoice::Remote => values.1,
+            }
+        }
+    };
     if task_field == TaskField::IsEpic
         && value == "0"
-        && crate::operations::task_has_epic_children(conn, &workspace.id, task_id).await?
+        && crate::operations::task_has_epic_children(&mut tx, &workspace.id, task_id).await?
     {
         bail!("error epic-has-children task_id={task_id}");
     }
-    let mut tx = begin_immediate(conn).await?;
     let result = sqlx::query(
         "UPDATE conflicts SET resolved = 1 WHERE workspace_id = ? AND task_id = ? AND field = ? AND resolved = 0",
     )
@@ -229,15 +315,18 @@ pub async fn resolve_conflict(
     .execute(&mut *tx)
     .await?;
     if result.rows_affected() != 1 {
-        bail!("error conflict-not-found task_id={task_id} field={field}");
+        return Err(anyhow::Error::new(ConflictNotFoundError {
+            task_id: task_id.clone(),
+            field,
+        }));
     }
     let payload = if task_field.is_project() {
-        let project = resolve_project_for_stored_value(&mut tx, &workspace.id, value).await?;
+        let project = resolve_project_for_stored_value(&mut tx, &workspace.id, &value).await?;
         apply_project_id_in_workspace(&mut tx, &workspace.id, task_id, &project.id).await?;
         TaskField::project_payload(&workspace.id, &workspace.key, &project)
     } else {
-        apply_field_value_in_workspace(&mut tx, &workspace.id, task_id, field, value).await?;
-        task_field.scalar_payload(&workspace.id, &workspace.key, value)?
+        apply_field_value_in_workspace(&mut tx, &workspace.id, task_id, field, &value).await?;
+        task_field.scalar_payload(&workspace.id, &workspace.key, &value)?
     };
     let change_id = insert_change(
         &mut tx,

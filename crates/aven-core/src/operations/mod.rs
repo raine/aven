@@ -5,6 +5,7 @@ mod projects;
 mod tasks;
 
 pub use conflicts::{ConflictDetail, ConflictListItem, ConflictOutcome, ConflictResolutionOutcome};
+pub(crate) use conflicts::{ConflictNotFoundError, ConflictValueChoice, resolve_conflict_choice};
 pub use dependencies::DependencyOutcome;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use dependencies::add_task_dependency;

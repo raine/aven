@@ -1,3 +1,4 @@
+pub mod api;
 pub mod change_log;
 pub mod choices;
 pub mod data_safety;

@@ -1,4 +1,36 @@
-use anyhow::{Result, bail};
+use std::fmt;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidTaskStatus(String);
+
+impl fmt::Display for InvalidTaskStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "error invalid-status input={} choices={}",
+            self.0,
+            STATUSES.join(",")
+        )
+    }
+}
+
+impl std::error::Error for InvalidTaskStatus {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidTaskPriority(String);
+
+impl fmt::Display for InvalidTaskPriority {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "error invalid-priority input={} choices={}",
+            self.0,
+            PRIORITIES.join(",")
+        )
+    }
+}
+
+impl std::error::Error for InvalidTaskPriority {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TaskStatus {
@@ -39,7 +71,7 @@ impl TaskStatus {
         }
     }
 
-    pub fn parse(value: &str) -> Result<Self> {
+    pub fn parse(value: &str) -> Result<Self, InvalidTaskStatus> {
         match value {
             "inbox" => Ok(Self::Inbox),
             "backlog" => Ok(Self::Backlog),
@@ -47,11 +79,7 @@ impl TaskStatus {
             "active" => Ok(Self::Active),
             "done" => Ok(Self::Done),
             "canceled" => Ok(Self::Canceled),
-            _ => bail!(
-                "error invalid-status input={} choices={}",
-                value,
-                STATUSES.join(",")
-            ),
+            _ => Err(InvalidTaskStatus(value.to_string())),
         }
     }
 }
@@ -63,9 +91,9 @@ impl std::fmt::Display for TaskStatus {
 }
 
 impl TryFrom<&str> for TaskStatus {
-    type Error = anyhow::Error;
+    type Error = InvalidTaskStatus;
 
-    fn try_from(value: &str) -> Result<Self> {
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
         Self::parse(value)
     }
 }
@@ -107,18 +135,14 @@ impl TaskPriority {
         }
     }
 
-    pub fn parse(value: &str) -> Result<Self> {
+    pub fn parse(value: &str) -> Result<Self, InvalidTaskPriority> {
         match value {
             "none" => Ok(Self::None),
             "low" => Ok(Self::Low),
             "medium" => Ok(Self::Medium),
             "high" => Ok(Self::High),
             "urgent" => Ok(Self::Urgent),
-            _ => bail!(
-                "error invalid-priority input={} choices={}",
-                value,
-                PRIORITIES.join(",")
-            ),
+            _ => Err(InvalidTaskPriority(value.to_string())),
         }
     }
 }
@@ -130,9 +154,9 @@ impl std::fmt::Display for TaskPriority {
 }
 
 impl TryFrom<&str> for TaskPriority {
-    type Error = anyhow::Error;
+    type Error = InvalidTaskPriority;
 
-    fn try_from(value: &str) -> Result<Self> {
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
         Self::parse(value)
     }
 }

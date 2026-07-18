@@ -79,8 +79,8 @@ impl TaskField {
 
     pub fn validate_value(self, value: &str) -> Result<()> {
         match self {
-            Self::Status => TaskStatus::parse(value).map(|_| ()),
-            Self::Priority => TaskPriority::parse(value).map(|_| ()),
+            Self::Status => TaskStatus::parse(value).map(|_| ()).map_err(Into::into),
+            Self::Priority => TaskPriority::parse(value).map(|_| ()).map_err(Into::into),
             Self::AvailableAt => crate::time_validation::validate_available_at_value(value),
             Self::DueOn => crate::time_validation::validate_due_on_value(value),
             Self::Deleted if matches!(value, "0" | "1") => Ok(()),
