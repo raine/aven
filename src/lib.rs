@@ -285,14 +285,7 @@ async fn dispatch_database(
     let result = match command {
         DatabaseCommand::Add(args) => cmd_add(&mut conn, command_workspace(), &config, args).await,
         DatabaseCommand::Attachment(args) => {
-            cmd_attachment(
-                &mut conn,
-                command_workspace(),
-                &config,
-                &db_path,
-                args,
-            )
-            .await
+            cmd_attachment(&mut conn, command_workspace(), &config, &db_path, args).await
         }
         DatabaseCommand::Context(args) => cmd_context(&mut conn, command_workspace(), args).await,
         DatabaseCommand::Show(args) => cmd_show(&mut conn, command_workspace(), args).await,

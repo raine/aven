@@ -260,9 +260,7 @@ impl App {
         description: String,
     ) -> Result<()> {
         let value = add_task_natural_intake(&title, &description);
-        if self.intake.view().add_task_only
-            && !self.authoring.add_task_has_pending_attachments()
-        {
+        if self.intake.view().add_task_only && !self.authoring.add_task_has_pending_attachments() {
             self.submit_add_task_only_natural(value, NaturalRetry::AddTask)
                 .await
         } else {
@@ -295,9 +293,7 @@ impl App {
     }
 
     pub(super) async fn submit_add_task_natural(&mut self, value: String) -> Result<()> {
-        if self.intake.view().add_task_only
-            && !self.authoring.add_task_has_pending_attachments()
-        {
+        if self.intake.view().add_task_only && !self.authoring.add_task_has_pending_attachments() {
             self.submit_add_task_only_natural(value, NaturalRetry::Dialog)
                 .await
         } else {

@@ -120,6 +120,7 @@ pub(crate) enum DetailMetadataTarget {
     Priority,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_detail(
     frame: &mut Frame,
     item: &TaskListItem,
@@ -213,7 +214,8 @@ pub(crate) fn detail_section_scroll_target(
     reverse: bool,
 ) -> u16 {
     let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    let model = build_detail_content_model(item, layout.content_area, scroll, None, None, None, None);
+    let model =
+        build_detail_content_model(item, layout.content_area, scroll, None, None, None, None);
     let sticky_height = model
         .sticky_lines
         .len()
@@ -1323,7 +1325,8 @@ pub(crate) fn detail_text_cell_at_position(
     {
         return None;
     }
-    let model = build_detail_content_model(item, layout.content_area, scroll, None, None, None, None);
+    let model =
+        build_detail_content_model(item, layout.content_area, scroll, None, None, None, None);
     let document = detail_selectable_document(item, layout.content_area.width as usize, None);
 
     let selectable = if row == layout.content_area.y {
@@ -1401,7 +1404,8 @@ pub(crate) fn detail_child_task_at_position(
     {
         return None;
     }
-    let model = build_detail_content_model(item, layout.content_area, scroll, None, None, None, None);
+    let model =
+        build_detail_content_model(item, layout.content_area, scroll, None, None, None, None);
     let sticky_height = model
         .sticky_lines
         .len()
@@ -1477,6 +1481,7 @@ fn metadata_content_row(metadata_area: Rect, body: Rect, column: u16, row: u16) 
     Some(row.saturating_sub(body.y))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_detail_underlay(
     frame: &mut Frame,
     store: &TuiStore,
@@ -2095,7 +2100,8 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let model = build_detail_content_model(&item, Rect::new(0, 0, 60, 5), 4, None, None, None, None);
+        let model =
+            build_detail_content_model(&item, Rect::new(0, 0, 60, 5), 4, None, None, None, None);
 
         assert_eq!(
             model.content_height,
@@ -2395,6 +2401,7 @@ mod tests {
             }],
             epic_children: Vec::new(),
             epic_parent: None,
+            attachments: Vec::new(),
             queue: Default::default(),
         }
     }

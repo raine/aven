@@ -53,6 +53,12 @@ fn write_inline_image(
     write!(writer, "{escape}")
 }
 
+fn inline_image_emissions_after_draw(
+    placements: &[ui::DetailInlineImagePlacement],
+) -> Vec<ui::DetailInlineImagePlacement> {
+    placements.to_vec()
+}
+
 fn write_inline_image_cleanup(
     writer: &mut impl Write,
     placements: &[ui::DetailInlineImagePlacement],
@@ -255,19 +261,17 @@ impl App {
             return Ok(());
         };
 
-        let pending_emissions = current
-            .iter()
-            .filter(|placement| !self.previous_inline_image_placements.contains(placement))
-            .cloned()
-            .collect::<Vec<_>>();
+        let pending_emissions = inline_image_emissions_after_draw(&current);
         let mut stdout = std::io::stdout();
         for placement in pending_emissions {
             let key = PreviewKey::new(&blob_dir, &placement.source_hash, preview_quota_bytes);
             let Some(lease) = self.preview_controller.lease(&key) else {
                 continue;
             };
-            self.previous_inline_image_placements
-                .push(placement.clone());
+            if !self.previous_inline_image_placements.contains(&placement) {
+                self.previous_inline_image_placements
+                    .push(placement.clone());
+            }
             let payload = lease.payload();
             if let Err(error) = write_inline_image(
                 &mut stdout,
@@ -585,6 +589,16 @@ mod inline_image_lifecycle_tests {
             width: 20,
             height: 6,
         }
+    }
+
+    #[test]
+    fn unchanged_placements_are_emitted_after_each_frame_draw() {
+        let placement = placement();
+
+        assert_eq!(
+            inline_image_emissions_after_draw(std::slice::from_ref(&placement)),
+            vec![placement]
+        );
     }
 
     #[test]

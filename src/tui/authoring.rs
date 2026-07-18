@@ -142,7 +142,7 @@ pub(crate) struct AddTaskCreate {
 
 #[cfg(test)]
 pub(crate) enum AddTaskTitleSubmit {
-    Create(AddTaskCreate),
+    Create(Box<AddTaskCreate>),
     ReopenTitle { message: &'static str },
     Inactive,
 }
@@ -258,14 +258,6 @@ impl AuthoringState {
         draft.attachments.clone()
     }
 
-    #[cfg(test)]
-    pub(crate) fn take_add_task_attachments(&mut self) -> Vec<PendingTaskAttachment> {
-        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
-            return Vec::new();
-        };
-        std::mem::take(&mut draft.attachments)
-    }
-
     pub(crate) fn clear_add_task(&mut self) {
         if matches!(self.flow, Some(AuthoringFlow::AddTask(_))) {
             self.flow = None;
@@ -370,7 +362,7 @@ impl AuthoringState {
             };
         }
         let description = draft.description.trim().to_string();
-        AddTaskTitleSubmit::Create(AddTaskCreate {
+        AddTaskTitleSubmit::Create(Box::new(AddTaskCreate {
             draft: TaskDraft {
                 title: trimmed.to_string(),
                 description,
@@ -383,7 +375,7 @@ impl AuthoringState {
                 is_epic: false,
             },
             attachments: draft.attachments,
-        })
+        }))
     }
 
     pub(crate) fn submit_add_note(&mut self, body: String) -> AddNoteSubmit {
@@ -576,8 +568,8 @@ mod tests {
             status: "inbox".to_string(),
             priority: "none".to_string(),
             labels: Vec::new(),
-            available_at: String::new(),
-            due_on: String::new(),
+            available_at: None,
+            due_on: None,
             is_epic: false,
         }));
 
@@ -586,8 +578,10 @@ mod tests {
             "User-authored details"
         );
         assert_eq!(state.add_task_attachments().len(), 1);
-        assert_eq!(state.add_task_attachments().len(), 1);
-        assert_eq!(state.take_add_task_attachments().len(), 1);
+        let AddTaskTitleSubmit::Create(create) = state.submit_add_task() else {
+            panic!("pending attachment task should be ready to create");
+        };
+        assert_eq!(create.attachments.len(), 1);
     }
 
     #[test]

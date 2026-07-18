@@ -581,11 +581,17 @@ mod tests {
         .await
         .unwrap();
 
-        let attachments = attachments_for_tasks(&mut conn, workspace_id, &[task_id.to_string()])
-            .await
-            .unwrap()
-            .remove(task_id)
-            .unwrap();
+        let typed_workspace_id = workspace_id.parse().unwrap();
+        let typed_task_id = task_id.parse().unwrap();
+        let attachments = attachments_for_tasks(
+            &mut conn,
+            &typed_workspace_id,
+            std::slice::from_ref(&typed_task_id),
+        )
+        .await
+        .unwrap()
+        .remove(&typed_task_id)
+        .unwrap();
 
         assert_eq!(
             attachments

@@ -728,8 +728,8 @@ mod tests {
             status: "inbox".to_string(),
             priority: "none".to_string(),
             labels: Vec::new(),
-            available_at: String::new(),
-            due_on: String::new(),
+            available_at: None,
+            due_on: None,
             is_epic: false,
         }
     }

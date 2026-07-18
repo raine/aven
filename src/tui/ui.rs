@@ -639,6 +639,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_overlay(
     frame: &mut Frame,
     store: &TuiStore,
