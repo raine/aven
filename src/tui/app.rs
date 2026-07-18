@@ -139,11 +139,14 @@ pub(crate) struct App {
     pub(crate) last_task_click: Option<TaskRowClick>,
     pub(crate) hovered_detail_child_task_id: Option<crate::ids::TaskId>,
     pub(crate) selected_detail_child_task_id: Option<crate::ids::TaskId>,
+    pub(crate) selected_detail_attachment_id: Option<String>,
     pub(crate) detail_text_selection: Option<crate::tui::detail_selection::DetailTextSelection>,
     pub(crate) detail_text_dragging: bool,
     pub(super) previous_inline_image_placements: Vec<crate::tui::ui::DetailInlineImagePlacement>,
     pub(super) previous_inline_image_backend: crate::tui::inline_images::InlineImageBackend,
     pub(super) preview_controller: crate::tui::preview_controller::PreviewController,
+    #[cfg(test)]
+    pub(crate) inline_image_context_override: Option<crate::tui::ui::DetailInlineImageContext>,
     pub(super) navigation_history: BoundedHistory<TaskViewState>,
     pub(super) detail_navigation_history: BoundedHistory<DetailNavigationState>,
 }
@@ -200,11 +203,14 @@ impl App {
             last_task_click: None,
             hovered_detail_child_task_id: None,
             selected_detail_child_task_id: None,
+            selected_detail_attachment_id: None,
             detail_text_selection: None,
             detail_text_dragging: false,
             previous_inline_image_placements: Vec::new(),
             previous_inline_image_backend: crate::tui::inline_images::InlineImageBackend::None,
             preview_controller: crate::tui::preview_controller::PreviewController::new(),
+            #[cfg(test)]
+            inline_image_context_override: None,
             navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
             detail_navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
         };

@@ -185,6 +185,8 @@ impl App {
         self.widgets.table.select(next);
         self.focus = Focus::Tasks;
         if current != next {
+            self.selected_detail_child_task_id = None;
+            self.selected_detail_attachment_id = None;
             let message = if delta > 0 {
                 "selected next task"
             } else {
@@ -258,6 +260,8 @@ impl App {
         self.pending_delete_project = None;
         self.clear_live_search_preview();
         self.detail_navigation_history.clear();
+        self.selected_detail_child_task_id = None;
+        self.selected_detail_attachment_id = None;
         let had_overlay = self.overlay.take().is_some();
         self.detail_context = false;
         if !had_overlay && self.focus == Focus::Sidebar {

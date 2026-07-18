@@ -17,6 +17,10 @@ pub(crate) enum OverlayView {
     Detail {
         scroll: u16,
     },
+    AttachmentPreview {
+        attachment_id: String,
+        scroll: u16,
+    },
     DetailHelp {
         scroll: u16,
     },
@@ -179,6 +183,13 @@ impl From<&OverlayState> for OverlayView {
         match state {
             Help { scroll } => Self::Help { scroll: *scroll },
             Detail { scroll } => Self::Detail { scroll: *scroll },
+            AttachmentPreview {
+                attachment_id,
+                scroll,
+            } => Self::AttachmentPreview {
+                attachment_id: attachment_id.clone(),
+                scroll: *scroll,
+            },
             DetailHelp { scroll } => Self::DetailHelp { scroll: *scroll },
             Search(state) => Self::Search {
                 input: state.input.text.clone(),

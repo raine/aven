@@ -14,19 +14,26 @@ use crate::tui::event::{
     lookup_command,
 };
 use crate::tui::navigation::{
-    detail_scroll_with_delta, detail_task_delta, handle_detail_overlay_key, next_index,
-    scroll_with_delta,
+    detail_scroll_with_delta_with_images, detail_task_delta, handle_detail_overlay_key_with_images,
+    next_index, scroll_with_delta,
 };
 use crate::tui::overlay::{AddTaskMode, CommandState, OverlayOutcome, OverlayRoute, OverlayState};
 use crate::tui::platform::is_editor_prefix_key;
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
 use crate::tui::store::TaskView;
 use crate::tui::ui::{
-    composer_help_scroll_cap, database_stats_scroll_cap, detail_child_task_at_position,
-    detail_help_scroll_cap, detail_section_scroll_target, detail_selected_text,
+    attachment_is_locally_previewable, composer_help_scroll_cap, database_stats_scroll_cap,
+    detail_attachment_at_position, detail_attachment_scroll_target, detail_child_task_at_position,
+    detail_help_scroll_cap, detail_section_scroll_target_with_images, detail_selected_text,
     detail_text_cell_at_position, help_scroll_cap, prefix_hint_scroll_cap,
     recent_action_at_position, task_at_position, task_status_at_position, text_panel_scroll_cap,
 };
+
+#[derive(Clone, PartialEq, Eq)]
+enum DetailFocusTarget {
+    Child(crate::ids::TaskId),
+    Attachment(String),
+}
 
 impl App {
     pub(super) async fn dispatch_paste(&mut self, text: &str) -> Result<()> {
@@ -78,6 +85,7 @@ impl App {
             if key.code == KeyCode::Char('?')
                 && matches!(self.overlay, Some(OverlayState::Detail { .. }))
                 && self.selected_detail_child_task_id.is_none()
+                && self.selected_detail_attachment_id.is_none()
             {
                 self.toggle_help_at_height(terminal_size.height);
                 Ok(())
@@ -190,6 +198,9 @@ impl App {
                 return self.handle_task_list_wheel(-1, terminal_size).await;
             }
             MouseEventKind::Down(MouseButton::Left) => {
+                if self.handle_detail_attachment_mouse_click(mouse, terminal_size) {
+                    return Ok(());
+                }
                 if self.begin_detail_text_selection(mouse, terminal_size) {
                     return Ok(());
                 }
@@ -577,46 +588,125 @@ impl App {
         }
     }
 
-    fn detail_child_task_ids(&self) -> Vec<crate::ids::TaskId> {
+    fn detail_focus_targets(&self) -> Vec<DetailFocusTarget> {
         let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
             return Vec::new();
         };
-        item.epic_children
+        let mut targets = item
+            .epic_children
             .iter()
             .filter(|child| child.unresolved)
             .chain(item.epic_children.iter().filter(|child| !child.unresolved))
-            .map(|child| child.task_id.clone())
-            .collect()
+            .map(|child| DetailFocusTarget::Child(child.task_id.clone()))
+            .collect::<Vec<_>>();
+        let Some(context) = self.inline_image_context() else {
+            return targets;
+        };
+        let unavailable_hashes = context.unavailable_hashes;
+        targets.extend(
+            item.attachments
+                .iter()
+                .filter(|attachment| {
+                    attachment_is_locally_previewable(attachment, &unavailable_hashes)
+                })
+                .map(|attachment| DetailFocusTarget::Attachment(attachment.attachment_id.clone())),
+        );
+        targets
     }
 
-    fn focus_detail_children(&mut self, reverse: bool) -> bool {
-        let child_ids = self.detail_child_task_ids();
-        let task_id = if reverse {
-            child_ids.last()
+    fn selected_detail_focus_target(&self) -> Option<DetailFocusTarget> {
+        let selected = self
+            .selected_detail_child_task_id
+            .clone()
+            .map(DetailFocusTarget::Child)
+            .or_else(|| {
+                self.selected_detail_attachment_id
+                    .clone()
+                    .map(DetailFocusTarget::Attachment)
+            })?;
+        self.detail_focus_targets()
+            .contains(&selected)
+            .then_some(selected)
+    }
+
+    fn select_detail_focus_target(&mut self, target: Option<DetailFocusTarget>) {
+        self.selected_detail_child_task_id = None;
+        self.selected_detail_attachment_id = None;
+        match target {
+            Some(DetailFocusTarget::Child(task_id)) => {
+                self.selected_detail_child_task_id = Some(task_id)
+            }
+            Some(DetailFocusTarget::Attachment(attachment_id)) => {
+                self.selected_detail_attachment_id = Some(attachment_id)
+            }
+            None => {}
+        }
+    }
+
+    fn focus_detail_targets(&mut self, reverse: bool) -> bool {
+        let targets = self.detail_focus_targets();
+        let target = if reverse {
+            targets.last()
         } else {
-            child_ids.first()
+            targets.first()
         };
-        let Some(task_id) = task_id else {
+        let Some(target) = target else {
             return false;
         };
         self.detail_text_selection = None;
         self.detail_text_dragging = false;
-        self.selected_detail_child_task_id = Some(task_id.clone());
+        self.select_detail_focus_target(Some(target.clone()));
         true
     }
 
-    fn move_detail_child_selection(&mut self, delta: isize) -> bool {
-        let Some(selected_id) = self.selected_detail_child_task_id.as_ref() else {
+    fn move_detail_focus_selection(&mut self, delta: isize) -> bool {
+        let Some(selected) = self.selected_detail_focus_target() else {
             return false;
         };
-        let child_ids = self.detail_child_task_ids();
-        let Some(index) = child_ids.iter().position(|task_id| task_id == selected_id) else {
-            self.selected_detail_child_task_id = None;
+        let targets = self.detail_focus_targets();
+        let Some(index) = targets.iter().position(|target| target == &selected) else {
+            self.select_detail_focus_target(None);
             return false;
         };
-        let next = (index as isize + delta).rem_euclid(child_ids.len() as isize) as usize;
-        self.selected_detail_child_task_id = Some(child_ids[next].clone());
+        let next = (index as isize + delta).rem_euclid(targets.len() as isize) as usize;
+        self.select_detail_focus_target(Some(targets[next].clone()));
         true
+    }
+
+    fn detail_focus_scroll(&self, scroll: u16, terminal_size: Size) -> u16 {
+        if self.selected_detail_child_task_id.is_some() {
+            return 0;
+        }
+        let Some(attachment_id) = self.selected_detail_attachment_id.as_deref() else {
+            return scroll;
+        };
+        let Some(context) = self.inline_image_context() else {
+            return scroll;
+        };
+        let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
+            return scroll;
+        };
+        detail_attachment_scroll_target(
+            item,
+            attachment_id,
+            scroll,
+            terminal_size.width,
+            terminal_size.height,
+            &context,
+        )
+        .unwrap_or(scroll)
+    }
+
+    fn open_detail_attachment(&mut self, attachment_id: String, scroll: u16) {
+        self.last_task_click = None;
+        self.detail_text_selection = None;
+        self.detail_text_dragging = false;
+        self.selected_detail_child_task_id = None;
+        self.selected_detail_attachment_id = Some(attachment_id.clone());
+        self.overlay = Some(OverlayState::AttachmentPreview {
+            attachment_id,
+            scroll,
+        });
     }
 
     fn open_detail_child_task(&mut self, task_id: &crate::ids::TaskId, scroll: u16) {
@@ -625,6 +715,7 @@ impl App {
             .selected_task(self.widgets.table.selected())
             .map(|item| item.task.id.clone());
         self.selected_detail_child_task_id = None;
+        self.selected_detail_attachment_id = None;
         self.hovered_detail_child_task_id = None;
         self.last_task_click = None;
         let Some(index) = self
@@ -644,6 +735,50 @@ impl App {
         self.detail_context = true;
         self.detail_context_scroll = 0;
         self.overlay = Some(OverlayState::Detail { scroll: 0 });
+    }
+
+    fn handle_detail_attachment_mouse_click(
+        &mut self,
+        mouse: MouseEvent,
+        terminal_size: Size,
+    ) -> bool {
+        let Some(OverlayState::Detail { scroll }) = self.overlay else {
+            return false;
+        };
+        let Some(context) = self.inline_image_context() else {
+            return false;
+        };
+        let attachment_id = self
+            .store
+            .selected_task(self.widgets.table.selected())
+            .and_then(|item| {
+                let hit = detail_attachment_at_position(
+                    item,
+                    terminal_size.width,
+                    terminal_size.height,
+                    mouse.column,
+                    mouse.row,
+                    scroll,
+                    &context,
+                )?;
+                let attachment = item
+                    .attachments
+                    .iter()
+                    .find(|attachment| attachment.attachment_id == hit.attachment_id)?;
+                self.widgets
+                    .inline_image_placements
+                    .iter()
+                    .any(|placement| {
+                        placement.attachment_id == attachment.attachment_id
+                            && placement.source_hash == attachment.sha256
+                    })
+                    .then_some(hit.attachment_id)
+            });
+        let Some(attachment_id) = attachment_id else {
+            return false;
+        };
+        self.open_detail_attachment(attachment_id, scroll);
+        true
     }
 
     fn handle_detail_mouse_click(
@@ -783,6 +918,7 @@ impl App {
             _ => return false,
         };
 
+        let inline_images = self.inline_image_context();
         match &mut self.overlay {
             Some(OverlayState::Help { scroll }) => {
                 let cap = help_scroll_cap(terminal_size.height);
@@ -796,12 +932,13 @@ impl App {
             }
             Some(OverlayState::Detail { scroll }) => {
                 let task = self.store.selected_task(self.widgets.table.selected());
-                *scroll = detail_scroll_with_delta(
+                *scroll = detail_scroll_with_delta_with_images(
                     *scroll,
                     delta,
                     terminal_size.width,
                     terminal_size.height,
                     task,
+                    inline_images.as_ref(),
                 );
                 true
             }
@@ -935,6 +1072,21 @@ impl App {
         overlay: OverlayState,
         terminal_size: Size,
     ) -> Result<()> {
+        if let OverlayState::AttachmentPreview {
+            attachment_id,
+            scroll,
+        } = &overlay
+        {
+            self.overlay = Some(if key.code == KeyCode::Esc {
+                OverlayState::Detail { scroll: *scroll }
+            } else {
+                OverlayState::AttachmentPreview {
+                    attachment_id: attachment_id.clone(),
+                    scroll: *scroll,
+                }
+            });
+            return Ok(());
+        }
         if let OverlayState::Detail { scroll } = overlay {
             if key.code == KeyCode::Esc && self.detail_text_selection.take().is_some() {
                 self.detail_text_dragging = false;
@@ -951,28 +1103,43 @@ impl App {
                 self.overlay = Some(OverlayState::Detail { scroll });
                 return Ok(());
             }
-            if self.selected_detail_child_task_id.is_some() {
+            let had_detail_focus = self.selected_detail_child_task_id.is_some()
+                || self.selected_detail_attachment_id.is_some();
+            let selected_target = self.selected_detail_focus_target();
+            if had_detail_focus && selected_target.is_none() {
+                self.select_detail_focus_target(None);
+                self.overlay = Some(OverlayState::Detail { scroll });
+                return Ok(());
+            }
+            if let Some(selected_target) = selected_target {
+                let mut focused_scroll = scroll;
                 match (key.code, key.modifiers) {
                     (KeyCode::Char('j') | KeyCode::Down, KeyModifiers::NONE) => {
-                        self.move_detail_child_selection(1);
+                        self.move_detail_focus_selection(1);
+                        focused_scroll = self.detail_focus_scroll(scroll, terminal_size);
                     }
                     (KeyCode::Char('k') | KeyCode::Up, KeyModifiers::NONE) => {
-                        self.move_detail_child_selection(-1);
+                        self.move_detail_focus_selection(-1);
+                        focused_scroll = self.detail_focus_scroll(scroll, terminal_size);
                     }
-                    (KeyCode::Enter, KeyModifiers::NONE) => {
-                        let task_id = self
-                            .selected_detail_child_task_id
-                            .clone()
-                            .expect("selected detail child");
-                        self.open_detail_child_task(&task_id, scroll);
-                        return Ok(());
-                    }
+                    (KeyCode::Enter, KeyModifiers::NONE) => match selected_target {
+                        DetailFocusTarget::Child(task_id) => {
+                            self.open_detail_child_task(&task_id, scroll);
+                            return Ok(());
+                        }
+                        DetailFocusTarget::Attachment(attachment_id) => {
+                            self.open_detail_attachment(attachment_id, scroll);
+                            return Ok(());
+                        }
+                    },
                     (KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab, _) => {
-                        self.selected_detail_child_task_id = None;
+                        self.select_detail_focus_target(None);
                     }
                     _ => {}
                 }
-                self.overlay = Some(OverlayState::Detail { scroll });
+                self.overlay = Some(OverlayState::Detail {
+                    scroll: focused_scroll,
+                });
                 return Ok(());
             }
             let section_direction = match (key.code, key.modifiers) {
@@ -982,22 +1149,27 @@ impl App {
                 _ => None,
             };
             if let Some(reverse) = section_direction
-                && self.focus_detail_children(reverse)
+                && self.focus_detail_targets(reverse)
             {
-                self.overlay = Some(OverlayState::Detail { scroll: 0 });
+                let focused_scroll = self.detail_focus_scroll(scroll, terminal_size);
+                self.overlay = Some(OverlayState::Detail {
+                    scroll: focused_scroll,
+                });
                 return Ok(());
             }
+            let inline_images = self.inline_image_context();
             if let (Some(reverse), Some(task)) = (
                 section_direction,
                 self.store.selected_task(self.widgets.table.selected()),
             ) {
                 self.overlay = Some(OverlayState::Detail {
-                    scroll: detail_section_scroll_target(
+                    scroll: detail_section_scroll_target_with_images(
                         task,
                         scroll,
                         terminal_size.width,
                         terminal_size.height,
                         reverse,
+                        inline_images.as_ref(),
                     ),
                 });
                 return Ok(());
@@ -1016,12 +1188,13 @@ impl App {
 
             let overlay = OverlayState::Detail { scroll };
             let task = self.store.selected_task(self.widgets.table.selected());
-            let outcome = handle_detail_overlay_key(
+            let outcome = handle_detail_overlay_key_with_images(
                 key,
                 overlay,
                 terminal_size.width,
                 terminal_size.height,
                 task,
+                inline_images.as_ref(),
             );
             match outcome {
                 OverlayOutcome::None(overlay) => self.overlay = Some(overlay),

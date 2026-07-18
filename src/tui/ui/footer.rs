@@ -10,6 +10,8 @@ pub(super) enum FooterMode {
     Columns,
     Detail,
     DetailChildren,
+    DetailAttachment,
+    AttachmentPreview,
     DetailSelection,
     StatusChoice,
     PriorityChoice,
@@ -117,6 +119,12 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("Enter", "open"),
             ("Tab/Esc", "leave"),
         ],
+        FooterMode::DetailAttachment => &[
+            ("j/k", "select image"),
+            ("Enter", "open preview"),
+            ("Tab/Esc", "leave"),
+        ],
+        FooterMode::AttachmentPreview => &[("Esc", "back")],
         FooterMode::DetailSelection if width >= 72 => &[
             ("y", "copy selection"),
             ("Esc", "clear selection"),
@@ -197,6 +205,8 @@ fn cmd(mode: FooterMode, label: &str) -> Span<'static> {
         | FooterMode::Columns
         | FooterMode::Detail
         | FooterMode::DetailChildren
+        | FooterMode::DetailAttachment
+        | FooterMode::AttachmentPreview
         | FooterMode::DetailSelection => Style::new().fg(FG_DIM),
     };
     Span::styled(format!(" {label}  "), style)
@@ -271,6 +281,22 @@ mod tests {
                 ("Enter", "open"),
                 ("Tab/Esc", "leave"),
             ]
+        );
+    }
+
+    #[test]
+    fn detail_attachment_footer_advertises_preview_controls() {
+        assert_eq!(
+            footer_hints(FooterMode::DetailAttachment, 80),
+            &[
+                ("j/k", "select image"),
+                ("Enter", "open preview"),
+                ("Tab/Esc", "leave"),
+            ]
+        );
+        assert_eq!(
+            footer_hints(FooterMode::AttachmentPreview, 80),
+            &[("Esc", "back")]
         );
     }
 

@@ -14,6 +14,10 @@ pub(crate) enum OverlayState {
     Detail {
         scroll: u16,
     },
+    AttachmentPreview {
+        attachment_id: String,
+        scroll: u16,
+    },
     DetailHelp {
         scroll: u16,
     },

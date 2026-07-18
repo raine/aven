@@ -59,6 +59,34 @@ fn test_task_draft(title: &str) -> TaskDraft {
     }
 }
 
+fn test_attachment(
+    attachment_id: &str,
+    media_type: &str,
+    has_blob: bool,
+    dimensions: Option<(i64, i64)>,
+) -> crate::task_render::AttachmentMetadataJson {
+    crate::task_render::AttachmentMetadataJson {
+        attachment_id: attachment_id.to_string(),
+        task_id: "7KQ9A1X".to_string(),
+        sha256: format!("{attachment_id:0<64}"),
+        media_type: media_type.to_string(),
+        byte_size: 4,
+        filename: Some(format!("{attachment_id}.png")),
+        alt_text: None,
+        width: dimensions.map(|(width, _)| width),
+        height: dimensions.map(|(_, height)| height),
+        created_at: "2026-06-20T12:00:00Z".to_string(),
+        deleted: false,
+        deleted_at: None,
+        bytes_state: if has_blob {
+            crate::attachments::AttachmentBytesState::Present
+        } else {
+            crate::attachments::AttachmentBytesState::PendingDownload
+        },
+        has_blob,
+    }
+}
+
 async fn create_and_select_task(app: &mut App, draft: TaskDraft) -> usize {
     let (_, selected) = app.store.create_task(draft, None).await.unwrap();
     let selected = selected.unwrap();
@@ -89,6 +117,23 @@ fn key(code: KeyCode) -> KeyEvent {
 
 fn shift_key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::SHIFT)
+}
+
+fn detail_attachment_hit_id(
+    item: &crate::query::TaskListItem,
+    width: u16,
+    height: u16,
+    scroll: u16,
+    context: &crate::tui::ui::DetailInlineImageContext,
+) -> Option<String> {
+    (0..height).find_map(|row| {
+        (0..width).find_map(|column| {
+            crate::tui::ui::detail_attachment_at_position(
+                item, width, height, column, row, scroll, context,
+            )
+            .map(|hit| hit.attachment_id)
+        })
+    })
 }
 
 fn ctrl_s() -> KeyEvent {
@@ -4764,6 +4809,457 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
         ));
+    }
+
+    #[tokio::test]
+    async fn detail_tab_focuses_only_locally_previewable_images_in_both_directions() {
+        let (_dir, _pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
+        let suppressed = test_attachment("SUPPRESSED", "image/png", true, Some((640, 480)));
+        app.inline_image_context_override = Some(crate::tui::ui::DetailInlineImageContext {
+            unavailable_hashes: [suppressed.sha256.clone()].into_iter().collect(),
+            ..crate::tui::ui::DetailInlineImageContext::default()
+        });
+        let mut unavailable = test_attachment("UNAVAILABLE", "image/png", true, Some((640, 480)));
+        unavailable.bytes_state = crate::attachments::AttachmentBytesState::Unavailable;
+        app.store.tasks[selected].attachments = vec![
+            test_attachment("PENDING", "image/png", false, Some((640, 480))),
+            unavailable,
+            suppressed,
+            test_attachment("DOCUMENT", "application/pdf", true, Some((640, 480))),
+            test_attachment("INVALID", "image/png", true, Some((0, 480))),
+            test_attachment("FIRSTIMAGE", "image/png", true, Some((640, 480))),
+            test_attachment("LASTIMAGE", "image/jpeg", true, Some((800, 600))),
+        ];
+        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+
+        app.dispatch_key(key(KeyCode::Tab), (100, 30).into())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.selected_detail_attachment_id.as_deref(),
+            Some("FIRSTIMAGE")
+        );
+        assert!(app.selected_detail_child_task_id.is_none());
+        let forward_scroll = match app.overlay {
+            Some(OverlayState::Detail { scroll }) => scroll,
+            _ => panic!("expected detail"),
+        };
+        let context = app.inline_image_context_override.as_ref().unwrap().clone();
+        assert_eq!(
+            detail_attachment_hit_id(
+                &app.store.tasks[selected],
+                100,
+                30,
+                forward_scroll,
+                &context,
+            )
+            .as_deref(),
+            Some("FIRSTIMAGE")
+        );
+
+        app.dispatch_key(key(KeyCode::Esc), (100, 30).into())
+            .await
+            .unwrap();
+        app.dispatch_key(shift_key(KeyCode::Tab), (100, 30).into())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.selected_detail_attachment_id.as_deref(),
+            Some("LASTIMAGE")
+        );
+        let reverse_scroll = match app.overlay {
+            Some(OverlayState::Detail { scroll }) => scroll,
+            _ => panic!("expected detail"),
+        };
+        assert_eq!(
+            detail_attachment_hit_id(
+                &app.store.tasks[selected],
+                100,
+                30,
+                reverse_scroll,
+                &context,
+            )
+            .as_deref(),
+            Some("LASTIMAGE")
+        );
+    }
+
+    #[tokio::test]
+    async fn detail_keyboard_scroll_includes_framed_preview_rows() {
+        let (_dir, _pool, mut app) = test_app_with_pool().await;
+        let context = crate::tui::ui::DetailInlineImageContext::default();
+        app.inline_image_context_override = Some(context.clone());
+        let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
+        app.store.tasks[selected].attachments = vec![test_attachment(
+            "OVERFLOWIMAGE",
+            "image/png",
+            true,
+            Some((640, 480)),
+        )];
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        let text_only_cap = crate::tui::ui::detail_scroll_cap(&app.store.tasks[selected], 80, 26);
+        let preview_cap = crate::tui::ui::detail_scroll_cap_with_images(
+            &app.store.tasks[selected],
+            80,
+            26,
+            Some(&context),
+        );
+        assert!(preview_cap > text_only_cap);
+
+        app.dispatch_key(key(KeyCode::PageDown), (80, 26).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll }) if scroll == preview_cap
+        ));
+    }
+
+    #[tokio::test]
+    async fn detail_child_focus_order_includes_images_and_enter_opens_preview() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        app.inline_image_context_override =
+            Some(crate::tui::ui::DetailInlineImageContext::default());
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        let child_index = create_and_select_task(&mut app, test_task_draft("Child")).await;
+        let child_id = app.store.tasks[child_index].task.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        crate::operations::add_task_to_epic(
+            &mut conn,
+            &app.store.active_workspace,
+            &child_id,
+            &parent_id,
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        app.store.refresh(Some(&parent_id)).await.unwrap();
+        let parent_index = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == parent_id)
+            .unwrap();
+        app.widgets.table.select(Some(parent_index));
+        app.store.tasks[parent_index].attachments = vec![test_attachment(
+            "FOCUSIMAGE",
+            "image/png",
+            true,
+            Some((640, 480)),
+        )];
+        app.overlay = Some(OverlayState::Detail { scroll: 5 });
+
+        app.dispatch_key(key(KeyCode::Tab), (100, 30).into())
+            .await
+            .unwrap();
+        assert_eq!(app.selected_detail_child_task_id.as_ref(), Some(&child_id));
+        app.dispatch_key(key(KeyCode::Char('j')), (100, 30).into())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.selected_detail_attachment_id.as_deref(),
+            Some("FOCUSIMAGE")
+        );
+        let image_scroll = match app.overlay {
+            Some(OverlayState::Detail { scroll }) => scroll,
+            _ => panic!("expected detail"),
+        };
+        assert_eq!(
+            detail_attachment_hit_id(
+                &app.store.tasks[parent_index],
+                100,
+                30,
+                image_scroll,
+                app.inline_image_context_override.as_ref().unwrap(),
+            )
+            .as_deref(),
+            Some("FOCUSIMAGE")
+        );
+        app.dispatch_key(key(KeyCode::Char('k')), (100, 30).into())
+            .await
+            .unwrap();
+        assert_eq!(app.selected_detail_child_task_id.as_ref(), Some(&child_id));
+        app.dispatch_key(key(KeyCode::Char('j')), (100, 30).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Enter), (100, 30).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::AttachmentPreview {
+                ref attachment_id,
+                scroll,
+            }) if attachment_id == "FOCUSIMAGE" && scroll == image_scroll
+        ));
+    }
+
+    #[tokio::test]
+    async fn detail_image_click_opens_preview_while_payload_is_loading() {
+        let (_dir, _pool, mut app) = test_app_with_pool().await;
+        app.inline_image_context_override =
+            Some(crate::tui::ui::DetailInlineImageContext::default());
+        let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
+        let attachment = test_attachment("CLICKIMAGE", "image/png", true, Some((640, 480)));
+        let source_hash = attachment.sha256.clone();
+        app.store.tasks[selected].attachments = vec![attachment];
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.widgets.inline_image_placements = vec![crate::tui::ui::DetailInlineImagePlacement {
+            attachment_id: "CLICKIMAGE".to_string(),
+            source_hash,
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        }];
+        let item = &app.store.tasks[selected];
+        let context = crate::tui::ui::DetailInlineImageContext::default();
+        let (column, row) = (0..30)
+            .flat_map(|row| (0..100).map(move |column| (column, row)))
+            .find(|(column, row)| {
+                crate::tui::ui::detail_attachment_at_position(
+                    item, 100, 30, *column, *row, 0, &context,
+                )
+                .is_some()
+            })
+            .expect("image hit target");
+
+        app.dispatch_mouse(left_click(column, row), (100, 30).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::AttachmentPreview {
+                ref attachment_id,
+                scroll: 0,
+            }) if attachment_id == "CLICKIMAGE"
+        ));
+    }
+
+    #[tokio::test]
+    async fn duplicate_hash_click_requires_the_visible_attachment_identity() {
+        let (_dir, _pool, mut app) = test_app_with_pool().await;
+        let context = crate::tui::ui::DetailInlineImageContext::default();
+        app.inline_image_context_override = Some(context.clone());
+        let selected = create_and_select_task(&mut app, test_task_draft("Duplicate images")).await;
+        let first = test_attachment("FIRSTDUPLICATE", "image/png", true, Some((640, 480)));
+        let mut second = test_attachment("SECONDDUPLICATE", "image/png", true, Some((640, 480)));
+        second.sha256 = first.sha256.clone();
+        let source_hash = first.sha256.clone();
+        app.store.tasks[selected].attachments = vec![first, second];
+        let scroll = crate::tui::ui::detail_attachment_scroll_target(
+            &app.store.tasks[selected],
+            "SECONDDUPLICATE",
+            0,
+            80,
+            30,
+            &context,
+        )
+        .expect("second attachment scroll target");
+        app.overlay = Some(OverlayState::Detail { scroll });
+        let (column, row) = (0..30)
+            .flat_map(|row| (0..80).map(move |column| (column, row)))
+            .find(|(column, row)| {
+                crate::tui::ui::detail_attachment_at_position(
+                    &app.store.tasks[selected],
+                    80,
+                    30,
+                    *column,
+                    *row,
+                    scroll,
+                    &context,
+                )
+                .is_some_and(|hit| hit.attachment_id == "SECONDDUPLICATE")
+            })
+            .expect("second attachment hit");
+        app.widgets.inline_image_placements = vec![crate::tui::ui::DetailInlineImagePlacement {
+            attachment_id: "FIRSTDUPLICATE".to_string(),
+            source_hash: source_hash.clone(),
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        }];
+
+        app.dispatch_mouse(left_click(column, row), (80, 30).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: current }) if current == scroll
+        ));
+
+        app.widgets.inline_image_placements[0].attachment_id = "SECONDDUPLICATE".to_string();
+        app.dispatch_mouse(left_click(column, row), (80, 30).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::AttachmentPreview {
+                ref attachment_id,
+                scroll: current,
+            }) if attachment_id == "SECONDDUPLICATE" && current == scroll
+        ));
+    }
+
+    #[tokio::test]
+    async fn changing_detail_task_clears_image_focus() {
+        let (_dir, _pool, mut app) = test_app_with_pool().await;
+        let first = create_and_select_task(&mut app, test_task_draft("First")).await;
+        let first_id = app.store.tasks[first].task.id.clone();
+        create_and_select_task(&mut app, test_task_draft("Second")).await;
+        let first = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == first_id)
+            .unwrap();
+        app.store.tasks[first].attachments = vec![test_attachment(
+            "FIRSTIMAGE",
+            "image/png",
+            true,
+            Some((640, 480)),
+        )];
+        app.widgets.table.select(Some(first));
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.selected_detail_attachment_id = Some("FIRSTIMAGE".to_string());
+
+        let previous = app.widgets.table.selected();
+        app.select_detail_task(1);
+
+        assert_ne!(app.widgets.table.selected(), previous);
+        assert!(app.selected_detail_attachment_id.is_none());
+        assert!(app.selected_detail_child_task_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn invalidated_image_focus_is_cleared_without_closing_detail() {
+        for key_code in [KeyCode::Enter, KeyCode::Esc] {
+            let (_dir, _pool, mut app) = test_app_with_pool().await;
+            app.inline_image_context_override =
+                Some(crate::tui::ui::DetailInlineImageContext::default());
+            let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
+            let attachment =
+                test_attachment("INVALIDATEDIMAGE", "image/png", true, Some((640, 480)));
+            let source_hash = attachment.sha256.clone();
+            app.store.tasks[selected].attachments = vec![attachment];
+            app.overlay = Some(OverlayState::Detail { scroll: 4 });
+            app.dispatch_key(key(KeyCode::Tab), (100, 30).into())
+                .await
+                .unwrap();
+            let focused_scroll = match app.overlay {
+                Some(OverlayState::Detail { scroll }) => scroll,
+                _ => panic!("expected detail overlay"),
+            };
+            assert_eq!(
+                app.selected_detail_attachment_id.as_deref(),
+                Some("INVALIDATEDIMAGE")
+            );
+
+            if key_code == KeyCode::Enter {
+                app.inline_image_context_override =
+                    Some(crate::tui::ui::DetailInlineImageContext {
+                        unavailable_hashes: [source_hash].into_iter().collect(),
+                        ..crate::tui::ui::DetailInlineImageContext::default()
+                    });
+            } else {
+                app.store.tasks[selected].attachments[0].width = Some(0);
+            }
+            assert!(app.view().selected_detail_attachment_id.is_none());
+
+            app.dispatch_key(key(key_code), (100, 30).into())
+                .await
+                .unwrap();
+
+            assert!(app.selected_detail_attachment_id.is_none());
+            assert!(matches!(
+                app.overlay,
+                Some(OverlayState::Detail { scroll }) if scroll == focused_scroll
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn detail_image_escape_returns_and_preserves_focus() {
+        let (_dir, _pool, mut app) = test_app_with_pool().await;
+        app.inline_image_context_override =
+            Some(crate::tui::ui::DetailInlineImageContext::default());
+        let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
+        app.store.tasks[selected].attachments = vec![test_attachment(
+            "ATTACHMENT000001",
+            "image/png",
+            true,
+            Some((640, 480)),
+        )];
+        app.overlay = Some(OverlayState::AttachmentPreview {
+            attachment_id: "ATTACHMENT000001".to_string(),
+            scroll: 4,
+        });
+        app.selected_detail_attachment_id = Some("ATTACHMENT000001".to_string());
+        assert!(!app.detail_underlay());
+
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 4 })
+        ));
+        assert_eq!(
+            app.selected_detail_attachment_id.as_deref(),
+            Some("ATTACHMENT000001")
+        );
+    }
+
+    #[tokio::test]
+    async fn attachment_preview_refresh_preserves_owning_task_across_query_change() {
+        let (_dir, _pool, mut app) = test_app_with_pool().await;
+        app.inline_image_context_override =
+            Some(crate::tui::ui::DetailInlineImageContext::default());
+        let selected = create_and_select_task(&mut app, test_task_draft("Preview owner")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        app.store.tasks[selected].attachments = vec![test_attachment(
+            "OWNEDIMAGE",
+            "image/png",
+            true,
+            Some((640, 480)),
+        )];
+        app.selected_detail_attachment_id = Some("OWNEDIMAGE".to_string());
+        app.overlay = Some(OverlayState::AttachmentPreview {
+            attachment_id: "OWNEDIMAGE".to_string(),
+            scroll: 6,
+        });
+        app.store.view_state.view = TaskView::Done;
+
+        app.refresh().await.unwrap();
+
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.id, task_id);
+        assert_eq!(
+            app.store.tasks[selected].attachments[0].attachment_id,
+            "OWNEDIMAGE"
+        );
+        app.dispatch_key(key(KeyCode::Esc), (100, 30).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 6 })
+        ));
+        let selected = app.widgets.table.selected().unwrap();
+        assert_eq!(app.store.tasks[selected].task.id, task_id);
     }
 
     #[tokio::test]

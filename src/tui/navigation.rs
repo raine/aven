@@ -6,7 +6,7 @@ use crate::tui::event::{
 };
 use crate::tui::overlay::{OverlayOutcome, OverlayState};
 use crate::tui::store::SidebarEntry;
-use crate::tui::ui::detail_scroll_cap;
+use crate::tui::ui::{DetailInlineImageContext, detail_scroll_cap_with_images};
 
 pub(crate) fn scroll_with_delta(scroll: u16, delta: isize, cap: u16) -> u16 {
     let scroll = scroll.min(cap);
@@ -20,19 +20,23 @@ pub(crate) fn scroll_with_delta(scroll: u16, delta: isize, cap: u16) -> u16 {
     }
 }
 
-pub(crate) fn detail_scroll_with_delta(
+pub(crate) fn detail_scroll_with_delta_with_images(
     scroll: u16,
     delta: isize,
     terminal_width: u16,
     terminal_height: u16,
     task: Option<&TaskListItem>,
+    inline_images: Option<&DetailInlineImageContext>,
 ) -> u16 {
     let cap = task
-        .map(|task| detail_scroll_cap(task, terminal_width, terminal_height))
+        .map(|task| {
+            detail_scroll_cap_with_images(task, terminal_width, terminal_height, inline_images)
+        })
         .unwrap_or(0);
     scroll_with_delta(scroll, delta, cap)
 }
 
+#[cfg(test)]
 pub(crate) fn handle_detail_overlay_key(
     key: KeyEvent,
     overlay: OverlayState,
@@ -40,58 +44,55 @@ pub(crate) fn handle_detail_overlay_key(
     terminal_height: u16,
     task: Option<&TaskListItem>,
 ) -> OverlayOutcome {
+    handle_detail_overlay_key_with_images(key, overlay, terminal_width, terminal_height, task, None)
+}
+
+pub(crate) fn handle_detail_overlay_key_with_images(
+    key: KeyEvent,
+    overlay: OverlayState,
+    terminal_width: u16,
+    terminal_height: u16,
+    task: Option<&TaskListItem>,
+    inline_images: Option<&DetailInlineImageContext>,
+) -> OverlayOutcome {
     let OverlayState::Detail { scroll } = overlay else {
         return OverlayOutcome::None(overlay);
     };
-    let scroll = detail_scroll_with_delta(scroll, 0, terminal_width, terminal_height, task);
+    let scroll_by = |scroll, delta| {
+        detail_scroll_with_delta_with_images(
+            scroll,
+            delta,
+            terminal_width,
+            terminal_height,
+            task,
+            inline_images,
+        )
+    };
+    let scroll = scroll_by(scroll, 0);
     let page = detail_page_scroll_rows(terminal_height);
     match key.code {
         KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => OverlayOutcome::Cancelled,
         KeyCode::Char('j') | KeyCode::Down => OverlayOutcome::None(OverlayState::Detail {
-            scroll: detail_scroll_with_delta(scroll, 1, terminal_width, terminal_height, task),
+            scroll: scroll_by(scroll, 1),
         }),
         KeyCode::Char('k') | KeyCode::Up => OverlayOutcome::None(OverlayState::Detail {
-            scroll: detail_scroll_with_delta(scroll, -1, terminal_width, terminal_height, task),
+            scroll: scroll_by(scroll, -1),
         }),
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             OverlayOutcome::None(OverlayState::Detail {
-                scroll: detail_scroll_with_delta(
-                    scroll,
-                    page as isize,
-                    terminal_width,
-                    terminal_height,
-                    task,
-                ),
+                scroll: scroll_by(scroll, page as isize),
             })
         }
         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             OverlayOutcome::None(OverlayState::Detail {
-                scroll: detail_scroll_with_delta(
-                    scroll,
-                    -(page as isize),
-                    terminal_width,
-                    terminal_height,
-                    task,
-                ),
+                scroll: scroll_by(scroll, -(page as isize)),
             })
         }
         KeyCode::PageDown => OverlayOutcome::None(OverlayState::Detail {
-            scroll: detail_scroll_with_delta(
-                scroll,
-                page as isize,
-                terminal_width,
-                terminal_height,
-                task,
-            ),
+            scroll: scroll_by(scroll, page as isize),
         }),
         KeyCode::PageUp => OverlayOutcome::None(OverlayState::Detail {
-            scroll: detail_scroll_with_delta(
-                scroll,
-                -(page as isize),
-                terminal_width,
-                terminal_height,
-                task,
-            ),
+            scroll: scroll_by(scroll, -(page as isize)),
         }),
         _ => OverlayOutcome::None(OverlayState::Detail { scroll }),
     }

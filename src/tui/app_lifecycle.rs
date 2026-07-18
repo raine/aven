@@ -354,6 +354,7 @@ impl App {
         }
 
         let selected_task = self.store.selected_task(self.widgets.table.selected());
+        let inline_images = self.inline_image_context();
         ViewState {
             focus: self.focus,
             overlay,
@@ -368,6 +369,23 @@ impl App {
                         task.epic_children
                             .iter()
                             .any(|child| &child.task_id == *task_id)
+                    })
+                })
+                .cloned(),
+            selected_detail_attachment_id: self
+                .selected_detail_attachment_id
+                .as_ref()
+                .filter(|attachment_id| {
+                    inline_images.as_ref().is_some_and(|context| {
+                        selected_task.is_some_and(|task| {
+                            task.attachments.iter().any(|attachment| {
+                                &attachment.attachment_id == *attachment_id
+                                    && ui::attachment_is_locally_previewable(
+                                        attachment,
+                                        &context.unavailable_hashes,
+                                    )
+                            })
+                        })
                     })
                 })
                 .cloned(),
@@ -395,11 +413,15 @@ impl App {
             } else {
                 ViewSurface::Main
             },
-            inline_images: self.inline_image_context(),
+            inline_images,
         }
     }
 
-    fn inline_image_context(&self) -> Option<ui::DetailInlineImageContext> {
+    pub(super) fn inline_image_context(&self) -> Option<ui::DetailInlineImageContext> {
+        #[cfg(test)]
+        if let Some(context) = &self.inline_image_context_override {
+            return Some(context.clone());
+        }
         if self.intake.view().add_task_only
             || self.notification.is_some()
             || !self.pending_shortcut.is_empty()
@@ -415,11 +437,15 @@ impl App {
         let blob_dir = resolve_blob_dir(db_path, self.intake.config()).ok()?;
         Some(ui::DetailInlineImageContext {
             unavailable_hashes: self.preview_controller.suppressed_hashes(&blob_dir),
+            focused_attachment_id: self.selected_detail_attachment_id.clone(),
         })
     }
 
     fn detail_surface_accepts_inline_images(&self) -> bool {
-        matches!(self.overlay, None | Some(OverlayState::Detail { .. }))
+        matches!(
+            self.overlay,
+            None | Some(OverlayState::Detail { .. } | OverlayState::AttachmentPreview { .. })
+        )
     }
 
     pub(super) fn detail_underlay(&self) -> bool {
@@ -449,10 +475,10 @@ impl App {
                 .selected_task(selected)
                 .map(|item| item.task.id.clone())
         };
-        let detail_task = self
-            .detail_underlay()
-            .then(|| self.store.selected_task(selected).cloned())
-            .flatten();
+        let detail_task = (self.detail_underlay()
+            || matches!(self.overlay, Some(OverlayState::AttachmentPreview { .. })))
+        .then(|| self.store.selected_task(selected).cloned())
+        .flatten();
         let result = self
             .store
             .refresh_with_scope_fallback(selected_id.as_ref())
@@ -604,6 +630,7 @@ mod inline_image_lifecycle_tests {
 
     fn placement() -> ui::DetailInlineImagePlacement {
         ui::DetailInlineImagePlacement {
+            attachment_id: "ATTACHMENT000001".to_string(),
             source_hash: "0".repeat(64),
             x: 4,
             y: 7,

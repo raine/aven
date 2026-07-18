@@ -23,7 +23,7 @@ pub(crate) use self::sidebar::{sidebar_click_at_for, sidebar_layout_for};
 
 pub(crate) use self::columns::column_lane_at_position;
 use self::columns::render_columns;
-use self::detail::render_detail_underlay;
+use self::detail::{render_attachment_preview, render_detail_underlay};
 use self::footer::{FooterMode, footer_bar};
 use self::header::render_header;
 use self::overlays::{
@@ -39,9 +39,13 @@ use self::toast::render_toast;
 
 pub(crate) use self::detail::{
     DetailInlineImageContext, DetailInlineImagePlacement, DetailMetadataTarget,
-    detail_child_task_at_position, detail_metadata_target_at, detail_scroll_cap,
-    detail_section_scroll_target, detail_selected_text, detail_text_cell_at_position,
+    attachment_is_locally_previewable, detail_attachment_at_position,
+    detail_attachment_scroll_target, detail_child_task_at_position, detail_metadata_target_at,
+    detail_scroll_cap_with_images, detail_section_scroll_target_with_images, detail_selected_text,
+    detail_text_cell_at_position,
 };
+#[cfg(test)]
+pub(crate) use self::detail::{detail_scroll_cap, detail_section_scroll_target};
 pub(crate) use self::overlays::{
     add_task_field_at, composer_help_scroll_cap, database_stats_scroll_cap, text_panel_scroll_cap,
 };
@@ -77,6 +81,7 @@ pub(crate) struct ViewState {
     pub(crate) detail_underlay_scroll: u16,
     pub(crate) hovered_detail_child_task_id: Option<crate::ids::TaskId>,
     pub(crate) selected_detail_child_task_id: Option<crate::ids::TaskId>,
+    pub(crate) selected_detail_attachment_id: Option<String>,
     pub(crate) detail_text_selection: Option<crate::tui::detail_selection::DetailTextSelection>,
     pub(crate) notification: Option<Toast>,
     pub(crate) pending_shortcut: Vec<String>,
@@ -97,12 +102,16 @@ impl ViewState {
             Some(FooterChoiceMode::Priority) => return FooterMode::PriorityChoice,
             None => {}
         }
-        if matches!(
+        if matches!(self.overlay, Some(OverlayView::AttachmentPreview { .. })) {
+            FooterMode::AttachmentPreview
+        } else if matches!(
             self.overlay,
             Some(OverlayView::Detail { .. } | OverlayView::DetailHelp { .. })
         ) {
             if self.selected_detail_child_task_id.is_some() {
                 FooterMode::DetailChildren
+            } else if self.selected_detail_attachment_id.is_some() {
+                FooterMode::DetailAttachment
             } else if self
                 .detail_text_selection
                 .as_ref()
@@ -635,7 +644,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
             render_database_stats(frame, stats, *scroll)
         }
         OverlayView::Update(state) => render_update(frame, state),
-        OverlayView::Detail { .. } => {}
+        OverlayView::Detail { .. } | OverlayView::AttachmentPreview { .. } => {}
     }
 }
 
@@ -650,6 +659,12 @@ fn render_overlay(
     detail_text_selection: Option<&crate::tui::detail_selection::DetailTextSelection>,
     inline_images: Option<&DetailInlineImageContext>,
 ) {
+    if let OverlayView::AttachmentPreview { attachment_id, .. } = overlay {
+        if let Some(item) = store.selected_task(widgets.table.selected()) {
+            render_attachment_preview(frame, item, attachment_id, widgets, inline_images);
+        }
+        return;
+    }
     if matches!(
         overlay,
         OverlayView::Detail { .. } | OverlayView::DetailHelp { .. }
