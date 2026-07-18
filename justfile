@@ -127,11 +127,13 @@ uniffi-swift:
     cp "$output/aven_uniffiFFI.modulemap" \
       "$package_generated/Sources/aven_uniffiFFI/module.modulemap"
 
-# Build, test, and run the macOS Swift local proof
+# Build, test, and run the macOS Swift local and sync proofs
 swift-local-proof: uniffi-swift
+    cargo build --locked --bin aven
     swift build --package-path experiments/aven-swift-cli
     swift test --package-path experiments/aven-swift-cli
     swift run --package-path experiments/aven-swift-cli aven-local-proof local
+    swift run --package-path experiments/aven-swift-cli aven-local-proof sync "$(pwd)/target/debug/aven"
 
 # Type-check all targets without producing final artifacts
 check-types:
