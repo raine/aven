@@ -67,6 +67,14 @@ async fn consumer_api_completes_local_task_and_conflict_flows() {
         .unwrap();
 
     let first = Store::open(&first_path).await.unwrap();
+    let invalid_sync_server = match first
+        .start_sync_session("ftp://sync.test".to_string(), None, None)
+        .await
+    {
+        Ok(_) => panic!("unsupported sync server URL was accepted"),
+        Err(error) => error,
+    };
+    assert_eq!(invalid_sync_server.code, ErrorCode::Validation);
     let workspaces = first.list_workspaces().await.unwrap();
     assert_eq!(workspaces.len(), 1);
     let workspace = first.resolve_workspace("default").await.unwrap();

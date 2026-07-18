@@ -23,7 +23,7 @@ pub struct SyncPersistenceStatus {
     pub last_cursor: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClientSyncPage {
     pub request: SyncRequest,
     pub pending: usize,
@@ -203,6 +203,14 @@ async fn load_unsynced_changes(
 async fn apply_sync_response(conn: &mut SqliteConnection, page: ApplySyncPage) -> Result<usize> {
     let mut applied = 0;
     let mut tx = begin_immediate(conn).await?;
+    let current_cursor = sync_cursor(&mut tx).await?;
+    if current_cursor != page.request.after {
+        bail!(
+            "error stale-sync-page expected_cursor={} request_cursor={}",
+            current_cursor,
+            page.request.after
+        );
+    }
     update_change_server_seqs_if_missing(&mut tx, &page.response.push_acks).await?;
     let existing_change_ids = load_existing_change_ids(&mut tx, &page.response.changes).await?;
     for change in &page.response.changes {

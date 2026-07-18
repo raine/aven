@@ -8,6 +8,7 @@ use crate::db::Database;
 use crate::ids::{ProjectId, TaskId, WorkspaceId};
 use crate::operations::{TaskDraft, TaskUpdate as InternalTaskUpdate};
 use crate::query::{SortDirection, TaskFilters, TaskQueryMode, TaskSort};
+use crate::sync::SyncSession;
 use crate::task_fields::TaskField;
 use crate::types::Task;
 use crate::workspaces::Workspace;
@@ -23,6 +24,23 @@ impl Store {
             .await
             .map_err(Error::database_open)?;
         Ok(Self { database })
+    }
+
+    pub async fn start_sync_session(
+        &self,
+        server: String,
+        auth_token: Option<String>,
+        page_budget: Option<usize>,
+    ) -> Result<SyncSession, Error> {
+        if !crate::sync::wire::sync_server_url_is_valid(&server) {
+            return Err(Error::new(
+                ErrorCode::Validation,
+                "invalid sync server URL".to_string(),
+            ));
+        }
+        SyncSession::start(self.database.clone(), server, auth_token, page_budget)
+            .await
+            .map_err(Error::from_internal)
     }
 
     pub async fn list_workspaces(&self) -> Result<Vec<WorkspaceRecord>, Error> {

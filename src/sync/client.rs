@@ -1,20 +1,12 @@
-use std::io::Write;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use aven_core::db::Database;
-use aven_core::sync::ApplySyncPage;
-use flate2::write::GzEncoder;
+use aven_core::sync::{SyncHttpHeader, SyncHttpResponse, SyncSession};
 use tracing::info;
 
-use super::wire::{
-    MAX_PULL_BATCH, MAX_PUSH_BATCH, SyncResponse, validate_sync_response_for_request,
-};
 use crate::cli::SyncArgs;
 use crate::config;
-use crate::ids::now;
-
-const GZIP_THRESHOLD: usize = 256;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SyncHttpClient {
@@ -38,27 +30,7 @@ impl SyncHttpClient {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct SyncSummary {
-    pub(crate) pushed: i64,
-    pub(crate) pulled: usize,
-    pub(crate) cursor: i64,
-    pub(crate) complete: bool,
-    pub(crate) pages: usize,
-    pub(crate) request_bytes: usize,
-    pub(crate) request_wire_bytes: usize,
-    pub(crate) response_decoded_bytes: usize,
-    pub(crate) response_compression: String,
-    pub(crate) apply_ms: u128,
-}
-
-fn gzip_encode(body: &[u8]) -> Result<Vec<u8>> {
-    let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::default());
-    encoder
-        .write_all(body)
-        .context("gzip encode sync request body")?;
-    encoder.finish().context("finish sync request compression")
-}
+pub(crate) type SyncSummary = aven_core::sync::SyncSessionSummary;
 
 pub(crate) async fn sync_client(
     database: &Database,
@@ -89,22 +61,17 @@ pub(crate) async fn run_sync_with_page_budget_using_client(
     page_budget: Option<usize>,
     client: &SyncHttpClient,
 ) -> Result<SyncSummary> {
-    let attempted_at = now();
-    database.begin_sync_attempt(attempted_at.clone()).await?;
-    match run_sync_once_inner(
-        database,
-        server,
-        auth_token,
-        attempted_at,
+    let mut session = SyncSession::start(
+        database.clone(),
+        server.to_string(),
+        auth_token.map(str::to_string),
         page_budget,
-        client,
     )
-    .await
-    {
+    .await?;
+    match drive_sync_session(&mut session, server, client).await {
         Ok(summary) => Ok(summary),
         Err(error) => {
-            let error_text = format!("{error:#}");
-            database.record_sync_error(error_text).await?;
+            database.record_sync_error(format!("{error:#}")).await?;
             Err(error)
         }
     }
@@ -120,150 +87,81 @@ pub(crate) async fn run_sync_with_page_budget(
     run_sync_with_page_budget_using_client(database, server, auth_token, page_budget, &client).await
 }
 
-async fn run_sync_once_inner(
-    database: &Database,
+async fn drive_sync_session(
+    session: &mut SyncSession,
     server: &str,
-    auth_token: Option<&str>,
-    attempted_at: String,
-    page_budget: Option<usize>,
     client: &SyncHttpClient,
 ) -> Result<SyncSummary> {
-    let mut last_response_compression: Option<String>;
-    let url = format!("{}/sync", server.trim_end_matches('/'));
-    let mut total_pushed = 0_i64;
-    let mut total_pulled = 0_usize;
-    let mut cursor: i64;
-    let mut pages = 0_usize;
-    let complete;
-    let mut total_request_bytes = 0_usize;
-    let mut total_request_wire_bytes = 0_usize;
-    let mut total_response_decoded_bytes = 0_usize;
-    let mut total_apply_ms = 0_u128;
     info!(server = %server, http_client_id = %client.id(), "sync client starting");
-
-    loop {
-        let page = database
-            .prepare_client_sync_page(server.to_string(), MAX_PUSH_BATCH, MAX_PULL_BATCH)
-            .await?;
-        let request_change_ids = page
-            .request
-            .changes
-            .iter()
-            .map(|change| change.change_id.clone())
-            .collect::<Vec<_>>();
-        let pending = page.pending;
-        let request_cursor = page.request.after;
-        let request_body = serde_json::to_vec(&page.request)?;
-        let request_bytes = request_body.len();
-        let (wire_body, request_wire_bytes) = if request_bytes > GZIP_THRESHOLD {
-            let compressed = gzip_encode(&request_body)?;
-            let wire = compressed.len();
-            (compressed, wire)
-        } else {
-            (request_body, request_bytes)
-        };
+    while let Some(prepared) = session.prepare_request().await? {
+        let method = reqwest::Method::from_bytes(prepared.method.as_bytes())
+            .context("invalid prepared sync HTTP method")?;
         let mut request = client
             .inner
-            .post(&url)
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(wire_body);
-        if request_wire_bytes != request_bytes {
-            request = request.header(reqwest::header::CONTENT_ENCODING, "gzip");
+            .request(method, &prepared.url)
+            .body(prepared.body.clone());
+        for header in &prepared.headers {
+            request = request.header(&header.name, &header.value);
         }
-        if let Some(token) = auth_token {
-            request = request.bearer_auth(token);
-        }
-        let http_started = Instant::now();
-        let response = request.send().await?.error_for_status()?;
-        let http_ms = http_started.elapsed().as_millis();
-        last_response_compression = Some(
-            response
-                .headers()
-                .get(reqwest::header::CONTENT_ENCODING)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("none")
-                .to_string(),
-        );
-        let response_body = response.bytes().await?;
-        let response_bytes = response_body.len();
-        let response: SyncResponse = serde_json::from_slice(&response_body)?;
-        validate_sync_response_for_request(
-            request_cursor,
-            MAX_PULL_BATCH,
-            &request_change_ids,
-            &response,
-        )?;
-        let has_more = response.has_more;
-        cursor = response.cursor;
-        let apply_started = Instant::now();
-        let applied = database
-            .apply_client_sync_page(ApplySyncPage {
-                request: page.request,
-                response,
-                attempted_at: attempted_at.clone(),
-                previous_pushed: total_pushed,
-                previous_pulled: total_pulled,
-            })
-            .await?;
-        let apply_ms = apply_started.elapsed().as_millis();
-        total_pushed += pending as i64;
-        total_pulled += applied;
-        pages += 1;
-        total_request_bytes += request_bytes;
-        total_request_wire_bytes += request_wire_bytes;
-        total_response_decoded_bytes += response_bytes;
-        total_apply_ms += apply_ms;
 
-        let local_more = pending == MAX_PUSH_BATCH;
-        let page_complete = !local_more && !has_more;
-        let budget_exhausted = page_budget.is_some_and(|budget| pages >= budget);
+        let http_started = Instant::now();
+        let response = request.send().await?;
+        let http_ms = http_started.elapsed().as_millis();
+        let status = response.status().as_u16();
+        let headers = response
+            .headers()
+            .get(reqwest::header::CONTENT_ENCODING)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| SyncHttpHeader {
+                name: "content-encoding".to_string(),
+                value: value.to_string(),
+            })
+            .into_iter()
+            .collect();
+        let body = response.bytes().await?.to_vec();
+        let outcome = session
+            .accept_response(
+                &prepared.context,
+                SyncHttpResponse {
+                    status,
+                    headers,
+                    body,
+                },
+            )
+            .await?;
         info!(
             server = %server,
-            page = pages,
-            pushed = pending,
-            pulled = applied,
-            cursor,
-            complete = page_complete,
-            request_bytes,
-            request_wire_bytes,
-            response_decoded_bytes = response_bytes,
-            response_compression = last_response_compression.as_deref().unwrap_or("none"),
+            page = outcome.page,
+            pushed = outcome.pushed,
+            pulled = outcome.pulled,
+            cursor = outcome.cursor,
+            complete = outcome.complete,
+            request_bytes = outcome.request_bytes,
+            request_wire_bytes = outcome.request_wire_bytes,
+            response_decoded_bytes = outcome.response_decoded_bytes,
+            response_compression = outcome.response_compression,
             http_ms,
-            apply_ms,
-            has_more,
-            local_more,
+            apply_ms = outcome.apply_ms,
+            has_more = outcome.has_more,
+            local_more = outcome.local_more,
             "sync client page completed"
         );
-        if page_complete || budget_exhausted {
-            complete = page_complete;
-            break;
-        }
     }
 
+    let summary = session.summary();
     info!(
         server = %server,
-        pushed = total_pushed,
-        pulled = total_pulled,
-        cursor,
-        complete,
-        pages,
-        request_bytes = total_request_bytes,
-        request_wire_bytes = total_request_wire_bytes,
-        response_decoded_bytes = total_response_decoded_bytes,
-        response_compression = last_response_compression.as_deref().unwrap_or("none"),
-        apply_ms = total_apply_ms,
+        pushed = summary.pushed,
+        pulled = summary.pulled,
+        cursor = summary.cursor,
+        complete = summary.complete,
+        pages = summary.pages,
+        request_bytes = summary.request_bytes,
+        request_wire_bytes = summary.request_wire_bytes,
+        response_decoded_bytes = summary.response_decoded_bytes,
+        response_compression = summary.response_compression,
+        apply_ms = summary.apply_ms,
         "sync client finished"
     );
-    Ok(SyncSummary {
-        pushed: total_pushed,
-        pulled: total_pulled,
-        cursor,
-        complete,
-        pages,
-        request_bytes: total_request_bytes,
-        request_wire_bytes: total_request_wire_bytes,
-        response_decoded_bytes: total_response_decoded_bytes,
-        response_compression: last_response_compression.unwrap_or_else(|| "none".to_string()),
-        apply_ms: total_apply_ms,
-    })
+    Ok(summary)
 }

@@ -79,7 +79,7 @@ impl ChangeRow {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncRequest {
     #[serde(default)]
     pub protocol_version: Option<u32>,
@@ -90,7 +90,7 @@ pub struct SyncRequest {
     pub changes: Vec<ChangeWire>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncResponse {
     pub protocol_version: u32,
     pub cursor: i64,
