@@ -1112,6 +1112,10 @@ impl App {
         };
 
         match overlay {
+            OverlayState::Onboarding { persist_on_exit } => {
+                self.handle_onboarding_key(key, terminal_size, persist_on_exit)
+                    .await?
+            }
             OverlayState::Search(state) => self.handle_search_key(state, key).await?,
             OverlayState::Update(state) => self.handle_update_overlay_key(state, key).await,
             OverlayState::Command { mut state } => match key.code {
@@ -1624,6 +1628,7 @@ impl App {
             }
             Action::GoBack => self.go_back().await?,
             Action::ToggleHelp => self.toggle_help_at_height(24),
+            Action::ShowWelcome => self.show_welcome(),
             Action::BeginSearch => self.begin_search(),
             Action::BeginCommand => self.begin_command(),
             Action::Refresh => self.refresh().await?,

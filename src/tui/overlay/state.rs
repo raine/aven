@@ -8,6 +8,9 @@ use unicode_width::UnicodeWidthStr;
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayState {
+    Onboarding {
+        persist_on_exit: bool,
+    },
     Help {
         scroll: u16,
     },

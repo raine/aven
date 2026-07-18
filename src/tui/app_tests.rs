@@ -575,6 +575,132 @@ async fn insert_conflict_for_task_id(
     app.refresh().await.unwrap();
 }
 
+mod onboarding {
+    use super::*;
+    use crate::tui::event::{CommandLookup, lookup_command};
+    use crate::tui::store::OnboardingStatus;
+
+    #[tokio::test]
+    async fn automatic_welcome_completes_once() {
+        let (_dir, _pool, mut app) = test_app_with_pool().await;
+
+        app.maybe_open_onboarding().await;
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Onboarding {
+                persist_on_exit: true
+            })
+        ));
+
+        app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(app.overlay.is_none());
+        assert_eq!(
+            app.store.onboarding_status().await.unwrap(),
+            OnboardingStatus::Complete
+        );
+
+        app.maybe_open_onboarding().await;
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn welcome_actions_open_the_first_use_flows() {
+        let mut add_app = test_app().await;
+        add_app.maybe_open_onboarding().await;
+        add_app
+            .dispatch_key(key(KeyCode::Char('a')), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(add_app.overlay, Some(OverlayState::AddTask(_))));
+
+        let mut help_app = test_app().await;
+        help_app.maybe_open_onboarding().await;
+        help_app
+            .dispatch_key(shift_key(KeyCode::Char('?')), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            help_app.overlay,
+            Some(OverlayState::Help { scroll: 0 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn welcome_replay_does_not_complete_automatic_onboarding() {
+        let mut app = test_app().await;
+
+        app.execute(Action::ShowWelcome).await.unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Onboarding {
+                persist_on_exit: false
+            })
+        ));
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            app.store.onboarding_status().await.unwrap(),
+            OnboardingStatus::Due
+        );
+    }
+
+    #[tokio::test]
+    async fn hidden_welcome_ignores_actions_and_modifiers() {
+        let mut app = test_app().await;
+        app.maybe_open_onboarding().await;
+
+        app.dispatch_key(key(KeyCode::Enter), (69, 17).into())
+            .await
+            .unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::Onboarding { .. })));
+
+        app.dispatch_key(ctrl_a(), (80, 24).into()).await.unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::Onboarding { .. })));
+        assert_eq!(
+            app.store.onboarding_status().await.unwrap(),
+            OnboardingStatus::Due
+        );
+    }
+
+    #[tokio::test]
+    async fn welcome_quit_completes_but_control_c_does_not() {
+        let mut app = test_app().await;
+        app.maybe_open_onboarding().await;
+        app.dispatch_key(key(KeyCode::Char('q')), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(app.should_quit);
+        assert_eq!(
+            app.store.onboarding_status().await.unwrap(),
+            OnboardingStatus::Complete
+        );
+
+        let mut interrupted = test_app().await;
+        interrupted.maybe_open_onboarding().await;
+        interrupted
+            .dispatch_key(ctrl_c(), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(interrupted.should_quit);
+        assert_eq!(
+            interrupted.store.onboarding_status().await.unwrap(),
+            OnboardingStatus::Due
+        );
+    }
+
+    #[test]
+    fn welcome_command_is_discoverable() {
+        assert_eq!(
+            lookup_command("welcome"),
+            CommandLookup::Found(Action::ShowWelcome)
+        );
+    }
+}
+
 mod theme_background {
     use super::*;
     use ratatui::style::Color;
@@ -894,6 +1020,9 @@ mod keyboard_dispatch {
     #[tokio::test]
     async fn esc_closes_every_overlay_variant() {
         let overlays = vec![
+            OverlayState::Onboarding {
+                persist_on_exit: false,
+            },
             OverlayState::Help { scroll: 0 },
             OverlayState::Detail { scroll: 0 },
             OverlayState::DetailHelp { scroll: 0 },

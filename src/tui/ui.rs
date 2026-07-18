@@ -28,8 +28,8 @@ use self::footer::{FooterMode, footer_bar};
 use self::header::render_header;
 use self::overlays::{
     SearchRenderStatus, SearchRenderView, render_confirm, render_database_stats,
-    render_multiline_input, render_picker, render_search, render_sync_status, render_tag_combobox,
-    render_text_input, render_text_panel, render_update,
+    render_multiline_input, render_onboarding, render_picker, render_search, render_sync_status,
+    render_tag_combobox, render_text_input, render_text_panel, render_update,
 };
 use self::recent_actions::render_recent_actions;
 use self::shortcuts::{render_command, render_detail_help, render_help, render_prefix_hints};
@@ -135,6 +135,9 @@ fn detail_underlay_scroll(view: &ViewState) -> u16 {
     }
 }
 
+pub(crate) const MIN_TUI_WIDTH: u16 = 70;
+pub(crate) const MIN_TUI_HEIGHT: u16 = 18;
+
 pub(crate) fn render(
     frame: &mut Frame,
     store: &TuiStore,
@@ -149,7 +152,7 @@ pub(crate) fn render(
         return;
     }
 
-    if frame.area().width < 70 || frame.area().height < 18 {
+    if frame.area().width < MIN_TUI_WIDTH || frame.area().height < MIN_TUI_HEIGHT {
         frame.render_widget(
             Paragraph::new("terminal too small for aven tui")
                 .alignment(Alignment::Center)
@@ -590,6 +593,7 @@ fn order_menu_items() -> [(TaskOrder, &'static str, &'static str); 6] {
 
 fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title_editor: bool) {
     match overlay {
+        OverlayView::Onboarding => render_onboarding(frame),
         OverlayView::Help { scroll } => render_help(frame, *scroll),
         OverlayView::DetailHelp { scroll } => render_detail_help(frame, *scroll),
         OverlayView::Search {

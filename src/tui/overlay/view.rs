@@ -11,6 +11,7 @@ use super::tag_combobox::{tag_combobox_completion, tag_combobox_matches};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayView {
+    Onboarding,
     Help {
         scroll: u16,
     },
@@ -181,6 +182,7 @@ pub(crate) struct ConfirmView {
 impl From<&OverlayState> for OverlayView {
     fn from(state: &OverlayState) -> Self {
         match state {
+            Onboarding { .. } => Self::Onboarding,
             Help { scroll } => Self::Help { scroll: *scroll },
             Detail { scroll } => Self::Detail { scroll: *scroll },
             AttachmentPreview {

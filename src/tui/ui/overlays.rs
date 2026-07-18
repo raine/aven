@@ -2,6 +2,7 @@ mod add_task;
 mod confirm;
 mod database_stats;
 mod multiline;
+mod onboarding;
 mod picker;
 mod search;
 mod shared;
@@ -20,6 +21,7 @@ pub(super) use multiline::{
     add_task_description_hint_line, add_task_free_text_input_line, add_task_natural_hint_line,
     render_multiline_input,
 };
+pub(super) use onboarding::render_onboarding;
 pub(super) use picker::render_picker;
 pub(super) use search::{SearchRenderStatus, SearchRenderView, render_search};
 pub(super) use shared::tail_viewport_start;
@@ -45,6 +47,9 @@ pub(super) use multiline::{
     CONFLICT_MANUAL_BODY_PLACEHOLDER, add_note_input_line, add_task_description_input_line,
     description_editor_lines, description_input_line, multiline_hint_line,
 };
+
+#[cfg(test)]
+pub(super) use onboarding::onboarding_lines_for_test;
 
 #[cfg(test)]
 pub(super) use sync_status::sync_status_lines_for_test;

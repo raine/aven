@@ -168,6 +168,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ToggleHelp,
     ),
     CommandSpec::implemented(
+        "welcome",
+        "show the getting-started guide",
+        "General",
+        &[],
+        Action::ShowWelcome,
+    ),
+    CommandSpec::implemented(
         "refresh",
         "reload tasks",
         "General",

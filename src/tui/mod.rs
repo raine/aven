@@ -13,6 +13,7 @@ mod app_filters;
 mod app_intake;
 mod app_lifecycle;
 mod app_navigation;
+mod app_onboarding;
 mod app_overlay_submit;
 mod app_projects;
 mod app_search;
@@ -123,7 +124,7 @@ pub(crate) async fn run(
             app.set_config(config);
             app.start_update_check();
             match startup {
-                store::TuiStartup::Browse => {}
+                store::TuiStartup::Browse => app.maybe_open_onboarding().await,
                 store::TuiStartup::AddTask { natural } => {
                     app.open_add_task_on_start(natural).await?;
                 }
