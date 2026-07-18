@@ -177,11 +177,11 @@ impl Default for DaemonConfig {
 }
 
 impl ProjectOverrideConfig {
-    pub(crate) fn project_key(&self) -> String {
+    pub fn project_key(&self) -> String {
         crate::projects::normalize_key(&self.project)
     }
 
-    pub(crate) fn matches_workspace(
+    pub fn matches_workspace(
         &self,
         workspace_id: Option<&WorkspaceId>,
         workspace: Option<&str>,
@@ -292,7 +292,7 @@ impl AppConfig {
     }
 }
 
-pub(crate) fn expand_tilde(path: &Path) -> Result<PathBuf> {
+pub fn expand_tilde(path: &Path) -> Result<PathBuf> {
     let mut components = path.components();
     if !matches!(components.next(), Some(Component::Normal(component)) if component == "~") {
         return Ok(path.to_path_buf());
@@ -358,7 +358,7 @@ pub fn write_config(path: &Path, config: &AppConfig) -> Result<()> {
     write_config_text(path, text)
 }
 
-pub(crate) fn write_config_text(path: &Path, text: String) -> Result<()> {
+pub fn write_config_text(path: &Path, text: String) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;

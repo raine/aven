@@ -1,5 +1,6 @@
 use crate::ids::WorkspaceId;
 use anyhow::Result;
+use aven_core::db::Database;
 use tokio::task::JoinHandle;
 
 use crate::query::{self, SortDirection, TaskSearchQuery};
@@ -9,8 +10,8 @@ use super::{
     TuiStore,
 };
 
-async fn search_preview_with_pool(
-    pool: sqlx::SqlitePool,
+async fn search_preview_with_database(
+    database: Database,
     workspace_id: WorkspaceId,
     input: String,
     limit: usize,
@@ -22,17 +23,16 @@ async fn search_preview_with_pool(
             total_matches: 0,
         });
     }
-    let mut conn = pool.acquire().await?;
-    query::search_task_preview_set_in_workspace(
-        &mut conn,
-        &workspace_id,
-        TaskSearchQuery {
-            text,
-            include_deleted: false,
-            limit,
-        },
-    )
-    .await
+    database
+        .search_task_preview_set(
+            &workspace_id,
+            TaskSearchQuery {
+                text,
+                include_deleted: false,
+                limit,
+            },
+        )
+        .await
 }
 
 impl TuiStore {
@@ -119,8 +119,8 @@ impl TuiStore {
         input: &str,
         limit: usize,
     ) -> Result<query::TaskSearchPreviewResultSet> {
-        search_preview_with_pool(
-            self.pool.clone(),
+        search_preview_with_database(
+            self.database.clone(),
             self.active_workspace.id.clone(),
             input.to_string(),
             limit,
@@ -133,8 +133,8 @@ impl TuiStore {
         input: String,
         limit: usize,
     ) -> JoinHandle<Result<query::TaskSearchPreviewResultSet>> {
-        tokio::spawn(search_preview_with_pool(
-            self.pool.clone(),
+        tokio::spawn(search_preview_with_database(
+            self.database.clone(),
             self.active_workspace.id.clone(),
             input,
             limit,
@@ -148,18 +148,17 @@ impl TuiStore {
             self.view_state.view = TaskView::Queue;
             return self.refresh(None).await;
         }
-        let mut conn = self.pool.acquire().await?;
-        let results = query::search_task_items_in_workspace(
-            &mut conn,
-            &self.active_workspace.id,
-            TaskSearchQuery {
-                text: text.to_string(),
-                include_deleted: false,
-                limit: 100,
-            },
-        )
-        .await?;
-        drop(conn);
+        let results = self
+            .database
+            .search_task_items(
+                &self.active_workspace.id,
+                TaskSearchQuery {
+                    text: text.to_string(),
+                    include_deleted: false,
+                    limit: 100,
+                },
+            )
+            .await?;
         self.view_state.scope = TaskScope::Workspace;
         self.view_state.view = TaskView::Search;
         self.view_state.filter_modifiers = TaskFilterModifiers {

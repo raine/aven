@@ -1,26 +1,18 @@
 use std::collections::BTreeMap;
 
 use anyhow::Result;
+use aven_core::db::Database;
 use serde::Serialize;
-use sqlx::SqliteConnection;
 
 use crate::cli::PrimeArgs;
-use crate::projects::{
-    find_project_in_workspace, inferred_project_key_for_add_in_workspace,
-    resolve_existing_project_in_workspace,
-};
 use crate::query::{
     self, SortDirection, TaskAvailabilityFilter, TaskFilters, TaskQueryMode, TaskSort,
 };
 use crate::render::{print_json_pretty, quote};
 use crate::workspaces::Workspace;
 
-pub(crate) async fn run(
-    conn: &mut SqliteConnection,
-    workspace: &Workspace,
-    args: PrimeArgs,
-) -> Result<()> {
-    let report = build_report(conn, workspace, args.project.as_deref(), args.limit).await?;
+pub(crate) async fn run(database: &Database, workspace: &Workspace, args: PrimeArgs) -> Result<()> {
+    let report = build_report(database, workspace, args.project.as_deref(), args.limit).await?;
     if args.json {
         print_json_pretty(&report)?;
     } else {
@@ -84,19 +76,20 @@ impl PrimeReport {
 }
 
 async fn build_report(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace: &Workspace,
     project_arg: Option<&str>,
     limit: Option<usize>,
 ) -> Result<PrimeReport> {
     let project = if let Some(project) = project_arg {
         Some(
-            resolve_existing_project_in_workspace(conn, &workspace.id, project)
+            database
+                .resolve_existing_project(&workspace.id, project)
                 .await?
                 .key,
         )
     } else {
-        inferred_project_key_for_add_in_workspace(conn, &workspace.id).await?
+        crate::projects::inferred_project_key_for_add_with_database(database, workspace).await?
     };
 
     let Some(project) = project else {
@@ -106,22 +99,23 @@ async fn build_report(
         ));
     };
 
-    if find_project_in_workspace(conn, &workspace.id, &project)
+    if database
+        .find_project(&workspace.id, &project)
         .await?
         .is_none()
     {
         return Ok(PrimeReport::unavailable(Some(project), "No open issues."));
     }
 
-    let mut items = query::list_task_items_in_workspace(
-        conn,
-        &workspace.id,
-        prime_task_filters(project.clone()),
-        TaskQueryMode::Flat,
-        TaskSort::Updated,
-        SortDirection::Desc,
-    )
-    .await?;
+    let mut items = database
+        .list_task_items(
+            &workspace.id,
+            prime_task_filters(project.clone()),
+            TaskQueryMode::Flat,
+            TaskSort::Updated,
+            SortDirection::Desc,
+        )
+        .await?;
     if let Some(limit) = limit {
         items.truncate(limit);
     }

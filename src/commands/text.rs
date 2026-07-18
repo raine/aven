@@ -1,13 +1,12 @@
 use std::fs;
 
 use anyhow::{Result, bail};
+use aven_core::db::Database;
 use sha2::{Digest, Sha256};
-use sqlx::SqliteConnection;
 
 use crate::cli::{TextCommand, TextSubcommand};
 use crate::input::read_required_text;
-use crate::operations::{TaskUpdate, update_task};
-use crate::refs::{DisplayRefContext, resolve_task_ref_in_workspace};
+use crate::operations::TaskUpdate;
 use crate::render::{print_multiline_block, print_text_diff, quote};
 use crate::task_fields::TaskField;
 use crate::workspaces::Workspace;
@@ -28,17 +27,17 @@ fn sha256_hex(value: &str) -> String {
 }
 
 pub(crate) async fn cmd_text(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace: &Workspace,
     args: TextCommand,
 ) -> Result<()> {
     match args.command {
         TextSubcommand::Get(args) => {
             ensure_description_field(&args.field)?;
-            let task = resolve_task_ref_in_workspace(conn, workspace, &args.task_ref).await?;
+            let task = database.resolve_task_ref(workspace, &args.task_ref).await?;
             let value = TaskField::Description.current_value(&task);
             let hash = sha256_hex(&value);
-            let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
+            let display_refs = database.display_ref_context(&workspace.id).await?;
             let task_ref = display_refs.display_ref(&task);
             if let Some(path) = args.output {
                 fs::write(&path, value.as_bytes())?;
@@ -55,7 +54,7 @@ pub(crate) async fn cmd_text(
         }
         TextSubcommand::Diff(args) => {
             ensure_description_field(&args.field)?;
-            let task = resolve_task_ref_in_workspace(conn, workspace, &args.task_ref).await?;
+            let task = database.resolve_task_ref(workspace, &args.task_ref).await?;
             let current = TaskField::Description.current_value(&task);
             let candidate = fs::read_to_string(&args.file)?;
             print_text_diff("current", &current, "candidate", &candidate);
@@ -63,7 +62,7 @@ pub(crate) async fn cmd_text(
         TextSubcommand::Set(args) => {
             ensure_description_field(&args.field)?;
             let value = read_required_text(None, args.file.as_deref(), args.stdin, "text")?;
-            let task = resolve_task_ref_in_workspace(conn, workspace, &args.task_ref).await?;
+            let task = database.resolve_task_ref(workspace, &args.task_ref).await?;
             let current = TaskField::Description.current_value(&task);
             let actual = sha256_hex(&current);
             if actual != args.if_sha256 {
@@ -73,17 +72,17 @@ pub(crate) async fn cmd_text(
                     actual
                 );
             }
-            let outcome = update_task(
-                conn,
-                workspace,
-                &task.id,
-                TaskUpdate {
-                    description: Some(value),
-                    ..Default::default()
-                },
-            )
-            .await?;
-            let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
+            let outcome = database
+                .update_task(
+                    workspace,
+                    &task.id,
+                    TaskUpdate {
+                        description: Some(value),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            let display_refs = database.display_ref_context(&workspace.id).await?;
             println!(
                 "updated {} field=description sha256={}",
                 display_refs.display_ref(&outcome.task),

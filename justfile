@@ -102,8 +102,8 @@ sqlx-prepare:
     db="target/sqlx-prepare.sqlite"
     rm -f "$db"
     DATABASE_URL="sqlite://$db" cargo sqlx database create
-    DATABASE_URL="sqlite://$db" cargo sqlx migrate run
-    DATABASE_URL="sqlite://$db" cargo sqlx prepare -- --all-targets
+    DATABASE_URL="sqlite://$db" cargo sqlx migrate run --source crates/aven-core/migrations
+    DATABASE_URL="sqlite://$db" cargo sqlx prepare --workspace -- --all-targets
 
 # Check sqlx offline query metadata
 sqlx-check:
@@ -112,8 +112,8 @@ sqlx-check:
     db="target/sqlx-check.sqlite"
     rm -f "$db"
     scripts/quiet-check sqlx-create env DATABASE_URL="sqlite://$db" cargo sqlx database create
-    scripts/quiet-check sqlx-migrate env DATABASE_URL="sqlite://$db" cargo sqlx migrate run
-    scripts/quiet-check sqlx-check env DATABASE_URL="sqlite://$db" cargo sqlx prepare --check -- --all-targets --locked
+    scripts/quiet-check sqlx-migrate env DATABASE_URL="sqlite://$db" cargo sqlx migrate run --source crates/aven-core/migrations
+    scripts/quiet-check sqlx-check env DATABASE_URL="sqlite://$db" cargo sqlx prepare --workspace --check -- --all-targets --locked
 
 # Check sqlx offline query metadata when SQLx inputs changed
 sqlx-check-if-needed:
@@ -137,7 +137,7 @@ sqlx-check-if-needed:
       ':(glob)**/Cargo.toml'
       build.rs
       ':(glob)**/build.rs'
-      migrations
+      crates/aven-core/migrations
       .sqlx
       ':(glob)**/*.rs'
     )

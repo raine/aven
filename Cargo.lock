@@ -159,13 +159,13 @@ name = "aven"
 version = "0.1.12"
 dependencies = [
  "anyhow",
+ "aven-core",
  "axum",
  "chrono",
  "clap",
  "crossterm",
  "dirs",
  "flate2",
- "getrandom 0.4.3",
  "hex",
  "pulldown-cmark",
  "ratatui",
@@ -185,6 +185,22 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-width",
+]
+
+[[package]]
+name = "aven-core"
+version = "0.1.12"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "getrandom 0.4.3",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]

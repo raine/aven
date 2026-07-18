@@ -1,7 +1,18 @@
-use sqlx::{Sqlite, pool::PoolConnection};
+use std::path::Path;
 
-use crate::db::open_db;
 use crate::ids::{BASE32, TaskId};
+
+pub(crate) async fn open_db(path: &Path) -> anyhow::Result<sqlx::SqlitePool> {
+    aven_core::db::Database::open(path).await?;
+    Ok(sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(path)
+                .create_if_missing(true),
+        )
+        .await?)
+}
 
 pub(crate) fn task_id(value: &str) -> TaskId {
     let mut encoded = value
@@ -16,11 +27,4 @@ pub(crate) fn task_id(value: &str) -> TaskId {
         .collect::<String>();
     encoded.extend(std::iter::repeat_n('0', 16 - encoded.len()));
     encoded.parse().unwrap()
-}
-
-pub async fn test_conn() -> (tempfile::TempDir, PoolConnection<Sqlite>) {
-    let temp = tempfile::tempdir().unwrap();
-    let pool = open_db(&temp.path().join("test.sqlite")).await.unwrap();
-    let conn = pool.acquire().await.unwrap();
-    (temp, conn)
 }

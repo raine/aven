@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use sqlx::SqlitePool;
+use aven_core::db::Database;
 use tokio::net::UdpSocket;
 use tokio::time::{Instant, sleep_until, timeout};
 
@@ -12,7 +12,6 @@ use std::os::unix::fs::MetadataExt;
 use tracing::{debug, info, warn};
 
 use crate::config::AppConfig;
-use crate::db::open_db;
 use crate::signals::shutdown_signal;
 use crate::sync::SyncHttpClient;
 use crate::sync::wire::{DAEMON_INCOMPLETE_RESCHEDULE_MS, DAEMON_SYNC_PAGE_BUDGET};
@@ -53,7 +52,7 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         .context("error sync-server-required hint=\"set sync.server_url in config.yaml\"")?;
     let wake_addr = args.config.wake_addr()?;
     let interval_seconds = args.config.sync_interval_seconds();
-    let pool = open_db(&args.db_path).await?;
+    let database = Database::open(&args.db_path).await?;
     let socket = UdpSocket::bind(wake_addr).await.with_context(|| {
         format!("could not bind daemon wake address {wake_addr}; is another daemon running?")
     })?;
@@ -75,7 +74,7 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
     let client = SyncHttpClient::new().context("build daemon sync HTTP client")?;
     info!(server = %server, http_client_id = %client.id(), "daemon sync client ready");
     run_loop(
-        pool,
+        database,
         server,
         socket,
         interval_seconds,
@@ -87,7 +86,7 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
 }
 
 async fn run_loop(
-    pool: SqlitePool,
+    database: Database,
     server: String,
     socket: UdpSocket,
     interval_seconds: u64,
@@ -126,7 +125,7 @@ async fn run_loop(
             _ = sleep_until(next_sync) => {
                 match timeout(
                     Duration::from_secs(35),
-                    sync_once(&pool, &server, auth_token.as_deref(), &client),
+                    sync_once(&database, &server, auth_token.as_deref(), &client),
                 )
                 .await
                 {
@@ -191,14 +190,13 @@ fn drain_wakes(socket: &UdpSocket, wake_buf: &mut [u8]) {
 }
 
 async fn sync_once(
-    pool: &SqlitePool,
+    database: &Database,
     server: &str,
     auth_token: Option<&str>,
     client: &SyncHttpClient,
 ) -> Result<crate::sync::SyncSummary> {
-    let mut conn = pool.acquire().await?;
     let summary = crate::sync::run_sync_with_page_budget_using_client(
-        &mut conn,
+        database,
         server,
         auth_token,
         Some(DAEMON_SYNC_PAGE_BUDGET),

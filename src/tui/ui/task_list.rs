@@ -1347,15 +1347,15 @@ mod tests {
 
     async fn test_store_with_tasks(tasks: Vec<TaskListItem>) -> TuiStore {
         let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open_db(&dir.path().join("test.db"))
-            .await
-            .unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = crate::test_support::open_db(&db_path).await.unwrap();
         let mut conn = pool.acquire().await.unwrap();
         let workspace = crate::workspaces::ensure_default_workspace(&mut conn)
             .await
             .unwrap();
         drop(conn);
-        let mut store = TuiStore::new(pool, workspace).await.unwrap();
+        let database = crate::db::Database::open(&db_path).await.unwrap();
+        let mut store = TuiStore::new(database, workspace).await.unwrap();
         let labels = tasks
             .iter()
             .flat_map(|item| item.labels.iter().cloned())

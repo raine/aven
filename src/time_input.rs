@@ -6,11 +6,11 @@ use chrono::{
 
 use crate::queue::unix_seconds;
 
-pub(crate) fn parse_available_at_input(input: &str) -> Result<String> {
+pub fn parse_available_at_input(input: &str) -> Result<String> {
     parse_available_at_input_at(input, Local::now())
 }
 
-pub(crate) fn parse_due_on_input(input: &str) -> Result<String> {
+pub fn parse_due_on_input(input: &str) -> Result<String> {
     parse_due_on_input_at(input, Local::now().date_naive())
 }
 
@@ -109,7 +109,7 @@ where
     local_datetime_to_utc(timezone, date.and_time(time))
 }
 
-pub(crate) fn available_at_error_message(error: &anyhow::Error) -> String {
+pub fn available_at_error_message(error: &anyhow::Error) -> String {
     let message = format!("{error:#}");
     message
         .rsplit_once("hint=\"")
@@ -121,7 +121,7 @@ pub(crate) fn available_at_error_message(error: &anyhow::Error) -> String {
         })
 }
 
-pub(crate) fn due_on_error_message(error: &anyhow::Error) -> String {
+pub fn due_on_error_message(error: &anyhow::Error) -> String {
     let message = format!("{error:#}");
     message
         .rsplit_once("hint=\"")
@@ -132,7 +132,7 @@ pub(crate) fn due_on_error_message(error: &anyhow::Error) -> String {
         })
 }
 
-pub(crate) fn validate_due_on_value(value: &str) -> Result<()> {
+pub fn validate_due_on_value(value: &str) -> Result<()> {
     if value.is_empty() {
         return Ok(());
     }
@@ -142,7 +142,7 @@ pub(crate) fn validate_due_on_value(value: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_available_at_value(value: &str) -> Result<()> {
+pub fn validate_available_at_value(value: &str) -> Result<()> {
     if value.is_empty() {
         return Ok(());
     }

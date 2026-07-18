@@ -1,23 +1,22 @@
 use crate::ids::WorkspaceId;
 use anyhow::Result;
+use aven_core::db::Database;
 use serde::Serialize;
-use sqlx::SqliteConnection;
 
 use crate::cli::ContextArgs;
-use crate::query::{self, TaskDependencyItem, conflict_display_value};
-use crate::refs::{DisplayRefContext, resolve_task_ref_in_workspace};
+use crate::query::{self, TaskDependencyItem};
 use crate::render::{print_json_pretty, print_multiline_block, quote};
 use crate::task_render::{TaskEpicLinkJson, task_epic_link_json};
 use crate::types::Task;
 use crate::workspaces::Workspace;
 
 pub(crate) async fn cmd_context(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace: &Workspace,
     args: ContextArgs,
 ) -> Result<()> {
-    let task = resolve_task_ref_in_workspace(conn, workspace, &args.task_ref).await?;
-    let snapshot = task_context_snapshot(conn, workspace, &task).await?;
+    let task = database.resolve_task_ref(workspace, &args.task_ref).await?;
+    let snapshot = task_context_snapshot(database, workspace, &task).await?;
     if args.json {
         print_json_pretty(&snapshot)?;
     } else {
@@ -116,14 +115,16 @@ struct ContextConflictVariant {
 }
 
 async fn task_context_snapshot(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace: &Workspace,
     task: &Task,
 ) -> Result<TaskContextSnapshot> {
-    let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
+    let display_refs = database.display_ref_context(&workspace.id).await?;
     let display_ref = display_refs.display_ref(task);
     let ref_suffix = display_refs.display_suffix(&workspace.id, &task.id);
-    let detail = query::task_detail_with_display_refs(conn, task, &display_refs).await?;
+    let detail = database
+        .task_detail_with_display_refs(task, &display_refs)
+        .await?;
     let labels = detail.item.labels.clone();
     let epic_parent = detail.item.epic_parent.as_ref().map(task_epic_link_json);
     let epic_children = detail
@@ -200,7 +201,7 @@ async fn task_context_snapshot(
                 body: note.body,
             })
             .collect(),
-        conflicts: context_conflicts(conn, &task.workspace_id, details).await?,
+        conflicts: context_conflicts(database, &task.workspace_id, details).await?,
         has_conflicts,
         is_blocked,
         has_open_dependents,
@@ -223,16 +224,18 @@ fn context_dependency_task(item: TaskDependencyItem) -> ContextDependencyTask {
 }
 
 async fn context_conflicts(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace_id: &WorkspaceId,
     details: Vec<query::TaskDetailConflict>,
 ) -> Result<Vec<ContextConflict>> {
     let mut conflicts = Vec::with_capacity(details.len());
     for detail in details {
-        let local_value =
-            conflict_display_value(conn, workspace_id, &detail.field, &detail.local_value).await?;
-        let remote_value =
-            conflict_display_value(conn, workspace_id, &detail.field, &detail.remote_value).await?;
+        let local_value = database
+            .conflict_display_value(workspace_id, &detail.field, &detail.local_value)
+            .await?;
+        let remote_value = database
+            .conflict_display_value(workspace_id, &detail.field, &detail.remote_value)
+            .await?;
         conflicts.push(ContextConflict {
             field: detail.field,
             variants: vec![

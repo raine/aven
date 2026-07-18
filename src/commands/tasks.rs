@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
+use aven_core::db::Database;
 use serde::Serialize;
-use sqlx::SqliteConnection;
 
 use super::validation::{validate_optional_priority, validate_optional_status, validate_priority};
 use crate::cli::{
@@ -8,22 +8,22 @@ use crate::cli::{
 };
 use crate::config::AppConfig;
 use crate::input::read_optional_text;
-use crate::operations::{TaskDraft, TaskUpdate, create_task, set_task_deleted, update_task};
+use crate::operations::{TaskDraft, TaskUpdate};
 use crate::query::{
     self, SortDirection, TaskAvailabilityFilter, TaskFilters, TaskQueryMode, TaskSearchQuery,
     TaskSearchResult, TaskSort,
 };
-use crate::refs::{DisplayRefContext, resolve_task_ref_in_workspace};
+use crate::refs::DisplayRefContext;
 use crate::render::{KvLine, changed_text, print_json_pretty, quote};
 use crate::task_render::{
     TaskConflictReport, TaskFullReport, print_full_task_report, print_task_line_item,
     task_full_json, task_line_json_item,
 };
 use crate::types::Task;
-use crate::workspaces::{Workspace, workspace_for_id};
+use crate::workspaces::Workspace;
 
 pub(crate) async fn cmd_add(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace: &Workspace,
     config: &AppConfig,
     args: AddArgs,
@@ -36,7 +36,7 @@ pub(crate) async fn cmd_add(
         "description",
     )?
     .unwrap_or_default();
-    let draft = if args.natural {
+    let mut draft = if args.natural {
         if !description.is_empty()
             || args.project.is_some()
             || args.priority != "none"
@@ -48,13 +48,17 @@ pub(crate) async fn cmd_add(
                 "error natural-add-exclusive hint=\"use plain add flags or --natural, not both\""
             );
         }
-        crate::task_intake::parse_task_intake(
-            conn,
+        let context =
+            crate::task_intake::TaskIntakeContext::load_with_database(database, workspace, None)
+                .await?;
+        let output = crate::task_intake::run_task_intake_command(
             &config.agent.task_intake,
+            &context,
             &args.title,
-            workspace,
         )
-        .await?
+        .await?;
+        crate::task_intake::parsed_output_to_draft_with_database(database, &context, &output)
+            .await?
     } else {
         TaskDraft {
             title: args.title,
@@ -76,45 +80,68 @@ pub(crate) async fn cmd_add(
             is_epic: args.epic,
         }
     };
-    let outcome = create_task(conn, workspace, draft).await?;
+    if let Some(project) = draft.project.as_deref() {
+        draft.project = Some(
+            crate::projects::resolve_project_key_for_add_with_database(
+                database,
+                &workspace.id,
+                project,
+            )
+            .await?,
+        );
+    } else {
+        draft.project =
+            crate::projects::inferred_project_key_for_add_with_database(database, workspace)
+                .await?;
+    }
+    let outcome = database.create_task(workspace, draft).await?;
     let task = outcome.task;
-    let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
+    let display_refs = database.display_ref_context(&workspace.id).await?;
     print_created_task(&task, workspace, &display_refs);
     Ok(())
 }
 
 pub(crate) async fn cmd_internal_natural_add(
-    conn: &mut SqliteConnection,
+    database: &Database,
     config: &AppConfig,
     args: InternalNaturalAddArgs,
 ) -> Result<()> {
-    let workspace = workspace_for_id(conn, &args.workspace_id).await?;
+    let workspace = database.workspace_for_id(&args.workspace_id).await?;
     let outcome = async {
-        let draft = crate::task_intake::parse_task_intake_with_project(
-            conn,
-            &config.agent.task_intake,
-            &args.input,
+        let context = crate::task_intake::TaskIntakeContext::load_with_database(
+            database,
             &workspace,
             args.project.as_deref(),
         )
         .await?;
-        let outcome = create_task(conn, &workspace, draft).await?;
+        let output = crate::task_intake::run_task_intake_command(
+            &config.agent.task_intake,
+            &context,
+            &args.input,
+        )
+        .await?;
+        let draft =
+            crate::task_intake::parsed_output_to_draft_with_database(database, &context, &output)
+                .await?;
+        let outcome = database.create_task(&workspace, draft).await?;
         if args.tui_undo {
             let task_id = outcome.task.id.clone();
-            let snapshot = crate::undo::task_snapshot(conn, &args.workspace_id, &task_id).await?;
-            crate::undo::record_tui_undo(
-                conn,
-                &args.workspace_id,
-                &format!("task {task_id}"),
-                crate::undo::UndoPayload {
-                    commands: vec![crate::undo::UndoCommand::DeleteCreatedTask {
-                        task_id,
-                        create_change_id: outcome.create_change_id.clone(),
-                        expected: snapshot,
-                    }],
-                },
-            )
-            .await?;
+            let snapshot = database
+                .task_undo_snapshot(&args.workspace_id, &task_id)
+                .await?;
+            database
+                .record_tui_undo(
+                    &args.workspace_id,
+                    &format!("task {task_id}"),
+                    crate::undo::UndoPayload {
+                        commands: vec![crate::undo::UndoCommand::DeleteCreatedTask {
+                            task_id,
+                            create_change_id: outcome.create_change_id.clone(),
+                            expected: snapshot,
+                        }],
+                    },
+                )
+                .await?;
         }
         Ok(outcome)
     }
@@ -138,7 +165,7 @@ pub(crate) async fn cmd_internal_natural_add(
         project = %task.project_key,
         "created task from internal natural-add"
     );
-    let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
+    let display_refs = database.display_ref_context(&workspace.id).await?;
     print_created_task(&task, &workspace, &display_refs);
     crate::daemon::wake_if_enabled(config);
     Ok(())
@@ -171,26 +198,18 @@ fn due_on_display(due_on: Option<&str>) -> String {
 }
 
 async fn build_full_task_report(
-    conn: &mut SqliteConnection,
+    database: &Database,
     detail: query::TaskDetail,
 ) -> Result<TaskFullReport> {
     let task = &detail.item.task;
     let mut conflicts = Vec::with_capacity(detail.conflicts.len());
     for conflict in &detail.conflicts {
-        let local_value = query::conflict_display_value(
-            conn,
-            &task.workspace_id,
-            &conflict.field,
-            &conflict.local_value,
-        )
-        .await?;
-        let remote_value = query::conflict_display_value(
-            conn,
-            &task.workspace_id,
-            &conflict.field,
-            &conflict.remote_value,
-        )
-        .await?;
+        let local_value = database
+            .conflict_display_value(&task.workspace_id, &conflict.field, &conflict.local_value)
+            .await?;
+        let remote_value = database
+            .conflict_display_value(&task.workspace_id, &conflict.field, &conflict.remote_value)
+            .await?;
         conflicts.push(TaskConflictReport {
             field: conflict.field.clone(),
             variant_a: conflict.variant_a.clone(),
@@ -203,35 +222,35 @@ async fn build_full_task_report(
 }
 
 pub(crate) async fn cmd_show(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace: &Workspace,
     args: ShowArgs,
 ) -> Result<()> {
-    let task = resolve_task_ref_in_workspace(conn, workspace, &args.task_ref).await?;
+    let task = database.resolve_task_ref(workspace, &args.task_ref).await?;
     if args.full {
-        let detail = query::task_detail(conn, &task).await?;
-        let report = build_full_task_report(conn, detail).await?;
+        let detail = database.task_detail(&task).await?;
+        let report = build_full_task_report(database, detail).await?;
         if args.json {
             print_json_pretty(&task_full_json(&report))?;
         } else {
             print_full_task_report(&report);
         }
     } else {
-        let item = query::list_task_items_in_workspace(
-            conn,
-            &workspace.id,
-            TaskFilters {
-                task_ids: vec![task.id.clone()],
-                ..TaskFilters::default().include_deleted(task.deleted)
-            },
-            TaskQueryMode::Flat,
-            TaskSort::Updated,
-            SortDirection::Desc,
-        )
-        .await?
-        .into_iter()
-        .next()
-        .expect("task must exist after resolve");
+        let item = database
+            .list_task_items(
+                &workspace.id,
+                TaskFilters {
+                    task_ids: vec![task.id.clone()],
+                    ..TaskFilters::default().include_deleted(task.deleted)
+                },
+                TaskQueryMode::Flat,
+                TaskSort::Updated,
+                SortDirection::Desc,
+            )
+            .await?
+            .into_iter()
+            .next()
+            .expect("task must exist after resolve");
         if args.json {
             print_json_pretty(&task_line_json_item(&item))?;
         } else {
@@ -242,7 +261,7 @@ pub(crate) async fn cmd_show(
 }
 
 pub(crate) async fn cmd_list(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace: &Workspace,
     args: ListArgs,
 ) -> Result<()> {
@@ -277,15 +296,9 @@ pub(crate) async fn cmd_list(
     } else {
         SortDirection::Desc
     };
-    let mut items = query::list_task_items_in_workspace(
-        conn,
-        &workspace.id,
-        filters,
-        TaskQueryMode::Flat,
-        sort,
-        direction,
-    )
-    .await?;
+    let mut items = database
+        .list_task_items(&workspace.id, filters, TaskQueryMode::Flat, sort, direction)
+        .await?;
     if let Some(limit) = args.limit {
         items.truncate(limit);
     }
@@ -316,7 +329,7 @@ struct SearchJsonItem {
 }
 
 pub(crate) async fn cmd_search(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace: &Workspace,
     args: TaskSearchArgs,
 ) -> Result<()> {
@@ -324,16 +337,16 @@ pub(crate) async fn cmd_search(
     if text.trim().is_empty() {
         bail!("error search-query-required hint=\"pass one or more search terms\"");
     }
-    let results = query::search_task_items_in_workspace(
-        conn,
-        &workspace.id,
-        TaskSearchQuery {
-            text,
-            include_deleted: args.all,
-            limit: args.limit,
-        },
-    )
-    .await?;
+    let results = database
+        .search_task_items(
+            &workspace.id,
+            TaskSearchQuery {
+                text,
+                include_deleted: args.all,
+                limit: args.limit,
+            },
+        )
+        .await?;
     if args.json {
         let items = results.iter().map(search_json_item).collect::<Vec<_>>();
         print_json_pretty(&items)?;
@@ -417,11 +430,11 @@ fn parse_epic_switch(value: Option<String>) -> Result<Option<bool>> {
 }
 
 pub(crate) async fn cmd_edit(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace: &Workspace,
     args: TaskEditArgs,
 ) -> Result<()> {
-    let task = resolve_task_ref_in_workspace(conn, workspace, &args.task_ref).await?;
+    let task = database.resolve_task_ref(workspace, &args.task_ref).await?;
     let description = read_optional_text(
         args.description,
         args.description_file.as_deref(),
@@ -457,26 +470,26 @@ pub(crate) async fn cmd_edit(
             .map(Some)
     };
     let is_epic = parse_epic_switch(args.epic)?;
-    let outcome = update_task(
-        conn,
-        workspace,
-        &task.id,
-        TaskUpdate {
-            title: args.title,
-            description,
-            project: args.project,
-            status: args.status,
-            priority: args.priority,
-            available_at,
-            due_on,
-            is_epic,
-            add_labels: args.label,
-            remove_labels: args.remove_label,
-        },
-    )
-    .await?;
+    let outcome = database
+        .update_task(
+            workspace,
+            &task.id,
+            TaskUpdate {
+                title: args.title,
+                description,
+                project: args.project,
+                status: args.status,
+                priority: args.priority,
+                available_at,
+                due_on,
+                is_epic,
+                add_labels: args.label,
+                remove_labels: args.remove_label,
+            },
+        )
+        .await?;
     let task = outcome.task;
-    let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
+    let display_refs = database.display_ref_context(&workspace.id).await?;
     println!(
         "updated {} changed={} status={} priority={}{}{} title={}",
         display_refs.display_ref(&task),
@@ -490,15 +503,17 @@ pub(crate) async fn cmd_edit(
     Ok(())
 }
 pub(crate) async fn cmd_delete_restore(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace: &Workspace,
     args: RefArgs,
     delete: bool,
 ) -> Result<()> {
-    let task = resolve_task_ref_in_workspace(conn, workspace, &args.task_ref).await?;
-    let outcome = set_task_deleted(conn, workspace, &task.id, delete).await?;
+    let task = database.resolve_task_ref(workspace, &args.task_ref).await?;
+    let outcome = database
+        .set_task_deleted(workspace, &task.id, delete)
+        .await?;
     let task = outcome.task;
-    let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
+    let display_refs = database.display_ref_context(&workspace.id).await?;
     if delete {
         println!("deleted {}", display_refs.display_ref(&task));
     } else {

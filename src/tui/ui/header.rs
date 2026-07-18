@@ -542,15 +542,15 @@ mod tests {
 
     async fn test_store() -> TuiStore {
         let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open_db(&dir.path().join("test.db"))
-            .await
-            .unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = crate::test_support::open_db(&db_path).await.unwrap();
         let mut conn = pool.acquire().await.unwrap();
         crate::workspaces::ensure_default_workspace(&mut conn)
             .await
             .unwrap();
         drop(conn);
-        let mut store = TuiStore::new(pool, crate::workspaces::Workspace::default())
+        let database = crate::db::Database::open(&db_path).await.unwrap();
+        let mut store = TuiStore::new(database, crate::workspaces::Workspace::default())
             .await
             .unwrap();
         store.counts = crate::query::SidebarCounts {

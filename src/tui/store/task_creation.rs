@@ -2,11 +2,8 @@ use anyhow::Result;
 use tokio::task::JoinHandle;
 
 use crate::config::TaskIntakeConfig;
-use crate::operations::{
-    TaskDraft, add_note as add_note_operation, create_task as create_task_operation,
-};
-use crate::refs::DisplayRefContext;
-use crate::undo::{UndoCommand, task_snapshot};
+use crate::operations::TaskDraft;
+use crate::undo::UndoCommand;
 
 use super::TuiStore;
 
@@ -17,42 +14,48 @@ impl TuiStore {
         input: String,
         project: Option<String>,
     ) -> JoinHandle<Result<TaskDraft>> {
-        let pool = self.pool.clone();
+        let database = self.database.clone();
         let workspace = self.active_workspace.clone();
         tokio::spawn(async move {
-            let context = {
-                let mut conn = pool.acquire().await?;
-                crate::task_intake::TaskIntakeContext::load_with_project(
-                    &mut conn,
-                    &workspace,
-                    project.as_deref(),
-                )
-                .await?
-            };
+            let context = crate::task_intake::TaskIntakeContext::load_with_database(
+                &database,
+                &workspace,
+                project.as_deref(),
+            )
+            .await?;
             let output =
                 crate::task_intake::run_task_intake_command(&config, &context, &input).await?;
-            let mut conn = pool.acquire().await?;
-            crate::task_intake::parsed_output_to_draft(&mut conn, &context, &output).await
+            crate::task_intake::parsed_output_to_draft_with_database(&database, &context, &output)
+                .await
         })
     }
 
     pub(crate) async fn create_task(
         &mut self,
-        draft: TaskDraft,
+        mut draft: TaskDraft,
         current_selected_index: Option<usize>,
     ) -> Result<(String, Option<usize>)> {
         let previous_id = self
             .selected_task(current_selected_index)
             .map(|item| item.task.id.clone());
-        let mut conn = self.pool.acquire().await?;
-        let outcome = create_task_operation(&mut conn, &self.active_workspace, draft).await?;
+        if draft.project.is_none() {
+            draft.project = self.inferred_add_project().await?;
+        }
+        let outcome = self
+            .database
+            .create_task(&self.active_workspace, draft)
+            .await?;
         let task_id = outcome.task.id.clone();
-        let display_refs =
-            DisplayRefContext::for_workspace(&mut conn, &self.active_workspace.id).await?;
+        let display_refs = self
+            .database
+            .display_ref_context(&self.active_workspace.id)
+            .await?;
         let message_ref = display_refs.display_ref(&outcome.task);
         let workspace_id = self.active_workspace.id.clone();
-        let snapshot = task_snapshot(&mut conn, &workspace_id, &task_id).await?;
-        drop(conn);
+        let snapshot = self
+            .database
+            .task_undo_snapshot(&workspace_id, &task_id)
+            .await?;
         self.record_undo_commands(
             &format!("task {task_id}"),
             vec![UndoCommand::DeleteCreatedTask {
@@ -81,18 +84,11 @@ impl TuiStore {
         task_id: &crate::ids::TaskId,
         body: String,
     ) -> Result<String> {
-        let workspace_id = self.active_workspace.id.clone();
-        let mut conn = self.pool.acquire().await?;
-        let outcome = add_note_operation(&mut conn, &self.active_workspace, task_id, body).await?;
-        let note_change_id: String = sqlx::query_scalar(
-            "SELECT change_id FROM notes WHERE workspace_id = ? AND id = ? AND task_id = ?",
-        )
-        .bind(&workspace_id)
-        .bind(&outcome.note_id)
-        .bind(task_id)
-        .fetch_one(&mut *conn)
-        .await?;
-        drop(conn);
+        let outcome = self
+            .database
+            .add_note(&self.active_workspace, task_id, body)
+            .await?;
+        let note_change_id = outcome.change_id.clone();
         self.record_undo_commands(
             &format!("note {}", outcome.note_id),
             vec![UndoCommand::DeleteCreatedNote {

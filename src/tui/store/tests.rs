@@ -1,17 +1,21 @@
+#![allow(unused_variables)]
+
 use super::*;
 use crate::ids::{TaskId, WorkspaceId};
 
 use crate::choices::{PRIORITIES, TaskPriority, TaskStatus};
 use crate::operations::{TaskDraft, TaskUpdate};
 use crate::query::SortDirection;
+use aven_core::test_support::list_labels_in_workspace;
+use sqlx::SqlitePool;
 
 async fn test_store() -> TuiStore {
     let dir = tempfile::tempdir().unwrap();
-    let pool = crate::db::open_db(&dir.path().join("test.db"))
-        .await
-        .unwrap();
+    let db_path = dir.path().join("test.db");
+    let pool = crate::test_support::open_db(&db_path).await.unwrap();
     reset_default_workspace(&pool).await;
-    TuiStore::new(pool, crate::workspaces::Workspace::default())
+    let database = aven_core::db::Database::open(&db_path).await.unwrap();
+    TuiStore::new(database, crate::workspaces::Workspace::default())
         .await
         .unwrap()
 }
@@ -25,11 +29,11 @@ async fn reset_default_workspace(pool: &SqlitePool) {
 
 async fn test_store_with_pool() -> (tempfile::TempDir, sqlx::SqlitePool, TuiStore) {
     let dir = tempfile::tempdir().unwrap();
-    let pool = crate::db::open_db(&dir.path().join("test.db"))
-        .await
-        .unwrap();
+    let db_path = dir.path().join("test.db");
+    let pool = crate::test_support::open_db(&db_path).await.unwrap();
     reset_default_workspace(&pool).await;
-    let store = TuiStore::new(pool.clone(), crate::workspaces::Workspace::default())
+    let database = aven_core::db::Database::open(&db_path).await.unwrap();
+    let store = TuiStore::new(database, crate::workspaces::Workspace::default())
         .await
         .unwrap();
     (dir, pool, store)
@@ -72,6 +76,21 @@ async fn seed_title_conflict(pool: &SqlitePool, task_id: &TaskId) {
     .await
     .unwrap();
     drop(conn);
+}
+
+async fn seed_title_conflict_database(database: &crate::db::Database, task_id: &TaskId) {
+    let mut conn = aven_core::test_support::acquire(database).await.unwrap();
+    sqlx::query(
+        "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
+         local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
+         VALUES (?, 'title', NULL, 'local title', 'remote title', NULL, ?, 'a', 'b', ?, 0)",
+    )
+    .bind(task_id)
+    .bind(crate::ids::new_id())
+    .bind(crate::ids::now())
+    .execute(&mut *conn)
+    .await
+    .unwrap();
 }
 
 fn task_draft(title: &str) -> TaskDraft {
@@ -639,7 +658,7 @@ mod task_creation_and_updates {
 
     #[tokio::test]
     async fn title_edit_keeps_queue_activity_timestamp() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) =
             create_selected_task_with_stale_queue_activity(&mut store, &pool, "Old").await;
         let old_activity = "1970-01-01T00:00:00Z";
@@ -667,7 +686,7 @@ mod task_creation_and_updates {
 
     #[tokio::test]
     async fn unchanged_title_edit_leaves_pending_change_count() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         let (_task_id, selected) = create_selected_task(&mut store, "Stable").await;
         let pending_before = pending_change_count(&pool).await;
         let display_ref = store.tasks[selected].display_ref.clone();
@@ -685,7 +704,7 @@ mod task_creation_and_updates {
 
     #[tokio::test]
     async fn unchanged_task_fields_leave_pending_change_count() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         store.create_project("Side".to_string()).await.unwrap();
         let (task_id, _selected) = create_selected_task(&mut store, "Stable").await;
         let pending_before = pending_change_count(&pool).await;
@@ -723,7 +742,7 @@ mod task_creation_and_updates {
 
     #[tokio::test]
     async fn unchanged_label_updates_leave_pending_change_count() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         store.create_label("bug".to_string()).await.unwrap();
         store.create_label("missing".to_string()).await.unwrap();
         let (task_id, _selected) = create_selected_task(&mut store, "Labels").await;
@@ -763,7 +782,7 @@ mod task_creation_and_updates {
 
     #[tokio::test]
     async fn priority_edit_refreshes_queue_activity_timestamp() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         let (_task_id, selected) =
             create_selected_task_with_stale_queue_activity(&mut store, &pool, "Old").await;
         let old_activity = "1970-01-01T00:00:00Z";
@@ -1015,12 +1034,17 @@ mod conflicts {
     #[tokio::test]
     async fn resolve_conflict_value_updates_task_and_clears_conflict() {
         let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open_db(&dir.path().join("test.db"))
+        let pool = crate::test_support::open_db(&dir.path().join("test.db"))
             .await
             .unwrap();
-        let mut store = TuiStore::new(pool.clone(), crate::workspaces::Workspace::default())
-            .await
-            .unwrap();
+        let mut store = TuiStore::new(
+            aven_core::db::Database::open(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+            crate::workspaces::Workspace::default(),
+        )
+        .await
+        .unwrap();
         let (_, selected) = store.create_task(task_draft("Before"), None).await.unwrap();
         let selected = selected.unwrap();
         let task_id = store.tasks[selected].task.id.clone();
@@ -1056,12 +1080,17 @@ mod conflicts {
     #[tokio::test]
     async fn resolve_missing_conflict_leaves_task_unchanged() {
         let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open_db(&dir.path().join("test.db"))
+        let pool = crate::test_support::open_db(&dir.path().join("test.db"))
             .await
             .unwrap();
-        let mut store = TuiStore::new(pool.clone(), crate::workspaces::Workspace::default())
-            .await
-            .unwrap();
+        let mut store = TuiStore::new(
+            aven_core::db::Database::open(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+            crate::workspaces::Workspace::default(),
+        )
+        .await
+        .unwrap();
         let (_, selected) = store
             .create_task(task_draft("Stable title"), None)
             .await
@@ -1091,12 +1120,17 @@ mod conflicts {
     #[tokio::test]
     async fn update_title_returns_conflicted_field_error() {
         let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open_db(&dir.path().join("test.db"))
+        let pool = crate::test_support::open_db(&dir.path().join("test.db"))
             .await
             .unwrap();
-        let mut store = TuiStore::new(pool.clone(), crate::workspaces::Workspace::default())
-            .await
-            .unwrap();
+        let mut store = TuiStore::new(
+            aven_core::db::Database::open(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+            crate::workspaces::Workspace::default(),
+        )
+        .await
+        .unwrap();
         let (_, selected) = store
             .create_task(task_draft("Conflict"), None)
             .await
@@ -1131,7 +1165,7 @@ mod views_filters_and_sort {
 
     #[tokio::test]
     async fn availability_transition_refreshes_tasks_sidebar_and_project_counts() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         let (message, selected) = store
             .create_task(
                 TaskDraft {
@@ -1506,11 +1540,13 @@ mod views_filters_and_sort {
             .await
             .unwrap();
 
-        let pool = store.pool.clone();
-        seed_title_conflict(&pool, &task_id).await;
+        let pool = store.database.clone();
+        seed_title_conflict_database(&pool, &task_id).await;
         store.refresh(Some(&task_id)).await.unwrap();
 
-        let mut conn = store.pool.acquire().await.unwrap();
+        let mut conn = aven_core::test_support::acquire(&store.database)
+            .await
+            .unwrap();
         crate::operations::add_task_dependency(
             &mut conn,
             &crate::workspaces::Workspace::default(),
@@ -1521,7 +1557,9 @@ mod views_filters_and_sort {
         .unwrap();
         drop(conn);
 
-        let mut conn = store.pool.acquire().await.unwrap();
+        let mut conn = aven_core::test_support::acquire(&store.database)
+            .await
+            .unwrap();
         crate::operations::add_task_dependency(
             &mut conn,
             &crate::workspaces::Workspace::default(),
@@ -1741,7 +1779,7 @@ mod undo {
 
     #[tokio::test]
     async fn undo_title_edit_expires_on_store_restart() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) = create_selected_task(&mut store, "Before").await;
         store
             .update_title(Some(selected), "After".to_string())
@@ -1749,9 +1787,14 @@ mod undo {
             .unwrap();
         assert_eq!(store.tasks[selected].task.title, "After");
 
-        let mut restarted = TuiStore::new(pool, crate::workspaces::Workspace::default())
-            .await
-            .unwrap();
+        let mut restarted = TuiStore::new(
+            aven_core::db::Database::open(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+            crate::workspaces::Workspace::default(),
+        )
+        .await
+        .unwrap();
         assert!(restarted.undo_last(None).await.unwrap().is_none());
         let index = restarted
             .tasks
@@ -1763,7 +1806,7 @@ mod undo {
 
     #[tokio::test]
     async fn store_startup_clears_pending_undo_but_preserves_consumed_entries() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         let (_, selected) = create_selected_task(&mut store, "Before").await;
         let workspace_id = store.active_workspace.id.clone();
 
@@ -1778,9 +1821,14 @@ mod undo {
         assert_eq!(pending_undo_count(&pool, &workspace_id).await, 1);
 
         drop(store);
-        let _restarted = TuiStore::new(pool.clone(), crate::workspaces::Workspace::default())
-            .await
-            .unwrap();
+        let _restarted = TuiStore::new(
+            aven_core::db::Database::open(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+            crate::workspaces::Workspace::default(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(pending_undo_count(&pool, &workspace_id).await, 0);
         assert_eq!(
@@ -1791,7 +1839,7 @@ mod undo {
 
     #[tokio::test]
     async fn undo_guard_blocks_stale_task_field() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) = create_selected_task(&mut store, "Before").await;
         store
             .update_title(Some(selected), "After".to_string())
@@ -1853,7 +1901,7 @@ mod undo {
 
     #[tokio::test]
     async fn repeated_delete_does_not_add_noop_undo_entry() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) = create_selected_task(&mut store, "Keep once").await;
         store.update_deleted(Some(selected), true).await.unwrap();
         let workspace_id = store.active_workspace.id.clone();
@@ -1881,7 +1929,7 @@ mod undo {
 
     #[tokio::test]
     async fn noop_task_field_updates_do_not_add_undo_entries() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         store.create_project("Side".to_string()).await.unwrap();
         store.create_label("bug".to_string()).await.unwrap();
         let (task_id, selected) = create_selected_task(&mut store, "Noop fields").await;
@@ -1941,7 +1989,7 @@ mod undo {
 
     #[tokio::test]
     async fn duplicate_project_and_label_do_not_add_undo_entries() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         store.create_project("Side".to_string()).await.unwrap();
         store.create_label("bug".to_string()).await.unwrap();
         let workspace_id = store.active_workspace.id.clone();
@@ -1989,7 +2037,7 @@ mod undo {
 
     #[tokio::test]
     async fn undo_create_task_removes_local_unsynced_task() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, _) = create_selected_task(&mut store, "Temporary").await;
         store.undo_last(None).await.unwrap();
 
@@ -2035,7 +2083,7 @@ mod undo {
 
     #[tokio::test]
     async fn undo_note_create_deletes_only_unsynced_note() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) = create_selected_task(&mut store, "Notes").await;
         let note_id = store
             .add_note_to_task(&task_id, "hello".to_string())
@@ -2057,7 +2105,7 @@ mod undo {
 
     #[tokio::test]
     async fn undo_project_create_fails_when_referenced_or_synced() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         store.create_project("Side".to_string()).await.unwrap();
         let mut conn = pool.acquire().await.unwrap();
         let workspace_id = store.active_workspace.id.clone();
@@ -2091,7 +2139,7 @@ mod undo {
 
     #[tokio::test]
     async fn undo_label_create_fails_when_referenced_or_synced() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         store.create_label("shared".to_string()).await.unwrap();
         let mut conn = pool.acquire().await.unwrap();
         let workspace_id = store.active_workspace.id.clone();
@@ -2116,7 +2164,7 @@ mod undo {
 
     #[tokio::test]
     async fn undo_conflict_resolution_restores_unresolved_conflict() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) = create_selected_task(&mut store, "Before").await;
         let display_ref = store.tasks[selected].display_ref.clone();
 
@@ -2149,7 +2197,7 @@ mod undo {
 
     #[tokio::test]
     async fn undo_project_conflict_resolution_uses_project_ids() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         store.create_project("Ops".to_string()).await.unwrap();
         let (task_id, selected) = create_selected_task(&mut store, "Before").await;
         let display_ref = store.tasks[selected].display_ref.clone();
@@ -2212,7 +2260,7 @@ mod undo {
 
     #[tokio::test]
     async fn undo_is_workspace_scoped_within_running_store() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) = create_selected_task(&mut store, "Scoped").await;
         store
             .update_title(Some(selected), "Changed".to_string())
@@ -2253,7 +2301,7 @@ mod undo {
 
     #[tokio::test]
     async fn undo_skips_noop_status_before_previous_mutation() {
-        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) = create_selected_task(&mut store, "Noop status").await;
         store.update_status(Some(selected), "todo").await.unwrap();
         let workspace_id = store.active_workspace.id.clone();
@@ -2326,7 +2374,7 @@ mod workspace_scoping {
         create_mobile_project(&mut store).await;
         create_task_in_project(&mut store, "mobile task", "mobile-app").await;
 
-        let reopened = TuiStore::new(store.pool.clone(), store.active_workspace.clone())
+        let reopened = TuiStore::new(store.database.clone(), store.active_workspace.clone())
             .await
             .unwrap();
 
@@ -2353,7 +2401,7 @@ mod workspace_scoping {
             .await
             .unwrap();
         let reopened = TuiStore::new_with_initial_project(
-            store.pool.clone(),
+            store.database.clone(),
             store.active_workspace.clone(),
             Some("mobile-app".to_string()),
         )
@@ -2373,7 +2421,9 @@ mod workspace_scoping {
     async fn delete_project_ignores_tasks_in_other_workspace() {
         let mut store = test_store().await;
         create_mobile_project(&mut store).await;
-        let mut conn = store.pool.acquire().await.unwrap();
+        let mut conn = aven_core::test_support::acquire(&store.database)
+            .await
+            .unwrap();
         let other = crate::workspaces::create_workspace(&mut conn, "Client Work")
             .await
             .unwrap();
@@ -2393,7 +2443,9 @@ mod workspace_scoping {
 
         store.delete_project("mobile-app").await.unwrap();
 
-        let mut conn = store.pool.acquire().await.unwrap();
+        let mut conn = aven_core::test_support::acquire(&store.database)
+            .await
+            .unwrap();
         let other_count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM projects WHERE workspace_id = ? AND key = 'mobile-app'",
         )
@@ -2409,7 +2461,9 @@ mod workspace_scoping {
         let mut store = test_store().await;
         create_mobile_project(&mut store).await;
         create_task_in_project(&mut store, "Default task", "mobile-app").await;
-        let mut conn = store.pool.acquire().await.unwrap();
+        let mut conn = aven_core::test_support::acquire(&store.database)
+            .await
+            .unwrap();
         let other = crate::workspaces::create_workspace(&mut conn, "Client Work")
             .await
             .unwrap();
@@ -2424,7 +2478,9 @@ mod workspace_scoping {
 
         store.delete_project("mobile-app").await.unwrap();
 
-        let mut conn = store.pool.acquire().await.unwrap();
+        let mut conn = aven_core::test_support::acquire(&store.database)
+            .await
+            .unwrap();
         let default_count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM projects WHERE workspace_id = ? AND key = 'mobile-app'",
         )
@@ -2438,7 +2494,9 @@ mod workspace_scoping {
     #[tokio::test]
     async fn deferred_task_intake_retains_spawned_workspace() {
         let mut store = test_store().await;
-        let mut conn = store.pool.acquire().await.unwrap();
+        let mut conn = aven_core::test_support::acquire(&store.database)
+            .await
+            .unwrap();
         crate::projects::create_project_in_workspace(
             &mut conn,
             &store.active_workspace.id,
@@ -2476,13 +2534,18 @@ mod workspace_scoping {
     #[tokio::test]
     async fn switch_workspace_refreshes_workspace_scoped_state() {
         let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open_db(&dir.path().join("test.db"))
+        let pool = crate::test_support::open_db(&dir.path().join("test.db"))
             .await
             .unwrap();
         reset_default_workspace(&pool).await;
-        let mut store = TuiStore::new(pool.clone(), crate::workspaces::Workspace::default())
-            .await
-            .unwrap();
+        let mut store = TuiStore::new(
+            aven_core::db::Database::open(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+            crate::workspaces::Workspace::default(),
+        )
+        .await
+        .unwrap();
         let (_, selected) = store
             .create_task(task_draft("Default workspace task"), None)
             .await
@@ -2528,13 +2591,18 @@ mod workspace_scoping {
     #[tokio::test]
     async fn workspace_picker_selects_first_inactive_workspace() {
         let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open_db(&dir.path().join("test.db"))
+        let pool = crate::test_support::open_db(&dir.path().join("test.db"))
             .await
             .unwrap();
         reset_default_workspace(&pool).await;
-        let mut store = TuiStore::new(pool.clone(), crate::workspaces::Workspace::default())
-            .await
-            .unwrap();
+        let mut store = TuiStore::new(
+            aven_core::db::Database::open(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+            crate::workspaces::Workspace::default(),
+        )
+        .await
+        .unwrap();
 
         let mut conn = pool.acquire().await.unwrap();
         crate::workspaces::create_workspace(&mut conn, "Client Work")
@@ -2560,13 +2628,18 @@ mod workspace_scoping {
     #[tokio::test]
     async fn refresh_reads_store_workspace() {
         let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open_db(&dir.path().join("test.db"))
+        let pool = crate::test_support::open_db(&dir.path().join("test.db"))
             .await
             .unwrap();
         reset_default_workspace(&pool).await;
-        let mut store = TuiStore::new(pool.clone(), crate::workspaces::Workspace::default())
-            .await
-            .unwrap();
+        let mut store = TuiStore::new(
+            aven_core::db::Database::open(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+            crate::workspaces::Workspace::default(),
+        )
+        .await
+        .unwrap();
         let (_, selected) = store
             .create_task(task_draft("Default workspace task"), None)
             .await
@@ -2627,7 +2700,9 @@ mod epics {
         let child_title = format!("child of {}", &parent_id[..4]);
         let (child_id, _) = create_selected_task(store, &child_title).await;
 
-        let mut conn = store.pool.acquire().await.unwrap();
+        let mut conn = aven_core::test_support::acquire(&store.database)
+            .await
+            .unwrap();
         crate::operations::add_task_to_epic(
             &mut conn,
             &crate::workspaces::Workspace::default(),

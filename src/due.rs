@@ -1,7 +1,7 @@
 use chrono::NaiveDate;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DueState {
+pub enum DueState {
     None,
     Future(i64),
     Today,
@@ -9,11 +9,12 @@ pub(crate) enum DueState {
 }
 
 impl DueState {
-    pub(crate) fn needs_action(self) -> bool {
+    pub fn needs_action(self) -> bool {
         matches!(self, Self::Today | Self::Overdue(_))
     }
 
-    pub(crate) fn score(self) -> i32 {
+    #[cfg(test)]
+    pub fn score(self) -> i32 {
         match self {
             Self::Today | Self::Overdue(_) => 40,
             Self::Future(days) if (1..=7).contains(&days) => (5 * (8 - days)) as i32,
@@ -22,7 +23,7 @@ impl DueState {
     }
 }
 
-pub(crate) fn due_state(due_on: &str, today: NaiveDate) -> DueState {
+pub fn due_state(due_on: &str, today: NaiveDate) -> DueState {
     let Ok(due) = NaiveDate::parse_from_str(due_on, "%Y-%m-%d") else {
         return DueState::None;
     };

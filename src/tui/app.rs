@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use aven_core::db::Database;
 use ratatui::widgets::{ListState, TableState};
-use sqlx::SqlitePool;
 
 use crate::config::AppConfig;
 use crate::tui::app_intake::IntakeController;
@@ -146,21 +146,21 @@ pub(crate) struct App {
 
 impl App {
     pub(crate) async fn new(
-        pool: SqlitePool,
+        database: Database,
         workspace: crate::workspaces::Workspace,
         project: Option<&str>,
     ) -> Result<Self> {
         let store = match project {
-            Some("") => TuiStore::new_for_inferred_project(pool, workspace).await?,
-            Some(project) => TuiStore::new_for_project(pool, workspace, project).await?,
-            None => TuiStore::new(pool, workspace).await?,
+            Some("") => TuiStore::new_for_inferred_project(database, workspace).await?,
+            Some(project) => TuiStore::new_for_project(database, workspace, project).await?,
+            None => TuiStore::new(database, workspace).await?,
         };
         Self::new_with_store(store)
     }
 
     #[cfg(test)]
-    pub(crate) async fn new_for_tests(pool: SqlitePool) -> Result<Self> {
-        let store = TuiStore::new(pool, crate::workspaces::Workspace::default()).await?;
+    pub(crate) async fn new_for_tests(database: Database) -> Result<Self> {
+        let store = TuiStore::new(database, crate::workspaces::Workspace::default()).await?;
         Self::new_with_store(store)
     }
 

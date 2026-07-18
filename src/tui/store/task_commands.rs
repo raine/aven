@@ -2,11 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
 
-use crate::mutation::{cycle_priority, set_deleted, set_priority, set_status};
-use crate::operations::{TaskUpdate, update_task as update_task_operation};
 use crate::query::TaskListItem;
 use crate::tui::store::MutationMessage;
 use crate::undo::UndoCommand;
+use aven_core::operations::TaskUpdate;
 
 use super::TuiStore;
 
@@ -27,9 +26,9 @@ impl TuiStore {
         F: FnOnce(&TaskListItem) -> String,
     {
         if let Some(item) = self.selected_task(index).cloned() {
-            let mut conn = self.pool.acquire().await?;
-            update_task_operation(&mut conn, &self.active_workspace, &item.task.id, update).await?;
-            drop(conn);
+            self.database
+                .update_task(&self.active_workspace, &item.task.id, update)
+                .await?;
             return Ok(Some(
                 self.refresh_task_message(&item.task.id, message(&item))
                     .await?,
@@ -67,9 +66,10 @@ impl TuiStore {
         };
 
         let before = item.task.status.as_str().to_string();
-        let mut conn = self.pool.acquire().await?;
-        let task = set_status(&mut conn, &self.active_workspace, &item.task, status).await?;
-        drop(conn);
+        let task = self
+            .database
+            .set_task_status(&self.active_workspace, &item.task, status)
+            .await?;
         self.record_undo_commands(
             &format!("status {}", item.display_ref),
             vec![UndoCommand::SetTaskField {
@@ -123,10 +123,10 @@ impl TuiStore {
     ) -> Result<Option<MutationMessage>> {
         if let Some(item) = self.selected_task(index).cloned() {
             let before = item.task.priority.as_str().to_string();
-            let mut conn = self.pool.acquire().await?;
-            let task =
-                cycle_priority(&mut conn, &self.active_workspace, &item.task, reverse).await?;
-            drop(conn);
+            let task = self
+                .database
+                .cycle_task_priority(&self.active_workspace, &item.task, reverse)
+                .await?;
             self.record_undo_commands(
                 &format!("priority {}", item.display_ref),
                 vec![UndoCommand::SetTaskField {
@@ -280,18 +280,17 @@ impl TuiStore {
             ));
         }
 
-        let mut conn = self.pool.acquire().await?;
-        let outcome = update_task_operation(
-            &mut conn,
-            &self.active_workspace,
-            &item.task.id,
-            TaskUpdate {
-                available_at: Some((!available_at.is_empty()).then(|| available_at.clone())),
-                ..TaskUpdate::default()
-            },
-        )
-        .await?;
-        drop(conn);
+        let outcome = self
+            .database
+            .update_task(
+                &self.active_workspace,
+                &item.task.id,
+                TaskUpdate {
+                    available_at: Some((!available_at.is_empty()).then(|| available_at.clone())),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await?;
         self.record_undo_commands(
             &format!("availability {}", item.display_ref),
             vec![UndoCommand::SetTaskField {
@@ -337,18 +336,17 @@ impl TuiStore {
             ));
         }
 
-        let mut conn = self.pool.acquire().await?;
-        let outcome = update_task_operation(
-            &mut conn,
-            &self.active_workspace,
-            &item.task.id,
-            TaskUpdate {
-                due_on: Some((!due_on.is_empty()).then(|| due_on.clone())),
-                ..TaskUpdate::default()
-            },
-        )
-        .await?;
-        drop(conn);
+        let outcome = self
+            .database
+            .update_task(
+                &self.active_workspace,
+                &item.task.id,
+                TaskUpdate {
+                    due_on: Some((!due_on.is_empty()).then(|| due_on.clone())),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await?;
         self.record_undo_commands(
             &format!("due date {}", item.display_ref),
             vec![UndoCommand::SetTaskField {
@@ -383,18 +381,17 @@ impl TuiStore {
             return Ok(None);
         };
         let before = item.task.project_id.clone();
-        let mut conn = self.pool.acquire().await?;
-        let outcome = update_task_operation(
-            &mut conn,
-            &self.active_workspace,
-            &item.task.id,
-            TaskUpdate {
-                project: Some(project.clone()),
-                ..TaskUpdate::default()
-            },
-        )
-        .await?;
-        drop(conn);
+        let outcome = self
+            .database
+            .update_task(
+                &self.active_workspace,
+                &item.task.id,
+                TaskUpdate {
+                    project: Some(project.clone()),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await?;
         self.record_undo_commands(
             &format!("project {}", item.display_ref),
             vec![UndoCommand::SetTaskField {
@@ -473,9 +470,9 @@ impl TuiStore {
             }
 
             let before = if item.task.deleted { "1" } else { "0" };
-            let mut conn = self.pool.acquire().await?;
-            set_deleted(&mut conn, &self.active_workspace, &item.task, deleted).await?;
-            drop(conn);
+            self.database
+                .set_task_deleted_state(&self.active_workspace, &item.task, deleted)
+                .await?;
             let summary = if deleted {
                 format!("delete {}", item.display_ref)
             } else {
@@ -529,20 +526,16 @@ impl TuiStore {
         task_id: &crate::ids::TaskId,
         depends_on_task_id: &crate::ids::TaskId,
     ) -> Result<MutationMessage> {
-        let mut conn = self.pool.acquire().await?;
-        let outcome = crate::operations::add_task_dependency(
-            &mut conn,
-            &self.active_workspace,
-            task_id,
-            depends_on_task_id,
-        )
-        .await?;
-        let display_refs =
-            crate::refs::DisplayRefContext::for_workspace(&mut conn, &self.active_workspace.id)
-                .await?;
+        let outcome = self
+            .database
+            .add_task_dependency(&self.active_workspace, task_id, depends_on_task_id)
+            .await?;
+        let display_refs = self
+            .database
+            .display_ref_context(&self.active_workspace.id)
+            .await?;
         let task_ref = display_refs.display_ref(&outcome.task);
         let depends_on_ref = display_refs.display_ref(&outcome.depends_on);
-        drop(conn);
         if outcome.changed {
             self.record_undo_commands(
                 &format!("dependency {task_ref}"),
@@ -569,19 +562,15 @@ impl TuiStore {
         let Some(item) = self.selected_task(index).cloned() else {
             return Ok(None);
         };
-        let mut conn = self.pool.acquire().await?;
-        let outcome = crate::operations::remove_task_dependency(
-            &mut conn,
-            &self.active_workspace,
-            &item.task.id,
-            depends_on_task_id,
-        )
-        .await?;
-        let display_refs =
-            crate::refs::DisplayRefContext::for_workspace(&mut conn, &self.active_workspace.id)
-                .await?;
+        let outcome = self
+            .database
+            .remove_task_dependency(&self.active_workspace, &item.task.id, depends_on_task_id)
+            .await?;
+        let display_refs = self
+            .database
+            .display_ref_context(&self.active_workspace.id)
+            .await?;
         let depends_on_ref = display_refs.display_ref(&outcome.depends_on);
-        drop(conn);
         if outcome.changed {
             self.record_undo_commands(
                 &format!("dependency {}", item.display_ref),
@@ -653,13 +642,19 @@ impl TuiStore {
         }
 
         let mut undo_commands = Vec::new();
-        let mut conn = self.pool.acquire().await?;
+        let mut updates = Vec::new();
         for item in &targets {
             let before = item.task.status.as_str().to_string();
             if before == status {
                 continue;
             }
-            set_status(&mut conn, &self.active_workspace, &item.task, status).await?;
+            updates.push((
+                item.task.id.clone(),
+                TaskUpdate {
+                    status: Some(status.to_string()),
+                    ..TaskUpdate::default()
+                },
+            ));
             undo_commands.push(UndoCommand::SetTaskField {
                 task_id: item.task.id.clone(),
                 field: "status".to_string(),
@@ -667,7 +662,9 @@ impl TuiStore {
                 after: status.to_string(),
             });
         }
-        drop(conn);
+        self.database
+            .update_tasks(&self.active_workspace, updates)
+            .await?;
 
         let changed = undo_commands.len();
         if changed > 0 {
@@ -698,7 +695,7 @@ impl TuiStore {
         }
 
         let mut undo_commands = Vec::new();
-        let mut conn = self.pool.acquire().await?;
+        let mut updates = Vec::new();
         for item in &targets {
             let Some(status) = status_by_id.get(&item.task.id) else {
                 continue;
@@ -707,7 +704,13 @@ impl TuiStore {
             if before == *status {
                 continue;
             }
-            set_status(&mut conn, &self.active_workspace, &item.task, status).await?;
+            updates.push((
+                item.task.id.clone(),
+                TaskUpdate {
+                    status: Some(status.clone()),
+                    ..TaskUpdate::default()
+                },
+            ));
             undo_commands.push(UndoCommand::SetTaskField {
                 task_id: item.task.id.clone(),
                 field: "status".to_string(),
@@ -715,7 +718,9 @@ impl TuiStore {
                 after: status.clone(),
             });
         }
-        drop(conn);
+        self.database
+            .update_tasks(&self.active_workspace, updates)
+            .await?;
 
         let changed = undo_commands.len();
         if changed > 0 {
@@ -747,20 +752,24 @@ impl TuiStore {
             return Ok(None);
         }
 
-        let mut undo_commands = Vec::new();
-        let mut conn = self.pool.acquire().await?;
-        for item in &targets {
-            let before = item.task.priority.as_str().to_string();
-            let task =
-                cycle_priority(&mut conn, &self.active_workspace, &item.task, reverse).await?;
-            undo_commands.push(UndoCommand::SetTaskField {
+        let tasks = targets
+            .iter()
+            .map(|item| item.task.clone())
+            .collect::<Vec<_>>();
+        let outcomes = self
+            .database
+            .cycle_task_priorities(&self.active_workspace, &tasks, reverse)
+            .await?;
+        let undo_commands = targets
+            .iter()
+            .zip(outcomes)
+            .map(|(item, task)| UndoCommand::SetTaskField {
                 task_id: item.task.id.clone(),
                 field: "priority".to_string(),
-                before,
+                before: item.task.priority.as_str().to_string(),
                 after: task.priority.as_str().to_string(),
-            });
-        }
-        drop(conn);
+            })
+            .collect::<Vec<_>>();
 
         let changed = undo_commands.len();
         self.record_undo_commands(&format!("priority {changed} tasks"), undo_commands)
@@ -787,22 +796,29 @@ impl TuiStore {
         }
 
         let mut undo_commands = Vec::new();
-        let mut conn = self.pool.acquire().await?;
+        let mut updates = Vec::new();
         for item in &targets {
             let before = item.task.priority.as_str().to_string();
             if before == priority {
                 continue;
             }
-            let task =
-                set_priority(&mut conn, &self.active_workspace, &item.task, priority).await?;
+            updates.push((
+                item.task.id.clone(),
+                TaskUpdate {
+                    priority: Some(priority.to_string()),
+                    ..TaskUpdate::default()
+                },
+            ));
             undo_commands.push(UndoCommand::SetTaskField {
                 task_id: item.task.id.clone(),
                 field: "priority".to_string(),
                 before,
-                after: task.priority.as_str().to_string(),
+                after: priority.to_string(),
             });
         }
-        drop(conn);
+        self.database
+            .update_tasks(&self.active_workspace, updates)
+            .await?;
 
         let changed = undo_commands.len();
         if changed > 0 {
@@ -831,31 +847,33 @@ impl TuiStore {
             return Ok(None);
         }
 
-        let mut undo_commands = Vec::new();
-        let mut conn = self.pool.acquire().await?;
-        for item in &targets {
-            let before = item.task.project_id.clone();
-            let outcome = update_task_operation(
-                &mut conn,
-                &self.active_workspace,
-                &item.task.id,
-                TaskUpdate {
-                    project: Some(project.clone()),
-                    ..TaskUpdate::default()
-                },
-            )
+        let updates = targets
+            .iter()
+            .map(|item| {
+                (
+                    item.task.id.clone(),
+                    TaskUpdate {
+                        project: Some(project.clone()),
+                        ..TaskUpdate::default()
+                    },
+                )
+            })
+            .collect();
+        let outcomes = self
+            .database
+            .update_tasks(&self.active_workspace, updates)
             .await?;
-            if !outcome.changed {
-                continue;
-            }
-            undo_commands.push(UndoCommand::SetTaskField {
+        let undo_commands = targets
+            .iter()
+            .zip(outcomes)
+            .filter(|(_, outcome)| outcome.changed)
+            .map(|(item, outcome)| UndoCommand::SetTaskField {
                 task_id: item.task.id.clone(),
                 field: "project".to_string(),
-                before: before.to_string(),
+                before: item.task.project_id.to_string(),
                 after: outcome.task.project_id.to_string(),
-            });
-        }
-        drop(conn);
+            })
+            .collect::<Vec<_>>();
 
         let changed = undo_commands.len();
         if changed > 0 {
@@ -885,21 +903,28 @@ impl TuiStore {
         }
 
         let mut undo_commands = Vec::new();
-        let mut conn = self.pool.acquire().await?;
+        let mut updates = Vec::new();
         for item in &targets {
             if item.task.deleted == deleted {
                 continue;
             }
             let before = if item.task.deleted { "1" } else { "0" };
-            set_deleted(&mut conn, &self.active_workspace, &item.task, deleted).await?;
+            let after = if deleted { "1" } else { "0" };
+            updates.push((
+                item.task.id.clone(),
+                "deleted".to_string(),
+                after.to_string(),
+            ));
             undo_commands.push(UndoCommand::SetTaskField {
                 task_id: item.task.id.clone(),
                 field: "deleted".to_string(),
                 before: before.to_string(),
-                after: if deleted { "1" } else { "0" }.to_string(),
+                after: after.to_string(),
             });
         }
-        drop(conn);
+        self.database
+            .set_task_fields(&self.active_workspace, &updates)
+            .await?;
 
         let changed = undo_commands.len();
         if changed > 0 {
@@ -944,7 +969,7 @@ impl TuiStore {
         }
 
         let mut undo_commands = Vec::new();
-        let mut conn = self.pool.acquire().await?;
+        let mut updates = Vec::new();
         for item in &targets {
             let before = item.labels.clone();
             let add_labels = selected_labels
@@ -960,24 +985,23 @@ impl TuiStore {
             if add_labels.is_empty() && remove_labels.is_empty() {
                 continue;
             }
-            update_task_operation(
-                &mut conn,
-                &self.active_workspace,
-                &item.task.id,
+            updates.push((
+                item.task.id.clone(),
                 TaskUpdate {
                     add_labels,
                     remove_labels,
                     ..TaskUpdate::default()
                 },
-            )
-            .await?;
+            ));
             undo_commands.push(UndoCommand::SetTaskLabels {
                 task_id: item.task.id.clone(),
                 before,
                 after: selected_labels.clone(),
             });
         }
-        drop(conn);
+        self.database
+            .update_tasks(&self.active_workspace, updates)
+            .await?;
 
         let changed = undo_commands.len();
         if changed > 0 {

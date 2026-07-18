@@ -38,11 +38,14 @@ fn toast_severity(app: &App) -> Option<ToastSeverity> {
 
 async fn test_app() -> App {
     let dir = tempfile::tempdir().unwrap();
-    let pool = crate::db::open_db(&dir.path().join("test.db"))
+    let pool = crate::test_support::open_db(&dir.path().join("test.db"))
         .await
         .unwrap();
     reset_default_workspace(&pool).await;
-    App::new_for_tests(pool).await.unwrap()
+    let database = aven_core::db::Database::open(&dir.path().join("test.db"))
+        .await
+        .unwrap();
+    App::new_for_tests(database).await.unwrap()
 }
 
 fn test_task_draft(title: &str) -> TaskDraft {
@@ -68,11 +71,14 @@ async fn create_and_select_task(app: &mut App, draft: TaskDraft) -> usize {
 
 async fn test_app_with_pool() -> (tempfile::TempDir, SqlitePool, App) {
     let dir = tempfile::tempdir().unwrap();
-    let pool = crate::db::open_db(&dir.path().join("test.db"))
+    let pool = crate::test_support::open_db(&dir.path().join("test.db"))
         .await
         .unwrap();
     reset_default_workspace(&pool).await;
-    let app = App::new_for_tests(pool.clone()).await.unwrap();
+    let database = aven_core::db::Database::open(&dir.path().join("test.db"))
+        .await
+        .unwrap();
+    let app = App::new_for_tests(database).await.unwrap();
     (dir, pool, app)
 }
 

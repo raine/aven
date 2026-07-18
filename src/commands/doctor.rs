@@ -3,15 +3,12 @@ use std::path::Path;
 
 use anyhow::Result;
 use crossterm::style::{Color, Stylize};
-use sqlx::SqliteConnection;
 
 use super::data_safety::{database_integrity_report, ensure_integrity_ok};
 use crate::config::{self as app_config, AppConfig};
-use crate::db::get_meta;
-use crate::query;
 use crate::render::print_json_pretty;
 use crate::sync::sync_server_url_is_valid;
-use crate::workspaces::resolve_active_workspace;
+use crate::workspaces::resolve_active_workspace_with_database;
 
 #[derive(serde::Serialize)]
 pub(super) struct DoctorReport {
@@ -190,7 +187,7 @@ fn format_optional_i64(value: Option<i64>) -> String {
 }
 
 pub(crate) async fn cmd_doctor(
-    conn: &mut SqliteConnection,
+    database: &aven_core::db::Database,
     config: &AppConfig,
     db_path: &Path,
     db_flag_set: bool,
@@ -208,18 +205,19 @@ pub(crate) async fn cmd_doctor(
     } else {
         "default"
     };
-    let client_id = get_meta(conn, "client_id").await?;
-    let sync_cursor = get_meta(conn, "sync_cursor").await?;
-    let local_seq = get_meta(conn, "local_seq").await?;
-    let pinned_server = get_meta(conn, "sync_server_url").await?;
+    let client_id = database.meta("client_id").await?;
+    let sync_cursor = database.meta("sync_cursor").await?;
+    let local_seq = database.meta("local_seq").await?;
+    let pinned_server = database.meta("sync_server_url").await?;
     let cwd = std::env::current_dir()?;
-    let workspace = resolve_active_workspace(conn, workspace_flag, config, &cwd).await;
+    let workspace =
+        resolve_active_workspace_with_database(database, workspace_flag, config, &cwd).await;
     let counts = match &workspace {
-        Ok(workspace) => Some(query::workspace_task_counts(conn, &workspace.id).await?),
+        Ok(workspace) => Some(database.workspace_task_counts(&workspace.id).await?),
         Err(_) => None,
     };
-    let sync_history = query::sync_history_stats(conn).await?;
-    let unresolved_conflicts = query::unresolved_conflict_count(conn).await?;
+    let sync_history = database.sync_history_stats().await?;
+    let unresolved_conflicts = database.unresolved_conflict_count().await?;
     let sync_server = app_config::resolve_sync_server(None, config);
     let wake_addr = config.wake_addr();
 
@@ -369,7 +367,7 @@ pub(crate) async fn cmd_doctor(
     }
 
     if integrity {
-        let integrity_report = database_integrity_report(conn).await?;
+        let integrity_report = database_integrity_report(database).await?;
         let integrity_section = report.section("Integrity");
         integrity_section.check(
             "quick check",

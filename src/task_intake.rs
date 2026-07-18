@@ -3,21 +3,16 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use aven_core::db::Database;
 use serde::Deserialize;
-use sqlx::SqliteConnection;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
-use tracing::{error, info};
 
 use crate::choices::{PRIORITIES, TaskPriority};
 use crate::config::TaskIntakeConfig;
-use crate::labels::{list_labels_in_workspace, resolve_labels_in_workspace};
 use crate::operations::TaskDraft;
-use crate::projects::{
-    inferred_project_key_for_add_in_workspace, resolve_existing_project_in_workspace,
-};
-use crate::query::{ProjectListItem, list_project_items_in_workspace};
+use crate::query::ProjectListItem;
 use crate::workspaces::Workspace;
 
 #[derive(Debug, Deserialize)]
@@ -45,92 +40,31 @@ pub(crate) struct TaskIntakeContext {
 }
 
 impl TaskIntakeContext {
-    pub(crate) async fn load_with_project(
-        conn: &mut SqliteConnection,
-        workspace: &Workspace,
-        project: Option<&str>,
-    ) -> Result<Self> {
-        Self::load_for_workspace(conn, workspace, project).await
-    }
-
-    pub(crate) async fn load_for_workspace(
-        conn: &mut SqliteConnection,
+    pub(crate) async fn load_with_database(
+        database: &Database,
         workspace: &Workspace,
         project: Option<&str>,
     ) -> Result<Self> {
         let inferred_project = match project {
             Some(project) => Some(
-                resolve_existing_project_in_workspace(conn, &workspace.id, project)
+                database
+                    .resolve_existing_project(&workspace.id, project)
                     .await?
                     .key,
             ),
-            None => inferred_project_key_for_add_in_workspace(conn, &workspace.id).await?,
+            None => {
+                crate::projects::inferred_project_key_for_add_with_database(database, workspace)
+                    .await?
+            }
         };
-        let projects = list_project_items_in_workspace(conn, &workspace.id).await?;
-        let labels = list_labels_in_workspace(conn, &workspace.id, None).await?;
+        let projects = database.list_project_items(&workspace.id).await?;
+        let labels = database.list_labels(&workspace.id, None).await?;
         Ok(Self {
             workspace_id: workspace.id.clone(),
             inferred_project,
             projects,
             labels,
         })
-    }
-}
-
-pub(crate) async fn parse_task_intake(
-    conn: &mut SqliteConnection,
-    config: &TaskIntakeConfig,
-    input: &str,
-    workspace: &Workspace,
-) -> Result<TaskDraft> {
-    parse_task_intake_with_project(conn, config, input, workspace, None).await
-}
-
-pub(crate) async fn parse_task_intake_with_project(
-    conn: &mut SqliteConnection,
-    config: &TaskIntakeConfig,
-    input: &str,
-    workspace: &Workspace,
-    project: Option<&str>,
-) -> Result<TaskDraft> {
-    let context = TaskIntakeContext::load_with_project(conn, workspace, project).await?;
-    parse_task_intake_with_context(conn, config, input, &context).await
-}
-
-async fn parse_task_intake_with_context(
-    conn: &mut SqliteConnection,
-    config: &TaskIntakeConfig,
-    input: &str,
-    context: &TaskIntakeContext,
-) -> Result<TaskDraft> {
-    info!(
-        workspace_id = %context.workspace_id,
-        input = %input,
-        "task intake input received"
-    );
-    let outcome = async {
-        let output = run_task_intake_command(config, context, input).await?;
-        parsed_output_to_draft(conn, context, &output).await
-    }
-    .await;
-    match outcome {
-        Ok(draft) => {
-            info!(
-                workspace_id = %context.workspace_id,
-                input = %input,
-                "task intake input parsed"
-            );
-            Ok(draft)
-        }
-        Err(error) => {
-            error!(
-                workspace_id = %context.workspace_id,
-                input = %input,
-                error = %error,
-                "task intake input failed"
-            );
-            Err(error)
-        }
     }
 }
 
@@ -263,8 +197,8 @@ fn task_intake_labels_prompt(context: &TaskIntakeContext) -> String {
     }
 }
 
-pub(crate) async fn parsed_output_to_draft(
-    conn: &mut SqliteConnection,
+pub(crate) async fn parsed_output_to_draft_with_database(
+    database: &Database,
     context: &TaskIntakeContext,
     output: &str,
 ) -> Result<TaskDraft> {
@@ -284,14 +218,17 @@ pub(crate) async fn parsed_output_to_draft(
         .filter(|value| !value.is_empty())
     {
         Some(
-            resolve_existing_project_in_workspace(conn, &context.workspace_id, project)
+            database
+                .resolve_existing_project(&context.workspace_id, project)
                 .await?
                 .key,
         )
     } else {
         context.inferred_project.clone()
     };
-    let labels = resolve_labels_in_workspace(conn, &context.workspace_id, &parsed.labels).await?;
+    let labels = database
+        .resolve_labels(&context.workspace_id, &parsed.labels)
+        .await?;
     let description = parsed.description.trim().to_string();
     let available_at = parsed
         .available_at

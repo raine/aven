@@ -108,7 +108,7 @@ bootstrap_database() (
       echo "database contains an invalid migration version: $version" >&2
       exit 1
     fi
-    migration="$(compgen -G "$repo_root/migrations/${version}_*.sql" || true)"
+    migration="$(compgen -G "$repo_root/crates/aven-core/migrations/${version}_*.sql" || true)"
     if [[ -z "$migration" ]]; then
       sqlite3 "$snapshot" "DELETE FROM _sqlx_migrations WHERE version = $version;"
       normalized+=("$version")

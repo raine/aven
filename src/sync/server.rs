@@ -1,8 +1,9 @@
 use std::fmt;
 use std::net::IpAddr;
-use std::time::Instant;
 
 use anyhow::{Result, bail};
+use aven_core::db::Database;
+use aven_core::sync::ServerSyncPage;
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderMap, Request, StatusCode};
@@ -10,24 +11,22 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
-use sqlx::{SqliteConnection, SqlitePool};
 use tokio::net::TcpListener;
 use tower_http::compression::CompressionLayer;
 use tower_http::decompression::RequestDecompressionLayer;
 use tracing::{error, info, warn};
 
 use super::wire::{
-    ChangeRow, ChangeWire, PushAck, SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse,
-    validate_pushed_change, validate_sync_request_envelope,
+    SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse, validate_pushed_change,
+    validate_sync_request_envelope,
 };
 use crate::cli::ServerArgs;
 use crate::config;
-use crate::db::{begin_immediate, open_db};
 use crate::signals::shutdown_signal;
 
 #[derive(Clone)]
 struct ServerState {
-    pool: SqlitePool,
+    database: Database,
     auth_token: Option<String>,
 }
 
@@ -104,8 +103,11 @@ pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> R
     let auth_token = config.sync_auth_token().map(str::to_string);
     let auth_enabled = auth_token.is_some();
     validate_bind_policy(scope, args.unsafe_public_bind, auth_token.as_deref())?;
-    let pool = open_db(&args.data).await?;
-    let state = ServerState { pool, auth_token };
+    let database = Database::open(&args.data).await?;
+    let state = ServerState {
+        database,
+        auth_token,
+    };
     info!(
         bind = %args.bind,
         scope = %scope,
@@ -204,69 +206,13 @@ async fn handle_sync(
     let change_count = envelope.push_count;
     info!(client_id = %client_id, after, change_count, pull_limit, "sync request received");
 
-    let mut conn = state.pool.acquire().await.map_err(internal_error)?;
-    let assign_started = Instant::now();
-    let (accepted_count, push_acks) = if request.changes.is_empty() {
-        (0_i64, Vec::new())
-    } else {
-        let mut tx = begin_immediate(&mut conn).await.map_err(internal_error)?;
-        let mut next_server_seq = next_available_server_seq(&mut tx)
-            .await
-            .map_err(internal_error)?;
-        let mut accepted_count = 0_i64;
-        let mut push_acks = Vec::with_capacity(request.changes.len());
-        for change in request.changes {
-            let existing_server_seq = sqlx::query_scalar!(
-                r#"SELECT server_seq AS "server_seq?: i64" FROM changes WHERE change_id = ?"#,
-                change.change_id
-            )
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(internal_error)?
-            .flatten();
-            let server_seq = if let Some(server_seq) = existing_server_seq {
-                server_seq
-            } else {
-                let server_seq = next_server_seq;
-                next_server_seq += 1;
-                let payload = change.payload.to_string();
-                sqlx::query!(
-                    "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field,
-                     op_type, payload, base_version, created_at, server_seq)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    change.change_id,
-                    change.client_id,
-                    change.local_seq,
-                    change.entity_type,
-                    change.entity_id,
-                    change.field,
-                    change.op_type,
-                    payload,
-                    change.base_version,
-                    change.created_at,
-                    server_seq,
-                )
-                .execute(&mut *tx)
-                .await
-                .map_err(internal_error)?;
-                accepted_count += 1;
-                server_seq
-            };
-            push_acks.push(PushAck {
-                change_id: change.change_id,
-                server_seq,
-            });
-        }
-        tx.commit().await.map_err(internal_error)?;
-        (accepted_count, push_acks)
-    };
-    let assign_ms = assign_started.elapsed().as_millis();
-    let pull_query_started = Instant::now();
-    let (changes, has_more) = load_server_changes_after(&mut conn, after, pull_limit)
+    let persisted = state
+        .database
+        .persist_server_sync_page(ServerSyncPage { request })
         .await
         .map_err(internal_error)?;
-    let pull_query_ms = pull_query_started.elapsed().as_millis();
-    let cursor = changes
+    let cursor = persisted
+        .changes
         .last()
         .and_then(|change| change.server_seq)
         .unwrap_or(after);
@@ -274,57 +220,21 @@ async fn handle_sync(
         client_id = %client_id,
         after,
         incoming = change_count,
-        accepted = accepted_count,
-        returned = changes.len(),
+        accepted = persisted.accepted_count,
+        returned = persisted.changes.len(),
         cursor,
-        has_more,
-        assign_ms,
-        pull_query_ms,
+        has_more = persisted.has_more,
+        assign_ms = persisted.assign_ms,
+        pull_query_ms = persisted.pull_query_ms,
         "sync request completed"
     );
     Ok(SyncResponse {
         protocol_version: SYNC_PROTOCOL_VERSION,
         cursor,
-        has_more,
-        push_acks,
-        changes,
+        has_more: persisted.has_more,
+        push_acks: persisted.push_acks,
+        changes: persisted.changes,
     })
-}
-
-async fn next_available_server_seq(conn: &mut SqliteConnection) -> Result<i64> {
-    Ok(sqlx::query_scalar!(
-        r#"SELECT COALESCE(MAX(server_seq), 0) + 1 AS "seq!: i64" FROM changes"#
-    )
-    .fetch_one(&mut *conn)
-    .await?)
-}
-
-async fn load_server_changes_after(
-    conn: &mut SqliteConnection,
-    after: i64,
-    pull_limit: u32,
-) -> Result<(Vec<ChangeWire>, bool)> {
-    let fetch_limit = i64::from(pull_limit) + 1;
-    let rows = sqlx::query_as!(
-        ChangeRow,
-        r#"SELECT change_id AS "change_id!: String", client_id AS "client_id!: String",
-         local_seq AS "local_seq!: i64", entity_type AS "entity_type!: String",
-         entity_id AS "entity_id!: String", field, op_type AS "op_type!: String",
-         payload AS "payload!: String", base_version, created_at AS "created_at!: String",
-         server_seq
-         FROM changes WHERE server_seq > ? ORDER BY server_seq LIMIT ?"#,
-        after,
-        fetch_limit,
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    let has_more = rows.len() > pull_limit as usize;
-    let changes = rows
-        .into_iter()
-        .take(pull_limit as usize)
-        .map(ChangeRow::into_wire)
-        .collect();
-    Ok((changes, has_more))
 }
 
 #[cfg(test)]

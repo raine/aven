@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
 
-use crate::workspaces::find_workspace;
-
 use super::{TaskFilterModifiers, TaskScope, TuiStore};
 
 impl TuiStore {
@@ -9,11 +7,11 @@ impl TuiStore {
         &mut self,
         key: String,
     ) -> Result<(String, Option<usize>)> {
-        let mut conn = self.pool.acquire().await?;
-        let workspace = find_workspace(&mut conn, &key)
+        let workspace = self
+            .database
+            .find_workspace(&key)
             .await?
             .with_context(|| format!("workspace not found: {key}"))?;
-        drop(conn);
         let name = workspace.name.clone();
         let key = workspace.key.clone();
         self.active_workspace = workspace;

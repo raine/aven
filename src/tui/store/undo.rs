@@ -8,8 +8,9 @@ use super::TuiStore;
 impl TuiStore {
     pub(super) async fn record_undo(&self, summary: &str, payload: UndoPayload) -> Result<()> {
         let workspace_id = self.active_workspace.id.clone();
-        let mut conn = self.pool.acquire().await?;
-        crate::undo::record_tui_undo(&mut conn, &workspace_id, summary, payload).await?;
+        self.database
+            .record_tui_undo(&workspace_id, summary, payload)
+            .await?;
         Ok(())
     }
 
@@ -45,12 +46,9 @@ impl TuiStore {
         selected: Option<usize>,
     ) -> Result<Option<MutationMessage>> {
         let workspace_id = self.active_workspace.id.clone();
-        let mut conn = self.pool.acquire().await?;
-        let Some(outcome) = crate::undo::apply_latest_tui_undo(&mut conn, &workspace_id).await?
-        else {
+        let Some(outcome) = self.database.apply_latest_tui_undo(&workspace_id).await? else {
             return Ok(None);
         };
-        drop(conn);
 
         if let Some(include_deleted) = outcome.include_deleted {
             self.view_state.filter_modifiers.include_deleted = include_deleted;

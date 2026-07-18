@@ -20,7 +20,7 @@ mod tests;
 use std::time::Instant;
 
 use anyhow::Result;
-use sqlx::SqlitePool;
+use aven_core::db::Database;
 
 pub(crate) use crate::query::RecentActionItem;
 pub(crate) use pickers::deleted_picker_items;
@@ -32,19 +32,12 @@ pub(crate) use types::{
 #[cfg(test)]
 pub(crate) use types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts};
 
-use crate::labels::list_labels_in_workspace;
-use crate::projects::{
-    inferred_existing_project_key_in_workspace, resolve_existing_project_in_workspace,
-};
-use crate::query::{
-    ProjectListItem, SidebarCounts, TaskListItem, list_project_items_in_workspace,
-    list_recent_actions_in_workspace, list_task_items_in_workspace,
-    sidebar_counts_for_scope_in_workspace,
-};
-use crate::workspaces::{Workspace, list_workspaces};
+use crate::projects::inferred_existing_project_key_with_database;
+use crate::query::{ProjectListItem, SidebarCounts, TaskListItem};
+use crate::workspaces::Workspace;
 
 pub(crate) struct TuiStore {
-    pool: SqlitePool,
+    database: Database,
     pub(crate) tasks: Vec<TaskListItem>,
     pub(crate) recent_actions: Vec<RecentActionItem>,
     pub(crate) projects: Vec<ProjectListItem>,
@@ -68,35 +61,32 @@ pub(crate) struct ScopeRefreshResult {
 }
 
 impl TuiStore {
-    pub(crate) async fn new(pool: SqlitePool, workspace: Workspace) -> Result<Self> {
-        Self::new_with_initial_project(pool, workspace, None).await
+    pub(crate) async fn new(database: Database, workspace: Workspace) -> Result<Self> {
+        Self::new_with_initial_project(database, workspace, None).await
     }
 
     pub(crate) async fn new_for_inferred_project(
-        pool: SqlitePool,
+        database: Database,
         workspace: Workspace,
     ) -> Result<Self> {
-        let initial_project = {
-            let mut conn = pool.acquire().await?;
-            inferred_existing_project_key_in_workspace(&mut conn, &workspace.id).await?
-        };
-        Self::new_with_initial_project(pool, workspace, initial_project).await
+        let initial_project =
+            inferred_existing_project_key_with_database(&database, &workspace).await?;
+        Self::new_with_initial_project(database, workspace, initial_project).await
     }
 
     pub(crate) async fn new_for_project(
-        pool: SqlitePool,
+        database: Database,
         workspace: Workspace,
         project: &str,
     ) -> Result<Self> {
-        let project = {
-            let mut conn = pool.acquire().await?;
-            resolve_existing_project_in_workspace(&mut conn, &workspace.id, project).await?
-        };
-        Self::new_with_initial_project(pool, workspace, Some(project.key)).await
+        let project = database
+            .resolve_existing_project(&workspace.id, project)
+            .await?;
+        Self::new_with_initial_project(database, workspace, Some(project.key)).await
     }
 
     async fn new_with_initial_project(
-        pool: SqlitePool,
+        database: Database,
         workspace: Workspace,
         initial_project: Option<String>,
     ) -> Result<Self> {
@@ -105,7 +95,7 @@ impl TuiStore {
             view_state.scope = TaskScope::Project(project);
         }
         let mut store = Self {
-            pool,
+            database,
             tasks: Vec::new(),
             recent_actions: Vec::new(),
             projects: Vec::new(),
@@ -121,10 +111,7 @@ impl TuiStore {
             db_stats: TuiDatabaseStats::default(),
             last_refresh: Instant::now(),
         };
-        {
-            let mut conn = store.pool.acquire().await?;
-            crate::undo::clear_pending_tui_undo_entries(&mut conn).await?;
-        }
+        store.database.clear_pending_tui_undo_entries().await?;
         store.refresh(None).await?;
         Ok(store)
     }
@@ -162,40 +149,39 @@ impl TuiStore {
         &mut self,
         selected_id: Option<&crate::ids::TaskId>,
     ) -> Result<ScopeRefreshResult> {
-        let mut conn = self.pool.acquire().await?;
         let workspace_id = self.active_workspace.id.clone();
-        self.workspaces = list_workspaces(&mut conn).await?;
-        self.projects = list_project_items_in_workspace(&mut conn, &workspace_id).await?;
-        self.labels = list_labels_in_workspace(&mut conn, &workspace_id, None).await?;
+        self.workspaces = self.database.list_workspaces().await?;
+        self.projects = self.database.list_project_items(&workspace_id).await?;
+        self.labels = self.database.list_labels(&workspace_id, None).await?;
         let fallback_scope = self.ensure_valid_scope();
         let project_scope = self.scope_project().map(str::to_string);
-        self.counts = sidebar_counts_for_scope_in_workspace(
-            &mut conn,
-            &workspace_id,
-            project_scope.as_deref(),
-        )
-        .await?;
-        self.recent_actions =
-            list_recent_actions_in_workspace(&mut conn, &workspace_id, project_scope.as_deref())
-                .await?;
+        self.counts = self
+            .database
+            .sidebar_counts_for_scope(&workspace_id, project_scope.as_deref())
+            .await?;
+        self.recent_actions = self
+            .database
+            .list_recent_actions(&workspace_id, project_scope.as_deref())
+            .await?;
         if self.view_state.view == TaskView::RecentActions {
             self.tasks.clear();
         } else {
             let filters = self.view_state.filters();
-            self.tasks = list_task_items_in_workspace(
-                &mut conn,
-                &workspace_id,
-                filters,
-                self.view_state.query_mode(),
-                self.view_state.sort(),
-                self.view_state.sort_direction(),
-            )
-            .await?;
+            self.tasks = self
+                .database
+                .list_task_items(
+                    &workspace_id,
+                    filters,
+                    self.view_state.query_mode(),
+                    self.view_state.sort(),
+                    self.view_state.sort_direction(),
+                )
+                .await?;
         }
         self.expand_visible_epics_by_default();
-        self.load_epic_child_tasks(&mut conn, &workspace_id).await?;
+        self.load_epic_child_tasks(&workspace_id).await?;
         self.prune_expanded_epic_ids();
-        self.sync_status = self.load_sync_status(&mut conn).await?;
+        self.sync_status = self.load_sync_status().await?;
         self.rebuild_sidebar();
         self.last_refresh = Instant::now();
         Ok(ScopeRefreshResult {
@@ -223,11 +209,7 @@ impl TuiStore {
         Some(project)
     }
 
-    async fn load_epic_child_tasks(
-        &mut self,
-        conn: &mut sqlx::SqliteConnection,
-        workspace_id: &WorkspaceId,
-    ) -> Result<()> {
+    async fn load_epic_child_tasks(&mut self, workspace_id: &WorkspaceId) -> Result<()> {
         if self.view_state.render_mode() != TaskListRenderMode::Epics {
             return Ok(());
         }
@@ -257,18 +239,19 @@ impl TuiStore {
         if child_ids.is_empty() {
             return Ok(());
         }
-        let children = list_task_items_in_workspace(
-            conn,
-            workspace_id,
-            crate::query::TaskFilters {
-                task_ids: child_ids,
-                ..crate::query::TaskFilters::default()
-            },
-            crate::query::TaskQueryMode::Flat,
-            crate::query::TaskSort::Created,
-            crate::query::SortDirection::Asc,
-        )
-        .await?;
+        let children = self
+            .database
+            .list_task_items(
+                workspace_id,
+                crate::query::TaskFilters {
+                    task_ids: child_ids,
+                    ..crate::query::TaskFilters::default()
+                },
+                crate::query::TaskQueryMode::Flat,
+                crate::query::TaskSort::Created,
+                crate::query::SortDirection::Asc,
+            )
+            .await?;
         self.tasks.extend(children);
         Ok(())
     }

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
+use aven_core::db::Database;
 use ratatui::DefaultTerminal;
-use sqlx::SqlitePool;
 
 mod app;
 mod app_authoring;
@@ -84,7 +84,7 @@ impl Drop for TerminalSession {
 }
 
 pub(crate) async fn run(
-    pool: SqlitePool,
+    database: Database,
     workspace: crate::workspaces::Workspace,
     project: Option<&str>,
     add_task: bool,
@@ -92,7 +92,7 @@ pub(crate) async fn run(
     db_path: std::path::PathBuf,
     config: crate::config::AppConfig,
 ) -> Result<()> {
-    let mut app = app::App::new(pool, workspace, project).await?;
+    let mut app = app::App::new(database, workspace, project).await?;
     app.set_add_task_db_path(db_path);
     app.set_config(config);
     app.start_update_check();
@@ -106,14 +106,14 @@ pub(crate) async fn run(
 }
 
 pub(crate) async fn run_add_task(
-    pool: SqlitePool,
+    database: Database,
     workspace: crate::workspaces::Workspace,
     project: Option<&str>,
     natural: bool,
     db_path: std::path::PathBuf,
     config: crate::config::AppConfig,
 ) -> Result<()> {
-    let mut app = app::App::new(pool, workspace, project).await?;
+    let mut app = app::App::new(database, workspace, project).await?;
     app.set_add_task_db_path(db_path);
     let mut terminal = TerminalSession::init()?;
     let result = app

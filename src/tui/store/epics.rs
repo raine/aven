@@ -1,4 +1,3 @@
-use crate::operations::remove_task_from_epic;
 use crate::tui::store::MutationMessage;
 
 use super::{TaskListRenderMode, TuiStore};
@@ -53,9 +52,9 @@ impl TuiStore {
             .find(|t| t.task.id == parent_id)
             .map(|t| t.display_ref.clone())
             .unwrap_or_default();
-        let mut conn = self.pool.acquire().await?;
-        remove_task_from_epic(&mut conn, &self.active_workspace, &child_id, &parent_id).await?;
-        drop(conn);
+        self.database
+            .remove_task_from_epic(&self.active_workspace, &child_id, &parent_id)
+            .await?;
         let message = format!("detached {} from {}", child_display_ref, parent_display_ref);
         self.refresh(None).await?;
         let selected = self.tasks.iter().position(|t| t.task.id == parent_id);
@@ -81,9 +80,9 @@ impl TuiStore {
             .find(|t| t.task.id == parent_id)
             .map(|t| t.display_ref.clone())
             .unwrap_or_default();
-        let mut conn = self.pool.acquire().await?;
-        remove_task_from_epic(&mut conn, &self.active_workspace, &child_id, &parent_id).await?;
-        drop(conn);
+        self.database
+            .remove_task_from_epic(&self.active_workspace, &child_id, &parent_id)
+            .await?;
         let message = format!("promoted {} from {}", child_display_ref, parent_display_ref);
         self.refresh(None).await?;
         let selected = self.tasks.iter().position(|t| t.task.id == child_id);

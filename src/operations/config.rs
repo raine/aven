@@ -4,26 +4,26 @@ use anyhow::Result;
 
 use crate::config as app_config;
 
-pub(crate) struct ConfigShowOutcome {
-    pub(crate) path: PathBuf,
-    pub(crate) text: String,
+pub struct ConfigShowOutcome {
+    pub path: PathBuf,
+    pub text: String,
 }
 
-pub(crate) struct ConfigInitOutcome {
-    pub(crate) path: PathBuf,
+pub struct ConfigInitOutcome {
+    pub path: PathBuf,
 }
 
-pub(crate) struct ConfigPathsOutcome {
-    pub(crate) lines: Vec<String>,
+pub struct ConfigPathsOutcome {
+    pub lines: Vec<String>,
 }
-pub(crate) fn show_config() -> Result<ConfigShowOutcome> {
+pub fn show_config() -> Result<ConfigShowOutcome> {
     let path = app_config::config_file_path()?;
     let config = app_config::AppConfig::load()?;
     let text = serde_yaml::to_string(&config)?;
     Ok(ConfigShowOutcome { path, text })
 }
 
-pub(crate) fn show_config_paths() -> Result<ConfigPathsOutcome> {
+pub fn show_config_paths() -> Result<ConfigPathsOutcome> {
     let config = app_config::AppConfig::load()?;
     let config_dir = app_config::config_dir_path()?;
     let config_file = app_config::config_file_path()?;
@@ -47,7 +47,7 @@ pub(crate) fn show_config_paths() -> Result<ConfigPathsOutcome> {
     })
 }
 
-pub(crate) fn init_config() -> Result<ConfigInitOutcome> {
+pub fn init_config() -> Result<ConfigInitOutcome> {
     let path = app_config::config_file_path()?;
     app_config::write_default_config(&path)?;
     Ok(ConfigInitOutcome { path })

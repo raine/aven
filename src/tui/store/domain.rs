@@ -1,11 +1,7 @@
 use anyhow::Result;
 
-use crate::labels::list_labels_in_workspace;
-use crate::operations::{
-    create_label_operation, create_project_operation, delete_project_operation,
-    rename_project_operation,
-};
-use crate::projects::inferred_project_key_for_add_in_workspace;
+use crate::operations::rename_config_project_mapping;
+use crate::projects::{inferred_project_key_for_add_with_database, project_has_config_mapping};
 use crate::tui::store::{MutationMessage, TaskScope};
 use crate::undo::UndoCommand;
 
@@ -14,10 +10,10 @@ use super::TuiStore;
 impl TuiStore {
     pub(crate) async fn create_project(&mut self, name: String) -> Result<String> {
         let name = name.trim().to_string();
-        let mut conn = self.pool.acquire().await?;
-        let outcome =
-            create_project_operation(&mut conn, &self.active_workspace, &name, None).await?;
-        drop(conn);
+        let outcome = self
+            .database
+            .create_project(&self.active_workspace, &name)
+            .await?;
         let commands = if outcome.created {
             vec![UndoCommand::DeleteCreatedProject {
                 project_key: outcome.project.key.clone(),
@@ -35,16 +31,27 @@ impl TuiStore {
     }
 
     pub(crate) async fn delete_project(&mut self, project: &str) -> Result<MutationMessage> {
-        let mut conn = self.pool.acquire().await?;
-        let outcome = delete_project_operation(&mut conn, &self.active_workspace, project).await?;
-        drop(conn);
+        let project = self
+            .database
+            .resolve_existing_project(&self.active_workspace.id, project)
+            .await?;
+        let config_mapping = project_has_config_mapping(
+            &self.active_workspace.id,
+            &self.active_workspace.key,
+            &project.key,
+        )
+        .unwrap_or(false);
+        let outcome = self
+            .database
+            .delete_project(&self.active_workspace, &project.key)
+            .await?;
 
         if self.scope_project() == Some(outcome.project.key.as_str()) {
             self.view_state.scope = TaskScope::Workspace;
         }
         let selected = self.refresh(None).await?;
         let mut message = format!("deleted project {}", outcome.project.key);
-        if outcome.config_mapping {
+        if config_mapping {
             message.push_str("; config path mappings were left unchanged");
         }
         Ok(MutationMessage::new(message, selected))
@@ -55,11 +62,24 @@ impl TuiStore {
         project: &str,
         new_name: String,
     ) -> Result<MutationMessage> {
-        let mut conn = self.pool.acquire().await?;
-        let outcome =
-            rename_project_operation(&mut conn, &self.active_workspace, project, &new_name, None)
-                .await?;
-        drop(conn);
+        let outcome = self
+            .database
+            .rename_project(&self.active_workspace, project, &new_name, None)
+            .await?;
+        let config_mapping = if outcome.changed {
+            rename_config_project_mapping(
+                &self.active_workspace,
+                &outcome.previous.key,
+                &outcome.project.key,
+            )?
+        } else {
+            project_has_config_mapping(
+                &self.active_workspace.id,
+                &self.active_workspace.key,
+                &outcome.previous.key,
+            )
+            .unwrap_or(false)
+        };
         if outcome.changed {
             self.record_undo_commands(
                 &format!("project {}", outcome.project.key),
@@ -85,7 +105,7 @@ impl TuiStore {
         );
         if !outcome.changed {
             message = format!("renamed project {} changed=none", outcome.project.key);
-        } else if outcome.config_mapping {
+        } else if config_mapping {
             message.push_str("; updated config path mappings");
         }
         Ok(MutationMessage::new(message, selected))
@@ -93,9 +113,10 @@ impl TuiStore {
 
     pub(crate) async fn create_label(&mut self, name: String) -> Result<String> {
         let name = name.trim().to_string();
-        let mut conn = self.pool.acquire().await?;
-        let outcome = create_label_operation(&mut conn, &self.active_workspace, &name).await?;
-        drop(conn);
+        let outcome = self
+            .database
+            .create_label(&self.active_workspace, &name)
+            .await?;
         let commands = if outcome.created {
             vec![UndoCommand::DeleteCreatedLabel {
                 label: outcome.name.clone(),
@@ -106,13 +127,14 @@ impl TuiStore {
         };
         self.record_undo_commands(&format!("label {}", outcome.name), commands)
             .await?;
-        let mut conn = self.pool.acquire().await?;
-        self.labels = list_labels_in_workspace(&mut conn, &self.active_workspace.id, None).await?;
+        self.labels = self
+            .database
+            .list_labels(&self.active_workspace.id, None)
+            .await?;
         Ok(format!("created label {}", outcome.name))
     }
 
     pub(crate) async fn inferred_add_project(&self) -> Result<Option<String>> {
-        let mut conn = self.pool.acquire().await?;
-        inferred_project_key_for_add_in_workspace(&mut conn, &self.active_workspace.id).await
+        inferred_project_key_for_add_with_database(&self.database, &self.active_workspace).await
     }
 }

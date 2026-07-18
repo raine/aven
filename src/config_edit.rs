@@ -9,11 +9,11 @@ use crate::config::{AppConfig, write_config_text};
 const MANAGED_MARKER: &str = "# aven-managed project path mapping";
 
 #[derive(Debug, Clone)]
-pub(crate) struct ProjectPathMappingEdit<'a> {
-    pub(crate) workspace_id: &'a WorkspaceId,
-    pub(crate) workspace: &'a str,
-    pub(crate) project: &'a str,
-    pub(crate) path: PathBuf,
+pub struct ProjectPathMappingEdit<'a> {
+    pub workspace_id: &'a WorkspaceId,
+    pub workspace: &'a str,
+    pub project: &'a str,
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -24,7 +24,7 @@ struct ManagedProjectOverride {
     paths: Vec<PathBuf>,
 }
 
-pub(crate) fn add_project_path(path: &Path, edit: ProjectPathMappingEdit<'_>) -> Result<()> {
+pub fn add_project_path(path: &Path, edit: ProjectPathMappingEdit<'_>) -> Result<()> {
     let text = read_config_text(path)?;
     let (text, mut entries) = remove_managed_entries(&text);
     for entry in &mut entries {
@@ -49,7 +49,7 @@ pub(crate) fn add_project_path(path: &Path, edit: ProjectPathMappingEdit<'_>) ->
     write_edited_config(path, append_managed_entries(&text, &entries)?)
 }
 
-pub(crate) fn remove_project_path(
+pub fn remove_project_path(
     path: &Path,
     workspace_id: &WorkspaceId,
     project: &str,
@@ -68,7 +68,7 @@ pub(crate) fn remove_project_path(
     write_edited_config(path, append_managed_entries(&text, &entries)?)
 }
 
-pub(crate) fn rename_project_path(
+pub fn rename_project_path(
     path: &Path,
     workspace_id: &WorkspaceId,
     old_project: &str,

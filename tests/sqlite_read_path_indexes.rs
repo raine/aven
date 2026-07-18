@@ -43,7 +43,7 @@ const READ_PATH_INDEXES: &[(&str, &str)] = &[
 ];
 
 const READ_PATH_INDEX_MIGRATION: &str =
-    include_str!("../migrations/20260621000000_read_path_indexes.sql");
+    include_str!("../crates/aven-core/migrations/20260621000000_read_path_indexes.sql");
 
 #[test]
 fn fresh_database_creates_read_path_indexes() {
@@ -146,7 +146,7 @@ fn old_schema_database_upgrade_creates_read_path_indexes() {
             .await
             .expect("open old schema db");
 
-        sqlx::raw_sql(include_str!("../migrations/20260618000000_initial.sql"))
+        sqlx::raw_sql(include_str!("../crates/aven-core/migrations/20260618000000_initial.sql"))
             .execute(&pool)
             .await
             .expect("apply initial migration");

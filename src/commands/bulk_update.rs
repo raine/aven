@@ -1,15 +1,12 @@
 use std::collections::HashSet;
 
 use anyhow::{Result, bail};
-use sqlx::SqliteConnection;
+use aven_core::db::Database;
 
 use super::validation::{validate_optional_priority, validate_optional_status};
 use crate::cli::BulkUpdateArgs;
-use crate::db::conflict_exists;
 use crate::ids::WorkspaceId;
-use crate::labels::resolve_labels_in_workspace;
-use crate::operations::{TaskUpdate, update_task};
-use crate::projects::resolve_existing_project_in_workspace;
+use crate::operations::TaskUpdate;
 use crate::query::{
     self, SortDirection, TaskAvailabilityFilter, TaskFilters, TaskQueryMode, TaskSort,
 };
@@ -19,7 +16,7 @@ use crate::types::Task;
 use crate::workspaces::Workspace;
 
 pub(crate) async fn cmd_bulk_update(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace: &Workspace,
     args: BulkUpdateArgs,
 ) -> Result<()> {
@@ -28,25 +25,25 @@ pub(crate) async fn cmd_bulk_update(
     validate_bulk_update_args(&args)?;
 
     let workspace_id = workspace.id.clone();
-    let labels = resolve_bulk_label_mutations(conn, &workspace_id, &args).await?;
+    let labels = resolve_bulk_label_mutations(database, &workspace_id, &args).await?;
     ensure_disjoint_labels(&labels.add, &labels.remove)?;
-    let set_project_key = resolve_bulk_project_mutation(conn, &workspace_id, &args).await?;
+    let set_project_key = resolve_bulk_project_mutation(database, &workspace_id, &args).await?;
 
     let filters = bulk_update_filters(&args);
-    let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
-    let items = query::list_task_items_with_display_refs(
-        conn,
-        &workspace.id,
-        filters,
-        TaskQueryMode::Flat,
-        TaskSort::Updated,
-        SortDirection::Desc,
-        &display_refs,
-    )
-    .await?;
+    let display_refs = database.display_ref_context(&workspace.id).await?;
+    let items = database
+        .list_task_items_with_display_refs(
+            &workspace.id,
+            filters,
+            TaskQueryMode::Flat,
+            TaskSort::Updated,
+            SortDirection::Desc,
+            &display_refs,
+        )
+        .await?;
     let matched = items.len();
     let planned = plan_bulk_updates(
-        conn,
+        database,
         &workspace_id,
         items,
         &args,
@@ -70,7 +67,9 @@ pub(crate) async fn cmd_bulk_update(
             print_unchanged_bulk_update(&item);
             continue;
         }
-        let outcome = update_task(conn, workspace, &item.task.id, update).await?;
+        let outcome = database
+            .update_task(workspace, &item.task.id, update)
+            .await?;
         changed += 1;
         print_changed_bulk_update(&display_refs, &outcome.task);
     }
@@ -128,24 +127,28 @@ struct PlannedBulkUpdate {
 }
 
 async fn resolve_bulk_label_mutations(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace_id: &WorkspaceId,
     args: &BulkUpdateArgs,
 ) -> Result<BulkLabelMutations> {
-    let add = dedup_labels(resolve_labels_in_workspace(conn, workspace_id, &args.label).await?);
-    let remove =
-        dedup_labels(resolve_labels_in_workspace(conn, workspace_id, &args.remove_label).await?);
+    let add = dedup_labels(database.resolve_labels(workspace_id, &args.label).await?);
+    let remove = dedup_labels(
+        database
+            .resolve_labels(workspace_id, &args.remove_label)
+            .await?,
+    );
     Ok(BulkLabelMutations { add, remove })
 }
 
 async fn resolve_bulk_project_mutation(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace_id: &WorkspaceId,
     args: &BulkUpdateArgs,
 ) -> Result<Option<String>> {
     if let Some(project) = args.set_project.as_deref() {
         return Ok(Some(
-            resolve_existing_project_in_workspace(conn, workspace_id, project)
+            database
+                .resolve_existing_project(workspace_id, project)
                 .await?
                 .key,
         ));
@@ -166,7 +169,7 @@ fn bulk_update_filters(args: &BulkUpdateArgs) -> TaskFilters {
 }
 
 async fn plan_bulk_updates(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace_id: &WorkspaceId,
     items: Vec<query::TaskListItem>,
     args: &BulkUpdateArgs,
@@ -178,7 +181,7 @@ async fn plan_bulk_updates(
         let update =
             bulk_update_for_item(&item, args, &labels.add, &labels.remove, set_project_key);
         let will_change = bulk_update_has_changes(&update);
-        preflight_bulk_update_item(conn, workspace_id, &item, &update).await?;
+        preflight_bulk_update_item(database, workspace_id, &item, &update).await?;
         planned.push(PlannedBulkUpdate {
             item,
             update,
@@ -287,14 +290,14 @@ fn bulk_update_has_changes(update: &TaskUpdate) -> bool {
 }
 
 async fn preflight_bulk_update_item(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace_id: &WorkspaceId,
     item: &query::TaskListItem,
     update: &TaskUpdate,
 ) -> Result<()> {
     if update.status.is_some() {
         ensure_bulk_field_clear(
-            conn,
+            database,
             workspace_id,
             &item.display_ref,
             &item.task.id,
@@ -304,7 +307,7 @@ async fn preflight_bulk_update_item(
     }
     if update.priority.is_some() {
         ensure_bulk_field_clear(
-            conn,
+            database,
             workspace_id,
             &item.display_ref,
             &item.task.id,
@@ -314,7 +317,7 @@ async fn preflight_bulk_update_item(
     }
     if update.project.is_some() {
         ensure_bulk_field_clear(
-            conn,
+            database,
             workspace_id,
             &item.display_ref,
             &item.task.id,
@@ -324,7 +327,7 @@ async fn preflight_bulk_update_item(
     }
     if !update.add_labels.is_empty() || !update.remove_labels.is_empty() {
         ensure_bulk_field_clear(
-            conn,
+            database,
             workspace_id,
             &item.display_ref,
             &item.task.id,
@@ -336,13 +339,16 @@ async fn preflight_bulk_update_item(
 }
 
 async fn ensure_bulk_field_clear(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace_id: &WorkspaceId,
     display_ref: &str,
     task_id: &crate::ids::TaskId,
     field: &str,
 ) -> Result<()> {
-    if conflict_exists(conn, workspace_id, task_id, field).await? {
+    if database
+        .conflict_exists(workspace_id, task_id, field)
+        .await?
+    {
         bail!("error bulk-update-conflicted-field ref={display_ref} field={field}");
     }
     Ok(())

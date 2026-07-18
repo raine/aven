@@ -1,8 +1,7 @@
 use anyhow::Result;
 
-use crate::operations::{resolve_conflict, task_conflicts};
 use crate::tui::store::{ConflictTarget, MutationMessage};
-use crate::undo::{UndoCommand, task_field_value};
+use crate::undo::UndoCommand;
 
 use super::TuiStore;
 
@@ -14,9 +13,10 @@ impl TuiStore {
         let Some(item) = self.selected_task(index) else {
             return Ok(None);
         };
-        let mut conn = self.pool.acquire().await?;
-        let details =
-            task_conflicts(&mut conn, &self.active_workspace, &item.task.id, None).await?;
+        let details = self
+            .database
+            .task_conflicts(&self.active_workspace, &item.task.id, None)
+            .await?;
         Ok(Some(
             details
                 .into_iter()
@@ -38,40 +38,33 @@ impl TuiStore {
         target: ConflictTarget,
         value: String,
     ) -> Result<MutationMessage> {
-        let workspace_id = self.active_workspace.id.clone();
-        let mut conn = self.pool.acquire().await?;
-        let before =
-            task_field_value(&mut conn, &workspace_id, &target.task_id, &target.field).await?;
-        let conflict_id =
-            crate::undo::conflict_row_id(&mut conn, &workspace_id, &target.task_id, &target.field)
-                .await?;
-        let outcome = resolve_conflict(
-            &mut conn,
-            &self.active_workspace,
-            &target.task_id,
-            &target.field,
-            &value,
-        )
-        .await?;
-        let after =
-            task_field_value(&mut conn, &workspace_id, &target.task_id, &target.field).await?;
-        drop(conn);
+        let resolution = self
+            .database
+            .resolve_conflict_for_undo(
+                &self.active_workspace,
+                &target.task_id,
+                &target.field,
+                &value,
+            )
+            .await?;
+        let resolved_task_id = resolution.outcome.task.id.clone();
+        let resolved_field = resolution.outcome.field.clone();
         self.record_undo_commands(
             &format!("conflict {} {}", target.display_ref, target.field),
             vec![UndoCommand::RestoreConflictResolution {
                 task_id: target.task_id.clone(),
                 field: target.field.clone(),
-                before,
-                after,
-                conflict_id,
+                before: resolution.before,
+                after: resolution.after,
+                conflict_id: resolution.conflict_id,
             }],
         )
         .await?;
         self.refresh_task_message(
-            &outcome.task.id,
+            &resolved_task_id,
             format!(
                 "resolved {} conflict field={}",
-                target.display_ref, outcome.field
+                target.display_ref, resolved_field
             ),
         )
         .await

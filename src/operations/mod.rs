@@ -1,26 +1,33 @@
 mod config;
-mod conflicts;
-mod dependencies;
-mod epics;
 mod projects;
-mod tasks;
 
-pub(crate) use config::{init_config, show_config, show_config_paths};
-pub(crate) use conflicts::{
-    ConflictDetail, ConflictListItem, conflict_variant_value, list_conflicts, resolve_conflict,
-    task_conflicts,
-};
-pub(crate) use dependencies::{
-    add_task_dependency, dependency_path_exists, remove_task_dependency,
-};
-pub(crate) use epics::{add_task_to_epic, remove_task_from_epic, task_has_epic_children};
-pub(crate) use projects::{
-    ProjectMetadata, add_project_path_operation, create_label_operation, create_project_operation,
-    delete_label_operation, delete_project_operation, insert_project_metadata_change,
-    list_project_paths_operation, remove_project_path_operation, rename_config_project_mapping,
-    rename_project_operation, set_project_metadata,
-};
-pub(crate) use tasks::{
-    TaskDraft, TaskUpdate, add_note, create_task, delete_note, set_task_deleted, update_task,
+pub use aven_core::operations::{ConflictDetail, ConflictListItem, TaskDraft, TaskUpdate};
+#[cfg(test)]
+pub use aven_core::test_support::{
+    add_task_dependency, add_task_to_epic, create_label_operation, set_task_deleted, update_task,
     update_task_labels_in_workspace,
+};
+
+#[cfg(test)]
+pub async fn create_task(
+    conn: &mut sqlx::SqliteConnection,
+    workspace: &crate::workspaces::Workspace,
+    mut draft: aven_core::operations::TaskDraft,
+) -> anyhow::Result<aven_core::operations::TaskOutcome> {
+    let project = aven_core::test_support::resolve_or_create_project_in_workspace(
+        conn,
+        &workspace.id,
+        draft.project.as_deref().unwrap_or("default"),
+    )
+    .await?;
+    draft.project = Some(project.key);
+    aven_core::test_support::create_task(conn, workspace, draft).await
+}
+
+pub use config::{init_config, show_config, show_config_paths};
+
+pub use projects::{
+    add_project_path_operation, create_project_operation, delete_project_operation,
+    list_project_paths_operation, remove_project_path_operation, rename_config_project_mapping,
+    rename_project_operation,
 };

@@ -3,17 +3,13 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Result, bail};
+use aven_core::db::Database;
 use serde::Serialize;
-use sqlx::SqliteConnection;
 
 use crate::cli::{ConflictCommand, ConflictSubcommand};
 use crate::input::read_required_text;
-use crate::operations::{
-    ConflictDetail, conflict_variant_value, list_conflicts, resolve_conflict, task_conflicts,
-};
-use crate::projects::resolve_existing_project_in_workspace;
-use crate::query::conflict_display_value;
-use crate::refs::{DisplayRefContext, resolve_task_ref_in_workspace};
+use crate::operations::ConflictDetail;
+use crate::refs::DisplayRefContext;
 use crate::render::{print_json_pretty, print_multiline_block, print_text_diff, quote};
 use crate::types::Task;
 use crate::workspaces::Workspace;
@@ -43,7 +39,7 @@ struct ConflictVariantJson {
 }
 
 pub(crate) async fn cmd_conflict(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace: &Workspace,
     args: ConflictCommand,
 ) -> Result<()> {
@@ -54,13 +50,15 @@ pub(crate) async fn cmd_conflict(
             limit,
             json,
         } => {
-            let project_key = resolve_conflict_project_filter(conn, &workspace.id, project).await?;
-            let mut items =
-                list_conflicts(conn, workspace, project_key.as_deref(), field.as_deref()).await?;
+            let project_key =
+                resolve_conflict_project_filter(database, &workspace.id, project).await?;
+            let mut items = database
+                .list_conflicts(workspace, project_key.as_deref(), field.as_deref())
+                .await?;
             if let Some(limit) = limit {
                 items.truncate(limit);
             }
-            let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
+            let display_refs = database.display_ref_context(&workspace.id).await?;
             if json {
                 let mut json_items = Vec::new();
                 for item in items {
@@ -89,25 +87,27 @@ pub(crate) async fn cmd_conflict(
             field,
             json,
         } => {
-            let task = resolve_task_ref_in_workspace(conn, workspace, &task_ref).await?;
-            let details = task_conflicts(conn, workspace, &task.id, field.as_deref()).await?;
+            let task = database.resolve_task_ref(workspace, &task_ref).await?;
+            let details = database
+                .task_conflicts(workspace, &task.id, field.as_deref())
+                .await?;
             if json {
                 let mut json_details = Vec::new();
                 for detail in details {
-                    let local_value = conflict_display_value(
-                        conn,
-                        &task.workspace_id,
-                        &detail.field,
-                        &detail.local_value,
-                    )
-                    .await?;
-                    let remote_value = conflict_display_value(
-                        conn,
-                        &task.workspace_id,
-                        &detail.field,
-                        &detail.remote_value,
-                    )
-                    .await?;
+                    let local_value = database
+                        .conflict_display_value(
+                            &task.workspace_id,
+                            &detail.field,
+                            &detail.local_value,
+                        )
+                        .await?;
+                    let remote_value = database
+                        .conflict_display_value(
+                            &task.workspace_id,
+                            &detail.field,
+                            &detail.remote_value,
+                        )
+                        .await?;
                     json_details.push(ConflictDetailJson {
                         r#ref: task_ref.clone(),
                         task_id: task.id.to_string(),
@@ -126,15 +126,15 @@ pub(crate) async fn cmd_conflict(
                 }
                 print_json_pretty(&json_details)?;
             } else {
-                let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
+                let display_refs = database.display_ref_context(&workspace.id).await?;
                 for detail in details {
-                    print_conflict_detail(conn, &display_refs, &task, detail).await?;
+                    print_conflict_detail(database, &display_refs, &task, detail).await?;
                 }
             }
         }
         ConflictSubcommand::Diff { task_ref, field } => {
-            let task = resolve_task_ref_in_workspace(conn, workspace, &task_ref).await?;
-            let detail = load_single_conflict_detail(conn, workspace, &task, &field).await?;
+            let task = database.resolve_task_ref(workspace, &task_ref).await?;
+            let detail = load_single_conflict_detail(database, workspace, &task, &field).await?;
             print_text_diff("local", &detail.local_value, "remote", &detail.remote_value);
         }
         ConflictSubcommand::Export {
@@ -142,9 +142,9 @@ pub(crate) async fn cmd_conflict(
             field,
             dir,
         } => {
-            let task = resolve_task_ref_in_workspace(conn, workspace, &task_ref).await?;
+            let task = database.resolve_task_ref(workspace, &task_ref).await?;
             fs::create_dir_all(&dir)?;
-            let detail = load_single_conflict_detail(conn, workspace, &task, &field).await?;
+            let detail = load_single_conflict_detail(database, workspace, &task, &field).await?;
             export_conflict_variant(&dir, &detail.field, &detail.variant_a, &detail.local_value)?;
             export_conflict_variant(&dir, &detail.field, &detail.variant_b, &detail.remote_value)?;
         }
@@ -156,14 +156,18 @@ pub(crate) async fn cmd_conflict(
             value_file,
             value_stdin,
         } => {
-            let task = resolve_task_ref_in_workspace(conn, workspace, &task_ref).await?;
+            let task = database.resolve_task_ref(workspace, &task_ref).await?;
             let value = if let Some(token) = use_variant {
-                conflict_variant_value(conn, workspace, &task.id, &field, &token).await?
+                database
+                    .conflict_variant_value(workspace, &task.id, &field, &token)
+                    .await?
             } else {
                 read_required_text(value, value_file.as_deref(), value_stdin, "value")?
             };
-            let outcome = resolve_conflict(conn, workspace, &task.id, &field, &value).await?;
-            let display_refs = DisplayRefContext::for_workspace(conn, &workspace.id).await?;
+            let outcome = database
+                .resolve_conflict(workspace, &task.id, &field, &value)
+                .await?;
+            let display_refs = database.display_ref_context(&workspace.id).await?;
             println!(
                 "resolved {} field={}",
                 display_refs.display_ref(&outcome.task),
@@ -175,13 +179,14 @@ pub(crate) async fn cmd_conflict(
 }
 
 async fn resolve_conflict_project_filter(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace_id: &WorkspaceId,
     project: Option<String>,
 ) -> Result<Option<String>> {
     if let Some(project) = project {
         return Ok(Some(
-            resolve_existing_project_in_workspace(conn, workspace_id, &project)
+            database
+                .resolve_existing_project(workspace_id, &project)
                 .await?
                 .key,
         ));
@@ -207,7 +212,7 @@ fn print_conflict_list_item(
 }
 
 async fn print_conflict_detail(
-    conn: &mut SqliteConnection,
+    database: &Database,
     display_refs: &DisplayRefContext,
     task: &Task,
     detail: ConflictDetail,
@@ -217,16 +222,12 @@ async fn print_conflict_detail(
         display_refs.display_ref(task),
         detail.field
     );
-    let local_value =
-        conflict_display_value(conn, &task.workspace_id, &detail.field, &detail.local_value)
-            .await?;
-    let remote_value = conflict_display_value(
-        conn,
-        &task.workspace_id,
-        &detail.field,
-        &detail.remote_value,
-    )
-    .await?;
+    let local_value = database
+        .conflict_display_value(&task.workspace_id, &detail.field, &detail.local_value)
+        .await?;
+    let remote_value = database
+        .conflict_display_value(&task.workspace_id, &detail.field, &detail.remote_value)
+        .await?;
     println!("variant {}", detail.variant_a);
     print_multiline_block("value", &local_value);
     println!("variant {}", detail.variant_b);
@@ -235,13 +236,15 @@ async fn print_conflict_detail(
 }
 
 async fn load_single_conflict_detail(
-    conn: &mut SqliteConnection,
+    database: &Database,
     workspace: &Workspace,
     task: &Task,
     field: &str,
 ) -> Result<ConflictDetail> {
     single_conflict(
-        task_conflicts(conn, workspace, &task.id, Some(field)).await?,
+        database
+            .task_conflicts(workspace, &task.id, Some(field))
+            .await?,
         &task.id,
         field,
     )

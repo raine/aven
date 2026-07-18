@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-migrations_dir="$repo_root/migrations"
+migrations_dir="$repo_root/crates/aven-core/migrations"
 target_ref="${WM_TARGET_BRANCH:-main}"
 
 usage() {
@@ -49,7 +49,7 @@ done < <(find "$migrations_dir" -maxdepth 1 -type f -name '*.sql' -print)
 if git -C "$repo_root" rev-parse --verify --quiet "$target_ref^{commit}" >/dev/null; then
   while IFS= read -r path; do
     record_latest_timestamp "$(basename "$path")"
-  done < <(git -C "$repo_root" ls-tree -r --name-only "$target_ref" -- migrations '*.sql')
+  done < <(git -C "$repo_root" ls-tree -r --name-only "$target_ref" -- migrations crates/aven-core/migrations '*.sql')
 fi
 
 if [[ -n "$latest_timestamp" ]]; then

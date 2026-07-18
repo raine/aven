@@ -1,8 +1,6 @@
 use anyhow::Result;
-use sqlx::SqliteConnection;
 
 use crate::config as app_config;
-use crate::db::get_meta;
 use crate::operations::{
     init_config as init_config_operation, show_config as show_config_operation,
     show_config_paths as show_config_paths_operation,
@@ -32,10 +30,7 @@ impl TuiStore {
         Ok(format!("created config {}", outcome.path.display()))
     }
 
-    pub(super) async fn load_sync_status(
-        &self,
-        conn: &mut SqliteConnection,
-    ) -> Result<TuiSyncStatus> {
+    pub(super) async fn load_sync_status(&self) -> Result<TuiSyncStatus> {
         let config = match app_config::AppConfig::load() {
             Ok(config) => config,
             Err(error) => {
@@ -45,7 +40,8 @@ impl TuiStore {
                 });
             }
         };
-        let pinned_server = get_meta(conn, "sync_server_url").await?;
+        let persistence = self.database.sync_persistence_status().await?;
+        let pinned_server = persistence.pinned_server.clone();
         let configured_server = configured_server_check(&config);
         let server_match = configured_server
             .as_ref()
@@ -68,15 +64,6 @@ impl TuiStore {
             Ok(addr) => SyncStatusCheck::new(true, addr.to_string()),
             Err(error) => SyncStatusCheck::new(false, format!("{error:#}")),
         };
-        let pending_changes: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM changes WHERE server_seq IS NULL")
-                .fetch_one(&mut *conn)
-                .await?;
-        let conflicts: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM conflicts WHERE resolved = 0")
-                .fetch_one(&mut *conn)
-                .await?;
-
         Ok(TuiSyncStatus {
             enabled: config.sync.enabled,
             config_error: None,
@@ -87,16 +74,16 @@ impl TuiStore {
             auth_token_configured: config.sync_auth_token().is_some(),
             interval_seconds: config.sync_interval_seconds(),
             daemon_wake,
-            pending_changes,
-            conflicts,
-            sync_cursor: get_meta(conn, "sync_cursor").await?,
-            local_sequence: get_meta(conn, "local_seq").await?,
-            last_attempt: get_meta(conn, "sync_last_attempt_at").await?,
-            last_success: get_meta(conn, "sync_last_success_at").await?,
-            last_error: get_meta(conn, "sync_last_error").await?,
-            last_pushed: get_meta(conn, "sync_last_pushed").await?,
-            last_pulled: get_meta(conn, "sync_last_pulled").await?,
-            last_cursor: get_meta(conn, "sync_last_cursor").await?,
+            pending_changes: persistence.pending_changes,
+            conflicts: persistence.conflicts,
+            sync_cursor: persistence.sync_cursor,
+            local_sequence: persistence.local_sequence,
+            last_attempt: persistence.last_attempt,
+            last_success: persistence.last_success,
+            last_error: persistence.last_error,
+            last_pushed: persistence.last_pushed,
+            last_pulled: persistence.last_pulled,
+            last_cursor: persistence.last_cursor,
         })
     }
 }

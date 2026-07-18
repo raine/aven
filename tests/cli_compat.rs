@@ -25,10 +25,12 @@ async fn old_schema_database_can_be_opened_and_read() {
         .await
         .unwrap();
 
-    sqlx::raw_sql(include_str!("../migrations/20260618000000_initial.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::raw_sql(include_str!(
+        "../crates/aven-core/migrations/20260618000000_initial.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query(
         "INSERT INTO projects(key, name, prefix, created_at, updated_at)
          VALUES ('app', 'app', 'APP', 't', 't')",
