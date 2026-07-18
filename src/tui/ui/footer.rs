@@ -124,7 +124,7 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("Enter", "open preview"),
             ("Tab/Esc", "leave"),
         ],
-        FooterMode::AttachmentPreview => &[("Esc", "back")],
+        FooterMode::AttachmentPreview => &[("j/k", "switch image"), ("Esc", "back")],
         FooterMode::DetailSelection if width >= 72 => &[
             ("y", "copy selection"),
             ("Esc", "clear selection"),
@@ -296,7 +296,7 @@ mod tests {
         );
         assert_eq!(
             footer_hints(FooterMode::AttachmentPreview, 80),
-            &[("Esc", "back")]
+            &[("j/k", "switch image"), ("Esc", "back")]
         );
     }
 

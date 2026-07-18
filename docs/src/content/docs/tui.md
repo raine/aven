@@ -167,7 +167,7 @@ Attachments appear in an `ATTACHMENTS` section below the description, in the ord
 
 A placeholder can also mean that the image is still downloading (`[image: pending download]`) or is unavailable on this device (`[image: unavailable bytes]`). Run `aven sync` to fetch images available from your sync server. If a preview you expect stays textual, see [Troubleshoot image previews](/tips/#troubleshoot-image-previews).
 
-When inline previews are supported, `Tab` focuses the first available child task or image and `Shift+Tab` focuses the last. Use `j/k` or the arrow keys to move among focused items. A focused image has a complete border, and detail scrolls to reveal it. Press `Enter` to open the focused image in a large in-TUI preview. `Tab`, `Shift+Tab`, or `Esc` clears detail focus. In the large preview, `Esc` returns to task detail with the image still focused. Clicking a locally available inline image opens the same preview, including while the preview is loading. Images that are pending download, unavailable, or unable to show a preview do not receive focus.
+When inline previews are supported, `Tab` focuses the first available child task or image and `Shift+Tab` focuses the last. Use `j/k` or the arrow keys to move among focused items. A focused image has a complete border, and detail scrolls to reveal it. Press `Enter` to open the focused image in a large in-TUI preview. In the large preview, use `j/k` or the arrow keys to switch directly between previewable images, and press `Esc` to return to task detail with the image still focused. `Tab`, `Shift+Tab`, or `Esc` clears detail focus. Clicking a locally available inline image opens the same preview, including while the preview is loading. Images that are pending download, unavailable, or unable to show a preview do not receive focus.
 
 Overdue and due-today labels are highlighted while future deadlines remain visible as dates. Use `j/k`, arrows, `Ctrl-d`, `Ctrl-u`, `PageDown`, `PageUp`, or the mouse wheel to scroll. Use `[` and `]` to switch tasks while staying in detail. With no child task or image focused, press `Esc`, `Enter`, or `q` to return to the list. Clicking status or priority opens the matching menu and returns to detail after selection. To save an image as a regular file, use [`aven attachment get`](/command-reference/#aven-attachment).
 
@@ -237,7 +237,7 @@ The TUI supports mouse actions in addition to keyboard shortcuts:
 
 | Shortcut         | Action                        |
 | ---------------- | ----------------------------- |
-| `j`, `k`, up/down | Move within the list or column |
+| `j`, `k`, up/down | Move within the current list, focus, or image preview |
 | Left/Right        | Move between column lanes     |
 | `Tab`, `Shift+Tab` | Switch focus, including previewable images in detail |
 | `Enter`          | Open selected task detail or focused image preview |

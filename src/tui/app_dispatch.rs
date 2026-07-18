@@ -673,6 +673,28 @@ impl App {
         true
     }
 
+    fn move_attachment_preview_selection(
+        &mut self,
+        attachment_id: &str,
+        delta: isize,
+    ) -> Option<String> {
+        let attachment_ids = self
+            .detail_focus_targets()
+            .into_iter()
+            .filter_map(|target| match target {
+                DetailFocusTarget::Attachment(attachment_id) => Some(attachment_id),
+                DetailFocusTarget::Child(_) => None,
+            })
+            .collect::<Vec<_>>();
+        let index = attachment_ids
+            .iter()
+            .position(|candidate| candidate == attachment_id)?;
+        let next = (index as isize + delta).rem_euclid(attachment_ids.len() as isize) as usize;
+        let attachment_id = attachment_ids[next].clone();
+        self.selected_detail_attachment_id = Some(attachment_id.clone());
+        Some(attachment_id)
+    }
+
     fn detail_focus_scroll(&self, scroll: u16, terminal_size: Size) -> u16 {
         if self.selected_detail_child_task_id.is_some() {
             return 0;
@@ -1093,11 +1115,20 @@ impl App {
             scroll,
         } = &overlay
         {
+            let next_attachment_id = match (key.code, key.modifiers) {
+                (KeyCode::Char('j') | KeyCode::Down, KeyModifiers::NONE) => self
+                    .move_attachment_preview_selection(attachment_id, 1)
+                    .unwrap_or_else(|| attachment_id.clone()),
+                (KeyCode::Char('k') | KeyCode::Up, KeyModifiers::NONE) => self
+                    .move_attachment_preview_selection(attachment_id, -1)
+                    .unwrap_or_else(|| attachment_id.clone()),
+                _ => attachment_id.clone(),
+            };
             self.overlay = Some(if key.code == KeyCode::Esc {
                 OverlayState::Detail { scroll: *scroll }
             } else {
                 OverlayState::AttachmentPreview {
-                    attachment_id: attachment_id.clone(),
+                    attachment_id: next_attachment_id,
                     scroll: *scroll,
                 }
             });

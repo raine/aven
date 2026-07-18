@@ -5087,6 +5087,62 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn full_screen_attachment_preview_switches_between_images() {
+        let (_dir, _pool, mut app) = test_app_with_pool().await;
+        app.inline_image_context_override =
+            Some(crate::tui::ui::DetailInlineImageContext::default());
+        let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
+        app.store.tasks[selected].attachments = vec![
+            test_attachment("FIRSTIMAGE", "image/png", true, Some((640, 480))),
+            test_attachment("MISSINGIMAGE", "image/png", false, Some((640, 480))),
+            test_attachment("DOCUMENT", "application/pdf", true, None),
+            test_attachment("SECONDIMAGE", "image/jpeg", true, Some((800, 600))),
+        ];
+        app.selected_detail_attachment_id = Some("FIRSTIMAGE".to_string());
+        app.overlay = Some(OverlayState::AttachmentPreview {
+            attachment_id: "FIRSTIMAGE".to_string(),
+            scroll: 4,
+        });
+
+        app.dispatch_key(key(KeyCode::Char('j')), (100, 30).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::AttachmentPreview {
+                ref attachment_id,
+                scroll: 4,
+            }) if attachment_id == "SECONDIMAGE"
+        ));
+        assert_eq!(
+            app.selected_detail_attachment_id.as_deref(),
+            Some("SECONDIMAGE")
+        );
+
+        app.dispatch_key(key(KeyCode::Down), (100, 30).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::AttachmentPreview {
+                ref attachment_id,
+                scroll: 4,
+            }) if attachment_id == "FIRSTIMAGE"
+        ));
+
+        app.dispatch_key(key(KeyCode::Char('k')), (100, 30).into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::AttachmentPreview {
+                ref attachment_id,
+                scroll: 4,
+            }) if attachment_id == "SECONDIMAGE"
+        ));
+    }
+
+    #[tokio::test]
     async fn detail_image_click_opens_preview_while_payload_is_loading() {
         let (_dir, _pool, mut app) = test_app_with_pool().await;
         app.inline_image_context_override =
