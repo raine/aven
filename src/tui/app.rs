@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use ratatui::widgets::{ListState, TableState};
 use sqlx::SqlitePool;
 
@@ -152,17 +152,12 @@ pub(crate) struct App {
 }
 
 impl App {
-    pub(crate) async fn new(
+    pub(crate) async fn new_with_view_state(
         pool: SqlitePool,
         workspace: crate::workspaces::Workspace,
-        project: Option<&str>,
+        view_state: TaskViewState,
     ) -> Result<Self> {
-        let store = match project {
-            Some("") => TuiStore::new_for_inferred_project(pool, workspace).await?,
-            Some(project) => TuiStore::new_for_project(pool, workspace, project).await?,
-            None => TuiStore::new(pool, workspace).await?,
-        };
-        Self::new_with_store(store)
+        Self::new_with_store(TuiStore::new_with_view_state(pool, workspace, view_state).await?)
     }
 
     #[cfg(test)]
@@ -217,8 +212,30 @@ impl App {
         app.restore_sidebar_selection();
         app.widgets
             .table
-            .select(Some(0).filter(|_| !app.store.tasks.is_empty()));
+            .select((app.store.main_row_count() > 0).then_some(0));
         Ok(app)
+    }
+
+    pub(crate) fn open_task_on_start(&mut self, task_id: &crate::ids::TaskId) -> Result<()> {
+        if !self.select_task_by_id(task_id) {
+            bail!("task target disappeared before the TUI loaded");
+        }
+        self.focus = Focus::Tasks;
+        self.overlay = Some(OverlayState::Detail { scroll: 0 });
+        Ok(())
+    }
+
+    pub(super) fn select_task_by_id(&mut self, task_id: &crate::ids::TaskId) -> bool {
+        let Some(index) = self
+            .store
+            .tasks
+            .iter()
+            .position(|item| &item.task.id == task_id)
+        else {
+            return false;
+        };
+        self.widgets.table.select(Some(index));
+        true
     }
 
     pub(crate) fn set_config(&mut self, config: AppConfig) {

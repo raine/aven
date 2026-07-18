@@ -719,24 +719,29 @@ aven daemon restart
 Open the terminal user interface.
 
 ```sh
-aven tui [-p [<project>] | --project [<project>]] [--add-task] [--add-task-only] [--natural]
+aven tui [<task-ref>] [--view <view>] [-p [<project>] | --project [<project>]] [--label <label>] [--priority <priority>] [--add-task | --add-task-only] [--natural]
 ```
 
-| Option | Description |
+| Argument or option | Description |
 | --- | --- |
+| `[<task-ref>]` | Open a task detail directly. Task refs cannot be combined with browse context or composer options. |
+| `--view <view>` | Start in `queue`, `columns`, `open`, `inbox`, `active`, `backlog`, `todo`, `done`, `upcoming`, `conflicts`, `epics`, or `recent-actions`. |
 | `-p`, `--project [<project>]` | Start in a project. Passing the flag without a value uses the project inferred from the current directory. Omitting the flag starts with workspace scope. |
-| `--add-task` | Open the add-task composer when the full TUI starts. |
-| `--add-task-only` | Run only the add-task popup and exit after submission or cancellation. |
-| `--natural` | Use natural-language intake when the startup add-task composer opens. |
+| `--label <label>` | Apply an initial label filter. |
+| `--priority <priority>` | Apply an initial `none`, `low`, `medium`, `high`, or `urgent` priority filter. |
+| `--add-task` | Open the add-task composer over the selected browse context. |
+| `--add-task-only` | Run only the add-task popup and exit after submission or cancellation. Project scope remains available. |
+| `--natural` | Use natural-language intake. Requires `--add-task` or `--add-task-only`. |
 
-`--natural` has an effect with `--add-task` or `--add-task-only`. `--add-task-only` takes precedence over the full TUI flow.
+Views, project scope, label, priority, and `--add-task` compose. The `recent-actions` view rejects label and priority filters because it displays change-log entries rather than tasks. `--add-task` and `--add-task-only` are mutually exclusive.
 
 ```sh
 aven tui
-aven tui --project aven
-aven tui -p
+aven tui --project aven --view todo --label bug
+aven tui --view columns
+aven tui AVN-7KQ9
 aven tui --add-task --natural
-aven tui --add-task-only
+aven tui --project aven --add-task-only
 ```
 
 ## Agent commands

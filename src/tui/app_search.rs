@@ -330,15 +330,4 @@ impl App {
             .collect();
         state.normalize_selection();
     }
-
-    fn select_task_by_id(&mut self, task_id: &crate::ids::TaskId) {
-        if let Some(index) = self
-            .store
-            .tasks
-            .iter()
-            .position(|item| &item.task.id == task_id)
-        {
-            self.widgets.table.select(Some(index));
-        }
-    }
 }

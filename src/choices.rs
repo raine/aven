@@ -79,7 +79,7 @@ pub(crate) const STATUSES: &[&str] = &[
     TaskStatus::Canceled.as_str(),
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum TaskPriority {
     None,
     Low,

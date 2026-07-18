@@ -4,6 +4,7 @@ mod config;
 mod conflicts;
 mod domain;
 mod epics;
+mod launch;
 mod pickers;
 mod sidebar;
 mod sort;
@@ -24,6 +25,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 
 pub(crate) use crate::query::RecentActionItem;
+pub(crate) use launch::{TuiLaunch, TuiStartup};
 pub(crate) use pickers::deleted_picker_items;
 pub(crate) use task_creation::task_creation_committed;
 pub(crate) use types::{
@@ -35,9 +37,6 @@ pub(crate) use types::{
 pub(crate) use types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts};
 
 use crate::labels::list_labels_in_workspace;
-use crate::projects::{
-    inferred_existing_project_key_in_workspace, resolve_existing_project_in_workspace,
-};
 use crate::query::{
     ProjectListItem, SidebarCounts, TaskListItem, list_project_items_in_workspace,
     list_recent_actions_in_workspace, list_task_items_in_workspace,
@@ -70,42 +69,16 @@ pub(crate) struct ScopeRefreshResult {
 }
 
 impl TuiStore {
+    #[cfg(test)]
     pub(crate) async fn new(pool: SqlitePool, workspace: Workspace) -> Result<Self> {
-        Self::new_with_initial_project(pool, workspace, None).await
+        Self::new_with_view_state(pool, workspace, TaskViewState::default()).await
     }
 
-    pub(crate) async fn new_for_inferred_project(
+    pub(crate) async fn new_with_view_state(
         pool: SqlitePool,
         workspace: Workspace,
+        view_state: TaskViewState,
     ) -> Result<Self> {
-        let initial_project = {
-            let mut conn = pool.acquire().await?;
-            inferred_existing_project_key_in_workspace(&mut conn, &workspace.id).await?
-        };
-        Self::new_with_initial_project(pool, workspace, initial_project).await
-    }
-
-    pub(crate) async fn new_for_project(
-        pool: SqlitePool,
-        workspace: Workspace,
-        project: &str,
-    ) -> Result<Self> {
-        let project = {
-            let mut conn = pool.acquire().await?;
-            resolve_existing_project_in_workspace(&mut conn, &workspace.id, project).await?
-        };
-        Self::new_with_initial_project(pool, workspace, Some(project.key)).await
-    }
-
-    async fn new_with_initial_project(
-        pool: SqlitePool,
-        workspace: Workspace,
-        initial_project: Option<String>,
-    ) -> Result<Self> {
-        let mut view_state = TaskViewState::default();
-        if let Some(project) = initial_project {
-            view_state.scope = TaskScope::Project(project);
-        }
         let mut store = Self {
             pool,
             tasks: Vec::new(),

@@ -232,29 +232,10 @@ async fn dispatch_tui(
     let cwd = std::env::current_dir()?;
     let resolved_workspace =
         resolve_active_workspace(&mut conn, workspace.as_deref(), &config, &cwd).await?;
+    let launch = tui::resolve_launch(&mut conn, &resolved_workspace, args).await?;
     drop(conn);
 
-    if args.add_task_only {
-        return tui::run_add_task(
-            pool,
-            resolved_workspace,
-            args.project.as_deref(),
-            args.natural,
-            db_path,
-            config,
-        )
-        .await;
-    }
-    tui::run(
-        pool,
-        resolved_workspace,
-        args.project.as_deref(),
-        args.add_task,
-        args.natural,
-        db_path,
-        config,
-    )
-    .await
+    tui::run(pool, resolved_workspace, launch, db_path, config).await
 }
 
 async fn dispatch_database(

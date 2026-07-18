@@ -2412,10 +2412,14 @@ mod workspace_scoping {
             )
             .await
             .unwrap();
-        let reopened = TuiStore::new_with_initial_project(
+        let view_state = TaskViewState {
+            scope: TaskScope::Project("mobile-app".to_string()),
+            ..TaskViewState::default()
+        };
+        let reopened = TuiStore::new_with_view_state(
             store.pool.clone(),
             store.active_workspace.clone(),
-            Some("mobile-app".to_string()),
+            view_state,
         )
         .await
         .unwrap();

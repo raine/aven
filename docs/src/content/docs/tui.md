@@ -204,6 +204,8 @@ Press `/` to search. Search shows live preview results while you type.
 
 Press `f` to filter the current list. Press `o` to change ordering.
 
+For shell shortcuts that need an initial view, filter, or task, see [`aven tui`](/command-reference/#aven-tui).
+
 ## Projects, labels, dependencies, and epics
 
 Projects and labels are available from the sidebar and command families. Use `p` for project administration and `L` for label administration.

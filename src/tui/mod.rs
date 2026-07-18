@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use ratatui::DefaultTerminal;
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 mod app;
 mod app_attachments;
@@ -86,51 +86,58 @@ impl Drop for TerminalSession {
     }
 }
 
+pub(crate) async fn resolve_launch(
+    conn: &mut SqliteConnection,
+    workspace: &crate::workspaces::Workspace,
+    args: crate::cli::TuiArgs,
+) -> Result<store::TuiLaunch> {
+    store::TuiLaunch::resolve(conn, workspace, args).await
+}
+
 pub(crate) async fn run(
     pool: SqlitePool,
     workspace: crate::workspaces::Workspace,
-    project: Option<&str>,
-    add_task: bool,
-    natural: bool,
+    launch: store::TuiLaunch,
     db_path: std::path::PathBuf,
     config: crate::config::AppConfig,
 ) -> Result<()> {
-    let mut app = app::App::new(pool, workspace, project).await?;
+    let mut app = app::App::new_with_view_state(pool, workspace, launch.view_state).await?;
     app.set_add_task_db_path(db_path);
-    app.set_config(config);
-    app.start_update_check();
-    if add_task {
-        app.open_add_task_on_start(natural).await?;
+    match launch.startup {
+        store::TuiStartup::AddTaskOnly { natural } => {
+            let mut terminal = TerminalSession::init()?;
+            let result = app
+                .run_add_task_only(terminal.terminal_mut(), natural, config)
+                .await;
+            let restore_result = terminal.restore();
+            let result = match (result, restore_result) {
+                (Ok(value), Ok(())) => Ok(value),
+                (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+            };
+            if let Ok(Some(message)) = &result {
+                println!("{message}");
+            }
+            result.map(|_| ())
+        }
+        startup => {
+            app.set_config(config);
+            app.start_update_check();
+            match startup {
+                store::TuiStartup::Browse => {}
+                store::TuiStartup::AddTask { natural } => {
+                    app.open_add_task_on_start(natural).await?;
+                }
+                store::TuiStartup::Detail { task_id } => {
+                    app.open_task_on_start(&task_id)?;
+                }
+                store::TuiStartup::AddTaskOnly { .. } => unreachable!(),
+            }
+            let mut terminal = TerminalSession::init()?;
+            let result = app.run(terminal.terminal_mut()).await;
+            let restore_result = terminal.restore();
+            result.and(restore_result)
+        }
     }
-    let mut terminal = TerminalSession::init()?;
-    let result = app.run(terminal.terminal_mut()).await;
-    let restore_result = terminal.restore();
-    result.and(restore_result)
-}
-
-pub(crate) async fn run_add_task(
-    pool: SqlitePool,
-    workspace: crate::workspaces::Workspace,
-    project: Option<&str>,
-    natural: bool,
-    db_path: std::path::PathBuf,
-    config: crate::config::AppConfig,
-) -> Result<()> {
-    let mut app = app::App::new(pool, workspace, project).await?;
-    app.set_add_task_db_path(db_path);
-    let mut terminal = TerminalSession::init()?;
-    let result = app
-        .run_add_task_only(terminal.terminal_mut(), natural, config)
-        .await;
-    let restore_result = terminal.restore();
-    let result = match (result, restore_result) {
-        (Ok(value), Ok(())) => Ok(value),
-        (Err(error), _) | (Ok(_), Err(error)) => Err(error),
-    };
-    if let Ok(Some(message)) = &result {
-        println!("{message}");
-    }
-    result.map(|_| ())
 }
 
 fn init_terminal() -> Result<DefaultTerminal> {

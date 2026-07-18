@@ -18,7 +18,9 @@ use crate::tui::overlay::{
     OverlayView, PickerItem, PickerMode, PickerState, SearchPurpose, SearchState, TextInputState,
     TextPanelState,
 };
-use crate::tui::store::{SidebarEntryTarget, TaskOrder, TaskScope, TaskScopeTarget, TaskView};
+use crate::tui::store::{
+    SidebarEntryTarget, TaskOrder, TaskScope, TaskScopeTarget, TaskView, TaskViewState,
+};
 use crate::tui::toast::ToastSeverity;
 use crate::tui::ui::ViewSurface;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -3303,6 +3305,85 @@ mod authoring {
             &app.overlay,
             Some(OverlayState::AddTask(state)) if state.title.as_str() == "Write docs"
         ));
+    }
+
+    #[tokio::test]
+    async fn direct_task_start_opens_selected_detail_without_history() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        create_and_select_task(&mut app, test_task_draft("first task")).await;
+        let target = create_and_select_task(&mut app, test_task_draft("target task")).await;
+        let task_id = app.store.tasks[target].task.id.clone();
+        drop(app);
+        sqlx::query("UPDATE tasks SET status = 'done', deleted = 1 WHERE id = ?")
+            .bind(&task_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let view_state = TaskViewState {
+            view: TaskView::Search,
+            filter_modifiers: crate::tui::store::TaskFilterModifiers {
+                task_ids: vec![task_id.clone()],
+                ..crate::tui::store::TaskFilterModifiers::default()
+            },
+            ..TaskViewState::default()
+        };
+        let mut app =
+            App::new_with_view_state(pool, crate::workspaces::Workspace::default(), view_state)
+                .await
+                .unwrap();
+
+        app.open_task_on_start(&task_id).unwrap();
+
+        assert_eq!(app.store.tasks.len(), 1);
+        assert_eq!(app.widgets.table.selected(), Some(0));
+        assert_eq!(app.store.tasks[0].task.id, task_id);
+        assert!(app.store.tasks[0].task.deleted);
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert!(app.navigation_history.pop().is_none());
+        assert!(app.detail_navigation_history.pop().is_none());
+
+        app.handle_normal_key(KeyCode::Esc).await.unwrap();
+        assert!(app.overlay.is_none());
+        assert_eq!(app.store.view_state.view, TaskView::Search);
+        assert_eq!(app.store.tasks.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn direct_task_start_rejects_a_missing_loaded_target() {
+        let mut app = test_app().await;
+        let missing: crate::ids::TaskId = "ABCD000000000000".parse().unwrap();
+
+        let error = app.open_task_on_start(&missing).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "task target disappeared before the TUI loaded"
+        );
+        assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn recent_actions_start_selects_the_first_action() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        create_and_select_task(&mut app, test_task_draft("recorded task")).await;
+        drop(app);
+        let view_state = TaskViewState {
+            view: TaskView::RecentActions,
+            ..TaskViewState::default()
+        };
+
+        let app =
+            App::new_with_view_state(pool, crate::workspaces::Workspace::default(), view_state)
+                .await
+                .unwrap();
+
+        assert!(!app.store.recent_actions.is_empty());
+        assert!(app.store.tasks.is_empty());
+        assert_eq!(app.widgets.table.selected(), Some(0));
     }
 
     #[tokio::test]
