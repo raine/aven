@@ -68,8 +68,13 @@ fn unique_inline_image_placements(
 
 fn inline_image_emissions_after_draw(
     placements: &[ui::DetailInlineImagePlacement],
+    previous: &[ui::DetailInlineImagePlacement],
 ) -> Vec<ui::DetailInlineImagePlacement> {
-    placements.to_vec()
+    placements
+        .iter()
+        .filter(|placement| !previous.contains(placement))
+        .cloned()
+        .collect()
 }
 
 fn write_inline_image_cleanup(
@@ -276,7 +281,8 @@ impl App {
             return Ok(());
         };
 
-        let pending_emissions = inline_image_emissions_after_draw(&current);
+        let pending_emissions =
+            inline_image_emissions_after_draw(&current, &self.previous_inline_image_placements);
         let mut stdout = std::io::stdout();
         for placement in pending_emissions {
             let key = PreviewKey::new(&blob_dir, &placement.source_hash, preview_quota_bytes);
@@ -617,12 +623,25 @@ mod inline_image_lifecycle_tests {
     }
 
     #[test]
-    fn unchanged_placements_are_emitted_after_each_frame_draw() {
+    fn new_placements_are_emitted_after_frame_draw() {
         let placement = placement();
 
         assert_eq!(
-            inline_image_emissions_after_draw(std::slice::from_ref(&placement)),
+            inline_image_emissions_after_draw(std::slice::from_ref(&placement), &[]),
             vec![placement]
+        );
+    }
+
+    #[test]
+    fn unchanged_placements_are_not_retransmitted_after_frame_draw() {
+        let placement = placement();
+
+        assert!(
+            inline_image_emissions_after_draw(
+                std::slice::from_ref(&placement),
+                std::slice::from_ref(&placement),
+            )
+            .is_empty()
         );
     }
 
