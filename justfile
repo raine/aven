@@ -87,6 +87,33 @@ clippy-fix:
 build:
     @scripts/quiet-check build cargo build --all --locked
 
+# Build the macOS Rust facade and generate Swift bindings
+uniffi-swift:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="$(git rev-parse --show-toplevel)"
+    host="$(rustc -vV | while IFS= read -r line; do
+      case "$line" in
+        "host: "*) printf '%s\n' "${line#host: }" ;;
+      esac
+    done)"
+    if [[ -z "$host" ]]; then
+      echo "Error: rustc did not report a host target" >&2
+      exit 1
+    fi
+    target_dir="$root/target/aven-uniffi/build"
+    output="$root/target/aven-uniffi/swift"
+    rm -rf "$output"
+    mkdir -p "$output"
+    CARGO_TARGET_DIR="$target_dir" MACOSX_DEPLOYMENT_TARGET=13.0 \
+      cargo build --release --locked -p aven-uniffi --target "$host"
+    CARGO_TARGET_DIR="$target_dir" MACOSX_DEPLOYMENT_TARGET=13.0 \
+      cargo run --release --locked -p aven-uniffi --bin uniffi-bindgen \
+      --target "$host" -- generate \
+      --library "$target_dir/$host/release/libaven_uniffi.dylib" \
+      --language swift \
+      --out-dir "$output"
+
 # Type-check all targets without producing final artifacts
 check-types:
     @scripts/quiet-check check-types cargo check --all-targets --locked

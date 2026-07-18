@@ -1,0 +1,25 @@
+[package]
+name = "aven-uniffi"
+version = "0.1.12"
+edition = "2024"
+rust-version = "1.96"
+authors = ["Raine"]
+description = "UniFFI facade for the aven core consumer API"
+repository = "https://github.com/raine/aven"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/uniffi_bindgen.rs"
+
+[dependencies]
+aven-core = { path = "../aven-core", version = "=0.1.12" }
+thiserror = "=2.0.18"
+tokio = { version = "=1.52.3", features = ["rt-multi-thread"] }
+uniffi = { version = "=0.32.0", features = ["cli"] }
+
+[dev-dependencies]
+tempfile = "3.14"

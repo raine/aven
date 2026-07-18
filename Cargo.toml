@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/aven-core"]
+members = [".", "crates/aven-core", "crates/aven-uniffi"]
 resolver = "3"
 
 [package]
