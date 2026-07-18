@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::ids::WorkspaceId;
 use anyhow::{Result, bail};
 use sqlx::SqliteConnection;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
 use crate::choices::{TaskPriority, TaskStatus};
@@ -140,8 +140,7 @@ pub(crate) async fn create_task_with_attachments(
             .or_insert_with(|| attachment.clone());
     }
 
-    let mut additional_bytes = 0_i64;
-    let mut capacity_hash = None;
+    let mut capacity_reservations = Vec::new();
     for attachment in unique.values() {
         let available: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM blob_inventory WHERE sha256 = ? AND available = 1)",
@@ -149,24 +148,31 @@ pub(crate) async fn create_task_with_attachments(
         .bind(&attachment.sha256)
         .fetch_one(&mut *conn)
         .await?;
-        if !available {
-            capacity_hash.get_or_insert_with(|| attachment.sha256.clone());
-            additional_bytes = additional_bytes.saturating_add(attachment.byte_size);
+        if available {
+            continue;
         }
-    }
-    let capacity_reservation = if let Some(capacity_hash) = capacity_hash {
-        crate::attachments::lifecycle::ensure_local_capacity(
+        match crate::attachments::lifecycle::ensure_local_capacity(
             conn,
             blob_dir,
-            &capacity_hash,
-            additional_bytes,
+            &attachment.sha256,
+            attachment.byte_size,
             lifecycle_policy,
             &crate::attachments::lifecycle::SystemClock,
         )
-        .await?
-    } else {
-        None
-    };
+        .await
+        {
+            Ok(Some(reservation_id)) => capacity_reservations.push(reservation_id),
+            Ok(None) => {}
+            Err(error) => {
+                for reservation_id in capacity_reservations {
+                    let _ =
+                        crate::attachments::lifecycle::release_reservation(conn, &reservation_id)
+                            .await;
+                }
+                return Err(error);
+            }
+        }
+    }
 
     let mut staging_leases = Vec::with_capacity(unique.len());
     for attachment in unique.values() {
@@ -183,9 +189,9 @@ pub(crate) async fn create_task_with_attachments(
                 for lease_id in staging_leases {
                     let _ = crate::attachments::lifecycle::release_lease(conn, &lease_id).await;
                 }
-                if let Some(reservation_id) = capacity_reservation.as_deref() {
+                for reservation_id in capacity_reservations {
                     let _ =
-                        crate::attachments::lifecycle::release_reservation(conn, reservation_id)
+                        crate::attachments::lifecycle::release_reservation(conn, &reservation_id)
                             .await;
                 }
                 return Err(error);
@@ -208,7 +214,7 @@ pub(crate) async fn create_task_with_attachments(
                     for lease_id in &staging_leases {
                         let _ = crate::attachments::lifecycle::release_lease(conn, lease_id).await;
                     }
-                    if let Some(reservation_id) = capacity_reservation.as_deref() {
+                    for reservation_id in &capacity_reservations {
                         let _ = crate::attachments::lifecycle::release_reservation(
                             conn,
                             reservation_id,
@@ -226,9 +232,9 @@ pub(crate) async fn create_task_with_attachments(
                 for lease_id in &staging_leases {
                     let _ = crate::attachments::lifecycle::release_lease(conn, lease_id).await;
                 }
-                if let Some(reservation_id) = capacity_reservation.as_deref() {
+                for reservation_id in capacity_reservations {
                     let _ =
-                        crate::attachments::lifecycle::release_reservation(conn, reservation_id)
+                        crate::attachments::lifecycle::release_reservation(conn, &reservation_id)
                             .await;
                 }
                 return Err(error);
@@ -265,20 +271,21 @@ pub(crate) async fn create_task_with_attachments(
                 .await?,
             );
         }
+        let task = get_task_in_workspace(&mut tx, workspace, &inserted.id).await?;
         inject_atomic_create_failure("commit")?;
         tx.commit().await?;
-        Ok::<_, anyhow::Error>((inserted, attachment_change_ids))
+        Ok::<_, anyhow::Error>((inserted, attachment_change_ids, task))
     }
     .await;
 
-    let (inserted, attachment_change_ids) = match database_result {
+    let (inserted, attachment_change_ids, task) = match database_result {
         Ok(value) => value,
         Err(error) => {
             cleanup_created_objects(conn, blob_dir, &created_hashes).await;
             for lease_id in staging_leases {
                 let _ = crate::attachments::lifecycle::release_lease(conn, &lease_id).await;
             }
-            if let Some(reservation_id) = capacity_reservation {
+            for reservation_id in capacity_reservations {
                 let _ =
                     crate::attachments::lifecycle::release_reservation(conn, &reservation_id).await;
             }
@@ -286,16 +293,25 @@ pub(crate) async fn create_task_with_attachments(
         }
     };
     for lease_id in staging_leases {
-        crate::attachments::lifecycle::release_lease(conn, &lease_id).await?;
+        if let Err(error) = crate::attachments::lifecycle::release_lease(conn, &lease_id).await {
+            warn!(%error, "failed to release attachment staging lease");
+        }
     }
-    if let Some(reservation_id) = capacity_reservation {
-        crate::attachments::lifecycle::release_reservation(conn, &reservation_id).await?;
+    for reservation_id in capacity_reservations {
+        if let Err(error) =
+            crate::attachments::lifecycle::release_reservation(conn, &reservation_id).await
+        {
+            warn!(%error, "failed to release attachment capacity reservation");
+        }
     }
-    crate::attachments::lifecycle::reconcile_liveness(
+    if let Err(error) = crate::attachments::lifecycle::reconcile_liveness(
         conn,
         &crate::attachments::lifecycle::SystemClock,
     )
-    .await?;
+    .await
+    {
+        warn!(%error, "failed to reconcile attachment liveness");
+    }
     info!(
         task_id = %inserted.id,
         project_key = %inserted.project_key,
@@ -304,7 +320,7 @@ pub(crate) async fn create_task_with_attachments(
         "task created"
     );
     Ok(TaskOutcome {
-        task: get_task_in_workspace(conn, workspace, &inserted.id).await?,
+        task,
         create_change_id: Some(inserted.change_id),
         attachment_change_ids,
     })
@@ -844,6 +860,104 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn multi_attachment_capacity_is_reserved_per_hash() {
+        let (dir, pool, workspace) = setup().await;
+        let blob_dir = dir.path().join("blobs");
+        let first = png_bytes(2);
+        let second = png_bytes(3);
+        let first_hash = sha256_hex(&first);
+        let second_hash = sha256_hex(&second);
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "CREATE TABLE reservation_audit(sha256 TEXT NOT NULL, byte_size INTEGER NOT NULL)",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER audit_local_reservation
+             AFTER INSERT ON blob_upload_reservations
+             WHEN NEW.workspace_id = '__local__'
+             BEGIN
+               INSERT INTO reservation_audit(sha256, byte_size)
+               VALUES (NEW.sha256, NEW.byte_size);
+             END",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        create_task_with_attachments(
+            &mut conn,
+            &workspace,
+            &blob_dir,
+            crate::attachments::lifecycle::LifecyclePolicy::default(),
+            task_draft("capacity"),
+            vec![
+                attachment("ATTACHMENT000001", first.clone()),
+                attachment("ATTACHMENT000002", second.clone()),
+            ],
+        )
+        .await
+        .unwrap();
+
+        let reservations: Vec<(String, i64)> =
+            sqlx::query_as("SELECT sha256, byte_size FROM reservation_audit ORDER BY sha256")
+                .fetch_all(&mut *conn)
+                .await
+                .unwrap();
+        let mut expected = vec![
+            (first_hash, i64::try_from(first.len()).unwrap()),
+            (second_hash, i64::try_from(second.len()).unwrap()),
+        ];
+        expected.sort();
+        assert_eq!(reservations, expected);
+    }
+
+    #[tokio::test]
+    async fn committed_create_succeeds_when_maintenance_cleanup_fails() {
+        let (dir, pool, workspace) = setup().await;
+        let blob_dir = dir.path().join("blobs");
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "CREATE TRIGGER block_lease_release BEFORE DELETE ON blob_leases
+             BEGIN SELECT RAISE(FAIL, 'lease release'); END",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER block_reservation_release
+             BEFORE DELETE ON blob_upload_reservations
+             BEGIN SELECT RAISE(FAIL, 'reservation release'); END",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER block_liveness_reconcile BEFORE INSERT ON blob_lifecycle
+             BEGIN SELECT RAISE(FAIL, 'liveness reconcile'); END",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let outcome = create_task_with_attachments(
+            &mut conn,
+            &workspace,
+            &blob_dir,
+            crate::attachments::lifecycle::LifecyclePolicy::default(),
+            task_draft("committed"),
+            vec![attachment("ATTACHMENT000001", png_bytes(2))],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.task.title, "committed");
+        assert_eq!(counts(&mut conn).await.0, 1);
     }
 
     #[tokio::test]

@@ -14,14 +14,16 @@ const MAX_PREVIEW_FAILURES: u8 = 2;
 pub(crate) struct PreviewKey {
     blob_dir: PathBuf,
     source_hash: String,
+    preview_quota_bytes: u64,
     profile: &'static str,
 }
 
 impl PreviewKey {
-    pub(crate) fn new(blob_dir: &Path, source_hash: &str) -> Self {
+    pub(crate) fn new(blob_dir: &Path, source_hash: &str, preview_quota_bytes: u64) -> Self {
         Self {
             blob_dir: blob_dir.to_path_buf(),
             source_hash: source_hash.to_string(),
+            preview_quota_bytes,
             profile: crate::attachments::preview::PREVIEW_PROFILE,
         }
     }
@@ -242,8 +244,12 @@ fn encode_preview_png(bytes: Vec<u8>) -> Result<PreviewPayload> {
 }
 
 async fn load_preview(generation: u64, key: PreviewKey) -> PreviewWorkResult {
-    let bytes =
-        crate::attachments::preview::load_preview_png(&key.blob_dir, &key.source_hash).await;
+    let bytes = crate::attachments::preview::load_preview_png(
+        &key.blob_dir,
+        &key.source_hash,
+        key.preview_quota_bytes,
+    )
+    .await;
     let payload = match bytes {
         Ok(bytes) => crate::attachments::blocking::run(move || encode_preview_png(bytes))
             .await
@@ -262,7 +268,7 @@ mod tests {
     use super::*;
 
     fn key(name: &str) -> PreviewKey {
-        PreviewKey::new(Path::new("/tmp/blobs"), &format!("{name:0<64}"))
+        PreviewKey::new(Path::new("/tmp/blobs"), &format!("{name:0<64}"), u64::MAX)
     }
 
     fn payload(value: &str) -> PreviewPayload {

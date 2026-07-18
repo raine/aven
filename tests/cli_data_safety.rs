@@ -72,10 +72,92 @@ fn backup_archive_round_trips_attachment_blobs() {
     contains_all(&output, &["restored-backup path=", "safety_backup="]);
     let object_path = blob_dir.join("objects").join("sha256").join(&sha);
     assert_eq!(fs::read(object_path).unwrap(), image_bytes);
+    let listed = ok(env.aven(&db, ["attachment", "list", &task_ref, "--json"]));
+    let listed: Value = serde_json::from_str(&listed).unwrap();
+    assert_eq!(listed[0]["sha256"], sha);
+}
+
+#[test]
+fn backup_restore_replaces_attachment_objects_and_repairs_bytes() {
+    let env = TestEnv::new();
+    let db = env.db("backup-replace-objects.sqlite");
+    let first_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "first image", "--project", "app"])
+    ));
+    let first_image = env.path("first.png");
+    let first_bytes = png_bytes(3, 2);
+    fs::write(&first_image, &first_bytes).unwrap();
+    ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &first_ref,
+            first_image.to_str().unwrap(),
+        ],
+    ));
+    let first_sha = query_string(&db, "SELECT sha256 FROM task_attachments LIMIT 1");
+    let backup_path = env.path("replace-objects.aven-backup.tar.zst");
+    ok(env.aven(&db, ["backup", "--output", backup_path.to_str().unwrap()]));
+
+    let second_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "second image", "--project", "app"])
+    ));
+    let second_image = env.path("second.png");
+    fs::write(&second_image, png_bytes(4, 3)).unwrap();
+    ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &second_ref,
+            second_image.to_str().unwrap(),
+        ],
+    ));
+    let second_sha = query_strings(&db, "SELECT sha256 FROM task_attachments")
+        .into_iter()
+        .find(|sha| sha != &first_sha)
+        .unwrap();
+    let objects = default_blob_dir(&db).join("objects").join("sha256");
+    fs::write(objects.join(&first_sha), b"corrupt").unwrap();
+
+    ok(env.aven(
+        &db,
+        ["backup", "restore", backup_path.to_str().unwrap(), "--yes"],
+    ));
+    assert_eq!(fs::read(objects.join(&first_sha)).unwrap(), first_bytes);
+    assert!(!objects.join(second_sha).exists());
     contains_all(
-        &ok(env.aven(&db, ["attachment", "list", &task_ref])),
-        &["attachment", &sha],
+        &ok(env.aven(&db, ["doctor", "--integrity"])),
+        &[
+            "ok attachment objects 0 missing",
+            "ok attachment object hashes 0 mismatched",
+            "ok attachment orphan objects 0 orphaned",
+        ],
     );
+}
+
+#[test]
+fn backup_archive_excludes_disposable_and_incomplete_attachment_files() {
+    let env = TestEnv::new();
+    let db = env.db("backup-exclusions.sqlite");
+    ok(env.aven(&db, ["add", "backup exclusions", "--project", "app"]));
+    let blob_dir = default_blob_dir(&db);
+    for relative in [
+        "cache/previews/profile/preview.png",
+        "trash/trashed-object",
+        "objects/sha256/.aven-stage-incomplete",
+        "staging/incomplete",
+    ] {
+        let path = blob_dir.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"private disposable bytes").unwrap();
+    }
+
+    let backup_path = env.path("exclusions.aven-backup.tar.zst");
+    ok(env.aven(&db, ["backup", "--output", backup_path.to_str().unwrap()]));
+    let entries = backup_entries(&backup_path);
+    assert_eq!(entries, vec!["manifest.json", "database.sqlite"]);
 }
 
 #[test]
@@ -225,6 +307,20 @@ fn import_preserves_attachment_metadata_without_local_blobs() {
         scalar_i64(&target_db, "SELECT available FROM blob_inventory LIMIT 1"),
         0
     );
+    assert_eq!(
+        scalar_i64(
+            &target_db,
+            "SELECT count(*) FROM changes WHERE server_seq IS NULL AND field = 'attachments'",
+        ),
+        0
+    );
+    assert_eq!(
+        scalar_i64(
+            &target_db,
+            "SELECT count(*) FROM task_attachments WHERE created_by_change_id IS NOT NULL OR deleted_by_change_id IS NOT NULL",
+        ),
+        0
+    );
     let sha = query_string(&target_db, "SELECT sha256 FROM blob_inventory LIMIT 1");
     assert!(
         !default_blob_dir(&target_db)
@@ -232,6 +328,35 @@ fn import_preserves_attachment_metadata_without_local_blobs() {
             .join("sha256")
             .join(sha)
             .exists()
+    );
+}
+
+#[test]
+fn import_rejects_attachment_inventory_metadata_mismatch() {
+    let env = TestEnv::new();
+    let db = env.db("import-attachment-mismatch.sqlite");
+    let task_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "attachment mismatch", "--project", "app"])
+    ));
+    let image = env.path("mismatch.png");
+    fs::write(&image, png_bytes(3, 2)).unwrap();
+    ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    ));
+    let export = env.path("attachment-mismatch.json");
+    ok(env.aven(&db, ["export", "--output", export.to_str().unwrap()]));
+    let mut snapshot: Value = serde_json::from_str(&fs::read_to_string(&export).unwrap()).unwrap();
+    let size = snapshot["tables"]["blob_inventory"][0]["byte_size"]
+        .as_i64()
+        .unwrap();
+    snapshot["tables"]["blob_inventory"][0]["byte_size"] = Value::from(size + 1);
+    fs::write(&export, serde_json::to_string(&snapshot).unwrap()).unwrap();
+
+    let output = fail(env.aven(&db, ["import", "--yes", export.to_str().unwrap()]));
+    contains_all(
+        &output,
+        &["error invalid-export-snapshot attachment inventory metadata mismatch"],
     );
 }
 
@@ -567,6 +692,26 @@ fn backup_count(db: &Path, reason: &str) -> usize {
         .count()
 }
 
+fn query_strings(db: &Path, sql: &'static str) -> Vec<String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create runtime");
+    runtime.block_on(async {
+        let mut conn = SqliteConnectOptions::new()
+            .filename(db)
+            .create_if_missing(false)
+            .foreign_keys(true)
+            .connect()
+            .await
+            .expect("open test db");
+        sqlx::query_scalar::<_, String>(sql)
+            .fetch_all(&mut conn)
+            .await
+            .expect("read strings")
+    })
+}
+
 fn query_string(db: &Path, sql: &'static str) -> String {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -585,6 +730,24 @@ fn query_string(db: &Path, sql: &'static str) -> String {
             .await
             .expect("read string")
     })
+}
+
+fn backup_entries(path: &Path) -> Vec<String> {
+    let file = fs::File::open(path).unwrap();
+    let decoder = zstd::stream::read::Decoder::new(file).unwrap();
+    let mut archive = tar::Archive::new(decoder);
+    archive
+        .entries()
+        .unwrap()
+        .map(|entry| {
+            entry
+                .unwrap()
+                .path()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect()
 }
 
 fn default_blob_dir(db: &Path) -> PathBuf {

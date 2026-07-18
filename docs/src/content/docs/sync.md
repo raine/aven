@@ -93,7 +93,9 @@ aven sync
 
 When tasks have image attachments, metadata travels in the operation log while blob bytes use authenticated attachment endpoints. A sync round transfers at most 16 unique blobs and 64 MiB across uploads and downloads. A round that has completed no transfer may take one otherwise valid blob beyond its remaining byte budget so large backlogs keep progressing.
 
-Sync output includes uploaded and downloaded blob counts and byte totals, remaining upload and download counts and bytes, the cursor, and completion state. `complete=false` means metadata or live attachment bytes remain. Interactive sync runs additional bounded rounds while progress is possible. Only attachments on live tasks are downloaded, and duplicate references to one content hash transfer one physical blob.
+Sync output includes uploaded and downloaded blob counts and byte totals, remaining upload and download counts and bytes, the cursor, and completion state. `complete=false` means metadata or required blob transfers remain. Remaining uploads can be prerequisites for unsynced attachment-add operations, while downloads are limited to attachments on live tasks. Interactive sync runs additional bounded rounds while progress is possible. Duplicate references to one content hash transfer one physical blob.
+
+Local add and download capacity and server workspace upload capacity enforce attachment quotas with `error attachment-quota-exceeded`. Sync exits before printing a completion summary on this error. Pulled metadata and cursor progress remain committed when a local download is blocked. Increase the relevant quota or free eligible original objects, then retry.
 
 :::note[Attachment ordering]
 Aven confirms attachment bytes and workspace quota capacity on the server before pushing dependent attachment metadata. Pulled metadata and cursor progress commit before local blob downloads, so a failed download remains pending for a later round without replaying applied metadata.
@@ -133,11 +135,11 @@ The repair command succeeds without changes when the LaunchAgent is absent.
 
 ## Back up and move data
 
-You can create exact SQLite backups or export portable JSON.
+Use compressed backup archives when attachment originals must travel with the database. Use JSON export and import for metadata-only portability.
 
 ```sh
-aven backup
-aven backup restore backup.sqlite --yes
+aven backup --output backup.aven-backup.tar.zst
+aven backup restore backup.aven-backup.tar.zst --yes
 ```
 
 ```sh
@@ -145,11 +147,11 @@ aven export --output tasks.json
 aven import tasks.json --yes
 ```
 
-- **Backups:** `aven backup` creates a SQLite backup.
-- **Export and import:** JSON exports include tasks, workspaces, projects, labels, notes, dependencies, epics, changes, field versions, conflicts, and metadata.
+- **Backup and restore:** Backup archives contain a consistent SQLite database, a manifest, and every locally available original attachment object. The database retains all inventory rows, including unavailable rows, while the manifest and object payload contain only locally available inventory. Staging, preview cache, trash, and incomplete files are excluded. Restore validates archive structure, hashes, image content, and attachment metadata before replacing the database and original-object set.
+- **Export and import:** JSON includes tasks, workspaces, projects, labels, notes, dependencies, epics, attachment metadata, blob inventory, changes, field versions, conflicts, and portable metadata. It sets `blobs_included: false`. Import marks every blob inventory row unavailable, and those missing bytes do not create upload obligations. Restore or sync can supply bytes later.
 
 :::caution[Local data replacement]
-Restore and import replace local data, require confirmation with `--yes`, and create a safety backup before replacement.
+Restore and import replace local data, require confirmation with `--yes`, and create safety backups before replacement. Archive restore also preserves the prior blob directory as a safety copy.
 :::
 
 - **Sync metadata:** Import preserves the target client id, resets the sync cursor, and skips imported pinned server metadata.

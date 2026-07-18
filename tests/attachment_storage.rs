@@ -42,6 +42,40 @@ async fn migrated_database_contains_attachment_tables_and_indexes() {
         "both attachment tables should have CHECK constraints"
     );
 
+    let lifecycle_tables: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN
+         ('blob_lifecycle', 'blob_leases', 'blob_upload_reservations', 'server_blob_references')",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(lifecycle_tables.len(), 4);
+
+    let validation_triggers: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN
+         ('task_attachments_validate_insert', 'task_attachments_validate_update',
+          'blob_inventory_validate_insert', 'blob_inventory_validate_update')",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(validation_triggers.len(), 4);
+
+    for (sha256, byte_size) in [
+        ("g".repeat(64), 1_i64),
+        ("a".repeat(64), 25_i64 * 1024 * 1024 + 1),
+    ] {
+        let result = sqlx::query(
+            "INSERT INTO blob_inventory(sha256, byte_size, media_type, available, first_seen_at)
+             VALUES (?, ?, 'image/png', 1, '2026-07-18T00:00:00Z')",
+        )
+        .bind(sha256)
+        .bind(byte_size)
+        .execute(&pool)
+        .await;
+        assert!(result.is_err());
+    }
+
     let col_names: Vec<String> =
         sqlx::query_scalar("SELECT name FROM pragma_table_info('task_attachments')")
             .fetch_all(&pool)

@@ -144,51 +144,31 @@ pub(crate) fn print_attachment_section(attachments: &[AttachmentMetadataJson]) {
 }
 
 pub(crate) fn print_attachment_metadata_line(attachment: &AttachmentMetadataJson) {
-    let mut line = KvLine::new("attachment")
+    let line = KvLine::new("attachment")
         .field("attachment_id", &attachment.attachment_id)
         .field("media_type", &attachment.media_type)
         .field("byte_size", attachment.byte_size)
         .field("deleted", yes_no(attachment.deleted))
         .field("has_blob", yes_no(attachment.has_blob));
-    if let Some(filename) = &attachment.filename {
-        line = line.quoted("filename", filename);
-    }
-    if let Some(alt_text) = &attachment.alt_text {
-        line = line.quoted("alt_text", alt_text);
-    }
     println!("{}", line.finish());
 }
 
 #[allow(dead_code)]
 pub(crate) fn attachment_placeholder(attachment: &AttachmentMetadataJson) -> String {
-    let label = attachment
-        .alt_text
-        .as_deref()
-        .or(attachment.filename.as_deref())
-        .unwrap_or("attachment");
     if attachment.deleted {
-        format!("[image: deleted attachment {label}]")
+        "[image: deleted attachment]".to_string()
     } else {
         match attachment.bytes_state {
-            AttachmentBytesState::Present => format!("[image: {label}]"),
-            AttachmentBytesState::PendingDownload => {
-                format!("[image: pending download {label}]")
-            }
-            AttachmentBytesState::Unavailable => {
-                format!("[image: unavailable bytes {label}]")
-            }
+            AttachmentBytesState::Present => "[image: attachment]".to_string(),
+            AttachmentBytesState::PendingDownload => "[image: pending download]".to_string(),
+            AttachmentBytesState::Unavailable => "[image: unavailable bytes]".to_string(),
         }
     }
 }
 
 #[cfg(test)]
-pub(crate) fn attachment_unavailable_placeholder(attachment: &AttachmentMetadataJson) -> String {
-    let label = attachment
-        .alt_text
-        .as_deref()
-        .or(attachment.filename.as_deref())
-        .unwrap_or("attachment");
-    format!("[image: unavailable bytes {label}]")
+pub(crate) fn attachment_unavailable_placeholder(_attachment: &AttachmentMetadataJson) -> String {
+    "[image: unavailable bytes]".to_string()
 }
 
 // --- JSON DTOs ---
@@ -417,22 +397,22 @@ mod tests {
         let deleted =
             test_attachment_metadata("9KQ9A1X4MV2P8D6R", true, true, None, Some("old screenshot"));
 
-        assert_eq!(attachment_placeholder(&present), "[image: diagram]");
+        assert_eq!(attachment_placeholder(&present), "[image: attachment]");
         assert_eq!(
             attachment_placeholder(&pending),
-            "[image: pending download photo.png]"
+            "[image: pending download]"
         );
         assert_eq!(
             attachment_placeholder(&unavailable),
-            "[image: unavailable bytes archive.png]"
+            "[image: unavailable bytes]"
         );
         assert_eq!(
             attachment_placeholder(&deleted),
-            "[image: deleted attachment old screenshot]"
+            "[image: deleted attachment]"
         );
         assert_eq!(
             attachment_unavailable_placeholder(&present),
-            "[image: unavailable bytes diagram]"
+            "[image: unavailable bytes]"
         );
     }
 }

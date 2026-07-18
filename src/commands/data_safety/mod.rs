@@ -160,7 +160,7 @@ struct TaskDependencyRow {
     created_at: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 struct TaskAttachmentRow {
     workspace_id: String,
     attachment_id: String,
@@ -189,7 +189,7 @@ struct BlobInventoryExportRow {
     last_verified_at: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 struct ChangeRow {
     change_id: String,
     client_id: String,
@@ -658,7 +658,7 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
         }
     }
 
-    let mut inventory_hashes = HashSet::new();
+    let mut inventory = HashMap::new();
     for blob in &export.tables.blob_inventory {
         crate::attachments::validation::validate_sha256(&blob.sha256)?;
         crate::attachments::validation::validate_media_type(&blob.media_type)?;
@@ -666,13 +666,17 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
             usize::try_from(blob.byte_size).unwrap_or(0),
         )?;
         if blob.available != 0 && blob.available != 1 {
-            bail!(
-                "error invalid-export-snapshot blob_inventory.available={} for sha256 {}",
-                blob.available,
-                blob.sha256
-            );
+            bail!("error invalid-export-snapshot blob_inventory.available invalid");
         }
-        inventory_hashes.insert(blob.sha256.clone());
+        if inventory
+            .insert(
+                blob.sha256.clone(),
+                (blob.byte_size, blob.media_type.as_str()),
+            )
+            .is_some()
+        {
+            bail!("error invalid-export-snapshot blob_inventory.sha256 duplicate");
+        }
     }
 
     for attachment in &export.tables.task_attachments {
@@ -700,11 +704,12 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
                 attachment.workspace_id
             );
         }
-        if !inventory_hashes.contains(&attachment.sha256) {
-            bail!(
-                "error invalid-export-snapshot attachment.sha256={} is missing from inventory",
-                attachment.sha256
-            );
+        let Some((inventory_size, inventory_media_type)) = inventory.get(&attachment.sha256) else {
+            bail!("error invalid-export-snapshot attachment inventory missing");
+        };
+        if *inventory_size != attachment.byte_size || *inventory_media_type != attachment.media_type
+        {
+            bail!("error invalid-export-snapshot attachment inventory metadata mismatch");
         }
         if attachment.deleted != 0 && attachment.deleted != 1 {
             bail!(
@@ -782,6 +787,45 @@ async fn replace_from_export(
         db::set_meta(tx, &meta.key, &meta.value).await?;
     }
 
+    let suppressed_attachment_changes = export
+        .tables
+        .changes
+        .iter()
+        .filter(|change| {
+            change.server_seq.is_none()
+                && change.field.as_deref() == Some("attachments")
+                && matches!(
+                    change.op_type.as_str(),
+                    "attachment_add" | "attachment_delete"
+                )
+        })
+        .map(|change| change.change_id.as_str())
+        .collect::<HashSet<_>>();
+    let mut attachments = export.tables.task_attachments.clone();
+    for attachment in &mut attachments {
+        if attachment
+            .created_by_change_id
+            .as_deref()
+            .is_some_and(|id| suppressed_attachment_changes.contains(id))
+        {
+            attachment.created_by_change_id = None;
+        }
+        if attachment
+            .deleted_by_change_id
+            .as_deref()
+            .is_some_and(|id| suppressed_attachment_changes.contains(id))
+        {
+            attachment.deleted_by_change_id = None;
+        }
+    }
+    let changes = export
+        .tables
+        .changes
+        .iter()
+        .filter(|change| !suppressed_attachment_changes.contains(change.change_id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+
     tables::import_workspaces(tx, &export.tables.workspaces).await?;
     tables::import_projects(tx, &export.tables.projects).await?;
     tables::import_project_id_aliases(tx, &export.tables.project_id_aliases).await?;
@@ -793,8 +837,8 @@ async fn replace_from_export(
     tables::import_task_dependencies(tx, &export.tables.task_dependencies).await?;
     tables::import_task_epic_links(tx, &export.tables.task_epic_links).await?;
     tables::import_blob_inventory(tx, &export.tables.blob_inventory).await?;
-    tables::import_task_attachments(tx, &export.tables.task_attachments).await?;
-    tables::import_changes(tx, &export.tables.changes).await?;
+    tables::import_task_attachments(tx, &attachments).await?;
+    tables::import_changes(tx, &changes).await?;
     tables::import_field_versions(tx, &export.tables.field_versions).await?;
     tables::import_conflicts(tx, &export.tables.conflicts).await?;
 

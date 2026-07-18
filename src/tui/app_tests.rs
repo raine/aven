@@ -1350,9 +1350,11 @@ mod attachment_paste {
         )
         .unwrap();
         set_executable(&command);
-        app.add_task_config.agent.task_intake.command = Some(command.display().to_string());
-        app.add_task_config.agent.task_intake.args = Vec::new();
-        app.add_task_config.agent.task_intake.timeout_seconds = Some(5);
+        let mut config = app.intake.config().clone();
+        config.agent.task_intake.command = Some(command.display().to_string());
+        config.agent.task_intake.args = Vec::new();
+        config.agent.task_intake.timeout_seconds = Some(5);
+        app.set_config(config);
     }
 
     #[cfg(unix)]

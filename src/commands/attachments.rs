@@ -158,12 +158,11 @@ pub(crate) async fn cmd_attachment_add(
             .await?
             .display_ref(&task);
         println!(
-            "attachment-added {} attachment_id={} media_type={} byte_size={} sha256={} has_blob={} optimized={}",
+            "attachment-added {} attachment_id={} media_type={} byte_size={} has_blob={} optimized={}",
             ref_str,
             outcome.attachment.attachment_id,
             outcome.attachment.media_type,
             outcome.attachment.byte_size,
-            outcome.attachment.sha256,
             outcome.has_blob,
             add_outcome.optimized,
         );
@@ -193,16 +192,11 @@ pub(crate) async fn cmd_attachment_list(
     } else {
         for att in &attachments {
             println!(
-                "attachment attachment_id={} media_type={} byte_size={} sha256={} deleted={}{}",
+                "attachment attachment_id={} media_type={} byte_size={} deleted={}",
                 att.attachment_id,
                 att.media_type,
                 att.byte_size,
-                att.sha256,
                 if att.deleted { "yes" } else { "no" },
-                att.alt_text
-                    .as_ref()
-                    .map(|a| format!(" alt_text={}", a))
-                    .unwrap_or_default(),
             );
         }
     }
@@ -266,24 +260,17 @@ pub(crate) async fn cmd_attachment_get(
     } else {
         let ref_str = attachment_task_ref(conn, workspace, &outcome.attachment).await?;
         println!(
-            "attachment attachment_id={} task={} media_type={} byte_size={} sha256={} has_blob={} deleted={}{}",
+            "attachment attachment_id={} task={} media_type={} byte_size={} has_blob={} deleted={}",
             outcome.attachment.attachment_id,
             ref_str,
             outcome.attachment.media_type,
             outcome.attachment.byte_size,
-            outcome.attachment.sha256,
             outcome.has_blob,
             if outcome.attachment.deleted {
                 "yes"
             } else {
                 "no"
             },
-            outcome
-                .attachment
-                .alt_text
-                .as_ref()
-                .map(|a| format!(" alt_text={}", a))
-                .unwrap_or_default(),
         );
     }
     Ok(())
@@ -303,10 +290,9 @@ pub(crate) async fn cmd_attachment_delete(
     } else {
         let ref_str = attachment_task_ref(conn, workspace, &outcome.attachment).await?;
         println!(
-            "attachment-deleted {} attachment_id={} task={} deleted={}",
+            "attachment-deleted {} attachment_id={} deleted={}",
             ref_str,
             outcome.attachment.attachment_id,
-            outcome.attachment.task_id,
             if outcome.attachment.deleted {
                 "yes"
             } else {

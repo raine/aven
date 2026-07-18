@@ -86,7 +86,7 @@ pub(crate) async fn stage_blob(blob_dir: &Path, sha256: &str, bytes: &[u8]) -> R
     let created =
         super::blocking::run(move || write_object_atomically(&write_path, &bytes)).await?;
     let byte_size = fs::metadata(&path)
-        .with_context(|| format!("could not inspect {}", path.display()))?
+        .context("could not inspect attachment object")?
         .len();
     let byte_size = i64::try_from(byte_size).context("attachment bytes exceed i64")?;
     Ok(StagedBlob {
@@ -127,11 +127,9 @@ pub(crate) async fn remove_staged_blob_if_unreferenced(
 
 fn write_object_atomically(path: &Path, bytes: &[u8]) -> Result<bool> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("could not create {}", parent.display()))?;
+        fs::create_dir_all(parent).context("could not create attachment object directory")?;
         if path.exists() {
-            let existing =
-                fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
+            let existing = fs::read(path).context("could not read attachment object")?;
             if sha256_hex(&existing) != sha256_hex(bytes) {
                 bail!("error attachment-object-content-mismatch");
             }
@@ -140,7 +138,7 @@ fn write_object_atomically(path: &Path, bytes: &[u8]) -> Result<bool> {
         let mut temp = tempfile::Builder::new()
             .prefix(".aven-stage-")
             .tempfile_in(parent)
-            .with_context(|| format!("could not create temporary file in {}", parent.display()))?;
+            .context("could not create attachment staging file")?;
         std::io::Write::write_all(&mut temp, bytes)?;
         temp.as_file().sync_all()?;
         match temp.persist_noclobber(path) {
@@ -154,8 +152,7 @@ fn write_object_atomically(path: &Path, bytes: &[u8]) -> Result<bool> {
                 return Ok(true);
             }
             Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let existing =
-                    fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
+                let existing = fs::read(path).context("could not read attachment object")?;
                 if sha256_hex(&existing) == sha256_hex(bytes) {
                     return Ok(false);
                 }

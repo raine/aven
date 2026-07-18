@@ -107,16 +107,11 @@ fn context_includes_attachment_metadata() {
     let attachment_id = extract_attachment_id(&added);
 
     let text = ok(env.aven(&db, ["context", &task_ref]));
-    contains_all(
+    contains_all(&text, &["attachment attachment_id=", "has_blob=yes"]);
+    contains_none(
         &text,
-        &[
-            "attachment attachment_id=",
-            "has_blob=yes",
-            "filename=\"photo.png\"",
-            "alt_text=\"diagram\"",
-        ],
+        &["sha256=", "filename=", "alt_text=", "photo.png", "diagram"],
     );
-    contains_none(&text, &["sha256="]);
 
     let json = ok(env.aven(&db, ["context", &task_ref, "--json"]));
     let value: Value = serde_json::from_str(&json).unwrap();

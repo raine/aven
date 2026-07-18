@@ -90,18 +90,32 @@ aven restore APP-7KQ9
 - After `aven add`, capture and report the printed ref so future agents can use
   it.
 - Attachment commands keep bytes outside text and JSON output. Use
-  `attachment add <ref> <path>` to store image bytes, `attachment list <ref>` or
-  `attachment get <attachment-id>` to inspect metadata, and
-  `attachment get <attachment-id> --output <path>` to write bytes to a file.
-  File output requires a local available blob and refuses to overwrite an
-  existing output path. `attachment add` accepts `--media-type`, `--filename`,
-  and `--alt`. PNG, JPEG, GIF, and WebP formats are detected from decoded
-  content, and Aven derives canonical media type and dimensions from the stored
-  bytes. An explicit `--media-type` must match the detected format.
-- `attachment prune` reports privacy-safe eligible counts and bytes. It is a dry
-  run unless `--apply` is passed. Grace periods, live references, unsynced adds,
-  staging, transfers, reads, backups, and upload reservations protect blobs from
-  pruning. Quota-blocked downloads stay pending and make sync incomplete.
+  `attachment add <ref> <path>` to store image bytes, `attachment list <ref>
+  --json` to inspect complete metadata, and `attachment get <attachment-id>
+  --output <path>` to write bytes to a file. Attachment IDs are exact
+  workspace-scoped identifiers. File output requires a local available blob and
+  refuses to overwrite an existing output path. `attachment add` accepts
+  `--media-type`, `--filename`, and `--alt`. PNG, JPEG, GIF, and WebP formats are
+  detected from decoded content, and Aven derives canonical media type and
+  dimensions from the stored bytes. An explicit `--media-type` must match the
+  detected format.
+- Attachment command JSON contains `attachment_id`, `task_id`, `sha256`,
+  `byte_size`, `media_type`, `filename`, `alt_text`, `width`, `height`,
+  `created_at`, `deleted`, `deleted_at`, and `has_blob`. Add output also contains
+  `optimized`. Attachment objects in `context --json` and `show --full --json`
+  omit `sha256` and contain the other metadata fields. Attachment deletion is an
+  idempotent tombstone operation. There is no attachment restore command.
+- `attachment prune` reports one privacy-safe batch of eligible counts and bytes,
+  capped by `local.attachment_lifecycle.maintenance_limit`. Repeated runs may be
+  needed. Original objects are deleted only with `--apply`; disposable preview
+  cache eviction to `preview_quota_bytes` also runs in dry-run mode. Grace
+  periods, live references, unsynced adds, staging, transfers, reads, backups,
+  and upload reservations protect original blobs from pruning.
+- Local add or download capacity and server workspace upload capacity enforce
+  attachment quotas with `error attachment-quota-exceeded`. Sync exits before a
+  completion summary on this error. Pulled metadata and cursor progress remain
+  committed when a local download is blocked. Increase the relevant quota or
+  free eligible originals, then retry.
 - Task detail read surfaces include ordered attachment metadata and `has_blob`
   without embedding bytes. The TUI renders live attachments after the description
   in a dedicated section and uses bounded, device-local previews when the terminal
@@ -199,8 +213,10 @@ aven daemon restart
   completion state. Blob counts are unique by content hash and stay separate from
   metadata change counts.
 - Each attachment transfer round allows up to 16 unique blobs and 64 MiB across
-  uploads and downloads. `complete=false` means metadata or live attachment bytes
-  remain, and interactive sync continues through bounded rounds while progress is
+  uploads and downloads. `complete=false` means metadata or required blob
+  transfers remain. Remaining uploads can be prerequisites for unsynced
+  attachment-add operations, while downloads are limited to attachments on live
+  tasks. Interactive sync continues through bounded rounds while progress is
   possible.
 - Sync transfers attachment bytes through authenticated blob endpoints and keeps
   bytes out of `/sync` JSON payloads.

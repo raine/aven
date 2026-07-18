@@ -555,11 +555,11 @@ mod tests {
         let workspace_id = crate::workspaces::DEFAULT_WORKSPACE_ID;
         let task_id = "TASK000000000001";
         sqlx::query(
-            "INSERT INTO task_attachments(workspace_id, attachment_id, task_id, sha256, byte_size, media_type, created_at, deleted, deleted_at)
-             VALUES (?, 'ATTACHMENT000002', ?, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 2, 'image/png', '001', 0, NULL),
-                    (?, 'ATTACHMENT000001', ?, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1, 'image/png', '001', 0, NULL),
-                    (?, 'ATTACHMENT000003', ?, 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', 3, 'image/png', '002', 0, NULL),
-                    (?, 'ATTACHMENT000004', ?, 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', 4, 'image/png', '003', 1, '004')",
+            "INSERT INTO task_attachments(workspace_id, attachment_id, task_id, sha256, byte_size, media_type, width, height, created_at, deleted, deleted_at)
+             VALUES (?, '00000000000000A2', ?, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 2, 'image/png', 1, 1, '001', 0, NULL),
+                    (?, '00000000000000A1', ?, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1, 'image/png', 1, 1, '001', 0, NULL),
+                    (?, '00000000000000A3', ?, 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', 3, 'image/png', 1, 1, '002', 0, NULL),
+                    (?, '00000000000000A4', ?, 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', 4, 'image/png', 1, 1, '003', 1, '004')",
         )
         .bind(workspace_id)
         .bind(task_id)
@@ -592,7 +592,7 @@ mod tests {
                 .iter()
                 .map(|attachment| attachment.attachment_id.as_str())
                 .collect::<Vec<_>>(),
-            ["ATTACHMENT000001", "ATTACHMENT000002", "ATTACHMENT000003"]
+            ["00000000000000A1", "00000000000000A2", "00000000000000A3"]
         );
         assert_eq!(attachments[0].bytes_state, AttachmentBytesState::Present);
         assert_eq!(

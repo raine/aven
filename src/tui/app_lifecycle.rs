@@ -207,13 +207,19 @@ impl App {
         } else {
             self.widgets.inline_image_placements.clone()
         };
+        let preview_quota_bytes = self
+            .intake
+            .config()
+            .local
+            .attachment_lifecycle
+            .preview_quota_bytes;
         let keys = blob_dir
             .as_deref()
             .into_iter()
             .flat_map(|blob_dir| {
-                current
-                    .iter()
-                    .map(move |placement| PreviewKey::new(blob_dir, &placement.source_hash))
+                current.iter().map(move |placement| {
+                    PreviewKey::new(blob_dir, &placement.source_hash, preview_quota_bytes)
+                })
             })
             .collect::<Vec<_>>();
         self.preview_controller.set_desired(keys);
@@ -256,7 +262,7 @@ impl App {
             .collect::<Vec<_>>();
         let mut stdout = std::io::stdout();
         for placement in pending_emissions {
-            let key = PreviewKey::new(&blob_dir, &placement.source_hash);
+            let key = PreviewKey::new(&blob_dir, &placement.source_hash, preview_quota_bytes);
             let Some(lease) = self.preview_controller.lease(&key) else {
                 continue;
             };

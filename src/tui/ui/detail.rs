@@ -2122,7 +2122,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(rendered.contains("ATTACHMENTS\n│ [image: Chart]"));
+        assert!(rendered.contains("ATTACHMENTS\n│ [image: attachment]"));
     }
 
     #[test]
@@ -2147,16 +2147,13 @@ mod tests {
             .join("\n");
 
         assert_eq!(rendered.matches("ATTACHMENTS").count(), 1);
-        assert_eq!(rendered.matches("[image: First]").count(), 1);
-        assert_eq!(
-            rendered.matches("[image: pending download Second]").count(),
-            1
+        assert_eq!(rendered.matches("[image: attachment]").count(), 1);
+        assert_eq!(rendered.matches("[image: pending download]").count(), 1);
+        assert_eq!(rendered.matches("[image: unavailable bytes]").count(), 1);
+        assert!(
+            rendered.find("[image: attachment]").unwrap()
+                < rendered.find("[image: pending download]").unwrap()
         );
-        assert_eq!(
-            rendered.matches("[image: unavailable bytes Third]").count(),
-            1
-        );
-        assert!(rendered.find("First").unwrap() < rendered.find("Second").unwrap());
         assert!(!rendered.contains("Deleted"));
     }
 
@@ -2174,7 +2171,7 @@ mod tests {
         assert!(
             lines
                 .iter()
-                .any(|line| line.to_string() == "│ [image: Chart]")
+                .any(|line| line.to_string() == "│ [image: attachment]")
         );
         assert_eq!(
             lines.iter().filter(|line| line.to_string() == "│ ").count(),
@@ -2213,7 +2210,7 @@ mod tests {
         assert!(
             lines
                 .iter()
-                .any(|line| line.to_string() == "│ [image: Chart]")
+                .any(|line| line.to_string() == "│ [image: attachment]")
         );
     }
 
@@ -2229,7 +2226,7 @@ mod tests {
         assert_eq!(
             lines
                 .iter()
-                .filter(|line| line.to_string().contains("[image: Chart]"))
+                .filter(|line| line.to_string().contains("[image: attachment]"))
                 .count(),
             1
         );

@@ -17,15 +17,6 @@ fn extract_attachment_id(output: &str) -> String {
         .to_string()
 }
 
-fn extract_sha256(output: &str) -> String {
-    output
-        .split_whitespace()
-        .find(|word| word.starts_with("sha256="))
-        .and_then(|word| word.strip_prefix("sha256="))
-        .expect("sha256 in output")
-        .to_string()
-}
-
 fn extract_byte_size(output: &str) -> i64 {
     output
         .split_whitespace()
@@ -134,11 +125,14 @@ fn attachment_add_list_get_and_delete_work_locally() {
     contains_all(&added, &["attachment-added", "media_type=image/png"]);
     assert_eq!(extract_byte_size(&added), image_bytes.len() as i64);
     let attachment_id = extract_attachment_id(&added);
-    let sha256 = extract_sha256(&added);
+    contains_none(&added, &["sha256=", "photo.png", "diagram"]);
+    let listed = ok(env.aven(&db, ["attachment", "list", &task_ref, "--json"]));
+    let listed_json: serde_json::Value = serde_json::from_str(&listed).unwrap();
+    let sha256 = listed_json[0]["sha256"].as_str().unwrap();
     let mut blob_root = db.as_os_str().to_os_string();
     blob_root.push(".blobs");
     let blob_root = PathBuf::from(blob_root);
-    let blob_path = blob_root.join("objects").join("sha256").join(&sha256);
+    let blob_path = blob_root.join("objects").join("sha256").join(sha256);
     assert!(blob_path.exists(), "sidecar blob should exist");
 
     let full = ok(env.aven(&db, ["show", &task_ref, "--full"]));
@@ -149,11 +143,19 @@ fn attachment_add_list_get_and_delete_work_locally() {
             &attachment_id,
             "attachment attachment_id=",
             "has_blob=yes",
-            "filename=\"photo.png\"",
-            "alt_text=\"diagram\"",
         ],
     );
-    contains_none(&full, &["sha256=", "png bytes"]);
+    contains_none(
+        &full,
+        &[
+            "sha256=",
+            "filename=",
+            "alt_text=",
+            "photo.png",
+            "diagram",
+            "png bytes",
+        ],
+    );
 
     let full_json = ok(env.aven(&db, ["show", &task_ref, "--full", "--json"]));
     let full_json: serde_json::Value = serde_json::from_str(&full_json).unwrap();

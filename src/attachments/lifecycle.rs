@@ -64,6 +64,7 @@ pub(crate) struct LifecycleReport {
     pub(crate) eligible: ByteCount,
     pub(crate) staging: ByteCount,
     pub(crate) trash: ByteCount,
+    pub(crate) reservations: ByteCount,
     pub(crate) quota: ByteCount,
     pub(crate) inconsistencies: ByteCount,
 }
@@ -671,6 +672,17 @@ pub(crate) async fn lifecycle_report(
             report.inconsistencies.bytes += bytes;
         }
     }
+    let (reservation_count, reservation_bytes): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(byte_size), 0)
+         FROM blob_upload_reservations WHERE expires_at > ?",
+    )
+    .bind(&now)
+    .fetch_one(&mut *conn)
+    .await?;
+    report.reservations = ByteCount {
+        count: u64::try_from(reservation_count)?,
+        bytes: u64::try_from(reservation_bytes)?,
+    };
     for entry in fs::read_dir(staging_dir(blob_dir))
         .into_iter()
         .flatten()
@@ -767,9 +779,9 @@ mod tests {
     ) {
         sqlx::query(
             "INSERT INTO task_attachments(
-               workspace_id, attachment_id, task_id, sha256, byte_size, media_type, created_at,
-               deleted, deleted_at
-             ) VALUES ('0000000000000000', ?, ?, ?, 4, 'image/png',
+               workspace_id, attachment_id, task_id, sha256, byte_size, media_type, width, height,
+               created_at, deleted, deleted_at
+             ) VALUES ('0000000000000000', ?, ?, ?, 4, 'image/png', 1, 1,
                        '2026-01-01T00:00:00Z', ?, ?)",
         )
         .bind(attachment_id)

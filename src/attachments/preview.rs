@@ -32,12 +32,18 @@ pub(crate) async fn ensure_preview(blob_dir: &Path, source_hash: &str) -> Result
     blocking::run(move || ensure_preview_blocking(&blob_dir, &source_hash)).await
 }
 
-pub(crate) async fn load_preview_png(blob_dir: &Path, source_hash: &str) -> Result<Vec<u8>> {
+pub(crate) async fn load_preview_png(
+    blob_dir: &Path,
+    source_hash: &str,
+    preview_quota_bytes: u64,
+) -> Result<Vec<u8>> {
     let blob_dir = blob_dir.to_path_buf();
     let source_hash = source_hash.to_string();
     blocking::run(move || {
         let path = ensure_preview_blocking(&blob_dir, &source_hash)?;
-        read_validated_preview(&path)
+        let bytes = read_validated_preview(&path)?;
+        crate::attachments::lifecycle::prune_preview_cache(&blob_dir, preview_quota_bytes)?;
+        Ok(bytes)
     })
     .await
 }
@@ -49,8 +55,7 @@ fn ensure_preview_blocking(blob_dir: &Path, source_hash: &str) -> Result<PathBuf
     }
 
     let source = object_path(blob_dir, source_hash)?;
-    let source_bytes = fs::read(&source)
-        .with_context(|| format!("could not read attachment object {}", source.display()))?;
+    let source_bytes = fs::read(&source).context("could not read attachment preview source")?;
     if sha256_hex(&source_bytes) != source_hash {
         bail!("error attachment-preview-source-hash-mismatch");
     }
@@ -80,14 +85,14 @@ fn ensure_preview_blocking(blob_dir: &Path, source_hash: &str) -> Result<PathBuf
     let parent = preview
         .parent()
         .ok_or_else(|| anyhow::anyhow!("preview path has no parent"))?;
-    fs::create_dir_all(parent).with_context(|| format!("could not create {}", parent.display()))?;
+    fs::create_dir_all(parent).context("could not create attachment preview directory")?;
     let mut temp = tempfile::NamedTempFile::new_in(parent)
-        .with_context(|| format!("could not create preview in {}", parent.display()))?;
+        .context("could not create attachment preview file")?;
     std::io::Write::write_all(&mut temp, &validated.bytes)?;
     temp.as_file().sync_all()?;
     temp.persist(&preview)
         .map_err(|error| error.error)
-        .with_context(|| format!("could not replace {}", preview.display()))?;
+        .context("could not replace attachment preview")?;
     Ok(preview)
 }
 
@@ -160,7 +165,9 @@ mod tests {
         let first = first.unwrap();
         assert_eq!(first, concurrent.unwrap());
         let first_bytes = fs::read(&first).unwrap();
-        let loaded = load_preview_png(temp.path(), &hash).await.unwrap();
+        let loaded = load_preview_png(temp.path(), &hash, u64::MAX)
+            .await
+            .unwrap();
         assert_eq!(loaded, first_bytes);
         assert_ne!(loaded, fs::read(&source).unwrap());
         let decoded = image::load_from_memory_with_format(&loaded, ImageFormat::Png).unwrap();
@@ -175,11 +182,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn materialization_enforces_preview_cache_quota() {
+        let temp = tempfile::tempdir().unwrap();
+        let bytes = png(2_000, 1_000);
+        let hash = sha256_hex(&bytes);
+        let source = object_path(temp.path(), &hash).unwrap();
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(source, bytes).unwrap();
+
+        let loaded = load_preview_png(temp.path(), &hash, 0).await.unwrap();
+        assert!(!loaded.is_empty());
+        assert!(!cached_preview_path(temp.path(), &hash).unwrap().exists());
+    }
+
+    #[tokio::test]
     async fn missing_source_fails_without_creating_cache_entry() {
         let temp = tempfile::tempdir().unwrap();
         let hash = "0".repeat(64);
 
-        assert!(load_preview_png(temp.path(), &hash).await.is_err());
+        assert!(
+            load_preview_png(temp.path(), &hash, u64::MAX)
+                .await
+                .is_err()
+        );
         assert!(!cached_preview_path(temp.path(), &hash).unwrap().exists());
     }
 

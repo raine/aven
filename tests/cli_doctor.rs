@@ -425,6 +425,29 @@ fn doctor_with_integrity_reports_attachment_sidecar_issues() {
 }
 
 #[test]
+fn doctor_with_integrity_decodes_unattached_available_objects() {
+    let env = TestEnv::new();
+    let db = env.db("integrity-unattached-attachment.sqlite");
+    ok(env.aven(&db, ["doctor"]));
+    let sha = "a".repeat(64);
+    run_sql(
+        &db,
+        "INSERT INTO blob_inventory(sha256, byte_size, media_type, available, first_seen_at)
+         VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 7, 'image/png', 1, '2026-07-18T00:00:00Z')",
+    );
+    let path = default_blob_dir(&db)
+        .join("objects")
+        .join("sha256")
+        .join(sha);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, b"corrupt").unwrap();
+
+    let output = ok(env.aven(&db, ["doctor", "--integrity"]));
+    contains_all(&output, &["!! attachment object hashes", "1 mismatched"]);
+    contains_none(&output, &["aaaaaaaaaaaaaaaa"]);
+}
+
+#[test]
 fn doctor_json_reports_default_database_health() {
     let env = TestEnv::new();
     let db = env.db("doctor-json.sqlite");

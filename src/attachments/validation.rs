@@ -21,7 +21,7 @@ pub(crate) fn validate_sha256(value: &str) -> Result<()> {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
     {
-        bail!("error invalid-sha256 input={value}");
+        bail!("error invalid-sha256");
     }
     Ok(())
 }

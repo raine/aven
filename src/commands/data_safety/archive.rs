@@ -17,7 +17,26 @@ const BACKUP_VERSION: i64 = 1;
 const DATABASE_ENTRY: &str = "database.sqlite";
 const MANIFEST_ENTRY: &str = "manifest.json";
 
-type AttachmentImageMetadataRow = (String, i64, String, Option<i64>, Option<i64>);
+#[derive(Debug, sqlx::FromRow)]
+struct ArchiveAttachmentRow {
+    attachment_id: String,
+    sha256: String,
+    byte_size: i64,
+    media_type: String,
+    filename: Option<String>,
+    alt_text: Option<String>,
+    width: Option<i64>,
+    height: Option<i64>,
+    deleted: i64,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct ArchiveInventoryRow {
+    sha256: String,
+    byte_size: i64,
+    media_type: String,
+    available: i64,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct BackupManifest {
@@ -68,13 +87,11 @@ pub(super) async fn create_backup_archive(
     for row in rows {
         let source = object_path(blob_dir, &row.sha256)?;
         if !source.exists() {
-            bail!("error backup-blob-missing sha256={}", row.sha256);
+            bail!("error backup-blob-missing");
         }
-        let bytes =
-            fs::read(&source).with_context(|| format!("could not read {}", source.display()))?;
+        let bytes = fs::read(&source).context("error backup-blob-read")?;
         validate_object_bytes(&row.sha256, row.byte_size, &row.media_type, &bytes).await?;
-        fs::write(objects_dir.join(&row.sha256), &bytes)
-            .with_context(|| format!("could not stage blob {}", row.sha256))?;
+        fs::write(objects_dir.join(&row.sha256), &bytes).context("error backup-blob-stage")?;
         objects.push(BackupObjectManifest {
             sha256: row.sha256,
             byte_size: row.byte_size,
@@ -120,7 +137,7 @@ pub(super) async fn restore_backup_archive(
     archive: &Path,
 ) -> Result<PathBuf> {
     let staging = tempfile::tempdir().context("could not create restore staging directory")?;
-    extract_archive(archive, staging.path())?;
+    let entries = extract_archive(archive, staging.path())?;
     let manifest_path = staging.path().join(MANIFEST_ENTRY);
     let manifest: BackupManifest = serde_json::from_slice(
         &fs::read(&manifest_path)
@@ -128,6 +145,7 @@ pub(super) async fn restore_backup_archive(
     )
     .context("could not parse backup manifest")?;
     validate_manifest(&manifest)?;
+    validate_archive_entries(&entries, &manifest)?;
     let database_path = staging.path().join(&manifest.database);
     validate_sqlite_file(&database_path).await?;
     for object in &manifest.objects {
@@ -136,8 +154,7 @@ pub(super) async fn restore_backup_archive(
             .join("objects")
             .join("sha256")
             .join(&object.sha256);
-        let bytes =
-            fs::read(&path).with_context(|| format!("could not read {}", path.display()))?;
+        let bytes = fs::read(&path).context("error backup-blob-read")?;
         validate_object_bytes(&object.sha256, object.byte_size, &object.media_type, &bytes).await?;
     }
     validate_archive_attachment_metadata(&database_path, staging.path(), &manifest).await?;
@@ -149,42 +166,25 @@ pub(super) async fn restore_backup_archive(
         copy_dir(blob_dir, &sidecar_safety.with_extension("blobdir"))?;
     }
 
+    let blob_parent = blob_dir
+        .parent()
+        .context("error backup-blob-directory-invalid")?;
+    fs::create_dir_all(blob_parent).context("could not create attachment restore directory")?;
+    let replacement = tempfile::Builder::new()
+        .prefix(".aven-restore-blobs-")
+        .tempdir_in(blob_parent)
+        .context("could not create restore blob directory")?;
+    let replacement_objects = replacement.path().join("objects").join("sha256");
+    fs::create_dir_all(&replacement_objects)
+        .context("could not create restore object directory")?;
     for object in &manifest.objects {
-        let target = object_path(blob_dir, &object.sha256)?;
         let source = staging
             .path()
             .join("objects")
             .join("sha256")
             .join(&object.sha256);
-        if target.exists() {
-            let existing = fs::read(&target)
-                .with_context(|| format!("could not read {}", target.display()))?;
-            validate_object_bytes(
-                &object.sha256,
-                object.byte_size,
-                &object.media_type,
-                &existing,
-            )
-            .await?;
-            continue;
-        }
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("could not create {}", parent.display()))?;
-            let tmp = tempfile::NamedTempFile::new_in(parent).with_context(|| {
-                format!("could not create temporary file in {}", parent.display())
-            })?;
-            fs::copy(&source, tmp.path()).with_context(|| {
-                format!(
-                    "could not copy {} -> {}",
-                    source.display(),
-                    tmp.path().display()
-                )
-            })?;
-            tmp.persist(&target)
-                .map_err(|error| error.error)
-                .with_context(|| format!("could not replace {}", target.display()))?;
-        }
+        fs::copy(&source, replacement_objects.join(&object.sha256))
+            .context("could not stage restored attachment object")?;
     }
 
     let db_tmp = db_path.with_extension("restore-staging");
@@ -195,6 +195,11 @@ pub(super) async fn restore_backup_archive(
             db_tmp.display()
         )
     })?;
+    if blob_dir.exists() {
+        fs::remove_dir_all(blob_dir).context("could not replace attachment object directory")?;
+    }
+    fs::rename(replacement.keep(), blob_dir)
+        .context("could not install restored attachment objects")?;
     for sidecar in [db::wal_path(db_path), db::shm_path(db_path)] {
         if sidecar.exists() {
             fs::remove_file(&sidecar)
@@ -212,6 +217,21 @@ pub(super) fn is_archive_path(path: &Path) -> Result<bool> {
     let mut magic = [0_u8; 4];
     let read = file.read(&mut magic)?;
     Ok(read == 4 && magic == [0x28, 0xb5, 0x2f, 0xfd])
+}
+
+fn validate_archive_entries(entries: &HashSet<PathBuf>, manifest: &BackupManifest) -> Result<()> {
+    let mut expected =
+        HashSet::from([PathBuf::from(MANIFEST_ENTRY), PathBuf::from(DATABASE_ENTRY)]);
+    expected.extend(
+        manifest
+            .objects
+            .iter()
+            .map(|object| PathBuf::from(format!("objects/sha256/{}", object.sha256))),
+    );
+    if entries != &expected {
+        bail!("error backup-entry-set-mismatch");
+    }
+    Ok(())
 }
 
 fn validate_manifest(manifest: &BackupManifest) -> Result<()> {
@@ -264,11 +284,11 @@ fn validate_object_bytes_blocking(
 ) -> Result<crate::attachments::decode::ImageFacts> {
     let actual_size = i64::try_from(bytes.len()).context("blob size exceeds i64")?;
     if actual_size != byte_size {
-        bail!("error backup-blob-size-mismatch sha256={sha256}");
+        bail!("error backup-blob-size-mismatch");
     }
     let actual_sha = sha256_hex(bytes);
     if actual_sha != sha256 {
-        bail!("error backup-blob-hash-mismatch sha256={sha256}");
+        bail!("error backup-blob-hash-mismatch");
     }
     let validated =
         crate::attachments::decode::validate_image_blocking(bytes.to_vec(), Some(media_type))
@@ -288,28 +308,89 @@ async fn validate_archive_attachment_metadata(
             .foreign_keys(true),
     )
     .await?;
-    let rows: Vec<AttachmentImageMetadataRow> = sqlx::query_as(
-        "SELECT DISTINCT ta.sha256, ta.byte_size, ta.media_type, ta.width, ta.height
-         FROM task_attachments ta
-         JOIN blob_inventory bi ON bi.sha256 = ta.sha256
-         WHERE bi.available = 1",
+    let inventory: Vec<ArchiveInventoryRow> = sqlx::query_as(
+        "SELECT sha256, byte_size, media_type, available FROM blob_inventory ORDER BY sha256",
     )
     .fetch_all(&mut conn)
     .await?;
-    for (sha256, byte_size, media_type, width, height) in rows {
-        let object = manifest
-            .objects
-            .iter()
-            .find(|object| object.sha256 == sha256)
-            .ok_or_else(|| anyhow::anyhow!("error backup-attachment-object-missing"))?;
-        if object.byte_size != byte_size || object.media_type != media_type {
-            bail!("error backup-attachment-metadata-mismatch sha256={sha256}");
+    let available = inventory
+        .iter()
+        .filter(|row| row.available == 1)
+        .map(|row| row.sha256.clone())
+        .collect::<HashSet<_>>();
+    let manifested = manifest
+        .objects
+        .iter()
+        .map(|object| object.sha256.clone())
+        .collect::<HashSet<_>>();
+    if available != manifested {
+        bail!("error backup-inventory-object-set-mismatch");
+    }
+    for row in &inventory {
+        crate::attachments::validation::validate_sha256(&row.sha256)?;
+        crate::attachments::validation::validate_blob_size(
+            usize::try_from(row.byte_size).unwrap_or(0),
+        )?;
+        crate::attachments::validation::validate_media_type(&row.media_type)?;
+        if row.available != 0 && row.available != 1 {
+            bail!("error backup-inventory-availability-invalid");
         }
-        let path = staging.join("objects").join("sha256").join(&sha256);
-        let bytes = fs::read(path)?;
-        let facts = validate_object_bytes(&sha256, byte_size, &media_type, &bytes).await?;
-        if (width, height) != (Some(facts.width), Some(facts.height)) {
-            bail!("error backup-attachment-dimensions-mismatch sha256={sha256}");
+        if row.available == 1 {
+            let object = manifest
+                .objects
+                .iter()
+                .find(|object| object.sha256 == row.sha256)
+                .context("error backup-inventory-object-missing")?;
+            if object.byte_size != row.byte_size || object.media_type != row.media_type {
+                bail!("error backup-inventory-metadata-mismatch");
+            }
+        }
+    }
+
+    let attachments: Vec<ArchiveAttachmentRow> = sqlx::query_as(
+        "SELECT attachment_id, sha256, byte_size, media_type, filename, alt_text, width, height, deleted
+         FROM task_attachments",
+    )
+    .fetch_all(&mut conn)
+    .await?;
+    for attachment in attachments {
+        crate::attachments::validation::validate_attachment_id(&attachment.attachment_id)?;
+        crate::attachments::validation::validate_sha256(&attachment.sha256)?;
+        crate::attachments::validation::validate_blob_size(
+            usize::try_from(attachment.byte_size).unwrap_or(0),
+        )?;
+        crate::attachments::validation::validate_media_type(&attachment.media_type)?;
+        crate::attachments::validation::validate_filename(attachment.filename.as_deref())?;
+        crate::attachments::validation::validate_alt_text(attachment.alt_text.as_deref())?;
+        crate::attachments::validation::validate_dimensions(attachment.width, attachment.height)?;
+        if attachment.deleted != 0 && attachment.deleted != 1 {
+            bail!("error backup-attachment-deletion-state-invalid");
+        }
+        let inventory_row = inventory
+            .iter()
+            .find(|row| row.sha256 == attachment.sha256)
+            .context("error backup-attachment-inventory-missing")?;
+        if inventory_row.byte_size != attachment.byte_size
+            || inventory_row.media_type != attachment.media_type
+        {
+            bail!("error backup-attachment-metadata-mismatch");
+        }
+        if inventory_row.available == 1 {
+            let path = staging
+                .join("objects")
+                .join("sha256")
+                .join(&attachment.sha256);
+            let bytes = fs::read(path).context("error backup-attachment-object-read")?;
+            let facts = validate_object_bytes(
+                &attachment.sha256,
+                attachment.byte_size,
+                &attachment.media_type,
+                &bytes,
+            )
+            .await?;
+            if (attachment.width, attachment.height) != (Some(facts.width), Some(facts.height)) {
+                bail!("error backup-attachment-dimensions-mismatch");
+            }
         }
     }
     Ok(())
@@ -333,7 +414,7 @@ async fn validate_sqlite_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn extract_archive(archive: &Path, target: &Path) -> Result<()> {
+fn extract_archive(archive: &Path, target: &Path) -> Result<HashSet<PathBuf>> {
     let file =
         fs::File::open(archive).with_context(|| format!("could not open {}", archive.display()))?;
     let decoder =
@@ -348,7 +429,7 @@ fn extract_archive(archive: &Path, target: &Path) -> Result<()> {
         let path = entry.path()?.into_owned();
         validate_backup_entry(&path)?;
         if !seen.insert(path.clone()) {
-            bail!("error backup-entry-duplicate path={}", path.display());
+            bail!("error backup-entry-duplicate");
         }
         let target_path = target.join(path);
         if let Some(parent) = target_path.parent() {
@@ -362,7 +443,7 @@ fn extract_archive(archive: &Path, target: &Path) -> Result<()> {
     if !seen.contains(Path::new(MANIFEST_ENTRY)) || !seen.contains(Path::new(DATABASE_ENTRY)) {
         bail!("error backup-entry-missing");
     }
-    Ok(())
+    Ok(seen)
 }
 
 fn validate_backup_entry(path: &Path) -> Result<()> {
@@ -380,7 +461,7 @@ fn validate_backup_entry(path: &Path) -> Result<()> {
         crate::attachments::validation::validate_sha256(name)?;
         return Ok(());
     }
-    bail!("error backup-entry-unexpected path={}", path.display());
+    bail!("error backup-entry-unexpected");
 }
 
 fn validate_relative_entry(path: &Path) -> Result<()> {
@@ -389,7 +470,7 @@ fn validate_relative_entry(path: &Path) -> Result<()> {
             .components()
             .any(|component| matches!(component, Component::ParentDir | Component::Prefix(_)))
     {
-        bail!("error backup-entry-invalid path={}", path.display());
+        bail!("error backup-entry-invalid");
     }
     Ok(())
 }

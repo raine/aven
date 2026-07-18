@@ -370,10 +370,93 @@ pub(crate) async fn cmd_doctor(
         None => daemon_section.info("program match", "unknown"),
     }
 
+    let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
+    let lifecycle = crate::attachments::lifecycle::lifecycle_report(
+        conn,
+        &blob_dir,
+        config.local.attachment_lifecycle.policy(),
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
+    let lifecycle_section = report.section("Attachment lifecycle");
+    lifecycle_section.info(
+        "referenced",
+        format!(
+            "count={} bytes={}",
+            lifecycle.referenced.count, lifecycle.referenced.bytes
+        ),
+    );
+    lifecycle_section.info(
+        "protected",
+        format!(
+            "count={} bytes={}",
+            lifecycle.protected.count, lifecycle.protected.bytes
+        ),
+    );
+    lifecycle_section.info(
+        "grace period",
+        format!(
+            "count={} bytes={}",
+            lifecycle.grace_period.count, lifecycle.grace_period.bytes
+        ),
+    );
+    lifecycle_section.info(
+        "eligible",
+        format!(
+            "count={} bytes={}",
+            lifecycle.eligible.count, lifecycle.eligible.bytes
+        ),
+    );
+    lifecycle_section.info(
+        "staging",
+        format!(
+            "count={} bytes={}",
+            lifecycle.staging.count, lifecycle.staging.bytes
+        ),
+    );
+    lifecycle_section.info(
+        "trash",
+        format!(
+            "count={} bytes={}",
+            lifecycle.trash.count, lifecycle.trash.bytes
+        ),
+    );
+    lifecycle_section.info(
+        "reservations",
+        format!(
+            "count={} bytes={}",
+            lifecycle.reservations.count, lifecycle.reservations.bytes
+        ),
+    );
+    lifecycle_section.check(
+        "quota",
+        lifecycle.quota.bytes
+            <= u64::try_from(config.local.attachment_lifecycle.quota_bytes).unwrap_or(0),
+        format!(
+            "count={} bytes={} limit={}",
+            lifecycle.quota.count,
+            lifecycle.quota.bytes,
+            config.local.attachment_lifecycle.quota_bytes,
+        ),
+    );
+    lifecycle_section.check(
+        "inconsistencies",
+        lifecycle.inconsistencies.count == 0,
+        format!(
+            "count={} bytes={}",
+            lifecycle.inconsistencies.count, lifecycle.inconsistencies.bytes
+        ),
+    );
+    let attachment_checks = attachment_integrity_checks(conn, &blob_dir, integrity).await?;
+    if !integrity {
+        let attachment_section = report.section("Attachments");
+        for check in &attachment_checks {
+            attachment_section.check(check.label, check.ok, &check.value);
+        }
+    }
+
     if integrity {
         let integrity_report = database_integrity_report(conn).await?;
-        let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
-        let attachment_checks = attachment_integrity_checks(conn, &blob_dir, true).await?;
         let integrity_section = report.section("Integrity");
         integrity_section.check(
             "quick check",

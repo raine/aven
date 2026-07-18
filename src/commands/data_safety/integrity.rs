@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -100,18 +100,20 @@ async fn mismatched_blob_check(
     conn: &mut SqliteConnection,
     blob_dir: &Path,
 ) -> Result<IntegrityCheck> {
-    let rows: Vec<AttachmentImageMetadataRow> = sqlx::query_as(
-        "SELECT DISTINCT ta.sha256, ta.byte_size, ta.media_type, ta.width, ta.height
-         FROM task_attachments ta
-         JOIN blob_inventory bi ON bi.sha256 = ta.sha256
-         WHERE bi.available = 1",
+    let inventory: Vec<(String, i64, String)> = sqlx::query_as(
+        "SELECT sha256, byte_size, media_type FROM blob_inventory WHERE available = 1",
     )
     .fetch_all(&mut *conn)
     .await?;
+    let attachments: Vec<AttachmentImageMetadataRow> =
+        sqlx::query_as("SELECT sha256, byte_size, media_type, width, height FROM task_attachments")
+            .fetch_all(&mut *conn)
+            .await?;
     let blob_dir = blob_dir.to_path_buf();
     let count = crate::attachments::blocking::run(move || {
         let mut count = 0_usize;
-        for (sha, byte_size, media_type, width, height) in rows {
+        let mut facts_by_hash = HashMap::new();
+        for (sha, byte_size, media_type) in inventory {
             if !SUPPORTED_MEDIA_TYPES.contains(&media_type.as_str()) {
                 continue;
             }
@@ -122,8 +124,7 @@ async fn mismatched_blob_check(
             if !path.exists() {
                 continue;
             }
-            let bytes =
-                fs::read(&path).with_context(|| format!("could not read {}", path.display()))?;
+            let bytes = fs::read(&path).context("error attachment-object-read")?;
             if sha256_hex(&bytes) != sha || i64::try_from(bytes.len()).unwrap_or(-1) != byte_size {
                 count += 1;
                 continue;
@@ -134,7 +135,15 @@ async fn mismatched_blob_check(
                 count += 1;
                 continue;
             };
-            if (width, height) != (Some(validated.facts.width), Some(validated.facts.height)) {
+            facts_by_hash.insert(sha, validated.facts);
+        }
+        for (sha, _byte_size, media_type, width, height) in attachments {
+            let Some(facts) = facts_by_hash.get(&sha) else {
+                continue;
+            };
+            if facts.media_type != media_type
+                || (width, height) != (Some(facts.width), Some(facts.height))
+            {
                 count += 1;
             }
         }
@@ -156,8 +165,8 @@ async fn orphan_blob_check(conn: &mut SqliteConnection, blob_dir: &Path) -> Resu
     let object_dir = blob_dir.join("objects").join("sha256");
     let mut count = 0_usize;
     if object_dir.exists() {
-        for entry in fs::read_dir(&object_dir)
-            .with_context(|| format!("could not read {}", object_dir.display()))?
+        for entry in
+            fs::read_dir(&object_dir).context("could not read attachment object directory")?
         {
             let entry = entry?;
             if entry.file_type()?.is_file()
