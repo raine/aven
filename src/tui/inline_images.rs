@@ -193,7 +193,7 @@ fn kitty_escape(
         let chunk = std::str::from_utf8(chunk).expect("base64 is valid UTF-8");
         let apc = if index == 0 {
             format!(
-                "\x1b_Ga=T,f=100,t=d,q=2,C=1,N=1,I={image_number},p={placement_id},c={},r={},m={more};{chunk}\x1b\\",
+                "\x1b_Ga=T,f=100,t=d,q=2,C=1,I={image_number},p={placement_id},c={},r={},m={more};{chunk}\x1b\\",
                 width_cols.max(1),
                 height_rows.max(1)
             )
@@ -208,7 +208,7 @@ fn kitty_escape(
     }
     if escape.is_empty() {
         let apc = format!(
-            "\x1b_Ga=T,f=100,t=d,q=2,C=1,N=1,I={image_number},p={placement_id},c={},r={}\x1b\\",
+            "\x1b_Ga=T,f=100,t=d,q=2,C=1,I={image_number},p={placement_id},c={},r={}\x1b\\",
             width_cols.max(1),
             height_rows.max(1)
         );
@@ -360,7 +360,8 @@ mod tests {
     fn kitty_escape_transmits_encoded_png_payload() {
         let escape = kitty_escape("cG5nIGJ5dGVz", 20, 6, false, (11, 12));
 
-        assert!(escape.starts_with("\x1b_Ga=T,f=100,t=d,q=2,C=1,N=1,I=11,p=12,c=20,r=6,m=0;"));
+        assert!(escape.starts_with("\x1b_Ga=T,f=100,t=d,q=2,C=1,I=11,p=12,c=20,r=6,m=0;"));
+        assert!(!escape.contains("N=1"));
         assert!(escape.contains("cG5nIGJ5dGVz"));
         assert!(escape.ends_with("\x1b\\"));
     }

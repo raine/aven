@@ -53,6 +53,19 @@ fn write_inline_image(
     write!(writer, "{escape}")
 }
 
+fn unique_inline_image_placements(
+    placements: Vec<ui::DetailInlineImagePlacement>,
+) -> Vec<ui::DetailInlineImagePlacement> {
+    placements
+        .into_iter()
+        .fold(Vec::new(), |mut unique, placement| {
+            if !unique.contains(&placement) {
+                unique.push(placement);
+            }
+            unique
+        })
+}
+
 fn inline_image_emissions_after_draw(
     placements: &[ui::DetailInlineImagePlacement],
 ) -> Vec<ui::DetailInlineImagePlacement> {
@@ -208,11 +221,13 @@ impl App {
             .db_path()
             .map(|db_path| resolve_blob_dir(db_path, self.intake.config()))
             .transpose()?;
-        let current = if backend == InlineImageBackend::None || blob_dir.is_none() {
-            Vec::new()
-        } else {
-            self.widgets.inline_image_placements.clone()
-        };
+        let current = unique_inline_image_placements(
+            if backend == InlineImageBackend::None || blob_dir.is_none() {
+                Vec::new()
+            } else {
+                self.widgets.inline_image_placements.clone()
+            },
+        );
         let preview_quota_bytes = self
             .intake
             .config()
@@ -589,6 +604,16 @@ mod inline_image_lifecycle_tests {
             width: 20,
             height: 6,
         }
+    }
+
+    #[test]
+    fn duplicate_placements_are_emitted_once() {
+        let placement = placement();
+
+        assert_eq!(
+            unique_inline_image_placements(vec![placement.clone(), placement.clone()]),
+            vec![placement]
+        );
     }
 
     #[test]
