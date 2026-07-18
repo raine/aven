@@ -14,7 +14,7 @@ aven is a local-first task manager for power users and agents. It gives you one 
 - **Built for coding agents.** Agents get token-efficient output, stable IDs, and commands for capturing follow-up work, updating status, and preserving handoff context.
 - **A polished terminal UI for humans.** Browse, triage, filter, sort, inspect task detail, undo changes, use mouse support, and open the command palette from the TUI.
 - **Local-first with optional sync.** Tasks live in SQLite for offline work, with self-hosted sync available when you want the same tasks across laptops, agents, and other devices.
-- **Unique task IDs and task-local context.** Jira/Linear-style IDs like `APP-7KQ9`, Markdown descriptions, and append-style notes keep work easy to mention and easy to resume.
+- **Unique task IDs and task-local context.** Jira/Linear-style IDs like `APP-7KQ9`, Markdown descriptions, notes, and image attachments keep work easy to explain and easy to resume.
 - **Workspaces for separate worlds.** Personal and work tasks can share the same tool without sharing the same visible queue.
 
 ## Design principles
@@ -27,5 +27,5 @@ aven makes a few opinionated choices. Taskwarrior is a major inspiration, and av
 - **The TUI is optimized for power users.** The Rust terminal UI starts instantly and makes human workflows faster than CLI command sequences. Keyboard shortcuts cover browsing, triage, editing, filtering, sorting, undo, and navigation.
 - **Task IDs provide stable identity.** Tasks have offline-safe IDs that can be created on different devices without coordination. aven displays the shortest unique ID it can, like git does with commit hashes, so `APP-7KQ9` is nicer to type and paste than a UUID while still referring to one task.
 - **The same task store has many entrypoints.** Tasks should be reachable from the laptop TUI, agent CLI, terminal capture flows, sync clients, and integrations that talk to the local or synced task store. Run the sync server on a Raspberry Pi or home server, then sync devices through a VPN or private network. Because tasks live in the task store instead of repo files, a Telegram agent, future iOS app, or other synced entrypoint can create project-scoped tasks without cloning every repository.
-- **Context belongs with the task.** Markdown descriptions and append-style notes keep problem statements, decisions, blockers, and partial progress attached to the work.
+- **Context belongs with the task.** Markdown descriptions, notes, and image attachments keep problem statements, decisions, blockers, screenshots, and partial progress attached to the work.
 - **Workspaces isolate worlds.** Personal and work tasks can use the same tool while keeping queues, IDs, labels, and projects separate. Workspace routes can make a directory such as `~/work` open the work workspace automatically, and the TUI can open a workspace explicitly when you want to switch context.

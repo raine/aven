@@ -91,15 +91,13 @@ When `sync.server_url` is configured, `aven sync` can omit `--server`:
 aven sync
 ```
 
-When tasks have image attachments, metadata travels in the operation log while blob bytes use authenticated attachment endpoints. A sync round transfers at most 16 unique blobs and 64 MiB across uploads and downloads. A round that has completed no transfer may take one otherwise valid blob beyond its remaining byte budget so large backlogs keep progressing.
+### Image attachments during sync
 
-Sync output includes uploaded and downloaded blob counts and byte totals, remaining upload and download counts and bytes, the cursor, and completion state. `complete=false` means metadata or required blob transfers remain. Remaining uploads can be prerequisites for unsynced attachment-add operations, while downloads are limited to attachments on live tasks. Interactive sync runs additional bounded rounds while progress is possible. Duplicate references to one content hash transfer one physical blob.
+Image files sync with their tasks. A task can appear before its image finishes downloading, so task detail shows a `pending download` placeholder while the transfer is incomplete.
 
-Local add and download capacity and server workspace upload capacity enforce attachment quotas with `error attachment-quota-exceeded`. Sync exits before printing a completion summary on this error. Pulled metadata and cursor progress remain committed when a local download is blocked. Increase the relevant quota or free eligible original objects, then retry.
+Sync output reports image upload and download counts, transferred sizes, remaining work, and completion state. Run `aven sync` again when it reports `complete=false`. Interactive sync continues automatically while it can make progress. A configured, running daemon resumes remaining work in the background.
 
-:::note[Attachment ordering]
-Aven confirms attachment bytes and workspace quota capacity on the server before pushing dependent attachment metadata. Pulled metadata and cursor progress commit before local blob downloads, so a failed download remains pending for a later round without replaying applied metadata.
-:::
+`error attachment-quota-exceeded` can refer to storage on this device or to the server workspace. For local storage, remove eligible images with `aven attachment prune` or increase [`quota_bytes`](/configuration/#retention-and-storage-limits). For server storage, increase `server_workspace_quota_bytes` in the server's configuration. Local pruning does not reduce server workspace usage. Task changes already downloaded remain available, and missing images can download on a later sync.
 
 :::note[Server pinning]
 A local database pins the sync server it has used. Use a fresh database for a different server.
@@ -135,26 +133,32 @@ The repair command succeeds without changes when the LaunchAgent is absent.
 
 ## Back up and move data
 
-Use compressed backup archives when attachment originals must travel with the database. Use JSON export and import for metadata-only portability.
+Choose the command that matches what you need to preserve:
+
+| Goal | Commands | Image files included? |
+| --- | --- | --- |
+| Preserve or move all local Aven data | `aven backup` and `aven backup restore` | Yes, for images available on this device when the backup is created |
+| Move task data through JSON | `aven export` and `aven import` | No |
 
 ```sh
 aven backup --output backup.aven-backup.tar.zst
 aven backup restore backup.aven-backup.tar.zst --yes
 ```
 
+A backup archive contains the task database and every attachment image available on the device. Images that have not downloaded cannot be included, so run `aven sync` first when the sync server may have files this device lacks. Restore checks the archive and images before replacing local data.
+
 ```sh
 aven export --output tasks.json
 aven import tasks.json --yes
 ```
 
-- **Backup and restore:** Backup archives contain a consistent SQLite database, a manifest, and every locally available original attachment object. The database retains all inventory rows, including unavailable rows, while the manifest and object payload contain only locally available inventory. Staging, preview cache, trash, and incomplete files are excluded. Restore validates archive structure, hashes, image content, and attachment metadata before replacing the database and original-object set.
-- **Export and import:** JSON includes tasks, workspaces, projects, labels, notes, dependencies, epics, attachment metadata, blob inventory, changes, field versions, conflicts, and portable metadata. It sets `blobs_included: false`. Import marks every blob inventory row unavailable, and those missing bytes do not create upload obligations. Restore or sync can supply bytes later.
+A JSON export includes tasks and attachment information, but sets `blobs_included: false` and leaves out the image files. After import, attachment labels remain visible while the TUI shows unavailable-image placeholders. Run sync or restore a backup archive to supply the files. Until then, [`attachment get --output`](/command-reference/#aven-attachment) cannot save them.
 
 :::caution[Local data replacement]
-Restore and import replace local data, require confirmation with `--yes`, and create safety backups before replacement. Archive restore also preserves the prior blob directory as a safety copy.
+Restore and import replace local data and require confirmation with `--yes`. Aven creates safety backups first. Archive restore also preserves the previous attachment directory.
 :::
 
-- **Sync metadata:** Import preserves the target client id, resets the sync cursor, and skips imported pinned server metadata.
+Import keeps this installation's client identity and clears server-specific sync state.
 
 ## Resolve conflicts
 

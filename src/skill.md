@@ -83,7 +83,7 @@ aven restore APP-7KQ9
   deletion state, or conflicts.
 - Use `context <ref>` when one task snapshot is needed before acting. It gathers
   task fields, description, labels, notes, dependencies, blockers, conflicts,
-  deletion state, refs, and project metadata.
+  current attachment metadata, deletion state, refs, and project metadata.
 - Human-readable CLI output is the default agent-facing format. Use
   `context <ref> --json` only when a machine-readable snapshot is needed for a
   script, MCP server, bot, web UI, or other structured integration.
@@ -99,23 +99,27 @@ aven restore APP-7KQ9
   detected from decoded content, and Aven derives canonical media type and
   dimensions from the stored bytes. An explicit `--media-type` must match the
   detected format.
-- Attachment command JSON contains `attachment_id`, `task_id`, `sha256`,
-  `byte_size`, `media_type`, `filename`, `alt_text`, `width`, `height`,
-  `created_at`, `deleted`, `deleted_at`, and `has_blob`. Add output also contains
-  `optimized`. Attachment objects in `context --json` and `show --full --json`
-  omit `sha256` and contain the other metadata fields. Attachment deletion is an
-  idempotent tombstone operation. There is no attachment restore command.
+- Attachment JSON from `add`, `list`, `get`, and `delete` contains
+  `attachment_id`, `task_id`, `sha256`, `byte_size`, `media_type`, `filename`,
+  `alt_text`, `width`, `height`, `created_at`, `deleted`, `deleted_at`, and
+  `has_blob`. Add output also contains `optimized`. Current attachment objects
+  in `context --json` and `show --full --json` omit `sha256` and contain the
+  other metadata fields. Attachment deletion is an idempotent tombstone
+  operation. There is no attachment restore command.
 - `attachment prune` reports one privacy-safe batch of eligible counts and bytes,
-  capped by `local.attachment_lifecycle.maintenance_limit`. Repeated runs may be
-  needed. Original objects are deleted only with `--apply`; disposable preview
-  cache eviction to `preview_quota_bytes` also runs in dry-run mode. Grace
-  periods, live references, unsynced adds, staging, transfers, reads, backups,
-  and upload reservations protect original blobs from pruning.
+  capped by `local.attachment_lifecycle.maintenance_limit`. JSON output contains
+  `mode`, `eligible_count`, `eligible_bytes`, `pruned_count`, and `pruned_bytes`.
+  Repeated runs may be needed. Original objects are deleted only with `--apply`;
+  disposable preview cache eviction to `preview_quota_bytes` also runs in dry-run
+  mode. Grace periods, live references, unsynced adds, staging, transfers, reads,
+  backups, and upload reservations protect original blobs from pruning.
 - Local add or download capacity and server workspace upload capacity enforce
   attachment quotas with `error attachment-quota-exceeded`. Sync exits before a
   completion summary on this error. Pulled metadata and cursor progress remain
-  committed when a local download is blocked. Increase the relevant quota or
-  free eligible originals, then retry.
+  committed when a local download is blocked. Local pruning frees only local
+  capacity. Increase `quota_bytes` for local capacity or
+  `server_workspace_quota_bytes` in the server configuration for server capacity,
+  then retry.
 - Task detail read surfaces include ordered attachment metadata and `has_blob`
   without embedding bytes. The TUI renders live attachments after the description
   in a dedicated section and uses bounded, device-local previews when the terminal

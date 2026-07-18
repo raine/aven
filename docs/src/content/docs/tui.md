@@ -98,11 +98,18 @@ Press `a` to open the task composer. Project, status, priority, labels, availabi
 
 <p class="media-caption">The composer captures structured fields without leaving the keyboard workflow.</p>
 
-Use `Tab` and `Shift-Tab` to move through every field. Press `Enter` to edit the focused metadata field. `Enter` creates from the title field and inserts a newline in the description. `Ctrl-Enter` creates from any field when the terminal reports modified Enter keys. `Ctrl-s` is the portable create fallback. Press `F1` for complete composer help.
+Use `Tab` and `Shift+Tab` to move through every field. Press `Enter` to edit the focused metadata field. `Enter` creates from the title field and inserts a newline in the description. `Ctrl-Enter` creates from any field when the terminal reports modified Enter keys. `Ctrl-s` is the portable create fallback. Press `F1` for complete composer help.
 
-Use `Ctrl-v` in the composer or task detail to read image bytes from the macOS clipboard. On every platform, pasting one existing image path or `file://` URL through the terminal paste event attaches that file. Other clipboard image formats and direct clipboard image reads on non-macOS platforms leave the task unchanged. Task detail deduplicates identical live bytes, while the composer deduplicates pending bytes.
+### Attach images
 
-Aven validates and durably stages every pending image before it commits the task and attachment metadata together. A failed pre-commit submission keeps the complete draft and its pending attachments available for retry. Creating a task and its attachments produces one TUI undo action.
+Attach images from the composer or task detail:
+
+- On macOS, copy an image and press `Ctrl-v`.
+- On any platform, use the terminal's paste action to insert one local image path or `file://` URL.
+
+The TUI attaches an image only once if you paste it repeatedly. If a clipboard image does not attach, save it as a PNG, JPEG, GIF, or WebP file and paste the file path instead.
+
+Images added in the composer are saved with the task. If the task cannot be created, the draft and its images stay available so you can try again. See [`aven attachment`](/command-reference/#aven-attachment) for command-line attachment management and image limits.
 
 :::note[Terminal compatibility]
 Aven negotiates progressive keyboard enhancement with compatible terminals and uses the xterm modified-key protocol as a fallback. In tmux, enable forwarding with `set -s extended-keys on`. The outer terminal must also support tmux's extended-key mode. Use `Ctrl-s` when that path does not distinguish `Ctrl-Enter` from `Enter`. See [Tips](/tips/#use-ctrl-enter-in-alacritty-and-tmux) for the complete Alacritty and tmux configuration.
@@ -152,9 +159,17 @@ Press `Enter` on a task to open its detail view. Double-clicking a task row also
 
 <p class="media-caption">The detail view keeps Markdown context, notes, relationships, and editable metadata together.</p>
 
-The detail view renders Markdown descriptions, notes, task metadata, availability, and due-date state. Live image attachments appear once in an `ATTACHMENTS` section after the description, ordered by creation time and attachment ID. Supported terminals load bounded inline previews lazily when local bytes are available. Text placeholders remain visible while previews are generated and whenever preview generation fails. Stable text placeholders also identify attachments that are pending download or whose local bytes are unavailable. Ordinary Markdown images remain part of the description. Overdue and due-today labels are highlighted while future deadlines remain visible as dates. Use `j/k`, arrows, `Ctrl-d`, `Ctrl-u`, `PageDown`, `PageUp`, or the mouse wheel to scroll. Use `[` and `]` to switch tasks while staying in detail. With no child task or image focused, press `Esc`, `Enter`, or `q` to return to the list. Clicking status or priority opens the matching menu and returns to detail after selection.
+The detail view shows the task description, notes, metadata, availability, and due date.
 
-When the terminal supports inline previews, a locally available image with valid dimensions can receive focus unless preview generation has been suppressed after repeated failures. `Tab` focuses the first available child task or image, and `Shift-Tab` focuses the last. Use `j/k` or the arrow keys to move among focused child tasks and images. Focusing an image scrolls detail as needed to reveal its complete border. Press `Enter` to open a focused image or a child task available in the current view; a hidden child remains in detail with a warning. `Tab`, `Shift-Tab`, or `Esc` clears detail focus. If a focused item becomes unavailable, the next detail key clears that focus and leaves detail open. A focused image opens in a large in-TUI preview where `Esc` returns to task detail with the image focus preserved. Clicking an inline image opens the same large preview, including while its terminal payload is still loading. Locally available images reserve a framed preview area during that loading; attachments pending local download, unavailable attachments, and non-image attachments do not receive focus.
+### View image attachments
+
+Attachments appear in an `ATTACHMENTS` section below the description, in the order they were added. iTerm2, Kitty, WezTerm, and Ghostty can show inline previews. Other terminals show a text label instead, so the attachment remains visible even when the terminal cannot display the image.
+
+A placeholder can also mean that the image is still downloading (`[image: pending download]`) or is unavailable on this device (`[image: unavailable bytes]`). Run `aven sync` to fetch images available from your sync server. If a preview you expect stays textual, see [Troubleshoot image previews](/tips/#troubleshoot-image-previews).
+
+When inline previews are supported, `Tab` focuses the first available child task or image and `Shift+Tab` focuses the last. Use `j/k` or the arrow keys to move among focused items. A focused image has a complete border, and detail scrolls to reveal it. Press `Enter` to open the focused image in a large in-TUI preview. `Tab`, `Shift+Tab`, or `Esc` clears detail focus. In the large preview, `Esc` returns to task detail with the image still focused. Clicking a locally available inline image opens the same preview, including while the preview is loading. Images that are pending download, unavailable, or unable to show a preview do not receive focus.
+
+Overdue and due-today labels are highlighted while future deadlines remain visible as dates. Use `j/k`, arrows, `Ctrl-d`, `Ctrl-u`, `PageDown`, `PageUp`, or the mouse wheel to scroll. Use `[` and `]` to switch tasks while staying in detail. With no child task or image focused, press `Esc`, `Enter`, or `q` to return to the list. Clicking status or priority opens the matching menu and returns to detail after selection. To save an image as a regular file, use [`aven attachment get`](/command-reference/#aven-attachment).
 
 ### Select and copy text
 
@@ -175,7 +190,7 @@ Drag across the rendered title or description to select text, then press `y` to 
 
 Search, filters, and ordering are separate tools:
 
-- **Search** finds tasks by title, description, project, label, note, status, priority, or ref.
+- **Search** finds tasks by title, description, project, label, note, status, priority, ref, and current attachment filename or alternative text.
 - **Filters** constrain the current task list by fields such as label, priority, and deleted visibility.
 - **Ordering** changes the sort field or direction. Queue ordering uses aven's attention score, while other views can order by fields including availability and due date. Due ordering places undated tasks last.
 
@@ -222,8 +237,8 @@ The TUI supports mouse actions in addition to keyboard shortcuts:
 | ---------------- | ----------------------------- |
 | `j`, `k`, up/down | Move within the list or column |
 | Left/Right        | Move between column lanes     |
-| `Tab`             | Switch focus                  |
-| `Enter`          | Open selected task detail     |
+| `Tab`, `Shift+Tab` | Switch focus, including previewable images in detail |
+| `Enter`          | Open selected task detail or focused image preview |
 | `[`, `]`         | Switch tasks while in detail  |
 | `/`              | Open search                   |
 | `:`              | Open command palette          |
@@ -231,7 +246,7 @@ The TUI supports mouse actions in addition to keyboard shortcuts:
 | `r`              | Refresh                       |
 | `u`              | Undo                          |
 | `q`              | Quit                          |
-| `Esc`            | Cancel overlay or prefix mode |
+| `Esc`            | Return from preview, cancel overlay or prefix mode |
 
 ### Task shortcuts
 
