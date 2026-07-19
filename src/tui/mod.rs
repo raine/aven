@@ -18,6 +18,7 @@ mod app_overlay_submit;
 mod app_projects;
 mod app_search;
 mod app_update;
+mod attachment_controller;
 mod authoring;
 mod bounded_history;
 mod columns;

@@ -97,6 +97,7 @@ pub(crate) struct ViewState {
     pub(crate) update_badge: Option<crate::tui::app_update::UpdateBadgeView>,
     pub(crate) surface: ViewSurface,
     pub(crate) inline_images: Option<DetailInlineImageContext>,
+    pub(crate) pending_attachments: Vec<crate::tui::attachment_controller::PendingAttachmentView>,
 }
 
 impl ViewState {
@@ -248,6 +249,7 @@ pub(crate) fn render(
             active_detail_child_task_id,
             view.detail_text_selection.as_ref(),
             view.inline_images.as_ref(),
+            &view.pending_attachments,
         );
     }
     if let Some(overlay) = &view.overlay {
@@ -260,6 +262,7 @@ pub(crate) fn render(
             active_detail_child_task_id,
             view.detail_text_selection.as_ref(),
             view.inline_images.as_ref(),
+            &view.pending_attachments,
         );
     }
     if !view.pending_shortcut.is_empty() && !add_task_dialog_prefix_active(view) {
@@ -682,6 +685,7 @@ fn render_overlay(
     active_detail_child_task_id: Option<&str>,
     detail_text_selection: Option<&crate::tui::detail_selection::DetailTextSelection>,
     inline_images: Option<&DetailInlineImageContext>,
+    pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
 ) {
     if let OverlayView::AttachmentPreview { attachment_id, .. } = overlay {
         if let Some(item) = store.selected_task(widgets.table.selected()) {
@@ -707,6 +711,7 @@ fn render_overlay(
             active_detail_child_task_id,
             detail_text_selection,
             inline_images.filter(|_| matches!(overlay, OverlayView::Detail { .. })),
+            pending_attachments,
         );
         if matches!(overlay, OverlayView::DetailHelp { .. }) {
             render_overlay_content(frame, overlay, inline_title_editor);

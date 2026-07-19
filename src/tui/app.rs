@@ -157,6 +157,7 @@ pub(crate) struct App {
     pub(super) previous_inline_image_placements: Vec<crate::tui::ui::DetailInlineImagePlacement>,
     pub(super) previous_inline_image_backend: crate::tui::inline_images::InlineImageBackend,
     pub(super) preview_controller: crate::tui::preview_controller::PreviewController,
+    pub(super) attachment_controller: crate::tui::attachment_controller::AttachmentController,
     pub(super) image_viewer_launcher: fn(&std::path::Path) -> anyhow::Result<()>,
     pub(super) external_image_exports: Vec<(String, tempfile::TempDir)>,
     #[cfg(test)]
@@ -219,6 +220,7 @@ impl App {
             previous_inline_image_placements: Vec::new(),
             previous_inline_image_backend: crate::tui::inline_images::InlineImageBackend::None,
             preview_controller: crate::tui::preview_controller::PreviewController::new(),
+            attachment_controller: crate::tui::attachment_controller::AttachmentController::new(),
             image_viewer_launcher: default_image_viewer_launcher(),
             external_image_exports: Vec::new(),
             #[cfg(test)]

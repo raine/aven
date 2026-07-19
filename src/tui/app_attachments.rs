@@ -7,6 +7,9 @@ use crate::config::resolve_blob_dir;
 use crate::ids::new_id;
 use crate::operations::AttachmentAddInput;
 use crate::tui::app::App;
+use crate::tui::attachment_controller::{
+    AttachmentCompletion, AttachmentRequest, AttachmentSource,
+};
 use crate::tui::authoring::PendingTaskAttachment;
 use crate::tui::overlay::{MultilineInputState, OverlayRoute, OverlayState};
 use crate::tui::platform::{ClipboardImage, read_clipboard_image, read_clipboard_text};
@@ -38,13 +41,12 @@ impl App {
         let Some(path) = pasted_image_path(text) else {
             return Ok(false);
         };
-        let bytes = std::fs::read(&path)?;
         let filename = path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("pasted-image")
             .to_string();
-        self.attach_image_bytes(filename, bytes).await?;
+        self.attach_image_source(filename, AttachmentSource::Path(path))?;
         Ok(true)
     }
 
@@ -137,10 +139,18 @@ impl App {
     }
 
     async fn attach_clipboard_image(&mut self, image: ClipboardImage) -> Result<()> {
-        self.attach_image_bytes(image.filename, image.bytes).await
+        self.attach_image_source(image.filename, AttachmentSource::Bytes(image.bytes))
     }
 
-    async fn attach_image_bytes(&mut self, filename: String, bytes: Vec<u8>) -> Result<()> {
+    fn attach_image_source(&mut self, filename: String, source: AttachmentSource) -> Result<()> {
+        let Some(item) = self
+            .store
+            .selected_task(self.widgets.table.selected())
+            .cloned()
+        else {
+            self.set_info("no selected task to edit");
+            return Ok(());
+        };
         let db_path = self
             .intake
             .db_path()
@@ -157,31 +167,60 @@ impl App {
         } else {
             ImageOptimizationPolicy::Preserve
         };
-        let result = self
-            .store
-            .add_attachment(
-                self.widgets.table.selected(),
-                &blob_dir,
-                self.intake.config().local.attachment_lifecycle.policy(),
-                AttachmentAddInput {
-                    filename: Some(filename),
-                    alt_text: Some("pasted image".to_string()),
-                    declared_media_type: None,
-                    bytes,
-                    optimization_policy,
-                    dedupe_existing: true,
-                },
-            )
-            .await?;
-        if let Some(result) = result {
-            self.apply_mutation_result(result);
-            if self.overlay.is_none() {
-                self.overlay = Some(OverlayState::Detail { scroll: 0 });
-            }
-        } else {
-            self.set_info("no selected task to edit");
-        }
+        let attachment_id = new_id();
+        let store = self.store.attachment_worker_context();
+        self.attachment_controller.start(AttachmentRequest {
+            attachment_id,
+            task_id: item.task.id,
+            source,
+            input: AttachmentAddInput {
+                filename: Some(filename),
+                alt_text: Some("pasted image".to_string()),
+                declared_media_type: None,
+                bytes: Vec::new(),
+                optimization_policy,
+                dedupe_existing: true,
+            },
+            blob_dir,
+            lifecycle: self.intake.config().local.attachment_lifecycle,
+            store,
+        })?;
+        self.set_info("preparing image attachment");
         Ok(())
+    }
+
+    pub(super) async fn poll_attachment_work(&mut self) -> Result<bool> {
+        let results = self.attachment_controller.poll();
+        if results.is_empty() {
+            return Ok(false);
+        }
+        if results.iter().any(|result| {
+            matches!(
+                result.completion,
+                AttachmentCompletion::Success | AttachmentCompletion::Duplicate
+            )
+        }) {
+            self.refresh().await?;
+        }
+        let completion = if results
+            .iter()
+            .any(|result| result.completion == AttachmentCompletion::Failure)
+        {
+            AttachmentCompletion::Failure
+        } else if results
+            .iter()
+            .any(|result| result.completion == AttachmentCompletion::Duplicate)
+        {
+            AttachmentCompletion::Duplicate
+        } else {
+            AttachmentCompletion::Success
+        };
+        match completion {
+            AttachmentCompletion::Success => self.set_success("attached image"),
+            AttachmentCompletion::Duplicate => self.set_info("image already attached"),
+            AttachmentCompletion::Failure => self.set_error("image attachment failed"),
+        }
+        Ok(true)
     }
 }
 

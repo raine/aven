@@ -107,7 +107,11 @@ Attach images from the composer or task detail:
 - On macOS, copy an image and press `Ctrl-v`.
 - On any platform, use the terminal's paste action to insert one local image path or `file://` URL.
 
-The TUI attaches an image only once if you paste it repeatedly. If a clipboard image does not attach, save it as a PNG, JPEG, GIF, or WebP file and paste the file path instead.
+Images that cannot be added stay marked as failed for the current session. Pasting the same image repeatedly adds it once.
+
+Image optimization is off by default. Set [`local.image_optimization`](/configuration/#png-optimization) to `paste` or `on` to apply lossless PNG optimization to pasted images.
+
+If a clipboard image does not attach, save it as a PNG, JPEG, GIF, or WebP file and paste the file path instead.
 
 Images added in the composer are saved with the task. If the task cannot be created, the draft and its images stay available so you can try again. See [`aven attachment`](/command-reference/#aven-attachment) for command-line attachment management and image limits.
 

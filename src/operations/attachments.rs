@@ -205,6 +205,11 @@ pub(super) async fn insert_prepared_attachment(
     Ok(change_id)
 }
 
+struct AttachmentCommitIdentity {
+    attachment_id: Option<String>,
+    created_at: Option<String>,
+}
+
 pub(crate) async fn add_task_attachment(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
@@ -213,7 +218,43 @@ pub(crate) async fn add_task_attachment(
     task_id: &TaskId,
     input: AttachmentAddInput,
 ) -> Result<AttachmentAddOutcome> {
-    add_task_attachment_inner(conn, workspace, blob_dir, policy, task_id, None, input).await
+    add_task_attachment_inner(
+        conn,
+        workspace,
+        blob_dir,
+        policy,
+        task_id,
+        AttachmentCommitIdentity {
+            attachment_id: None,
+            created_at: None,
+        },
+        input,
+    )
+    .await
+}
+
+pub(crate) async fn add_ordered_task_attachment(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    blob_dir: &Path,
+    policy: crate::attachments::lifecycle::LifecyclePolicy,
+    task_id: &TaskId,
+    created_at: String,
+    input: TaskAttachmentAddInput,
+) -> Result<AttachmentAddOutcome> {
+    add_task_attachment_inner(
+        conn,
+        workspace,
+        blob_dir,
+        policy,
+        task_id,
+        AttachmentCommitIdentity {
+            attachment_id: Some(input.attachment_id),
+            created_at: Some(created_at),
+        },
+        input.input,
+    )
+    .await
 }
 
 async fn add_task_attachment_inner(
@@ -222,7 +263,7 @@ async fn add_task_attachment_inner(
     blob_dir: &Path,
     policy: crate::attachments::lifecycle::LifecyclePolicy,
     task_id: &TaskId,
-    attachment_id: Option<String>,
+    identity: AttachmentCommitIdentity,
     input: AttachmentAddInput,
 ) -> Result<AttachmentAddOutcome> {
     validate_filename(input.filename.as_deref())?;
@@ -301,8 +342,8 @@ async fn add_task_attachment_inner(
             return Ok::<_, anyhow::Error>((attachment_id, false));
         }
 
-        let attachment_id = attachment_id.unwrap_or_else(new_id);
-        let created_at = now();
+        let attachment_id = identity.attachment_id.unwrap_or_else(new_id);
+        let created_at = identity.created_at.unwrap_or_else(now);
         let change_id = append_change(
             &mut tx,
             ChangeEntity::Task,
@@ -345,7 +386,18 @@ async fn add_task_attachment_inner(
     }
     .await;
     let release_result = crate::attachments::lifecycle::release_lease(conn, &staging_lease).await;
-    let (attachment_id, created) = database_result?;
+    let (attachment_id, created) = match database_result {
+        Ok(result) => result,
+        Err(error) => {
+            crate::attachments::storage::remove_staged_blob_if_unreferenced(
+                conn,
+                blob_dir,
+                &stored.sha256,
+            )
+            .await;
+            return Err(error);
+        }
+    };
     release_result?;
     crate::attachments::lifecycle::reconcile_liveness(
         conn,

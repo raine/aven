@@ -311,7 +311,7 @@ Aven checks the actual image rather than trusting its extension. It accepts none
 | Filename | 1-255 UTF-8 bytes, with no control characters or path separators |
 | Alternative text | 500 UTF-8 bytes, with no control characters |
 
-Aven checks the complete image, including every animation frame, before attaching it. `--optimize` requests lossless PNG optimization, while `--no-optimize` preserves the file. Without either flag, [`local.image_optimization`](/configuration/#png-optimization) controls CLI attachments. Optimization applies only to PNG files. Aven preserves the original when optimization fails or does not reduce the file size, and validates any optimized file before storage.
+Aven checks the complete image, including every animation frame, before attaching it. `--optimize` requests lossless PNG optimization, while `--no-optimize` preserves the file. Without either flag, [`local.image_optimization`](/configuration/#png-optimization) controls CLI attachments and defaults to `off`. Optimization applies only to PNG files. Aven preserves the original when optimization fails or does not reduce the file size, and validates any optimized file before storage.
 
 #### JSON output and search
 

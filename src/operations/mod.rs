@@ -7,8 +7,9 @@ mod projects;
 mod tasks;
 
 pub(crate) use attachments::{
-    AttachmentAddInput, AttachmentReadItem, TaskAttachmentAddInput, add_task_attachment,
-    attachment_by_id, attachment_read_items_by_task, attachments_by_task, delete_task_attachment,
+    AttachmentAddInput, AttachmentReadItem, TaskAttachmentAddInput, add_ordered_task_attachment,
+    add_task_attachment, attachment_by_id, attachment_read_items_by_task, attachments_by_task,
+    delete_task_attachment,
 };
 pub(crate) use config::{init_config, show_config, show_config_paths};
 pub(crate) use conflicts::{

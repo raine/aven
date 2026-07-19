@@ -26,6 +26,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 
 pub(crate) use crate::query::RecentActionItem;
+pub(crate) use attachments::AttachmentWorkerContext;
 pub(crate) use launch::{TuiLaunch, TuiStartup};
 pub(crate) use onboarding::OnboardingStatus;
 pub(crate) use pickers::deleted_picker_items;

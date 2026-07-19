@@ -113,6 +113,7 @@ impl App {
     pub(crate) async fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
         let result = self.run_loop(terminal).await;
+        self.attachment_controller.shutdown().await;
         let _ = self.erase_previous_inline_images();
         execute!(
             std::io::stdout(),
@@ -132,6 +133,7 @@ impl App {
         self.open_add_task_on_start(natural).await?;
         execute!(std::io::stdout(), EnableBracketedPaste)?;
         let result = self.run_loop(terminal).await;
+        self.attachment_controller.shutdown().await;
         let _ = self.erase_previous_inline_images();
         execute!(std::io::stdout(), DisableBracketedPaste)?;
         result.map(|()| self.intake.take_message())
@@ -157,6 +159,10 @@ impl App {
             }
 
             if self.poll_search_preview().await? {
+                needs_redraw = true;
+            }
+
+            if self.poll_attachment_work().await? {
                 needs_redraw = true;
             }
 
@@ -417,6 +423,7 @@ impl App {
                 ViewSurface::Main
             },
             inline_images,
+            pending_attachments: self.attachment_controller.views(),
         }
     }
 
@@ -581,6 +588,7 @@ impl App {
         if self.intake.work_pending()
             || self.search_preview_work_pending()
             || self.preview_controller.work_pending()
+            || self.attachment_controller.work_pending()
             || self.update.work_pending()
         {
             timeout = timeout.min(INPUT_POLL_INTERVAL);

@@ -251,7 +251,7 @@ async fn load_preview(generation: u64, key: PreviewKey) -> PreviewWorkResult {
     )
     .await;
     let payload = match bytes {
-        Ok(bytes) => crate::attachments::blocking::run(move || encode_preview_png(bytes))
+        Ok(bytes) => crate::attachments::blocking::run_preview(move || encode_preview_png(bytes))
             .await
             .ok(),
         Err(_) => None,

@@ -210,10 +210,10 @@ pub(crate) async fn create_task_with_attachments(
         {
             Ok(staged) => {
                 if staged.byte_size != attachment.byte_size {
-                    cleanup_created_objects(conn, blob_dir, &created_hashes).await;
                     for lease_id in &staging_leases {
                         let _ = crate::attachments::lifecycle::release_lease(conn, lease_id).await;
                     }
+                    cleanup_created_objects(conn, blob_dir, &created_hashes).await;
                     for reservation_id in &capacity_reservations {
                         let _ = crate::attachments::lifecycle::release_reservation(
                             conn,
@@ -228,10 +228,10 @@ pub(crate) async fn create_task_with_attachments(
                 }
             }
             Err(error) => {
-                cleanup_created_objects(conn, blob_dir, &created_hashes).await;
                 for lease_id in &staging_leases {
                     let _ = crate::attachments::lifecycle::release_lease(conn, lease_id).await;
                 }
+                cleanup_created_objects(conn, blob_dir, &created_hashes).await;
                 for reservation_id in capacity_reservations {
                     let _ =
                         crate::attachments::lifecycle::release_reservation(conn, &reservation_id)
@@ -281,10 +281,10 @@ pub(crate) async fn create_task_with_attachments(
     let (inserted, attachment_change_ids, task) = match database_result {
         Ok(value) => value,
         Err(error) => {
-            cleanup_created_objects(conn, blob_dir, &created_hashes).await;
             for lease_id in staging_leases {
                 let _ = crate::attachments::lifecycle::release_lease(conn, &lease_id).await;
             }
+            cleanup_created_objects(conn, blob_dir, &created_hashes).await;
             for reservation_id in capacity_reservations {
                 let _ =
                     crate::attachments::lifecycle::release_reservation(conn, &reservation_id).await;

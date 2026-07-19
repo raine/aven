@@ -1151,6 +1151,18 @@ mod keyboard_dispatch {
 mod attachment_paste {
     use super::*;
 
+    async fn finish_attachment_work(app: &mut App) {
+        for _ in 0..400 {
+            app.poll_attachment_work().await.unwrap();
+            if !app.attachment_controller.work_pending() {
+                app.poll_attachment_work().await.unwrap();
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("attachment work did not finish");
+    }
+
     fn compressible_png_bytes() -> Vec<u8> {
         let width = 16u32;
         let height = 16u32;
@@ -1173,6 +1185,14 @@ mod attachment_paste {
         append_png_chunk(&mut png, b"IDAT", &idat);
         append_png_chunk(&mut png, b"IEND", &[]);
         png
+    }
+
+    fn jpeg_bytes() -> Vec<u8> {
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image::RgbImage::new(2, 1))
+            .write_to(&mut bytes, image::ImageFormat::Jpeg)
+            .unwrap();
+        bytes.into_inner()
     }
 
     fn append_png_chunk(png: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
@@ -1204,11 +1224,27 @@ mod attachment_paste {
         let selected = create_and_select_task(&mut app, test_task_draft("image target")).await;
         let task_id = app.store.tasks[selected].task.id.clone();
         let image = dir.path().join("photo.png");
-        std::fs::write(&image, compressible_png_bytes()).unwrap();
+        let original_bytes = compressible_png_bytes();
+        std::fs::write(&image, &original_bytes).unwrap();
         app.overlay = Some(OverlayState::Detail { scroll: 0 });
 
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        let pending = app.attachment_controller.views();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].task_id, task_id);
+        assert_eq!(
+            pending[0].status,
+            crate::tui::attachment_controller::PendingAttachmentStatus::Preparing
+        );
+        let mut conn = pool.acquire().await.unwrap();
+        let attachment_count: i64 = sqlx::query_scalar("SELECT count(*) FROM task_attachments")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(attachment_count, 0);
+        drop(conn);
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        finish_attachment_work(&mut app).await;
 
         assert_eq!(
             toast_message(&app).as_deref(),
@@ -1236,6 +1272,10 @@ mod attachment_paste {
             Some("photo.png")
         );
         assert_eq!(attachments[0].attachment.media_type, "image/png");
+        assert_eq!(
+            attachments[0].attachment.byte_size,
+            original_bytes.len() as i64
+        );
         assert!(attachments[0].has_blob);
     }
 
@@ -1255,6 +1295,7 @@ mod attachment_paste {
 
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        finish_attachment_work(&mut app).await;
 
         assert_eq!(
             toast_message(&app).as_deref(),
@@ -1274,6 +1315,206 @@ mod attachment_paste {
     }
 
     #[tokio::test]
+    async fn detail_paste_optimizes_asynchronously_when_enabled() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        let mut config = crate::config::AppConfig::default();
+        config.local.image_optimization = crate::config::ImageOptimizationConfig::Paste;
+        app.set_config(config);
+        let selected = create_and_select_task(&mut app, test_task_draft("optimized target")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        let image = dir.path().join("optimized.png");
+        let bytes = compressible_png_bytes();
+        std::fs::write(&image, &bytes).unwrap();
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        assert_eq!(app.attachment_controller.views().len(), 1);
+        finish_attachment_work(&mut app).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let attachments = crate::operations::attachment_read_items_by_task(
+            &mut conn,
+            app.store.active_workspace.id.as_str(),
+            &task_id,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert!(attachments[0].attachment.byte_size < bytes.len() as i64);
+    }
+
+    #[tokio::test]
+    async fn detail_paste_failure_stays_visible_without_metadata() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        create_and_select_task(&mut app, test_task_draft("invalid image target")).await;
+        let image = dir.path().join("invalid.png");
+        std::fs::write(&image, b"not an image").unwrap();
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        finish_attachment_work(&mut app).await;
+
+        let pending = app.attachment_controller.views();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(
+            pending[0].status,
+            crate::tui::attachment_controller::PendingAttachmentStatus::Failed
+        );
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("image attachment failed")
+        );
+        let mut conn = pool.acquire().await.unwrap();
+        let attachment_count: i64 = sqlx::query_scalar("SELECT count(*) FROM task_attachments")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(attachment_count, 0);
+    }
+
+    #[tokio::test]
+    async fn detail_paste_keeps_target_across_refresh_and_task_switch() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        let first = create_and_select_task(&mut app, test_task_draft("first target")).await;
+        let first_id = app.store.tasks[first].task.id.clone();
+        let second = create_and_select_task(&mut app, test_task_draft("second target")).await;
+        let second_id = app.store.tasks[second].task.id.clone();
+        assert!(app.select_task_by_id(&first_id));
+        let image = dir.path().join("switch.png");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        assert!(app.select_task_by_id(&second_id));
+        app.refresh().await.unwrap();
+        assert_eq!(app.attachment_controller.views()[0].task_id, first_id);
+        finish_attachment_work(&mut app).await;
+
+        let selected_id = app
+            .store
+            .selected_task(app.widgets.table.selected())
+            .unwrap()
+            .task
+            .id
+            .clone();
+        assert_eq!(selected_id, second_id);
+        let mut conn = pool.acquire().await.unwrap();
+        let first_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM task_attachments WHERE task_id = ?")
+                .bind(&first_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        let second_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM task_attachments WHERE task_id = ?")
+                .bind(&second_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!((first_count, second_count), (1, 0));
+    }
+
+    #[tokio::test]
+    async fn background_database_failure_cleans_staged_content() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        let db_path = dir.path().join("test.db");
+        app.set_add_task_db_path(db_path.clone());
+        create_and_select_task(&mut app, test_task_draft("failing target")).await;
+        let image = dir.path().join("failure.png");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "CREATE TRIGGER fail_background_attachment BEFORE INSERT ON task_attachments
+             BEGIN SELECT RAISE(FAIL, 'injected attachment insert failure'); END",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        finish_attachment_work(&mut app).await;
+
+        assert_eq!(
+            app.attachment_controller.views()[0].status,
+            crate::tui::attachment_controller::PendingAttachmentStatus::Failed
+        );
+        let blob_dir = crate::config::resolve_blob_dir(&db_path, app.intake.config()).unwrap();
+        let object_dir = blob_dir.join("objects").join("sha256");
+        let object_count = std::fs::read_dir(object_dir)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        assert_eq!(object_count, 0);
+        let mut conn = pool.acquire().await.unwrap();
+        let inventory_count: i64 = sqlx::query_scalar("SELECT count(*) FROM blob_inventory")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(inventory_count, 0);
+    }
+
+    #[tokio::test]
+    async fn concurrent_pastes_keep_paste_order() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        let mut config = crate::config::AppConfig::default();
+        config.local.image_optimization = crate::config::ImageOptimizationConfig::Paste;
+        app.set_config(config);
+        let selected = create_and_select_task(&mut app, test_task_draft("ordered target")).await;
+        let task_id = app.store.tasks[selected].task.id.clone();
+        let first = dir.path().join("first.png");
+        let second = dir.path().join("second.jpg");
+        std::fs::write(&first, compressible_png_bytes()).unwrap();
+        std::fs::write(&second, jpeg_bytes()).unwrap();
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_paste(first.to_str().unwrap()).await.unwrap();
+        app.dispatch_paste(second.to_str().unwrap()).await.unwrap();
+        finish_attachment_work(&mut app).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let attachments = crate::operations::attachment_read_items_by_task(
+            &mut conn,
+            app.store.active_workspace.id.as_str(),
+            &task_id,
+            false,
+        )
+        .await
+        .unwrap();
+        let filenames = attachments
+            .iter()
+            .map(|item| item.attachment.filename.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(filenames, vec![Some("first.png"), Some("second.jpg")]);
+    }
+
+    #[tokio::test]
+    async fn attachment_shutdown_finishes_commit_and_clears_pending_state() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        create_and_select_task(&mut app, test_task_draft("shutdown target")).await;
+        let image = dir.path().join("shutdown.png");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        app.attachment_controller.shutdown().await;
+
+        assert!(app.attachment_controller.views().is_empty());
+        let mut conn = pool.acquire().await.unwrap();
+        let attachment_count: i64 = sqlx::query_scalar("SELECT count(*) FROM task_attachments")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(attachment_count, 1);
+    }
+
+    #[tokio::test]
     async fn detail_paste_image_path_ignores_existing_image() {
         let (dir, pool, mut app) = test_app_with_pool().await;
         app.set_add_task_db_path(dir.path().join("test.db"));
@@ -1285,6 +1526,7 @@ mod attachment_paste {
 
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        finish_attachment_work(&mut app).await;
 
         assert_eq!(
             toast_message(&app).as_deref(),

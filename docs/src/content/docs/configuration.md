@@ -20,7 +20,7 @@ local:
   db_path: "/path/to/aven.sqlite"
   blob_dir: "/path/to/aven-blobs"
   inline_images: auto
-  image_optimization: paste
+  image_optimization: off
   attachment_lifecycle:
     grace_days: 7
     server_grace_days: 30
@@ -108,8 +108,8 @@ Detection uses terminal markers such as `TERM_PROGRAM`, `TERM`, `KITTY_WINDOW_ID
 
 | Value | Behavior |
 | --- | --- |
-| `off` | Preserve images unless `attachment add --optimize` overrides it. |
-| `paste` | Optimize pasted images and preserve CLI file attachments. This is the default. |
+| `off` | Preserve images unless `attachment add --optimize` overrides it. This is the default. |
+| `paste` | Optimize pasted images and preserve CLI file attachments. |
 | `on` | Optimize pasted images and CLI file attachments unless `--no-optimize` overrides it. |
 
 Optimization applies only to PNG files. Aven preserves the original when optimization fails or does not reduce the file size, and validates any optimized file before storage. Cached previews are disposable, regenerate when needed, and are excluded from sync, backup, export, and import.

@@ -3,12 +3,48 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::attachments::export::{LeasedImageExport, lease_image_export};
-use crate::operations::{AttachmentAddInput, add_task_attachment};
-use crate::tui::store::MutationMessage;
+use crate::operations::TaskAttachmentAddInput;
 
 use super::TuiStore;
 
+#[derive(Clone)]
+pub(crate) struct AttachmentWorkerContext {
+    pool: sqlx::SqlitePool,
+    workspace: crate::workspaces::Workspace,
+}
+
+impl AttachmentWorkerContext {
+    pub(crate) async fn add_ordered_attachment(
+        &self,
+        blob_dir: &Path,
+        lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
+        task_id: &crate::ids::TaskId,
+        created_at: String,
+        input: TaskAttachmentAddInput,
+    ) -> Result<bool> {
+        let mut conn = self.pool.acquire().await?;
+        Ok(crate::operations::add_ordered_task_attachment(
+            &mut conn,
+            &self.workspace,
+            blob_dir,
+            lifecycle_policy,
+            task_id,
+            created_at,
+            input,
+        )
+        .await?
+        .created)
+    }
+}
+
 impl TuiStore {
+    pub(crate) fn attachment_worker_context(&self) -> AttachmentWorkerContext {
+        AttachmentWorkerContext {
+            pool: self.pool.clone(),
+            workspace: self.active_workspace.clone(),
+        }
+    }
+
     pub(crate) async fn lease_image_export(
         &self,
         blob_dir: &Path,
@@ -19,37 +55,5 @@ impl TuiStore {
 
     pub(crate) async fn release_image_export(&self, export: &mut LeasedImageExport) -> Result<()> {
         export.release().await
-    }
-
-    pub(crate) async fn add_attachment(
-        &mut self,
-        index: Option<usize>,
-        blob_dir: &Path,
-        lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
-        input: AttachmentAddInput,
-    ) -> Result<Option<MutationMessage>> {
-        let Some(item) = self.selected_task(index).cloned() else {
-            return Ok(None);
-        };
-        let workspace = self.active_workspace.clone();
-        let mut conn = self.pool.acquire().await?;
-        let add_outcome = add_task_attachment(
-            &mut conn,
-            &workspace,
-            blob_dir,
-            lifecycle_policy,
-            &item.task.id,
-            input,
-        )
-        .await?;
-        drop(conn);
-        let message = if add_outcome.created {
-            "attached image"
-        } else {
-            "image already attached"
-        };
-        Ok(Some(
-            self.refresh_task_message(&item.task.id, message).await?,
-        ))
     }
 }

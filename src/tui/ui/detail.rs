@@ -161,6 +161,7 @@ fn render_detail(
     selection: Option<&DetailTextSelection>,
     widgets: &mut WidgetState,
     inline_images: Option<&DetailInlineImageContext>,
+    pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
 ) {
     let layout = detail_content_layout(frame.area());
     frame.render_widget(Clear, layout.body_area);
@@ -170,7 +171,7 @@ fn render_detail(
     }
 
     let selection = selection.filter(|selection| selection.terminal_width == frame.area().width);
-    let model = build_detail_content_model(
+    let model = build_detail_content_model_with_pending(
         item,
         layout.content_area,
         scroll,
@@ -178,6 +179,7 @@ fn render_detail(
         hovered_child_task_id,
         selection,
         inline_images,
+        pending_attachments,
     );
     render_detail_content_from_model(frame, layout.content_area, &model, widgets);
     if layout.metadata_area.width > 0 {
@@ -382,13 +384,38 @@ fn build_detail_content_model(
     selection: Option<&DetailTextSelection>,
     inline_images: Option<&DetailInlineImageContext>,
 ) -> DetailContentRenderModel {
-    let mut sticky_lines = detail_header_options(item, area.width as usize, inline_title_editor);
-    let (mut body_lines, image_placements, attachment_placements) = detail_body_lines_with_images(
+    build_detail_content_model_with_pending(
         item,
-        area.width as usize,
+        area,
+        scroll,
+        inline_title_editor,
         hovered_child_task_id,
+        selection,
         inline_images,
-    );
+        &[],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_detail_content_model_with_pending(
+    item: &TaskListItem,
+    area: Rect,
+    scroll: u16,
+    inline_title_editor: Option<&TextInputView>,
+    hovered_child_task_id: Option<&str>,
+    selection: Option<&DetailTextSelection>,
+    inline_images: Option<&DetailInlineImageContext>,
+    pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
+) -> DetailContentRenderModel {
+    let mut sticky_lines = detail_header_options(item, area.width as usize, inline_title_editor);
+    let (mut body_lines, image_placements, attachment_placements) =
+        detail_body_lines_with_pending_images(
+            item,
+            area.width as usize,
+            hovered_child_task_id,
+            inline_images,
+            pending_attachments,
+        );
     if inline_title_editor.is_none()
         && let Some(selection) = selection.filter(|selection| selection.task_id == item.task.id)
     {
@@ -513,11 +540,26 @@ fn detail_body_lines(
     detail_body_lines_with_images(item, width, hovered_child_task_id, None).0
 }
 
+#[cfg(test)]
 fn detail_body_lines_with_images(
     item: &TaskListItem,
     width: usize,
     hovered_child_task_id: Option<&str>,
     inline_images: Option<&DetailInlineImageContext>,
+) -> (
+    Vec<Line<'static>>,
+    Vec<DetailBodyImagePlacement>,
+    Vec<DetailBodyAttachmentPlacement>,
+) {
+    detail_body_lines_with_pending_images(item, width, hovered_child_task_id, inline_images, &[])
+}
+
+fn detail_body_lines_with_pending_images(
+    item: &TaskListItem,
+    width: usize,
+    hovered_child_task_id: Option<&str>,
+    inline_images: Option<&DetailInlineImageContext>,
+    pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
 ) -> (
     Vec<Line<'static>>,
     Vec<DetailBodyImagePlacement>,
@@ -545,6 +587,14 @@ fn detail_body_lines_with_images(
         &item.attachments,
         width,
         inline_images,
+    );
+    extend_pending_attachment_section(
+        &mut lines,
+        &item.task.id,
+        pending_attachments,
+        item.attachments
+            .iter()
+            .any(|attachment| !attachment.deleted),
     );
     lines.push(Line::from(""));
     lines.extend(detail_note_lines(item, width));
@@ -1147,6 +1197,39 @@ fn extend_detail_body_blocks(
                 });
             }
         }
+    }
+}
+
+fn extend_pending_attachment_section(
+    lines: &mut Vec<Line<'static>>,
+    task_id: &crate::ids::TaskId,
+    pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
+    has_live_attachments: bool,
+) {
+    let pending = pending_attachments
+        .iter()
+        .filter(|attachment| &attachment.task_id == task_id)
+        .collect::<Vec<_>>();
+    if pending.is_empty() {
+        return;
+    }
+    if !has_live_attachments {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "ATTACHMENTS",
+            Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+        )));
+    }
+    for attachment in pending {
+        let (label, color) = match attachment.status {
+            crate::tui::attachment_controller::PendingAttachmentStatus::Preparing => {
+                ("[image: preparing]", FG_MUTED)
+            }
+            crate::tui::attachment_controller::PendingAttachmentStatus::Failed => {
+                ("[image: failed]", crate::tui::theme::RED)
+            }
+        };
+        lines.push(quoted_line(Line::from(label), Style::new().fg(color)));
     }
 }
 
@@ -1901,6 +1984,7 @@ pub(super) fn render_detail_underlay(
     hovered_child_task_id: Option<&str>,
     selection: Option<&DetailTextSelection>,
     inline_images: Option<&DetailInlineImageContext>,
+    pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
 ) {
     if let Some(task) = store.selected_task(widgets.table.selected()) {
         render_detail(
@@ -1912,6 +1996,7 @@ pub(super) fn render_detail_underlay(
             selection,
             widgets,
             inline_images,
+            pending_attachments,
         );
     }
 }
@@ -2548,6 +2633,34 @@ mod tests {
     }
 
     #[test]
+    fn detail_renders_pending_and_failed_attachment_rows() {
+        let item = detail_test_item();
+        let pending = vec![
+            crate::tui::attachment_controller::PendingAttachmentView {
+                attachment_id: "PENDINGATTACH01".to_string(),
+                task_id: item.task.id.clone(),
+                status: crate::tui::attachment_controller::PendingAttachmentStatus::Preparing,
+            },
+            crate::tui::attachment_controller::PendingAttachmentView {
+                attachment_id: "PENDINGATTACH02".to_string(),
+                task_id: item.task.id.clone(),
+                status: crate::tui::attachment_controller::PendingAttachmentStatus::Failed,
+            },
+        ];
+
+        let rendered = detail_body_lines_with_pending_images(&item, 60, None, None, &pending)
+            .0
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("ATTACHMENTS"));
+        assert!(rendered.contains("[image: preparing]"));
+        assert!(rendered.contains("[image: failed]"));
+    }
+
+    #[test]
     fn detail_empty_description_renders_attachment_section() {
         let mut item = detail_test_item();
         item.task.description = String::new();
@@ -2959,6 +3072,7 @@ mod tests {
                     None,
                     &mut widgets,
                     Some(&context),
+                    &[],
                 );
             })
             .unwrap();

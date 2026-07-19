@@ -99,6 +99,10 @@ aven restore APP-7KQ9
   detected from decoded content, and Aven derives canonical media type and
   dimensions from the stored bytes. An explicit `--media-type` must match the
   detected format.
+- Image optimization is off by default. `local.image_optimization: paste` applies
+  lossless PNG optimization to pasted images, while `on` also applies it to CLI
+  file attachments. `attachment add --optimize` and `--no-optimize` override the
+  configured file-attachment behavior.
 - Attachment JSON from `add`, `list`, `get`, and `delete` contains
   `attachment_id`, `task_id`, `sha256`, `byte_size`, `media_type`, `filename`,
   `alt_text`, `width`, `height`, `created_at`, `deleted`, `deleted_at`, and
