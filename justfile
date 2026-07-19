@@ -95,6 +95,10 @@ ios-rust-artifacts:
 ios-swiftpm-package: ios-rust-artifacts
     scripts/package-ios-swiftpm
 
+# Build, test, install, and launch the minimal iOS host proof
+ios-host-proof: ios-swiftpm-package
+    ios/run-host-proof all
+
 # Build the macOS Rust facade and generate Swift bindings
 uniffi-swift:
     #!/usr/bin/env bash

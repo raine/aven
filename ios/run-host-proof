@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+project="$script_dir/AvenIOS.xcodeproj"
+scheme="AvenIOS"
+generated="$script_dir/Generated"
+proof_root="$generated/HostProof"
+simulator_derived_data="$proof_root/DerivedDataSimulator"
+device_derived_data="$proof_root/DerivedDataDevice"
+bundle_identifier="com.raine.aven.ios-proof"
+
+require_package() {
+    if [[ ! -d "$generated/AvenUniFFI.xcframework" ]]; then
+        printf '%s\n' \
+            "error: run 'just ios-swiftpm-package' before the host proof" >&2
+        exit 1
+    fi
+}
+
+simulator_udid() {
+    xcrun simctl list devices available -j | jq -er '
+        [
+            .devices
+            | to_entries[]
+            | select(.key | contains("iOS-26-5"))
+            | .value[]
+            | select(.name == "iPhone 17 Pro" and .isAvailable == true)
+        ][0].udid
+    '
+}
+
+build_simulator() {
+    local simulator_id="$1"
+
+    xcodebuild \
+        -project "$project" \
+        -scheme "$scheme" \
+        -configuration Release \
+        -sdk iphonesimulator \
+        -destination "platform=iOS Simulator,id=$simulator_id" \
+        -derivedDataPath "$simulator_derived_data" \
+        IPHONEOS_DEPLOYMENT_TARGET=17.0 \
+        ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+        build
+}
+
+test_simulator() {
+    local simulator_id="$1"
+    local result_bundle="$proof_root/AvenIOSHostTests.xcresult"
+
+    rm -rf "$result_bundle"
+    xcodebuild \
+        -project "$project" \
+        -scheme "$scheme" \
+        -configuration Debug \
+        -sdk iphonesimulator \
+        -destination "platform=iOS Simulator,id=$simulator_id" \
+        -derivedDataPath "$simulator_derived_data" \
+        -resultBundlePath "$result_bundle" \
+        IPHONEOS_DEPLOYMENT_TARGET=17.0 \
+        ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+        test
+}
+
+run_simulator() {
+    local simulator_id
+    local app_path
+    local launch_log="$proof_root/simulator-launch.log"
+
+    simulator_id="$(simulator_udid)"
+    mkdir -p "$proof_root"
+    xcrun simctl bootstatus "$simulator_id" -b
+    build_simulator "$simulator_id"
+    test_simulator "$simulator_id"
+
+    app_path="$simulator_derived_data/Build/Products/Release-iphonesimulator/AvenIOS.app"
+    xcrun simctl install "$simulator_id" "$app_path"
+    xcrun simctl launch --console --terminate-running-process \
+        "$simulator_id" "$bundle_identifier" | tee "$launch_log"
+    grep -Fqx \
+        "AVEN_IOS_HOST_PROOF status=pass facade=typed worker=serial heartbeat=progressing" \
+        "$launch_log"
+}
+
+build_device() {
+    mkdir -p "$proof_root"
+    xcodebuild \
+        -project "$project" \
+        -scheme "$scheme" \
+        -configuration Release \
+        -sdk iphoneos \
+        -destination "generic/platform=iOS" \
+        -derivedDataPath "$device_derived_data" \
+        IPHONEOS_DEPLOYMENT_TARGET=17.0 \
+        ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+        build
+}
+
+run_device() {
+    local device_id="${AVEN_IOS_DEVICE_ID:-}"
+    local development_team="${AVEN_IOS_DEVELOPMENT_TEAM:-}"
+    local app_path
+    local install_json="$proof_root/device-install.json"
+    local launch_json="$proof_root/device-launch.json"
+
+    if [[ -z "$device_id" || -z "$development_team" ]]; then
+        printf '%s\n' \
+            "AVEN_IOS_DEVICE_PROOF status=unavailable condition=device_or_team" \
+            >&2
+        return 2
+    fi
+
+    xcodebuild \
+        -project "$project" \
+        -scheme "$scheme" \
+        -configuration Release \
+        -sdk iphoneos \
+        -destination "platform=iOS,id=$device_id" \
+        -derivedDataPath "$device_derived_data" \
+        IPHONEOS_DEPLOYMENT_TARGET=17.0 \
+        ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+        CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM="$development_team" \
+        -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+        build
+
+    app_path="$device_derived_data/Build/Products/Release-iphoneos/AvenIOS.app"
+    rm -f "$install_json" "$launch_json"
+    xcrun devicectl device install app \
+        --device "$device_id" "$app_path" \
+        --json-output "$install_json"
+    xcrun devicectl device process launch \
+        --device "$device_id" --terminate-existing --console \
+        "$bundle_identifier" \
+        --json-output "$launch_json"
+}
+
+usage() {
+    printf 'usage: %s {all|simulator|device-build|device}\n' "$0" >&2
+    exit 64
+}
+
+require_package
+case "${1:-}" in
+    all)
+        build_device
+        run_simulator
+        run_device || status=$?
+        if [[ "${status:-0}" -ne 0 && "${status:-0}" -ne 2 ]]; then
+            exit "$status"
+        fi
+        ;;
+    simulator)
+        run_simulator
+        ;;
+    device-build)
+        build_device
+        ;;
+    device)
+        run_device
+        ;;
+    *)
+        usage
+        ;;
+esac
