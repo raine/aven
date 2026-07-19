@@ -14,6 +14,12 @@ fn local_task_flow_uses_typed_values_and_validates_ids() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("local.sqlite");
     let client = AvenClient::open(database.to_string_lossy().into_owned()).unwrap();
+    let storage = client.initialize_storage().unwrap();
+    assert_eq!(storage.root, format!("{}.blobs", database.display()));
+    assert_eq!(storage.staging, storage.objects);
+    assert!(std::path::Path::new(&storage.objects).is_dir());
+    assert!(std::path::Path::new(&storage.trash).is_dir());
+    assert!(std::path::Path::new(&storage.previews).is_dir());
     let workspace = client.resolve_workspace("default".to_string()).unwrap();
 
     let task = client

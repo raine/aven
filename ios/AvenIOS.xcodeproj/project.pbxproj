@@ -13,6 +13,7 @@
 		100000000000000000000004 /* HostSmokeProof.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000004 /* HostSmokeProof.swift */; };
 		100000000000000000000005 /* AvenIOSHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000005 /* AvenIOSHostTests.swift */; };
 		100000000000000000000006 /* AvenUniFFI in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000001 /* AvenUniFFI */; };
+		100000000000000000000007 /* PersistenceProof.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* PersistenceProof.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -34,6 +35,7 @@
 		200000000000000000000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		200000000000000000000007 /* AvenIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AvenIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		200000000000000000000008 /* AvenIOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AvenIOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		200000000000000000000009 /* PersistenceProof.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceProof.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -88,6 +90,7 @@
 			isa = PBXGroup;
 			children = (
 				200000000000000000000004 /* HostSmokeProof.swift */,
+				200000000000000000000009 /* PersistenceProof.swift */,
 			);
 			path = Proof;
 			sourceTree = "<group>";
@@ -225,6 +228,7 @@
 				100000000000000000000002 /* ApplicationSupportPath.swift in Sources */,
 				100000000000000000000003 /* RustWorker.swift in Sources */,
 				100000000000000000000004 /* HostSmokeProof.swift in Sources */,
+				100000000000000000000007 /* PersistenceProof.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

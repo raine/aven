@@ -15,6 +15,35 @@ final class AvenIOSHostTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testSandboxPersistenceAndTypedTaskMappings() async throws {
+        let result = try await PersistenceProof().run()
+
+        XCTAssertGreaterThanOrEqual(result.workspaceCount, 1)
+        XCTAssertEqual(result.taskCount, 1)
+        XCTAssertEqual(
+            result.statusNames,
+            ["inbox", "backlog", "todo", "active", "done", "canceled"]
+        )
+        XCTAssertEqual(
+            result.priorityNames,
+            ["none", "low", "medium", "high", "urgent"]
+        )
+        XCTAssertEqual(result.validationErrorCount, 2)
+        XCTAssertEqual(result.notFoundErrorCount, 1)
+        XCTAssertTrue(result.workspaceMismatchMatched)
+        XCTAssertTrue(result.walObservedBeforeRelease)
+        XCTAssertTrue(result.shmObservedBeforeRelease)
+        XCTAssertTrue(result.walObservedAfterReopen)
+        XCTAssertTrue(result.shmObservedAfterReopen)
+        XCTAssertTrue(result.dataProtectionMatched)
+        XCTAssertEqual(result.storagePathCount, 5)
+        print(
+            "AVEN_IOS_PERSISTENCE_TEST status=pass persistence=reopen " +
+                "types=complete storage=application_support attachments=none"
+        )
+    }
+
     func testApplicationSupportPathIsStableAndDurable() throws {
         let first = try ApplicationSupportPath.hostDatabaseURL()
         let second = try ApplicationSupportPath.hostDatabaseURL()

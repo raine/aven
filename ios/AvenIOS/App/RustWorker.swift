@@ -1,3 +1,4 @@
+import AvenUniFFI
 import Dispatch
 
 public final class RustWorker: @unchecked Sendable {
@@ -18,6 +19,16 @@ public final class RustWorker: @unchecked Sendable {
                     continuation.resume(throwing: error)
                 }
             }
+        }
+    }
+
+    public func withClient<T: Sendable>(
+        at databasePath: String,
+        _ operation: @escaping @Sendable (AvenClient) throws -> T
+    ) async throws -> T {
+        try await run {
+            let client = try AvenClient.open(path: databasePath)
+            return try operation(client)
         }
     }
 }

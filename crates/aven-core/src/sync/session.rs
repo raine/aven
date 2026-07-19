@@ -202,7 +202,7 @@ impl SyncSession {
         auth_token: Option<String>,
         page_budget: Option<usize>,
     ) -> Result<Self> {
-        let blob_dir = super::blob::default_blob_dir(database.path());
+        let blob_dir = crate::attachments::default_blob_dir(database.path());
         Self::start_with_attachment_storage(
             database,
             server,

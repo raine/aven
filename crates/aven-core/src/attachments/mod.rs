@@ -26,3 +26,9 @@ pub use validation::{
     validate_attachment_id, validate_blob_size, validate_dimensions, validate_filename,
     validate_media_type, validate_sha256,
 };
+
+pub fn default_blob_dir(database_path: &std::path::Path) -> std::path::PathBuf {
+    let mut value = database_path.as_os_str().to_os_string();
+    value.push(".blobs");
+    std::path::PathBuf::from(value)
+}

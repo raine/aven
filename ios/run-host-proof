@@ -79,8 +79,38 @@ run_simulator() {
     xcrun simctl launch --console --terminate-running-process \
         "$simulator_id" "$bundle_identifier" | tee "$launch_log"
     grep -Fqx \
-        "AVEN_IOS_HOST_PROOF status=pass facade=typed worker=serial heartbeat=progressing" \
+        "AVEN_IOS_HOST_PROOF status=pass facade=typed worker=serial heartbeat=progressing persistence=reopen types=complete storage=application_support" \
         "$launch_log"
+
+    inspect_simulator_sandbox "$simulator_id"
+}
+
+inspect_simulator_sandbox() {
+    local simulator_id="$1"
+    local data_container
+    local persistence_root
+    local database
+    local storage_root
+    local inventory="$proof_root/simulator-sandbox-layout.txt"
+
+    data_container="$(
+        xcrun simctl get_app_container \
+            "$simulator_id" "$bundle_identifier" data
+    )"
+    persistence_root="$data_container/Library/Application Support/AvenHostProof/Persistence"
+    database="$persistence_root/persistence.sqlite"
+    storage_root="$database.blobs"
+
+    test -f "$database"
+    test -d "$storage_root/objects/sha256"
+    test -d "$storage_root/trash"
+    test -d "$storage_root/cache/previews"
+    test -z "$(find "$storage_root/objects/sha256" -type f -print -quit)"
+    find "$persistence_root" -mindepth 1 -maxdepth 5 -print \
+        | sed "s|$data_container|<app-data-container>|" \
+        | LC_ALL=C sort > "$inventory"
+    printf '%s\n' \
+        "AVEN_IOS_SANDBOX_PROOF status=pass location=application_support attachments=none"
 }
 
 build_device() {

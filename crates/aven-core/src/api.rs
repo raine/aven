@@ -1,5 +1,5 @@
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Error as InternalError;
 
@@ -24,6 +24,24 @@ impl Store {
             .await
             .map_err(Error::database_open)?;
         Ok(Self { database })
+    }
+
+    pub fn initialize_storage(&self) -> Result<StorageLayout, Error> {
+        let root = crate::attachments::default_blob_dir(self.database.path());
+        let objects = root.join("objects").join("sha256");
+        let trash = root.join("trash");
+        let previews = root.join("cache").join("previews");
+        for directory in [&objects, &trash, &previews] {
+            std::fs::create_dir_all(directory)
+                .map_err(|error| Error::from_internal(error.into()))?;
+        }
+        Ok(StorageLayout {
+            root,
+            staging: objects.clone(),
+            objects,
+            trash,
+            previews,
+        })
     }
 
     pub async fn start_sync_session(
@@ -309,6 +327,15 @@ fn validate_date_update(field: &str, update: &OptionalDateUpdate) -> Result<(), 
         OptionalDateUpdate::Unchanged | OptionalDateUpdate::Clear => Ok(()),
         OptionalDateUpdate::Set(value) => validate_optional_date(field, Some(value)),
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageLayout {
+    pub root: PathBuf,
+    pub objects: PathBuf,
+    pub staging: PathBuf,
+    pub trash: PathBuf,
+    pub previews: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

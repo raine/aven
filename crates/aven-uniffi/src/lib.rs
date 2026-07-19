@@ -154,6 +154,27 @@ impl From<OptionalDateUpdate> for core_api::OptionalDateUpdate {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct StorageLayout {
+    pub root: String,
+    pub objects: String,
+    pub staging: String,
+    pub trash: String,
+    pub previews: String,
+}
+
+impl From<core_api::StorageLayout> for StorageLayout {
+    fn from(value: core_api::StorageLayout) -> Self {
+        Self {
+            root: value.root.to_string_lossy().into_owned(),
+            objects: value.objects.to_string_lossy().into_owned(),
+            staging: value.staging.to_string_lossy().into_owned(),
+            trash: value.trash.to_string_lossy().into_owned(),
+            previews: value.previews.to_string_lossy().into_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct WorkspaceRecord {
     pub id: String,
     pub key: String,
@@ -389,6 +410,13 @@ impl AvenClient {
         runtime()?
             .block_on(self.store.list_workspaces())
             .map(|values| values.into_iter().map(Into::into).collect())
+            .map_err(Into::into)
+    }
+
+    pub fn initialize_storage(&self) -> Result<StorageLayout, AvenError> {
+        self.store
+            .initialize_storage()
+            .map(Into::into)
             .map_err(Into::into)
     }
 

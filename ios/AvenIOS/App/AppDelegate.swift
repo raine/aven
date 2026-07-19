@@ -23,6 +23,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         Task { @MainActor in
             do {
                 _ = try await HostSmokeProof().run()
+                _ = try await PersistenceProof().run()
                 ProofMarker.writePass()
                 exit(EXIT_SUCCESS)
             } catch {
@@ -38,7 +39,8 @@ private enum ProofMarker {
     static func writePass() {
         write(
             "AVEN_IOS_HOST_PROOF status=pass facade=typed " +
-                "worker=serial heartbeat=progressing\n"
+                "worker=serial heartbeat=progressing persistence=reopen " +
+                "types=complete storage=application_support\n"
         )
     }
 

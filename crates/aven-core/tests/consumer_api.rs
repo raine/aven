@@ -67,6 +67,12 @@ async fn consumer_api_completes_local_task_and_conflict_flows() {
         .unwrap();
 
     let first = Store::open(&first_path).await.unwrap();
+    let storage = first.initialize_storage().unwrap();
+    assert_eq!(storage.root, first_path.with_extension("sqlite.blobs"));
+    assert_eq!(storage.staging, storage.objects);
+    assert!(storage.objects.is_dir());
+    assert!(storage.trash.is_dir());
+    assert!(storage.previews.is_dir());
     let invalid_sync_server = match first
         .start_sync_session("ftp://sync.test".to_string(), None, None)
         .await

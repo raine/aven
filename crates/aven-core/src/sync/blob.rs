@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use sqlx::{Row, SqliteConnection};
@@ -320,10 +320,4 @@ pub(super) fn missing_counts(blobs: &[MissingLocalBlob]) -> ByteCount {
             .map(|blob| u64::try_from(blob.byte_size).unwrap_or(0))
             .sum(),
     }
-}
-
-pub(super) fn default_blob_dir(database_path: &Path) -> PathBuf {
-    let mut value = database_path.as_os_str().to_os_string();
-    value.push(".blobs");
-    PathBuf::from(value)
 }
