@@ -1,7 +1,0 @@
-module aven_interop_spikeFFI {
-    header "aven_interop_spikeFFI.h"
-    export *
-    use "Darwin"
-    use "_Builtin_stdbool"
-    use "_Builtin_stdint"
-}
