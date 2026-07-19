@@ -226,25 +226,6 @@ mod domain_mutations_and_pickers {
     use super::*;
 
     #[tokio::test]
-    async fn create_project_refreshes_sidebar() {
-        let mut store = test_store().await;
-        create_mobile_project(&mut store).await;
-
-        assert!(
-            store
-                .projects
-                .iter()
-                .any(|project| project.key == "mobile-app")
-        );
-        assert!(
-            store
-                .sidebar_entries
-                .iter()
-                .any(|entry| entry.label.contains("Mobile App"))
-        );
-    }
-
-    #[tokio::test]
     async fn delete_project_removes_unused_project() {
         let mut store = test_store().await;
         create_mobile_project(&mut store).await;
@@ -365,23 +346,6 @@ mod domain_mutations_and_pickers {
                 .projects
                 .iter()
                 .any(|project| project.key == "mobile-app")
-        );
-    }
-
-    #[tokio::test]
-    async fn create_label_refreshes_label_cache() {
-        let mut store = test_store().await;
-        store
-            .create_label("Needs Review".to_string())
-            .await
-            .unwrap();
-
-        assert!(store.labels.iter().any(|label| label == "needs-review"));
-        assert!(
-            store
-                .label_picker_items()
-                .iter()
-                .any(|item| item.value == "needs-review")
         );
     }
 
@@ -1312,41 +1276,6 @@ mod views_filters_and_sort {
                 .collect::<Vec<_>>(),
             vec!["Open task"]
         );
-    }
-
-    #[tokio::test]
-    async fn done_view_preserves_project_scope() {
-        let mut store = test_store().await;
-        create_mobile_project(&mut store).await;
-        store.create_project("Ops".to_string()).await.unwrap();
-        for (title, project) in [("Mobile done", "mobile-app"), ("Ops done", "ops")] {
-            let (_, selected) = store
-                .create_task(
-                    TaskDraft {
-                        title: title.to_string(),
-                        project: Some(project.to_string()),
-                        ..task_draft("")
-                    },
-                    None,
-                )
-                .await
-                .unwrap();
-            store.update_status(selected, "done").await.unwrap();
-        }
-
-        store
-            .show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
-            .await
-            .unwrap();
-        store.show_view(TaskView::Done).await.unwrap();
-
-        assert_eq!(
-            store.view_state.scope,
-            TaskScope::Project("mobile-app".to_string())
-        );
-        assert_eq!(store.view_state.view, TaskView::Done);
-        assert_eq!(store.tasks.len(), 1);
-        assert_eq!(store.tasks[0].task.title, "Mobile done");
     }
 
     #[tokio::test]

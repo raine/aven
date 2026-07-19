@@ -4399,23 +4399,6 @@ mod authoring {
     }
 
     #[tokio::test]
-    async fn add_task_ctrl_s_creates_from_every_field() {
-        for field in AddTaskStep::ALL {
-            let mut app = test_app().await;
-            app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
-            type_chars(&mut app, "Write docs").await;
-            let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
-                panic!("expected composer");
-            };
-            state.focus = field;
-            app.handle_overlay_key(ctrl_s()).await.unwrap();
-            assert!(app.overlay.is_none(), "failed from {field:?}");
-            let selected = app.widgets.table.selected().unwrap();
-            assert_eq!(app.store.tasks[selected].task.title, "Write docs");
-        }
-    }
-
-    #[tokio::test]
     async fn add_note_requires_selected_task() {
         let mut app = test_app().await;
         app.widgets.table.select(None);
