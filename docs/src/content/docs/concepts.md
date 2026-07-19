@@ -48,7 +48,7 @@ Add screenshots, diagrams, and other images to a task when they help explain the
 
 You can attach images in the TUI while creating or viewing a task. From the command line, create the task first, then use [`aven attachment`](/command-reference/#aven-attachment). Supported terminals show image previews in task detail, while other terminals show a text placeholder. See [View image attachments](/tui/#view-image-attachments) for preview controls.
 
-Sync can copy attachment images between devices. To move all local data yourself, including the image files stored on that device, use a [backup archive](/sync/#back-up-and-move-data). JSON export keeps the attachment records but leaves out the image files.
+[Sync can copy attachment images between devices](/sync/#image-attachments-during-sync). To move all local data yourself, including the image files stored on that device, use a [backup archive](/sync/#back-up-and-move-data). JSON export keeps the attachment records but leaves out the image files.
 
 ## Refs
 
