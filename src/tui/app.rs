@@ -16,6 +16,17 @@ use crate::tui::store::{TaskOrder, TaskViewState, TuiStore};
 use crate::tui::toast::{Toast, ToastSeverity};
 
 pub(crate) const TASK_ROW_DOUBLE_CLICK: Duration = Duration::from_millis(500);
+pub(super) const MAX_EXTERNAL_IMAGE_EXPORTS: usize = 8;
+
+#[cfg(not(test))]
+fn default_image_viewer_launcher() -> fn(&std::path::Path) -> anyhow::Result<()> {
+    crate::tui::platform::open_image_in_default_viewer
+}
+
+#[cfg(test)]
+fn default_image_viewer_launcher() -> fn(&std::path::Path) -> anyhow::Result<()> {
+    |_| Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TaskRowClick {
@@ -145,6 +156,8 @@ pub(crate) struct App {
     pub(super) previous_inline_image_placements: Vec<crate::tui::ui::DetailInlineImagePlacement>,
     pub(super) previous_inline_image_backend: crate::tui::inline_images::InlineImageBackend,
     pub(super) preview_controller: crate::tui::preview_controller::PreviewController,
+    pub(super) image_viewer_launcher: fn(&std::path::Path) -> anyhow::Result<()>,
+    pub(super) external_image_exports: Vec<(String, tempfile::TempDir)>,
     #[cfg(test)]
     pub(crate) inline_image_context_override: Option<crate::tui::ui::DetailInlineImageContext>,
     pub(super) navigation_history: BoundedHistory<TaskViewState>,
@@ -204,6 +217,8 @@ impl App {
             previous_inline_image_placements: Vec::new(),
             previous_inline_image_backend: crate::tui::inline_images::InlineImageBackend::None,
             preview_controller: crate::tui::preview_controller::PreviewController::new(),
+            image_viewer_launcher: default_image_viewer_launcher(),
+            external_image_exports: Vec::new(),
             #[cfg(test)]
             inline_image_context_override: None,
             navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),

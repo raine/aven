@@ -61,12 +61,24 @@ struct DetailContentRenderModel {
     body_start: usize,
     scrollbar_position: usize,
     image_placements: Vec<DetailBodyImagePlacement>,
+    attachment_placements: Vec<DetailBodyAttachmentPlacement>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct DetailInlineImageContext {
+    pub(crate) previews_enabled: bool,
     pub(crate) unavailable_hashes: HashSet<String>,
     pub(crate) focused_attachment_id: Option<String>,
+}
+
+impl Default for DetailInlineImageContext {
+    fn default() -> Self {
+        Self {
+            previews_enabled: true,
+            unavailable_hashes: HashSet::new(),
+            focused_attachment_id: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +98,13 @@ struct DetailBodyImagePlacement {
     line_index: usize,
     width: u16,
     height: u16,
+}
+
+#[derive(Debug, Clone)]
+struct DetailBodyAttachmentPlacement {
+    attachment_id: String,
+    line_index: usize,
+    height: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -278,20 +297,17 @@ pub(crate) fn detail_attachment_scroll_target(
         .min(layout.content_area.height as usize);
     let body_visible = (layout.content_area.height as usize).saturating_sub(sticky_height);
     let placement = model
-        .image_placements
+        .attachment_placements
         .iter()
         .find(|placement| placement.attachment_id == attachment_id)?;
-    let frame_start = placement.line_index.checked_sub(1)?;
-    let frame_end = placement
-        .line_index
-        .saturating_add(placement.height as usize);
-    let frame_height = frame_end.saturating_sub(frame_start).saturating_add(1);
-    if frame_height > body_visible || body_visible == 0 {
+    let frame_start = placement.line_index;
+    let frame_end = frame_start.saturating_add(placement.height.saturating_sub(1));
+    if body_visible == 0 {
         return None;
     }
     let cap = model.content_height.saturating_sub(body_visible);
     let scroll = (scroll as usize).min(cap);
-    let target = if frame_start < scroll {
+    let target = if placement.height > body_visible || frame_start < scroll {
         frame_start
     } else if frame_end >= scroll.saturating_add(body_visible) {
         frame_end.saturating_add(1).saturating_sub(body_visible)
@@ -367,7 +383,7 @@ fn build_detail_content_model(
     inline_images: Option<&DetailInlineImageContext>,
 ) -> DetailContentRenderModel {
     let mut sticky_lines = detail_header_options(item, area.width as usize, inline_title_editor);
-    let (mut body_lines, image_placements) = detail_body_lines_with_images(
+    let (mut body_lines, image_placements, attachment_placements) = detail_body_lines_with_images(
         item,
         area.width as usize,
         hovered_child_task_id,
@@ -402,6 +418,7 @@ fn build_detail_content_model(
         body_start: start,
         scrollbar_position,
         image_placements,
+        attachment_placements,
     }
 }
 
@@ -501,12 +518,17 @@ fn detail_body_lines_with_images(
     width: usize,
     hovered_child_task_id: Option<&str>,
     inline_images: Option<&DetailInlineImageContext>,
-) -> (Vec<Line<'static>>, Vec<DetailBodyImagePlacement>) {
+) -> (
+    Vec<Line<'static>>,
+    Vec<DetailBodyImagePlacement>,
+    Vec<DetailBodyAttachmentPlacement>,
+) {
     let mut lines = detail_epic_child_lines(item, width, hovered_child_task_id);
     if !lines.is_empty() {
         lines.push(Line::from(""));
     }
     let mut image_placements = Vec::new();
+    let mut attachment_placements = Vec::new();
     extend_detail_body_blocks(
         &mut lines,
         &mut image_placements,
@@ -519,6 +541,7 @@ fn detail_body_lines_with_images(
     extend_attachment_section(
         &mut lines,
         &mut image_placements,
+        &mut attachment_placements,
         &item.attachments,
         width,
         inline_images,
@@ -526,7 +549,7 @@ fn detail_body_lines_with_images(
     lines.push(Line::from(""));
     lines.extend(detail_note_lines(item, width));
     lines.extend(detail_dependency_lines(item, width));
-    (lines, image_placements)
+    (lines, image_placements, attachment_placements)
 }
 
 fn detail_selectable_document(
@@ -719,6 +742,7 @@ fn detail_description_lines(
     ));
     extend_attachment_section(
         &mut lines,
+        &mut Vec::new(),
         &mut Vec::new(),
         &item.attachments,
         width,
@@ -1129,6 +1153,7 @@ fn extend_detail_body_blocks(
 fn extend_attachment_section(
     lines: &mut Vec<Line<'static>>,
     placements: &mut Vec<DetailBodyImagePlacement>,
+    attachment_placements: &mut Vec<DetailBodyAttachmentPlacement>,
     attachments: &[AttachmentMetadataJson],
     width: usize,
     inline_images: Option<&DetailInlineImageContext>,
@@ -1149,7 +1174,19 @@ fn extend_attachment_section(
     for attachment in live {
         match attachment_detail_block(attachment, content_width, inline_images) {
             DetailBodyBlock::Line(line) => {
-                lines.push(quoted_line(line, Style::new().fg(FG_MUTED)));
+                let focused = inline_images.is_some_and(|context| {
+                    context.focused_attachment_id.as_deref()
+                        == Some(attachment.attachment_id.as_str())
+                });
+                attachment_placements.push(DetailBodyAttachmentPlacement {
+                    attachment_id: attachment.attachment_id.clone(),
+                    line_index: lines.len(),
+                    height: 1,
+                });
+                lines.push(quoted_line(
+                    line,
+                    Style::new().fg(if focused { ACCENT } else { FG_MUTED }),
+                ));
             }
             DetailBodyBlock::Image {
                 placeholder,
@@ -1160,6 +1197,11 @@ fn extend_attachment_section(
             } => {
                 let focused = inline_images.is_some_and(|context| {
                     context.focused_attachment_id.as_deref() == Some(attachment_id.as_str())
+                });
+                attachment_placements.push(DetailBodyAttachmentPlacement {
+                    attachment_id: attachment_id.clone(),
+                    line_index: lines.len(),
+                    height: height as usize + 3,
                 });
                 let frame_style = Style::new().fg(if focused { ACCENT } else { BORDER });
                 lines.push(quoted_line(placeholder, Style::new().fg(FG_MUTED)));
@@ -1194,14 +1236,21 @@ fn extend_attachment_section(
     }
 }
 
+pub(crate) fn attachment_is_locally_openable(attachment: &AttachmentMetadataJson) -> bool {
+    !attachment.deleted
+        && attachment.has_blob
+        && attachment.bytes_state == crate::attachments::AttachmentBytesState::Present
+        && matches!(
+            attachment.media_type.as_str(),
+            "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+        )
+}
+
 pub(crate) fn attachment_is_locally_previewable(
     attachment: &AttachmentMetadataJson,
     unavailable_hashes: &HashSet<String>,
 ) -> bool {
-    !attachment.deleted
-        && attachment.has_blob
-        && attachment.bytes_state == crate::attachments::AttachmentBytesState::Present
-        && attachment.media_type.starts_with("image/")
+    attachment_is_locally_openable(attachment)
         && !unavailable_hashes.contains(&attachment.sha256)
         && matches!(
             (attachment.width, attachment.height),
@@ -1218,7 +1267,9 @@ fn attachment_detail_block(
     let Some(inline_images) = inline_images else {
         return DetailBodyBlock::Line(placeholder);
     };
-    if !attachment_is_locally_previewable(attachment, &inline_images.unavailable_hashes) {
+    if !inline_images.previews_enabled
+        || !attachment_is_locally_previewable(attachment, &inline_images.unavailable_hashes)
+    {
         return DetailBodyBlock::Line(placeholder);
     }
     let (width, height) = image_preview_size(attachment, content_width.saturating_sub(4));
@@ -1567,27 +1618,25 @@ pub(crate) fn detail_attachment_at_position(
         layout.content_area.width,
         layout.content_area.height.saturating_sub(sticky_height),
     );
-    for placement in &model.image_placements {
-        if inline_images
-            .unavailable_hashes
-            .contains(&placement.source_hash)
-        {
+    for placement in &model.attachment_placements {
+        let attachment = item
+            .attachments
+            .iter()
+            .find(|attachment| attachment.attachment_id == placement.attachment_id)?;
+        if !attachment_is_locally_openable(attachment) {
             continue;
         }
-        let Some(image) = visible_detail_image_rect(body_area, &model, placement) else {
+        let Some(start) = placement.line_index.checked_sub(model.body_start) else {
             continue;
         };
-        let frame = Rect::new(
-            image.x.saturating_sub(1),
-            image.y.saturating_sub(1),
-            image.width.saturating_add(2),
-            image.height.saturating_add(2),
-        );
-        if column >= frame.x
-            && column < frame.x.saturating_add(frame.width)
-            && row >= frame.y
-            && row < frame.y.saturating_add(frame.height)
-            && row < body_area.y.saturating_add(body_area.height)
+        let end = start.saturating_add(placement.height);
+        if column >= body_area.x
+            && column < body_area.x.saturating_add(body_area.width)
+            && row >= body_area.y.saturating_add(start as u16)
+            && row
+                < body_area
+                    .y
+                    .saturating_add(end.min(body_area.height as usize) as u16)
         {
             return Some(DetailAttachmentHit {
                 attachment_id: placement.attachment_id.clone(),
@@ -2552,7 +2601,7 @@ mod tests {
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
         let context = DetailInlineImageContext::default();
 
-        let (lines, placements) = detail_body_lines_with_images(&item, 80, None, Some(&context));
+        let (lines, placements, _) = detail_body_lines_with_images(&item, 80, None, Some(&context));
 
         assert_eq!(placements.len(), 1);
         assert_eq!(placements[0].height, 12);
@@ -2582,9 +2631,9 @@ mod tests {
             ..DetailInlineImageContext::default()
         };
 
-        let (unfocused_lines, unfocused_placements) =
+        let (unfocused_lines, unfocused_placements, _) =
             detail_body_lines_with_images(&item, 80, None, Some(&unfocused));
-        let (focused_lines, focused_placements) =
+        let (focused_lines, focused_placements, _) =
             detail_body_lines_with_images(&item, 80, None, Some(&focused));
 
         assert_eq!(unfocused_placements.len(), 1);
@@ -2620,7 +2669,8 @@ mod tests {
         item.attachments[0].height = Some(302);
         let context = DetailInlineImageContext::default();
 
-        let (_lines, placements) = detail_body_lines_with_images(&item, 200, None, Some(&context));
+        let (_lines, placements, _) =
+            detail_body_lines_with_images(&item, 200, None, Some(&context));
 
         assert_eq!(placements.len(), 1);
         assert_eq!(placements[0].height, 12);
@@ -2637,7 +2687,7 @@ mod tests {
             ..DetailInlineImageContext::default()
         };
 
-        let (lines, placements) = detail_body_lines_with_images(&item, 80, None, Some(&context));
+        let (lines, placements, _) = detail_body_lines_with_images(&item, 80, None, Some(&context));
 
         assert!(placements.is_empty());
         assert!(
@@ -2653,7 +2703,7 @@ mod tests {
         item.task.description = String::new();
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
 
-        let (lines, placements) = detail_body_lines_with_images(&item, 80, None, None);
+        let (lines, placements, _) = detail_body_lines_with_images(&item, 80, None, None);
 
         assert!(placements.is_empty());
         assert_eq!(
@@ -2705,6 +2755,7 @@ mod tests {
                 width: 30,
                 height: 12,
             }],
+            attachment_placements: Vec::new(),
         };
         let mut widgets = WidgetState {
             sidebar: ListState::default(),

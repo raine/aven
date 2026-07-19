@@ -1,5 +1,6 @@
 pub(crate) mod blocking;
 pub(crate) mod decode;
+pub(crate) mod export;
 pub(crate) mod lifecycle;
 pub(crate) mod optimization;
 pub(crate) mod preview;

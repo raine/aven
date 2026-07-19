@@ -47,6 +47,47 @@ async fn test_app() -> App {
     App::new_for_tests(pool).await.unwrap()
 }
 
+fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image::RgbaImage::new(width, height))
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    bytes.into_inner()
+}
+
+async fn add_real_attachment(
+    app: &mut App,
+    pool: &SqlitePool,
+    db_path: &std::path::Path,
+    selected: usize,
+) -> String {
+    app.set_add_task_db_path(db_path.to_path_buf());
+    let blob_dir = crate::config::resolve_blob_dir(db_path, app.intake.config()).unwrap();
+    let task_id = app.store.tasks[selected].task.id.clone();
+    let mut conn = pool.acquire().await.unwrap();
+    let outcome = crate::operations::add_task_attachment(
+        &mut conn,
+        &app.store.active_workspace,
+        &blob_dir,
+        crate::attachments::lifecycle::LifecyclePolicy::default(),
+        &task_id,
+        crate::operations::AttachmentAddInput {
+            filename: Some("viewer-test.png".to_string()),
+            alt_text: None,
+            declared_media_type: Some("image/png".to_string()),
+            bytes: png_bytes(2, 2),
+            optimization_policy: crate::attachments::ImageOptimizationPolicy::Preserve,
+            dedupe_existing: true,
+        },
+    )
+    .await
+    .unwrap();
+    drop(conn);
+    app.store.refresh(Some(&task_id)).await.unwrap();
+    app.widgets.table.select(Some(selected));
+    outcome.outcome.attachment.attachment_id
+}
+
 fn test_task_draft(title: &str) -> TaskDraft {
     TaskDraft {
         title: title.to_string(),
@@ -4893,7 +4934,7 @@ mod detail_mode {
     }
 
     #[tokio::test]
-    async fn detail_tab_focuses_only_locally_previewable_images_in_both_directions() {
+    async fn detail_tab_focuses_locally_available_images_independent_of_preview_state() {
         let (_dir, _pool, mut app) = test_app_with_pool().await;
         let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
         let suppressed = test_attachment("SUPPRESSED", "image/png", true, Some((640, 480)));
@@ -4919,9 +4960,13 @@ mod detail_mode {
             .unwrap();
         assert_eq!(
             app.selected_detail_attachment_id.as_deref(),
-            Some("FIRSTIMAGE")
+            Some("SUPPRESSED")
         );
         assert!(app.selected_detail_child_task_id.is_none());
+        assert_eq!(
+            app.view().selected_detail_attachment_id.as_deref(),
+            Some("SUPPRESSED")
+        );
         let forward_scroll = match app.overlay {
             Some(OverlayState::Detail { scroll }) => scroll,
             _ => panic!("expected detail"),
@@ -4936,7 +4981,7 @@ mod detail_mode {
                 &context,
             )
             .as_deref(),
-            Some("FIRSTIMAGE")
+            Some("SUPPRESSED")
         );
 
         app.dispatch_key(key(KeyCode::Esc), (100, 30).into())
@@ -4964,6 +5009,229 @@ mod detail_mode {
             .as_deref(),
             Some("LASTIMAGE")
         );
+    }
+
+    fn fail_image_viewer(_path: &std::path::Path) -> anyhow::Result<()> {
+        anyhow::bail!("viewer unavailable")
+    }
+
+    #[tokio::test]
+    async fn external_viewer_notification_keeps_inline_previews_enabled() {
+        let (_dir, _pool, mut app) = test_app_with_pool().await;
+        app.inline_image_context_override =
+            Some(crate::tui::ui::DetailInlineImageContext::default());
+        create_and_select_task(&mut app, test_task_draft("Image task")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.set_success("opened attachment in default image viewer");
+
+        assert!(
+            app.inline_image_context()
+                .is_some_and(|context| context.previews_enabled)
+        );
+    }
+
+    #[tokio::test]
+    async fn unsupported_terminal_focus_opens_highlighted_image_externally() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
+        let attachment_id =
+            add_real_attachment(&mut app, &pool, &dir.path().join("test.db"), selected).await;
+        app.inline_image_context_override = Some(crate::tui::ui::DetailInlineImageContext {
+            previews_enabled: false,
+            ..crate::tui::ui::DetailInlineImageContext::default()
+        });
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Tab), (100, 30).into())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.selected_detail_attachment_id.as_deref(),
+            Some(attachment_id.as_str())
+        );
+        app.dispatch_key(key(KeyCode::Char('o')), (100, 30).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+        assert_eq!(app.external_image_exports.len(), 1);
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("opened attachment in default image viewer")
+        );
+    }
+
+    #[tokio::test]
+    async fn unsupported_terminal_enter_and_mouse_use_external_viewer() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
+        let attachment_id =
+            add_real_attachment(&mut app, &pool, &dir.path().join("test.db"), selected).await;
+        let context = crate::tui::ui::DetailInlineImageContext {
+            previews_enabled: false,
+            ..crate::tui::ui::DetailInlineImageContext::default()
+        };
+        app.inline_image_context_override = Some(context.clone());
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        app.dispatch_key(key(KeyCode::Tab), (100, 30).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Enter), (100, 30).into())
+            .await
+            .unwrap();
+        assert_eq!(app.external_image_exports.len(), 1);
+        assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+
+        let item = app
+            .store
+            .selected_task(app.widgets.table.selected())
+            .unwrap();
+        let (column, row) = (0..30)
+            .flat_map(|row| (0..100).map(move |column| (column, row)))
+            .find(|(column, row)| {
+                crate::tui::ui::detail_attachment_at_position(
+                    item, 100, 30, *column, *row, 0, &context,
+                )
+                .is_some_and(|hit| hit.attachment_id == attachment_id)
+            })
+            .expect("attachment label hit target");
+        app.dispatch_mouse(left_click(column, row), (100, 30).into())
+            .await
+            .unwrap();
+        assert_eq!(app.external_image_exports.len(), 1);
+        assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+    }
+
+    #[tokio::test]
+    async fn full_screen_preview_opens_current_image_externally() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
+        let attachment_id =
+            add_real_attachment(&mut app, &pool, &dir.path().join("test.db"), selected).await;
+        app.inline_image_context_override =
+            Some(crate::tui::ui::DetailInlineImageContext::default());
+        app.overlay = Some(OverlayState::AttachmentPreview {
+            attachment_id: attachment_id.clone(),
+            scroll: 3,
+        });
+
+        app.dispatch_key(key(KeyCode::Char('o')), (100, 30).into())
+            .await
+            .unwrap();
+
+        assert_eq!(app.external_image_exports.len(), 1);
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::AttachmentPreview {
+                attachment_id: ref current,
+                scroll: 3,
+            }) if current == &attachment_id
+        ));
+    }
+
+    #[tokio::test]
+    async fn external_viewer_reports_unavailable_bytes_and_launch_failures() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
+        let attachment_id =
+            add_real_attachment(&mut app, &pool, &dir.path().join("test.db"), selected).await;
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("UPDATE blob_inventory SET available = 0")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+
+        app.open_attachment_externally(&attachment_id).await;
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("attachment bytes are unavailable")
+        );
+        assert!(app.external_image_exports.is_empty());
+
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("UPDATE blob_inventory SET available = 1")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+        app.image_viewer_launcher = fail_image_viewer;
+        app.open_attachment_externally(&attachment_id).await;
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("could not start the default image viewer")
+        );
+        assert!(app.external_image_exports.is_empty());
+        let lease_count: i64 = sqlx::query_scalar("SELECT count(*) FROM blob_leases")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(lease_count, 0);
+
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("UPDATE task_attachments SET deleted = 1, deleted_at = '2026-07-19T00:00:00Z'")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+        app.open_attachment_externally(&attachment_id).await;
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("attachment is no longer available")
+        );
+    }
+
+    #[tokio::test]
+    async fn successful_external_export_holds_temp_file_until_app_cleanup() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
+        let attachment_id =
+            add_real_attachment(&mut app, &pool, &dir.path().join("test.db"), selected).await;
+
+        app.open_attachment_externally(&attachment_id).await;
+
+        let export_dir = app.external_image_exports[0].1.path().to_path_buf();
+        assert!(export_dir.join("attachment.png").is_file());
+        let lease_count: i64 = sqlx::query_scalar("SELECT count(*) FROM blob_leases")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(lease_count, 0);
+        app.external_image_exports.clear();
+        assert!(!export_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn dropped_external_export_releases_read_lease() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        let db_path = dir.path().join("test.db");
+        let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
+        let attachment_id = add_real_attachment(&mut app, &pool, &db_path, selected).await;
+        let blob_dir = crate::config::resolve_blob_dir(&db_path, app.intake.config()).unwrap();
+        let export = app
+            .store
+            .lease_image_export(&blob_dir, &attachment_id)
+            .await
+            .unwrap();
+        let lease_count: i64 = sqlx::query_scalar("SELECT count(*) FROM blob_leases")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(lease_count, 1);
+
+        drop(export);
+        for _ in 0..20 {
+            let lease_count: i64 = sqlx::query_scalar("SELECT count(*) FROM blob_leases")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            if lease_count == 0 {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("dropped image export retained its read lease");
     }
 
     #[tokio::test]
@@ -5089,15 +5357,20 @@ mod detail_mode {
     #[tokio::test]
     async fn full_screen_attachment_preview_switches_between_images() {
         let (_dir, _pool, mut app) = test_app_with_pool().await;
-        app.inline_image_context_override =
-            Some(crate::tui::ui::DetailInlineImageContext::default());
         let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
+        let suppressed = test_attachment("SUPPRESSEDIMAGE", "image/png", true, Some((640, 480)));
+        let suppressed_hash = suppressed.sha256.clone();
         app.store.tasks[selected].attachments = vec![
             test_attachment("FIRSTIMAGE", "image/png", true, Some((640, 480))),
             test_attachment("MISSINGIMAGE", "image/png", false, Some((640, 480))),
             test_attachment("DOCUMENT", "application/pdf", true, None),
+            suppressed,
             test_attachment("SECONDIMAGE", "image/jpeg", true, Some((800, 600))),
         ];
+        app.inline_image_context_override = Some(crate::tui::ui::DetailInlineImageContext {
+            unavailable_hashes: [suppressed_hash].into_iter().collect(),
+            ..crate::tui::ui::DetailInlineImageContext::default()
+        });
         app.selected_detail_attachment_id = Some("FIRSTIMAGE".to_string());
         app.overlay = Some(OverlayState::AttachmentPreview {
             attachment_id: "FIRSTIMAGE".to_string(),
@@ -5290,7 +5563,6 @@ mod detail_mode {
             let selected = create_and_select_task(&mut app, test_task_draft("Image task")).await;
             let attachment =
                 test_attachment("INVALIDATEDIMAGE", "image/png", true, Some((640, 480)));
-            let source_hash = attachment.sha256.clone();
             app.store.tasks[selected].attachments = vec![attachment];
             app.overlay = Some(OverlayState::Detail { scroll: 4 });
             app.dispatch_key(key(KeyCode::Tab), (100, 30).into())
@@ -5305,15 +5577,9 @@ mod detail_mode {
                 Some("INVALIDATEDIMAGE")
             );
 
-            if key_code == KeyCode::Enter {
-                app.inline_image_context_override =
-                    Some(crate::tui::ui::DetailInlineImageContext {
-                        unavailable_hashes: [source_hash].into_iter().collect(),
-                        ..crate::tui::ui::DetailInlineImageContext::default()
-                    });
-            } else {
-                app.store.tasks[selected].attachments[0].width = Some(0);
-            }
+            app.store.tasks[selected].attachments[0].has_blob = false;
+            app.store.tasks[selected].attachments[0].bytes_state =
+                crate::attachments::AttachmentBytesState::Unavailable;
             assert!(app.view().selected_detail_attachment_id.is_none());
 
             app.dispatch_key(key(key_code), (100, 30).into())

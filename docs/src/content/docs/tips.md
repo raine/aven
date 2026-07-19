@@ -87,7 +87,7 @@ aven attachment get 7KQ9A1X4MV2P8D6R --json
 
 ### The terminal shows labels instead of previews
 
-Inline previews work in iTerm2, Kitty, WezTerm, and Ghostty. Other terminals, including Sixel-only terminals, show labels instead. You can still save and open the image with `aven attachment get --output`.
+Inline previews work in iTerm2, Kitty, WezTerm, and Ghostty. Other terminals, including Sixel-only terminals, show labels instead. In task detail, use `Tab` to focus a locally available image and press `Enter` or `o` to open it in the operating system's default viewer. Clicking the image label performs the same external open. You can also save a regular copy with `aven attachment get --output`.
 
 Check the preview mode in `~/.config/aven/config.yaml`:
 

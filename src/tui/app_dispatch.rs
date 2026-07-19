@@ -4,8 +4,8 @@ use ratatui::layout::{Rect, Size};
 use std::time::Instant;
 
 use crate::tui::app::{
-    App, DetailNavigationState, Focus, FooterChoiceMode, TASK_ROW_DOUBLE_CLICK, TaskCopyKind,
-    TaskRefKind,
+    App, DetailNavigationState, Focus, FooterChoiceMode, MAX_EXTERNAL_IMAGE_EXPORTS,
+    TASK_ROW_DOUBLE_CLICK, TaskCopyKind, TaskRefKind,
 };
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::conflict_flow::ConflictResolutionChoice;
@@ -22,11 +22,12 @@ use crate::tui::platform::{copy_to_clipboard, is_editor_prefix_key};
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
 use crate::tui::store::TaskView;
 use crate::tui::ui::{
-    attachment_is_locally_previewable, composer_help_scroll_cap, database_stats_scroll_cap,
-    detail_attachment_at_position, detail_attachment_scroll_target, detail_child_task_at_position,
-    detail_copy_target_at, detail_help_scroll_cap, detail_section_scroll_target_with_images,
-    detail_selected_text, detail_text_cell_at_position, help_scroll_cap, prefix_hint_scroll_cap,
-    recent_action_at_position, task_at_position, task_status_at_position, text_panel_scroll_cap,
+    attachment_is_locally_openable, attachment_is_locally_previewable, composer_help_scroll_cap,
+    database_stats_scroll_cap, detail_attachment_at_position, detail_attachment_scroll_target,
+    detail_child_task_at_position, detail_copy_target_at, detail_help_scroll_cap,
+    detail_section_scroll_target_with_images, detail_selected_text, detail_text_cell_at_position,
+    help_scroll_cap, prefix_hint_scroll_cap, recent_action_at_position, task_at_position,
+    task_status_at_position, text_panel_scroll_cap,
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -198,7 +199,10 @@ impl App {
                 return self.handle_task_list_wheel(-1, terminal_size).await;
             }
             MouseEventKind::Down(MouseButton::Left) => {
-                if self.handle_detail_attachment_mouse_click(mouse, terminal_size) {
+                if self
+                    .handle_detail_attachment_mouse_click(mouse, terminal_size)
+                    .await?
+                {
                     return Ok(());
                 }
                 if self.begin_detail_text_selection(mouse, terminal_size) {
@@ -599,16 +603,10 @@ impl App {
             .chain(item.epic_children.iter().filter(|child| !child.unresolved))
             .map(|child| DetailFocusTarget::Child(child.task_id.clone()))
             .collect::<Vec<_>>();
-        let Some(context) = self.inline_image_context() else {
-            return targets;
-        };
-        let unavailable_hashes = context.unavailable_hashes;
         targets.extend(
             item.attachments
                 .iter()
-                .filter(|attachment| {
-                    attachment_is_locally_previewable(attachment, &unavailable_hashes)
-                })
+                .filter(|attachment| attachment_is_locally_openable(attachment))
                 .map(|attachment| DetailFocusTarget::Attachment(attachment.attachment_id.clone())),
         );
         targets
@@ -678,13 +676,19 @@ impl App {
         attachment_id: &str,
         delta: isize,
     ) -> Option<String> {
+        let context = self.inline_image_context()?;
+        if !context.previews_enabled {
+            return None;
+        }
         let attachment_ids = self
-            .detail_focus_targets()
-            .into_iter()
-            .filter_map(|target| match target {
-                DetailFocusTarget::Attachment(attachment_id) => Some(attachment_id),
-                DetailFocusTarget::Child(_) => None,
+            .store
+            .selected_task(self.widgets.table.selected())?
+            .attachments
+            .iter()
+            .filter(|attachment| {
+                attachment_is_locally_previewable(attachment, &context.unavailable_hashes)
             })
+            .map(|attachment| attachment.attachment_id.clone())
             .collect::<Vec<_>>();
         let index = attachment_ids
             .iter()
@@ -717,6 +721,73 @@ impl App {
             &context,
         )
         .unwrap_or(scroll)
+    }
+
+    fn detail_attachment_supports_inline_preview(&self, attachment_id: &str) -> bool {
+        let Some(context) = self.inline_image_context() else {
+            return false;
+        };
+        context.previews_enabled
+            && self
+                .store
+                .selected_task(self.widgets.table.selected())
+                .and_then(|item| {
+                    item.attachments
+                        .iter()
+                        .find(|attachment| attachment.attachment_id == attachment_id)
+                })
+                .is_some_and(|attachment| {
+                    attachment_is_locally_previewable(attachment, &context.unavailable_hashes)
+                })
+    }
+
+    pub(crate) async fn open_attachment_externally(&mut self, attachment_id: &str) {
+        let Some(db_path) = self.intake.db_path() else {
+            self.set_error("could not resolve attachment storage");
+            return;
+        };
+        let Ok(blob_dir) = crate::config::resolve_blob_dir(db_path, self.intake.config()) else {
+            self.set_error("could not resolve attachment storage");
+            return;
+        };
+        let mut export = match self
+            .store
+            .lease_image_export(&blob_dir, attachment_id)
+            .await
+        {
+            Ok(export) => export,
+            Err(error) => {
+                let message = error.to_string();
+                if message.contains("attachment-invalidated") {
+                    self.set_warning("attachment is no longer available");
+                } else if message.contains("attachment-blob-unavailable") {
+                    self.set_warning("attachment bytes are unavailable");
+                } else if message.contains("attachment-format-unsupported") {
+                    self.set_warning("attachment format cannot be opened");
+                } else {
+                    self.set_error("could not prepare attachment for the image viewer");
+                }
+                return;
+            }
+        };
+        let launch_result = (self.image_viewer_launcher)(export.path());
+        let release_result = self.store.release_image_export(&mut export).await;
+        if let Err(_error) = launch_result {
+            self.set_error("could not start the default image viewer");
+            return;
+        }
+        self.external_image_exports
+            .retain(|(retained_id, _)| retained_id != attachment_id);
+        if self.external_image_exports.len() >= MAX_EXTERNAL_IMAGE_EXPORTS {
+            self.external_image_exports.remove(0);
+        }
+        self.external_image_exports
+            .push((attachment_id.to_string(), export.into_directory()));
+        if release_result.is_err() {
+            self.set_warning("image opened; attachment read protection expires automatically");
+        } else {
+            self.set_success("opened attachment in default image viewer");
+        }
     }
 
     fn open_detail_attachment(&mut self, attachment_id: String, scroll: u16) {
@@ -759,22 +830,22 @@ impl App {
         self.overlay = Some(OverlayState::Detail { scroll: 0 });
     }
 
-    fn handle_detail_attachment_mouse_click(
+    async fn handle_detail_attachment_mouse_click(
         &mut self,
         mouse: MouseEvent,
         terminal_size: Size,
-    ) -> bool {
+    ) -> Result<bool> {
         let Some(OverlayState::Detail { scroll }) = self.overlay else {
-            return false;
+            return Ok(false);
         };
         let Some(context) = self.inline_image_context() else {
-            return false;
+            return Ok(false);
         };
-        let attachment_id = self
+        let hit = self
             .store
             .selected_task(self.widgets.table.selected())
             .and_then(|item| {
-                let hit = detail_attachment_at_position(
+                detail_attachment_at_position(
                     item,
                     terminal_size.width,
                     terminal_size.height,
@@ -782,25 +853,23 @@ impl App {
                     mouse.row,
                     scroll,
                     &context,
-                )?;
-                let attachment = item
-                    .attachments
-                    .iter()
-                    .find(|attachment| attachment.attachment_id == hit.attachment_id)?;
-                self.widgets
-                    .inline_image_placements
-                    .iter()
-                    .any(|placement| {
-                        placement.attachment_id == attachment.attachment_id
-                            && placement.source_hash == attachment.sha256
-                    })
-                    .then_some(hit.attachment_id)
+                )
             });
-        let Some(attachment_id) = attachment_id else {
-            return false;
+        let Some(hit) = hit else {
+            return Ok(false);
         };
-        self.open_detail_attachment(attachment_id, scroll);
-        true
+        let has_inline_placement = self
+            .widgets
+            .inline_image_placements
+            .iter()
+            .any(|placement| placement.attachment_id == hit.attachment_id);
+        if context.previews_enabled && has_inline_placement {
+            self.open_detail_attachment(hit.attachment_id, scroll);
+        } else {
+            self.selected_detail_attachment_id = Some(hit.attachment_id.clone());
+            self.open_attachment_externally(&hit.attachment_id).await;
+        }
+        Ok(true)
     }
 
     fn handle_detail_mouse_click(
@@ -1115,6 +1184,15 @@ impl App {
             scroll,
         } = &overlay
         {
+            if key.code == KeyCode::Char('o') && key.modifiers.is_empty() {
+                let attachment_id = attachment_id.clone();
+                self.open_attachment_externally(&attachment_id).await;
+                self.overlay = Some(OverlayState::AttachmentPreview {
+                    attachment_id,
+                    scroll: *scroll,
+                });
+                return Ok(());
+            }
             let next_attachment_id = match (key.code, key.modifiers) {
                 (KeyCode::Char('j') | KeyCode::Down, KeyModifiers::NONE) => self
                     .move_attachment_preview_selection(attachment_id, 1)
@@ -1169,13 +1247,23 @@ impl App {
                         self.move_detail_focus_selection(-1);
                         focused_scroll = self.detail_focus_scroll(scroll, terminal_size);
                     }
+                    (KeyCode::Char('o'), KeyModifiers::NONE) => {
+                        if let DetailFocusTarget::Attachment(attachment_id) = &selected_target {
+                            self.open_attachment_externally(attachment_id).await;
+                        }
+                    }
                     (KeyCode::Enter, KeyModifiers::NONE) => match selected_target {
                         DetailFocusTarget::Child(task_id) => {
                             self.open_detail_child_task(&task_id, scroll);
                             return Ok(());
                         }
                         DetailFocusTarget::Attachment(attachment_id) => {
-                            self.open_detail_attachment(attachment_id, scroll);
+                            if self.detail_attachment_supports_inline_preview(&attachment_id) {
+                                self.open_detail_attachment(attachment_id, scroll);
+                            } else {
+                                self.open_attachment_externally(&attachment_id).await;
+                                self.overlay = Some(OverlayState::Detail { scroll });
+                            }
                             return Ok(());
                         }
                     },

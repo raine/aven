@@ -376,15 +376,10 @@ impl App {
                 .selected_detail_attachment_id
                 .as_ref()
                 .filter(|attachment_id| {
-                    inline_images.as_ref().is_some_and(|context| {
-                        selected_task.is_some_and(|task| {
-                            task.attachments.iter().any(|attachment| {
-                                &attachment.attachment_id == *attachment_id
-                                    && ui::attachment_is_locally_previewable(
-                                        attachment,
-                                        &context.unavailable_hashes,
-                                    )
-                            })
+                    selected_task.is_some_and(|task| {
+                        task.attachments.iter().any(|attachment| {
+                            &attachment.attachment_id == *attachment_id
+                                && ui::attachment_is_locally_openable(attachment)
                         })
                     })
                 })
@@ -418,24 +413,32 @@ impl App {
     }
 
     pub(super) fn inline_image_context(&self) -> Option<ui::DetailInlineImageContext> {
+        if self.intake.view().add_task_only || !self.detail_surface_accepts_inline_images() {
+            return None;
+        }
+        if !self.pending_shortcut.is_empty() {
+            return Some(ui::DetailInlineImageContext {
+                previews_enabled: false,
+                unavailable_hashes: Default::default(),
+                focused_attachment_id: self.selected_detail_attachment_id.clone(),
+            });
+        }
         #[cfg(test)]
         if let Some(context) = &self.inline_image_context_override {
             return Some(context.clone());
         }
-        if self.intake.view().add_task_only
-            || self.notification.is_some()
-            || !self.pending_shortcut.is_empty()
-            || !self.detail_surface_accepts_inline_images()
-        {
-            return None;
-        }
         let backend = active_backend_from_env(self.intake.config().local.inline_images);
         if backend == InlineImageBackend::None {
-            return None;
+            return Some(ui::DetailInlineImageContext {
+                previews_enabled: false,
+                unavailable_hashes: Default::default(),
+                focused_attachment_id: self.selected_detail_attachment_id.clone(),
+            });
         }
         let db_path = self.intake.db_path()?;
         let blob_dir = resolve_blob_dir(db_path, self.intake.config()).ok()?;
         Some(ui::DetailInlineImageContext {
+            previews_enabled: true,
             unavailable_hashes: self.preview_controller.suppressed_hashes(&blob_dir),
             focused_attachment_id: self.selected_detail_attachment_id.clone(),
         })

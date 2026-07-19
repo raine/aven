@@ -90,7 +90,7 @@ All image attachment settings are optional. The defaults support normal use with
 
 ### Image previews
 
-`local.inline_images` controls whether the TUI draws image previews or shows text labels:
+`local.inline_images` controls whether the TUI draws image previews or shows text labels. Locally available images remain focusable and can open in the operating system viewer in every mode:
 
 | Value | Behavior |
 | --- | --- |

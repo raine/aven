@@ -123,9 +123,12 @@ aven restore APP-7KQ9
 - Task detail read surfaces include ordered attachment metadata and `has_blob`
   without embedding bytes. The TUI renders live attachments after the description
   in a dedicated section and uses bounded, device-local previews when the terminal
-  backend supports them. Pending downloads, unavailable local bytes, and disabled
-  previews use text placeholders. Search matches attachment filename and alt text,
-  not hashes, sidecar paths, or bytes.
+  backend supports them. Pending downloads and unavailable local bytes use text
+  placeholders. `Tab` focuses locally available images in task detail. `Enter`
+  opens the large TUI preview when supported and otherwise uses the operating
+  system image viewer. `o` opens the focused image, or the current large-preview
+  image, in the operating system viewer. Search matches attachment filename and
+  alt text, not hashes, sidecar paths, or bytes.
 - `aven backup` writes one archive containing SQLite data and local attachment
   objects. `aven backup restore <path> --yes` restores that archive and keeps a
   SQLite safety copy. `aven export` writes attachment metadata and blob

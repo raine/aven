@@ -2,12 +2,25 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use crate::attachments::export::{LeasedImageExport, lease_image_export};
 use crate::operations::{AttachmentAddInput, add_task_attachment};
 use crate::tui::store::MutationMessage;
 
 use super::TuiStore;
 
 impl TuiStore {
+    pub(crate) async fn lease_image_export(
+        &self,
+        blob_dir: &Path,
+        attachment_id: &str,
+    ) -> Result<LeasedImageExport> {
+        lease_image_export(&self.pool, &self.active_workspace, blob_dir, attachment_id).await
+    }
+
+    pub(crate) async fn release_image_export(&self, export: &mut LeasedImageExport) -> Result<()> {
+        export.release().await
+    }
+
     pub(crate) async fn add_attachment(
         &mut self,
         index: Option<usize>,
