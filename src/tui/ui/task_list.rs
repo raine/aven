@@ -20,7 +20,7 @@ use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::app::{Focus, WidgetState};
 use crate::tui::markdown::render_markdown_preview;
 use crate::tui::overlay::TextInputView;
-use crate::tui::store::{TaskListRenderMode, TuiStore};
+use crate::tui::store::{TaskListRenderMode, TaskView, TuiStore};
 use crate::tui::theme::{
     self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, RED, SELECTED,
     SELECTED_INACTIVE, YELLOW,
@@ -29,7 +29,7 @@ use crate::tui::widgets::{
     age_style, label_cell, priority_icon, priority_short, status_chip, status_span, title_cell,
 };
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
@@ -77,6 +77,14 @@ struct TaskListTaskRow {
 struct TaskListAreas {
     table_area: Rect,
     preview_area: Rect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EmptyTaskPrompt {
+    title: &'static str,
+    detail: &'static str,
+    key: &'static str,
+    action: &'static str,
 }
 
 fn task_list_areas(area: Rect) -> TaskListAreas {
@@ -226,6 +234,11 @@ fn render_task_list(
         model.due_order,
     );
 
+    if store.tasks.is_empty() {
+        render_empty_task_list(frame, store, area);
+        return;
+    }
+
     for (index, row) in model.rows.iter().enumerate() {
         let Some(row_area) = model.row_areas.get(index + 1).copied() else {
             break;
@@ -248,6 +261,199 @@ fn render_task_list(
         model.top_scroll,
         area,
     );
+}
+
+fn render_empty_task_list(frame: &mut Frame, store: &TuiStore, area: Rect) {
+    let body = Rect::new(
+        area.x,
+        area.y.saturating_add(1),
+        area.width,
+        area.height.saturating_sub(1),
+    );
+    if body.width == 0 || body.height == 0 {
+        return;
+    }
+
+    let prompt = empty_task_prompt(store);
+    let compact_action = match prompt.key {
+        "a" => "add task",
+        "f c" => "clear filters",
+        "/" => "search",
+        "v q" => "view queue",
+        _ => prompt.action,
+    };
+    let action = if body.width < 28 {
+        compact_action
+    } else {
+        prompt.action
+    };
+    let action_line = Line::from(vec![
+        Span::styled(
+            format!(" {} ", prompt.key),
+            Style::new().fg(FG).bg(BG_ALT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!(" {action}"), Style::new().fg(FG_MUTED)),
+    ]);
+
+    if body.height == 1 {
+        frame.render_widget(
+            Paragraph::new(action_line)
+                .alignment(Alignment::Center)
+                .style(Style::new().bg(BG)),
+            body,
+        );
+        return;
+    }
+
+    let title_line = Line::from(vec![
+        Span::styled(" ◆  ", Style::new().fg(ACCENT)),
+        Span::styled(
+            prompt.title,
+            Style::new().fg(FG).add_modifier(Modifier::BOLD),
+        ),
+    ]);
+    let mut lines = vec![title_line];
+    if body.height >= 3 {
+        lines.push(Line::from(Span::styled(
+            format!("    {}", prompt.detail),
+            Style::new().fg(FG_DIM),
+        )));
+    }
+    if body.height >= 5 {
+        lines.push(Line::from(""));
+    }
+    lines.push(action_line);
+
+    let content_height = lines.len() as u16;
+    let desired_width = [
+        prompt.title.chars().count() + 4,
+        prompt.detail.chars().count() + 4,
+        prompt.key.chars().count() + action.chars().count() + 3,
+    ]
+    .into_iter()
+    .max()
+    .unwrap_or(1)
+    .min(56) as u16;
+    let content = Rect::new(
+        body.x
+            .saturating_add(body.width.saturating_sub(desired_width) / 2),
+        body.y
+            .saturating_add(body.height.saturating_sub(content_height) / 2),
+        body.width.min(desired_width),
+        content_height,
+    );
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::new().bg(BG)),
+        content,
+    );
+}
+
+fn empty_task_prompt(store: &TuiStore) -> EmptyTaskPrompt {
+    if store.view_state.view == TaskView::Search {
+        return EmptyTaskPrompt {
+            title: "No search results",
+            detail: "Try another title, note, or task ID.",
+            key: "/",
+            action: "Search again",
+        };
+    }
+
+    let modifiers = &store.view_state.filter_modifiers;
+    if modifiers.label.is_some()
+        || modifiers.priority.is_some()
+        || modifiers.include_deleted
+        || modifiers.deleted_only
+        || modifiers.search.is_some()
+    {
+        return EmptyTaskPrompt {
+            title: "No matching tasks",
+            detail: "This view is narrowed by filters.",
+            key: "f c",
+            action: "Clear filters",
+        };
+    }
+
+    if store.view_state.view == TaskView::Queue
+        && store.counts.open == 0
+        && store.counts.done == 0
+        && store.counts.upcoming == 0
+    {
+        return EmptyTaskPrompt {
+            title: "Ready for your first task",
+            detail: "Tasks you add will appear here.",
+            key: "a",
+            action: "Add a task",
+        };
+    }
+
+    match store.view_state.view {
+        TaskView::Queue => EmptyTaskPrompt {
+            title: "Queue is clear",
+            detail: "Nothing is actionable in this scope.",
+            key: "a",
+            action: "Add a task",
+        },
+        TaskView::Open => EmptyTaskPrompt {
+            title: "No open tasks",
+            detail: "Capture the next thing worth doing.",
+            key: "a",
+            action: "Add a task",
+        },
+        TaskView::Inbox => EmptyTaskPrompt {
+            title: "Inbox is clear",
+            detail: "Capture anything you do not want to lose.",
+            key: "a",
+            action: "Add a task",
+        },
+        TaskView::Active => EmptyTaskPrompt {
+            title: "No tasks in motion",
+            detail: "Choose the next task from your queue.",
+            key: "v q",
+            action: "View queue",
+        },
+        TaskView::Backlog => EmptyTaskPrompt {
+            title: "Backlog is clear",
+            detail: "There are no parked tasks in this scope.",
+            key: "v q",
+            action: "View queue",
+        },
+        TaskView::Todo => EmptyTaskPrompt {
+            title: "No tasks ready to start",
+            detail: "Choose the next task from your queue.",
+            key: "v q",
+            action: "View queue",
+        },
+        TaskView::Done => EmptyTaskPrompt {
+            title: "Nothing completed yet",
+            detail: "Finished tasks will collect here.",
+            key: "v q",
+            action: "View queue",
+        },
+        TaskView::Upcoming => EmptyTaskPrompt {
+            title: "Nothing scheduled",
+            detail: "No tasks are waiting for a future date.",
+            key: "v q",
+            action: "View queue",
+        },
+        TaskView::Conflicts => EmptyTaskPrompt {
+            title: "No conflicts",
+            detail: "Task changes agree across devices.",
+            key: "v q",
+            action: "View queue",
+        },
+        TaskView::Epics => EmptyTaskPrompt {
+            title: "No open epics",
+            detail: "Open epics will collect here.",
+            key: "v q",
+            action: "View queue",
+        },
+        TaskView::Columns | TaskView::RecentActions | TaskView::Search => EmptyTaskPrompt {
+            title: "No tasks here",
+            detail: "Your queue has the wider view.",
+            key: "v q",
+            action: "View queue",
+        },
+    }
 }
 
 fn build_task_list_render_model(
@@ -1346,6 +1552,30 @@ mod tests {
         buffer.content.iter().map(|cell| cell.symbol()).collect()
     }
 
+    fn render_task_list_buffer(
+        store: &TuiStore,
+        width: u16,
+        height: u16,
+    ) -> ratatui::buffer::Buffer {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut table_state = TableState::default();
+        terminal
+            .draw(|frame| {
+                render_task_list(
+                    frame,
+                    store,
+                    &mut table_state,
+                    Focus::Tasks,
+                    frame.area(),
+                    None,
+                    &BTreeSet::new(),
+                );
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
     async fn test_store_with_tasks(tasks: Vec<TaskListItem>) -> TuiStore {
         let dir = tempfile::tempdir().unwrap();
         let pool = crate::db::open_db(&dir.path().join("test.db"))
@@ -1386,6 +1616,60 @@ mod tests {
             Constraint::Length(width) => width,
             other => panic!("expected fixed column width, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn empty_task_list_keeps_header_and_invites_first_task() {
+        let store = test_store_with_tasks(Vec::new()).await;
+
+        let rendered = buffer_text(&render_task_list_buffer(&store, 80, 10));
+
+        assert!(rendered.contains("TITLE"));
+        assert!(rendered.contains("Ready for your first task"));
+        assert!(rendered.contains("Tasks you add will appear here."));
+        assert!(rendered.contains("Add a task"));
+        let column = |needle| rendered[..rendered.find(needle).unwrap()].chars().count() % 80;
+        assert_eq!(
+            column("Ready for your first task"),
+            column("Tasks you add will appear here."),
+        );
+        assert_eq!(column("Ready for your first task"), column("Add a task"));
+    }
+
+    #[tokio::test]
+    async fn empty_filtered_task_list_offers_to_clear_filters() {
+        let mut store = test_store_with_tasks(Vec::new()).await;
+        store.view_state.filter_modifiers.label = Some("blocked".to_string());
+
+        let rendered = buffer_text(&render_task_list_buffer(&store, 64, 7));
+
+        assert!(rendered.contains("No matching tasks"));
+        assert!(rendered.contains("f c"));
+        assert!(rendered.contains("Clear filters"));
+        assert!(!rendered.contains("Ready for your first task"));
+    }
+
+    #[tokio::test]
+    async fn empty_task_list_adapts_to_short_and_narrow_bodies() {
+        let store = test_store_with_tasks(Vec::new()).await;
+
+        let one_body_row = buffer_text(&render_task_list_buffer(&store, 20, 2));
+        let header_only = buffer_text(&render_task_list_buffer(&store, 20, 1));
+
+        assert!(one_body_row.contains("add task"));
+        assert!(!one_body_row.contains("Ready for your first task"));
+        assert!(!header_only.contains("add task"));
+    }
+
+    #[tokio::test]
+    async fn populated_task_list_preserves_rows_without_empty_prompt() {
+        let store = test_store_with_tasks(vec![task_item("Ship the release")]).await;
+
+        let rendered = buffer_text(&render_task_list_buffer(&store, 80, 7));
+
+        assert!(rendered.contains("Ship the release"));
+        assert!(!rendered.contains("Ready for your first task"));
+        assert!(!rendered.contains("Tasks you add will appear here."));
     }
 
     #[tokio::test]
