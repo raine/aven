@@ -1,4 +1,5 @@
 target/
+ios/Generated/
 .aven/
 .envrc
 node_modules/

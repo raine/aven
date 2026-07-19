@@ -1,0 +1,325 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+generated_root="$repo_root/ios/Generated/RustArtifacts"
+target_dir="$repo_root/target/ios-rust-artifacts"
+deployment_target="17.0"
+expected_rust_version="1.96.0"
+device_target="aarch64-apple-ios"
+simulator_target="aarch64-apple-ios-sim"
+
+error() {
+  printf 'error: %s\n' "$*" >&2
+}
+
+require_command() {
+  local command_name="$1"
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    error "required command is unavailable: $command_name"
+    exit 1
+  fi
+}
+
+sha256() {
+  shasum -a 256 "$1" | cut -d' ' -f1
+}
+
+file_size() {
+  stat -f '%z' "$1"
+}
+
+verify_source_revision() {
+  local source_changes
+  source_changes="$(git -C "$repo_root" status --porcelain --untracked-files=all -- \
+    Cargo.lock Cargo.toml crates/aven-core crates/aven-uniffi)"
+  if [[ -n "$source_changes" ]]; then
+    error "aven-core or aven-uniffi inputs differ from HEAD"
+    printf '%s\n' "$source_changes" >&2
+    exit 1
+  fi
+}
+
+verify_toolchain() {
+  local rust_version
+  local cargo_version
+
+  rust_version="$(rustc --version | cut -d' ' -f2)"
+  cargo_version="$(cargo --version | cut -d' ' -f2)"
+  if [[ "$rust_version" != "$expected_rust_version" ]]; then
+    error "rustc $expected_rust_version is required, found $rust_version"
+    exit 1
+  fi
+  if [[ "$cargo_version" != "$expected_rust_version" ]]; then
+    error "cargo $expected_rust_version is required, found $cargo_version"
+    exit 1
+  fi
+
+  for target in "$device_target" "$simulator_target"; do
+    if ! rustup target list --installed | grep -Fxq "$target"; then
+      error "Rust target is unavailable: $target"
+      error "install frozen targets with: rustup target add $device_target $simulator_target"
+      exit 1
+    fi
+  done
+}
+
+inspect_archive() {
+  local target="$1"
+  local platform="$2"
+  local sdk="$3"
+  local clang_target="$4"
+  local archive="$5"
+  local verification_dir="$6"
+  local probe_dir="$7"
+  local archive_name
+  local architecture
+  local readobj_output
+  local probe
+  local sdk_path
+
+  archive_name="$(basename "$(dirname "$archive")")"
+  readobj_output="$verification_dir/${archive_name}-llvm-readobj.txt"
+  probe="$probe_dir/${archive_name}-link-probe"
+  sdk_path="$(xcrun --sdk "$sdk" --show-sdk-path)"
+
+  file -b "$archive" >"$verification_dir/${archive_name}-file.txt"
+  architecture="$(xcrun lipo -archs "$archive")"
+  printf '%s\n' "$architecture" >"$verification_dir/${archive_name}-lipo.txt"
+  if [[ "$architecture" != "arm64" ]]; then
+    error "$target archive has unexpected architectures: $architecture"
+    exit 1
+  fi
+
+  "$llvm_readobj" --macho-version-min "$archive" |
+    sed "s|$staging_root|ios/Generated/RustArtifacts|g" >"$readobj_output"
+  if grep -q 'Platform: macos' "$readobj_output"; then
+    error "$target archive contains a macOS object"
+    exit 1
+  fi
+  if ! grep -q "Platform: $platform" "$readobj_output"; then
+    error "$target archive does not report platform $platform"
+    exit 1
+  fi
+  if grep 'Platform:' "$readobj_output" | grep -Fv "Platform: $platform" >/dev/null; then
+    error "$target archive contains an unexpected Apple platform"
+    grep 'Platform:' "$readobj_output" | sort -u >&2
+    exit 1
+  fi
+  if ! grep -Eq 'Version: 17\.0(\.0)?$' "$readobj_output"; then
+    error "$target archive does not contain objects built for deployment target $deployment_target"
+    exit 1
+  fi
+  if ! awk '
+    /  Version: / {
+      split($2, version, ".")
+      numeric = version[1] * 100 + version[2]
+      found = 1
+      if (numeric > 1700) {
+        exit 1
+      }
+    }
+    END {
+      if (!found) {
+        exit 2
+      }
+    }
+  ' "$readobj_output"; then
+    error "$target archive requires a deployment target above $deployment_target"
+    grep 'Version:' "$readobj_output" | sort -u >&2
+    exit 1
+  fi
+
+  "$llvm_nm" --defined-only "$archive" \
+    >"$probe_dir/${archive_name}-defined-symbols.txt" \
+    2>"$probe_dir/${archive_name}-llvm-nm.txt"
+  sed "s|$staging_root|ios/Generated/RustArtifacts|g" \
+    "$probe_dir/${archive_name}-defined-symbols.txt" \
+    >"$verification_dir/${archive_name}-defined-symbols.txt"
+  sed "s|$staging_root|ios/Generated/RustArtifacts|g" \
+    "$probe_dir/${archive_name}-llvm-nm.txt" \
+    >"$verification_dir/${archive_name}-llvm-nm.txt"
+  if ! grep -q 'uniffi_aven_uniffi' "$verification_dir/${archive_name}-defined-symbols.txt"; then
+    error "$target archive does not export the production UniFFI symbols"
+    exit 1
+  fi
+  if ! grep -q '_sqlite3_open_v2' "$verification_dir/${archive_name}-defined-symbols.txt"; then
+    error "$target archive does not contain bundled SQLite"
+    exit 1
+  fi
+
+  {
+    printf 'xcrun --sdk %q clang -target %q -isysroot <sdk-path> <main.c> ' \
+      "$sdk" "$clang_target"
+    printf '%q ' \
+      "-Wl,-force_load,ios/Generated/RustArtifacts/libraries/$target/libaven_uniffi.a" \
+      -framework CoreFoundation -liconv -o '<link-probe>'
+    printf '\n'
+  } >"$verification_dir/${archive_name}-link-command.txt"
+
+  xcrun --sdk "$sdk" clang \
+    -target "$clang_target" \
+    -isysroot "$sdk_path" \
+    "$probe_source" \
+    "-Wl,-force_load,$archive" \
+    -framework CoreFoundation \
+    -liconv \
+    -o "$probe" \
+    >"$verification_dir/${archive_name}-link.txt" 2>&1
+  xcrun vtool -show-build "$probe" |
+    sed "s|$probe|<link-probe>|g" \
+      >"$verification_dir/${archive_name}-link-vtool.txt"
+
+  if ! grep -q "platform ${platform^^}" "$verification_dir/${archive_name}-link-vtool.txt"; then
+    error "$target link probe does not report platform $platform"
+    exit 1
+  fi
+  if ! grep -Eq 'minos 17\.0(\.0)?$' "$verification_dir/${archive_name}-link-vtool.txt"; then
+    error "$target link probe does not report deployment target $deployment_target"
+    exit 1
+  fi
+}
+
+require_command cargo
+require_command file
+require_command git
+require_command jq
+require_command rustc
+require_command rustup
+require_command shasum
+require_command stat
+require_command xcrun
+
+verify_source_revision
+verify_toolchain
+
+host="$(rustc -vV | while IFS= read -r line; do
+  case "$line" in
+    "host: "*) printf '%s\n' "${line#host: }" ;;
+  esac
+done)"
+if [[ -z "$host" ]]; then
+  error "rustc did not report a host target"
+  exit 1
+fi
+
+llvm_bin="$(rustc --print sysroot)/lib/rustlib/$host/bin"
+llvm_nm="$llvm_bin/llvm-nm"
+llvm_readobj="$llvm_bin/llvm-readobj"
+if [[ ! -x "$llvm_nm" || ! -x "$llvm_readobj" ]]; then
+  error "Rust llvm-tools are required"
+  error "install them with: rustup component add llvm-tools"
+  exit 1
+fi
+
+source_revision="$(git -C "$repo_root" rev-parse HEAD)"
+staging_root="$repo_root/ios/Generated/.RustArtifacts.$$.tmp"
+verification_dir="$staging_root/verification"
+probe_dir="$target_dir/link-probes"
+probe_source="$probe_dir/main.c"
+
+rm -rf "$target_dir" "$staging_root"
+mkdir -p \
+  "$staging_root/bindings" \
+  "$staging_root/headers" \
+  "$staging_root/libraries/$device_target" \
+  "$staging_root/libraries/$simulator_target" \
+  "$verification_dir" \
+  "$probe_dir"
+printf 'int main(void) { return 0; }\n' >"$probe_source"
+
+(
+  cd "$repo_root"
+  just uniffi-swift
+  IPHONEOS_DEPLOYMENT_TARGET="$deployment_target" CARGO_TARGET_DIR="$target_dir/build" \
+    cargo build --release --locked -p aven-uniffi --target "$device_target"
+  IPHONEOS_DEPLOYMENT_TARGET="$deployment_target" CARGO_TARGET_DIR="$target_dir/build" \
+    cargo build --release --locked -p aven-uniffi --target "$simulator_target"
+)
+
+bindings_source="$repo_root/target/aven-uniffi/swift"
+cp "$bindings_source/aven_uniffi.swift" "$staging_root/bindings/aven_uniffi.swift"
+cp "$bindings_source/aven_uniffiFFI.h" "$staging_root/headers/aven_uniffiFFI.h"
+cp "$bindings_source/aven_uniffiFFI.modulemap" "$staging_root/headers/module.modulemap"
+
+device_archive="$staging_root/libraries/$device_target/libaven_uniffi.a"
+simulator_archive="$staging_root/libraries/$simulator_target/libaven_uniffi.a"
+cp "$target_dir/build/$device_target/release/libaven_uniffi.a" "$device_archive"
+cp "$target_dir/build/$simulator_target/release/libaven_uniffi.a" "$simulator_archive"
+
+printf '%s\n' '-framework CoreFoundation' '-liconv' >"$staging_root/linker-flags.txt"
+
+inspect_archive \
+  "$device_target" ios iphoneos "arm64-apple-ios${deployment_target}" \
+  "$device_archive" "$verification_dir" "$probe_dir"
+inspect_archive \
+  "$simulator_target" iossimulator iphonesimulator \
+  "arm64-apple-ios${deployment_target}-simulator" \
+  "$simulator_archive" "$verification_dir" "$probe_dir"
+
+bindings_manifest="$(jq -n \
+  --arg swift_path 'bindings/aven_uniffi.swift' \
+  --arg swift_sha "$(sha256 "$staging_root/bindings/aven_uniffi.swift")" \
+  --argjson swift_size "$(file_size "$staging_root/bindings/aven_uniffi.swift")" \
+  --arg header_path 'headers/aven_uniffiFFI.h' \
+  --arg header_sha "$(sha256 "$staging_root/headers/aven_uniffiFFI.h")" \
+  --argjson header_size "$(file_size "$staging_root/headers/aven_uniffiFFI.h")" \
+  --arg modulemap_path 'headers/module.modulemap' \
+  --arg modulemap_sha "$(sha256 "$staging_root/headers/module.modulemap")" \
+  --argjson modulemap_size "$(file_size "$staging_root/headers/module.modulemap")" \
+  '[
+    {path: $swift_path, size: $swift_size, sha256: $swift_sha},
+    {path: $header_path, size: $header_size, sha256: $header_sha},
+    {path: $modulemap_path, size: $modulemap_size, sha256: $modulemap_sha}
+  ]')"
+
+jq -n \
+  --arg source_revision "$source_revision" \
+  --arg deployment_target "$deployment_target" \
+  --arg device_target "$device_target" \
+  --arg device_path "libraries/$device_target/libaven_uniffi.a" \
+  --arg device_sha "$(sha256 "$device_archive")" \
+  --argjson device_size "$(file_size "$device_archive")" \
+  --arg simulator_target "$simulator_target" \
+  --arg simulator_path "libraries/$simulator_target/libaven_uniffi.a" \
+  --arg simulator_sha "$(sha256 "$simulator_archive")" \
+  --argjson simulator_size "$(file_size "$simulator_archive")" \
+  --argjson bindings "$bindings_manifest" \
+  '{
+    schema_version: 1,
+    source_revision: $source_revision,
+    deployment_target: $deployment_target,
+    linker_requirements: {
+      frameworks: ["CoreFoundation"],
+      libraries: ["iconv"]
+    },
+    bindings: $bindings,
+    artifacts: [
+      {
+        target_triple: $device_target,
+        apple_platform: "ios",
+        architecture: "arm64",
+        deployment_target: $deployment_target,
+        path: $device_path,
+        size: $device_size,
+        sha256: $device_sha
+      },
+      {
+        target_triple: $simulator_target,
+        apple_platform: "iossimulator",
+        architecture: "arm64",
+        deployment_target: $deployment_target,
+        path: $simulator_path,
+        size: $simulator_size,
+        sha256: $simulator_sha
+      }
+    ]
+  }' >"$staging_root/artifact-manifest.json"
+
+rm -rf "$generated_root"
+mv "$staging_root" "$generated_root"
+printf 'generated %s\n' "$generated_root"
+printf 'source revision %s\n' "$source_revision"
+jq -r '.artifacts[] | "\(.target_triple) \(.size) bytes \(.sha256)"' \
+  "$generated_root/artifact-manifest.json"

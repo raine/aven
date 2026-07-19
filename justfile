@@ -87,6 +87,10 @@ clippy-fix:
 build:
     @scripts/quiet-check build cargo build --all --locked
 
+# Build and verify the frozen iOS Rust artifact matrix
+ios-rust-artifacts:
+    scripts/build-ios-rust-artifacts
+
 # Build the macOS Rust facade and generate Swift bindings
 uniffi-swift:
     #!/usr/bin/env bash
