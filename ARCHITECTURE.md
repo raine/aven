@@ -16,7 +16,7 @@
 | TUI app | launch-intent resolution, event loop, actions, overlays, store, rendering, undo, natural add runtime, platform helpers | `src/tui/store/launch.rs`, `src/tui/` | Store modules own DB access, including launch-time project, label, and task-ref resolution. UI modules render view models. Overlay routes drive behavior, not titles. Natural add worker setup belongs in `src/tui/natural_add_runtime.rs`. |
 | Update delivery | cached GitHub release discovery, semantic version comparison, install ownership classification, verified direct replacement | `src/update.rs`, `src/update/` | Background checks are fail-silent and rate-limited. CLI and TUI flows own their presentation and confirmation behavior. Package-manager installations receive manager-specific guidance rather than binary replacement. |
 | Shared domain helpers | IDs, choices, labels, input loading, text rendering, CLI render output, logging, fuzzy matching | `src/ids.rs`, `src/choices.rs`, `src/labels.rs`, `src/input.rs`, `src/render.rs`, `src/task_render.rs`, `src/logging.rs`, `src/fuzzy.rs`, `src/types.rs` | Reuse canonical helpers instead of duplicating validation, display, diff, or parsing rules. Attachment section placeholders for CLI and TUI read surfaces come from `src/task_render.rs`. |
-| Tests and tooling | CLI integration tests, TUI/store tests, overlay module tests, SQL index checks, just tasks | `tests/`, `src/tui/*tests.rs`, `src/tui/overlay/`, `justfile` | Add focused tests near the subsystem and rely on commit hooks for the full gate. |
+| Tests and tooling | CLI integration tests, TUI/store tests, overlay module tests, SQL index checks, just tasks | `tests/`, `src/tui/*tests.rs`, `src/tui/overlay/`, `justfile` | Add focused tests near the subsystem, run relevant focused tests during development, and rely on the pre-push hook for the full gate. |
 
 ## Runtime flows
 
@@ -230,11 +230,12 @@ SQLite stores synced task data and local UI state. Config files store local rout
 
 Use `just` as the main development entrypoint:
 
-- `just check`: local read-only validation gate, equivalent to `just pre-commit`.
+- `just check`: fast local read-only validation, equivalent to `just pre-commit`.
 - `just test`: Rust test suite through `cargo nextest`, plus Rust doctests.
+- `just check-full`: full local gate with tests, doctests, build, and SQLx validation.
 - `just migration-new <lower_snake_name>`: create the next SQLx migration filename safely.
 - `just sqlx-prepare`: regenerate SQLx offline query metadata after migrations or query shape changes.
 - `just sqlx-check`: verify SQLx offline query metadata.
 - `just run -- ...`: run the application.
 
-The pre-commit hook runs formatting, static analysis, migration order checks, clippy, tests, and doctests. Local project instructions say cargo format and broad tests run automatically on commit, so run focused commands while developing and let the hook run the full gate when committing.
+The pre-commit hook runs formatting, static analysis, migration order checks, and clippy. During implementation, run the focused tests identified in the change-routing table. The pre-push hook runs the full local gate, including tests, doctests, build, and SQLx validation.

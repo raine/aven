@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! just check-full; then
+  echo "pre-push checks failed" >&2
+  exit 1
+fi
