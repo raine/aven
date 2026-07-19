@@ -93,7 +93,20 @@ aven sync
 
 ### Image attachments during sync
 
-Image files sync with their tasks. A task can appear before its image finishes downloading, so task detail shows a `pending download` placeholder while the transfer is incomplete.
+#### How attachment sync works
+
+Aven syncs an attachment record and its image file as related but separate data. The record identifies the task, media type, dimensions, and other attachment information. The image file is stored and transferred separately. This keeps normal task changes responsive even when images are large or a device is temporarily offline.
+
+The cross-device flow is:
+
+1. The task and attachment record sync through the normal change stream.
+2. The image uploads to the sync server in a separate, bounded transfer.
+3. Another device can receive the task and attachment record before it receives the image. That device shows `pending download` until a later sync transfers the file.
+4. Each device tracks its own local image availability and storage quota. The server enforces a separate quota for each workspace.
+5. Images are addressed by their content, so identical image bytes share storage and transfer identity instead of creating independent copies.
+6. Deleting an attachment syncs that change. Image bytes with no remaining references become eligible for cleanup after the configured grace period rather than disappearing immediately.
+
+This separation also affects data portability. The [backup and export comparison](#back-up-and-move-data) explains the available options. A backup archive includes every attachment image available on the device that creates it, while a JSON export includes attachment records but omits image files.
 
 Sync output reports image upload and download counts, transferred sizes, remaining work, and completion state. Run `aven sync` again when it reports `complete=false`. Interactive sync continues automatically while it can make progress. A configured, running daemon resumes remaining work in the background.
 
