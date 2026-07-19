@@ -234,6 +234,135 @@ launch_simulator_phase() {
     grep -Fqx "$marker" "$launch_log"
 }
 
+launch_simulator_capture() {
+    local simulator_id="$1"
+    local phase="$2"
+    local log_name="$3"
+    local launch_log="$proof_root/$log_name"
+
+    SIMCTL_CHILD_AVEN_IOS_SYNC_SERVER="$server_url" \
+        SIMCTL_CHILD_AVEN_IOS_SYNC_AUTH_TOKEN="$sync_auth_token" \
+        xcrun simctl launch --console --terminate-running-process \
+        "$simulator_id" "$bundle_identifier" "$phase" | tee "$launch_log"
+}
+
+wait_for_marker() {
+    local marker="$1"
+    local log_path="$2"
+
+    for _ in {1..300}; do
+        if grep -Fqx "$marker" "$log_path" 2>/dev/null; then
+            return 0
+        fi
+        sleep 0.1
+    done
+    printf '%s\n' "error: lifecycle marker timed out" >&2
+    return 1
+}
+
+run_background_phase() {
+    local simulator_id="$1"
+    local phase="$2"
+    local ready_marker="$3"
+    local pass_prefix="$4"
+    local log_name="$5"
+    local launch_log="$proof_root/$log_name"
+    local launch_pid
+
+    : > "$launch_log"
+    SIMCTL_CHILD_AVEN_IOS_SYNC_SERVER="$server_url" \
+        SIMCTL_CHILD_AVEN_IOS_SYNC_AUTH_TOKEN="$sync_auth_token" \
+        xcrun simctl launch --console --terminate-running-process \
+        "$simulator_id" "$bundle_identifier" "$phase" \
+        > "$launch_log" 2>&1 &
+    launch_pid=$!
+    wait_for_marker "$ready_marker" "$launch_log"
+    xcrun simctl launch "$simulator_id" com.apple.Preferences > /dev/null
+    sleep 1
+    xcrun simctl launch "$simulator_id" "$bundle_identifier" > /dev/null
+    wait "$launch_pid"
+    grep -Fq "$pass_prefix" "$launch_log"
+    cat "$launch_log"
+}
+
+run_termination_phase() {
+    local simulator_id="$1"
+    local phase="$2"
+    local ready_marker="$3"
+    local log_name="$4"
+    local launch_log="$proof_root/$log_name"
+    local launch_pid
+
+    : > "$launch_log"
+    SIMCTL_CHILD_AVEN_IOS_SYNC_SERVER="$server_url" \
+        SIMCTL_CHILD_AVEN_IOS_SYNC_AUTH_TOKEN="$sync_auth_token" \
+        xcrun simctl launch --console --terminate-running-process \
+        "$simulator_id" "$bundle_identifier" "$phase" \
+        > "$launch_log" 2>&1 &
+    launch_pid=$!
+    wait_for_marker "$ready_marker" "$launch_log"
+    xcrun simctl terminate "$simulator_id" "$bundle_identifier"
+    wait "$launch_pid" || true
+    cat "$launch_log"
+}
+
+run_simulator_lifecycle() {
+    local simulator_id="$1"
+    local resource_log="$proof_root/simulator-resource.log"
+
+    start_server "127.0.0.1:0"
+    launch_simulator_capture \
+        "$simulator_id" --aven-resource-proof simulator-resource.log
+    grep -Fq \
+        "AVEN_IOS_RESOURCE_PROOF status=pass configuration=release" \
+        "$resource_log"
+    stop_server
+
+    run_background_phase \
+        "$simulator_id" \
+        --aven-background-local \
+        "AVEN_IOS_BACKGROUND_LOCAL status=ready" \
+        "AVEN_IOS_BACKGROUND_LOCAL status=pass behavior=" \
+        simulator-background-local.log
+
+    start_server "127.0.0.1:0"
+    run_background_phase \
+        "$simulator_id" \
+        --aven-background-network \
+        "AVEN_IOS_BACKGROUND_NETWORK status=ready" \
+        "AVEN_IOS_BACKGROUND_NETWORK status=pass transport=urlsession" \
+        simulator-background-network.log
+    stop_server
+
+    run_termination_phase \
+        "$simulator_id" \
+        --aven-termination-committed \
+        "AVEN_IOS_TERMINATION_COMMITTED status=ready" \
+        simulator-termination-committed.log
+    launch_simulator_capture \
+        "$simulator_id" \
+        --aven-termination-committed-verify \
+        simulator-termination-committed-verify.log
+    grep -Fqx \
+        "AVEN_IOS_TERMINATION_COMMITTED status=pass database=reopened mutation=observed" \
+        "$proof_root/simulator-termination-committed-verify.log"
+
+    start_server "127.0.0.1:0"
+    run_termination_phase \
+        "$simulator_id" \
+        --aven-termination-network \
+        "AVEN_IOS_TERMINATION_NETWORK status=ready" \
+        simulator-termination-network.log
+    launch_simulator_capture \
+        "$simulator_id" \
+        --aven-termination-network-recover \
+        simulator-termination-network-recover.log
+    grep -Fqx \
+        "AVEN_IOS_TERMINATION_NETWORK status=pass database=reopened session=fresh recovery=complete" \
+        "$proof_root/simulator-termination-network-recover.log"
+    stop_server
+}
+
 run_simulator_sync() {
     local simulator_id="$1"
 
@@ -275,6 +404,7 @@ run_simulator() {
 
     inspect_simulator_sandbox "$simulator_id"
     run_simulator_sync "$simulator_id"
+    run_simulator_lifecycle "$simulator_id"
 }
 
 inspect_simulator_sandbox() {

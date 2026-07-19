@@ -43,12 +43,38 @@ public struct URLSessionTransport: Sendable {
         }
         return SyncHttpResponse(status: status, headers: headers, body: body)
     }
+
+    public func waitForProcessTermination(
+        _ prepared: PreparedSyncRequest
+    ) async throws -> Never {
+        guard let url = URL(string: prepared.url) else {
+            throw URLSessionTransportError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = prepared.method
+        request.httpBody = prepared.body
+        for header in prepared.headers {
+            request.setValue(header.value, forHTTPHeaderField: header.name)
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [TerminationWaitURLProtocol.self]
+        let waitSession = URLSession(configuration: configuration)
+        defer { waitSession.invalidateAndCancel() }
+        _ = try await waitSession.data(for: request)
+        throw URLSessionTransportError.cancellationWasNotObserved
+    }
 }
 
 public struct CancelledRequestResult: Sendable {
     public let failRequestCount: Int
     public let cursorBefore: Int64
     public let cursorAfter: Int64
+}
+
+public struct SyncRunMeasurement: Sendable {
+    public let summary: SyncSessionSummary
+    public let requestBodyBytes: Int
+    public let responseBodyBytes: Int
 }
 
 public struct SyncDriver: Sendable {
@@ -68,6 +94,18 @@ public struct SyncDriver: Sendable {
         server: String,
         authToken: String
     ) async throws -> SyncSessionSummary {
+        try await runMeasured(
+            databasePath: databasePath,
+            server: server,
+            authToken: authToken
+        ).summary
+    }
+
+    public func runMeasured(
+        databasePath: String,
+        server: String,
+        authToken: String
+    ) async throws -> SyncRunMeasurement {
         let session = try await worker.withClient(at: databasePath) { client in
             try client.startSyncSession(
                 server: server,
@@ -75,13 +113,17 @@ public struct SyncDriver: Sendable {
                 pageBudget: nil
             )
         }
+        var requestBodyBytes = 0
+        var responseBodyBytes = 0
 
         while let prepared = try await worker.run({
             try session.prepareRequest()
         }) {
+            requestBodyBytes += prepared.body.count
             let response: SyncHttpResponse
             do {
                 response = try await transport.send(prepared)
+                responseBodyBytes += response.body.count
             } catch {
                 try await worker.run {
                     try session.failRequest(
@@ -99,15 +141,27 @@ public struct SyncDriver: Sendable {
             }
         }
 
-        return try await worker.run {
+        let summary = try await worker.run {
             try session.summary()
         }
+        return SyncRunMeasurement(
+            summary: summary,
+            requestBodyBytes: requestBodyBytes,
+            responseBodyBytes: responseBodyBytes
+        )
+    }
+
+    public func waitForProcessTermination(
+        _ prepared: PreparedSyncRequest
+    ) async throws -> Never {
+        try await transport.waitForProcessTermination(prepared)
     }
 
     public func cancelOneDelayedRequest(
         databasePath: String,
         server: String,
-        authToken: String
+        authToken: String,
+        beforeCancellation: (@MainActor @Sendable () async -> Void)? = nil
     ) async throws -> CancelledRequestResult {
         let session = try await worker.withClient(at: databasePath) { client in
             try client.startSyncSession(
@@ -133,6 +187,9 @@ public struct SyncDriver: Sendable {
         }
 
         try await state.waitUntilStarted()
+        if let beforeCancellation {
+            await beforeCancellation()
+        }
         try await Task.sleep(for: .milliseconds(100))
         requestTask.cancel()
         do {
@@ -163,6 +220,22 @@ public struct SyncDriver: Sendable {
             cursorAfter: summaryAfter.cursor
         )
     }
+}
+
+private final class TerminationWaitURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with _: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        ProofOutput.write("AVEN_IOS_TERMINATION_NETWORK status=ready\n")
+    }
+
+    override func stopLoading() {}
 }
 
 private final class CancellationURLProtocol: URLProtocol, @unchecked Sendable {

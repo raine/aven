@@ -41,6 +41,18 @@ public enum ApplicationSupportPath {
         )
     }
 
+    public static func prepareLifecycleProof(
+        reset: Bool,
+        fileManager: FileManager = .default
+    ) throws -> SandboxPersistencePaths {
+        try prepareProofDatabase(
+            directoryName: "Lifecycle",
+            databaseName: "lifecycle.sqlite",
+            reset: reset,
+            fileManager: fileManager
+        )
+    }
+
     private static func prepareProofDatabase(
         directoryName: String,
         databaseName: String,
