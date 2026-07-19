@@ -1280,6 +1280,89 @@ mod attachment_paste {
     }
 
     #[tokio::test]
+    async fn focused_detail_image_can_be_removed_after_confirmation() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        create_and_select_task(&mut app, test_task_draft("image target")).await;
+        let image = dir.path().join("photo.png");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+        app.overlay = Some(OverlayState::Detail { scroll: 7 });
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        finish_attachment_work(&mut app).await;
+        let attachment_id = app.store.tasks[0].attachments[0].attachment_id.clone();
+        app.selected_detail_attachment_id = Some(attachment_id.clone());
+        app.overlay = Some(OverlayState::Detail { scroll: 7 });
+
+        app.dispatch_key(shift_key(KeyCode::Char('D')), (100, 30).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Confirm(ConfirmState {
+                route: OverlayRoute::DeleteAttachmentConfirm,
+                ref title,
+                ref prompt,
+            })) if title == "Remove image" && prompt == "Remove photo.png?"
+        ));
+        assert_eq!(
+            app.pending_delete_attachment.as_deref(),
+            Some(attachment_id.as_str())
+        );
+
+        app.dispatch_key(key(KeyCode::Char('y')), (100, 30).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 7 })
+        ));
+        assert!(app.selected_detail_attachment_id.is_none());
+        assert!(app.store.tasks[0].attachments.is_empty());
+        assert_eq!(toast_message(&app).as_deref(), Some("removed image"));
+        let deleted: i64 =
+            sqlx::query_scalar("SELECT deleted FROM task_attachments WHERE attachment_id = ?")
+                .bind(&attachment_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(deleted, 1);
+    }
+
+    #[tokio::test]
+    async fn attachment_preview_remove_can_be_cancelled() {
+        let (dir, _pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        create_and_select_task(&mut app, test_task_draft("image target")).await;
+        let image = dir.path().join("photo.png");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        finish_attachment_work(&mut app).await;
+        let attachment_id = app.store.tasks[0].attachments[0].attachment_id.clone();
+        app.selected_detail_attachment_id = Some(attachment_id.clone());
+        app.overlay = Some(OverlayState::AttachmentPreview {
+            attachment_id: attachment_id.clone(),
+            scroll: 3,
+        });
+
+        app.dispatch_key(shift_key(KeyCode::Char('D')), (100, 30).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('n')), (100, 30).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 3 })
+        ));
+        assert!(app.pending_delete_attachment.is_none());
+        assert_eq!(app.store.tasks[0].attachments.len(), 1);
+    }
+
+    #[tokio::test]
     async fn detail_paste_image_path_obeys_optimization_config() {
         let (dir, pool, mut app) = test_app_with_pool().await;
         app.set_add_task_db_path(dir.path().join("test.db"));

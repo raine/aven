@@ -476,6 +476,7 @@ impl App {
         self.conflict_flow.clear();
         self.pending_rename_project = None;
         self.pending_delete_project = None;
+        self.pending_delete_attachment = None;
         self.detail_context = false;
         self.restore_detail_overlay(return_to_detail);
     }

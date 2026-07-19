@@ -258,6 +258,7 @@ impl App {
         self.conflict_flow.clear();
         self.pending_rename_project = None;
         self.pending_delete_project = None;
+        self.pending_delete_attachment = None;
         self.clear_live_search_preview();
         self.detail_navigation_history.clear();
         self.selected_detail_child_task_id = None;

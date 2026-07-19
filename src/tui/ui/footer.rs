@@ -123,11 +123,13 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
             ("j/k", "select image"),
             ("Enter", "preview/open"),
             ("o", "system viewer"),
+            ("D", "remove"),
             ("Tab/Esc", "leave"),
         ],
         FooterMode::AttachmentPreview => &[
             ("j/k", "switch image"),
             ("o", "system viewer"),
+            ("D", "remove"),
             ("Esc", "back"),
         ],
         FooterMode::DetailSelection if width >= 72 => &[
@@ -297,6 +299,7 @@ mod tests {
                 ("j/k", "select image"),
                 ("Enter", "preview/open"),
                 ("o", "system viewer"),
+                ("D", "remove"),
                 ("Tab/Esc", "leave"),
             ]
         );
@@ -305,6 +308,7 @@ mod tests {
             &[
                 ("j/k", "switch image"),
                 ("o", "system viewer"),
+                ("D", "remove"),
                 ("Esc", "back"),
             ]
         );

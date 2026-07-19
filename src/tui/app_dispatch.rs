@@ -1188,6 +1188,13 @@ impl App {
             scroll,
         } = &overlay
         {
+            if key.code == KeyCode::Char('D')
+                && matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT)
+            {
+                let attachment_id = attachment_id.clone();
+                self.begin_delete_attachment(&attachment_id, *scroll);
+                return Ok(());
+            }
             if key.code == KeyCode::Char('o') && key.modifiers.is_empty() {
                 let attachment_id = attachment_id.clone();
                 self.open_attachment_externally(&attachment_id).await;
@@ -1250,6 +1257,12 @@ impl App {
                     (KeyCode::Char('k') | KeyCode::Up, KeyModifiers::NONE) => {
                         self.move_detail_focus_selection(-1);
                         focused_scroll = self.detail_focus_scroll(scroll, terminal_size);
+                    }
+                    (KeyCode::Char('D'), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+                        if let DetailFocusTarget::Attachment(attachment_id) = &selected_target {
+                            self.begin_delete_attachment(attachment_id, scroll);
+                            return Ok(());
+                        }
                     }
                     (KeyCode::Char('o'), KeyModifiers::NONE) => {
                         if let DetailFocusTarget::Attachment(attachment_id) = &selected_target {

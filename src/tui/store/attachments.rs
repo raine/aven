@@ -45,6 +45,13 @@ impl TuiStore {
         }
     }
 
+    pub(crate) async fn delete_attachment(&self, attachment_id: &str) -> Result<()> {
+        let mut conn = self.pool.acquire().await?;
+        crate::operations::delete_task_attachment(&mut conn, &self.active_workspace, attachment_id)
+            .await?;
+        Ok(())
+    }
+
     pub(crate) async fn lease_image_export(
         &self,
         blob_dir: &Path,

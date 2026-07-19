@@ -14,7 +14,53 @@ use crate::tui::authoring::PendingTaskAttachment;
 use crate::tui::overlay::{MultilineInputState, OverlayRoute, OverlayState};
 use crate::tui::platform::{ClipboardImage, read_clipboard_image, read_clipboard_text};
 
+pub(crate) const DELETE_ATTACHMENT_TITLE: &str = "Remove image";
+
 impl App {
+    pub(super) fn begin_delete_attachment(&mut self, attachment_id: &str, scroll: u16) {
+        let Some(attachment) = self
+            .store
+            .selected_task(self.widgets.table.selected())
+            .and_then(|item| {
+                item.attachments.iter().find(|attachment| {
+                    attachment.attachment_id == attachment_id && !attachment.deleted
+                })
+            })
+        else {
+            self.set_warning("image attachment is unavailable");
+            return;
+        };
+        let label = attachment
+            .filename
+            .as_deref()
+            .or(attachment.alt_text.as_deref())
+            .unwrap_or("attached image");
+        self.pending_delete_attachment = Some(attachment_id.to_string());
+        self.detail_context = true;
+        self.detail_context_scroll = scroll;
+        self.overlay = Some(OverlayState::confirm(
+            OverlayRoute::DeleteAttachmentConfirm,
+            DELETE_ATTACHMENT_TITLE,
+            format!("Remove {label}?"),
+        ));
+    }
+
+    pub(super) async fn submit_delete_attachment(&mut self) -> Result<()> {
+        let Some(attachment_id) = self.pending_delete_attachment.take() else {
+            self.set_warning("image removal confirmation is not active");
+            self.restore_detail_overlay(true);
+            return Ok(());
+        };
+        self.store.delete_attachment(&attachment_id).await?;
+        self.selected_detail_attachment_id = None;
+        self.external_image_exports
+            .retain(|(retained_id, _)| retained_id != &attachment_id);
+        self.refresh().await?;
+        self.set_success("removed image");
+        self.restore_detail_overlay(true);
+        Ok(())
+    }
+
     pub(super) async fn paste_detail_image_from_clipboard(&mut self) -> Result<()> {
         if !self.detail_accepts_image_paste() {
             self.set_info("open task detail to attach an image");

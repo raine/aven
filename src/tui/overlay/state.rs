@@ -386,6 +386,7 @@ pub(crate) enum OverlayRoute {
     DeleteProjectNameConfirm,
     DeleteProjectConfirm,
     DeleteTaskConfirm,
+    DeleteAttachmentConfirm,
     SwitchWorkspace,
     ConflictField,
     ConflictConfirm,
@@ -447,6 +448,7 @@ pub(crate) enum ConfirmSubmitRoute {
     ConfigInit,
     DeleteProjectConfirm,
     DeleteTaskConfirm,
+    DeleteAttachmentConfirm,
     UpdateConfirm,
 }
 
@@ -645,6 +647,10 @@ impl OverlayRoute {
                 confirm_submit: Some(ConfirmSubmitRoute::DeleteTaskConfirm),
                 ..OverlayRouteDescriptor::default()
             },
+            Self::DeleteAttachmentConfirm => OverlayRouteDescriptor {
+                confirm_submit: Some(ConfirmSubmitRoute::DeleteAttachmentConfirm),
+                ..OverlayRouteDescriptor::default()
+            },
             Self::SwitchWorkspace => OverlayRouteDescriptor {
                 picker_submit: Some(PickerSubmitRoute::SwitchWorkspace),
                 ..OverlayRouteDescriptor::default()
@@ -710,7 +716,7 @@ impl OverlayRoute {
 
 #[cfg(test)]
 impl OverlayRoute {
-    pub(crate) const ALL: [Self; 37] = [
+    pub(crate) const ALL: [Self; 38] = [
         Self::MessageOnly,
         Self::AddTaskTitle,
         Self::AddTaskDescription,
@@ -740,6 +746,7 @@ impl OverlayRoute {
         Self::DeleteProjectNameConfirm,
         Self::DeleteProjectConfirm,
         Self::DeleteTaskConfirm,
+        Self::DeleteAttachmentConfirm,
         Self::SwitchWorkspace,
         Self::ConflictField,
         Self::ConflictConfirm,
