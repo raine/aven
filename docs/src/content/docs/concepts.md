@@ -44,7 +44,7 @@ Notes are append-style entries attached to a task. Use notes for decisions, bloc
 
 ## Image attachments
 
-Add screenshots, diagrams, and other images to a task when they help explain the work. Aven supports PNG, JPEG, GIF, and WebP images. Attachments appear below the task description without changing its text.
+Add screenshots, diagrams, and other images to a task when they help explain the work. Aven supports PNG, JPEG, GIF, and WebP images. Task detail shows attachments in a dedicated section beneath the description.
 
 You can attach images in the TUI while creating or viewing a task. From the command line, create the task first, then use [`aven attachment`](/command-reference/#aven-attachment). Supported terminals show image previews in task detail, while other terminals show a text placeholder. See [View image attachments](/tui/#view-image-attachments) for preview controls.
 
