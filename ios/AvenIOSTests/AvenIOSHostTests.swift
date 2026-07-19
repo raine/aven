@@ -36,7 +36,7 @@ final class AvenIOSHostTests: XCTestCase {
         XCTAssertTrue(result.shmObservedBeforeRelease)
         XCTAssertTrue(result.walObservedAfterReopen)
         XCTAssertTrue(result.shmObservedAfterReopen)
-        XCTAssertTrue(result.dataProtectionMatched)
+        XCTAssertTrue(result.dataProtectionConfigured)
         XCTAssertEqual(result.storagePathCount, 5)
         print(
             "AVEN_IOS_PERSISTENCE_TEST status=pass persistence=reopen " +

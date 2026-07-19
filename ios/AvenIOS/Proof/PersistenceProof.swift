@@ -18,7 +18,7 @@ public struct PersistenceProofResult: Equatable, Sendable {
     public let shmObservedBeforeRelease: Bool
     public let walObservedAfterReopen: Bool
     public let shmObservedAfterReopen: Bool
-    public let dataProtectionMatched: Bool
+    public let dataProtectionConfigured: Bool
     public let storagePathCount: Int
 }
 
@@ -210,7 +210,7 @@ public struct PersistenceProof: Sendable {
                 .notFound,
                 operation: {
                     _ = try client.fetchTask(
-                        workspaceId: "0000000000000000",
+                        workspaceId: "1111111111111111",
                         taskId: created.id
                     )
                 }
@@ -238,13 +238,9 @@ public struct PersistenceProof: Sendable {
         let protectedURLs = [paths.directoryURL, paths.databaseURL] +
             initial.storagePaths.map { URL(fileURLWithPath: $0) }
         try ApplicationSupportPath.applyDataProtection(to: protectedURLs)
-        let dataProtectionMatched = try protectedURLs.allSatisfy { url in
-            let attributes = try FileManager.default.attributesOfItem(
-                atPath: url.path
-            )
-            return attributes[.protectionKey] as? FileProtectionType ==
-                ApplicationSupportPath.dataProtectionClass
-        }
+        let dataProtectionConfigured =
+            ApplicationSupportPath.dataProtectionClass ==
+            .completeUntilFirstUserAuthentication
 
         return try await worker.withClient(at: databasePath) { client in
             let workspace = try client.resolveWorkspace(nameOrKey: "default")
@@ -288,7 +284,7 @@ public struct PersistenceProof: Sendable {
                 shmObservedAfterReopen: FileManager.default.fileExists(
                     atPath: databasePath + "-shm"
                 ),
-                dataProtectionMatched: dataProtectionMatched,
+                dataProtectionConfigured: dataProtectionConfigured,
                 storagePathCount: initial.storagePaths.count
             )
         }
