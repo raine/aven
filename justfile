@@ -91,6 +91,10 @@ build:
 ios-rust-artifacts:
     scripts/build-ios-rust-artifacts
 
+# Package and verify the frozen iOS SwiftPM artifact matrix
+ios-swiftpm-package: ios-rust-artifacts
+    scripts/package-ios-swiftpm
+
 # Build the macOS Rust facade and generate Swift bindings
 uniffi-swift:
     #!/usr/bin/env bash

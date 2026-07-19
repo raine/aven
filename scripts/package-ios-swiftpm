@@ -1,0 +1,403 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+ios_root="$repo_root/ios"
+generated_root="$ios_root/Generated"
+artifact_root="$generated_root/RustArtifacts"
+artifact_manifest="$artifact_root/artifact-manifest.json"
+xcframework="$generated_root/AvenUniFFI.xcframework"
+generated_sources="$generated_root/Sources/AvenUniFFI"
+build_root="$generated_root/PackageBuild"
+verification_root="$generated_root/SwiftPMVerification"
+deployment_target="17.0"
+device_target="aarch64-apple-ios"
+simulator_target="aarch64-apple-ios-sim"
+product="AvenUniFFIPackageProbe"
+facade_symbol="uniffi_aven_uniffi_fn_constructor_avenclient_open"
+
+error() {
+  printf 'error: %s\n' "$*" >&2
+}
+
+require_command() {
+  local command_name="$1"
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    error "required command is unavailable: $command_name"
+    exit 1
+  fi
+}
+
+sha256() {
+  shasum -a 256 "$1" | cut -d' ' -f1
+}
+
+file_size() {
+  stat -f '%z' "$1"
+}
+
+require_file() {
+  local path="$1"
+  if [[ ! -f "$path" ]]; then
+    error "required artifact is unavailable: ${path#"$repo_root/"}"
+    exit 1
+  fi
+}
+
+verify_manifest_file() {
+  local relative_path="$1"
+  local expected_size="$2"
+  local expected_sha="$3"
+  local path="$artifact_root/$relative_path"
+  local actual_size
+  local actual_sha
+
+  require_file "$path"
+  actual_size="$(file_size "$path")"
+  actual_sha="$(sha256 "$path")"
+  if [[ "$actual_size" != "$expected_size" ]]; then
+    error "$relative_path has size $actual_size, expected $expected_size"
+    exit 1
+  fi
+  if [[ "$actual_sha" != "$expected_sha" ]]; then
+    error "$relative_path has SHA-256 $actual_sha, expected $expected_sha"
+    exit 1
+  fi
+}
+
+verify_artifact_manifest() {
+  local source_revision
+  local production_paths
+
+  require_file "$artifact_manifest"
+  if ! jq -e --arg deployment "$deployment_target" \
+    --arg device "$device_target" --arg simulator "$simulator_target" '
+      .schema_version == 1 and
+      .deployment_target == $deployment and
+      .linker_requirements.frameworks == ["CoreFoundation"] and
+      .linker_requirements.libraries == ["iconv"] and
+      (.bindings | length) == 3 and
+      (.artifacts | length) == 2 and
+      any(.artifacts[];
+        .target_triple == $device and
+        .apple_platform == "ios" and
+        .architecture == "arm64" and
+        .deployment_target == $deployment and
+        .path == ("libraries/" + $device + "/libaven_uniffi.a")) and
+      any(.artifacts[];
+        .target_triple == $simulator and
+        .apple_platform == "iossimulator" and
+        .architecture == "arm64" and
+        .deployment_target == $deployment and
+        .path == ("libraries/" + $simulator + "/libaven_uniffi.a"))
+    ' "$artifact_manifest" >/dev/null; then
+    error "artifact manifest does not match the frozen package matrix"
+    exit 1
+  fi
+
+  source_revision="$(jq -r '.source_revision' "$artifact_manifest")"
+  if ! git -C "$repo_root" cat-file -e "$source_revision^{commit}" 2>/dev/null; then
+    error "artifact source revision is unavailable: $source_revision"
+    exit 1
+  fi
+  production_paths=(Cargo.lock Cargo.toml crates/aven-core crates/aven-uniffi)
+  if ! git -C "$repo_root" diff --quiet "$source_revision" -- "${production_paths[@]}"; then
+    error "production facade inputs differ from artifact revision $source_revision"
+    exit 1
+  fi
+  if [[ -n "$(git -C "$repo_root" status --porcelain --untracked-files=all -- "${production_paths[@]}")" ]]; then
+    error "production facade inputs contain uncommitted changes"
+    exit 1
+  fi
+
+  while IFS=$'\t' read -r relative_path expected_size expected_sha; do
+    verify_manifest_file "$relative_path" "$expected_size" "$expected_sha"
+  done < <(jq -r '(.bindings + .artifacts)[] | [.path, .size, .sha256] | @tsv' \
+    "$artifact_manifest")
+}
+
+verify_binding_interface() {
+  local swift_binding="$artifact_root/bindings/aven_uniffi.swift"
+  local header="$artifact_root/headers/aven_uniffiFFI.h"
+  local module_map="$artifact_root/headers/module.modulemap"
+
+  if ! grep -Fq 'import aven_uniffiFFI' "$swift_binding"; then
+    error "generated Swift binding does not import aven_uniffiFFI"
+    exit 1
+  fi
+  if ! grep -Fq "$facade_symbol" "$swift_binding"; then
+    error "generated Swift binding does not reference $facade_symbol"
+    exit 1
+  fi
+  if ! grep -Fq "$facade_symbol" "$header"; then
+    error "generated C header does not declare $facade_symbol"
+    exit 1
+  fi
+  if ! grep -Fq 'module aven_uniffiFFI' "$module_map" ||
+    ! grep -Fq 'header "aven_uniffiFFI.h"' "$module_map"; then
+    error "generated module map does not expose the expected C header"
+    exit 1
+  fi
+}
+
+assemble_package_layout() {
+  local staging_root="$generated_root/.SwiftPMPackage.$$.tmp"
+  local headers="$staging_root/Headers"
+  local device_archive
+  local simulator_archive
+
+  device_archive="$artifact_root/libraries/$device_target/libaven_uniffi.a"
+  simulator_archive="$artifact_root/libraries/$simulator_target/libaven_uniffi.a"
+
+  rm -rf "$staging_root" "$xcframework" "$generated_sources" \
+    "$build_root" "$verification_root"
+  mkdir -p "$headers" "$staging_root/Sources/AvenUniFFI" "$verification_root"
+  cp "$artifact_root/headers/aven_uniffiFFI.h" "$headers/aven_uniffiFFI.h"
+  cp "$artifact_root/headers/module.modulemap" "$headers/module.modulemap"
+  cp "$artifact_root/bindings/aven_uniffi.swift" \
+    "$staging_root/Sources/AvenUniFFI/aven_uniffi.swift"
+
+  xcodebuild -create-xcframework \
+    -library "$device_archive" -headers "$headers" \
+    -library "$simulator_archive" -headers "$headers" \
+    -output "$staging_root/AvenUniFFI.xcframework" \
+    >"$verification_root/xcodebuild-create-xcframework.txt" 2>&1
+
+  mv "$staging_root/AvenUniFFI.xcframework" "$xcframework"
+  mkdir -p "$(dirname "$generated_sources")"
+  mv "$staging_root/Sources/AvenUniFFI" "$generated_sources"
+  rm -rf "$staging_root"
+}
+
+verify_xcframework() {
+  local plist_json="$verification_root/xcframework-info.json"
+  local source_header="$artifact_root/headers/aven_uniffiFFI.h"
+  local source_module_map="$artifact_root/headers/module.modulemap"
+  local identifier
+
+  plutil -convert json -o "$plist_json" "$xcframework/Info.plist"
+  if ! jq -e '
+    .XCFrameworkFormatVersion == "1.0" and
+    (.AvailableLibraries | length) == 2 and
+    any(.AvailableLibraries[];
+      .LibraryIdentifier == "ios-arm64" and
+      .LibraryPath == "libaven_uniffi.a" and
+      .HeadersPath == "Headers" and
+      .SupportedArchitectures == ["arm64"] and
+      .SupportedPlatform == "ios" and
+      (has("SupportedPlatformVariant") | not)) and
+    any(.AvailableLibraries[];
+      .LibraryIdentifier == "ios-arm64-simulator" and
+      .LibraryPath == "libaven_uniffi.a" and
+      .HeadersPath == "Headers" and
+      .SupportedArchitectures == ["arm64"] and
+      .SupportedPlatform == "ios" and
+      .SupportedPlatformVariant == "simulator")
+  ' "$plist_json" >/dev/null; then
+    error "XCFramework metadata does not contain the exact frozen slices"
+    exit 1
+  fi
+
+  for identifier in ios-arm64 ios-arm64-simulator; do
+    if [[ "$(sha256 "$xcframework/$identifier/Headers/aven_uniffiFFI.h")" != \
+      "$(sha256 "$source_header")" ]]; then
+      error "$identifier contains a mismatched C header"
+      exit 1
+    fi
+    if [[ "$(sha256 "$xcframework/$identifier/Headers/module.modulemap")" != \
+      "$(sha256 "$source_module_map")" ]]; then
+      error "$identifier contains a mismatched module map"
+      exit 1
+    fi
+    if [[ "$(xcrun lipo -archs "$xcframework/$identifier/libaven_uniffi.a")" != "arm64" ]]; then
+      error "$identifier does not contain exactly arm64"
+      exit 1
+    fi
+  done
+
+  if [[ "$(sha256 "$generated_sources/aven_uniffi.swift")" != \
+    "$(sha256 "$artifact_root/bindings/aven_uniffi.swift")" ]]; then
+    error "SwiftPM wrapper source differs from the artifact binding"
+    exit 1
+  fi
+}
+
+verify_package_definition() {
+  local package_json="$verification_root/package-dump.json"
+
+  swift package --package-path "$ios_root" dump-package >"$package_json"
+  if ! grep -Fq '.linkedFramework("CoreFoundation")' "$ios_root/Package.swift" ||
+    ! grep -Fq '.linkedLibrary("iconv")' "$ios_root/Package.swift"; then
+    error "AvenUniFFI target does not carry the required linker settings"
+    exit 1
+  fi
+  if grep -Eiq 'linkedLibrary\("sqlite3"\)|-lsqlite3' "$ios_root/Package.swift"; then
+    error "Swift package intentionally links a second SQLite implementation"
+    exit 1
+  fi
+  if ! jq -e '
+    .name == "AvenUniFFI" and
+    any(.platforms[]; .platformName == "ios" and .version == "17.0") and
+    any(.products[]; .name == "AvenUniFFI" and .type.library != null) and
+    any(.targets[]; .name == "aven_uniffiFFI" and .type == "binary") and
+    any(.targets[]; .name == "AvenUniFFI") and
+    any(.targets[]; .name == "AvenUniFFIPackageProbe" and .type == "executable")
+  ' "$package_json" >/dev/null; then
+    error "Swift package definition does not expose the expected iOS targets"
+    exit 1
+  fi
+}
+
+build_consumer() {
+  local label="$1"
+  local sdk="$2"
+  local triple="$3"
+  local expected_identifier="$4"
+  local expected_platform="$5"
+  local sdk_path
+  local scratch_path="$build_root/$label"
+  local build_log="$verification_root/$label-swift-build.txt"
+  local bin_path
+  local executable
+  local symbols="$verification_root/$label-defined-symbols.txt"
+  local vtool_output="$verification_root/$label-vtool.txt"
+
+  sdk_path="$(xcrun --sdk "$sdk" --show-sdk-path)"
+  swift build --package-path "$ios_root" \
+    --scratch-path "$scratch_path" \
+    --configuration release \
+    --triple "$triple" \
+    --sdk "$sdk_path" \
+    --product "$product" \
+    --verbose >"$build_log" 2>&1
+
+  bin_path="$(swift build --package-path "$ios_root" \
+    --scratch-path "$scratch_path" \
+    --configuration release \
+    --triple "$triple" \
+    --sdk "$sdk_path" \
+    --show-bin-path)"
+  executable="$bin_path/$product"
+  require_file "$executable"
+
+  if ! grep -Fq "/$expected_identifier/libaven_uniffi.a" "$build_log"; then
+    error "$label build did not select XCFramework slice $expected_identifier"
+    exit 1
+  fi
+  if grep -Fq '/ios-arm64/libaven_uniffi.a' "$build_log" &&
+    grep -Fq '/ios-arm64-simulator/libaven_uniffi.a' "$build_log"; then
+    error "$label build selected more than one XCFramework slice"
+    exit 1
+  fi
+  if ! grep -Fq -- '-framework CoreFoundation' "$build_log" ||
+    ! grep -Fq -- '-liconv' "$build_log"; then
+    error "$label link command is missing CoreFoundation or iconv"
+    exit 1
+  fi
+  if grep -Fq -- '-lsqlite3' "$build_log"; then
+    error "$label link command includes a second SQLite implementation"
+    exit 1
+  fi
+
+  "$llvm_nm" --defined-only "$executable" >"$symbols"
+  if ! grep -Fq "$facade_symbol" "$symbols"; then
+    error "$label executable does not contain production facade symbol $facade_symbol"
+    exit 1
+  fi
+  xcrun vtool -show-build "$executable" >"$vtool_output"
+  if ! grep -Fq "platform $expected_platform" "$vtool_output" ||
+    ! grep -Eq 'minos 17\.0(\.0)?$' "$vtool_output"; then
+    error "$label executable has unexpected platform or deployment metadata"
+    exit 1
+  fi
+
+  jq -n \
+    --arg destination "$label" \
+    --arg sdk "$sdk" \
+    --arg triple "$triple" \
+    --arg slice "$expected_identifier" \
+    --arg platform "$expected_platform" \
+    --arg deployment_target "$deployment_target" \
+    --arg path "${executable#"$repo_root/"}" \
+    --argjson size "$(file_size "$executable")" \
+    --arg sha256 "$(sha256 "$executable")" \
+    '{
+      destination: $destination,
+      sdk: $sdk,
+      triple: $triple,
+      selected_slice: $slice,
+      platform: $platform,
+      deployment_target: $deployment_target,
+      executable: {path: $path, size: $size, sha256: $sha256}
+    }' >"$verification_root/$label-result.json"
+}
+
+write_package_manifest() {
+  local source_revision
+  local device_result
+  local simulator_result
+
+  source_revision="$(jq -r '.source_revision' "$artifact_manifest")"
+  device_result="$(jq '.' "$verification_root/device-result.json")"
+  simulator_result="$(jq '.' "$verification_root/simulator-result.json")"
+
+  jq -n \
+    --arg source_revision "$source_revision" \
+    --arg deployment_target "$deployment_target" \
+    --arg xcframework_path 'ios/Generated/AvenUniFFI.xcframework' \
+    --arg swift_path 'ios/Generated/Sources/AvenUniFFI/aven_uniffi.swift' \
+    --arg xcframework_info_sha "$(sha256 "$xcframework/Info.plist")" \
+    --arg swift_sha "$(sha256 "$generated_sources/aven_uniffi.swift")" \
+    --argjson swift_size "$(file_size "$generated_sources/aven_uniffi.swift")" \
+    --argjson device "$device_result" \
+    --argjson simulator "$simulator_result" \
+    '{
+      schema_version: 1,
+      source_revision: $source_revision,
+      deployment_target: $deployment_target,
+      package: "ios/Package.swift",
+      xcframework: {path: $xcframework_path, info_plist_sha256: $xcframework_info_sha},
+      swift_binding: {path: $swift_path, size: $swift_size, sha256: $swift_sha},
+      linker_requirements: {frameworks: ["CoreFoundation"], libraries: ["iconv"]},
+      consumers: [$device, $simulator]
+    }' >"$generated_root/swiftpm-package-manifest.json"
+}
+
+require_command git
+require_command grep
+require_command jq
+require_command plutil
+require_command shasum
+require_command shellcheck
+require_command stat
+require_command swift
+require_command xcodebuild
+require_command xcrun
+
+host="$(rustc -vV | while IFS= read -r line; do
+  case "$line" in
+    "host: "*) printf '%s\n' "${line#host: }" ;;
+  esac
+done)"
+llvm_nm="$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-nm"
+if [[ -z "$host" || ! -x "$llvm_nm" ]]; then
+  error "Rust llvm-tools are required for linked symbol verification"
+  exit 1
+fi
+
+verify_artifact_manifest
+verify_binding_interface
+assemble_package_layout
+verify_xcframework
+verify_package_definition
+build_consumer device iphoneos "arm64-apple-ios${deployment_target}" \
+  ios-arm64 IOS
+build_consumer simulator iphonesimulator \
+  "arm64-apple-ios${deployment_target}-simulator" ios-arm64-simulator IOSSIMULATOR
+write_package_manifest
+
+printf 'generated %s\n' "$xcframework"
+printf 'generated %s\n' "$generated_sources/aven_uniffi.swift"
+printf 'verified device and simulator SwiftPM consumers\n'
+printf 'source revision %s\n' "$(jq -r '.source_revision' "$artifact_manifest")"
