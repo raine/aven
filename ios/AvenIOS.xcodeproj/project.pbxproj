@@ -14,6 +14,8 @@
 		100000000000000000000005 /* AvenIOSHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000005 /* AvenIOSHostTests.swift */; };
 		100000000000000000000006 /* AvenUniFFI in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000001 /* AvenUniFFI */; };
 		100000000000000000000007 /* PersistenceProof.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* PersistenceProof.swift */; };
+		100000000000000000000008 /* IOSSyncProof.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000A /* IOSSyncProof.swift */; };
+		100000000000000000000009 /* URLSessionTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000B /* URLSessionTransport.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -36,6 +38,8 @@
 		200000000000000000000007 /* AvenIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AvenIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		200000000000000000000008 /* AvenIOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AvenIOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		200000000000000000000009 /* PersistenceProof.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceProof.swift; sourceTree = "<group>"; };
+		20000000000000000000000A /* IOSSyncProof.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSSyncProof.swift; sourceTree = "<group>"; };
+		20000000000000000000000B /* URLSessionTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLSessionTransport.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -91,6 +95,8 @@
 			children = (
 				200000000000000000000004 /* HostSmokeProof.swift */,
 				200000000000000000000009 /* PersistenceProof.swift */,
+				20000000000000000000000A /* IOSSyncProof.swift */,
+				20000000000000000000000B /* URLSessionTransport.swift */,
 			);
 			path = Proof;
 			sourceTree = "<group>";
@@ -229,6 +235,8 @@
 				100000000000000000000003 /* RustWorker.swift in Sources */,
 				100000000000000000000004 /* HostSmokeProof.swift in Sources */,
 				100000000000000000000007 /* PersistenceProof.swift in Sources */,
+				100000000000000000000008 /* IOSSyncProof.swift in Sources */,
+				100000000000000000000009 /* URLSessionTransport.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

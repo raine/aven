@@ -2,6 +2,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repository_root="$(cd "$script_dir/.." && pwd)"
 project="$script_dir/AvenIOS.xcodeproj"
 scheme="AvenIOS"
 generated="$script_dir/Generated"
@@ -9,6 +10,10 @@ proof_root="$generated/HostProof"
 simulator_derived_data="$proof_root/DerivedDataSimulator"
 device_derived_data="$proof_root/DerivedDataDevice"
 bundle_identifier="com.raine.aven.ios-proof"
+aven_binary="$repository_root/target/debug/aven"
+sync_auth_token="aven-ios-proof-authentication"
+server_pid=""
+server_url=""
 
 require_package() {
     if [[ ! -d "$generated/AvenUniFFI.xcframework" ]]; then
@@ -63,6 +68,192 @@ test_simulator() {
         test
 }
 
+build_server() {
+    cargo build --locked --bin aven
+    git -C "$repository_root" rev-parse HEAD > "$proof_root/server-revision.txt"
+}
+
+read_server_url() {
+    local line
+    local field
+
+    while IFS= read -r line; do
+        [[ "$line" == listening\ * ]] || continue
+        for field in $line; do
+            if [[ "$field" == url=* ]]; then
+                printf '%s\n' "${field#url=}"
+                return 0
+            fi
+        done
+    done < "$proof_root/server-stdout.log"
+    return 1
+}
+
+start_server() {
+    local bind_address="$1"
+    local advertised_host="${2:-}"
+    local server_root="$proof_root/SyncServer"
+    local config_directory="$server_root/config"
+    local parsed_url=""
+    local port
+    local -a arguments=(
+        server
+        --bind "$bind_address"
+        --data "$server_root/server.sqlite"
+    )
+
+    stop_server
+    rm -rf "$server_root"
+    mkdir -p "$config_directory"
+    chmod 700 "$server_root" "$config_directory"
+    printf "sync:\n  auth_token: '%s'\n" "$sync_auth_token" \
+        > "$config_directory/config.yaml"
+    chmod 600 "$config_directory/config.yaml"
+    : > "$proof_root/server-stdout.log"
+    : > "$proof_root/server-stderr.log"
+    if [[ "$bind_address" == 0.0.0.0:* ]]; then
+        arguments+=(--unsafe-public-bind)
+    fi
+
+    AVEN_CONFIG_DIR="$config_directory" \
+        "$aven_binary" "${arguments[@]}" \
+        > "$proof_root/server-stdout.log" \
+        2> "$proof_root/server-stderr.log" &
+    server_pid=$!
+
+    for _ in {1..100}; do
+        if ! kill -0 "$server_pid" 2>/dev/null; then
+            wait "$server_pid" || true
+            server_pid=""
+            printf '%s\n' "error: proof server exited before readiness" >&2
+            return 1
+        fi
+        if parsed_url="$(read_server_url)"; then
+            break
+        fi
+        sleep 0.1
+    done
+    if [[ -z "$parsed_url" ]]; then
+        printf '%s\n' "error: proof server readiness timed out" >&2
+        return 1
+    fi
+
+    if [[ -n "$advertised_host" ]]; then
+        port="${parsed_url##*:}"
+        server_url="http://$advertised_host:$port"
+    else
+        server_url="$parsed_url"
+    fi
+}
+
+stop_server() {
+    if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
+        kill -TERM "$server_pid"
+        wait "$server_pid" || true
+    fi
+    server_pid=""
+    server_url=""
+}
+
+configure_host_replica() {
+    local client_root="$proof_root/HostReplica"
+
+    rm -rf "$client_root"
+    mkdir -p "$client_root/config"
+    chmod 700 "$client_root" "$client_root/config"
+    printf "sync:\n  server_url: '%s'\n  auth_token: '%s'\n" \
+        "$server_url" "$sync_auth_token" \
+        > "$client_root/config/config.yaml"
+    chmod 600 "$client_root/config/config.yaml"
+}
+
+host_replica_command() {
+    local client_root="$proof_root/HostReplica"
+
+    env \
+        -u AVEN_SYNC_SERVER \
+        AVEN_CONFIG_DIR="$client_root/config" \
+        AVEN_DB="$client_root/host-replica.sqlite" \
+        "$aven_binary" "$@"
+}
+
+prepare_host_divergence() {
+    local list_json
+    local task_ref
+
+    configure_host_replica
+    host_replica_command sync > /dev/null
+    list_json="$(host_replica_command list --json)"
+    jq -e '
+        length == 1 and
+        .[0].title == "iOS sync proof seed" and
+        .[0].project == "ios-sync-proof" and
+        .[0].status == "todo" and
+        .[0].priority == "high" and
+        .[0].has_conflict == false
+    ' > /dev/null <<< "$list_json"
+    task_ref="$(jq -er '.[0].ref' <<< "$list_json")"
+    host_replica_command edit "$task_ref" \
+        --title "iOS sync proof host variant" > /dev/null
+    host_replica_command sync > /dev/null
+}
+
+verify_host_convergence() {
+    local list_json
+    local conflicts_json
+
+    host_replica_command sync > /dev/null
+    list_json="$(host_replica_command list --json)"
+    conflicts_json="$(host_replica_command conflict list --json)"
+    jq -e '
+        length == 1 and
+        .[0].title == "iOS sync proof host variant" and
+        .[0].project == "ios-sync-proof" and
+        .[0].status == "todo" and
+        .[0].priority == "high" and
+        .[0].available_at == "" and
+        .[0].due_on == "" and
+        .[0].has_conflict == false
+    ' > /dev/null <<< "$list_json"
+    jq -e 'length == 0' > /dev/null <<< "$conflicts_json"
+    printf '%s\n' \
+        "AVEN_IOS_HOST_REPLICA status=pass transport=rust_http convergence=equal unresolved=zero attachments=zero"
+}
+
+launch_simulator_phase() {
+    local simulator_id="$1"
+    local phase="$2"
+    local marker="$3"
+    local log_name="$4"
+    local launch_log="$proof_root/$log_name"
+
+    SIMCTL_CHILD_AVEN_IOS_SYNC_SERVER="$server_url" \
+        SIMCTL_CHILD_AVEN_IOS_SYNC_AUTH_TOKEN="$sync_auth_token" \
+        xcrun simctl launch --console --terminate-running-process \
+        "$simulator_id" "$bundle_identifier" "$phase" | tee "$launch_log"
+    grep -Fqx "$marker" "$launch_log"
+}
+
+run_simulator_sync() {
+    local simulator_id="$1"
+
+    build_server
+    start_server "127.0.0.1:0"
+    launch_simulator_phase \
+        "$simulator_id" \
+        --aven-sync-seed \
+        "AVEN_IOS_SYNC_SEED status=pass transport=urlsession auth=accepted metadata=push malformed=atomic cancellation=single_fail recovery=fresh_session heartbeat=progressing attachments=zero" \
+        simulator-sync-seed.log
+    prepare_host_divergence
+    launch_simulator_phase \
+        "$simulator_id" \
+        --aven-sync-conflict \
+        "AVEN_IOS_SYNC_CONFLICT status=pass variants=typed resolution=remote metadata=push_pull convergence=local unresolved=zero attachments=zero" \
+        simulator-sync-conflict.log
+    verify_host_convergence
+    stop_server
+}
+
 run_simulator() {
     local simulator_id
     local app_path
@@ -83,6 +274,7 @@ run_simulator() {
         "$launch_log"
 
     inspect_simulator_sandbox "$simulator_id"
+    run_simulator_sync "$simulator_id"
 }
 
 inspect_simulator_sandbox() {
@@ -127,18 +319,40 @@ build_device() {
         build
 }
 
+launch_device_phase() {
+    local device_id="$1"
+    local phase="$2"
+    local marker="$3"
+    local output_name="$4"
+    local launch_json="$proof_root/$output_name.json"
+    local launch_log="$proof_root/$output_name.log"
+
+    rm -f "$launch_json"
+    DEVICECTL_CHILD_AVEN_IOS_SYNC_SERVER="$server_url" \
+        DEVICECTL_CHILD_AVEN_IOS_SYNC_AUTH_TOKEN="$sync_auth_token" \
+        xcrun devicectl device process launch \
+        --device "$device_id" --terminate-existing --console \
+        --json-output "$launch_json" \
+        "$bundle_identifier" "$phase" | tee "$launch_log"
+    grep -Fqx "$marker" "$launch_log"
+}
+
 run_device() {
     local device_id="${AVEN_IOS_DEVICE_ID:-}"
     local development_team="${AVEN_IOS_DEVELOPMENT_TEAM:-}"
+    local server_host="${AVEN_IOS_DEVICE_SERVER_HOST:-}"
     local app_path
     local install_json="$proof_root/device-install.json"
-    local launch_json="$proof_root/device-launch.json"
 
-    if [[ -z "$device_id" || -z "$development_team" ]]; then
+    if [[ -z "$device_id" || -z "$development_team" || -z "$server_host" ]]; then
         printf '%s\n' \
-            "AVEN_IOS_DEVICE_PROOF status=unavailable condition=device_or_team" \
+            "AVEN_IOS_DEVICE_PROOF status=unavailable condition=device_team_or_lan" \
             >&2
         return 2
+    fi
+    if [[ ! "$server_host" =~ ^[A-Za-z0-9.-]+$ ]]; then
+        printf '%s\n' "error: invalid device server host" >&2
+        return 64
     fi
 
     xcodebuild \
@@ -155,14 +369,32 @@ run_device() {
         build
 
     app_path="$device_derived_data/Build/Products/Release-iphoneos/AvenIOS.app"
-    rm -f "$install_json" "$launch_json"
+    rm -f "$install_json"
     xcrun devicectl device install app \
         --device "$device_id" "$app_path" \
         --json-output "$install_json"
-    xcrun devicectl device process launch \
-        --device "$device_id" --terminate-existing --console \
-        "$bundle_identifier" \
-        --json-output "$launch_json"
+
+    build_server
+    start_server "0.0.0.0:0" "$server_host"
+    launch_device_phase \
+        "$device_id" \
+        --aven-sync-seed \
+        "AVEN_IOS_SYNC_SEED status=pass transport=urlsession auth=accepted metadata=push malformed=atomic cancellation=single_fail recovery=fresh_session heartbeat=progressing attachments=zero" \
+        device-sync-seed
+    prepare_host_divergence
+    launch_device_phase \
+        "$device_id" \
+        --aven-sync-conflict \
+        "AVEN_IOS_SYNC_CONFLICT status=pass variants=typed resolution=remote metadata=push_pull convergence=local unresolved=zero attachments=zero" \
+        device-sync-conflict
+    verify_host_convergence
+    stop_server
+    printf '%s\n' \
+        "AVEN_IOS_DEVICE_PROOF status=pass transport=urlsession metadata=round_trip"
+}
+
+cleanup() {
+    stop_server
 }
 
 usage() {
@@ -170,6 +402,7 @@ usage() {
     exit 64
 }
 
+trap cleanup EXIT INT TERM
 require_package
 case "${1:-}" in
     all)

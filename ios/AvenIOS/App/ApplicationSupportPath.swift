@@ -21,12 +21,38 @@ public enum ApplicationSupportPath {
     public static func preparePersistenceProof(
         fileManager: FileManager = .default
     ) throws -> SandboxPersistencePaths {
+        try prepareProofDatabase(
+            directoryName: "Persistence",
+            databaseName: "persistence.sqlite",
+            reset: true,
+            fileManager: fileManager
+        )
+    }
+
+    public static func prepareSyncProof(
+        reset: Bool,
+        fileManager: FileManager = .default
+    ) throws -> SandboxPersistencePaths {
+        try prepareProofDatabase(
+            directoryName: "Sync",
+            databaseName: "ios-replica.sqlite",
+            reset: reset,
+            fileManager: fileManager
+        )
+    }
+
+    private static func prepareProofDatabase(
+        directoryName: String,
+        databaseName: String,
+        reset: Bool,
+        fileManager: FileManager
+    ) throws -> SandboxPersistencePaths {
         let root = try proofRootURL(fileManager: fileManager)
         let directory = root.appendingPathComponent(
-            "Persistence",
+            directoryName,
             isDirectory: true
         )
-        if fileManager.fileExists(atPath: directory.path) {
+        if reset, fileManager.fileExists(atPath: directory.path) {
             try fileManager.removeItem(at: directory)
         }
         try fileManager.createDirectory(
@@ -37,7 +63,7 @@ public enum ApplicationSupportPath {
         return SandboxPersistencePaths(
             directoryURL: directory,
             databaseURL: directory.appendingPathComponent(
-                "persistence.sqlite",
+                databaseName,
                 isDirectory: false
             )
         )

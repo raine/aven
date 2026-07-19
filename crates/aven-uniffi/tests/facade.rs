@@ -130,6 +130,19 @@ fn sync_session_carries_opaque_context_and_accepts_response_bytes() {
         .unwrap();
     assert!(outcome.complete);
     assert_eq!(outcome.page, 1);
+    assert_eq!(outcome.blob_uploaded, 0);
+    assert_eq!(outcome.blob_uploaded_bytes, 0);
+    assert_eq!(outcome.blob_downloaded, 0);
+    assert_eq!(outcome.blob_downloaded_bytes, 0);
     assert!(session.prepare_request().unwrap().is_none());
-    assert!(session.summary().unwrap().complete);
+    let summary = session.summary().unwrap();
+    assert!(summary.complete);
+    assert_eq!(summary.blob_uploaded, 0);
+    assert_eq!(summary.blob_uploaded_bytes, 0);
+    assert_eq!(summary.blob_downloaded, 0);
+    assert_eq!(summary.blob_downloaded_bytes, 0);
+    assert_eq!(summary.blob_upload_remaining, 0);
+    assert_eq!(summary.blob_upload_remaining_bytes, 0);
+    assert_eq!(summary.blob_download_remaining, 0);
+    assert_eq!(summary.blob_download_remaining_bytes, 0);
 }
