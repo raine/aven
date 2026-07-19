@@ -18,14 +18,14 @@ use crate::tui::navigation::{
     next_index, scroll_with_delta,
 };
 use crate::tui::overlay::{AddTaskMode, CommandState, OverlayOutcome, OverlayRoute, OverlayState};
-use crate::tui::platform::is_editor_prefix_key;
+use crate::tui::platform::{copy_to_clipboard, is_editor_prefix_key};
 use crate::tui::shortcut_buffer::{DetailShortcutResolution, NormalShortcutResolution};
 use crate::tui::store::TaskView;
 use crate::tui::ui::{
     attachment_is_locally_previewable, composer_help_scroll_cap, database_stats_scroll_cap,
     detail_attachment_at_position, detail_attachment_scroll_target, detail_child_task_at_position,
-    detail_help_scroll_cap, detail_section_scroll_target_with_images, detail_selected_text,
-    detail_text_cell_at_position, help_scroll_cap, prefix_hint_scroll_cap,
+    detail_copy_target_at, detail_help_scroll_cap, detail_section_scroll_target_with_images,
+    detail_selected_text, detail_text_cell_at_position, help_scroll_cap, prefix_hint_scroll_cap,
     recent_action_at_position, task_at_position, task_status_at_position, text_panel_scroll_cap,
 };
 
@@ -798,6 +798,22 @@ impl App {
             )
         {
             self.open_detail_child_task(&hit.task_id, scroll);
+            return true;
+        }
+
+        if let Some(item) = self.store.selected_task(self.widgets.table.selected())
+            && let Some(hit) = detail_copy_target_at(
+                item,
+                terminal_size.width,
+                terminal_size.height,
+                mouse.column,
+                mouse.row,
+            )
+        {
+            match copy_to_clipboard(&hit.value) {
+                Ok(()) => self.set_success(format!("copied {}", hit.value)),
+                Err(error) => self.set_error(format!("copy failed: {error}")),
+            }
             return true;
         }
 

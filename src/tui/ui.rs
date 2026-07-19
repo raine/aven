@@ -40,9 +40,9 @@ use self::toast::render_toast;
 pub(crate) use self::detail::{
     DetailInlineImageContext, DetailInlineImagePlacement, DetailMetadataTarget,
     attachment_is_locally_previewable, detail_attachment_at_position,
-    detail_attachment_scroll_target, detail_child_task_at_position, detail_metadata_target_at,
-    detail_scroll_cap_with_images, detail_section_scroll_target_with_images, detail_selected_text,
-    detail_text_cell_at_position,
+    detail_attachment_scroll_target, detail_child_task_at_position, detail_copy_target_at,
+    detail_metadata_target_at, detail_scroll_cap_with_images,
+    detail_section_scroll_target_with_images, detail_selected_text, detail_text_cell_at_position,
 };
 #[cfg(test)]
 pub(crate) use self::detail::{detail_scroll_cap, detail_section_scroll_target};

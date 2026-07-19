@@ -5919,6 +5919,46 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn detail_copy_clicks_copy_displayed_values_and_show_toasts() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Copy target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 4 });
+        let terminal_size: ratatui::layout::Size = (120, 30).into();
+
+        for (column, row) in [(2, 5), (88, 17), (88, 20), (88, 23)] {
+            let value = crate::tui::ui::detail_copy_target_at(
+                app.store
+                    .selected_task(app.widgets.table.selected())
+                    .unwrap(),
+                terminal_size.width,
+                terminal_size.height,
+                column,
+                row,
+            )
+            .unwrap()
+            .value;
+
+            app.dispatch_mouse(left_click(column, row), terminal_size)
+                .await
+                .unwrap();
+
+            assert_eq!(
+                crate::tui::platform::clipboard_text_for_test(),
+                Some(value.clone())
+            );
+            assert_eq!(
+                toast_message(&app).as_deref(),
+                Some(format!("copied {value}").as_str())
+            );
+            assert_eq!(toast_severity(&app), Some(ToastSeverity::Success));
+            assert!(matches!(
+                app.overlay,
+                Some(OverlayState::Detail { scroll: 4 })
+            ));
+        }
+    }
+
+    #[tokio::test]
     async fn detail_toast_renders_above_detail_overlay() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Toast target")).await;

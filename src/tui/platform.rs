@@ -290,8 +290,21 @@ pub(crate) fn copy_to_clipboard(value: &str) -> Result<()> {
 }
 
 #[cfg(test)]
-pub(crate) fn copy_to_clipboard(_value: &str) -> Result<()> {
+thread_local! {
+    static TEST_CLIPBOARD: std::cell::RefCell<Option<String>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(test)]
+pub(crate) fn copy_to_clipboard(value: &str) -> Result<()> {
+    TEST_CLIPBOARD.with(|clipboard| clipboard.replace(Some(value.to_string())));
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn clipboard_text_for_test() -> Option<String> {
+    TEST_CLIPBOARD.with(|clipboard| clipboard.borrow().clone())
 }
 
 #[cfg(test)]

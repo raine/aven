@@ -122,6 +122,10 @@ pub(crate) struct DetailAttachmentHit {
     pub(crate) attachment_id: String,
 }
 
+pub(crate) struct DetailCopyHit {
+    pub(crate) value: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DetailMetadataTarget {
     Status,
@@ -1663,6 +1667,44 @@ fn detail_epic_child_task_id_at_body_line(
     None
 }
 
+pub(crate) fn detail_copy_target_at(
+    item: &TaskListItem,
+    terminal_width: u16,
+    terminal_height: u16,
+    column: u16,
+    row: u16,
+) -> Option<DetailCopyHit> {
+    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    let header_ref_row = layout.content_area.y.saturating_add(2);
+    if row == header_ref_row
+        && column >= layout.content_area.x
+        && column
+            < layout
+                .content_area
+                .x
+                .saturating_add(UnicodeWidthStr::width(item.display_ref.as_str()) as u16)
+    {
+        return Some(DetailCopyHit {
+            value: item.display_ref.clone(),
+        });
+    }
+
+    if layout.metadata_area.width == 0 {
+        return None;
+    }
+    let body = detail_body_area(Rect::new(0, 0, terminal_width, terminal_height));
+    let line = metadata_content_row(layout.metadata_area, body, column, row)?;
+    let value = match line {
+        15 => item.display_ref.clone(),
+        18 => local_timestamp_display(&item.task.created_at),
+        21 => local_timestamp_display(&item.task.updated_at),
+        _ => return None,
+    };
+    let value_start = layout.metadata_area.x.saturating_add(2);
+    let value_end = value_start.saturating_add(UnicodeWidthStr::width(value.as_str()) as u16);
+    (column >= value_start && column < value_end).then_some(DetailCopyHit { value })
+}
+
 pub(crate) fn detail_metadata_target_at(
     terminal_width: u16,
     terminal_height: u16,
@@ -2370,6 +2412,27 @@ mod tests {
 
         assert_eq!(narrow.metadata_area, Rect::default());
         assert_eq!(narrow.content_area.x, 2);
+    }
+
+    #[test]
+    fn detail_copy_targets_map_displayed_values() {
+        let item = detail_test_item();
+        let expected = [
+            (2, 5, item.display_ref.clone()),
+            (88, 17, item.display_ref.clone()),
+            (88, 20, local_timestamp_display(&item.task.created_at)),
+            (88, 23, local_timestamp_display(&item.task.updated_at)),
+        ];
+
+        for (column, row, value) in expected {
+            assert_eq!(
+                detail_copy_target_at(&item, 120, 30, column, row).map(|hit| hit.value),
+                Some(value)
+            );
+        }
+        assert!(detail_copy_target_at(&item, 120, 30, 87, 17).is_none());
+        assert!(detail_copy_target_at(&item, 120, 30, 88, 16).is_none());
+        assert!(detail_copy_target_at(&item, 80, 30, 70, 20).is_none());
     }
 
     #[test]
