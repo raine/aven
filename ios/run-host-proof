@@ -79,7 +79,7 @@ run_simulator() {
     xcrun simctl launch --console --terminate-running-process \
         "$simulator_id" "$bundle_identifier" | tee "$launch_log"
     grep -Fqx \
-        "AVEN_IOS_HOST_PROOF status=pass facade=typed worker=serial heartbeat=progressing persistence=reopen types=complete storage=application_support" \
+        "AVEN_IOS_HOST_PROOF status=pass facade=typed worker=serial heartbeat=progressing persistence=reopen types=complete storage=application_support wal_shm=reopen protection=complete_until_first_authentication" \
         "$launch_log"
 
     inspect_simulator_sandbox "$simulator_id"

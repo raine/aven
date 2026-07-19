@@ -40,7 +40,8 @@ private enum ProofMarker {
         write(
             "AVEN_IOS_HOST_PROOF status=pass facade=typed " +
                 "worker=serial heartbeat=progressing persistence=reopen " +
-                "types=complete storage=application_support\n"
+                "types=complete storage=application_support wal_shm=reopen " +
+                "protection=complete_until_first_authentication\n"
         )
     }
 

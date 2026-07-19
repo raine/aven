@@ -40,7 +40,8 @@ final class AvenIOSHostTests: XCTestCase {
         XCTAssertEqual(result.storagePathCount, 5)
         print(
             "AVEN_IOS_PERSISTENCE_TEST status=pass persistence=reopen " +
-                "types=complete storage=application_support attachments=none"
+                "types=complete storage=application_support attachments=none " +
+                "wal_shm=reopen protection=complete_until_first_authentication"
         )
     }
 

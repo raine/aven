@@ -268,6 +268,23 @@ public struct PersistenceProof: Sendable {
                 )
             }
 
+            let walObservedAfterReopen = FileManager.default.fileExists(
+                atPath: databasePath + "-wal"
+            )
+            let shmObservedAfterReopen = FileManager.default.fileExists(
+                atPath: databasePath + "-shm"
+            )
+            guard initial.walObserved,
+                  initial.shmObserved,
+                  walObservedAfterReopen,
+                  shmObservedAfterReopen,
+                  dataProtectionConfigured
+            else {
+                throw PersistenceProofFailure.invariant(
+                    "WAL, SHM, or data protection proof failed"
+                )
+            }
+
             return PersistenceProofResult(
                 workspaceCount: initial.workspaceCount,
                 taskCount: tasks.count,
@@ -278,12 +295,8 @@ public struct PersistenceProof: Sendable {
                 workspaceMismatchMatched: initial.workspaceMismatchMatched,
                 walObservedBeforeRelease: initial.walObserved,
                 shmObservedBeforeRelease: initial.shmObserved,
-                walObservedAfterReopen: FileManager.default.fileExists(
-                    atPath: databasePath + "-wal"
-                ),
-                shmObservedAfterReopen: FileManager.default.fileExists(
-                    atPath: databasePath + "-shm"
-                ),
+                walObservedAfterReopen: walObservedAfterReopen,
+                shmObservedAfterReopen: shmObservedAfterReopen,
                 dataProtectionConfigured: dataProtectionConfigured,
                 storagePathCount: initial.storagePaths.count
             )
