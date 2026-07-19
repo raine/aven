@@ -21,7 +21,7 @@ pub(super) use multiline::{
     add_task_description_hint_line, add_task_free_text_input_line, add_task_natural_hint_line,
     render_multiline_input,
 };
-pub(super) use onboarding::render_onboarding;
+pub(super) use onboarding::{render_onboarding, render_onboarding_raised};
 pub(super) use picker::render_picker;
 pub(super) use search::{SearchRenderStatus, SearchRenderView, render_search};
 pub(super) use shared::tail_viewport_start;

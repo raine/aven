@@ -148,6 +148,10 @@ impl App {
     async fn run_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         let mut needs_redraw = true;
         while !self.should_quit {
+            if self.finish_onboarding_intro_if_elapsed() {
+                needs_redraw = true;
+            }
+
             if self.poll_pending_task_intake().await? {
                 needs_redraw = true;
             }
@@ -188,6 +192,9 @@ impl App {
                 needs_redraw = true;
                 match event::read()? {
                     Event::Key(key) => {
+                        if self.skip_onboarding_intro() {
+                            continue;
+                        }
                         let result = self.dispatch_key(key, terminal.size()?).await;
                         if let Err(error) = result {
                             self.set_error(format!("{error:#}"));
@@ -358,6 +365,7 @@ impl App {
         ViewState {
             focus: self.focus,
             overlay,
+            onboarding_intro: self.onboarding_intro_visual(),
             detail_underlay: self.detail_underlay(),
             detail_underlay_scroll: self.detail_context_scroll,
             hovered_detail_child_task_id: self.hovered_detail_child_task_id.clone(),
@@ -546,7 +554,7 @@ impl App {
     }
 
     pub(super) fn has_time_based_redraw(&self) -> bool {
-        self.notification.is_some() || self.refresh_is_due()
+        self.notification.is_some() || self.refresh_is_due() || self.onboarding_intro.is_some()
     }
 
     pub(super) fn next_poll_timeout(&self) -> Duration {
@@ -564,6 +572,10 @@ impl App {
                 timeout = timeout.min(INPUT_POLL_INTERVAL);
             }
             None => {}
+        }
+
+        if let Some(intro_timeout) = self.onboarding_intro_timeout() {
+            timeout = timeout.min(intro_timeout);
         }
 
         if self.intake.work_pending()

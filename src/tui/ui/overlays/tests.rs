@@ -29,7 +29,7 @@ fn buffer_text(backend: &TestBackend) -> String {
 
 fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView) {
     match overlay {
-        OverlayView::Onboarding => render_onboarding(frame),
+        OverlayView::Onboarding { .. } => render_onboarding(frame),
         OverlayView::Search {
             input,
             cursor,
@@ -205,7 +205,13 @@ mod onboarding {
 
     #[test]
     fn welcome_card_renders_at_minimum_tui_size() {
-        let rendered = render_overlay_view_at(OverlayView::Onboarding, 70, 18);
+        let rendered = render_overlay_view_at(
+            OverlayView::Onboarding {
+                splash_underlay: false,
+            },
+            70,
+            18,
+        );
 
         assert!(rendered.contains("Welcome to aven"));
         assert!(rendered.contains("Local-first tasks for power users and coding agents."));
@@ -223,7 +229,12 @@ mod onboarding {
 
     #[test]
     fn welcome_card_uses_shared_dialog_chrome() {
-        assert_overlay_uses_dialog_chrome(OverlayView::Onboarding, "Welcome to aven");
+        assert_overlay_uses_dialog_chrome(
+            OverlayView::Onboarding {
+                splash_underlay: false,
+            },
+            "Welcome to aven",
+        );
     }
 
     #[test]

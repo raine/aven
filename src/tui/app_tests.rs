@@ -578,6 +578,7 @@ async fn insert_conflict_for_task_id(
 mod onboarding {
     use super::*;
     use crate::tui::event::{CommandLookup, lookup_command};
+    use crate::tui::overlay::OverlayView;
     use crate::tui::store::OnboardingStatus;
 
     #[tokio::test]
@@ -585,6 +586,13 @@ mod onboarding {
         let (_dir, _pool, mut app) = test_app_with_pool().await;
 
         app.maybe_open_onboarding().await;
+        assert!(app.onboarding_intro.is_some());
+        assert!(matches!(
+            app.view().overlay,
+            Some(OverlayView::Onboarding {
+                splash_underlay: true
+            })
+        ));
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Onboarding {
@@ -632,6 +640,13 @@ mod onboarding {
         let mut app = test_app().await;
 
         app.execute(Action::ShowWelcome).await.unwrap();
+        assert!(app.onboarding_intro.is_none());
+        assert!(matches!(
+            app.view().overlay,
+            Some(OverlayView::Onboarding {
+                splash_underlay: false
+            })
+        ));
         assert!(matches!(
             app.overlay,
             Some(OverlayState::Onboarding {
