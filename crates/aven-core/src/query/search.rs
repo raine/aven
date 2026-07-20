@@ -109,7 +109,6 @@ pub struct TaskSearchPreviewResultSet {
 
 struct ScoredSearchResults {
     items: Vec<ScoredDocument>,
-    total_matches: usize,
 }
 
 struct SearchDocument {
@@ -139,15 +138,30 @@ pub async fn search_task_items_in_workspace(
     workspace_id: &WorkspaceId,
     query: TaskSearchQuery,
 ) -> Result<Vec<TaskSearchResult>> {
-    Ok(search_task_item_set_in_workspace(conn, workspace_id, query)
-        .await?
-        .items)
+    Ok(
+        search_task_item_set_with_presentation(conn, workspace_id, query, true)
+            .await?
+            .items,
+    )
 }
 
-pub async fn search_task_item_set_in_workspace(
+pub async fn search_task_occurrence_items_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     query: TaskSearchQuery,
+) -> Result<Vec<TaskSearchResult>> {
+    Ok(
+        search_task_item_set_with_presentation(conn, workspace_id, query, false)
+            .await?
+            .items,
+    )
+}
+
+async fn search_task_item_set_with_presentation(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    query: TaskSearchQuery,
+    group_recurring: bool,
 ) -> Result<TaskSearchResultSet> {
     let display_refs = DisplayRefContext::for_workspace(conn, workspace_id).await?;
     let scored = scored_search_documents(conn, workspace_id, &query, &display_refs).await?;
@@ -184,8 +198,43 @@ pub async fn search_task_item_set_in_workspace(
                     snippet: scored.snippet,
                 })
         })
+        .collect::<Vec<_>>();
+    let metadata = results
+        .iter()
+        .map(|result| {
+            (
+                result.item.task.id.clone(),
+                (result.score, result.matched_field, result.snippet.clone()),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let grouped = if group_recurring {
+        let at =
+            chrono::DateTime::parse_from_rfc3339(&crate::ids::now())?.with_timezone(&chrono::Utc);
+        super::recurrence::group_search_task_items(
+            conn,
+            workspace_id,
+            results.into_iter().map(|result| result.item).collect(),
+            at,
+        )
+        .await?
+    } else {
+        results.into_iter().map(|result| result.item).collect()
+    };
+    let items = grouped
+        .into_iter()
+        .filter_map(|item| {
+            metadata
+                .get(&item.task.id)
+                .map(|metadata| TaskSearchResult {
+                    item,
+                    score: metadata.0,
+                    matched_field: metadata.1,
+                    snippet: metadata.2.clone(),
+                })
+        })
         .collect();
-    Ok(TaskSearchResultSet { items: results })
+    Ok(TaskSearchResultSet { items })
 }
 
 async fn scored_search_documents(
@@ -201,10 +250,7 @@ async fn scored_search_documents(
     };
     let parsed = parser::parse_task_search_query(&query.text);
     if parsed.trimmed.is_empty() {
-        return Ok(ScoredSearchResults {
-            items: Vec::new(),
-            total_matches: 0,
-        });
+        return Ok(ScoredSearchResults { items: Vec::new() });
     }
     let load_deleted = query.include_deleted || parsed.ref_query.is_some();
     let documents =
@@ -230,7 +276,6 @@ async fn scored_search_documents(
             Some(scored)
         })
         .collect::<Vec<_>>();
-    let total_matches = scored.len();
     scored.sort_by(|a, b| {
         b.score
             .cmp(&a.score)
@@ -239,10 +284,7 @@ async fn scored_search_documents(
             .then_with(|| a.document.task.id.cmp(&b.document.task.id))
     });
     scored.truncate(limit);
-    Ok(ScoredSearchResults {
-        items: scored,
-        total_matches,
-    })
+    Ok(ScoredSearchResults { items: scored })
 }
 
 pub async fn search_task_preview_set_in_workspace(
@@ -251,12 +293,21 @@ pub async fn search_task_preview_set_in_workspace(
     query: TaskSearchQuery,
 ) -> Result<TaskSearchPreviewResultSet> {
     let display_refs = DisplayRefContext::for_workspace(conn, workspace_id).await?;
-    let scored = scored_search_documents(conn, workspace_id, &query, &display_refs).await?;
+    let mut scored = scored_search_documents(conn, workspace_id, &query, &display_refs).await?;
     let task_ids = scored
         .items
         .iter()
         .map(|scored| scored.document.task.id.clone())
         .collect::<Vec<_>>();
+    let recurrence =
+        super::recurrence::task_recurrence_summaries(conn, workspace_id, &task_ids).await?;
+    let mut seen_series = std::collections::HashSet::new();
+    scored.items.retain(|scored| {
+        recurrence
+            .get(&scored.document.task.id)
+            .is_none_or(|summary| seen_series.insert(summary.series_id.clone()))
+    });
+    let total_matches = scored.items.len();
     let mut labels_by_task = labels_for_tasks(conn, workspace_id, &task_ids).await?;
     let mut epic_parents_by_task =
         epic_parents_for_tasks(conn, workspace_id, &task_ids, &display_refs).await?;
@@ -287,7 +338,7 @@ pub async fn search_task_preview_set_in_workspace(
         .collect();
     Ok(TaskSearchPreviewResultSet {
         items,
-        total_matches: scored.total_matches,
+        total_matches,
     })
 }
 
@@ -405,7 +456,9 @@ async fn load_attachment_text_search_documents(
     }
     query.push(") AND (");
     query.push_bind(include_deleted);
-    query.push(" OR t.deleted = 0) ORDER BY t.updated_at DESC, t.id");
+    query.push(" OR t.deleted = 0) AND ");
+    query.push(super::fragments::ordinary_task_clause("t"));
+    query.push(" ORDER BY t.updated_at DESC, t.id");
 
     let rows = query.build().fetch_all(&mut *conn).await?;
     search_documents_from_rows(rows, display_refs)
@@ -456,7 +509,13 @@ async fn load_ref_search_documents(
          t.status, t.priority, t.source, t.created_at, t.updated_at, t.queue_activity_at, t.available_at, t.due_on, t.deleted, t.is_epic,
          '' AS fts_labels, '' AS fts_notes
          FROM tasks t JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
-         WHERE t.workspace_id = ? AND (? OR t.deleted = 0) AND t.id LIKE ? || '%'
+         WHERE t.workspace_id = ? AND (? OR t.deleted = 0) AND NOT EXISTS (
+             SELECT 1 FROM recurrence_occurrences ro
+             JOIN recurrence_series rs ON rs.workspace_id = ro.workspace_id AND rs.id = ro.series_id
+             WHERE ro.workspace_id = t.workspace_id AND ro.task_id = t.id
+               AND (ro.projection_state = 'archived'
+                    OR (ro.projection_state = 'projected' AND rs.state = 'paused'))
+         ) AND t.id LIKE ? || '%'
          ORDER BY t.updated_at DESC, t.id",
     )
     .bind(workspace_id)
@@ -496,6 +555,13 @@ async fn load_fts_search_documents(
          JOIN tasks t ON t.workspace_id = d.workspace_id AND t.id = d.task_id
          JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
          WHERE task_search_fts MATCH ? AND d.workspace_id = ? AND (? OR t.deleted = 0)
+           AND NOT EXISTS (
+             SELECT 1 FROM recurrence_occurrences ro
+             JOIN recurrence_series rs ON rs.workspace_id = ro.workspace_id AND rs.id = ro.series_id
+             WHERE ro.workspace_id = t.workspace_id AND ro.task_id = t.id
+               AND (ro.projection_state = 'archived'
+                    OR (ro.projection_state = 'projected' AND rs.state = 'paused'))
+           )
          ORDER BY t.updated_at DESC, t.id",
     )
     .bind(&fts_match)

@@ -15,27 +15,55 @@ pub async fn list_recent_actions_in_workspace(
     project_scope: Option<&str>,
 ) -> Result<Vec<RecentActionItem>> {
     let display_refs = DisplayRefContext::for_workspace(conn, workspace_id).await?;
+    let series_refs = super::recurrence::SeriesRefContext::load(conn, workspace_id).await?;
 
     let rows = sqlx::query(
         "SELECT c.change_id, c.entity_type, c.entity_id, c.field, c.op_type, c.payload,
                 c.created_at, c.server_seq,
                 t.title AS task_title, t.status AS task_status, t.deleted AS task_deleted,
-                p.key AS project_key, p.name AS project_name, p.prefix AS project_prefix
+                p.key AS project_key, p.name AS project_name, p.prefix AS project_prefix,
+                rs.id AS recurrence_series_id, rs.title AS recurrence_series_title
          FROM changes c
          LEFT JOIN tasks t
            ON c.entity_type = 'task'
           AND t.workspace_id = ?
           AND t.id = c.entity_id
+         LEFT JOIN recurrence_occurrences ro
+           ON c.entity_type = 'task'
+          AND ro.workspace_id = ?
+          AND ro.task_id = c.entity_id
+         LEFT JOIN recurrence_series rs
+           ON rs.workspace_id = ?
+          AND rs.id = CASE
+              WHEN c.entity_type = 'recurrence_series' THEN c.entity_id
+              ELSE ro.series_id
+          END
          LEFT JOIN projects p
            ON p.workspace_id = ?
-          AND ((c.entity_type = 'project' AND p.id = c.entity_id) OR p.id = t.project_id)
+          AND ((c.entity_type = 'project' AND p.id = c.entity_id)
+               OR p.id = t.project_id OR p.id = rs.project_id)
          WHERE json_extract(c.payload, '$.workspace_id') = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM changes resolving
+             WHERE resolving.entity_type = 'recurrence_series'
+               AND resolving.op_type = 'resolve_recurrence_occurrence'
+               AND (
+                 json_extract(resolving.payload, '$.task_status_change_id') = c.change_id
+                 OR (c.op_type = 'create_task'
+                     AND json_extract(resolving.payload, '$.successor_task_id') = c.entity_id)
+                 OR (c.op_type = 'project_recurrence_occurrence'
+                     AND json_extract(resolving.payload, '$.successor_task_id') =
+                         json_extract(c.payload, '$.task_id'))
+               )
+           )
            AND (? IS NULL
                 OR p.key = ?
                 OR json_extract(c.payload, '$.project_key') = ?)
          ORDER BY c.created_at DESC, c.local_seq DESC
          LIMIT ?",
     )
+    .bind(workspace_id)
+    .bind(workspace_id)
     .bind(workspace_id)
     .bind(workspace_id)
     .bind(workspace_id)
@@ -47,7 +75,7 @@ pub async fn list_recent_actions_in_workspace(
     .await?;
 
     rows.into_iter()
-        .map(|row| action_from_row(row, workspace_id, &display_refs))
+        .map(|row| action_from_row(row, workspace_id, &display_refs, &series_refs))
         .collect()
 }
 
@@ -55,6 +83,7 @@ fn action_from_row(
     row: sqlx::sqlite::SqliteRow,
     workspace_id: &WorkspaceId,
     display_refs: &DisplayRefContext,
+    series_refs: &super::recurrence::SeriesRefContext,
 ) -> Result<RecentActionItem> {
     let change_id: String = row.try_get("change_id")?;
     let entity_type: String = row.try_get("entity_type")?;
@@ -71,8 +100,13 @@ fn action_from_row(
     let project_key: Option<String> = row.try_get("project_key")?;
     let project_name: Option<String> = row.try_get("project_name")?;
     let project_prefix: Option<String> = row.try_get("project_prefix")?;
+    let recurrence_series_id: Option<crate::recurrence::RecurrenceSeriesId> =
+        row.try_get("recurrence_series_id")?;
+    let recurrence_series_title: Option<String> = row.try_get("recurrence_series_title")?;
 
-    let display_ref = if entity_type == "task" {
+    let display_ref = if let Some(series_id) = recurrence_series_id.as_ref() {
+        Some(series_refs.display_ref(series_id))
+    } else if entity_type == "task" {
         let task_id = entity_id.parse()?;
         project_prefix
             .as_deref()
@@ -89,6 +123,16 @@ fn action_from_row(
         project_name.as_deref(),
     );
 
+    let grouped_change_count = if op_type == op_type::RESOLVE_RECURRENCE_OCCURRENCE {
+        if payload_string(&payload, "successor_task_id").is_some_and(|value| !value.is_empty()) {
+            4
+        } else {
+            2
+        }
+    } else {
+        1
+    };
+
     Ok(RecentActionItem {
         change_id,
         entity_type,
@@ -99,7 +143,7 @@ fn action_from_row(
         synced: server_seq.is_some(),
         target: RecentActionTarget {
             display_ref,
-            title: task_title.or(project_name),
+            title: recurrence_series_title.or(task_title).or(project_name),
             project_key,
             status: task_status,
             deleted: task_deleted == Some(1),
@@ -108,6 +152,7 @@ fn action_from_row(
         summary,
         detail,
         accent,
+        grouped_change_count,
     })
 }
 
@@ -120,6 +165,33 @@ fn action_text(
     project_name: Option<&str>,
 ) -> (String, String, Option<String>, String) {
     match (entity_type, op_type) {
+        ("recurrence_series", op_type::CREATE_RECURRENCE_SERIES) => (
+            "recurrence".to_string(),
+            "created recurring series".to_string(),
+            payload_string(payload, "title"),
+            "green".to_string(),
+        ),
+        ("recurrence_series", op_type::RESOLVE_RECURRENCE_OCCURRENCE) => {
+            let outcome = payload_string(payload, "outcome").unwrap_or_default();
+            (
+                "recurrence".to_string(),
+                format!("recorded recurring occurrence {outcome}"),
+                payload_string(payload, "slot_on"),
+                "green".to_string(),
+            )
+        }
+        ("recurrence_series", op_type::RECORD_RECURRENCE_OUTCOME) => (
+            "recurrence".to_string(),
+            "corrected recurring history".to_string(),
+            payload_string(payload, "slot_on"),
+            "blue".to_string(),
+        ),
+        ("recurrence_series", op_type::PROJECT_RECURRENCE_OCCURRENCE) => (
+            "recurrence".to_string(),
+            "projected recurring occurrence".to_string(),
+            payload_string(payload, "slot_on"),
+            "dim".to_string(),
+        ),
         ("task", op_type::CREATE_TASK) => (
             "create".to_string(),
             title_summary("created task", task_title),

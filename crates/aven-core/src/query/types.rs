@@ -1,7 +1,10 @@
 use crate::attachments::AttachmentBytesState;
-use crate::ids::TaskId;
+use crate::ids::{TaskId, WorkspaceId};
 use crate::queue::QueueMeta;
-use crate::types::Task;
+use crate::recurrence::{
+    RecurrenceOutcome, RecurrenceProjectionState, RecurrenceSeriesId, RecurrenceSeriesState,
+};
+use crate::types::{RecurrenceOccurrence, RecurrenceSeries, Task};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +66,7 @@ pub struct TaskFilters {
     pub overdue_only: bool,
     pub search: Option<String>,
     pub task_ids: Vec<TaskId>,
+    pub expand_recurring: bool,
 }
 
 impl TaskFilters {
@@ -92,6 +96,115 @@ impl TaskFilters {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskRecurrenceSummary {
+    pub series_id: RecurrenceSeriesId,
+    pub series_ref: String,
+    pub slot_on: String,
+    pub rule_label: String,
+    pub timezone: String,
+    pub lifecycle: RecurrenceSeriesState,
+    pub outcome: Option<RecurrenceOutcome>,
+    pub projection_state: RecurrenceProjectionState,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecurrenceCounts {
+    pub series_ref: String,
+    pub completed: usize,
+    pub skipped: usize,
+    pub missed: usize,
+    pub pause_intervals: usize,
+    pub latest_slot_on: Option<String>,
+    pub latest_outcome: Option<RecurrenceOutcome>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecurrenceSeriesSummary {
+    pub series: RecurrenceSeries,
+    pub series_ref: String,
+    pub rule_label: String,
+    pub current_slot_on: Option<String>,
+    pub current_task_ref: Option<String>,
+    pub counts: RecurrenceCounts,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecurrenceSeriesDetail {
+    pub series: RecurrenceSeries,
+    pub labels: Vec<String>,
+    pub summary: RecurrenceSeriesSummary,
+    pub current_occurrence: Option<RecurrenceOccurrence>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecurrenceHistoryKind {
+    Completed,
+    Skipped,
+    Missed,
+    Paused,
+}
+
+impl RecurrenceHistoryKind {
+    pub(crate) const fn order(self) -> u8 {
+        match self {
+            Self::Completed => 0,
+            Self::Skipped => 1,
+            Self::Missed => 2,
+            Self::Paused => 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceHistoryEntry {
+    pub kind: RecurrenceHistoryKind,
+    pub slot_on: Option<String>,
+    pub interval_started_at: Option<String>,
+    pub interval_ended_at: Option<String>,
+    pub task_id: Option<TaskId>,
+    pub task_ref: Option<String>,
+    pub openable: bool,
+    pub corrected: bool,
+    pub archived_projection: bool,
+    pub resolved_at: Option<String>,
+}
+
+impl RecurrenceHistoryEntry {
+    pub(crate) fn sort_key(&self) -> &str {
+        self.slot_on
+            .as_deref()
+            .or(self.interval_started_at.as_deref())
+            .unwrap_or("")
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RecurrenceHistoryPage {
+    pub series_ref: String,
+    pub items: Vec<RecurrenceHistoryEntry>,
+    pub offset: usize,
+    pub limit: usize,
+    pub total: usize,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecurrenceReconciliation {
+    pub workspace_id: Option<WorkspaceId>,
+    pub examined: usize,
+    pub changed: usize,
+    pub lifecycle_blocked: usize,
+    pub incomplete: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecurrenceTaskGroup {
+    pub series_id: RecurrenceSeriesId,
+    pub series_ref: String,
+    pub counts: RecurrenceCounts,
+}
+
 #[derive(Debug, Clone)]
 pub struct TaskListItem {
     pub task: Task,
@@ -107,6 +220,8 @@ pub struct TaskListItem {
     pub epic_children: Vec<TaskDependencyLink>,
     pub epic_parent: Option<TaskDependencyLink>,
     pub queue: QueueMeta,
+    pub recurrence: Option<TaskRecurrenceSummary>,
+    pub recurrence_group: Option<RecurrenceTaskGroup>,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -159,6 +274,7 @@ pub struct RecentActionItem {
     pub summary: String,
     pub detail: Option<String>,
     pub accent: String,
+    pub grouped_change_count: usize,
 }
 
 #[derive(Debug, Clone)]

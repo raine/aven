@@ -63,6 +63,7 @@ pub async fn build_task_list_items(
             .remove(&task_id)
             .unwrap_or_default();
         let epic_parent = enrichment.epic_parent_by_task.remove(&task_id);
+        let recurrence = enrichment.recurrence_by_task.remove(&task_id);
         let queue = queue_meta_on(
             &task,
             has_conflict,
@@ -86,6 +87,8 @@ pub async fn build_task_list_items(
             epic_children,
             epic_parent,
             queue,
+            recurrence,
+            recurrence_group: None,
         });
     }
 

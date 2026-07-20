@@ -542,6 +542,7 @@ mod tests {
             summary: "created task: Task".to_string(),
             detail: None,
             accent: "green".to_string(),
+            grouped_change_count: 1,
         }
     }
 

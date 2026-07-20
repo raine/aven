@@ -268,6 +268,8 @@ mod tests {
             blocks: Vec::new(),
             epic_children: Vec::new(),
             epic_parent: None,
+            recurrence: None,
+            recurrence_group: None,
             attachments: Vec::new(),
             queue: Default::default(),
         }

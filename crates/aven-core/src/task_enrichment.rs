@@ -3,7 +3,7 @@ use crate::ids::{TaskId, WorkspaceId};
 use std::collections::{HashMap, HashSet};
 
 use crate::query::fragments;
-use crate::query::{AttachmentMetadata, TaskDependencyLink, TaskNote};
+use crate::query::{AttachmentMetadata, TaskDependencyLink, TaskNote, TaskRecurrenceSummary};
 use crate::refs::DisplayRefContext;
 use anyhow::Result;
 use sqlx::sqlite::SqliteRow;
@@ -22,6 +22,7 @@ pub struct TaskEnrichment {
     pub blocks_by_task: HashMap<TaskId, Vec<TaskDependencyLink>>,
     pub epic_children_by_task: HashMap<TaskId, Vec<TaskDependencyLink>>,
     pub epic_parent_by_task: HashMap<TaskId, TaskDependencyLink>,
+    pub recurrence_by_task: HashMap<TaskId, TaskRecurrenceSummary>,
 }
 
 pub async fn load_task_enrichment(
@@ -61,6 +62,8 @@ pub async fn load_task_enrichment(
         epic_children_by_task: epic_children_for_tasks(conn, workspace_id, task_ids, display_refs)
             .await?,
         epic_parent_by_task: epic_parents_for_tasks(conn, workspace_id, task_ids, display_refs)
+            .await?,
+        recurrence_by_task: crate::query::task_recurrence_summaries(conn, workspace_id, task_ids)
             .await?,
     })
 }

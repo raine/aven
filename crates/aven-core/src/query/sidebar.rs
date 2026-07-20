@@ -15,7 +15,10 @@ COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'inbox' AND (t.available_at 
 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'active' AND (t.available_at = '' OR t.available_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) THEN 1 ELSE 0 END), 0) AS active_count,
 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'backlog' AND (t.available_at = '' OR t.available_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) THEN 1 ELSE 0 END), 0) AS backlog_count,
 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status = 'todo' AND (t.available_at = '' OR t.available_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) THEN 1 ELSE 0 END), 0) AS todo_count,
-COALESCE(SUM(CASE WHEN {} THEN 1 ELSE 0 END), 0) AS done_count,
+COALESCE(SUM(CASE WHEN {} AND NOT EXISTS (
+    SELECT 1 FROM recurrence_occurrences done_occurrence
+    WHERE done_occurrence.workspace_id = t.workspace_id AND done_occurrence.task_id = t.id
+) THEN 1 ELSE 0 END), 0) AS done_count,
 COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status NOT IN ('done', 'canceled') AND t.available_at != '' AND t.available_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now') THEN 1 ELSE 0 END), 0) AS upcoming_count",
         fragments::open_task_clause("t"),
         fragments::terminal_status_clause("t"),
@@ -43,15 +46,20 @@ fn sidebar_counts_sql(project_scoped: bool) -> String {
          (SELECT COUNT(DISTINCT c.task_id)
           FROM conflicts c
           JOIN tasks ct ON ct.workspace_id = c.workspace_id AND ct.id = c.task_id
-          WHERE c.workspace_id = ? AND c.resolved = 0 AND ct.deleted = 0{conflict_project}) AS conflicts_count,
+          WHERE c.workspace_id = ? AND c.resolved = 0 AND ct.deleted = 0
+            AND {}{conflict_project}) AS conflicts_count,
          (SELECT COUNT(*)
           FROM tasks ep
           WHERE ep.workspace_id = ?{epic_project}
             AND ep.deleted = 0 AND ep.status NOT IN ('done', 'canceled') AND ep.is_epic = 1
+            AND {}
             AND (ep.available_at = '' OR ep.available_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))) AS epics_count
          FROM tasks t
-         WHERE t.workspace_id = ?{task_project}",
+         WHERE t.workspace_id = ?{task_project} AND {}",
         sidebar_task_count_columns(),
+        fragments::ordinary_task_clause("ct"),
+        fragments::ordinary_task_clause("ep"),
+        fragments::ordinary_task_clause("t"),
     )
 }
 
@@ -84,6 +92,32 @@ pub async fn sidebar_counts_for_scope_in_workspace(
         q = q.bind(pid);
     }
     let row = q.fetch_one(&mut *conn).await?;
+    let recurring_done = if let Some(project_id) = project_id.as_ref() {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(DISTINCT o.series_id)
+             FROM recurrence_occurrences o
+             JOIN recurrence_series s
+               ON s.workspace_id = o.workspace_id AND s.id = o.series_id
+             WHERE o.workspace_id = ? AND s.project_id = ? AND s.deleted = 0
+               AND o.outcome IN ('completed', 'skipped')",
+        )
+        .bind(workspace_id)
+        .bind(project_id)
+        .fetch_one(&mut *conn)
+        .await?
+    } else {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(DISTINCT o.series_id)
+             FROM recurrence_occurrences o
+             JOIN recurrence_series s
+               ON s.workspace_id = o.workspace_id AND s.id = o.series_id
+             WHERE o.workspace_id = ? AND s.deleted = 0
+               AND o.outcome IN ('completed', 'skipped')",
+        )
+        .bind(workspace_id)
+        .fetch_one(&mut *conn)
+        .await?
+    };
     Ok(SidebarCounts {
         open: row.get("open_count"),
         inbox: row.get("inbox_count"),
@@ -91,7 +125,7 @@ pub async fn sidebar_counts_for_scope_in_workspace(
         backlog: row.get("backlog_count"),
         todo: row.get("todo_count"),
         conflicts: row.get("conflicts_count"),
-        done: row.get("done_count"),
+        done: row.get::<i64, _>("done_count") + recurring_done,
         epics: row.get("epics_count"),
         upcoming: row.get("upcoming_count"),
     })

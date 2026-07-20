@@ -47,6 +47,7 @@ pub async fn list_task_items_with_display_refs(
     direction: SortDirection,
     display_refs: &DisplayRefContext,
 ) -> Result<Vec<TaskListItem>> {
+    let expand_recurring = filters.expand_recurring;
     if let Some(status) = filters.status.as_deref() {
         TaskStatus::parse(status)?;
     }
@@ -80,6 +81,8 @@ pub async fn list_task_items_with_display_refs(
     push_filter_prefix(&mut query, &mut filters_added);
     query.push("t.workspace_id = ");
     query.push_bind(workspace_id.to_string());
+    push_filter_prefix(&mut query, &mut filters_added);
+    query.push(fragments::ordinary_task_clause("t"));
     if filters.deleted_only {
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("t.deleted = 1");
@@ -203,6 +206,11 @@ pub async fn list_task_items_with_display_refs(
         display_refs,
     )
     .await?;
+    if !expand_recurring {
+        let at =
+            chrono::DateTime::parse_from_rfc3339(&crate::ids::now())?.with_timezone(&chrono::Utc);
+        items = super::recurrence::group_terminal_task_items(conn, workspace_id, items, at).await?;
+    }
     if mode == TaskQueryMode::RankedQueue {
         items.sort_by(|a, b| queue_order((&a.task, a.queue), (&b.task, b.queue)));
     }
