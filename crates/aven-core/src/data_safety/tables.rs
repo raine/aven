@@ -240,6 +240,102 @@ pub(super) async fn import_blob_inventory(
     Ok(())
 }
 
+pub(super) async fn import_recurrence_series(
+    tx: &mut SqliteConnection,
+    rows: &[super::RecurrenceSeriesRow],
+) -> Result<()> {
+    for row in rows {
+        sqlx::query(
+            "INSERT INTO recurrence_series(workspace_id, id, title, description, project_id, priority, initial_status, frequency, interval, weekdays, timezone, start_on, available_local_time, due_policy, state, stopped_at, created_at, updated_at, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&row.workspace_id)
+        .bind(&row.id)
+        .bind(&row.title)
+        .bind(&row.description)
+        .bind(&row.project_id)
+        .bind(&row.priority)
+        .bind(&row.initial_status)
+        .bind(&row.frequency)
+        .bind(row.interval)
+        .bind(&row.weekdays)
+        .bind(&row.timezone)
+        .bind(&row.start_on)
+        .bind(&row.available_local_time)
+        .bind(&row.due_policy)
+        .bind(&row.state)
+        .bind(&row.stopped_at)
+        .bind(&row.created_at)
+        .bind(&row.updated_at)
+        .bind(row.deleted)
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
+pub(super) async fn import_recurrence_series_labels(
+    tx: &mut SqliteConnection,
+    rows: &[super::RecurrenceSeriesLabelRow],
+) -> Result<()> {
+    for row in rows {
+        sqlx::query(
+            "INSERT INTO recurrence_series_labels(workspace_id, series_id, label) VALUES (?, ?, ?)",
+        )
+        .bind(&row.workspace_id)
+        .bind(&row.series_id)
+        .bind(&row.label)
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
+pub(super) async fn import_recurrence_occurrences(
+    tx: &mut SqliteConnection,
+    rows: &[super::RecurrenceOccurrenceRow],
+) -> Result<()> {
+    for row in rows {
+        sqlx::query(
+            "INSERT INTO recurrence_occurrences(workspace_id, series_id, slot_on, task_id, outcome, resolved_at, outcome_change_id, projection_state, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&row.workspace_id)
+        .bind(&row.series_id)
+        .bind(&row.slot_on)
+        .bind(&row.task_id)
+        .bind(&row.outcome)
+        .bind(&row.resolved_at)
+        .bind(&row.outcome_change_id)
+        .bind(&row.projection_state)
+        .bind(&row.archived_at)
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
+pub(super) async fn import_recurrence_pause_intervals(
+    tx: &mut SqliteConnection,
+    rows: &[super::RecurrencePauseIntervalRow],
+) -> Result<()> {
+    for row in rows {
+        sqlx::query(
+            "INSERT INTO recurrence_pause_intervals(workspace_id, id, series_id, paused_at, resumed_at, suspended_slot_on, suspended_task_id, created_by_change_id, resolved_by_change_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&row.workspace_id)
+        .bind(&row.id)
+        .bind(&row.series_id)
+        .bind(&row.paused_at)
+        .bind(&row.resumed_at)
+        .bind(&row.suspended_slot_on)
+        .bind(&row.suspended_task_id)
+        .bind(&row.created_by_change_id)
+        .bind(&row.resolved_by_change_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
 pub(super) async fn import_changes(
     tx: &mut SqliteConnection,
     rows: &[super::ChangeRow],

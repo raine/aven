@@ -857,7 +857,7 @@ aven doctor [--integrity] [--json]
 
 The report includes config and database paths and their sources, current directory, workspace and project routing, database and workspace counts, client and sequence metadata, sync configuration and recent sync state, unresolved conflict count, daemon wake settings, and macOS service status. Attachment checks report image storage, cleanup eligibility, quotas, operations in progress, and inconsistencies.
 
-Normal doctor checks attachment records and local image availability. `--integrity` also runs SQLite and relationship checks across the database, verifies stored image hashes and sizes, decodes the images, and confirms their formats and dimensions. `--json` preserves each result as a labeled row with `ok`, `error`, or `info` status.
+Normal doctor checks attachment records and local image availability. `--integrity` also runs SQLite and relationship checks across the database, verifies recurrence schedule, identity, deterministic materialization, outcome, pause, lifecycle, and projection invariants, verifies stored image hashes and sizes, decodes the images, and confirms their formats and dimensions. A missing recurrence projection is a repairable warning with guidance to run `aven recur list`. Recurrence identity, outcome, pause, and lifecycle failures include guidance to preserve the database and recover from a known-good backup. `--json` preserves each result as a labeled row with `ok`, `warning`, `error`, or `info` status.
 
 ```sh
 aven doctor
@@ -891,7 +891,7 @@ aven backup [--output <path>]
 aven backup restore <path> --yes
 ```
 
-Without `--output`, backup creates a timestamped `.aven-backup.tar.zst` archive beside the active database. The archive contains a consistent database backup and every attachment image available on this device. Attachment records for missing images remain in the database, but the missing files cannot be included. Cached previews and incomplete files are excluded. Aven validates every included image while creating the archive.
+Without `--output`, backup creates a timestamped `.aven-backup.tar.zst` archive beside the active database. The archive contains a consistent database backup and every attachment image available on this device. The database preserves recurrence series, template labels, sparse occurrences, pause intervals, generalized conflicts and field versions, archived occurrence tasks, and occurrence-local notes and attachments. Attachment records for missing images remain in the database, but the missing files cannot be included. Cached previews and incomplete files are excluded. Aven validates every included image while creating the archive.
 
 `backup restore` requires `--yes`. Restore checks the archive, database, attachment information, and image files before replacing local data. It creates safety copies of the existing database and attachment directory first. Plain SQLite backup files remain accepted for database-only recovery.
 
@@ -909,7 +909,7 @@ Export portable user and sync metadata as JSON.
 aven export --output <path>
 ```
 
-The versioned export includes workspaces, projects, project paths and aliases, labels, tasks, epics, notes, dependencies, attachment information, changes, conflicts, and other portable data. Image files are excluded and the top-level `blobs_included` field is `false`. Parent directories are created as needed. The command reports workspace and task counts and output size.
+The export includes recurrence series, template labels, sparse occurrences, pause intervals, generalized conflicts, field versions, and the existing portable task data. Archived occurrence tasks remain ordinary task rows. Image files are excluded and `blobs_included` is `false`. Parent directories are created as needed. The command reports workspace and task counts and output size.
 
 ```sh
 aven export --output ~/backups/aven.json
@@ -923,9 +923,9 @@ Replace local data from an aven JSON export.
 aven import <path> --yes
 ```
 
-Import requires explicit confirmation with `--yes`. Aven validates the export, relationships, and attachment information before replacing local data. It creates a safety backup, preserves this installation's client identity, clears server-specific sync state, and runs integrity checks. Because JSON contains no image files, imported attachments are marked unavailable until sync or a backup restore supplies them.
+Import requires explicit confirmation with `--yes`. Aven validates the export, relationships, attachment information, fixed recurrence rules, IANA zones, stable series and task identities, lattice membership, deterministic task, change, timestamp, link, and field-version identities, outcome and status agreement, pause intervals, lifecycle boundaries, and projection uniqueness before replacing local data. It creates a safety backup, preserves this installation's client identity, clears server-specific sync state, and runs integrity checks. Archived tasks and occurrence-local fields, notes, and attachment metadata remain intact. Because JSON contains no image files, imported attachments are marked unavailable until sync or a backup restore supplies them.
 
-The export schema version must exactly match the installed aven schema.
+Exports without recurrence sections import every task as nonrecurring data.
 
 ```sh
 aven import ~/backups/aven.json --yes

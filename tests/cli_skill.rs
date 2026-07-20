@@ -29,6 +29,8 @@ fn skill_install_targets_explicit_agent() {
             "description: Use aven to find tasks, update status, and leave durable handoff context.",
             "# Aven CLI Primer",
             "aven list --ready",
+            "Older task-only exports import every task as nonrecurring data",
+            "repairable recurrence projection gap",
         ],
     );
     assert!(!home.join(".codex/skills/aven/SKILL.md").exists());
@@ -86,6 +88,29 @@ fn skill_install_rejects_unsupported_agent() {
     ));
     contains_all(&output, &["invalid value 'unknown'"]);
     contains_none(&output, &["installed aven skill"]);
+}
+
+#[test]
+fn recurrence_data_safety_documentation_covers_portability_and_consumers() {
+    let architecture = include_str!("../ARCHITECTURE.md");
+    let command_reference = include_str!("../docs/src/content/docs/command-reference.md");
+    let sync = include_str!("../docs/src/content/docs/sync.md");
+    for text in [architecture, command_reference, sync] {
+        contains_all(text, &["recurrence", "projection", "known-good backup"]);
+    }
+    contains_all(
+        architecture,
+        &["UniFFI consumer data-safety contract", "task-only exports"],
+    );
+    contains_all(
+        command_reference,
+        &[
+            "IANA zones",
+            "deterministic task, change, timestamp, link, and field-version identities",
+            "Exports without recurrence sections import every task as nonrecurring data",
+        ],
+    );
+    contains_all(sync, &["### UniFFI consumers", "opaque bytes"]);
 }
 
 fn skill_command<const N: usize>(home: &std::path::Path, args: [&str; N]) -> std::process::Output {

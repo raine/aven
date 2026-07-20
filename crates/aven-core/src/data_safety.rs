@@ -1,7 +1,15 @@
-use crate::choices::TaskSource;
+use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::ids::{ProjectId, TaskId, WorkspaceId};
-use anyhow::{Context, Result, bail};
+use crate::recurrence::{
+    RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceProjectionState,
+    RecurrenceRule, RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId,
+    WeekdaySet, derive_occurrence_identity, is_slot, slot_values,
+};
+use crate::task_fields::TaskField;
+use anyhow::{Context, Result, bail, ensure};
+use chrono::{DateTime, NaiveDate, NaiveTime};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::{SqliteConnection, query_scalar};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -10,6 +18,9 @@ mod archive;
 mod integrity;
 mod tables;
 use crate::db::{self, Database};
+
+const EXPORT_FORMAT: &str = "aven-export";
+const EXPORT_VERSION: i64 = 1;
 
 #[derive(Debug, Clone)]
 pub struct IntegrityReport {
@@ -52,6 +63,14 @@ pub struct ExportTables {
     pub task_attachments: Vec<TaskAttachmentRow>,
     #[serde(default)]
     pub blob_inventory: Vec<BlobInventoryExportRow>,
+    #[serde(default)]
+    pub recurrence_series: Vec<RecurrenceSeriesRow>,
+    #[serde(default)]
+    pub recurrence_series_labels: Vec<RecurrenceSeriesLabelRow>,
+    #[serde(default)]
+    pub recurrence_occurrences: Vec<RecurrenceOccurrenceRow>,
+    #[serde(default)]
+    pub recurrence_pause_intervals: Vec<RecurrencePauseIntervalRow>,
     pub changes: Vec<ChangeRow>,
     pub field_versions: Vec<FieldVersionRow>,
     pub conflicts: Vec<ConflictRow>,
@@ -189,6 +208,62 @@ pub struct BlobInventoryExportRow {
     pub last_verified_at: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct RecurrenceSeriesRow {
+    pub workspace_id: WorkspaceId,
+    pub id: RecurrenceSeriesId,
+    pub title: String,
+    pub description: String,
+    pub project_id: ProjectId,
+    pub priority: String,
+    pub initial_status: String,
+    pub frequency: String,
+    pub interval: i64,
+    pub weekdays: String,
+    pub timezone: String,
+    pub start_on: String,
+    pub available_local_time: String,
+    pub due_policy: String,
+    pub state: String,
+    pub stopped_at: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub deleted: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct RecurrenceSeriesLabelRow {
+    pub workspace_id: WorkspaceId,
+    pub series_id: RecurrenceSeriesId,
+    pub label: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct RecurrenceOccurrenceRow {
+    pub workspace_id: WorkspaceId,
+    pub series_id: RecurrenceSeriesId,
+    pub slot_on: String,
+    pub task_id: String,
+    pub outcome: String,
+    pub resolved_at: String,
+    pub outcome_change_id: String,
+    pub projection_state: String,
+    pub archived_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct RecurrencePauseIntervalRow {
+    pub workspace_id: WorkspaceId,
+    pub id: String,
+    pub series_id: RecurrenceSeriesId,
+    pub paused_at: String,
+    pub resumed_at: String,
+    pub suspended_slot_on: String,
+    pub suspended_task_id: String,
+    pub created_by_change_id: String,
+    pub resolved_by_change_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ChangeRow {
     pub change_id: String,
@@ -204,7 +279,7 @@ pub struct ChangeRow {
     pub server_seq: Option<i64>,
 }
 
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct FieldVersionRow {
     pub workspace_id: WorkspaceId,
     pub entity_type: String,
@@ -213,7 +288,7 @@ pub struct FieldVersionRow {
     pub version: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ConflictRow {
     pub id: i64,
     pub workspace_id: WorkspaceId,
@@ -243,8 +318,8 @@ impl Database {
         let mut conn = self.acquire().await?;
         let schema_version = db::current_schema_version(&mut conn).await?;
         Ok(AvenExport {
-            format: "aven-export".to_string(),
-            version: 1,
+            format: EXPORT_FORMAT.to_string(),
+            version: EXPORT_VERSION,
             exported_at,
             schema_version,
             blobs_included: false,
@@ -261,6 +336,10 @@ impl Database {
                 task_epic_links: scan_task_epic_links(&mut conn).await?,
                 task_attachments: scan_task_attachments(&mut conn).await?,
                 blob_inventory: scan_blob_inventory(&mut conn).await?,
+                recurrence_series: scan_recurrence_series(&mut conn).await?,
+                recurrence_series_labels: scan_recurrence_series_labels(&mut conn).await?,
+                recurrence_occurrences: scan_recurrence_occurrences(&mut conn).await?,
+                recurrence_pause_intervals: scan_recurrence_pause_intervals(&mut conn).await?,
                 changes: scan_changes(&mut conn).await?,
                 field_versions: scan_field_versions(&mut conn).await?,
                 conflicts: scan_conflicts(&mut conn).await?,
@@ -441,6 +520,44 @@ async fn scan_blob_inventory(conn: &mut SqliteConnection) -> Result<Vec<BlobInve
     .await
 }
 
+async fn scan_recurrence_series(conn: &mut SqliteConnection) -> Result<Vec<RecurrenceSeriesRow>> {
+    tables::scan_rows(
+        conn,
+        "SELECT workspace_id, id, title, description, project_id, priority, initial_status, frequency, interval, weekdays, timezone, start_on, available_local_time, due_policy, state, stopped_at, created_at, updated_at, deleted FROM recurrence_series",
+    )
+    .await
+}
+
+async fn scan_recurrence_series_labels(
+    conn: &mut SqliteConnection,
+) -> Result<Vec<RecurrenceSeriesLabelRow>> {
+    tables::scan_rows(
+        conn,
+        "SELECT workspace_id, series_id, label FROM recurrence_series_labels",
+    )
+    .await
+}
+
+async fn scan_recurrence_occurrences(
+    conn: &mut SqliteConnection,
+) -> Result<Vec<RecurrenceOccurrenceRow>> {
+    tables::scan_rows(
+        conn,
+        "SELECT workspace_id, series_id, slot_on, task_id, outcome, resolved_at, outcome_change_id, projection_state, archived_at FROM recurrence_occurrences",
+    )
+    .await
+}
+
+async fn scan_recurrence_pause_intervals(
+    conn: &mut SqliteConnection,
+) -> Result<Vec<RecurrencePauseIntervalRow>> {
+    tables::scan_rows(
+        conn,
+        "SELECT workspace_id, id, series_id, paused_at, resumed_at, suspended_slot_on, suspended_task_id, created_by_change_id, resolved_by_change_id FROM recurrence_pause_intervals",
+    )
+    .await
+}
+
 async fn scan_changes(conn: &mut SqliteConnection) -> Result<Vec<ChangeRow>> {
     tables::scan_rows(conn, "SELECT change_id, client_id, local_seq, entity_type, entity_id, field, op_type, payload, base_version, created_at, server_seq FROM changes").await
 }
@@ -461,22 +578,14 @@ async fn scan_meta(conn: &mut SqliteConnection) -> Result<Vec<MetaRow>> {
     tables::scan_rows(conn, "SELECT key, value FROM meta").await
 }
 
-async fn ensure_supported_export(conn: &mut SqliteConnection, export: &AvenExport) -> Result<()> {
-    if export.format != "aven-export" {
+async fn ensure_supported_export(_conn: &mut SqliteConnection, export: &AvenExport) -> Result<()> {
+    if export.format != EXPORT_FORMAT {
         bail!("error export-format-unsupported format={}", export.format);
     }
-    if export.version != 1 {
+    if export.version != EXPORT_VERSION {
         bail!(
             "error export-version-unsupported version={}",
             export.version
-        );
-    }
-    let current = db::current_schema_version(conn).await?;
-    if export.schema_version != current {
-        bail!(
-            "error export-schema-unsupported expected={} actual={}",
-            current,
-            export.schema_version
         );
     }
     Ok(())
@@ -701,7 +810,543 @@ fn validate_export_snapshot(export: &AvenExport) -> Result<()> {
         }
     }
 
+    if has_recurrence_data(export) {
+        validate_recurrence_snapshot(export, &workspace_ids, &project_ids, &label_keys, &task_ids)?;
+    }
+
     Ok(())
+}
+
+fn has_recurrence_data(export: &AvenExport) -> bool {
+    !export.tables.recurrence_series.is_empty()
+        || !export.tables.recurrence_series_labels.is_empty()
+        || !export.tables.recurrence_occurrences.is_empty()
+        || !export.tables.recurrence_pause_intervals.is_empty()
+}
+
+fn validate_recurrence_snapshot(
+    export: &AvenExport,
+    workspace_ids: &HashSet<WorkspaceId>,
+    project_ids: &HashMap<WorkspaceId, HashSet<ProjectId>>,
+    label_keys: &HashSet<(WorkspaceId, String)>,
+    task_ids: &HashMap<WorkspaceId, HashSet<TaskId>>,
+) -> Result<()> {
+    struct ValidatedSeries<'a> {
+        row: &'a RecurrenceSeriesRow,
+        schedule: RecurrenceSchedule,
+        state: RecurrenceSeriesState,
+        created_at: DateTime<chrono::FixedOffset>,
+        stopped_at: Option<DateTime<chrono::FixedOffset>>,
+    }
+
+    let task_rows = export
+        .tables
+        .tasks
+        .iter()
+        .map(|task| ((task.workspace_id.clone(), task.id.clone()), task))
+        .collect::<HashMap<_, _>>();
+    let mut change_rows = HashMap::new();
+    for change in &export.tables.changes {
+        ensure!(
+            change_rows
+                .insert(change.change_id.as_str(), change)
+                .is_none(),
+            "error invalid-export-snapshot change.change_id={} is duplicated",
+            change.change_id
+        );
+    }
+    let field_versions = export
+        .tables
+        .field_versions
+        .iter()
+        .map(|row| {
+            (
+                (
+                    row.workspace_id.clone(),
+                    row.entity_type.as_str(),
+                    row.entity_id.as_str(),
+                    row.field.as_str(),
+                ),
+                row.version.as_str(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    let mut series_by_id = HashMap::new();
+    for row in &export.tables.recurrence_series {
+        ensure!(
+            workspace_ids.contains(&row.workspace_id),
+            "error invalid-export-snapshot recurrence_series.workspace_id={} is missing",
+            row.workspace_id
+        );
+        ensure!(
+            project_ids
+                .get(&row.workspace_id)
+                .is_some_and(|projects| projects.contains(&row.project_id)),
+            "error invalid-export-snapshot recurrence_series.project_id={} is missing in workspace {}",
+            row.project_id,
+            row.workspace_id
+        );
+        TaskPriority::parse(&row.priority).context("invalid recurrence series priority")?;
+        let initial_status =
+            TaskStatus::parse(&row.initial_status).context("invalid recurrence initial status")?;
+        ensure!(
+            initial_status.is_open(),
+            "error invalid-export-snapshot recurrence initial status must be open"
+        );
+        let frequency = RecurrenceFrequency::parse(&row.frequency)?;
+        let interval = u32::try_from(row.interval).context("invalid recurrence interval")?;
+        let weekdays = row
+            .weekdays
+            .parse::<WeekdaySet>()
+            .map_err(anyhow::Error::msg)?;
+        let rule = RecurrenceRule::new(frequency, interval, weekdays)?;
+        let timezone = row.timezone.parse::<TimeZoneId>()?;
+        let start_on = row
+            .start_on
+            .parse::<NaiveDate>()
+            .context("invalid recurrence start date")?;
+        let available_local_time = optional_import_text(&row.available_local_time)
+            .map(|value| value.parse::<NaiveTime>())
+            .transpose()
+            .context("invalid recurrence availability time")?;
+        let due_policy = RecurrenceDuePolicy::parse(&row.due_policy)?;
+        let state = RecurrenceSeriesState::parse(&row.state)?;
+        let stopped_at = optional_import_text(&row.stopped_at)
+            .map(DateTime::parse_from_rfc3339)
+            .transpose()
+            .context("invalid recurrence stop time")?;
+        ensure!(
+            matches!(state, RecurrenceSeriesState::Stopped) == stopped_at.is_some(),
+            "error invalid-export-snapshot recurrence stopped state and stop time disagree"
+        );
+        let created_at = DateTime::parse_from_rfc3339(&row.created_at)
+            .context("invalid recurrence creation time")?;
+        DateTime::parse_from_rfc3339(&row.updated_at).context("invalid recurrence update time")?;
+        ensure!(
+            matches!(row.deleted, 0 | 1),
+            "error invalid-export-snapshot recurrence deleted value must be zero or one"
+        );
+        let key = (row.workspace_id.clone(), row.id.clone());
+        ensure!(
+            !series_by_id.contains_key(&key),
+            "error invalid-export-snapshot recurrence series identity is duplicated"
+        );
+        series_by_id.insert(
+            key,
+            ValidatedSeries {
+                row,
+                schedule: RecurrenceSchedule::new(
+                    rule,
+                    timezone,
+                    start_on,
+                    available_local_time,
+                    due_policy,
+                ),
+                state,
+                created_at,
+                stopped_at,
+            },
+        );
+    }
+
+    let mut series_label_keys = HashSet::new();
+    for row in &export.tables.recurrence_series_labels {
+        let series_key = (row.workspace_id.clone(), row.series_id.clone());
+        ensure!(
+            series_by_id.contains_key(&series_key),
+            "error invalid-export-snapshot recurrence series label has no series"
+        );
+        ensure!(
+            label_keys.contains(&(row.workspace_id.clone(), row.label.clone())),
+            "error invalid-export-snapshot recurrence series label={} is missing",
+            row.label
+        );
+        ensure!(
+            series_label_keys.insert((row.workspace_id.clone(), row.series_id.clone(), &row.label)),
+            "error invalid-export-snapshot recurrence series label is duplicated"
+        );
+    }
+
+    let mut occurrence_keys = HashSet::new();
+    let mut occurrence_tasks = HashSet::new();
+    let mut projected_series = HashSet::new();
+    for row in &export.tables.recurrence_occurrences {
+        let series_key = (row.workspace_id.clone(), row.series_id.clone());
+        let series = series_by_id
+            .get(&series_key)
+            .context("error invalid-export-snapshot recurrence occurrence has no series")?;
+        let slot_on = row
+            .slot_on
+            .parse::<NaiveDate>()
+            .context("invalid recurrence slot date")?;
+        ensure!(
+            occurrence_keys.insert((row.workspace_id.clone(), row.series_id.clone(), slot_on)),
+            "error invalid-export-snapshot recurrence occurrence identity is duplicated"
+        );
+        ensure!(
+            is_slot(&series.schedule.rule, series.schedule.start_on, slot_on),
+            "error invalid-export-snapshot recurrence slot={} is outside the series lattice",
+            slot_on
+        );
+        let slot = slot_values(&series.schedule, slot_on)?;
+        let boundary = DateTime::parse_from_rfc3339(&slot.boundary_at)?;
+        let creation_date = series
+            .created_at
+            .with_timezone(&series.schedule.timezone.timezone())
+            .date_naive();
+        ensure!(
+            slot_on >= creation_date,
+            "error invalid-export-snapshot recurrence slot={} precedes the series lifecycle",
+            slot_on
+        );
+        if let Some(stopped_at) = series.stopped_at {
+            ensure!(
+                boundary <= stopped_at,
+                "error invalid-export-snapshot recurrence slot={} exceeds the stop boundary",
+                slot_on
+            );
+        }
+
+        let projection_state = RecurrenceProjectionState::parse(&row.projection_state)?;
+        let outcome = optional_import_text(&row.outcome)
+            .map(RecurrenceOutcome::parse)
+            .transpose()?;
+        let task_id = optional_import_text(&row.task_id)
+            .map(str::parse::<TaskId>)
+            .transpose()?;
+        let resolved_at = optional_import_text(&row.resolved_at);
+        let outcome_change_id = optional_import_text(&row.outcome_change_id);
+        let archived_at = optional_import_text(&row.archived_at);
+        let valid_shape = match projection_state {
+            RecurrenceProjectionState::Projected => {
+                task_id.is_some()
+                    && outcome.is_none()
+                    && resolved_at.is_none()
+                    && outcome_change_id.is_none()
+                    && archived_at.is_none()
+            }
+            RecurrenceProjectionState::Resolved => {
+                task_id.is_some()
+                    && outcome.is_some()
+                    && resolved_at.is_some()
+                    && outcome_change_id.is_some()
+                    && archived_at.is_none()
+            }
+            RecurrenceProjectionState::Archived => {
+                task_id.is_some()
+                    && outcome.is_none()
+                    && resolved_at.is_none()
+                    && outcome_change_id.is_none()
+                    && archived_at.is_some()
+            }
+            RecurrenceProjectionState::Corrected => {
+                task_id.is_none()
+                    && outcome.is_some()
+                    && resolved_at.is_some()
+                    && outcome_change_id.is_some()
+                    && archived_at.is_none()
+            }
+        };
+        ensure!(
+            valid_shape,
+            "error invalid-export-snapshot recurrence occurrence state and fields disagree"
+        );
+        if matches!(projection_state, RecurrenceProjectionState::Projected) {
+            ensure!(
+                projected_series.insert(series_key.clone()),
+                "error invalid-export-snapshot recurrence projection is not unique"
+            );
+        }
+        for value in [resolved_at, archived_at].into_iter().flatten() {
+            DateTime::parse_from_rfc3339(value)
+                .context("invalid recurrence occurrence timestamp")?;
+        }
+
+        if let Some(task_id) = task_id {
+            ensure!(
+                task_ids
+                    .get(&row.workspace_id)
+                    .is_some_and(|tasks| tasks.contains(&task_id)),
+                "error invalid-export-snapshot recurrence task={} is missing",
+                task_id
+            );
+            ensure!(
+                occurrence_tasks.insert((row.workspace_id.clone(), task_id.clone())),
+                "error invalid-export-snapshot recurrence task link is duplicated"
+            );
+            let identity = derive_occurrence_identity(
+                &row.workspace_id,
+                &row.series_id,
+                &series.schedule,
+                slot_on,
+            )?;
+            ensure!(
+                identity.task_id == task_id,
+                "error invalid-export-snapshot recurrence deterministic task identity mismatch slot={slot_on}"
+            );
+            let task = task_rows
+                .get(&(row.workspace_id.clone(), task_id.clone()))
+                .context("error invalid-export-snapshot recurrence task row is missing")?;
+            ensure!(
+                task.created_at == identity.created_at,
+                "error invalid-export-snapshot recurrence deterministic task timestamp mismatch slot={slot_on}"
+            );
+            match outcome {
+                Some(RecurrenceOutcome::Completed) => ensure!(
+                    task.status == "done",
+                    "error invalid-export-snapshot recurrence completed outcome requires done task"
+                ),
+                Some(RecurrenceOutcome::Skipped) => ensure!(
+                    task.status == "canceled",
+                    "error invalid-export-snapshot recurrence skipped outcome requires canceled task"
+                ),
+                None if matches!(projection_state, RecurrenceProjectionState::Projected) => {
+                    ensure!(
+                        TaskStatus::parse(&task.status)?.is_open(),
+                        "error invalid-export-snapshot recurrence projected task must be open"
+                    );
+                }
+                None => {}
+            }
+            validate_deterministic_change(
+                change_rows.get(identity.task_change_id.as_str()).copied(),
+                &identity,
+                slot_on,
+                false,
+            )?;
+            validate_deterministic_change(
+                change_rows
+                    .get(identity.occurrence_change_id.as_str())
+                    .copied(),
+                &identity,
+                slot_on,
+                true,
+            )?;
+            for field in TaskField::VERSIONED {
+                let version = field_versions
+                    .get(&(
+                        row.workspace_id.clone(),
+                        "task",
+                        task_id.as_str(),
+                        field.as_str(),
+                    ))
+                    .context(
+                        "error invalid-export-snapshot recurrence task field version is missing",
+                    )?;
+                if *version == identity.field_version_seeds.task {
+                    continue;
+                }
+                ensure!(
+                    change_rows.contains_key(version),
+                    "error invalid-export-snapshot recurrence task field version has no change"
+                );
+            }
+        }
+
+        if let Some(change_id) = outcome_change_id {
+            let change = change_rows
+                .get(change_id)
+                .context("error invalid-export-snapshot recurrence outcome change is missing")?;
+            ensure!(
+                change.entity_type == "recurrence_series"
+                    && change.entity_id == row.series_id.as_str()
+                    && change.field.as_deref() == Some("outcome")
+                    && matches!(
+                        change.op_type.as_str(),
+                        "resolve_recurrence_occurrence" | "record_recurrence_outcome"
+                    ),
+                "error invalid-export-snapshot recurrence outcome change identity mismatch"
+            );
+            let payload: Value = serde_json::from_str(&change.payload)
+                .context("invalid recurrence outcome change payload")?;
+            ensure!(
+                payload.get("slot_on").and_then(Value::as_str) == Some(row.slot_on.as_str())
+                    && payload.get("outcome").and_then(Value::as_str)
+                        == outcome.map(RecurrenceOutcome::as_str)
+                    && payload.get("resolved_at").and_then(Value::as_str) == resolved_at,
+                "error invalid-export-snapshot recurrence outcome change payload mismatch"
+            );
+        }
+    }
+
+    let mut pause_ids = HashSet::new();
+    let mut pauses_by_series: HashMap<_, Vec<_>> = HashMap::new();
+    for row in &export.tables.recurrence_pause_intervals {
+        let series_key = (row.workspace_id.clone(), row.series_id.clone());
+        let series = series_by_id
+            .get(&series_key)
+            .context("error invalid-export-snapshot recurrence pause has no series")?;
+        ensure!(
+            pause_ids.insert((row.workspace_id.clone(), row.id.as_str())),
+            "error invalid-export-snapshot recurrence pause identity is duplicated"
+        );
+        let paused_at = DateTime::parse_from_rfc3339(&row.paused_at)
+            .context("invalid recurrence pause time")?;
+        let resumed_at = optional_import_text(&row.resumed_at)
+            .map(DateTime::parse_from_rfc3339)
+            .transpose()
+            .context("invalid recurrence resume time")?;
+        ensure!(
+            resumed_at.is_none_or(|resumed| resumed > paused_at),
+            "error invalid-export-snapshot recurrence pause interval is inverted"
+        );
+        ensure!(
+            paused_at >= series.created_at,
+            "error invalid-export-snapshot recurrence pause precedes the series lifecycle"
+        );
+        if let Some(stopped_at) = series.stopped_at {
+            ensure!(
+                paused_at <= stopped_at && resumed_at.is_none_or(|resumed| resumed <= stopped_at),
+                "error invalid-export-snapshot recurrence pause exceeds the stop boundary"
+            );
+        }
+        ensure!(
+            resumed_at.is_some() != row.resolved_by_change_id.is_empty(),
+            "error invalid-export-snapshot recurrence pause resolution fields disagree"
+        );
+        ensure!(
+            row.suspended_slot_on.is_empty() == row.suspended_task_id.is_empty(),
+            "error invalid-export-snapshot recurrence suspended task fields disagree"
+        );
+        if !row.suspended_slot_on.is_empty() {
+            let slot_on = row.suspended_slot_on.parse::<NaiveDate>()?;
+            let task_id = row.suspended_task_id.parse::<TaskId>()?;
+            ensure!(
+                occurrence_keys.contains(&(
+                    row.workspace_id.clone(),
+                    row.series_id.clone(),
+                    slot_on
+                )) && occurrence_tasks.contains(&(row.workspace_id.clone(), task_id)),
+                "error invalid-export-snapshot recurrence suspended task link is missing"
+            );
+        }
+        for change_id in [
+            Some(row.created_by_change_id.as_str()),
+            optional_import_text(&row.resolved_by_change_id),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let change = change_rows
+                .get(change_id)
+                .context("error invalid-export-snapshot recurrence pause change is missing")?;
+            ensure!(
+                change.entity_type == "recurrence_series"
+                    && change.entity_id == row.series_id.as_str(),
+                "error invalid-export-snapshot recurrence pause change identity mismatch"
+            );
+        }
+        pauses_by_series
+            .entry(series_key)
+            .or_default()
+            .push((paused_at, resumed_at));
+    }
+    for pauses in pauses_by_series.values_mut() {
+        pauses.sort_by_key(|(paused_at, _)| *paused_at);
+        for pair in pauses.windows(2) {
+            ensure!(
+                pair[0].1.is_some_and(|resumed_at| resumed_at <= pair[1].0),
+                "error invalid-export-snapshot recurrence pause intervals overlap"
+            );
+        }
+    }
+
+    for series in series_by_id.values() {
+        let has_lifecycle_conflict = export.tables.conflicts.iter().any(|conflict| {
+            conflict.workspace_id == series.row.workspace_id
+                && conflict.entity_type == "recurrence_series"
+                && conflict.entity_id == series.row.id.as_str()
+                && conflict.field == "state"
+                && conflict.resolved == 0
+        });
+        let has_open_pause = pauses_by_series
+            .get(&(series.row.workspace_id.clone(), series.row.id.clone()))
+            .is_some_and(|pauses| pauses.iter().any(|(_, resumed_at)| resumed_at.is_none()));
+        if !has_lifecycle_conflict {
+            ensure!(
+                matches!(series.state, RecurrenceSeriesState::Paused) == has_open_pause,
+                "error invalid-export-snapshot recurrence state and open pause disagree"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_deterministic_change(
+    change: Option<&ChangeRow>,
+    identity: &crate::recurrence::RecurrenceOccurrenceIdentity,
+    slot_on: NaiveDate,
+    projection: bool,
+) -> Result<()> {
+    let change = change
+        .context("error invalid-export-snapshot recurrence deterministic change is missing")?;
+    let (entity_type, entity_id, field, op_type, created_at) = if projection {
+        (
+            "recurrence_series",
+            identity.occurrence_link.series_id.as_str(),
+            Some("projection"),
+            "project_recurrence_occurrence",
+            identity.occurrence_link.projected_at.as_str(),
+        )
+    } else {
+        (
+            "task",
+            identity.task_id.as_str(),
+            None,
+            "create_task",
+            identity.created_at.as_str(),
+        )
+    };
+    ensure!(
+        change.entity_type == entity_type
+            && change.entity_id == entity_id
+            && change.field.as_deref() == field
+            && change.op_type == op_type
+            && change.created_at == created_at,
+        "error invalid-export-snapshot recurrence deterministic change identity mismatch"
+    );
+    let payload: Value = serde_json::from_str(&change.payload)
+        .context("invalid recurrence deterministic change payload")?;
+    for (key, expected) in [
+        ("task_id", identity.task_id.as_str()),
+        ("series_id", identity.occurrence_link.series_id.as_str()),
+        ("task_change_id", identity.task_change_id.as_str()),
+        (
+            "occurrence_change_id",
+            identity.occurrence_change_id.as_str(),
+        ),
+        (
+            "task_field_version_seed",
+            identity.field_version_seeds.task.as_str(),
+        ),
+        (
+            "occurrence_field_version_seed",
+            identity.field_version_seeds.occurrence.as_str(),
+        ),
+    ] {
+        ensure!(
+            payload.get(key).and_then(Value::as_str) == Some(expected),
+            "error invalid-export-snapshot recurrence deterministic payload field={key} mismatch"
+        );
+    }
+    ensure!(
+        payload.get("slot_on").and_then(Value::as_str) == Some(&slot_on.to_string()),
+        "error invalid-export-snapshot recurrence deterministic payload slot mismatch"
+    );
+    if projection {
+        ensure!(
+            payload.get("projected_at").and_then(Value::as_str)
+                == Some(identity.occurrence_link.projected_at.as_str()),
+            "error invalid-export-snapshot recurrence deterministic projection link mismatch"
+        );
+    }
+    Ok(())
+}
+
+fn optional_import_text(value: &str) -> Option<&str> {
+    (!value.is_empty()).then_some(value)
 }
 
 async fn replace_from_export(
@@ -709,6 +1354,7 @@ async fn replace_from_export(
     export: &AvenExport,
     target_client_id: &str,
 ) -> Result<()> {
+    let recurrence_data = has_recurrence_data(export);
     let delete_order = [
         "DELETE FROM recurrence_pause_intervals",
         "DELETE FROM recurrence_occurrences",
@@ -792,6 +1438,25 @@ async fn replace_from_export(
         .changes
         .iter()
         .filter(|change| !suppressed_attachment_changes.contains(change.change_id.as_str()))
+        .filter(|change| {
+            recurrence_data
+                || (change.entity_type != "recurrence_series"
+                    && !change.op_type.contains("recurrence"))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let field_versions = export
+        .tables
+        .field_versions
+        .iter()
+        .filter(|row| recurrence_data || row.entity_type != "recurrence_series")
+        .cloned()
+        .collect::<Vec<_>>();
+    let conflicts = export
+        .tables
+        .conflicts
+        .iter()
+        .filter(|row| recurrence_data || row.entity_type != "recurrence_series")
         .cloned()
         .collect::<Vec<_>>();
 
@@ -807,9 +1472,17 @@ async fn replace_from_export(
     tables::import_task_epic_links(tx, &export.tables.task_epic_links).await?;
     tables::import_blob_inventory(tx, &export.tables.blob_inventory).await?;
     tables::import_task_attachments(tx, &attachments).await?;
+    if recurrence_data {
+        tables::import_recurrence_series(tx, &export.tables.recurrence_series).await?;
+        tables::import_recurrence_series_labels(tx, &export.tables.recurrence_series_labels)
+            .await?;
+        tables::import_recurrence_occurrences(tx, &export.tables.recurrence_occurrences).await?;
+        tables::import_recurrence_pause_intervals(tx, &export.tables.recurrence_pause_intervals)
+            .await?;
+    }
     tables::import_changes(tx, &changes).await?;
-    tables::import_field_versions(tx, &export.tables.field_versions).await?;
-    tables::import_conflicts(tx, &export.tables.conflicts).await?;
+    tables::import_field_versions(tx, &field_versions).await?;
+    tables::import_conflicts(tx, &conflicts).await?;
 
     Ok(())
 }
@@ -914,7 +1587,7 @@ async fn database_integrity_report_with_connection(
     checks.push(count_check(
         conn,
         "field version changes",
-        "SELECT count(*) FROM field_versions fv LEFT JOIN changes c ON c.change_id = fv.version WHERE c.change_id IS NULL",
+        "SELECT count(*) FROM field_versions fv LEFT JOIN changes c ON c.change_id = fv.version WHERE c.change_id IS NULL AND NOT (fv.entity_type = 'task' AND EXISTS (SELECT 1 FROM recurrence_occurrences o WHERE o.workspace_id = fv.workspace_id AND o.task_id = fv.entity_id))",
     )
     .await?);
     checks.extend(integrity::recurrence_integrity_checks(conn).await?);
@@ -933,7 +1606,7 @@ pub(crate) fn ensure_integrity_ok(report: &IntegrityReport) -> Result<()> {
         bad.push("quick check");
     }
     for check in &report.checks {
-        if !check.ok {
+        if !check.ok && check.label != "recurrence projection gaps" {
             bad.push(check.label);
         }
     }

@@ -4,6 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use chrono::DateTime;
+use serde_json::Value;
 use sqlx::{SqliteConnection, query_scalar};
 
 use crate::attachments::storage::{object_path, sha256_hex};
@@ -66,6 +67,12 @@ pub(crate) async fn recurrence_integrity_checks(
     .await?);
     checks.push(count_check(
         conn,
+        "recurrence projection gaps",
+        "SELECT count(*) FROM recurrence_series s WHERE s.state = 'active' AND s.deleted = 0 AND NOT EXISTS (SELECT 1 FROM recurrence_occurrences o WHERE o.workspace_id = s.workspace_id AND o.series_id = s.id AND o.projection_state = 'projected') AND NOT EXISTS (SELECT 1 FROM conflicts c WHERE c.workspace_id = s.workspace_id AND c.entity_type = 'recurrence_series' AND c.entity_id = s.id AND c.field = 'state' AND c.resolved = 0)",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
         "recurrence task links",
         "SELECT count(*) FROM recurrence_occurrences o LEFT JOIN tasks t ON t.workspace_id = o.workspace_id AND t.id = o.task_id WHERE o.task_id != '' AND t.id IS NULL",
     )
@@ -84,6 +91,12 @@ pub(crate) async fn recurrence_integrity_checks(
     .await?);
     checks.push(count_check(
         conn,
+        "recurrence outcome changes",
+        "SELECT count(*) FROM recurrence_occurrences o LEFT JOIN changes c ON c.change_id = o.outcome_change_id AND c.entity_type = 'recurrence_series' AND c.entity_id = o.series_id AND c.field = 'outcome' AND c.op_type IN ('resolve_recurrence_occurrence', 'record_recurrence_outcome') AND CASE WHEN json_valid(c.payload) THEN json_extract(c.payload, '$.slot_on') END = o.slot_on AND CASE WHEN json_valid(c.payload) THEN json_extract(c.payload, '$.outcome') END = o.outcome AND CASE WHEN json_valid(c.payload) THEN json_extract(c.payload, '$.resolved_at') END = o.resolved_at WHERE o.outcome_change_id != '' AND c.change_id IS NULL",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
         "recurrence corrected slots",
         "SELECT count(*) FROM recurrence_occurrences WHERE projection_state = 'corrected' AND (task_id != '' OR outcome = '' OR resolved_at = '' OR outcome_change_id = '' OR archived_at != '')",
     )
@@ -98,6 +111,18 @@ pub(crate) async fn recurrence_integrity_checks(
         conn,
         "recurrence pause tasks",
         "SELECT count(*) FROM recurrence_pause_intervals p LEFT JOIN recurrence_occurrences o ON o.workspace_id = p.workspace_id AND o.series_id = p.series_id AND o.slot_on = p.suspended_slot_on AND o.task_id = p.suspended_task_id WHERE p.suspended_task_id != '' AND o.task_id IS NULL",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
+        "recurrence pause changes",
+        "SELECT count(*) FROM recurrence_pause_intervals p LEFT JOIN changes opened ON opened.change_id = p.created_by_change_id AND opened.entity_type = 'recurrence_series' AND opened.entity_id = p.series_id LEFT JOIN changes closed ON closed.change_id = p.resolved_by_change_id AND closed.entity_type = 'recurrence_series' AND closed.entity_id = p.series_id WHERE opened.change_id IS NULL OR (p.resolved_by_change_id != '' AND closed.change_id IS NULL)",
+    )
+    .await?);
+    checks.push(count_check(
+        conn,
+        "recurrence lifecycle state",
+        "SELECT count(*) FROM recurrence_series s WHERE NOT EXISTS (SELECT 1 FROM conflicts c WHERE c.workspace_id = s.workspace_id AND c.entity_type = 'recurrence_series' AND c.entity_id = s.id AND c.field = 'state' AND c.resolved = 0) AND ((s.state = 'paused') != EXISTS (SELECT 1 FROM recurrence_pause_intervals p WHERE p.workspace_id = s.workspace_id AND p.series_id = s.id AND p.resumed_at = ''))",
     )
     .await?);
     checks.push(count_check(
@@ -142,7 +167,11 @@ async fn recurrence_row_checks(conn: &mut SqliteConnection) -> Result<Vec<Integr
         .await?;
     let mut invalid_occurrences = 0_usize;
     let mut deterministic_identity_mismatches = 0_usize;
+    let mut deterministic_change_mismatches = 0_usize;
+    let mut deterministic_timestamp_mismatches = 0_usize;
+    let mut deterministic_field_version_mismatches = 0_usize;
     let mut off_lattice_slots = 0_usize;
+    let mut creation_boundary_violations = 0_usize;
     let mut stop_boundary_violations = 0_usize;
     for row in &occurrence_rows {
         let Ok(occurrence) = recurrence_occurrence_from_row(row) else {
@@ -165,6 +194,17 @@ async fn recurrence_row_checks(conn: &mut SqliteConnection) -> Result<Vec<Integr
             series.available_local_time,
             series.due_policy,
         );
+        let created_date =
+            DateTime::parse_from_rfc3339(&series.created_at)
+                .ok()
+                .map(|created_at| {
+                    created_at
+                        .with_timezone(&series.timezone.timezone())
+                        .date_naive()
+                });
+        if created_date.is_none_or(|created_date| occurrence.slot_on < created_date) {
+            creation_boundary_violations += 1;
+        }
         if let Some(task_id) = &occurrence.task_id {
             match derive_occurrence_identity(
                 &occurrence.workspace_id,
@@ -172,7 +212,73 @@ async fn recurrence_row_checks(conn: &mut SqliteConnection) -> Result<Vec<Integr
                 &schedule,
                 occurrence.slot_on,
             ) {
-                Ok(identity) if identity.task_id == *task_id => {}
+                Ok(identity) if identity.task_id == *task_id => {
+                    let created_at: Option<String> = sqlx::query_scalar(
+                        "SELECT created_at FROM tasks WHERE workspace_id = ? AND id = ?",
+                    )
+                    .bind(&occurrence.workspace_id)
+                    .bind(task_id)
+                    .fetch_optional(&mut *conn)
+                    .await?;
+                    if created_at.as_deref() != Some(identity.created_at.as_str()) {
+                        deterministic_timestamp_mismatches += 1;
+                    }
+                    let task_change_payload: Option<String> = sqlx::query_scalar(
+                        "SELECT payload FROM changes WHERE change_id = ? AND entity_type = 'task' AND entity_id = ? AND field IS NULL AND op_type = 'create_task' AND created_at = ?",
+                    )
+                    .bind(&identity.task_change_id)
+                    .bind(task_id)
+                    .bind(&identity.created_at)
+                    .fetch_optional(&mut *conn)
+                    .await?;
+                    let occurrence_change_payload: Option<String> = sqlx::query_scalar(
+                        "SELECT payload FROM changes WHERE change_id = ? AND entity_type = 'recurrence_series' AND entity_id = ? AND field = 'projection' AND op_type = 'project_recurrence_occurrence' AND created_at = ?",
+                    )
+                    .bind(&identity.occurrence_change_id)
+                    .bind(&occurrence.series_id)
+                    .bind(&identity.occurrence_link.projected_at)
+                    .fetch_optional(&mut *conn)
+                    .await?;
+                    if task_change_payload.as_deref().is_none_or(|payload| {
+                        !deterministic_payload_matches(
+                            payload,
+                            &identity,
+                            occurrence.slot_on,
+                            false,
+                        )
+                    }) || occurrence_change_payload.as_deref().is_none_or(|payload| {
+                        !deterministic_payload_matches(payload, &identity, occurrence.slot_on, true)
+                    }) {
+                        deterministic_change_mismatches += 1;
+                    }
+                    for field in crate::task_fields::TaskField::VERSIONED {
+                        let version: Option<String> = sqlx::query_scalar(
+                            "SELECT version FROM field_versions WHERE workspace_id = ? AND entity_type = 'task' AND entity_id = ? AND field = ?",
+                        )
+                        .bind(&occurrence.workspace_id)
+                        .bind(task_id)
+                        .bind(field.as_str())
+                        .fetch_optional(&mut *conn)
+                        .await?;
+                        let valid = match version {
+                            Some(version) if version == identity.field_version_seeds.task => true,
+                            Some(version) => {
+                                sqlx::query_scalar::<_, i64>(
+                                    "SELECT count(*) FROM changes WHERE change_id = ?",
+                                )
+                                .bind(version)
+                                .fetch_one(&mut *conn)
+                                .await?
+                                    == 1
+                            }
+                            None => false,
+                        };
+                        if !valid {
+                            deterministic_field_version_mismatches += 1;
+                            break;
+                        }
+                    }
+                }
                 _ => deterministic_identity_mismatches += 1,
             }
         }
@@ -195,7 +301,20 @@ async fn recurrence_row_checks(conn: &mut SqliteConnection) -> Result<Vec<Integr
         .await?;
     let invalid_pauses = pause_rows
         .iter()
-        .filter(|row| recurrence_pause_interval_from_row(row).is_err())
+        .filter(|row| {
+            let Ok(pause) = recurrence_pause_interval_from_row(row) else {
+                return true;
+            };
+            let Ok(paused_at) = DateTime::parse_from_rfc3339(&pause.paused_at) else {
+                return true;
+            };
+            pause.resumed_at.as_deref().is_some_and(
+                |resumed_at| match DateTime::parse_from_rfc3339(resumed_at) {
+                    Ok(resumed_at) => resumed_at <= paused_at,
+                    Err(_) => true,
+                },
+            )
+        })
         .count();
 
     Ok(vec![
@@ -206,10 +325,61 @@ async fn recurrence_row_checks(conn: &mut SqliteConnection) -> Result<Vec<Integr
             "recurrence deterministic task identity",
             deterministic_identity_mismatches,
         ),
+        issue_count_check(
+            "recurrence deterministic changes",
+            deterministic_change_mismatches,
+        ),
+        issue_count_check(
+            "recurrence deterministic timestamps",
+            deterministic_timestamp_mismatches,
+        ),
+        issue_count_check(
+            "recurrence deterministic field versions",
+            deterministic_field_version_mismatches,
+        ),
         issue_count_check("recurrence schedule slots", off_lattice_slots),
+        issue_count_check(
+            "recurrence creation boundaries",
+            creation_boundary_violations,
+        ),
         issue_count_check("recurrence pause rows", invalid_pauses),
         issue_count_check("recurrence stop boundaries", stop_boundary_violations),
     ])
+}
+
+fn deterministic_payload_matches(
+    payload: &str,
+    identity: &crate::recurrence::RecurrenceOccurrenceIdentity,
+    slot_on: chrono::NaiveDate,
+    projection: bool,
+) -> bool {
+    let Ok(payload) = serde_json::from_str::<Value>(payload) else {
+        return false;
+    };
+    let identity_fields_match = [
+        ("task_id", identity.task_id.as_str()),
+        ("series_id", identity.occurrence_link.series_id.as_str()),
+        ("task_change_id", identity.task_change_id.as_str()),
+        (
+            "occurrence_change_id",
+            identity.occurrence_change_id.as_str(),
+        ),
+        (
+            "task_field_version_seed",
+            identity.field_version_seeds.task.as_str(),
+        ),
+        (
+            "occurrence_field_version_seed",
+            identity.field_version_seeds.occurrence.as_str(),
+        ),
+    ]
+    .into_iter()
+    .all(|(key, expected)| payload.get(key).and_then(Value::as_str) == Some(expected));
+    identity_fields_match
+        && payload.get("slot_on").and_then(Value::as_str) == Some(&slot_on.to_string())
+        && (!projection
+            || payload.get("projected_at").and_then(Value::as_str)
+                == Some(identity.occurrence_link.projected_at.as_str()))
 }
 
 fn issue_count_check(label: &'static str, count: usize) -> IntegrityCheck {
@@ -478,6 +648,55 @@ mod tests {
         .execute(&mut *conn)
         .await
         .unwrap();
+        let next_seq: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(local_seq), 0) + 1 FROM changes WHERE client_id = 'integrity-test'",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let identity_payload = serde_json::json!({
+            "task_id": identity.task_id.as_str(),
+            "series_id": series_id.as_str(),
+            "slot_on": slot_on.to_string(),
+            "task_change_id": identity.task_change_id,
+            "occurrence_change_id": identity.occurrence_change_id,
+            "task_field_version_seed": identity.field_version_seeds.task,
+            "occurrence_field_version_seed": identity.field_version_seeds.occurrence,
+        });
+        let mut projection_payload = identity_payload.clone();
+        projection_payload["projected_at"] =
+            serde_json::Value::String(identity.occurrence_link.projected_at.clone());
+        sqlx::query(
+            "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field, op_type, payload, created_at)
+             VALUES (?, 'integrity-test', ?, 'task', ?, NULL, 'create_task', ?, ?),
+                    (?, 'integrity-test', ?, 'recurrence_series', ?, 'projection', 'project_recurrence_occurrence', ?, ?)",
+        )
+        .bind(&identity.task_change_id)
+        .bind(next_seq)
+        .bind(&identity.task_id)
+        .bind(identity_payload.to_string())
+        .bind(&identity.created_at)
+        .bind(&identity.occurrence_change_id)
+        .bind(next_seq + 1)
+        .bind(series_id.to_string())
+        .bind(projection_payload.to_string())
+        .bind(&identity.occurrence_link.projected_at)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        for field in crate::task_fields::TaskField::VERSIONED {
+            sqlx::query(
+                "INSERT INTO field_versions(workspace_id, entity_type, entity_id, field, version)
+                 VALUES (?, 'task', ?, ?, ?)",
+            )
+            .bind(default_workspace_id())
+            .bind(&identity.task_id)
+            .bind(field.as_str())
+            .bind(&identity.field_version_seeds.task)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        }
         identity.task_id.to_string()
     }
 

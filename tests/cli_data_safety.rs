@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use chrono::Utc;
 use serde_json::Value;
 use sqlx::ConnectOptions;
 use sqlx::sqlite::SqliteConnectOptions;
@@ -343,6 +344,291 @@ fn import_rejects_attachment_inventory_metadata_mismatch() {
 }
 
 #[test]
+fn recurrence_export_import_round_trips_aggregate_and_occurrence_local_data() {
+    let env = TestEnv::new();
+    let source_db = env.db("recurrence-export-source.sqlite");
+    let target_db = env.db("recurrence-export-target.sqlite");
+    ok(env.aven(&source_db, ["label", "create", "ritual"]));
+    let (series_ref, occurrence_ref) =
+        add_daily_series(&env, &source_db, "daily journal", &["--label", "ritual"]);
+    ok(env.aven_stdin(
+        &source_db,
+        ["note", &occurrence_ref, "--stdin"],
+        "occurrence-local note\n",
+    ));
+    ok(env.aven(&source_db, ["edit", &occurrence_ref, "--status", "done"]));
+    ok(env.aven(&source_db, ["recur", "pause", &series_ref]));
+    execute_sql(
+        &source_db,
+        "INSERT INTO conflicts(workspace_id, entity_type, entity_id, task_id, field, local_value, remote_value, remote_change_id, variant_a, variant_b, created_at) SELECT workspace_id, 'recurrence_series', id, '', 'state', 'paused', 'active', '7KQ9A1X4MV2P8D6R', 'paused', 'active', '2026-07-20T00:00:00Z' FROM recurrence_series LIMIT 1",
+    );
+
+    let export_path = env.path("recurrence-round-trip.json");
+    ok(env.aven(
+        &source_db,
+        ["export", "--output", export_path.to_str().unwrap()],
+    ));
+    let snapshot: Value = serde_json::from_str(&fs::read_to_string(&export_path).unwrap()).unwrap();
+    assert_eq!(snapshot["version"], 1);
+    assert_eq!(
+        snapshot["tables"]["recurrence_series"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        snapshot["tables"]["recurrence_series_labels"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        snapshot["tables"]["recurrence_occurrences"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        snapshot["tables"]["recurrence_pause_intervals"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        snapshot["tables"]["field_versions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["entity_type"] == "recurrence_series")
+    );
+    assert!(
+        snapshot["tables"]["conflicts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["entity_type"] == "recurrence_series")
+    );
+
+    ok(env.aven(
+        &target_db,
+        ["import", "--yes", export_path.to_str().unwrap()],
+    ));
+    contains_all(
+        &ok(env.aven(&target_db, ["recur", "show", &series_ref])),
+        &["state=paused", "daily journal"],
+    );
+    contains_all(
+        &ok(env.aven(&target_db, ["show", &occurrence_ref, "--full"])),
+        &["occurrence-local note", "ritual"],
+    );
+    assert_eq!(
+        scalar_i64(&target_db, "SELECT count(*) FROM recurrence_series"),
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            &target_db,
+            "SELECT count(*) FROM recurrence_pause_intervals"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            &target_db,
+            "SELECT count(*) FROM conflicts WHERE entity_type = 'recurrence_series'",
+        ),
+        1
+    );
+}
+
+#[test]
+fn older_task_only_export_imports_tasks_as_nonrecurring_and_ignores_schema_version() {
+    let env = TestEnv::new();
+    let source_db = env.db("portable-v1-source.sqlite");
+    let target_db = env.db("portable-v1-target.sqlite");
+    let task_ref = extract_ref(&ok(
+        env.aven(&source_db, ["add", "legacy task", "--project", "app"])
+    ));
+    let export_path = env.path("portable-v1.json");
+    ok(env.aven(
+        &source_db,
+        ["export", "--output", export_path.to_str().unwrap()],
+    ));
+    let mut snapshot: Value =
+        serde_json::from_str(&fs::read_to_string(&export_path).unwrap()).unwrap();
+    snapshot["schema_version"] = Value::from(1);
+    for table in [
+        "recurrence_series",
+        "recurrence_series_labels",
+        "recurrence_occurrences",
+        "recurrence_pause_intervals",
+    ] {
+        snapshot["tables"].as_object_mut().unwrap().remove(table);
+    }
+    fs::write(&export_path, serde_json::to_string(&snapshot).unwrap()).unwrap();
+
+    ok(env.aven(
+        &target_db,
+        ["import", "--yes", export_path.to_str().unwrap()],
+    ));
+    contains_all(
+        &ok(env.aven(&target_db, ["show", &task_ref])),
+        &["legacy task"],
+    );
+    assert_eq!(
+        scalar_i64(&target_db, "SELECT count(*) FROM recurrence_series"),
+        0
+    );
+    assert_eq!(
+        scalar_i64(&target_db, "SELECT count(*) FROM recurrence_occurrences"),
+        0
+    );
+}
+
+#[test]
+fn recurrence_import_rejects_malformed_zone_identity_lattice_and_outcome() {
+    let env = TestEnv::new();
+    let db = env.db("recurrence-invalid-import.sqlite");
+    let (_series_ref, _occurrence_ref) = add_daily_series(&env, &db, "validated series", &[]);
+    let ordinary_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "ordinary task", "--project", "app"])
+    ));
+    let ordinary_id = query_string(
+        &db,
+        "SELECT id FROM tasks WHERE title = 'ordinary task' LIMIT 1",
+    );
+    let export_path = env.path("recurrence-invalid.json");
+    ok(env.aven(&db, ["export", "--output", export_path.to_str().unwrap()]));
+    let original: Value = serde_json::from_str(&fs::read_to_string(&export_path).unwrap()).unwrap();
+
+    let mut invalid = Vec::new();
+    let mut zone = original.clone();
+    zone["tables"]["recurrence_series"][0]["timezone"] = Value::from("Mars/Olympus");
+    invalid.push((zone, "invalid IANA time zone"));
+
+    let mut identity = original.clone();
+    identity["tables"]["recurrence_occurrences"][0]["task_id"] = Value::from(ordinary_id);
+    invalid.push((identity, "deterministic task identity mismatch"));
+
+    let mut lattice = original.clone();
+    lattice["tables"]["recurrence_series"][0]["start_on"] = Value::from("2099-01-01");
+    invalid.push((lattice, "outside the series lattice"));
+
+    let mut outcome = original.clone();
+    outcome["tables"]["recurrence_occurrences"][0]["outcome"] = Value::from("completed");
+    outcome["tables"]["recurrence_occurrences"][0]["resolved_at"] =
+        Value::from("2026-07-20T12:00:00Z");
+    outcome["tables"]["recurrence_occurrences"][0]["outcome_change_id"] =
+        Value::from("7KQ9A1X4MV2P8D6R");
+    outcome["tables"]["recurrence_occurrences"][0]["projection_state"] = Value::from("resolved");
+    invalid.push((outcome, "completed outcome requires done task"));
+
+    let mut pauses = original.clone();
+    let workspace_id = pauses["tables"]["recurrence_series"][0]["workspace_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let series_id = pauses["tables"]["recurrence_series"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let series_change_id = pauses["tables"]["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|change| change["entity_type"] == "recurrence_series")
+        .unwrap()["change_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    pauses["tables"]["recurrence_pause_intervals"] = serde_json::json!([
+        {
+            "workspace_id": workspace_id.clone(),
+            "id": "pause-a",
+            "series_id": series_id.clone(),
+            "paused_at": "2090-01-01T00:00:00Z",
+            "resumed_at": "2090-01-03T00:00:00Z",
+            "suspended_slot_on": "",
+            "suspended_task_id": "",
+            "created_by_change_id": series_change_id.clone(),
+            "resolved_by_change_id": series_change_id.clone(),
+        },
+        {
+            "workspace_id": workspace_id,
+            "id": "pause-b",
+            "series_id": series_id,
+            "paused_at": "2090-01-02T00:00:00Z",
+            "resumed_at": "2090-01-04T00:00:00Z",
+            "suspended_slot_on": "",
+            "suspended_task_id": "",
+            "created_by_change_id": series_change_id.clone(),
+            "resolved_by_change_id": series_change_id.clone(),
+        }
+    ]);
+    invalid.push((pauses, "pause intervals overlap"));
+
+    let mut lifecycle = original;
+    lifecycle["tables"]["recurrence_series"][0]["state"] = Value::from("paused");
+    invalid.push((lifecycle, "state and open pause disagree"));
+
+    for (snapshot, expected) in invalid {
+        fs::write(&export_path, serde_json::to_string(&snapshot).unwrap()).unwrap();
+        contains_all(
+            &fail(env.aven(&db, ["import", "--yes", export_path.to_str().unwrap()])),
+            &[expected],
+        );
+    }
+    contains_all(
+        &ok(env.aven(&db, ["show", &ordinary_ref])),
+        &["ordinary task"],
+    );
+}
+
+#[test]
+fn backup_restore_preserves_recurrence_and_archived_occurrence_data() {
+    let env = TestEnv::new();
+    let db = env.db("recurrence-backup.sqlite");
+    let (series_ref, occurrence_ref) = add_daily_series(&env, &db, "archived journal", &[]);
+    ok(env.aven_stdin(
+        &db,
+        ["note", &occurrence_ref, "--stdin"],
+        "preserved archive note\n",
+    ));
+    execute_sql(
+        &db,
+        "UPDATE recurrence_occurrences SET projection_state = 'archived', archived_at = '2099-01-01T00:00:00Z'; UPDATE recurrence_series SET state = 'stopped', stopped_at = '2099-01-01T00:00:00Z'",
+    );
+    let backup_path = env.path("recurrence.aven-backup.tar.zst");
+    ok(env.aven(&db, ["backup", "--output", backup_path.to_str().unwrap()]));
+    fs::remove_file(&db).unwrap();
+
+    ok(env.aven(
+        &db,
+        ["backup", "restore", backup_path.to_str().unwrap(), "--yes"],
+    ));
+    contains_all(
+        &ok(env.aven(&db, ["recur", "show", &series_ref])),
+        &["archived journal"],
+    );
+    contains_all(
+        &ok(env.aven(&db, ["show", &occurrence_ref, "--full"])),
+        &["preserved archive note"],
+    );
+    assert_eq!(
+        query_string(
+            &db,
+            "SELECT projection_state FROM recurrence_occurrences LIMIT 1"
+        ),
+        "archived"
+    );
+    assert_eq!(scalar_i64(&db, "SELECT count(*) FROM tasks"), 1);
+}
+
+#[test]
 fn export_command_writes_portable_snapshot() {
     let env = TestEnv::new();
     let db = env.db("export.json.sqlite");
@@ -654,6 +940,57 @@ fn import_rejects_invalid_due_on_values() {
         &output,
         &["error invalid-export-snapshot", "task.due_on=tomorrowish"],
     );
+}
+
+fn add_daily_series(
+    env: &TestEnv,
+    db: &Path,
+    title: &str,
+    extra_args: &[&str],
+) -> (String, String) {
+    let today = Utc::now().date_naive().to_string();
+    let mut args = vec![
+        "add".to_string(),
+        title.to_string(),
+        "--repeat".to_string(),
+        "daily".to_string(),
+        "--repeat-due".to_string(),
+        "same-day".to_string(),
+        "--time-zone".to_string(),
+        "UTC".to_string(),
+        "--repeat-start-on".to_string(),
+        today,
+    ];
+    args.extend(extra_args.iter().map(|arg| (*arg).to_string()));
+    let output = ok(env.aven(db, &args));
+    let series_ref = output.split_whitespace().nth(1).unwrap().to_string();
+    let occurrence_ref = output
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("occurrence="))
+        .unwrap()
+        .trim_matches('"')
+        .to_string();
+    (series_ref, occurrence_ref)
+}
+
+fn execute_sql(db: &Path, sql: &'static str) {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create runtime");
+    runtime.block_on(async {
+        let mut conn = SqliteConnectOptions::new()
+            .filename(db)
+            .create_if_missing(false)
+            .foreign_keys(true)
+            .connect()
+            .await
+            .expect("open test db");
+        sqlx::query(sql)
+            .execute(&mut conn)
+            .await
+            .expect("execute test SQL");
+    });
 }
 
 fn seed_sample_data(env: &TestEnv, db: &Path) {

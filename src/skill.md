@@ -181,11 +181,22 @@ aven search "daily journal" --expand-recurring
   system image viewer. `o` opens the focused image, or the current large-preview
   image, in the operating system viewer. Search matches attachment filename and
   alt text, not hashes, sidecar paths, or bytes.
-- `aven backup` writes one archive containing SQLite data and local attachment
-  objects. `aven backup restore <path> --yes` restores that archive and keeps a
-  SQLite safety copy. `aven export` writes attachment metadata and blob
-  inventory without bytes, and `aven import --yes <path>` imports that metadata
-  with blob inventory marked unavailable.
+- `aven backup` writes one archive containing the complete SQLite database and
+  local attachment objects. Series templates, labels, sparse occurrences, pause
+  intervals, conflicts, field versions, archived occurrence tasks, and all
+  occurrence-local data remain intact. `aven backup restore <path> --yes`
+  restores that archive and keeps a SQLite safety copy.
+- `aven export` writes portable JSON containing the recurrence aggregate and
+  attachment metadata without image bytes. `aven import --yes <path>` validates
+  recurrence schedule, zone, identity, lattice, deterministic projection,
+  outcome, pause, lifecycle, and uniqueness invariants before replacing local
+  data. Older task-only exports import every task as nonrecurring data. Imported
+  blob inventory is unavailable until sync or backup restore supplies the
+  bytes.
+- `aven doctor --integrity` distinguishes a repairable recurrence projection gap
+  from identity, deterministic materialization, outcome, pause, or lifecycle
+  corruption. Run `aven recur list` to reconcile a projection gap. Preserve the
+  database and restore a known-good backup before addressing corruption.
 - `aven doctor` checks attachment metadata and local object presence and reports
   referenced, protected, grace-period, eligible, staging, trash, quota, and
   lifecycle inconsistency counts and bytes. `aven doctor --integrity` also

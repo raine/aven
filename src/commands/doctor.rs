@@ -59,6 +59,14 @@ impl DoctorSection {
             value: value.into(),
         });
     }
+
+    pub(super) fn warning(&mut self, label: &'static str, value: impl Into<String>) {
+        self.rows.push(DoctorRow {
+            status: DoctorStatus::Warning,
+            label,
+            value: value.into(),
+        });
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -72,6 +80,7 @@ pub(super) struct DoctorRow {
 #[serde(rename_all = "snake_case")]
 pub(super) enum DoctorStatus {
     Ok,
+    Warning,
     Error,
     Info,
 }
@@ -154,6 +163,7 @@ impl DoctorStatus {
     fn marker(self) -> &'static str {
         match self {
             Self::Ok => "ok",
+            Self::Warning => "!!",
             Self::Error => "!!",
             Self::Info => "..",
         }
@@ -162,6 +172,7 @@ impl DoctorStatus {
     fn icon(self) -> &'static str {
         match self {
             Self::Ok => "✓",
+            Self::Warning => "!",
             Self::Error => "✗",
             Self::Info => "·",
         }
@@ -170,6 +181,7 @@ impl DoctorStatus {
     fn color(self) -> Color {
         match self {
             Self::Ok => Color::Green,
+            Self::Warning => Color::Yellow,
             Self::Error => Color::Red,
             Self::Info => Color::DarkGrey,
         }
@@ -177,7 +189,7 @@ impl DoctorStatus {
 
     fn label_color(self) -> Color {
         match self {
-            Self::Ok | Self::Error => Color::White,
+            Self::Ok | Self::Warning | Self::Error => Color::White,
             Self::Info => Color::Grey,
         }
     }
@@ -186,6 +198,32 @@ fn format_optional_i64(value: Option<i64>) -> String {
     value
         .map(|value| value.to_string())
         .unwrap_or_else(|| "none".to_string())
+}
+
+fn add_integrity_check(
+    section: &mut DoctorSection,
+    check: &aven_core::data_safety::IntegrityCheck,
+) {
+    if check.label == "recurrence projection gaps" && !check.ok {
+        section.warning(
+            check.label,
+            format!(
+                "{}; repair by running `aven recur list`, then rerun `aven doctor --integrity`",
+                check.value
+            ),
+        );
+    } else if check.label.starts_with("recurrence ") && !check.ok {
+        section.check(
+            check.label,
+            false,
+            format!(
+                "{}; restore a known-good backup or export unaffected data before repair",
+                check.value
+            ),
+        );
+    } else {
+        section.check(check.label, check.ok, &check.value);
+    }
 }
 
 pub(crate) async fn cmd_doctor(
@@ -460,7 +498,7 @@ pub(crate) async fn cmd_doctor(
             &integrity_report.quick_check_value,
         );
         for check in &integrity_report.checks {
-            integrity_section.check(check.label, check.ok, &check.value);
+            add_integrity_check(integrity_section, check);
         }
         for check in &attachment_checks {
             integrity_section.check(check.label, check.ok, &check.value);

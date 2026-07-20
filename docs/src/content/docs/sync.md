@@ -158,20 +158,24 @@ aven backup --output backup.aven-backup.tar.zst
 aven backup restore backup.aven-backup.tar.zst --yes
 ```
 
-A backup archive contains the task database and every attachment image available on the device. Images that have not downloaded cannot be included, so run `aven sync` first when the sync server may have files this device lacks. Restore checks the archive and images before replacing local data.
+A backup archive contains the complete SQLite database and every attachment image available on the device. Recurrence series, template labels, sparse explicit occurrences, pause intervals, conflicts, field versions, archived occurrence tasks, and occurrence-local fields, notes, and attachments remain intact. Images that have not downloaded cannot be included, so run `aven sync` first when the sync server may have files this device lacks. Restore checks the archive and images before replacing local data.
 
 ```sh
 aven export --output tasks.json
 aven import tasks.json --yes
 ```
 
-A JSON export includes tasks and attachment information, but sets `blobs_included: false` and leaves out the image files. After import, attachment labels remain visible while the TUI shows unavailable-image placeholders. Run sync or restore a backup archive to supply the files. Until then, [`attachment get --output`](/command-reference/#aven-attachment) cannot save them.
+A JSON export includes tasks, recurrence series, template labels, sparse occurrences, pause intervals, generalized conflicts and field versions, and attachment information. It sets `blobs_included: false` and leaves out image files. Import validates recurrence schedule, zone, identity, lattice, deterministic projection, outcome, pause, lifecycle, and uniqueness invariants before replacement. Older task-only exports import every task as nonrecurring data. After import, attachment labels remain visible while the TUI shows unavailable-image placeholders. Run sync or restore a backup archive to supply the files. Until then, [`attachment get --output`](/command-reference/#aven-attachment) cannot save them.
 
 :::caution[Local data replacement]
 Restore and import replace local data and require confirmation with `--yes`. Aven creates safety backups first. Archive restore also preserves the previous attachment directory.
 :::
 
 Import keeps this installation's client identity and clears server-specific sync state.
+
+### UniFFI consumers
+
+Swift and other UniFFI hosts choose the durable SQLite path and run synchronous facade calls on one serial Rust worker. Rust owns database migrations, recurrence persistence, deterministic occurrence identity, sync payload validation, and conflict behavior. Hosts pass prepared sync bodies and responses as opaque bytes and do not serialize recurrence tables themselves. Portable JSON and archive backup workflows remain core and CLI data-safety surfaces. A host-provided backup must coordinate with the Rust worker and use a consistent SQLite backup instead of copying an open database file.
 
 ## Resolve conflicts
 
@@ -197,4 +201,4 @@ aven doctor --integrity
 aven doctor --json
 ```
 
-For sync specifically, doctor reports the configured server, sync cursor, pending changes, conflicts, daemon wake validity, and integrity status when requested.
+For sync specifically, doctor reports the configured server, sync cursor, pending changes, conflicts, daemon wake validity, and integrity status when requested. Recurrence integrity separates a repairable missing projection from identity, outcome, pause, and lifecycle corruption. Run `aven recur list` for the repairable case. Preserve the database and recover from a known-good backup for corruption.

@@ -3,6 +3,7 @@ mod common;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use chrono::Utc;
 use common::{TestEnv, contains_all, contains_none, extract_ref, meta_value, ok, png_bytes};
 use sqlx::ConnectOptions;
 use sqlx::sqlite::SqliteConnectOptions;
@@ -445,6 +446,51 @@ fn doctor_with_integrity_decodes_unattached_available_objects() {
     let output = ok(env.aven(&db, ["doctor", "--integrity"]));
     contains_all(&output, &["!! attachment object hashes", "1 mismatched"]);
     contains_none(&output, &["aaaaaaaaaaaaaaaa"]);
+}
+
+#[test]
+fn doctor_distinguishes_repairable_recurrence_gap_from_identity_corruption() {
+    let env = TestEnv::new();
+    let db = env.db("integrity-recurrence-doctor.sqlite");
+    let today = Utc::now().date_naive().to_string();
+    ok(env.aven(
+        &db,
+        [
+            "add",
+            "doctor recurrence",
+            "--repeat",
+            "daily",
+            "--time-zone",
+            "UTC",
+            "--repeat-start-on",
+            &today,
+        ],
+    ));
+    run_sql(
+        &db,
+        "UPDATE recurrence_occurrences SET projection_state = 'archived', archived_at = '2099-01-01T00:00:00Z'",
+    );
+
+    let repairable = ok(env.aven(&db, ["doctor", "--integrity"]));
+    contains_all(
+        &repairable,
+        &[
+            "!! recurrence projection gaps",
+            "repair by running `aven recur list`",
+        ],
+    );
+    contains_none(&repairable, &["!! result"]);
+
+    run_sql(&db, "UPDATE tasks SET created_at = '2000-01-01T00:00:00Z'");
+    let corrupt = ok(env.aven(&db, ["doctor", "--integrity"]));
+    contains_all(
+        &corrupt,
+        &[
+            "!! recurrence deterministic timestamps",
+            "restore a known-good backup",
+            "!! result",
+        ],
+    );
 }
 
 #[test]
