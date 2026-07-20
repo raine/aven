@@ -755,6 +755,71 @@ async fn task_mutation_routing_rejects_delete_reopen_and_archived_edits() {
     .await
     .unwrap_err();
     assert!(archived_error.to_string().contains("occurrence-archived"));
+
+    let note_error = crate::operations::tasks::add_note(
+        &mut conn,
+        &workspace,
+        &successor.id,
+        "should fail".to_string(),
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(note_error.to_string().contains("occurrence-archived"));
+
+    let current = load_projected_occurrence(&mut conn, &workspace.id, &created.series.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .task_id
+        .unwrap();
+    let dependency_error =
+        crate::operations::add_task_dependency(&mut conn, &workspace, &current, &successor.id)
+            .await
+            .err()
+            .unwrap();
+    assert!(dependency_error.to_string().contains("occurrence-archived"));
+    let epic_error =
+        crate::operations::add_task_to_epic(&mut conn, &workspace, &successor.id, &current)
+            .await
+            .err()
+            .unwrap();
+    assert!(epic_error.to_string().contains("occurrence-archived"));
+}
+
+#[tokio::test]
+async fn stale_occurrence_mutations_reconcile_before_resolving_or_pausing() {
+    let (_temp, mut conn, workspace) = setup().await;
+    let created = create_daily(&mut conn, &workspace).await;
+
+    let mut tx = begin_immediate(&mut conn).await.unwrap();
+    let error = resolve_recurrence_occurrence_in_transaction(
+        &mut tx,
+        &workspace,
+        &created.task.id,
+        RecurrenceOutcome::Completed,
+        "2026-07-26T10:00:00Z",
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(error.to_string().contains("occurrence-not-current"));
+    tx.rollback().await.unwrap();
+
+    let paused = pause_recurrence_series(
+        &mut conn,
+        &workspace,
+        &created.series.id,
+        "2026-07-26T11:00:00Z",
+    )
+    .await
+    .unwrap();
+    let projected = paused.occurrence.unwrap();
+    assert_eq!(
+        projected.slot_on,
+        NaiveDate::from_ymd_opt(2026, 7, 26).unwrap()
+    );
+    assert_ne!(projected.task_id.as_ref(), Some(&created.task.id));
 }
 
 #[tokio::test]

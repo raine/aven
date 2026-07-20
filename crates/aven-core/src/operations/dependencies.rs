@@ -161,6 +161,16 @@ async fn add_task_dependency_in_transaction(
     task_id: &crate::ids::TaskId,
     depends_on_id: &crate::ids::TaskId,
 ) -> Result<DependencyOutcome> {
+    crate::operations::route_recurrence_task_field(conn, workspace, task_id, "dependencies", "")
+        .await?;
+    crate::operations::route_recurrence_task_field(
+        conn,
+        workspace,
+        depends_on_id,
+        "dependencies",
+        "",
+    )
+    .await?;
     let pair = load_dependency_pair(conn, workspace, task_id, depends_on_id).await?;
 
     if dependency_path_exists(
@@ -205,6 +215,16 @@ async fn remove_task_dependency_in_transaction(
     task_id: &crate::ids::TaskId,
     depends_on_id: &crate::ids::TaskId,
 ) -> Result<DependencyOutcome> {
+    crate::operations::route_recurrence_task_field(conn, workspace, task_id, "dependencies", "")
+        .await?;
+    crate::operations::route_recurrence_task_field(
+        conn,
+        workspace,
+        depends_on_id,
+        "dependencies",
+        "",
+    )
+    .await?;
     let pair = load_dependency_pair(conn, workspace, task_id, depends_on_id).await?;
 
     let changed = sqlx::query(

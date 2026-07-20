@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result, bail};
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -15,7 +15,7 @@ use crate::ids::{BASE32, ProjectId, WorkspaceId};
 use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceRule,
     RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId, WeekdaySet,
-    derive_occurrence_identity, is_slot, next_slot_after,
+    derive_occurrence_identity, is_slot, live_slot_on, next_slot_after,
 };
 use crate::task_fields::TaskField;
 
@@ -554,7 +554,9 @@ fn validate_recurrence_task(change: &ChangeWire) -> Result<()> {
             bail!("error invalid-sync-change recurrence-deterministic-mismatch field={key}");
         }
     }
-    if change.entity_id != identity.task_id.as_str() || change.change_id != identity.task_change_id
+    if change.entity_id != identity.task_id.as_str()
+        || change.change_id != identity.task_change_id
+        || change.created_at != identity.created_at
     {
         bail!("error invalid-sync-change recurrence-deterministic-mismatch field=change_identity");
     }
@@ -713,7 +715,9 @@ fn validate_recurrence_projection(change: &ChangeWire) -> Result<()> {
             bail!("error invalid-sync-change recurrence-deterministic-mismatch field={key}");
         }
     }
-    if change.change_id != identity.occurrence_change_id {
+    if change.change_id != identity.occurrence_change_id
+        || change.created_at != identity.occurrence_link.projected_at
+    {
         bail!("error invalid-sync-change recurrence-deterministic-mismatch field=change_id");
     }
     Ok(())
@@ -721,6 +725,7 @@ fn validate_recurrence_projection(change: &ChangeWire) -> Result<()> {
 
 fn validate_recurrence_outcome(change: &ChangeWire, task_backed: bool) -> Result<()> {
     validate_recurrence_entity(change)?;
+    validate_timestamp_value("created_at", &change.created_at)?;
     if change.field.as_deref() != Some("outcome") {
         bail!("error invalid-sync-change field=outcome");
     }
@@ -774,8 +779,21 @@ fn validate_recurrence_outcome(change: &ChangeWire, task_backed: bool) -> Result
                 );
             }
         }
-    } else if change.payload.get("task_id").is_some() && !conflict_resolution {
-        bail!("error invalid-sync-change recurrence-correction-has-task");
+    } else {
+        let operation_at = DateTime::parse_from_rfc3339(&change.created_at)?.with_timezone(&Utc);
+        let live_slot = live_slot_on(
+            &schedule.rule,
+            schedule.start_on,
+            operation_at,
+            &schedule.timezone,
+        )
+        .context("error invalid-sync-change recurrence-schedule-out-of-range")?;
+        if slot_on >= live_slot {
+            bail!("error invalid-sync-change recurrence-correction-not-past");
+        }
+        if change.payload.get("task_id").is_some() && !conflict_resolution {
+            bail!("error invalid-sync-change recurrence-correction-has-task");
+        }
     }
     Ok(())
 }
@@ -1147,6 +1165,11 @@ fn required_i64_payload(key: &str, payload: &Value) -> Result<i64> {
 
 fn required_timestamp_payload(key: &str, payload: &Value) -> Result<String> {
     let value = required_string_payload(key, payload)?;
+    validate_timestamp_value(&format!("payload.{key}"), &value)?;
+    Ok(value)
+}
+
+fn validate_timestamp_value(label: &str, value: &str) -> Result<()> {
     if value.len() == 20
         && value.as_bytes()[4] == b'-'
         && value.as_bytes()[7] == b'-'
@@ -1159,9 +1182,9 @@ fn required_timestamp_payload(key: &str, payload: &Value) -> Result<String> {
             .enumerate()
             .all(|(idx, byte)| matches!(idx, 4 | 7 | 10 | 13 | 16 | 19) || byte.is_ascii_digit())
     {
-        Ok(value)
+        Ok(())
     } else {
-        bail!("error invalid-sync-change payload.{key} invalid-timestamp");
+        bail!("error invalid-sync-change {label} invalid-timestamp");
     }
 }
 
@@ -1247,6 +1270,63 @@ mod tests {
             created_at: "2026-06-01T00:00:00Z".to_string(),
             server_seq: None,
         }
+    }
+
+    #[test]
+    fn recurrence_projection_rejects_nondeterministic_change_timestamp() {
+        let workspace = test_workspace();
+        let series_id: RecurrenceSeriesId = "AAAAAAAAAAAAAAAA".parse().unwrap();
+        let schedule = RecurrenceSchedule::new(
+            RecurrenceRule::daily(),
+            "UTC".parse().unwrap(),
+            "2026-07-20".parse().unwrap(),
+            None,
+            RecurrenceDuePolicy::SameDay,
+        );
+        let slot_on: NaiveDate = "2026-07-20".parse().unwrap();
+        let identity =
+            derive_occurrence_identity(&workspace.id, &series_id, &schedule, slot_on).unwrap();
+        let payload = ChangePayload::workspace(&workspace)
+            .set("series_id", series_id.as_str())
+            .set("slot_on", slot_on.to_string())
+            .set("task_id", identity.task_id.as_str())
+            .set("projected_at", &identity.occurrence_link.projected_at)
+            .set("task_change_id", &identity.task_change_id)
+            .set("occurrence_change_id", &identity.occurrence_change_id)
+            .set(
+                "task_field_version_seed",
+                &identity.field_version_seeds.task,
+            )
+            .set(
+                "occurrence_field_version_seed",
+                &identity.field_version_seeds.occurrence,
+            )
+            .set("frequency", "daily")
+            .set("interval", 1)
+            .set("weekdays", "")
+            .set("timezone", "UTC")
+            .set("start_on", "2026-07-20")
+            .set("available_local_time", "")
+            .set("due_policy", "same_day")
+            .into_value();
+        let mut change = make_change_wire(
+            op_type::PROJECT_RECURRENCE_OCCURRENCE,
+            "recurrence_series",
+            series_id.as_str(),
+            payload,
+        );
+        change.change_id = identity.occurrence_change_id;
+        change.field = Some("projection".to_string());
+        change.created_at = identity.occurrence_link.projected_at;
+        validate_pushed_change(&change).unwrap();
+
+        change.created_at = "2026-07-20T00:00:01Z".to_string();
+        assert!(
+            validate_pushed_change(&change)
+                .unwrap_err()
+                .to_string()
+                .contains("recurrence-deterministic-mismatch")
+        );
     }
 
     #[test]

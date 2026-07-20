@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail, ensure};
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use serde_json::Value;
 use sqlx::{Row, SqliteConnection};
 
@@ -9,7 +9,7 @@ use crate::ids::{ProjectId, TaskId, WorkspaceId};
 use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceRule,
     RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId, WeekdaySet,
-    derive_occurrence_identity, is_slot, slot_values,
+    derive_occurrence_identity, is_slot, live_slot_on, slot_values,
 };
 use crate::sync::wire::ChangeWire;
 use crate::task_fields::TaskField;
@@ -339,7 +339,31 @@ pub(super) async fn project_occurrence(
         return Ok(());
     }
 
+    let lifecycle_blocked = entity_conflict_exists(
+        conn,
+        &workspace_id,
+        MutableEntityType::RecurrenceSeries,
+        series_id.as_str(),
+        "state",
+    )
+    .await?;
     let archived_at = identity.occurrence_link.projected_at.clone();
+    if lifecycle_blocked {
+        sqlx::query(
+            "INSERT INTO recurrence_occurrences(
+                workspace_id, series_id, slot_on, task_id, outcome, resolved_at,
+                outcome_change_id, projection_state, archived_at
+             ) VALUES (?, ?, ?, ?, '', '', '', 'archived', ?)",
+        )
+        .bind(&workspace_id)
+        .bind(&series_id)
+        .bind(slot_on.to_string())
+        .bind(task_id)
+        .bind(&archived_at)
+        .execute(&mut *conn)
+        .await?;
+        return Ok(());
+    }
     sqlx::query(
         "UPDATE recurrence_occurrences SET projection_state = 'archived', archived_at = ?
          WHERE workspace_id = ? AND series_id = ? AND projection_state = 'projected' AND slot_on < ?",
@@ -419,6 +443,60 @@ async fn apply_outcome(
     let task_id = if task_backed {
         Some(str_payload(&change.payload, "task_id")?.parse::<TaskId>()?)
     } else {
+        let operation_at = DateTime::parse_from_rfc3339(&change.created_at)?.with_timezone(&Utc);
+        let live_slot = live_slot_on(
+            &schedule.rule,
+            schedule.start_on,
+            operation_at,
+            &schedule.timezone,
+        )
+        .context("recurrence schedule has no live slot")?;
+        ensure!(
+            slot_on < live_slot,
+            "error recurrence-correction-not-past slot={slot_on}"
+        );
+        let lifetime = sqlx::query(
+            "SELECT created_at, stopped_at FROM recurrence_series
+             WHERE workspace_id = ? AND id = ?",
+        )
+        .bind(&workspace_id)
+        .bind(&series_id)
+        .fetch_one(&mut *conn)
+        .await?;
+        let created_at: String = lifetime.get("created_at");
+        let created_on = DateTime::parse_from_rfc3339(&created_at)?
+            .with_timezone(&schedule.timezone.timezone())
+            .date_naive();
+        ensure!(
+            slot_on >= schedule.start_on && slot_on >= created_on,
+            "error recurrence-slot-outside-lifetime slot={slot_on}"
+        );
+        let stopped_at: String = lifetime.get("stopped_at");
+        let boundary = DateTime::parse_from_rfc3339(&slot_values(&schedule, slot_on)?.boundary_at)?
+            .with_timezone(&Utc);
+        if !stopped_at.is_empty() {
+            ensure!(
+                boundary < DateTime::parse_from_rfc3339(&stopped_at)?.with_timezone(&Utc),
+                "error recurrence-slot-outside-lifetime slot={slot_on}"
+            );
+        }
+        let intervals = sqlx::query(
+            "SELECT paused_at, resumed_at FROM recurrence_pause_intervals
+             WHERE workspace_id = ? AND series_id = ?",
+        )
+        .bind(&workspace_id)
+        .bind(&series_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        for interval in intervals {
+            let paused_at = DateTime::parse_from_rfc3339(&interval.get::<String, _>("paused_at"))?
+                .with_timezone(&Utc);
+            let resumed_at: String = interval.get("resumed_at");
+            let inside = boundary >= paused_at
+                && (resumed_at.is_empty()
+                    || boundary < DateTime::parse_from_rfc3339(&resumed_at)?.with_timezone(&Utc));
+            ensure!(!inside, "error recurrence-slot-paused slot={slot_on}");
+        }
         None
     };
     let existing = sqlx::query(
@@ -616,7 +694,7 @@ pub(super) async fn set_state(conn: &mut SqliteConnection, change: &ChangeWire) 
     sqlx::query("UPDATE recurrence_series SET state = ?, stopped_at = ?, updated_at = ? WHERE workspace_id = ? AND id = ?")
         .bind(remote.as_str())
         .bind(&merged_stopped_at)
-        .bind(changed_at)
+        .bind(&changed_at)
         .bind(&workspace_id)
         .bind(&series_id)
         .execute(&mut *conn)
@@ -644,6 +722,33 @@ pub(super) async fn set_state(conn: &mut SqliteConnection, change: &ChangeWire) 
     if conflict_resolution {
         sqlx::query("UPDATE conflicts SET resolved = 1 WHERE workspace_id = ? AND entity_type = 'recurrence_series' AND entity_id = ? AND field = 'state' AND resolved = 0")
             .bind(&workspace_id).bind(&series_id).execute(&mut *conn).await?;
+        if remote == RecurrenceSeriesState::Active {
+            let paused_at: Option<String> = sqlx::query_scalar(
+                "SELECT paused_at FROM recurrence_pause_intervals
+                 WHERE workspace_id = ? AND series_id = ? AND resumed_at = ''",
+            )
+            .bind(&workspace_id)
+            .bind(&series_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+            if let Some(paused_at) = paused_at {
+                let resumed_at = crate::operations::recurrence::timestamp_strictly_after(
+                    &paused_at,
+                    &changed_at,
+                )?;
+                sqlx::query(
+                    "UPDATE recurrence_pause_intervals
+                     SET resumed_at = ?, resolved_by_change_id = ?
+                     WHERE workspace_id = ? AND series_id = ? AND resumed_at = ''",
+                )
+                .bind(resumed_at)
+                .bind(&change.change_id)
+                .bind(&workspace_id)
+                .bind(&series_id)
+                .execute(&mut *conn)
+                .await?;
+            }
+        }
         let workspace = crate::workspaces::workspace_for_id(conn, &workspace_id).await?;
         crate::operations::conflicts::cleanup_recurrence_projections(
             conn,
@@ -653,6 +758,15 @@ pub(super) async fn set_state(conn: &mut SqliteConnection, change: &ChangeWire) 
             &merged_stopped_at,
         )
         .await?;
+        if remote == RecurrenceSeriesState::Active {
+            crate::operations::recurrence::reconcile_recurrence_series_in_transaction(
+                conn,
+                &workspace,
+                &series_id,
+                chrono::DateTime::parse_from_rfc3339(&changed_at)?.with_timezone(&chrono::Utc),
+            )
+            .await?;
+        }
     }
     Ok(())
 }
@@ -1121,4 +1235,173 @@ async fn apply_series_field(
         .execute(&mut *conn)
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{NaiveDate, TimeZone};
+
+    use super::*;
+    use crate::db::begin_immediate;
+    use crate::operations::recurrence::{RecurrenceSeriesDraft, create_recurrence_series};
+
+    #[tokio::test]
+    async fn lifecycle_conflict_preserves_existing_projection_during_remote_projection_apply() {
+        let (_temp, mut conn) = crate::test_support::test_conn().await;
+        let workspace = crate::test_support::ensure_default_workspace(&mut conn)
+            .await
+            .unwrap();
+        let schedule = RecurrenceSchedule::new(
+            RecurrenceRule::daily(),
+            "UTC".parse().unwrap(),
+            NaiveDate::from_ymd_opt(2026, 7, 20).unwrap(),
+            None,
+            RecurrenceDuePolicy::SameDay,
+        );
+        let created = create_recurrence_series(
+            &mut conn,
+            &workspace,
+            RecurrenceSeriesDraft {
+                title: "sync projection".to_string(),
+                description: String::new(),
+                project: "recurrence".to_string(),
+                priority: "none".to_string(),
+                initial_status: "todo".to_string(),
+                labels: Vec::new(),
+                schedule,
+            },
+            Utc.with_ymd_and_hms(2026, 7, 20, 12, 0, 0)
+                .single()
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let mut tx = begin_immediate(&mut conn).await.unwrap();
+        crate::operations::recurrence::reconcile_recurrence_series_in_transaction(
+            &mut tx,
+            &workspace,
+            &created.series.id,
+            Utc.with_ymd_and_hms(2026, 7, 21, 12, 0, 0)
+                .single()
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        let row = sqlx::query(
+            "SELECT change_id, client_id, local_seq, entity_type, entity_id, field,
+                    op_type, payload, base_version, created_at, server_seq
+             FROM changes WHERE entity_type = 'recurrence_series' AND entity_id = ?
+               AND op_type = 'project_recurrence_occurrence'
+             ORDER BY local_seq DESC LIMIT 1",
+        )
+        .bind(&created.series.id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let change = ChangeWire {
+            change_id: row.get("change_id"),
+            client_id: row.get("client_id"),
+            local_seq: row.get("local_seq"),
+            entity_type: row.get("entity_type"),
+            entity_id: row.get("entity_id"),
+            field: row.get("field"),
+            op_type: row.get("op_type"),
+            payload: serde_json::from_str(&row.get::<String, _>("payload")).unwrap(),
+            base_version: row.get("base_version"),
+            created_at: row.get("created_at"),
+            server_seq: row.get("server_seq"),
+        };
+        let slot_on = change.payload["slot_on"].as_str().unwrap().to_string();
+        sqlx::query(
+            "DELETE FROM recurrence_occurrences
+             WHERE workspace_id = ? AND series_id = ? AND slot_on = ?",
+        )
+        .bind(&workspace.id)
+        .bind(&created.series.id)
+        .bind(&slot_on)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE recurrence_occurrences SET projection_state = 'projected', archived_at = ''
+             WHERE workspace_id = ? AND series_id = ? AND slot_on = '2026-07-20'",
+        )
+        .bind(&workspace.id)
+        .bind(&created.series.id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO conflicts(
+                workspace_id, entity_type, entity_id, task_id, field, base_version,
+                local_value, remote_value, local_change_id, remote_change_id,
+                variant_a, variant_b, created_at
+             ) VALUES (?, 'recurrence_series', ?, '', 'state', NULL,
+                       'active', 'paused', '', '', 'va', 'vb', '2026-07-21T12:00:00Z')",
+        )
+        .bind(&workspace.id)
+        .bind(&created.series.id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        project_occurrence(&mut conn, &change).await.unwrap();
+
+        let old_state: String = sqlx::query_scalar(
+            "SELECT projection_state FROM recurrence_occurrences
+             WHERE workspace_id = ? AND series_id = ? AND slot_on = '2026-07-20'",
+        )
+        .bind(&workspace.id)
+        .bind(&created.series.id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let incoming_state: String = sqlx::query_scalar(
+            "SELECT projection_state FROM recurrence_occurrences
+             WHERE workspace_id = ? AND series_id = ? AND slot_on = ?",
+        )
+        .bind(&workspace.id)
+        .bind(&created.series.id)
+        .bind(slot_on)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(old_state, "projected");
+        assert_eq!(incoming_state, "archived");
+
+        sqlx::query(
+            "UPDATE conflicts SET resolved = 1
+             WHERE workspace_id = ? AND entity_type = 'recurrence_series' AND entity_id = ?",
+        )
+        .bind(&workspace.id)
+        .bind(&created.series.id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let mut tx = begin_immediate(&mut conn).await.unwrap();
+        crate::operations::recurrence::reconcile_recurrence_series_in_transaction(
+            &mut tx,
+            &workspace,
+            &created.series.id,
+            Utc.with_ymd_and_hms(2026, 7, 21, 12, 0, 0)
+                .single()
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let promoted: String = sqlx::query_scalar(
+            "SELECT projection_state FROM recurrence_occurrences
+             WHERE workspace_id = ? AND series_id = ? AND slot_on = ?",
+        )
+        .bind(&workspace.id)
+        .bind(&created.series.id)
+        .bind(change.payload["slot_on"].as_str().unwrap())
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(promoted, "projected");
+    }
 }

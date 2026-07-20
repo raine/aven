@@ -428,15 +428,22 @@ async fn recurrence_hydration_statement_shapes_stay_bounded() {
     let (_temp, database, workspace) = setup().await;
     let created = create(&database, &workspace, "batch fixture", 1).await;
     let mut task_id = created.task.id;
-    for _ in 0..24 {
-        let outcome = database
-            .resolve_recurrence_occurrence(&workspace, &task_id, RecurrenceOutcome::Completed)
-            .await
-            .unwrap();
+    let mut conn = database.acquire().await.unwrap();
+    for day in 1..=24 {
+        let mut tx = crate::db::begin_immediate(&mut conn).await.unwrap();
+        let outcome = crate::operations::recurrence::resolve_recurrence_occurrence_in_transaction(
+            &mut tx,
+            &workspace,
+            &task_id,
+            RecurrenceOutcome::Completed,
+            &format!("2026-07-{day:02}T12:00:00Z"),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
         task_id = outcome.successor.unwrap().id;
     }
 
-    let mut conn = database.acquire().await.unwrap();
     conn.clear_cached_statements().await.unwrap();
     let items = super::super::tasks::list_task_items_in_workspace(
         &mut conn,

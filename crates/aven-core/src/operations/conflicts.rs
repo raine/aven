@@ -544,7 +544,22 @@ async fn resolve_recurrence_state_conflict(
     } else {
         String::new()
     };
-    let changed_at = now();
+    let mut changed_at = now();
+    if state == RecurrenceSeriesState::Active {
+        let pause_boundaries: Vec<String> = sqlx::query_scalar(
+            "SELECT json_extract(payload, '$.paused_at') FROM changes
+             WHERE entity_type = 'recurrence_series' AND entity_id = ?
+               AND op_type = 'open_recurrence_pause'
+               AND json_extract(payload, '$.workspace_id') = ?",
+        )
+        .bind(series_id)
+        .bind(workspace.id.as_str())
+        .fetch_all(&mut *conn)
+        .await?;
+        for paused_at in pause_boundaries {
+            changed_at = super::recurrence::timestamp_strictly_after(&paused_at, &changed_at)?;
+        }
+    }
     sqlx::query("UPDATE recurrence_series SET state = ?, stopped_at = ?, updated_at = ? WHERE workspace_id = ? AND id = ?")
         .bind(state.as_str()).bind(&stopped_at).bind(&changed_at).bind(&workspace.id).bind(series_id).execute(&mut *conn).await?;
     let operation = if state == RecurrenceSeriesState::Stopped {
@@ -576,7 +591,38 @@ async fn resolve_recurrence_state_conflict(
         &change_id,
     )
     .await?;
+    sqlx::query(
+        "UPDATE conflicts SET resolved = 1
+         WHERE workspace_id = ? AND entity_type = 'recurrence_series'
+           AND entity_id = ? AND field = 'state' AND resolved = 0",
+    )
+    .bind(&workspace.id)
+    .bind(series_id)
+    .execute(&mut *conn)
+    .await?;
+    if state == RecurrenceSeriesState::Active {
+        sqlx::query(
+            "UPDATE recurrence_pause_intervals
+             SET resumed_at = ?, resolved_by_change_id = ?
+             WHERE workspace_id = ? AND series_id = ? AND resumed_at = ''",
+        )
+        .bind(&changed_at)
+        .bind(&change_id)
+        .bind(&workspace.id)
+        .bind(series_id)
+        .execute(&mut *conn)
+        .await?;
+    }
     cleanup_recurrence_projections(conn, workspace, series_id, state, &stopped_at).await?;
+    if state == RecurrenceSeriesState::Active {
+        super::recurrence::reconcile_recurrence_series_in_transaction(
+            conn,
+            workspace,
+            series_id,
+            chrono::DateTime::parse_from_rfc3339(&changed_at)?.with_timezone(&chrono::Utc),
+        )
+        .await?;
+    }
     Ok(())
 }
 

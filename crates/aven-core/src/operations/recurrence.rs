@@ -669,6 +669,44 @@ pub(crate) async fn reconcile_recurrence_series_in_transaction(
         .execute(&mut *conn)
         .await?;
     }
+    if let Some(existing) = load_occurrence(conn, &workspace.id, series_id, target).await?
+        && matches!(
+            existing.projection_state,
+            RecurrenceProjectionState::Archived
+        )
+        && existing.outcome.is_none()
+    {
+        let expected = derive_occurrence_identity(&workspace.id, series_id, &schedule, target)?;
+        ensure!(
+            existing.task_id.as_ref() == Some(&expected.task_id),
+            "error recurrence-generation-conflict slot={target} field=task_id"
+        );
+        let task = get_task_in_workspace(conn, workspace, &expected.task_id).await?;
+        ensure!(
+            task.status.is_open() && !task.deleted,
+            "error recurrence-generation-conflict slot={target} field=task"
+        );
+        sqlx::query(
+            "UPDATE recurrence_occurrences
+             SET projection_state = 'projected', archived_at = ''
+             WHERE workspace_id = ? AND series_id = ? AND slot_on = ?
+             AND projection_state = 'archived' AND outcome = ''",
+        )
+        .bind(&workspace.id)
+        .bind(series_id)
+        .bind(target.format("%Y-%m-%d").to_string())
+        .execute(&mut *conn)
+        .await?;
+        let occurrence = load_occurrence(conn, &workspace.id, series_id, target)
+            .await?
+            .context("promoted recurrence occurrence missing")?;
+        return Ok(RecurrenceReconcileOutcome {
+            series,
+            occurrence: Some(occurrence),
+            changed: true,
+            lifecycle_blocked: false,
+        });
+    }
     let labels = load_series_labels(conn, &workspace.id, series_id).await?;
     let occurrence = materialize_occurrence(conn, workspace, &series, &labels, target).await?;
     Ok(RecurrenceReconcileOutcome {
@@ -686,9 +724,26 @@ pub(crate) async fn resolve_recurrence_occurrence_in_transaction(
     outcome: RecurrenceOutcome,
     resolved_at: &str,
 ) -> Result<RecurrenceResolveOutcome> {
-    let occurrence = load_occurrence_for_task(conn, &workspace.id, task_id)
+    let mut occurrence = load_occurrence_for_task(conn, &workspace.id, task_id)
         .await?
         .context("error recurrence-occurrence-not-found")?;
+    if matches!(
+        occurrence.projection_state,
+        RecurrenceProjectionState::Projected
+    ) {
+        reconcile_recurrence_series_in_transaction(
+            conn,
+            workspace,
+            &occurrence.series_id,
+            DateTime::parse_from_rfc3339(resolved_at)
+                .context("invalid recurrence resolution time")?
+                .with_timezone(&Utc),
+        )
+        .await?;
+        occurrence = load_occurrence_for_task(conn, &workspace.id, task_id)
+            .await?
+            .context("error recurrence-occurrence-not-found")?;
+    }
     ensure!(
         matches!(
             occurrence.projection_state,
@@ -902,7 +957,9 @@ pub async fn pause_recurrence_series(
     series_id: &RecurrenceSeriesId,
     paused_at: &str,
 ) -> Result<RecurrenceStateOutcome> {
-    DateTime::parse_from_rfc3339(paused_at).context("invalid recurrence pause time")?;
+    let paused_at_utc = DateTime::parse_from_rfc3339(paused_at)
+        .context("invalid recurrence pause time")?
+        .with_timezone(&Utc);
     let mut tx = begin_immediate(conn).await?;
     let series = load_series(&mut tx, &workspace.id, series_id).await?;
     ensure!(
@@ -911,6 +968,8 @@ pub async fn pause_recurrence_series(
         series.state.as_str()
     );
     ensure_no_series_conflict(&mut tx, &workspace.id, series_id, "state").await?;
+    reconcile_recurrence_series_in_transaction(&mut tx, workspace, series_id, paused_at_utc)
+        .await?;
     let projected = load_projected_occurrence(&mut tx, &workspace.id, series_id).await?;
     let change_id = set_series_state(
         &mut tx,
@@ -1098,7 +1157,9 @@ pub async fn stop_recurrence_series(
     skip_current: bool,
     stopped_at: &str,
 ) -> Result<RecurrenceStateOutcome> {
-    DateTime::parse_from_rfc3339(stopped_at).context("invalid recurrence stop time")?;
+    let stopped_at_utc = DateTime::parse_from_rfc3339(stopped_at)
+        .context("invalid recurrence stop time")?
+        .with_timezone(&Utc);
     let mut tx = begin_immediate(conn).await?;
     let series = load_series(&mut tx, &workspace.id, series_id).await?;
     ensure!(
@@ -1106,6 +1167,8 @@ pub async fn stop_recurrence_series(
         "error recurrence-already-stopped"
     );
     ensure_no_series_conflict(&mut tx, &workspace.id, series_id, "state").await?;
+    reconcile_recurrence_series_in_transaction(&mut tx, workspace, series_id, stopped_at_utc)
+        .await?;
     if matches!(series.state, RecurrenceSeriesState::Paused) {
         let close_change_id = append_change(
             &mut tx,
@@ -1170,9 +1233,24 @@ pub(crate) async fn route_recurrence_task_field(
     field: &str,
     value: &str,
 ) -> Result<Option<bool>> {
-    let Some(occurrence) = load_occurrence_for_task(conn, &workspace.id, task_id).await? else {
+    let Some(mut occurrence) = load_occurrence_for_task(conn, &workspace.id, task_id).await? else {
         return Ok(None);
     };
+    if matches!(
+        occurrence.projection_state,
+        RecurrenceProjectionState::Projected
+    ) {
+        reconcile_recurrence_series_in_transaction(
+            conn,
+            workspace,
+            &occurrence.series_id,
+            Utc::now(),
+        )
+        .await?;
+        occurrence = load_occurrence_for_task(conn, &workspace.id, task_id)
+            .await?
+            .context("error recurrence-occurrence-not-found")?;
+    }
     if matches!(
         occurrence.projection_state,
         RecurrenceProjectionState::Archived
@@ -2184,7 +2262,7 @@ fn retryable_reconcile_error(error: &anyhow::Error) -> bool {
         .is_some_and(|code| matches!(code.as_ref(), "5" | "6" | "19"))
 }
 
-fn timestamp_strictly_after(earlier: &str, candidate: &str) -> Result<String> {
+pub(crate) fn timestamp_strictly_after(earlier: &str, candidate: &str) -> Result<String> {
     if candidate > earlier {
         return Ok(candidate.to_string());
     }

@@ -649,6 +649,9 @@ async fn apply_undo_command(
             note_id,
             note_add_change_id,
         } => {
+            let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+            crate::operations::route_recurrence_task_field(conn, &workspace, task_id, "notes", "")
+                .await?;
             delete_created_note(conn, workspace_id, task_id, note_id, note_add_change_id).await?;
             Ok(CommandOutcome {
                 task_id: Some(task_id.clone()),
@@ -749,6 +752,23 @@ async fn apply_undo_command(
             task_id,
             depends_on_task_id,
         } => {
+            let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+            crate::operations::route_recurrence_task_field(
+                conn,
+                &workspace,
+                task_id,
+                "dependencies",
+                "",
+            )
+            .await?;
+            crate::operations::route_recurrence_task_field(
+                conn,
+                &workspace,
+                depends_on_task_id,
+                "dependencies",
+                "",
+            )
+            .await?;
             ensure!(
                 dependency_edge_exists(conn, workspace_id, task_id, depends_on_task_id).await?,
                 "error undo-state-changed task_id={task_id} field=dependency"
@@ -764,6 +784,23 @@ async fn apply_undo_command(
             task_id,
             depends_on_task_id,
         } => {
+            let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+            crate::operations::route_recurrence_task_field(
+                conn,
+                &workspace,
+                task_id,
+                "dependencies",
+                "",
+            )
+            .await?;
+            crate::operations::route_recurrence_task_field(
+                conn,
+                &workspace,
+                depends_on_task_id,
+                "dependencies",
+                "",
+            )
+            .await?;
             ensure!(
                 !dependency_edge_exists(conn, workspace_id, task_id, depends_on_task_id).await?,
                 "error undo-state-changed task_id={task_id} field=dependency"
@@ -836,6 +873,8 @@ async fn set_task_field_in_workspace(
     value: &str,
 ) -> Result<()> {
     let field = task_field.as_str();
+    let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+    crate::operations::route_recurrence_task_field(conn, &workspace, task_id, field, value).await?;
     if conflict_exists(conn, workspace_id, task_id, field).await? {
         bail!(
             "error conflicted-field ref={} field={} hint=\"use conflict resolve\"",

@@ -218,6 +218,12 @@ CREATE INDEX idx_conflicts_workspace_task
 ON conflicts(workspace_id, task_id, resolved)
 WHERE entity_type = 'task';
 
+CREATE INDEX idx_conflicts_workspace_resolved_created_task
+ON conflicts(workspace_id, resolved, created_at, task_id);
+
+CREATE INDEX idx_conflicts_workspace_resolved_task
+ON conflicts(workspace_id, resolved, task_id);
+
 CREATE INDEX idx_conflicts_recurrence_lifecycle
 ON conflicts(workspace_id, entity_type, entity_id, field, resolved)
 WHERE entity_type = 'recurrence_series';

@@ -3954,6 +3954,68 @@ fn recurrence_pause_resume_race_blocks_reconciliation_until_resolution() {
 }
 
 #[test]
+fn recurrence_pause_conflict_resolution_to_active_closes_pause_interval() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("recurrence-lifecycle-active-a.sqlite");
+    let b = env.db("recurrence-lifecycle-active-b.sqlite");
+    let (series_ref, _) = add_daily_recurrence(&env, &a, "active lifecycle resolution");
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    ok(env.aven(&a, ["recur", "pause", &series_ref]));
+    ok(env.aven(&b, ["recur", "pause", &series_ref]));
+    ok(env.aven(&b, ["recur", "resume", &series_ref]));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    sync(&env, &a, &server);
+
+    ok(env.aven(
+        &a,
+        [
+            "conflict",
+            "resolve",
+            &series_ref,
+            "state",
+            "--value",
+            "active",
+        ],
+    ));
+    assert_eq!(
+        query_sql_scalar(&a, "SELECT state FROM recurrence_series"),
+        "active"
+    );
+    assert_eq!(
+        scalar_i64(
+            &a,
+            "SELECT count(*) FROM recurrence_pause_intervals WHERE resumed_at = ''"
+        ),
+        0
+    );
+    assert_eq!(
+        scalar_i64(
+            &a,
+            "SELECT count(*) FROM recurrence_occurrences WHERE projection_state = 'projected'"
+        ),
+        1
+    );
+
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    assert_eq!(
+        query_sql_scalar(&b, "SELECT state FROM recurrence_series"),
+        "active"
+    );
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT count(*) FROM recurrence_pause_intervals WHERE resumed_at = ''"
+        ),
+        0
+    );
+}
+
+#[test]
 fn attachment_add_for_missing_task_fails() {
     let env = TestEnv::new();
     let db = env.db("attachment-missing-task.sqlite");

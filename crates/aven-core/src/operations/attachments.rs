@@ -385,6 +385,14 @@ async fn add_task_attachment_inner(
     }
     let database_result = async {
         let mut tx = begin_immediate(conn).await?;
+        crate::operations::route_recurrence_task_field(
+            &mut tx,
+            workspace,
+            task_id,
+            "attachments",
+            "",
+        )
+        .await?;
         let task_exists = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM tasks WHERE workspace_id = ? AND id = ?)",
         )
@@ -488,6 +496,14 @@ pub async fn delete_task_attachment(
     let deleted_at = now();
 
     let mut tx = begin_immediate(conn).await?;
+    crate::operations::route_recurrence_task_field(
+        &mut tx,
+        workspace,
+        &task_id,
+        "attachments",
+        "",
+    )
+    .await?;
 
     let change_id = append_change(
         &mut tx,

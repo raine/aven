@@ -1199,6 +1199,8 @@ async fn add_note_operation(
     let note_id = new_id();
     let ts = now();
     let mut tx = begin_immediate(conn).await?;
+    crate::operations::route_recurrence_task_field(&mut tx, workspace, task_id, "notes", "")
+        .await?;
     let change_id = append_change(
         &mut tx,
         ChangeEntity::Task,
@@ -1259,6 +1261,8 @@ pub async fn delete_note(
     note_id: &str,
 ) -> Result<NoteDeleteOutcome> {
     let mut tx = begin_immediate(conn).await?;
+    crate::operations::route_recurrence_task_field(&mut tx, workspace, task_id, "notes", "")
+        .await?;
     let deleted_at = now();
     let deleted =
         sqlx::query("DELETE FROM notes WHERE workspace_id = ? AND task_id = ? AND id = ?")
