@@ -27,7 +27,7 @@ COALESCE(SUM(CASE WHEN t.deleted = 0 AND t.status NOT IN ('done', 'canceled') AN
 
 fn sidebar_counts_sql(project_scoped: bool) -> String {
     let conflict_project = if project_scoped {
-        " AND ct.project_id = ?"
+        " AND COALESCE(ct.project_id, cs.project_id) = ?"
     } else {
         ""
     };
@@ -43,11 +43,16 @@ fn sidebar_counts_sql(project_scoped: bool) -> String {
     };
     format!(
         "SELECT {},
-         (SELECT COUNT(DISTINCT c.task_id)
-          FROM conflicts c
-          JOIN tasks ct ON ct.workspace_id = c.workspace_id AND ct.id = c.task_id
-          WHERE c.workspace_id = ? AND c.resolved = 0 AND ct.deleted = 0
-            AND {}{conflict_project}) AS conflicts_count,
+         (SELECT COUNT(*) FROM (
+              SELECT DISTINCT c.entity_type, c.entity_id
+              FROM conflicts c
+              LEFT JOIN tasks ct ON c.entity_type = 'task'
+                AND ct.workspace_id = c.workspace_id AND ct.id = c.entity_id
+              LEFT JOIN recurrence_series cs ON c.entity_type = 'recurrence_series'
+                AND cs.workspace_id = c.workspace_id AND cs.id = c.entity_id
+              WHERE c.workspace_id = ? AND c.resolved = 0
+                AND COALESCE(ct.deleted, cs.deleted, 1) = 0{conflict_project}
+          )) AS conflicts_count,
          (SELECT COUNT(*)
           FROM tasks ep
           WHERE ep.workspace_id = ?{epic_project}
@@ -57,7 +62,6 @@ fn sidebar_counts_sql(project_scoped: bool) -> String {
          FROM tasks t
          WHERE t.workspace_id = ?{task_project} AND {}",
         sidebar_task_count_columns(),
-        fragments::ordinary_task_clause("ct"),
         fragments::ordinary_task_clause("ep"),
         fragments::ordinary_task_clause("t"),
     )

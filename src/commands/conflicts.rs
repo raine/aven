@@ -17,6 +17,7 @@ use crate::workspaces::Workspace;
 #[derive(Serialize)]
 struct ConflictListJsonItem {
     r#ref: String,
+    entity_type: String,
     task_id: String,
     title: String,
     project: String,
@@ -62,12 +63,27 @@ pub(crate) async fn cmd_conflict(
             if json {
                 let mut json_items = Vec::new();
                 for item in items {
-                    json_items.push(ConflictListJsonItem {
-                        r#ref: display_refs.display_ref_for_id(
+                    let entity_ref = if item.recurrence_series {
+                        database
+                            .recurrence_series_ref(
+                                &workspace.id,
+                                &item.task_id.to_string().parse()?,
+                            )
+                            .await?
+                    } else {
+                        display_refs.display_ref_for_id(
                             &workspace.id,
                             &item.project_prefix,
                             &item.task_id,
-                        ),
+                        )
+                    };
+                    json_items.push(ConflictListJsonItem {
+                        r#ref: entity_ref,
+                        entity_type: if item.recurrence_series {
+                            "recurrence_series".to_string()
+                        } else {
+                            "task".to_string()
+                        },
                         task_id: item.task_id.to_string(),
                         title: item.title,
                         project: item.project_key,
@@ -78,7 +94,22 @@ pub(crate) async fn cmd_conflict(
                 print_json_pretty(&json_items)?;
             } else {
                 for item in items {
-                    print_conflict_list_item(&display_refs, workspace, item);
+                    if item.recurrence_series {
+                        let series_id = item.task_id.to_string().parse()?;
+                        let entity_ref = database
+                            .recurrence_series_ref(&workspace.id, &series_id)
+                            .await?;
+                        println!(
+                            "{} conflict field={} variants={},{} title={}",
+                            entity_ref,
+                            item.field,
+                            item.variant_a,
+                            item.variant_b,
+                            quote(&item.title)
+                        );
+                    } else {
+                        print_conflict_list_item(&display_refs, workspace, item);
+                    }
                 }
             }
         }
@@ -87,6 +118,44 @@ pub(crate) async fn cmd_conflict(
             field,
             json,
         } => {
+            if task_ref.to_ascii_uppercase().starts_with("RCR-") {
+                let series = database
+                    .resolve_recurrence_ref(workspace, &task_ref)
+                    .await?;
+                let details = database
+                    .recurrence_series_conflicts(workspace, &series.id, field.as_deref())
+                    .await?;
+                if json {
+                    let json_details = details
+                        .into_iter()
+                        .map(|detail| ConflictDetailJson {
+                            r#ref: task_ref.clone(),
+                            task_id: series.id.to_string(),
+                            field: detail.field,
+                            variants: vec![
+                                ConflictVariantJson {
+                                    token: detail.variant_a,
+                                    value: detail.local_value,
+                                },
+                                ConflictVariantJson {
+                                    token: detail.variant_b,
+                                    value: detail.remote_value,
+                                },
+                            ],
+                        })
+                        .collect::<Vec<_>>();
+                    print_json_pretty(&json_details)?;
+                } else {
+                    for detail in details {
+                        println!("conflict {} field={}", task_ref, detail.field);
+                        println!("variant {}", detail.variant_a);
+                        print_multiline_block("value", &detail.local_value);
+                        println!("variant {}", detail.variant_b);
+                        print_multiline_block("value", &detail.remote_value);
+                    }
+                }
+                return Ok(());
+            }
             let task = database.resolve_task_ref(workspace, &task_ref).await?;
             let details = database
                 .task_conflicts(workspace, &task.id, field.as_deref())
@@ -156,6 +225,23 @@ pub(crate) async fn cmd_conflict(
             value_file,
             value_stdin,
         } => {
+            if task_ref.to_ascii_uppercase().starts_with("RCR-") {
+                let series = database
+                    .resolve_recurrence_ref(workspace, &task_ref)
+                    .await?;
+                let value = if let Some(token) = use_variant {
+                    database
+                        .recurrence_conflict_variant_value(workspace, &series.id, &field, &token)
+                        .await?
+                } else {
+                    read_required_text(value, value_file.as_deref(), value_stdin, "value")?
+                };
+                let field = database
+                    .resolve_recurrence_conflict(workspace, &series.id, &field, &value)
+                    .await?;
+                println!("resolved {} field={}", task_ref, field);
+                return Ok(());
+            }
             let task = database.resolve_task_ref(workspace, &task_ref).await?;
             let value = if let Some(token) = use_variant {
                 database

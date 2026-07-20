@@ -73,8 +73,13 @@ pub(super) async fn create_task(conn: &mut SqliteConnection, change: &ChangeWire
                 .await?;
         }
     }
+    let field_version_seed = change
+        .payload
+        .get("task_field_version_seed")
+        .and_then(Value::as_str)
+        .unwrap_or(&change.change_id);
     for field in TaskField::VERSIONED {
-        set_field_version(conn, &task_id, field.as_str(), &change.change_id).await?;
+        set_field_version(conn, &task_id, field.as_str(), field_version_seed).await?;
     }
     Ok(())
 }
@@ -124,6 +129,17 @@ pub async fn set_field(
             return Ok(());
         }
         if current != change.base_version {
+            if super::recurrence::suppress_recurrence_status_conflict(
+                conn,
+                &workspace_id,
+                &task_id,
+                &value,
+                false,
+            )
+            .await?
+            {
+                return Ok(());
+            }
             conflict::create_conflict(
                 conn,
                 change,

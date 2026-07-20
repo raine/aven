@@ -145,6 +145,11 @@ pub(super) async fn ensure_project_for_payload(
     project_id: &ProjectId,
     change: &ChangeWire,
 ) -> Result<ProjectId> {
+    if change.payload.get("series_id").is_some()
+        && let Some(existing_id) = live_project_by_id(conn, workspace_id, project_id).await?
+    {
+        return Ok(existing_id);
+    }
     let key = str_payload(&change.payload, "project_key")?;
     let name = str_payload(&change.payload, "project_name").unwrap_or_else(|_| key.clone());
     let prefix =

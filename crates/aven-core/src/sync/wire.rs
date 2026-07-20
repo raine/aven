@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result, bail};
+use chrono::{NaiveDate, NaiveTime};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -11,9 +12,15 @@ use crate::attachments::validation::{
 use crate::change_log::op_type;
 use crate::choices::TaskSource;
 use crate::ids::{BASE32, ProjectId, WorkspaceId};
+use crate::recurrence::{
+    RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceRule,
+    RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId, WeekdaySet,
+    derive_occurrence_identity, is_slot, next_slot_after,
+};
 use crate::task_fields::TaskField;
 
-pub const SYNC_PROTOCOL_VERSION: u32 = 9;
+pub const SYNC_PROTOCOL_VERSION: u32 = 10;
+const MAX_CHANGE_PAYLOAD_BYTES: usize = 64 * 1024;
 pub fn sync_server_url_is_valid(server: &str) -> bool {
     let Ok(url) = url::Url::parse(server) else {
         return false;
@@ -307,6 +314,9 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
     if !change.payload.is_object() {
         bail!("error invalid-sync-change payload expected-object");
     }
+    if serde_json::to_vec(&change.payload)?.len() > MAX_CHANGE_PAYLOAD_BYTES {
+        bail!("error invalid-sync-change payload-too-large limit={MAX_CHANGE_PAYLOAD_BYTES}");
+    }
 
     match change.op_type.as_str() {
         op_type::CREATE_WORKSPACE => {
@@ -360,10 +370,23 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             required_string_payload("title", &change.payload)?;
             let project_id = required_string_payload("project_id", &change.payload)?;
             ensure_project_id("project_id", &project_id)?;
-            required_string_payload("project_key", &change.payload)?;
             optional_string_payload("description", &change.payload)?;
-            required_string_payload("project_name", &change.payload)?;
-            required_string_payload("project_prefix", &change.payload)?;
+            let recurrence_task = change
+                .payload
+                .get("series_id")
+                .and_then(Value::as_str)
+                .is_some();
+            if recurrence_task {
+                let series_id = required_string_payload("series_id", &change.payload)?;
+                series_id.parse::<RecurrenceSeriesId>().map_err(|_| {
+                    anyhow::anyhow!("error invalid-sync-change series_id invalid-id")
+                })?;
+                validate_recurrence_task(change)?;
+            } else {
+                required_string_payload("project_key", &change.payload)?;
+                required_string_payload("project_name", &change.payload)?;
+                required_string_payload("project_prefix", &change.payload)?;
+            }
             if let Some(status) = optional_string_payload("status", &change.payload)? {
                 validate_sync_task_field_value(TaskField::Status, &status)?;
             }
@@ -474,11 +497,398 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
             ensure_sync_id("note_id", &note_id)?;
             required_timestamp_payload("deleted_at", &change.payload)?;
         }
+        op_type::CREATE_RECURRENCE_SERIES => validate_recurrence_create(change)?,
+        op_type::UPDATE_RECURRENCE_TEMPLATE => validate_recurrence_template(change)?,
+        op_type::PROJECT_RECURRENCE_OCCURRENCE => validate_recurrence_projection(change)?,
+        op_type::RESOLVE_RECURRENCE_OCCURRENCE => validate_recurrence_outcome(change, true)?,
+        op_type::RECORD_RECURRENCE_OUTCOME => validate_recurrence_outcome(change, false)?,
+        op_type::SET_RECURRENCE_STATE | op_type::STOP_RECURRENCE_SERIES => {
+            validate_recurrence_state(change)?
+        }
+        op_type::OPEN_RECURRENCE_PAUSE => validate_recurrence_pause(change, true)?,
+        op_type::CLOSE_RECURRENCE_PAUSE => validate_recurrence_pause(change, false)?,
         op_type::ATTACHMENT_ADD => validate_attachment_add_change(change)?,
         op_type::ATTACHMENT_DELETE => validate_attachment_delete_change(change)?,
         _ => bail!("error invalid-sync-change op_type={}", change.op_type),
     }
     Ok(())
+}
+
+fn validate_recurrence_task(change: &ChangeWire) -> Result<()> {
+    let workspace_id: WorkspaceId = required_string_payload("workspace_id", &change.payload)?
+        .parse()
+        .map_err(|_| anyhow::anyhow!("error invalid-sync-change workspace_id invalid-id"))?;
+    let series_id: RecurrenceSeriesId = required_string_payload("series_id", &change.payload)?
+        .parse()
+        .map_err(|_| anyhow::anyhow!("error invalid-sync-change series_id invalid-id"))?;
+    let slot_on = recurrence_date_payload("slot_on", &change.payload)?;
+    let schedule = recurrence_schedule_payload(&change.payload)?;
+    if !is_slot(&schedule.rule, schedule.start_on, slot_on) {
+        bail!("error invalid-sync-change recurrence-slot-off-lattice");
+    }
+    let identity = derive_occurrence_identity(&workspace_id, &series_id, &schedule, slot_on)
+        .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))?;
+    let slot = crate::recurrence::slot_values(&schedule, slot_on)
+        .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))?;
+    for (key, expected) in [
+        ("task_id", identity.task_id.as_str()),
+        ("created_at", identity.created_at.as_str()),
+        ("updated_at", identity.updated_at.as_str()),
+        ("available_at", slot.available_at.as_str()),
+        ("due_on", slot.due_on.as_deref().unwrap_or("")),
+        ("task_change_id", identity.task_change_id.as_str()),
+        (
+            "occurrence_change_id",
+            identity.occurrence_change_id.as_str(),
+        ),
+        (
+            "task_field_version_seed",
+            identity.field_version_seeds.task.as_str(),
+        ),
+        (
+            "occurrence_field_version_seed",
+            identity.field_version_seeds.occurrence.as_str(),
+        ),
+    ] {
+        if required_string_payload(key, &change.payload)? != expected {
+            bail!("error invalid-sync-change recurrence-deterministic-mismatch field={key}");
+        }
+    }
+    if change.entity_id != identity.task_id.as_str() || change.change_id != identity.task_change_id
+    {
+        bail!("error invalid-sync-change recurrence-deterministic-mismatch field=change_identity");
+    }
+    Ok(())
+}
+
+fn validate_recurrence_create(change: &ChangeWire) -> Result<()> {
+    ensure_entity_type(change, "recurrence_series")?;
+    let series_id: RecurrenceSeriesId = change
+        .entity_id
+        .parse()
+        .map_err(|_| anyhow::anyhow!("error invalid-sync-change entity_id invalid-id"))?;
+    required_workspace_payload(&change.payload)?;
+    if required_string_payload("series_id", &change.payload)? != series_id.as_str() {
+        bail!("error invalid-sync-change recurrence-series-id-mismatch");
+    }
+    required_string_payload("title", &change.payload)?;
+    required_string_payload("description", &change.payload)?;
+    let project_id = required_string_payload("project_id", &change.payload)?;
+    ensure_project_id("project_id", &project_id)?;
+    required_string_payload("project_key", &change.payload)?;
+    required_string_payload("project_name", &change.payload)?;
+    required_string_payload("project_prefix", &change.payload)?;
+    validate_sync_task_field_value(
+        TaskField::Priority,
+        &required_string_payload("priority", &change.payload)?,
+    )?;
+    let status = required_string_payload("initial_status", &change.payload)?;
+    validate_sync_task_field_value(TaskField::Status, &status)?;
+    if matches!(status.as_str(), "done" | "canceled") {
+        bail!("error invalid-sync-change recurrence-terminal-template");
+    }
+    recurrence_schedule_payload(&change.payload)?;
+    optional_string_array_payload("labels", &change.payload)?;
+    if required_string_payload("state", &change.payload)? != "active"
+        || !required_string_payload("stopped_at", &change.payload)?.is_empty()
+    {
+        bail!("error invalid-sync-change recurrence-create-state");
+    }
+    required_timestamp_payload("created_at", &change.payload)?;
+    required_timestamp_payload("updated_at", &change.payload)?;
+    Ok(())
+}
+
+fn validate_recurrence_template(change: &ChangeWire) -> Result<()> {
+    validate_recurrence_entity(change)?;
+    let fields = change
+        .payload
+        .get("fields")
+        .and_then(Value::as_array)
+        .context("error invalid-sync-change payload.fields missing")?;
+    if fields.len() > 8 {
+        bail!("error invalid-sync-change recurrence-template-fields-too-large");
+    }
+    let base_versions = change
+        .payload
+        .get("base_versions")
+        .and_then(Value::as_object)
+        .context("error invalid-sync-change payload.base_versions missing")?;
+    let mut seen = HashSet::new();
+    for pair in fields {
+        let pair = pair
+            .as_array()
+            .filter(|pair| pair.len() == 2)
+            .context("error invalid-sync-change recurrence-template-field-pair")?;
+        let field = pair[0]
+            .as_str()
+            .context("error invalid-sync-change recurrence-template-field")?;
+        let value = pair[1]
+            .as_str()
+            .context("error invalid-sync-change recurrence-template-value")?;
+        if !seen.insert(field) {
+            bail!("error invalid-sync-change recurrence-template-duplicate-field");
+        }
+        if !matches!(
+            base_versions.get(field),
+            Some(Value::String(_)) | Some(Value::Null)
+        ) {
+            bail!("error invalid-sync-change recurrence-template-base-version field={field}");
+        }
+        match field {
+            "title" | "description" => {}
+            "project" => ensure_project_id("project_id", value)?,
+            "priority" => validate_sync_task_field_value(TaskField::Priority, value)?,
+            "initial_status" => {
+                validate_sync_task_field_value(TaskField::Status, value)?;
+                if matches!(value, "done" | "canceled") {
+                    bail!("error invalid-sync-change recurrence-terminal-template");
+                }
+            }
+            "available_local_time" => {
+                validate_local_time(value)?;
+            }
+            "due_policy" => {
+                RecurrenceDuePolicy::parse(value)
+                    .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))?;
+            }
+            _ => bail!("error invalid-sync-change recurrence-template-field={field}"),
+        }
+    }
+    optional_string_array_payload("labels", &change.payload)?;
+    let labels_changed = change
+        .payload
+        .get("labels_changed")
+        .and_then(Value::as_bool)
+        .context("error invalid-sync-change payload.labels_changed missing")?;
+    if labels_changed
+        && !matches!(
+            base_versions.get("labels"),
+            Some(Value::String(_)) | Some(Value::Null)
+        )
+    {
+        bail!("error invalid-sync-change recurrence-template-base-version field=labels");
+    }
+    required_timestamp_payload("updated_at", &change.payload)?;
+    Ok(())
+}
+
+fn validate_recurrence_projection(change: &ChangeWire) -> Result<()> {
+    validate_recurrence_entity(change)?;
+    if change.field.as_deref() != Some("projection") {
+        bail!("error invalid-sync-change field=projection");
+    }
+    let workspace_id: WorkspaceId = required_string_payload("workspace_id", &change.payload)?
+        .parse()
+        .map_err(|_| anyhow::anyhow!("error invalid-sync-change workspace_id invalid-id"))?;
+    let series_id: RecurrenceSeriesId = change.entity_id.parse().unwrap();
+    let slot_on = recurrence_date_payload("slot_on", &change.payload)?;
+    let schedule = recurrence_schedule_payload(&change.payload)?;
+    if !is_slot(&schedule.rule, schedule.start_on, slot_on) {
+        bail!("error invalid-sync-change recurrence-slot-off-lattice");
+    }
+    let identity = derive_occurrence_identity(&workspace_id, &series_id, &schedule, slot_on)
+        .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))?;
+    for (key, expected) in [
+        ("task_id", identity.task_id.as_str()),
+        (
+            "projected_at",
+            identity.occurrence_link.projected_at.as_str(),
+        ),
+        ("task_change_id", identity.task_change_id.as_str()),
+        (
+            "occurrence_change_id",
+            identity.occurrence_change_id.as_str(),
+        ),
+        (
+            "task_field_version_seed",
+            identity.field_version_seeds.task.as_str(),
+        ),
+        (
+            "occurrence_field_version_seed",
+            identity.field_version_seeds.occurrence.as_str(),
+        ),
+    ] {
+        if required_string_payload(key, &change.payload)? != expected {
+            bail!("error invalid-sync-change recurrence-deterministic-mismatch field={key}");
+        }
+    }
+    if change.change_id != identity.occurrence_change_id {
+        bail!("error invalid-sync-change recurrence-deterministic-mismatch field=change_id");
+    }
+    Ok(())
+}
+
+fn validate_recurrence_outcome(change: &ChangeWire, task_backed: bool) -> Result<()> {
+    validate_recurrence_entity(change)?;
+    if change.field.as_deref() != Some("outcome") {
+        bail!("error invalid-sync-change field=outcome");
+    }
+    let slot_on = recurrence_date_payload("slot_on", &change.payload)?;
+    let schedule = recurrence_schedule_payload(&change.payload)?;
+    if !is_slot(&schedule.rule, schedule.start_on, slot_on) {
+        bail!("error invalid-sync-change recurrence-slot-off-lattice");
+    }
+    let outcome = RecurrenceOutcome::parse(&required_string_payload("outcome", &change.payload)?)
+        .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))?;
+    let resolved_at = required_timestamp_payload("resolved_at", &change.payload)?;
+    if resolved_at < crate::recurrence::slot_values(&schedule, slot_on)?.boundary_at {
+        bail!("error invalid-sync-change recurrence-resolution-before-slot");
+    }
+    let conflict_resolution = change
+        .payload
+        .get("conflict_resolution")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if task_backed {
+        let task_id = required_string_payload("task_id", &change.payload)?;
+        ensure_sync_id("task_id", &task_id)?;
+        let workspace_id: WorkspaceId =
+            required_string_payload("workspace_id", &change.payload)?.parse()?;
+        let series_id: RecurrenceSeriesId = change.entity_id.parse().unwrap();
+        let identity = derive_occurrence_identity(&workspace_id, &series_id, &schedule, slot_on)?;
+        if task_id != identity.task_id.as_str() {
+            bail!("error invalid-sync-change recurrence-deterministic-mismatch field=task_id");
+        }
+        let expected_status = match outcome {
+            RecurrenceOutcome::Completed => "done",
+            RecurrenceOutcome::Skipped => "canceled",
+        };
+        if required_string_payload("task_status", &change.payload)? != expected_status {
+            bail!("error invalid-sync-change recurrence-outcome-status-mismatch");
+        }
+        let status_change_id = required_string_payload("task_status_change_id", &change.payload)?;
+        if !conflict_resolution || !status_change_id.is_empty() {
+            ensure_sync_id("task_status_change_id", &status_change_id)?;
+        }
+        let successor = required_string_payload("successor_task_id", &change.payload)?;
+        if !successor.is_empty() {
+            ensure_sync_id("successor_task_id", &successor)?;
+            let successor_slot = next_slot_after(&schedule.rule, schedule.start_on, slot_on)
+                .context("error invalid-sync-change recurrence-successor-out-of-range")?;
+            let successor_identity =
+                derive_occurrence_identity(&workspace_id, &series_id, &schedule, successor_slot)?;
+            if successor != successor_identity.task_id.as_str() {
+                bail!(
+                    "error invalid-sync-change recurrence-deterministic-mismatch field=successor_task_id"
+                );
+            }
+        }
+    } else if change.payload.get("task_id").is_some() && !conflict_resolution {
+        bail!("error invalid-sync-change recurrence-correction-has-task");
+    }
+    Ok(())
+}
+
+fn validate_recurrence_state(change: &ChangeWire) -> Result<()> {
+    validate_recurrence_entity(change)?;
+    if change.field.as_deref() != Some("state") {
+        bail!("error invalid-sync-change field=state");
+    }
+    let conflict_resolution = change
+        .payload
+        .get("conflict_resolution")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if change.base_version.is_none() && !conflict_resolution {
+        bail!("error invalid-sync-change recurrence-lifecycle-base-version-missing");
+    }
+    let state = RecurrenceSeriesState::parse(&required_string_payload("state", &change.payload)?)
+        .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))?;
+    let stopped_at = required_string_payload("stopped_at", &change.payload)?;
+    if matches!(state, RecurrenceSeriesState::Stopped) {
+        required_timestamp_payload("stopped_at", &change.payload)?;
+    } else if !stopped_at.is_empty() {
+        bail!("error invalid-sync-change recurrence-stop-state-mismatch");
+    }
+    required_timestamp_payload("changed_at", &change.payload)?;
+    Ok(())
+}
+
+fn validate_recurrence_pause(change: &ChangeWire, open: bool) -> Result<()> {
+    validate_recurrence_entity(change)?;
+    if change.field.as_deref() != Some("pause") {
+        bail!("error invalid-sync-change field=pause");
+    }
+    if open {
+        let interval_id = required_string_payload("interval_id", &change.payload)?;
+        ensure_sync_id("interval_id", &interval_id)?;
+        required_timestamp_payload("paused_at", &change.payload)?;
+        let slot = required_string_payload("suspended_slot_on", &change.payload)?;
+        if !slot.is_empty() {
+            slot.parse::<NaiveDate>()
+                .context("error invalid-sync-change suspended_slot_on")?;
+            let task_id = required_string_payload("suspended_task_id", &change.payload)?;
+            ensure_sync_id("suspended_task_id", &task_id)?;
+        }
+    } else {
+        required_timestamp_payload("resumed_at", &change.payload)?;
+        if let Some(interval_id) = optional_string_payload("interval_id", &change.payload)? {
+            ensure_sync_id("interval_id", &interval_id)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_recurrence_entity(change: &ChangeWire) -> Result<()> {
+    ensure_entity_type(change, "recurrence_series")?;
+    change
+        .entity_id
+        .parse::<RecurrenceSeriesId>()
+        .map_err(|_| anyhow::anyhow!("error invalid-sync-change entity_id invalid-id"))?;
+    required_workspace_payload(&change.payload)?;
+    Ok(())
+}
+
+fn recurrence_schedule_payload(payload: &Value) -> Result<RecurrenceSchedule> {
+    let frequency = RecurrenceFrequency::parse(&required_string_payload("frequency", payload)?)
+        .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))?;
+    let interval = required_i64_payload("interval", payload)?;
+    let interval = u32::try_from(interval)
+        .context("error invalid-sync-change recurrence-interval-out-of-range")?;
+    let weekdays_text = required_string_payload("weekdays", payload)?;
+    let weekdays = weekdays_text
+        .parse::<WeekdaySet>()
+        .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))?;
+    if weekdays.to_string() != weekdays_text {
+        bail!("error invalid-sync-change recurrence-weekdays-noncanonical");
+    }
+    let rule = RecurrenceRule::new(frequency, interval, weekdays)
+        .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))?;
+    let timezone_text = required_string_payload("timezone", payload)?;
+    let timezone = timezone_text
+        .parse::<TimeZoneId>()
+        .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))?;
+    if timezone_text.parse::<chrono_tz::Tz>()?.to_string() != timezone_text {
+        bail!("error invalid-sync-change recurrence-timezone-noncanonical");
+    }
+    let start_on = recurrence_date_payload("start_on", payload)?;
+    let available = required_string_payload("available_local_time", payload)?;
+    let available_local_time = if available.is_empty() {
+        None
+    } else {
+        Some(validate_local_time(&available)?)
+    };
+    let due_policy = RecurrenceDuePolicy::parse(&required_string_payload("due_policy", payload)?)
+        .map_err(|err| anyhow::anyhow!("error invalid-sync-change {err}"))?;
+    Ok(RecurrenceSchedule::new(
+        rule,
+        timezone,
+        start_on,
+        available_local_time,
+        due_policy,
+    ))
+}
+
+fn recurrence_date_payload(key: &str, payload: &Value) -> Result<NaiveDate> {
+    required_string_payload(key, payload)?
+        .parse()
+        .with_context(|| format!("error invalid-sync-change payload.{key} invalid-date"))
+}
+
+fn validate_local_time(value: &str) -> Result<NaiveTime> {
+    NaiveTime::parse_from_str(value, "%H:%M:%S")
+        .context("error invalid-sync-change recurrence-local-time")
 }
 
 fn validate_attachment_add_change(change: &ChangeWire) -> Result<()> {

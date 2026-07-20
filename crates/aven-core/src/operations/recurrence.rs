@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result, bail, ensure};
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use serde_json::Value;
@@ -327,6 +329,9 @@ pub async fn create_recurrence_series(
             .set("title", &draft.title)
             .set("description", &draft.description)
             .set("project_id", project.id.as_str())
+            .set("project_key", &project.key)
+            .set("project_name", &project.name)
+            .set("project_prefix", &project.prefix)
             .set("priority", priority.as_str())
             .set("initial_status", initial_status.as_str())
             .set("frequency", draft.schedule.rule.frequency().as_str())
@@ -343,7 +348,10 @@ pub async fn create_recurrence_series(
             )
             .set("due_policy", draft.schedule.due_policy.as_str())
             .set("labels", &labels)
-            .set("created_at", &created_at),
+            .set("state", "active")
+            .set("stopped_at", "")
+            .set("created_at", &created_at)
+            .set("updated_at", &created_at),
     )
     .await?;
     for field in SERIES_TEMPLATE_FIELDS {
@@ -462,6 +470,33 @@ pub async fn update_recurrence_template(
     if labels_changed {
         ensure_no_series_conflict(&mut tx, &workspace.id, series_id, "labels").await?;
     }
+    let mut base_versions = BTreeMap::new();
+    for (field, _) in &values {
+        base_versions.insert(
+            (*field).to_string(),
+            entity_field_version(
+                &mut tx,
+                &workspace.id,
+                MutableEntityType::RecurrenceSeries,
+                series_id.as_str(),
+                field,
+            )
+            .await?,
+        );
+    }
+    if labels_changed {
+        base_versions.insert(
+            "labels".to_string(),
+            entity_field_version(
+                &mut tx,
+                &workspace.id,
+                MutableEntityType::RecurrenceSeries,
+                series_id.as_str(),
+                "labels",
+            )
+            .await?,
+        );
+    }
     let updated_at = now();
     for (field, value) in &values {
         update_series_template_scalar(&mut tx, &workspace.id, series_id, field, value, &updated_at)
@@ -495,6 +530,8 @@ pub async fn update_recurrence_template(
         op_type::UPDATE_RECURRENCE_TEMPLATE,
         ChangePayload::workspace(workspace)
             .set("fields", &values)
+            .set("base_versions", &base_versions)
+            .set("labels_changed", labels_changed)
             .set("labels", &target_labels)
             .set("updated_at", &updated_at),
     )
@@ -542,7 +579,7 @@ async fn reconcile_recurrence_series_once(
     Ok(outcome)
 }
 
-async fn reconcile_recurrence_series_in_transaction(
+pub(crate) async fn reconcile_recurrence_series_in_transaction(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     series_id: &RecurrenceSeriesId,
@@ -598,17 +635,6 @@ async fn reconcile_recurrence_series_in_transaction(
     }
     let labels = load_series_labels(conn, &workspace.id, series_id).await?;
     let occurrence = materialize_occurrence(conn, workspace, &series, &labels, target).await?;
-    append_change(
-        conn,
-        ChangeEntity::RecurrenceSeries,
-        series_id.as_str(),
-        None,
-        op_type::PROJECT_RECURRENCE_OCCURRENCE,
-        ChangePayload::workspace(workspace)
-            .set("slot_on", target.format("%Y-%m-%d").to_string())
-            .set("reconciled_at", &changed_at),
-    )
-    .await?;
     Ok(RecurrenceReconcileOutcome {
         series,
         occurrence: Some(occurrence),
@@ -683,12 +709,23 @@ pub(crate) async fn resolve_recurrence_occurrence_in_transaction(
             .set("slot_on", occurrence.slot_on.format("%Y-%m-%d").to_string())
             .set("task_id", task_id.as_str())
             .set("outcome", outcome.as_str())
+            .set("task_status", target_status.as_str())
             .set("resolved_at", resolved_at)
             .set("task_status_change_id", &status_change_id)
             .set(
                 "successor_task_id",
                 successor_task_id.as_ref().map(TaskId::as_str).unwrap_or(""),
-            ),
+            )
+            .set("frequency", series.rule.frequency().as_str())
+            .set("interval", series.rule.interval())
+            .set("weekdays", series.rule.weekdays_set().to_string())
+            .set("timezone", series.timezone.as_str())
+            .set("start_on", series.start_on.format("%Y-%m-%d").to_string())
+            .set(
+                "available_local_time",
+                format_local_time(series.available_local_time),
+            )
+            .set("due_policy", series.due_policy.as_str()),
     )
     .await?;
     sqlx::query(
@@ -739,7 +776,11 @@ pub async fn record_recurrence_outcome(
     resolved_at: String,
     at: DateTime<Utc>,
 ) -> Result<RecurrenceRecordOutcome> {
-    DateTime::parse_from_rfc3339(&resolved_at).context("invalid recurrence resolution time")?;
+    let resolved_at = format_utc(
+        DateTime::parse_from_rfc3339(&resolved_at)
+            .context("invalid recurrence resolution time")?
+            .with_timezone(&Utc),
+    );
     let mut tx = begin_immediate(conn).await?;
     let series = load_series(&mut tx, &workspace.id, series_id).await?;
     let schedule = schedule_for_series(&series);
@@ -785,7 +826,17 @@ pub async fn record_recurrence_outcome(
         ChangePayload::workspace(workspace)
             .set("slot_on", slot_on.format("%Y-%m-%d").to_string())
             .set("outcome", outcome.as_str())
-            .set("resolved_at", &resolved_at),
+            .set("resolved_at", &resolved_at)
+            .set("frequency", series.rule.frequency().as_str())
+            .set("interval", series.rule.interval())
+            .set("weekdays", series.rule.weekdays_set().to_string())
+            .set("timezone", series.timezone.as_str())
+            .set("start_on", series.start_on.format("%Y-%m-%d").to_string())
+            .set(
+                "available_local_time",
+                format_local_time(series.available_local_time),
+            )
+            .set("due_policy", series.due_policy.as_str()),
     )
     .await?;
     sqlx::query(
@@ -877,6 +928,14 @@ pub async fn pause_recurrence_series(
                     .as_ref()
                     .map(|occurrence| occurrence.slot_on.format("%Y-%m-%d").to_string())
                     .unwrap_or_default(),
+            )
+            .set(
+                "suspended_task_id",
+                projected
+                    .as_ref()
+                    .and_then(|occurrence| occurrence.task_id.as_ref())
+                    .map(TaskId::as_str)
+                    .unwrap_or(""),
             ),
     )
     .await?;
@@ -1305,7 +1364,7 @@ async fn materialize_occurrence(
     .execute(&mut *conn)
     .await?;
 
-    let payload = deterministic_task_payload(workspace, series, labels, &slot, &identity.task_id);
+    let payload = deterministic_task_payload(workspace, series, labels, &slot, &identity);
     insert_change_with_identity(
         conn,
         IdentifiedChange {
@@ -1325,6 +1384,26 @@ async fn materialize_occurrence(
         .set("slot_on", slot_on.format("%Y-%m-%d").to_string())
         .set("task_id", identity.task_id.as_str())
         .set("projected_at", &identity.occurrence_link.projected_at)
+        .set("task_change_id", &identity.task_change_id)
+        .set("occurrence_change_id", &identity.occurrence_change_id)
+        .set(
+            "task_field_version_seed",
+            &identity.field_version_seeds.task,
+        )
+        .set(
+            "occurrence_field_version_seed",
+            &identity.field_version_seeds.occurrence,
+        )
+        .set("frequency", series.rule.frequency().as_str())
+        .set("interval", series.rule.interval())
+        .set("weekdays", series.rule.weekdays_set().to_string())
+        .set("timezone", series.timezone.as_str())
+        .set("start_on", series.start_on.format("%Y-%m-%d").to_string())
+        .set(
+            "available_local_time",
+            format_local_time(series.available_local_time),
+        )
+        .set("due_policy", series.due_policy.as_str())
         .into_value();
     insert_change_with_identity(
         conn,
@@ -1414,7 +1493,7 @@ async fn verify_materialized_occurrence(
             occurrence.slot_on
         );
     }
-    let payload = deterministic_task_payload(workspace, series, labels, slot, &identity.task_id);
+    let payload = deterministic_task_payload(workspace, series, labels, slot, identity);
     insert_change_with_identity(
         conn,
         IdentifiedChange {
@@ -1437,10 +1516,10 @@ fn deterministic_task_payload(
     series: &RecurrenceSeries,
     labels: &[String],
     slot: &crate::recurrence::RecurrenceSlot,
-    task_id: &TaskId,
+    identity: &crate::recurrence::RecurrenceOccurrenceIdentity,
 ) -> Value {
     ChangePayload::workspace(workspace)
-        .set("task_id", task_id.as_str())
+        .set("task_id", identity.task_id.as_str())
         .set("series_id", series.id.as_str())
         .set("slot_on", slot.scheduled_on.format("%Y-%m-%d").to_string())
         .set("title", &series.title)
@@ -1452,7 +1531,28 @@ fn deterministic_task_payload(
         .set("due_on", slot.due_on.as_deref().unwrap_or(""))
         .set("is_epic", "0")
         .set("labels", labels)
-        .set("created_at", &slot.boundary_at)
+        .set("created_at", &identity.created_at)
+        .set("updated_at", &identity.updated_at)
+        .set("task_change_id", &identity.task_change_id)
+        .set("occurrence_change_id", &identity.occurrence_change_id)
+        .set(
+            "task_field_version_seed",
+            &identity.field_version_seeds.task,
+        )
+        .set(
+            "occurrence_field_version_seed",
+            &identity.field_version_seeds.occurrence,
+        )
+        .set("frequency", series.rule.frequency().as_str())
+        .set("interval", series.rule.interval())
+        .set("weekdays", series.rule.weekdays_set().to_string())
+        .set("timezone", series.timezone.as_str())
+        .set("start_on", series.start_on.format("%Y-%m-%d").to_string())
+        .set(
+            "available_local_time",
+            format_local_time(series.available_local_time),
+        )
+        .set("due_policy", series.due_policy.as_str())
         .into_value()
 }
 

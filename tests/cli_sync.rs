@@ -19,7 +19,7 @@ const SYNC_OPPOSITE_DEP_CHANGE_ID: &str = "FFFFFFFFFFFFFFFF";
 const SYNC_CLIENT_ID: &str = "GGGGGGGGGGGGGGGG";
 const MAX_PUSH_BATCH: usize = 256;
 const MAX_PULL_BATCH: usize = 512;
-const SYNC_PROTOCOL_VERSION: u32 = 9;
+const SYNC_PROTOCOL_VERSION: u32 = 10;
 
 fn sync_round_values(output: &str, key: &str) -> Vec<u64> {
     output
@@ -31,6 +31,33 @@ fn sync_round_values(output: &str, key: &str) -> Vec<u64> {
                 .and_then(|value| value.parse().ok())
         })
         .collect()
+}
+
+fn add_daily_recurrence(env: &TestEnv, db: &std::path::Path, title: &str) -> (String, String) {
+    let today = chrono::Utc::now().date_naive().to_string();
+    let output = ok(env.aven(
+        db,
+        [
+            "add",
+            title,
+            "--repeat",
+            "daily",
+            "--repeat-due",
+            "same-day",
+            "--time-zone",
+            "UTC",
+            "--repeat-start-on",
+            &today,
+        ],
+    ));
+    let series_ref = output.split_whitespace().nth(1).unwrap().to_string();
+    let occurrence_ref = output
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("occurrence="))
+        .unwrap()
+        .trim_matches('"')
+        .to_string();
+    (series_ref, occurrence_ref)
 }
 
 fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
@@ -2237,7 +2264,7 @@ fn sync_client_skips_already_stored_pulled_change_in_applied_count() {
 }
 
 #[test]
-fn sync_client_preserves_existing_pulled_change_server_seq() {
+fn sync_client_rejects_existing_change_payload_mismatch_and_preserves_server_seq() {
     let env = TestEnv::new();
     let db = env.db("server-seq-preserve.sqlite");
     ok(env.aven(&db, ["add", "preserve seq", "--project", "app"]));
@@ -2278,7 +2305,8 @@ fn sync_client_preserves_existing_pulled_change_server_seq() {
         "changes": [same_id_change],
     }));
 
-    ok(env.aven(&db, ["sync", "--server", server.url()]));
+    let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
+    contains_all(&error, &["error sync-change-id-payload-mismatch"]);
     assert_eq!(
         query_sql_scalar(
             &db,
@@ -2592,7 +2620,7 @@ fn missing_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=0 server=9",
+        "error sync-protocol-unsupported client=0 server=10",
     );
 }
 
@@ -2601,7 +2629,7 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let body = serde_json::json!({
-        "protocol_version": 8,
+        "protocol_version": 9,
         "client_id": "old-client",
         "after": 0,
         "changes": [project_change_json("old-version-change", "old-version")]
@@ -2612,7 +2640,7 @@ fn old_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=8 server=9",
+        "error sync-protocol-unsupported client=9 server=10",
     );
 }
 
@@ -2621,7 +2649,7 @@ fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);
     let body = serde_json::json!({
-        "protocol_version": 10,
+        "protocol_version": 11,
         "client_id": "new-client",
         "after": 0,
         "changes": [project_change_json("new-version-change", "new-version")]
@@ -2632,7 +2660,7 @@ fn newer_request_protocol_version_is_rejected_before_changes_are_stored() {
         &env,
         &server,
         &body,
-        "error sync-protocol-unsupported client=10 server=9",
+        "error sync-protocol-unsupported client=11 server=10",
     );
 }
 
@@ -2654,7 +2682,7 @@ fn wrong_response_protocol_version_is_rejected() {
     let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
     contains_all(
         &error,
-        &["error sync-protocol-unsupported client=9 server=0"],
+        &["error sync-protocol-unsupported client=10 server=0"],
     );
     assert_eq!(
         scalar_i64(&db, "SELECT count(*) FROM changes"),
@@ -3519,6 +3547,410 @@ fn sync_client_rejects_malformed_attachment_response_before_state_change() {
     assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("0"));
     assert_eq!(scalar_i64(&db, "SELECT count(*) FROM task_attachments"), 0);
     server.finish();
+}
+
+#[tokio::test]
+async fn recurrence_server_rejects_malformed_and_deterministically_mismatched_payloads() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let mut malformed = wire_change(
+        "create_recurrence_series",
+        "recurrence_series",
+        "AAAAAAAAAAAAAAAA",
+        json!({
+            "workspace_id": DEFAULT_WORKSPACE_ID,
+            "workspace_key": "default",
+            "series_id": "AAAAAAAAAAAAAAAA",
+            "title": "bad recurrence",
+            "description": "",
+            "project_id": REMOTE_PROJECT_ID,
+            "project_key": "app",
+            "project_name": "app",
+            "project_prefix": "APP",
+            "priority": "none",
+            "initial_status": "todo",
+            "frequency": "daily",
+            "interval": 1,
+            "weekdays": "",
+            "start_on": "2026-07-20",
+            "available_local_time": "",
+            "due_policy": "same_day",
+            "labels": [],
+            "state": "active",
+            "stopped_at": "",
+            "created_at": "2026-07-20T00:00:00Z",
+            "updated_at": "2026-07-20T00:00:00Z"
+        }),
+    );
+    let response = post_sync(&server, malformed.clone()).await;
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert!(
+        response
+            .text()
+            .await
+            .unwrap()
+            .contains("payload.timezone missing")
+    );
+
+    malformed["op_type"] = json!("project_recurrence_occurrence");
+    malformed["field"] = json!("projection");
+    malformed["payload"] = json!({
+        "workspace_id": DEFAULT_WORKSPACE_ID,
+        "workspace_key": "default",
+        "series_id": "AAAAAAAAAAAAAAAA",
+        "slot_on": "2026-07-20",
+        "task_id": "BBBBBBBBBBBBBBBB",
+        "projected_at": "2026-07-20T00:00:00Z",
+        "task_change_id": "CCCCCCCCCCCCCCCC",
+        "occurrence_change_id": "DDDDDDDDDDDDDDDD",
+        "task_field_version_seed": "EEEEEEEEEEEEEEEE",
+        "occurrence_field_version_seed": "FFFFFFFFFFFFFFFF",
+        "frequency": "daily",
+        "interval": 1,
+        "weekdays": "",
+        "timezone": "UTC",
+        "start_on": "2026-07-20",
+        "available_local_time": "",
+        "due_policy": "same_day"
+    });
+    let response = post_sync(&server, malformed).await;
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert!(
+        response
+            .text()
+            .await
+            .unwrap()
+            .contains("recurrence-deterministic-mismatch")
+    );
+}
+
+#[test]
+fn recurrence_same_slot_materialization_and_retries_are_idempotent() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("recurrence-materialize-a.sqlite");
+    let b = env.db("recurrence-materialize-b.sqlite");
+    add_daily_recurrence(&env, &a, "sync journal");
+
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    assert_eq!(
+        scalar_i64(&a, "SELECT count(*) FROM recurrence_occurrences"),
+        1
+    );
+    assert_eq!(
+        scalar_i64(&b, "SELECT count(*) FROM recurrence_occurrences"),
+        1
+    );
+    assert_eq!(
+        query_sql_scalar(&a, "SELECT task_id FROM recurrence_occurrences"),
+        query_sql_scalar(&b, "SELECT task_id FROM recurrence_occurrences")
+    );
+    assert_eq!(
+        query_sql_scalar(
+            &a,
+            "SELECT payload FROM changes WHERE op_type = 'project_recurrence_occurrence' LIMIT 1"
+        ),
+        query_sql_scalar(
+            &b,
+            "SELECT payload FROM changes WHERE op_type = 'project_recurrence_occurrence' LIMIT 1"
+        )
+    );
+}
+
+#[test]
+fn recurrence_dual_complete_merges_earliest_completion() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("recurrence-complete-a.sqlite");
+    let b = env.db("recurrence-complete-b.sqlite");
+    let (_, occurrence_ref) = add_daily_recurrence(&env, &a, "dual complete");
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    ok(env.aven(&a, ["edit", &occurrence_ref, "--status", "done"]));
+    ok(env.aven(&b, ["edit", &occurrence_ref, "--status", "done"]));
+    let expected = [
+        query_sql_scalar(
+            &a,
+            "SELECT resolved_at FROM recurrence_occurrences WHERE outcome = 'completed'",
+        ),
+        query_sql_scalar(
+            &b,
+            "SELECT resolved_at FROM recurrence_occurrences WHERE outcome = 'completed'",
+        ),
+    ]
+    .into_iter()
+    .min()
+    .unwrap();
+
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    for db in [&a, &b] {
+        assert_eq!(
+            scalar_i64(db, "SELECT count(*) FROM conflicts WHERE resolved = 0"),
+            0
+        );
+        assert_eq!(
+            query_sql_scalar(
+                db,
+                "SELECT resolved_at FROM recurrence_occurrences WHERE outcome = 'completed' ORDER BY slot_on LIMIT 1"
+            ),
+            expected
+        );
+        assert_eq!(
+            scalar_i64(
+                db,
+                "SELECT count(*) FROM recurrence_occurrences WHERE projection_state = 'projected'"
+            ),
+            1
+        );
+    }
+}
+
+#[test]
+fn recurrence_complete_skip_creates_series_conflict_without_blocking_projection() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("recurrence-outcome-a.sqlite");
+    let b = env.db("recurrence-outcome-b.sqlite");
+    let (series_ref, occurrence_ref) = add_daily_recurrence(&env, &a, "outcome conflict");
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    ok(env.aven(&a, ["edit", &occurrence_ref, "--status", "done"]));
+    ok(env.aven(&b, ["edit", &occurrence_ref, "--status", "canceled"]));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    for db in [&a, &b] {
+        assert_eq!(
+            scalar_i64(
+                db,
+                "SELECT count(*) FROM conflicts WHERE entity_type = 'recurrence_series' AND field LIKE 'outcome:%' AND resolved = 0"
+            ),
+            1
+        );
+        assert_eq!(
+            scalar_i64(
+                db,
+                "SELECT count(*) FROM recurrence_occurrences WHERE projection_state = 'projected'"
+            ),
+            1
+        );
+        let listed = ok(env.aven(db, ["conflict", "list"]));
+        contains_all(&listed, &[&series_ref, "field=outcome:"]);
+    }
+    let field = query_sql_scalar(
+        &a,
+        "SELECT field FROM conflicts WHERE entity_type = 'recurrence_series' AND resolved = 0",
+    );
+    ok(env.aven(
+        &a,
+        [
+            "conflict",
+            "resolve",
+            &series_ref,
+            &field,
+            "--value",
+            "completed",
+        ],
+    ));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    assert_eq!(
+        scalar_i64(&b, "SELECT count(*) FROM conflicts WHERE resolved = 0"),
+        0
+    );
+    assert_eq!(
+        query_sql_scalar(
+            &b,
+            "SELECT outcome FROM recurrence_occurrences WHERE projection_state = 'resolved' ORDER BY slot_on LIMIT 1"
+        ),
+        "completed"
+    );
+}
+
+#[test]
+fn recurrence_corrected_taskless_outcomes_conflict_without_blocking_current_task() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("recurrence-correction-a.sqlite");
+    let b = env.db("recurrence-correction-b.sqlite");
+    let (series_ref, _) = add_daily_recurrence(&env, &a, "corrected conflict");
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    let yesterday = chrono::Utc::now().date_naive() - chrono::Duration::days(1);
+    let created_at = format!("{yesterday}T00:00:00Z");
+    for db in [&a, &b] {
+        exec_sql(
+            db,
+            &format!(
+                "DROP TRIGGER recurrence_series_schedule_immutable; UPDATE recurrence_series SET start_on = '{yesterday}', created_at = '{created_at}'"
+            ),
+        );
+    }
+    let slot = yesterday.to_string();
+    let resolved_at = format!("{yesterday}T12:00:00Z");
+    ok(env.aven(
+        &a,
+        [
+            "recur",
+            "record",
+            &series_ref,
+            "--slot",
+            &slot,
+            "--outcome",
+            "completed",
+            "--at",
+            &resolved_at,
+        ],
+    ));
+    ok(env.aven(
+        &b,
+        [
+            "recur",
+            "record",
+            &series_ref,
+            "--slot",
+            &slot,
+            "--outcome",
+            "skipped",
+            "--at",
+            &resolved_at,
+        ],
+    ));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    sync(&env, &a, &server);
+
+    assert_eq!(
+        scalar_i64(
+            &a,
+            "SELECT count(*) FROM recurrence_occurrences WHERE projection_state = 'corrected' AND task_id = ''"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            &a,
+            "SELECT count(*) FROM conflicts WHERE entity_type = 'recurrence_series' AND field LIKE 'outcome:%' AND resolved = 0"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            &a,
+            "SELECT count(*) FROM recurrence_occurrences WHERE projection_state = 'projected'"
+        ),
+        1
+    );
+}
+
+#[test]
+fn recurrence_active_stop_race_preserves_tasks_and_blocks_projection() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("recurrence-stop-a.sqlite");
+    let b = env.db("recurrence-stop-b.sqlite");
+    let (series_ref, _) = add_daily_recurrence(&env, &a, "stop conflict");
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    ok(env.aven(&a, ["recur", "stop", &series_ref]));
+    ok(env.aven(&b, ["recur", "pause", &series_ref]));
+    ok(env.aven(&b, ["recur", "resume", &series_ref]));
+    let tasks_before = scalar_i64(&b, "SELECT count(*) FROM tasks");
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    sync(&env, &a, &server);
+
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT count(*) FROM conflicts WHERE entity_type = 'recurrence_series' AND field = 'state' AND resolved = 0"
+        ),
+        1
+    );
+    assert_eq!(scalar_i64(&b, "SELECT count(*) FROM tasks"), tasks_before);
+    let occurrences_before = scalar_i64(&b, "SELECT count(*) FROM recurrence_occurrences");
+    ok(env.aven(&b, ["recur", "list"]));
+    assert_eq!(
+        scalar_i64(&b, "SELECT count(*) FROM recurrence_occurrences"),
+        occurrences_before
+    );
+}
+
+#[test]
+fn recurrence_pause_resume_race_blocks_reconciliation_until_resolution() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let a = env.db("recurrence-lifecycle-a.sqlite");
+    let b = env.db("recurrence-lifecycle-b.sqlite");
+    let (series_ref, _) = add_daily_recurrence(&env, &a, "lifecycle conflict");
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+
+    ok(env.aven(&a, ["recur", "pause", &series_ref]));
+    ok(env.aven(&b, ["recur", "pause", &series_ref]));
+    ok(env.aven(&b, ["recur", "resume", &series_ref]));
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    sync(&env, &a, &server);
+
+    assert_eq!(
+        scalar_i64(
+            &a,
+            "SELECT count(*) FROM conflicts WHERE entity_type = 'recurrence_series' AND field = 'state' AND resolved = 0"
+        ),
+        1
+    );
+    let before = scalar_i64(&a, "SELECT count(*) FROM recurrence_occurrences");
+    ok(env.aven(&a, ["recur", "list"]));
+    assert_eq!(
+        scalar_i64(&a, "SELECT count(*) FROM recurrence_occurrences"),
+        before
+    );
+    let listed = ok(env.aven(&a, ["conflict", "list"]));
+    contains_all(&listed, &[&series_ref, "field=state"]);
+    let tasks_before = scalar_i64(&a, "SELECT count(*) FROM tasks");
+    ok(env.aven(
+        &a,
+        [
+            "conflict",
+            "resolve",
+            &series_ref,
+            "state",
+            "--value",
+            "paused",
+        ],
+    ));
+    assert_eq!(
+        scalar_i64(&a, "SELECT count(*) FROM conflicts WHERE resolved = 0"),
+        0
+    );
+    assert_eq!(scalar_i64(&a, "SELECT count(*) FROM tasks"), tasks_before);
+    assert_eq!(
+        scalar_i64(
+            &a,
+            "SELECT count(*) FROM recurrence_occurrences WHERE projection_state = 'projected'"
+        ),
+        1
+    );
+    sync(&env, &a, &server);
+    sync(&env, &b, &server);
+    assert_eq!(
+        query_sql_scalar(&b, "SELECT state FROM recurrence_series"),
+        "paused"
+    );
+    assert_eq!(scalar_i64(&b, "SELECT count(*) FROM tasks"), tasks_before);
 }
 
 #[test]

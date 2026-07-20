@@ -6,6 +6,7 @@ mod label;
 mod note;
 mod payload;
 mod project;
+mod recurrence;
 mod shared;
 mod task;
 mod workspace;
@@ -47,6 +48,20 @@ pub async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWir
         op_type::LABEL_DELETE => label::delete_label(conn, change).await?,
         op_type::ATTACHMENT_ADD => attachment::add_attachment(conn, change).await?,
         op_type::ATTACHMENT_DELETE => attachment::delete_attachment(conn, change).await?,
+        op_type::CREATE_RECURRENCE_SERIES => recurrence::create_series(conn, change).await?,
+        op_type::UPDATE_RECURRENCE_TEMPLATE => recurrence::update_template(conn, change).await?,
+        op_type::PROJECT_RECURRENCE_OCCURRENCE => {
+            recurrence::project_occurrence(conn, change).await?
+        }
+        op_type::RESOLVE_RECURRENCE_OCCURRENCE => {
+            recurrence::resolve_occurrence(conn, change).await?
+        }
+        op_type::RECORD_RECURRENCE_OUTCOME => recurrence::record_outcome(conn, change).await?,
+        op_type::SET_RECURRENCE_STATE | op_type::STOP_RECURRENCE_SERIES => {
+            recurrence::set_state(conn, change).await?
+        }
+        op_type::OPEN_RECURRENCE_PAUSE => recurrence::open_pause(conn, change).await?,
+        op_type::CLOSE_RECURRENCE_PAUSE => recurrence::close_pause(conn, change).await?,
         _ => bail!("error unsupported-remote-change op_type={}", change.op_type),
     }
     Ok(())

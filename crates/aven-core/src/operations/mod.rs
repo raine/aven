@@ -1,9 +1,9 @@
 mod attachments;
-mod conflicts;
+pub(crate) mod conflicts;
 mod dependencies;
 mod epics;
 mod projects;
-mod recurrence;
+pub(crate) mod recurrence;
 mod tasks;
 
 #[cfg(feature = "test-support")]

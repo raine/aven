@@ -249,14 +249,46 @@ async fn apply_sync_response(conn: &mut SqliteConnection, page: ApplySyncPage) -
     }
     update_change_server_seqs_if_missing(&mut tx, &page.response.push_acks).await?;
     let existing_change_ids = load_existing_change_ids(&mut tx, &page.response.changes).await?;
+    let mut affected_series = HashSet::new();
     for change in &page.response.changes {
         if existing_change_ids.contains(change.change_id.as_str()) {
+            verify_existing_change(&mut tx, change).await?;
             update_change_server_seq(&mut tx, &change.change_id, change.server_seq).await?;
             continue;
         }
         apply_remote_change(&mut tx, change).await?;
+        if change.entity_type == "recurrence_series" {
+            let workspace_id = change
+                .payload
+                .get("workspace_id")
+                .and_then(serde_json::Value::as_str)
+                .context("recurrence change missing workspace_id")?;
+            affected_series.insert((workspace_id.to_string(), change.entity_id.clone()));
+        } else if let Some(series_id) = change
+            .payload
+            .get("series_id")
+            .and_then(serde_json::Value::as_str)
+        {
+            let workspace_id = change
+                .payload
+                .get("workspace_id")
+                .and_then(serde_json::Value::as_str)
+                .context("recurrence task change missing workspace_id")?;
+            affected_series.insert((workspace_id.to_string(), series_id.to_string()));
+        }
         insert_wire_change(&mut tx, change).await?;
         applied += 1;
+    }
+    for (workspace_id, series_id) in affected_series {
+        let workspace_id: crate::ids::WorkspaceId = workspace_id.parse()?;
+        let series_id: crate::recurrence::RecurrenceSeriesId = series_id.parse()?;
+        let workspace = crate::workspaces::workspace_for_id(&mut tx, &workspace_id).await?;
+        let at =
+            chrono::DateTime::parse_from_rfc3339(&page.attempted_at)?.with_timezone(&chrono::Utc);
+        crate::operations::recurrence::reconcile_recurrence_series_in_transaction(
+            &mut tx, &workspace, &series_id, at,
+        )
+        .await?;
     }
     let pushed = page.previous_pushed + page.response.push_acks.len() as i64;
     let pulled = page.previous_pulled + applied;
@@ -295,6 +327,33 @@ async fn load_existing_change_ids(
         .await?
         .into_iter()
         .collect())
+}
+
+async fn verify_existing_change(conn: &mut SqliteConnection, incoming: &ChangeWire) -> Result<()> {
+    let row = sqlx::query(
+        "SELECT entity_type, entity_id, field, op_type, payload, base_version, created_at
+         FROM changes WHERE change_id = ?",
+    )
+    .bind(&incoming.change_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    use sqlx::Row;
+    let stored_payload: String = row.try_get("payload")?;
+    let stored_payload: serde_json::Value = serde_json::from_str(&stored_payload)?;
+    let equal = row.try_get::<String, _>("entity_type")? == incoming.entity_type
+        && row.try_get::<String, _>("entity_id")? == incoming.entity_id
+        && row.try_get::<Option<String>, _>("field")? == incoming.field
+        && row.try_get::<String, _>("op_type")? == incoming.op_type
+        && stored_payload == incoming.payload
+        && row.try_get::<Option<String>, _>("base_version")? == incoming.base_version
+        && row.try_get::<String, _>("created_at")? == incoming.created_at;
+    if !equal {
+        bail!(
+            "error sync-change-id-payload-mismatch change_id={}",
+            incoming.change_id
+        );
+    }
+    Ok(())
 }
 
 async fn update_change_server_seq(
@@ -399,6 +458,7 @@ async fn assign_server_sequences(
         .await?
         .flatten();
         let server_seq = if let Some(server_seq) = existing_server_seq {
+            verify_existing_change(&mut tx, &change).await?;
             server_seq
         } else {
             let server_seq = next_server_seq;
