@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use aven_core::db::Database;
 use tokio::net::UdpSocket;
-use tokio::time::{Instant, sleep_until};
+use tokio::time::{Instant, sleep_until, timeout};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -23,6 +23,7 @@ pub use service::{
 };
 
 const BINARY_CHECK_INTERVAL: Duration = Duration::from_secs(30);
+const SYNC_ROUND_TIMEOUT: Duration = Duration::from_secs(35);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BinaryFingerprint {
@@ -130,17 +131,20 @@ async fn run_loop(
                 next_binary_check = Instant::now() + BINARY_CHECK_INTERVAL;
             }
             _ = sleep_until(next_sync) => {
-                match sync_once(
-                    &database,
-                    &blob_dir,
-                    lifecycle_policy,
-                    &server,
-                    auth_token.as_deref(),
-                    &client,
+                match timeout(
+                    SYNC_ROUND_TIMEOUT,
+                    sync_once(
+                        &database,
+                        &blob_dir,
+                        lifecycle_policy,
+                        &server,
+                        auth_token.as_deref(),
+                        &client,
+                    ),
                 )
                 .await
                 {
-                    Ok(summary) => {
+                    Ok(Ok(summary)) => {
                         backoff_seconds = 1;
                         next_sync = if summary.complete {
                             Instant::now() + Duration::from_secs(interval_seconds)
@@ -148,9 +152,15 @@ async fn run_loop(
                             Instant::now() + Duration::from_millis(DAEMON_INCOMPLETE_RESCHEDULE_MS)
                         };
                     }
-                    Err(err) => {
+                    Ok(Err(err)) => {
                         warn!(error = %err, backoff_seconds, "daemon sync failed");
                         eprintln!("daemon sync failed: {err}");
+                        next_sync = Instant::now() + Duration::from_secs(backoff_seconds);
+                        backoff_seconds = (backoff_seconds * 2).min(300);
+                    }
+                    Err(_) => {
+                        warn!(backoff_seconds, "daemon sync timed out");
+                        eprintln!("daemon sync failed: timed out");
                         next_sync = Instant::now() + Duration::from_secs(backoff_seconds);
                         backoff_seconds = (backoff_seconds * 2).min(300);
                     }
@@ -212,6 +222,12 @@ async fn sync_once(
         lifecycle_policy,
     )
     .await?;
+    if let Err(err) = database
+        .prune_attachments(blob_dir, lifecycle_policy, true)
+        .await
+    {
+        warn!(error = %err, "attachment maintenance failed");
+    }
     info!(
         pushed = summary.pushed,
         pulled = summary.pulled,
@@ -266,6 +282,11 @@ fn wake(addr: SocketAddr) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn complete_sync_round_has_35_second_deadline() {
+        assert_eq!(SYNC_ROUND_TIMEOUT, Duration::from_secs(35));
+    }
 
     #[test]
     fn wake_if_enabled_sends_to_configured_address() {

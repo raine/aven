@@ -84,6 +84,29 @@ impl Database {
         let mut conn = self.acquire().await?;
         rename_project_operation(&mut conn, workspace, project, new_name, prefix).await
     }
+
+    pub async fn rename_project_before_commit<T, F>(
+        &self,
+        workspace: &Workspace,
+        project: &str,
+        new_name: &str,
+        prefix: Option<&str>,
+        before_commit: F,
+    ) -> Result<(ProjectRenameOutcome, T)>
+    where
+        F: FnOnce(&ProjectRenameOutcome) -> Result<T>,
+    {
+        let mut conn = self.acquire().await?;
+        rename_project_operation_before_commit(
+            &mut conn,
+            workspace,
+            project,
+            new_name,
+            prefix,
+            before_commit,
+        )
+        .await
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -264,6 +287,25 @@ pub async fn rename_project_operation(
     new_name: &str,
     prefix: Option<&str>,
 ) -> Result<ProjectRenameOutcome> {
+    let (outcome, ()) =
+        rename_project_operation_before_commit(conn, workspace, project, new_name, prefix, |_| {
+            Ok(())
+        })
+        .await?;
+    Ok(outcome)
+}
+
+async fn rename_project_operation_before_commit<T, F>(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    project: &str,
+    new_name: &str,
+    prefix: Option<&str>,
+    before_commit: F,
+) -> Result<(ProjectRenameOutcome, T)>
+where
+    F: FnOnce(&ProjectRenameOutcome) -> Result<T>,
+{
     let previous = resolve_existing_project_in_workspace(conn, &workspace.id, project).await?;
     let new_name = new_name.trim();
     let key = normalize_key(new_name);
@@ -289,11 +331,13 @@ pub async fn rename_project_operation(
     };
     let changed = previous.key != key || previous.name != new_name || previous.prefix != prefix;
     if !changed {
-        return Ok(ProjectRenameOutcome {
+        let outcome = ProjectRenameOutcome {
             project: previous.clone(),
             previous,
             changed: false,
-        });
+        };
+        let value = before_commit(&outcome)?;
+        return Ok((outcome, value));
     }
     let mut tx = begin_immediate(conn).await?;
     let project = set_project_metadata(
@@ -308,13 +352,15 @@ pub async fn rename_project_operation(
         true,
     )
     .await?;
-    tx.commit().await?;
-    info!(project_id = %project.id, project_key = %project.key, "project renamed");
-    Ok(ProjectRenameOutcome {
+    let outcome = ProjectRenameOutcome {
         previous,
         project,
         changed: true,
-    })
+    };
+    let value = before_commit(&outcome)?;
+    tx.commit().await?;
+    info!(project_id = %outcome.project.id, project_key = %outcome.project.key, "project renamed");
+    Ok((outcome, value))
 }
 
 pub async fn set_project_metadata(

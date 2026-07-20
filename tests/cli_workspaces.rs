@@ -11,6 +11,25 @@ fn sync(env: &TestEnv, db: &std::path::Path, server: &TestServer) {
 }
 
 #[test]
+fn explicit_unknown_workspace_preserves_structured_error_source() {
+    let env = TestEnv::new();
+    let db = env.db("unknown-workspace.sqlite");
+
+    let error = fail(env.aven(&db, ["--workspace", "missing", "list"]));
+
+    contains_all(
+        &error,
+        &[
+            "error unknown-workspace",
+            "input=missing",
+            "source=--workspace",
+            "hint=\"create the workspace with aven workspace create\"",
+        ],
+    );
+    contains_none(&error, &["invalid --workspace"]);
+}
+
+#[test]
 fn workspace_commands_manage_names_and_ambiguity() {
     let env = TestEnv::new();
     let db = env.db("workspaces.sqlite");

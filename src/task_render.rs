@@ -1,3 +1,4 @@
+use aven_core::operations::AttachmentReadItem;
 use serde::Serialize;
 
 use crate::attachments::AttachmentBytesState;
@@ -216,6 +217,25 @@ pub(crate) fn task_epic_link_json(link: &TaskDependencyLink) -> TaskEpicLinkJson
         status: link.status.clone(),
         priority: link.priority.clone(),
         open: link.unresolved,
+    }
+}
+
+pub(crate) fn attachment_metadata_json(item: AttachmentReadItem) -> AttachmentMetadataJson {
+    AttachmentMetadataJson {
+        attachment_id: item.attachment.attachment_id,
+        task_id: item.attachment.task_id.to_string(),
+        sha256: item.attachment.sha256,
+        media_type: item.attachment.media_type,
+        byte_size: item.attachment.byte_size,
+        filename: item.attachment.filename,
+        alt_text: item.attachment.alt_text,
+        width: item.attachment.width,
+        height: item.attachment.height,
+        created_at: item.attachment.created_at,
+        deleted: item.attachment.deleted,
+        deleted_at: item.attachment.deleted_at,
+        bytes_state: item.bytes_state,
+        has_blob: item.has_blob,
     }
 }
 

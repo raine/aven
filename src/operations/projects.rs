@@ -63,15 +63,25 @@ pub async fn rename_project_operation(
     new_name: &str,
     prefix: Option<&str>,
 ) -> Result<ProjectRenameOutcome> {
-    let outcome = database
-        .rename_project(workspace, project, new_name, prefix)
-        .await?;
-    let config_mapping = if outcome.changed {
-        rename_config_project_mapping(workspace, &outcome.previous.key, &outcome.project.key)?
-    } else {
-        project_has_config_mapping(&workspace.id, &workspace.key, &outcome.previous.key)
-            .unwrap_or(false)
-    };
+    let (outcome, config_mapping) =
+        database
+            .rename_project_before_commit(workspace, project, new_name, prefix, |outcome| {
+                if outcome.changed {
+                    rename_config_project_mapping(
+                        workspace,
+                        &outcome.previous.key,
+                        &outcome.project.key,
+                    )
+                } else {
+                    Ok(project_has_config_mapping(
+                        &workspace.id,
+                        &workspace.key,
+                        &outcome.previous.key,
+                    )
+                    .unwrap_or(false))
+                }
+            })
+            .await?;
     Ok(ProjectRenameOutcome {
         previous: outcome.previous,
         project: outcome.project,

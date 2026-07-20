@@ -51,8 +51,17 @@ impl Database {
     }
 
     pub async fn resolve_workspace(&self, name_or_key: &str) -> Result<Workspace> {
+        self.resolve_required_workspace(name_or_key, "workspace")
+            .await
+    }
+
+    pub async fn resolve_required_workspace(
+        &self,
+        name_or_key: &str,
+        source: &str,
+    ) -> Result<Workspace> {
         let mut conn = self.acquire().await?;
-        resolve_workspace(&mut conn, name_or_key).await
+        resolve_required_workspace(&mut conn, name_or_key, source).await
     }
 
     pub async fn create_workspace(&self, name: &str) -> Result<Workspace> {

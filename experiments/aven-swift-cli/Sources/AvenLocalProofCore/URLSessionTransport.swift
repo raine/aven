@@ -5,13 +5,21 @@ public enum URLSessionTransportError: Error, Equatable, Sendable {
     case invalidURL
     case nonHTTPResponse
     case invalidStatus(Int)
+    case responseTooLarge(limit: Int)
 }
 
 public struct URLSessionTransport: Sendable {
-    private let session: URLSession
+    public static let defaultMaxResponseBytes = 64 * 1024 * 1024
 
-    public init(session: URLSession = .shared) {
+    private let session: URLSession
+    private let maxResponseBytes: Int
+
+    public init(
+        session: URLSession = .shared,
+        maxResponseBytes: Int = Self.defaultMaxResponseBytes
+    ) {
         self.session = session
+        self.maxResponseBytes = maxResponseBytes
     }
 
     public func send(_ prepared: PreparedSyncRequest) async throws -> SyncHttpResponse {
@@ -26,12 +34,25 @@ public struct URLSessionTransport: Sendable {
             request.setValue(header.value, forHTTPHeaderField: header.name)
         }
 
-        let (body, response) = try await session.data(for: request)
+        let (bytes, response) = try await session.bytes(for: request)
         guard let response = response as? HTTPURLResponse else {
             throw URLSessionTransportError.nonHTTPResponse
         }
         guard let status = UInt16(exactly: response.statusCode) else {
             throw URLSessionTransportError.invalidStatus(response.statusCode)
+        }
+        if response.expectedContentLength > Int64(maxResponseBytes) {
+            throw URLSessionTransportError.responseTooLarge(limit: maxResponseBytes)
+        }
+        var body = Data()
+        if response.expectedContentLength > 0 {
+            body.reserveCapacity(Int(response.expectedContentLength))
+        }
+        for try await byte in bytes {
+            guard body.count < maxResponseBytes else {
+                throw URLSessionTransportError.responseTooLarge(limit: maxResponseBytes)
+            }
+            body.append(byte)
         }
 
         let headers = ["content-encoding", "content-length", "content-type"].compactMap { name in
@@ -83,11 +104,21 @@ public struct SyncDriver: Sendable {
                 }
                 throw error
             }
-            _ = try await worker.run {
-                try session.acceptResponse(
-                    context: prepared.context,
-                    response: response
-                )
+            do {
+                _ = try await worker.run {
+                    try session.acceptResponse(
+                        context: prepared.context,
+                        response: response
+                    )
+                }
+            } catch {
+                try await worker.run {
+                    try session.failRequest(
+                        context: prepared.context,
+                        message: "sync response rejected"
+                    )
+                }
+                throw error
             }
         }
 

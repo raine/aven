@@ -17,15 +17,13 @@ pub async fn resolve_active_workspace_with_database(
 ) -> Result<Workspace> {
     if let Some(name) = explicit {
         return database
-            .resolve_workspace(name)
-            .await
-            .with_context(|| format!("invalid --workspace {name}"));
+            .resolve_required_workspace(name, "--workspace")
+            .await;
     }
     if let Some(route) = longest_matching_route(cwd, &config.workspace.routes)? {
         return database
-            .resolve_workspace(&route.workspace)
-            .await
-            .with_context(|| format!("invalid workspace route {}", route.workspace));
+            .resolve_required_workspace(&route.workspace, "workspace route")
+            .await;
     }
     if let Some(default) = config
         .workspace
@@ -34,9 +32,8 @@ pub async fn resolve_active_workspace_with_database(
         .filter(|value| !value.trim().is_empty())
     {
         return database
-            .resolve_workspace(default)
-            .await
-            .with_context(|| format!("invalid workspace.default {default}"));
+            .resolve_required_workspace(default, "workspace.default")
+            .await;
     }
     let workspaces = database.list_workspaces().await?;
     if let Some(workspace) = workspaces

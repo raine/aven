@@ -222,11 +222,13 @@ impl SyncSession {
         blob_dir: PathBuf,
         lifecycle_policy: LifecyclePolicy,
     ) -> Result<Self> {
-        if !sync_server_url_is_valid(&server) {
-            bail!("invalid sync server URL");
-        }
         let attempted_at = now();
         database.begin_sync_attempt(attempted_at.clone()).await?;
+        if !sync_server_url_is_valid(&server) {
+            let message = "invalid sync server URL";
+            database.record_sync_error(message.to_string()).await?;
+            bail!("{message}");
+        }
         Ok(Self {
             database,
             server: server.trim_end_matches('/').to_string(),

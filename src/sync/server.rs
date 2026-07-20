@@ -281,6 +281,7 @@ async fn put_blob_handler(
         }
         Err(err)
             if err.to_string().contains("blob-hash-or-size-mismatch")
+                || err.to_string().contains("blob-inventory-metadata-mismatch")
                 || err.to_string().contains("blob-validation-failed")
                 || err.to_string().contains("invalid-sync-change") =>
         {

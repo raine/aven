@@ -127,6 +127,18 @@ final class LocalProofTests: XCTestCase {
                 SyncHttpHeader(name: "content-type", value: "application/octet-stream"),
             ]
         )
+
+        state.reset()
+        let limitedTransport = URLSessionTransport(session: session, maxResponseBytes: 2)
+        let limitedTask = Task { try await limitedTransport.send(prepared) }
+        XCTAssertTrue(state.waitUntilStarted(timeout: 2))
+        state.releaseResponse()
+        do {
+            _ = try await limitedTask.value
+            XCTFail("oversized response must fail")
+        } catch let error as URLSessionTransportError {
+            XCTAssertEqual(error, .responseTooLarge(limit: 2))
+        }
     }
 }
 

@@ -211,6 +211,16 @@ fn attachment_add_list_get_and_delete_work_locally() {
     let show = ok(env.aven(&db, ["show", &task_ref, "--full"]));
     contains_all(&show, &["description<<EOF\nbefore\nEOF"]);
     contains_none(&show, &["Attachments:", &attachment_id]);
+
+    for structured in [
+        ok(env.aven(&db, ["show", &task_ref, "--full", "--json"])),
+        ok(env.aven(&db, ["context", &task_ref, "--json"])),
+    ] {
+        let value: serde_json::Value = serde_json::from_str(&structured).unwrap();
+        assert_eq!(value["attachments"][0]["attachment_id"], attachment_id);
+        assert_eq!(value["attachments"][0]["deleted"], true);
+        assert!(value["attachments"][0]["deleted_at"].is_string());
+    }
     assert_eq!(
         scalar_i64(
             &db,
@@ -1106,6 +1116,43 @@ fn project_rename_updates_managed_path_mapping() {
     let config = std::fs::read_to_string(env.config_file()).unwrap();
     contains_all(&config, &["project: sideagent"]);
     contains_none(&config, &["project: agent-offload"]);
+}
+
+#[test]
+fn project_rename_rolls_back_when_config_mapping_write_fails() {
+    let env = TestEnv::new();
+    let db = env.db("rename-project-config-failure.sqlite");
+    let project_dir = env.path("mapped-project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    ok(env.aven(&db, ["project", "create", "agent-offload"]));
+    ok(env.aven(
+        &db,
+        [
+            "project",
+            "path",
+            "add",
+            "agent-offload",
+            project_dir.to_str().unwrap(),
+        ],
+    ));
+    let blocked_tmp = env.config_file().with_extension("yaml.tmp");
+    std::fs::create_dir(&blocked_tmp).unwrap();
+
+    let error = fail(env.aven(&db, ["project", "rename", "agent-offload", "sideagent"]));
+
+    contains_all(&error, &["could not write"]);
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT count(*) FROM projects WHERE key = 'agent-offload'"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar_i64(&db, "SELECT count(*) FROM projects WHERE key = 'sideagent'"),
+        0
+    );
 }
 
 #[test]

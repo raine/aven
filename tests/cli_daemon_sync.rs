@@ -1,15 +1,15 @@
 mod common;
 
 use std::net::UdpSocket;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
 use serde_json::json;
 
 use common::{
-    TestEnv, TestProcess, TestServer, contains_all, contains_none, extract_ref, fail, ok,
-    scalar_i64,
+    TestEnv, TestProcess, TestServer, contains_all, contains_none, extract_attachment_id,
+    extract_ref, fail, ok, png_bytes, scalar_i64,
 };
 
 const MAX_PUSH_BATCH: usize = 256;
@@ -213,6 +213,58 @@ fn daemon_wake_syncs_representative_mutations() {
         &[&task_ref, "wake synced task", "status=active", "wake note"],
     );
     contains_none(&shown, &["deleted=yes"]);
+}
+
+#[test]
+fn daemon_successful_sync_prunes_grace_expired_attachment() {
+    let env = TestEnv::new();
+    let server = TestServer::start(&env);
+    let db = env.db("daemon-prune.sqlite");
+    let wake_addr = env.free_loopback_addr();
+    let task_ref = extract_ref(&ok(
+        env.aven(&db, ["add", "daemon prune", "--project", "app"])
+    ));
+    let image = env.path("daemon-prune.png");
+    std::fs::write(&image, png_bytes(2, 1)).unwrap();
+    let attachment_id = extract_attachment_id(&ok(env.aven(
+        &db,
+        ["attachment", "add", &task_ref, image.to_str().unwrap()],
+    )));
+    let listed = ok(env.aven(&db, ["attachment", "list", &task_ref, "--json"]));
+    let listed: serde_json::Value = serde_json::from_str(&listed).unwrap();
+    let sha256 = listed[0]["sha256"].as_str().unwrap();
+    let mut blob_root = db.as_os_str().to_os_string();
+    blob_root.push(".blobs");
+    let blob_path = PathBuf::from(blob_root)
+        .join("objects")
+        .join("sha256")
+        .join(sha256);
+    assert!(blob_path.exists());
+    ok(env.aven(&db, ["attachment", "delete", &attachment_id]));
+    env.write_config(&format!(
+        r#"
+local:
+  db_path: "{}"
+  attachment_lifecycle:
+    grace_days: 0
+    maintenance_limit: 16
+
+sync:
+  enabled: true
+  server_url: "{}"
+
+daemon:
+  wake_addr: "{}"
+"#,
+        db.display(),
+        server.url,
+        wake_addr
+    ));
+
+    let daemon = TestProcess::start_daemon(&env);
+    daemon.wait_for_log("daemon-synced", Duration::from_secs(5));
+
+    assert!(!blob_path.exists());
 }
 
 #[test]

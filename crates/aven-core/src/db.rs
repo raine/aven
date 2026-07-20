@@ -36,6 +36,10 @@ impl Database {
         &self.path
     }
 
+    pub fn latest_schema_version() -> Option<i64> {
+        MIGRATOR.iter().map(|migration| migration.version).max()
+    }
+
     pub async fn meta(&self, key: &str) -> Result<Option<String>> {
         let mut conn = self.acquire().await?;
         get_meta(&mut conn, key).await

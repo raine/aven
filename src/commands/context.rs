@@ -7,7 +7,8 @@ use crate::cli::ContextArgs;
 use crate::query::{self, TaskDependencyItem};
 use crate::render::{print_json_pretty, print_multiline_block, quote};
 use crate::task_render::{
-    AttachmentMetadataJson, TaskEpicLinkJson, print_attachment_section, task_epic_link_json,
+    AttachmentMetadataJson, TaskEpicLinkJson, attachment_metadata_json, print_attachment_section,
+    task_epic_link_json,
 };
 use crate::types::Task;
 use crate::workspaces::Workspace;
@@ -138,7 +139,12 @@ async fn task_context_snapshot(
         .collect();
     let summary = detail.dependencies;
     let details = detail.conflicts;
-    let attachments = detail.item.attachments.clone();
+    let attachments = database
+        .attachment_read_items_by_task(&task.workspace_id, &task.id, true)
+        .await?
+        .into_iter()
+        .map(attachment_metadata_json)
+        .collect();
 
     let depends_on_open = summary
         .depends_on
