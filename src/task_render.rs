@@ -136,14 +136,38 @@ pub(crate) fn print_attachment_metadata_line(attachment: &AttachmentMetadataJson
 
 #[allow(dead_code)]
 pub(crate) fn attachment_placeholder(attachment: &AttachmentMetadataJson) -> String {
-    if attachment.deleted {
-        "[image: deleted attachment]".to_string()
+    let placeholder = if attachment.deleted {
+        "[image: deleted attachment]"
     } else {
         match attachment.bytes_state {
-            AttachmentBytesState::Present => "[image: attachment]".to_string(),
-            AttachmentBytesState::PendingDownload => "[image: pending download]".to_string(),
-            AttachmentBytesState::Unavailable => "[image: unavailable bytes]".to_string(),
+            AttachmentBytesState::Present => "[image: attachment]",
+            AttachmentBytesState::PendingDownload => "[image: pending download]",
+            AttachmentBytesState::Unavailable => "[image: unavailable bytes]",
         }
+    };
+    let filename = attachment
+        .filename
+        .as_deref()
+        .map(|filename| format!(" {filename}"))
+        .unwrap_or_default();
+    let dimensions = match (attachment.width, attachment.height) {
+        (Some(width), Some(height)) => format!(" · {width}×{height}"),
+        _ => String::new(),
+    };
+    let file_size = human_file_size(attachment.byte_size);
+    format!("{placeholder}{filename}{dimensions} · {file_size}")
+}
+
+fn human_file_size(byte_size: i64) -> String {
+    const KIB: i64 = 1024;
+    const MIB: i64 = KIB * 1024;
+
+    if byte_size < KIB {
+        format!("{byte_size} B")
+    } else if byte_size < MIB {
+        format!("{:.1} KiB", byte_size as f64 / KIB as f64)
+    } else {
+        format!("{:.1} MiB", byte_size as f64 / MIB as f64)
     }
 }
 
@@ -376,25 +400,41 @@ mod tests {
             test_attachment_metadata("AKQ9A1X4MV2P8D6R", false, false, Some("archive.png"), None);
         let mut unavailable = unavailable;
         unavailable.bytes_state = AttachmentBytesState::Unavailable;
+        let unnamed =
+            test_attachment_metadata("BKQ9A1X4MV2P8D6R", true, false, None, Some("unnamed image"));
         let deleted =
             test_attachment_metadata("9KQ9A1X4MV2P8D6R", true, true, None, Some("old screenshot"));
 
-        assert_eq!(attachment_placeholder(&present), "[image: attachment]");
+        assert_eq!(
+            attachment_placeholder(&present),
+            "[image: attachment] diagram.png · 9 B"
+        );
+        assert_eq!(
+            attachment_placeholder(&unnamed),
+            "[image: attachment] · 9 B"
+        );
         assert_eq!(
             attachment_placeholder(&pending),
-            "[image: pending download]"
+            "[image: pending download] photo.png · 9 B"
         );
         assert_eq!(
             attachment_placeholder(&unavailable),
-            "[image: unavailable bytes]"
+            "[image: unavailable bytes] archive.png · 9 B"
         );
         assert_eq!(
             attachment_placeholder(&deleted),
-            "[image: deleted attachment]"
+            "[image: deleted attachment] · 9 B"
         );
         assert_eq!(
             attachment_unavailable_placeholder(&present),
             "[image: unavailable bytes]"
         );
+    }
+
+    #[test]
+    fn human_file_size_uses_binary_units() {
+        assert_eq!(human_file_size(999), "999 B");
+        assert_eq!(human_file_size(1_536), "1.5 KiB");
+        assert_eq!(human_file_size(2_621_440), "2.5 MiB");
     }
 }

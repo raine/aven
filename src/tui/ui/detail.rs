@@ -1346,7 +1346,10 @@ fn attachment_detail_block(
     content_width: usize,
     inline_images: Option<&DetailInlineImageContext>,
 ) -> DetailBodyBlock {
-    let placeholder = Line::from(attachment_placeholder(attachment));
+    let placeholder = Line::from(truncate_width(
+        &attachment_placeholder(attachment),
+        content_width,
+    ));
     let Some(inline_images) = inline_images else {
         return DetailBodyBlock::Line(placeholder);
     };
@@ -2665,6 +2668,7 @@ mod tests {
         let mut item = detail_test_item();
         item.task.description = String::new();
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
+        item.attachments[0].filename = None;
 
         let rendered = detail_content_lines(&item, 80, None)
             .iter()
@@ -2673,6 +2677,52 @@ mod tests {
             .join("\n");
 
         assert!(rendered.contains("ATTACHMENTS\n│ [image: attachment]"));
+    }
+
+    #[test]
+    fn detail_attachment_rows_show_filename_and_generic_fallback() {
+        let mut item = detail_test_item();
+        item.task.description = String::new();
+        item.attachments = vec![
+            attachment_metadata("ATTACHMENT000001", false, true),
+            attachment_metadata("ATTACHMENT000002", false, true),
+        ];
+        item.attachments[0].filename = Some("super_aïti_floral_transparent.png".to_string());
+        item.attachments[1].filename = None;
+
+        let rendered = detail_content_lines(&item, 80, None)
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert!(rendered.iter().any(|line| {
+            line == "│ [image: attachment] super_aïti_floral_transparent.png · 640×480 · 4 B"
+        }));
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line == "│ [image: attachment] · 640×480 · 4 B")
+        );
+    }
+
+    #[test]
+    fn detail_attachment_filename_truncates_to_content_width() {
+        let mut item = detail_test_item();
+        item.task.description = String::new();
+        item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
+        item.attachments[0].filename = Some("a-very-long-attachment-filename.png".to_string());
+
+        let rendered = detail_content_lines(&item, 30, None)
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+        let attachment = rendered
+            .iter()
+            .find(|line| line.starts_with("│ [image: attachment]"))
+            .expect("attachment row");
+
+        assert_eq!(UnicodeWidthStr::width(attachment.as_str()), 29);
+        assert!(attachment.ends_with('…'));
     }
 
     #[test]
@@ -2718,11 +2768,9 @@ mod tests {
 
         assert_eq!(placements.len(), 1);
         assert_eq!(placements[0].height, 12);
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.to_string() == "│ [image: attachment]")
-        );
+        assert!(lines.iter().any(|line| {
+            line.to_string() == "│ [image: attachment] chart.png · 640×480 · 4 B"
+        }));
         assert_eq!(
             lines[placements[0].line_index - 1].to_string(),
             format!("│ ┌{}┐", "─".repeat(placements[0].width as usize))
@@ -2803,11 +2851,9 @@ mod tests {
         let (lines, placements, _) = detail_body_lines_with_images(&item, 80, None, Some(&context));
 
         assert!(placements.is_empty());
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.to_string() == "│ [image: attachment]")
-        );
+        assert!(lines.iter().any(|line| {
+            line.to_string() == "│ [image: attachment] chart.png · 640×480 · 4 B"
+        }));
     }
 
     #[test]
