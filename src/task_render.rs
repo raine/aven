@@ -136,15 +136,7 @@ pub(crate) fn print_attachment_metadata_line(attachment: &AttachmentMetadataJson
 
 #[allow(dead_code)]
 pub(crate) fn attachment_placeholder(attachment: &AttachmentMetadataJson) -> String {
-    let placeholder = if attachment.deleted {
-        "[image: deleted attachment]"
-    } else {
-        match attachment.bytes_state {
-            AttachmentBytesState::Present => "[image: attachment]",
-            AttachmentBytesState::PendingDownload => "[image: pending download]",
-            AttachmentBytesState::Unavailable => "[image: unavailable bytes]",
-        }
-    };
+    let placeholder = attachment_state_placeholder(attachment);
     let filename = attachment
         .filename
         .as_deref()
@@ -158,7 +150,19 @@ pub(crate) fn attachment_placeholder(attachment: &AttachmentMetadataJson) -> Str
     format!("{placeholder}{filename}{dimensions} · {file_size}")
 }
 
-fn human_file_size(byte_size: i64) -> String {
+pub(crate) fn attachment_state_placeholder(attachment: &AttachmentMetadataJson) -> &'static str {
+    if attachment.deleted {
+        "[image: deleted attachment]"
+    } else {
+        match attachment.bytes_state {
+            AttachmentBytesState::Present => "[image: attachment]",
+            AttachmentBytesState::PendingDownload => "[image: pending download]",
+            AttachmentBytesState::Unavailable => "[image: unavailable bytes]",
+        }
+    }
+}
+
+pub(crate) fn human_file_size(byte_size: i64) -> String {
     const KIB: i64 = 1024;
     const MIB: i64 = KIB * 1024;
 

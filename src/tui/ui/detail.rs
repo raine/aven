@@ -14,7 +14,7 @@ use super::task_list::EPIC_MARKER;
 use super::timestamps::local_timestamp_display;
 use super::truncate::truncate_width;
 use crate::query::TaskListItem;
-use crate::task_render::{AttachmentMetadataJson, attachment_placeholder};
+use crate::task_render::{AttachmentMetadataJson, attachment_state_placeholder, human_file_size};
 use crate::tui::app::WidgetState;
 use crate::tui::detail_selection::{DetailTextSelection, TextCell, text_cell_at_column};
 use crate::tui::markdown::{
@@ -1346,10 +1346,10 @@ fn attachment_detail_block(
     content_width: usize,
     inline_images: Option<&DetailInlineImageContext>,
 ) -> DetailBodyBlock {
-    let placeholder = Line::from(truncate_width(
-        &attachment_placeholder(attachment),
-        content_width,
-    ));
+    let focused = inline_images.is_some_and(|context| {
+        context.focused_attachment_id.as_deref() == Some(attachment.attachment_id.as_str())
+    });
+    let placeholder = attachment_detail_line(attachment, content_width, focused);
     let Some(inline_images) = inline_images else {
         return DetailBodyBlock::Line(placeholder);
     };
@@ -1366,6 +1366,70 @@ fn attachment_detail_block(
         width,
         height,
     }
+}
+
+fn attachment_detail_line(
+    attachment: &AttachmentMetadataJson,
+    content_width: usize,
+    focused: bool,
+) -> Line<'static> {
+    let state_style = Style::new().fg(if focused { ACCENT } else { FG_MUTED });
+    let filename_style = Style::new().fg(if focused { ACCENT } else { FG });
+    let separator_style = Style::new().fg(if focused { ACCENT } else { FG_DIM });
+    let metadata_style = Style::new().fg(if focused { ACCENT } else { FG_MUTED });
+    let mut spans = vec![Span::styled(
+        attachment_state_placeholder(attachment),
+        state_style,
+    )];
+    if let Some(filename) = attachment.filename.as_deref() {
+        spans.push(Span::styled(format!(" {filename}"), filename_style));
+    }
+    if let (Some(width), Some(height)) = (attachment.width, attachment.height) {
+        spans.push(Span::styled(" · ", separator_style));
+        spans.push(Span::styled(format!("{width}×{height}"), metadata_style));
+    }
+    spans.push(Span::styled(" · ", separator_style));
+    spans.push(Span::styled(
+        human_file_size(attachment.byte_size),
+        metadata_style,
+    ));
+    truncate_styled_line(Line::from(spans), content_width)
+}
+
+fn truncate_styled_line(line: Line<'static>, max_width: usize) -> Line<'static> {
+    use unicode_width::UnicodeWidthChar;
+
+    if UnicodeWidthStr::width(line.to_string().as_str()) <= max_width {
+        return line;
+    }
+    if max_width == 0 {
+        return Line::default();
+    }
+
+    let target_width = max_width - 1;
+    let mut used_width = 0;
+    let mut truncated = Vec::new();
+    let mut ellipsis_style = Style::default();
+    'spans: for span in line.spans {
+        let mut content = String::new();
+        ellipsis_style = span.style;
+        for character in span.content.chars() {
+            let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
+            if used_width + character_width > target_width {
+                if !content.is_empty() {
+                    truncated.push(Span::styled(content, span.style));
+                }
+                break 'spans;
+            }
+            content.push(character);
+            used_width += character_width;
+        }
+        if !content.is_empty() {
+            truncated.push(Span::styled(content, span.style));
+        }
+    }
+    truncated.push(Span::styled("…", ellipsis_style));
+    Line::from(truncated)
 }
 
 fn detail_body_blocks(
@@ -2723,6 +2787,40 @@ mod tests {
 
         assert_eq!(UnicodeWidthStr::width(attachment.as_str()), 29);
         assert!(attachment.ends_with('…'));
+    }
+
+    #[test]
+    fn detail_attachment_row_styles_filename_and_metadata() {
+        let attachment = attachment_metadata("ATTACHMENT000001", false, true);
+
+        let line = attachment_detail_line(&attachment, 80, false);
+
+        assert_eq!(
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                "[image: attachment]",
+                " chart.png",
+                " · ",
+                "640×480",
+                " · ",
+                "4 B",
+            ]
+        );
+        assert_eq!(line.spans[0].style.fg, Some(FG_MUTED));
+        assert_eq!(line.spans[1].style.fg, Some(FG));
+        assert_eq!(line.spans[2].style.fg, Some(FG_DIM));
+        assert_eq!(line.spans[3].style.fg, Some(FG_MUTED));
+
+        let focused = attachment_detail_line(&attachment, 80, true);
+        assert!(
+            focused
+                .spans
+                .iter()
+                .all(|span| span.style.fg == Some(ACCENT))
+        );
     }
 
     #[test]
