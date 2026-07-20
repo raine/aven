@@ -101,6 +101,23 @@ pub enum RecurrenceDuePolicy {
     None,
 }
 
+impl RecurrenceDuePolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SameDay => "same_day",
+            Self::None => "none",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, InvalidRecurrenceValue> {
+        match value {
+            "same_day" => Ok(Self::SameDay),
+            "none" => Ok(Self::None),
+            _ => Err(InvalidRecurrenceValue::new("due policy", value)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecurrenceSeriesState {
@@ -109,12 +126,105 @@ pub enum RecurrenceSeriesState {
     Stopped,
 }
 
+impl RecurrenceSeriesState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Paused => "paused",
+            Self::Stopped => "stopped",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, InvalidRecurrenceValue> {
+        match value {
+            "active" => Ok(Self::Active),
+            "paused" => Ok(Self::Paused),
+            "stopped" => Ok(Self::Stopped),
+            _ => Err(InvalidRecurrenceValue::new("series state", value)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecurrenceOutcome {
     Completed,
     Skipped,
 }
+
+impl RecurrenceOutcome {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Skipped => "skipped",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, InvalidRecurrenceValue> {
+        match value {
+            "completed" => Ok(Self::Completed),
+            "skipped" => Ok(Self::Skipped),
+            _ => Err(InvalidRecurrenceValue::new("outcome", value)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecurrenceProjectionState {
+    Projected,
+    Resolved,
+    Archived,
+    Corrected,
+}
+
+impl RecurrenceProjectionState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Projected => "projected",
+            Self::Resolved => "resolved",
+            Self::Archived => "archived",
+            Self::Corrected => "corrected",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, InvalidRecurrenceValue> {
+        match value {
+            "projected" => Ok(Self::Projected),
+            "resolved" => Ok(Self::Resolved),
+            "archived" => Ok(Self::Archived),
+            "corrected" => Ok(Self::Corrected),
+            _ => Err(InvalidRecurrenceValue::new("projection state", value)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidRecurrenceValue {
+    kind: &'static str,
+    value: String,
+}
+
+impl InvalidRecurrenceValue {
+    fn new(kind: &'static str, value: &str) -> Self {
+        Self {
+            kind,
+            value: value.to_string(),
+        }
+    }
+}
+
+impl fmt::Display for InvalidRecurrenceValue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "invalid recurrence {}: {}",
+            self.kind, self.value
+        )
+    }
+}
+
+impl std::error::Error for InvalidRecurrenceValue {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]

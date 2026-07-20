@@ -1,4 +1,5 @@
 use std::fmt;
+use std::str::FromStr;
 
 use chrono::{Datelike, Weekday};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -9,6 +10,34 @@ pub enum RecurrenceFrequency {
     Daily,
     Weekly,
 }
+
+impl RecurrenceFrequency {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Daily => "daily",
+            Self::Weekly => "weekly",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, InvalidRecurrenceFrequency> {
+        match value {
+            "daily" => Ok(Self::Daily),
+            "weekly" => Ok(Self::Weekly),
+            _ => Err(InvalidRecurrenceFrequency(value.to_string())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidRecurrenceFrequency(String);
+
+impl fmt::Display for InvalidRecurrenceFrequency {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "invalid recurrence frequency: {}", self.0)
+    }
+}
+
+impl std::error::Error for InvalidRecurrenceFrequency {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct WeekdaySet(u8);
@@ -78,6 +107,14 @@ impl fmt::Display for WeekdaySet {
             separator = ",";
         }
         Ok(())
+    }
+}
+
+impl FromStr for WeekdaySet {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        parse_weekday_set(value)
     }
 }
 

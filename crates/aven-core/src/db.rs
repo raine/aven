@@ -6,13 +6,21 @@ use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
+use chrono::{NaiveDate, NaiveTime};
 use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
 use sqlx::{Connection as _, Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
 
 use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::ids::{new_id, now};
-use crate::types::Task;
+use crate::recurrence::{
+    RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceProjectionState,
+    RecurrenceRule, RecurrenceSeriesState, TimeZoneId, WeekdaySet,
+};
+use crate::types::{
+    MutableEntityType, RecurrenceOccurrence, RecurrencePauseInterval, RecurrenceSeries,
+    RecurrenceSeriesLabel, Task,
+};
 use crate::workspaces::ensure_default_workspace;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
@@ -395,20 +403,233 @@ pub(crate) fn task_from_row(row: &SqliteRow) -> Result<Task> {
     })
 }
 
+pub(crate) fn recurrence_series_from_row(row: &SqliteRow) -> Result<RecurrenceSeries> {
+    let frequency = RecurrenceFrequency::parse(&row.try_get::<String, _>("frequency")?)?;
+    let interval = u32::try_from(row.try_get::<i64, _>("interval")?)
+        .context("recurrence interval must fit u32")?;
+    let weekdays = row
+        .try_get::<String, _>("weekdays")?
+        .parse::<WeekdaySet>()
+        .map_err(anyhow::Error::msg)?;
+    let rule = RecurrenceRule::new(frequency, interval, weekdays)?;
+    let start_on = row
+        .try_get::<String, _>("start_on")?
+        .parse::<NaiveDate>()
+        .context("invalid recurrence start date")?;
+    let available_local_time = optional_text(row.try_get("available_local_time")?)
+        .map(|value| {
+            value
+                .parse::<NaiveTime>()
+                .context("invalid recurrence availability time")
+        })
+        .transpose()?;
+    let initial_status = TaskStatus::parse(&row.try_get::<String, _>("initial_status")?)?;
+    if !initial_status.is_open() {
+        bail!("recurrence initial status must be open");
+    }
+    let state = RecurrenceSeriesState::parse(&row.try_get::<String, _>("state")?)?;
+    let stopped_at = optional_text(row.try_get("stopped_at")?);
+    if matches!(state, RecurrenceSeriesState::Stopped) != stopped_at.is_some() {
+        bail!("recurrence stopped state and stop time must agree");
+    }
+    let deleted = row.try_get::<i64, _>("deleted")?;
+    if !matches!(deleted, 0 | 1) {
+        bail!("recurrence deleted value must be zero or one");
+    }
+    Ok(RecurrenceSeries {
+        workspace_id: row.try_get("workspace_id")?,
+        id: row.try_get::<String, _>("id")?.parse()?,
+        title: row.try_get("title")?,
+        description: row.try_get("description")?,
+        project_id: row.try_get("project_id")?,
+        priority: TaskPriority::parse(&row.try_get::<String, _>("priority")?)?,
+        initial_status,
+        rule,
+        timezone: row
+            .try_get::<String, _>("timezone")?
+            .parse::<TimeZoneId>()?,
+        start_on,
+        available_local_time,
+        due_policy: RecurrenceDuePolicy::parse(&row.try_get::<String, _>("due_policy")?)?,
+        state,
+        stopped_at,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+        deleted: deleted != 0,
+    })
+}
+
+pub(crate) fn recurrence_series_label_from_row(row: &SqliteRow) -> Result<RecurrenceSeriesLabel> {
+    Ok(RecurrenceSeriesLabel {
+        workspace_id: row.try_get("workspace_id")?,
+        series_id: row.try_get::<String, _>("series_id")?.parse()?,
+        label: row.try_get("label")?,
+    })
+}
+
+pub(crate) fn recurrence_occurrence_from_row(row: &SqliteRow) -> Result<RecurrenceOccurrence> {
+    let task_id = optional_text(row.try_get("task_id")?)
+        .map(|value| value.parse())
+        .transpose()?;
+    let outcome = optional_text(row.try_get("outcome")?)
+        .map(|value| RecurrenceOutcome::parse(&value))
+        .transpose()?;
+    let resolved_at = optional_text(row.try_get("resolved_at")?);
+    let outcome_change_id = optional_text(row.try_get("outcome_change_id")?);
+    let projection_state =
+        RecurrenceProjectionState::parse(&row.try_get::<String, _>("projection_state")?)?;
+    let archived_at = optional_text(row.try_get("archived_at")?);
+    let valid_shape = match projection_state {
+        RecurrenceProjectionState::Projected => {
+            task_id.is_some()
+                && outcome.is_none()
+                && resolved_at.is_none()
+                && outcome_change_id.is_none()
+                && archived_at.is_none()
+        }
+        RecurrenceProjectionState::Resolved => {
+            task_id.is_some()
+                && outcome.is_some()
+                && resolved_at.is_some()
+                && outcome_change_id.is_some()
+                && archived_at.is_none()
+        }
+        RecurrenceProjectionState::Archived => {
+            task_id.is_some()
+                && outcome.is_none()
+                && resolved_at.is_none()
+                && outcome_change_id.is_none()
+                && archived_at.is_some()
+        }
+        RecurrenceProjectionState::Corrected => {
+            task_id.is_none()
+                && outcome.is_some()
+                && resolved_at.is_some()
+                && outcome_change_id.is_some()
+                && archived_at.is_none()
+        }
+    };
+    if !valid_shape {
+        bail!("recurrence occurrence fields do not match projection state");
+    }
+    Ok(RecurrenceOccurrence {
+        workspace_id: row.try_get("workspace_id")?,
+        series_id: row.try_get::<String, _>("series_id")?.parse()?,
+        slot_on: row
+            .try_get::<String, _>("slot_on")?
+            .parse::<NaiveDate>()
+            .context("invalid recurrence slot date")?,
+        task_id,
+        outcome,
+        resolved_at,
+        outcome_change_id,
+        projection_state,
+        archived_at,
+    })
+}
+
+pub(crate) fn recurrence_pause_interval_from_row(
+    row: &SqliteRow,
+) -> Result<RecurrencePauseInterval> {
+    let suspended_slot_on = optional_text(row.try_get("suspended_slot_on")?)
+        .map(|value| {
+            value
+                .parse::<NaiveDate>()
+                .context("invalid suspended recurrence slot date")
+        })
+        .transpose()?;
+    let suspended_task_id = optional_text(row.try_get("suspended_task_id")?)
+        .map(|value| value.parse())
+        .transpose()?;
+    let resumed_at = optional_text(row.try_get("resumed_at")?);
+    let resolved_by_change_id = optional_text(row.try_get("resolved_by_change_id")?);
+    if resumed_at.is_some() != resolved_by_change_id.is_some() {
+        bail!("recurrence pause resume time and change must agree");
+    }
+    if suspended_slot_on.is_some() != suspended_task_id.is_some() {
+        bail!("recurrence suspended slot and task must agree");
+    }
+    Ok(RecurrencePauseInterval {
+        workspace_id: row.try_get("workspace_id")?,
+        id: row.try_get("id")?,
+        series_id: row.try_get::<String, _>("series_id")?.parse()?,
+        paused_at: row.try_get("paused_at")?,
+        resumed_at,
+        suspended_slot_on,
+        suspended_task_id,
+        created_by_change_id: row.try_get("created_by_change_id")?,
+        resolved_by_change_id,
+    })
+}
+
+fn optional_text(value: String) -> Option<String> {
+    (!value.is_empty()).then_some(value)
+}
+
+pub(crate) async fn entity_field_version(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    entity_type: MutableEntityType,
+    entity_id: &str,
+    field: &str,
+) -> Result<Option<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT version FROM field_versions
+         WHERE workspace_id = ? AND entity_type = ? AND entity_id = ? AND field = ?",
+    )
+    .bind(workspace_id)
+    .bind(entity_type.as_str())
+    .bind(entity_id)
+    .bind(field)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
+pub(crate) async fn set_entity_field_version(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    entity_type: MutableEntityType,
+    entity_id: &str,
+    field: &str,
+    version: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO field_versions(workspace_id, entity_type, entity_id, field, version)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(workspace_id, entity_type, entity_id, field)
+         DO UPDATE SET version = excluded.version",
+    )
+    .bind(workspace_id)
+    .bind(entity_type.as_str())
+    .bind(entity_id)
+    .bind(field)
+    .bind(version)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 pub(crate) async fn field_version(
     conn: &mut SqliteConnection,
     entity_id: &str,
     field: &str,
 ) -> Result<Option<String>> {
-    Ok(
-        sqlx::query_scalar!(
-            r#"SELECT version AS "version!: String" FROM field_versions WHERE entity_id = ? AND field = ?"#,
-            entity_id,
-            field
-        )
+    let workspace_id =
+        sqlx::query_scalar::<_, WorkspaceId>("SELECT workspace_id FROM tasks WHERE id = ? LIMIT 1")
+            .bind(entity_id)
             .fetch_optional(&mut *conn)
-            .await?,
+            .await?;
+    let Some(workspace_id) = workspace_id else {
+        return Ok(None);
+    };
+    entity_field_version(
+        conn,
+        &workspace_id,
+        MutableEntityType::Task,
+        entity_id,
+        field,
     )
+    .await
 }
 
 pub(crate) async fn set_field_version(
@@ -417,16 +638,44 @@ pub(crate) async fn set_field_version(
     field: &str,
     version: &str,
 ) -> Result<()> {
-    sqlx::query!(
-        "INSERT INTO field_versions(entity_id, field, version) VALUES (?, ?, ?)
-         ON CONFLICT(entity_id, field) DO UPDATE SET version = excluded.version",
-        entity_id,
-        field,
-        version,
-    )
-    .execute(&mut *conn)
-    .await?;
+    let workspace_id =
+        sqlx::query_scalar::<_, WorkspaceId>("SELECT workspace_id FROM tasks WHERE id = ? LIMIT 1")
+            .bind(entity_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    if let Some(workspace_id) = workspace_id {
+        set_entity_field_version(
+            conn,
+            &workspace_id,
+            MutableEntityType::Task,
+            entity_id,
+            field,
+            version,
+        )
+        .await?;
+    }
     Ok(())
+}
+
+pub(crate) async fn entity_conflict_exists(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    entity_type: MutableEntityType,
+    entity_id: &str,
+    field: &str,
+) -> Result<bool> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM conflicts
+         WHERE workspace_id = ? AND entity_type = ? AND entity_id = ?
+         AND field = ? AND resolved = 0 LIMIT 1",
+    )
+    .bind(workspace_id)
+    .bind(entity_type.as_str())
+    .bind(entity_id)
+    .bind(field)
+    .fetch_one(&mut *conn)
+    .await?
+        > 0)
 }
 
 pub(crate) async fn conflict_exists(
@@ -435,15 +684,14 @@ pub(crate) async fn conflict_exists(
     task_id: &crate::ids::TaskId,
     field: &str,
 ) -> Result<bool> {
-    Ok(sqlx::query_scalar::<_, i64>(
-        "SELECT count(*) FROM conflicts WHERE workspace_id = ? AND task_id = ? AND field = ? AND resolved = 0 LIMIT 1",
+    entity_conflict_exists(
+        conn,
+        workspace_id,
+        MutableEntityType::Task,
+        task_id.as_str(),
+        field,
     )
-    .bind(workspace_id)
-    .bind(task_id)
-    .bind(field)
-    .fetch_one(&mut *conn)
-    .await?
-        > 0)
+    .await
 }
 
 #[cfg(test)]
@@ -548,6 +796,161 @@ mod tests {
         assert_eq!(
             task_from_row(&row).unwrap_err().to_string(),
             "error invalid-priority input=soon choices=none,low,medium,high,urgent"
+        );
+    }
+
+    #[tokio::test]
+    async fn recurrence_migration_enforces_schedule_immutability_and_task_conflict_compatibility() {
+        let (_temp, mut conn) = crate::test_support::test_conn().await;
+        sqlx::query(
+            "INSERT INTO recurrence_series(
+                workspace_id, id, title, description, project_id, priority, initial_status,
+                frequency, interval, weekdays, timezone, start_on, available_local_time,
+                due_policy, state, created_at, updated_at
+             ) VALUES (
+                '0000000000000000', '7KQ9A1X4MV2P8D6R', 'journal', '',
+                '7KQ9A1X4MV2P8D6S', 'none', 'todo', 'daily', 1, '', 'UTC',
+                '2026-07-20', '09:00:00', 'same_day', 'active', 't', 't'
+             )",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "UPDATE recurrence_series SET title = 'future journal' WHERE id = '7KQ9A1X4MV2P8D6R'",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let error = sqlx::query(
+            "UPDATE recurrence_series SET frequency = 'weekly', weekdays = 'mon' WHERE id = '7KQ9A1X4MV2P8D6R'",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("recurrence schedule is immutable")
+        );
+
+        sqlx::query(
+            "INSERT INTO conflicts(task_id, field, local_value, remote_value, remote_change_id, variant_a, variant_b, created_at)
+             VALUES ('7KQ9A1X4MV2P8D6T', 'title', 'a', 'b', 'remote', 'a', 'b', 't')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let identity: (String, String) = sqlx::query_as(
+            "SELECT entity_type, entity_id FROM conflicts WHERE task_id = '7KQ9A1X4MV2P8D6T'",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            identity,
+            ("task".to_string(), "7KQ9A1X4MV2P8D6T".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn recurrence_rows_map_through_validated_domain_types() {
+        let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+        let series_row = sqlx::query(
+            "SELECT '0000000000000000' AS workspace_id,
+                    '7KQ9A1X4MV2P8D6R' AS id, 'journal' AS title, '' AS description,
+                    '7KQ9A1X4MV2P8D6S' AS project_id, 'high' AS priority,
+                    'todo' AS initial_status, 'weekly' AS frequency, 2 AS interval,
+                    'mon,fri' AS weekdays, 'Europe/Stockholm' AS timezone,
+                    '2026-07-20' AS start_on, '09:30:00' AS available_local_time,
+                    'same_day' AS due_policy, 'active' AS state, '' AS stopped_at,
+                    'created' AS created_at, 'updated' AS updated_at, 0 AS deleted",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        let series = recurrence_series_from_row(&series_row).unwrap();
+        assert_eq!(series.id.as_str(), "7KQ9A1X4MV2P8D6R");
+        assert_eq!(series.rule.interval(), 2);
+        assert_eq!(series.available_local_time.unwrap().to_string(), "09:30:00");
+
+        let occurrence_row = sqlx::query(
+            "SELECT '0000000000000000' AS workspace_id,
+                    '7KQ9A1X4MV2P8D6R' AS series_id, '2026-07-20' AS slot_on,
+                    '' AS task_id, 'completed' AS outcome, 'resolved' AS resolved_at,
+                    'change' AS outcome_change_id, 'corrected' AS projection_state,
+                    '' AS archived_at",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        let occurrence = recurrence_occurrence_from_row(&occurrence_row).unwrap();
+        assert_eq!(occurrence.task_id, None);
+        assert_eq!(occurrence.outcome, Some(RecurrenceOutcome::Completed));
+        assert_eq!(
+            occurrence.projection_state,
+            RecurrenceProjectionState::Corrected
+        );
+
+        let invalid_row = sqlx::query(
+            "SELECT '0000000000000000' AS workspace_id,
+                    '7KQ9A1X4MV2P8D6R' AS id, 'journal' AS title, '' AS description,
+                    '7KQ9A1X4MV2P8D6S' AS project_id, 'none' AS priority,
+                    'todo' AS initial_status, 'weekly' AS frequency, 1 AS interval,
+                    'fri,mon' AS weekdays, 'UTC' AS timezone, '2026-07-20' AS start_on,
+                    '' AS available_local_time, 'none' AS due_policy, 'active' AS state,
+                    '' AS stopped_at, 't' AS created_at, 't' AS updated_at, 0 AS deleted",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert!(recurrence_series_from_row(&invalid_row).is_err());
+    }
+
+    #[tokio::test]
+    async fn field_versions_support_task_and_recurrence_series_identity() {
+        let (_temp, mut conn) = crate::test_support::test_conn().await;
+        sqlx::query(
+            "INSERT INTO tasks(id, title, description, project_id, status, priority, created_at, updated_at)
+             VALUES ('7KQ9A1X4MV2P8D6T', 'task', '', '7KQ9A1X4MV2P8D6S', 'todo', 'none', 't', 't')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        set_field_version(&mut conn, "7KQ9A1X4MV2P8D6T", "title", "task-version")
+            .await
+            .unwrap();
+        set_entity_field_version(
+            &mut conn,
+            &crate::workspaces::default_workspace_id(),
+            MutableEntityType::RecurrenceSeries,
+            "7KQ9A1X4MV2P8D6R",
+            "title",
+            "series-version",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            field_version(&mut conn, "7KQ9A1X4MV2P8D6T", "title")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("task-version")
+        );
+        assert_eq!(
+            entity_field_version(
+                &mut conn,
+                &crate::workspaces::default_workspace_id(),
+                MutableEntityType::RecurrenceSeries,
+                "7KQ9A1X4MV2P8D6R",
+                "title",
+            )
+            .await
+            .unwrap()
+            .as_deref(),
+            Some("series-version")
         );
     }
 }

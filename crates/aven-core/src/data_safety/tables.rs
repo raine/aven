@@ -270,12 +270,16 @@ pub(super) async fn import_field_versions(
     rows: &[super::FieldVersionRow],
 ) -> Result<()> {
     for row in rows {
-        sqlx::query("INSERT INTO field_versions(entity_id, field, version) VALUES (?, ?, ?)")
-            .bind(&row.entity_id)
-            .bind(&row.field)
-            .bind(&row.version)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "INSERT INTO field_versions(workspace_id, entity_type, entity_id, field, version) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(&row.workspace_id)
+        .bind(&row.entity_type)
+        .bind(&row.entity_id)
+        .bind(&row.field)
+        .bind(&row.version)
+        .execute(&mut *tx)
+        .await?;
     }
     Ok(())
 }
@@ -286,10 +290,12 @@ pub(super) async fn import_conflicts(
 ) -> Result<()> {
     for row in rows {
         sqlx::query(
-            "INSERT INTO conflicts(id, workspace_id, task_id, field, base_version, local_value, remote_value, local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO conflicts(id, workspace_id, entity_type, entity_id, task_id, field, base_version, local_value, remote_value, local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(row.id)
         .bind(&row.workspace_id)
+        .bind(&row.entity_type)
+        .bind(&row.entity_id)
         .bind(&row.task_id)
         .bind(&row.field)
         .bind(&row.base_version)

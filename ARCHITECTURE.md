@@ -103,7 +103,7 @@
 
 SQLite stores synced task data and local UI state. Config files store local routing and service settings.
 
-- Synced domain tables: `workspaces`, `tasks`, `projects`, `labels`, `task_labels`, `notes`, `task_dependencies`, `task_epic_links`, and `task_attachments`.
+- Synced domain tables: `workspaces`, `tasks`, `projects`, `labels`, `task_labels`, `notes`, `task_dependencies`, `task_epic_links`, `task_attachments`, `recurrence_series`, `recurrence_series_labels`, `recurrence_occurrences`, and `recurrence_pause_intervals`. Recurrence occurrence rows are sparse links and explicit outcomes. Archived projections retain their task rows and use `projection_state = 'archived'`.
 - Attachment object state: `blob_inventory`, `blob_lifecycle`, `blob_leases`, `blob_upload_reservations`, `server_blob_references`, and `server_task_tombstones`; encoded image bytes live in content-addressed files under the configured blob directory. The `local.image_optimization` values are `off`, `paste`, and `on`. `off` is the default, `paste` optimizes paste sources, and `on` optimizes paste sources and file attachments. Lazy terminal thumbnails live under disposable `cache/previews/` storage.
 - Sync and local client bookkeeping: `changes`, `field_versions`, `conflicts`, and `meta`. `meta` stores sync cursors, client identity, and durable local TUI scalars such as the onboarding version.
 - Local-only config: database path, sync settings, project path mappings, directory overrides, and TUI column grouping.
@@ -142,7 +142,7 @@ SQLite stores synced task data and local UI state. Config files store local rout
 - Keep attachment persistence, validation, content-addressed storage, lifecycle accounting, sync planning and apply, and atomic task-plus-attachment mutations inside `crates/aven-core`. Root application code owns input file reads, output file writes, terminal previews, configuration, Reqwest, and Axum.
 - Use `crates/aven-core/src/operations/` or `crates/aven-core/src/mutation.rs` for writes that affect synced domain data.
 - Use `crates/aven-core/src/query.rs`, `crates/aven-core/src/query/`, and core enrichment helpers for read models.
-- Keep scalar task fields aligned across validation, task rows, `changes`, `field_versions`, sync apply, and conflict resolution.
+- Keep scalar task fields aligned across validation, task rows, `changes`, `field_versions`, sync apply, and conflict resolution. Field-version and conflict identity is workspace, entity type, entity ID, and field. Task helpers preserve the existing task-specific API while recurrence series use `entity_type = 'recurrence_series'`.
 - Keep workspace scope explicit on queries and mutations that operate on user data.
 - Keep config serialization and durable text writes in `src/config.rs`; keep managed-entry text transforms in `src/config_edit.rs`.
 - Keep CLI output formatting in command or render modules, not in persistence helpers. Use `src/render.rs` for shared quoting, changed flag text, multiline blocks, near-match errors, and text diffs. Use focused command-family modules such as `src/commands/context.rs` for command-local snapshots and formatting. Commands with text and JSON output should construct one typed report before selecting a renderer, as `src/commands/prime.rs` does.

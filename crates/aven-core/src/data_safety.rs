@@ -206,6 +206,8 @@ pub struct ChangeRow {
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct FieldVersionRow {
+    pub workspace_id: WorkspaceId,
+    pub entity_type: String,
     pub entity_id: String,
     pub field: String,
     pub version: String,
@@ -215,7 +217,9 @@ pub struct FieldVersionRow {
 pub struct ConflictRow {
     pub id: i64,
     pub workspace_id: WorkspaceId,
-    pub task_id: TaskId,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub task_id: String,
     pub field: String,
     pub base_version: Option<String>,
     pub local_value: String,
@@ -442,11 +446,15 @@ async fn scan_changes(conn: &mut SqliteConnection) -> Result<Vec<ChangeRow>> {
 }
 
 async fn scan_field_versions(conn: &mut SqliteConnection) -> Result<Vec<FieldVersionRow>> {
-    tables::scan_rows(conn, "SELECT entity_id, field, version FROM field_versions").await
+    tables::scan_rows(
+        conn,
+        "SELECT workspace_id, entity_type, entity_id, field, version FROM field_versions",
+    )
+    .await
 }
 
 async fn scan_conflicts(conn: &mut SqliteConnection) -> Result<Vec<ConflictRow>> {
-    tables::scan_rows(conn, "SELECT id, workspace_id, task_id, field, base_version, local_value, remote_value, local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved FROM conflicts").await
+    tables::scan_rows(conn, "SELECT id, workspace_id, entity_type, entity_id, task_id, field, base_version, local_value, remote_value, local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved FROM conflicts").await
 }
 
 async fn scan_meta(conn: &mut SqliteConnection) -> Result<Vec<MetaRow>> {
@@ -702,6 +710,10 @@ async fn replace_from_export(
     target_client_id: &str,
 ) -> Result<()> {
     let delete_order = [
+        "DELETE FROM recurrence_pause_intervals",
+        "DELETE FROM recurrence_occurrences",
+        "DELETE FROM recurrence_series_labels",
+        "DELETE FROM recurrence_series",
         "DELETE FROM task_attachments",
         "DELETE FROM blob_inventory",
         "DELETE FROM task_epic_links",
@@ -884,7 +896,7 @@ async fn database_integrity_report_with_connection(
     checks.push(count_check(
         conn,
         "conflict tasks",
-        "SELECT count(*) FROM conflicts c LEFT JOIN tasks t ON t.workspace_id = c.workspace_id AND t.id = c.task_id WHERE c.resolved = 0 AND t.id IS NULL",
+        "SELECT count(*) FROM conflicts c LEFT JOIN tasks t ON t.workspace_id = c.workspace_id AND t.id = c.entity_id WHERE c.resolved = 0 AND c.entity_type = 'task' AND t.id IS NULL",
     )
     .await?);
     checks.push(count_check(
@@ -896,7 +908,7 @@ async fn database_integrity_report_with_connection(
     checks.push(count_check(
         conn,
         "field version tasks",
-        "SELECT count(*) FROM field_versions fv LEFT JOIN tasks t ON t.id = fv.entity_id WHERE t.id IS NULL AND fv.field IN ('title','description','status','priority','project','labels','available_at','due_on','deleted','is_epic')",
+        "SELECT count(*) FROM field_versions fv LEFT JOIN tasks t ON t.workspace_id = fv.workspace_id AND t.id = fv.entity_id WHERE fv.entity_type = 'task' AND t.id IS NULL",
     )
     .await?);
     checks.push(count_check(
@@ -905,6 +917,7 @@ async fn database_integrity_report_with_connection(
         "SELECT count(*) FROM field_versions fv LEFT JOIN changes c ON c.change_id = fv.version WHERE c.change_id IS NULL",
     )
     .await?);
+    checks.extend(integrity::recurrence_integrity_checks(conn).await?);
     push_meta_checks(conn, &mut checks).await?;
 
     Ok(IntegrityReport {
