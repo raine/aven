@@ -26,6 +26,7 @@ pub(crate) enum Action {
     ToggleColumnsPreview,
     GoBack,
     ToggleHelp,
+    ShowWelcome,
     BeginSearch,
     BeginCommand,
     AcceptSearch,

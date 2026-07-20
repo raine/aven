@@ -6,6 +6,7 @@ pub mod data_safety;
 pub mod db;
 pub mod ids;
 pub mod labels;
+pub mod local_state;
 mod matching;
 mod mutation;
 pub mod operations;

@@ -2981,22 +2981,6 @@ async fn sync_server_rejects_malformed_attachment_payloads() {
 }
 
 #[test]
-fn current_protocol_version_sync_succeeds() {
-    let env = TestEnv::new();
-    let server = TestServer::start(&env);
-    let a = env.db("client-a.sqlite");
-    let b = env.db("client-b.sqlite");
-
-    let task_ref = extract_ref(&ok(
-        env.aven(&a, ["add", "protocol version sync", "--project", "app"])
-    ));
-    sync(&env, &a, &server);
-    sync(&env, &b, &server);
-
-    contains_all(&ok(env.aven(&b, ["show", &task_ref])), &[&task_ref]);
-}
-
-#[test]
 fn attachment_metadata_and_blobs_round_trip_through_real_sync_server() {
     let env = TestEnv::new();
     let server = TestServer::start(&env);

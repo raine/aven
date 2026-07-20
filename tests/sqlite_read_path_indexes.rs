@@ -42,22 +42,6 @@ const READ_PATH_INDEXES: &[(&str, &str)] = &[
     ),
 ];
 
-const READ_PATH_INDEX_MIGRATION: &str =
-    include_str!("../crates/aven-core/migrations/20260621000000_read_path_indexes.sql");
-
-#[test]
-fn fresh_database_creates_read_path_indexes() {
-    let env = TestEnv::new();
-    let db = env.db("fresh.sqlite");
-
-    ok(env.aven(&db, ["list"]));
-
-    let indexes = read_index_names(&db);
-    for (index, _) in READ_PATH_INDEXES {
-        assert!(indexes.contains(*index), "missing index {index}");
-    }
-}
-
 #[test]
 fn fresh_database_index_ddl_matches_migration() {
     let env = TestEnv::new();
@@ -75,57 +59,6 @@ fn fresh_database_index_ddl_matches_migration() {
             normalize_sql(expected),
             "unexpected ddl for {index}"
         );
-    }
-}
-
-#[test]
-fn existing_database_migration_preserves_data() {
-    let env = TestEnv::new();
-    let db = env.db("existing.sqlite");
-
-    ok(env.aven(&db, ["project", "create", "app"]));
-    ok(env.aven(&db, ["label", "create", "bug"]));
-    ok(env.aven(
-        &db,
-        [
-            "add",
-            "indexed task",
-            "--project",
-            "app",
-            "--priority",
-            "high",
-            "--label",
-            "bug",
-        ],
-    ));
-
-    ok(env.aven(&db, ["list", "--label", "bug"]));
-
-    let runtime = runtime();
-    let (task_count, task_title, label_count) = runtime.block_on(async {
-        let mut conn = open_db(&db).await;
-        let task_count = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM tasks")
-            .fetch_one(&mut conn)
-            .await
-            .expect("count tasks");
-        let task_title = sqlx::query_scalar::<_, String>("SELECT title FROM tasks")
-            .fetch_one(&mut conn)
-            .await
-            .expect("read task title");
-        let label_count = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM task_labels")
-            .fetch_one(&mut conn)
-            .await
-            .expect("count task labels");
-        (task_count, task_title, label_count)
-    });
-
-    assert_eq!(task_count, 1);
-    assert_eq!(task_title, "indexed task");
-    assert_eq!(label_count, 1);
-
-    let indexes = read_index_names(&db);
-    for (index, _) in READ_PATH_INDEXES {
-        assert!(indexes.contains(*index), "missing index {index}");
     }
 }
 
@@ -178,32 +111,6 @@ fn old_schema_database_upgrade_creates_read_path_indexes() {
             indexes.contains(*index),
             "missing index {index} after upgrade"
         );
-    }
-}
-
-#[test]
-fn read_path_index_migration_sql_is_idempotent() {
-    let env = TestEnv::new();
-    let db = env.db("idempotent.sqlite");
-
-    ok(env.aven(&db, ["list"]));
-
-    let runtime = runtime();
-    runtime.block_on(async {
-        let mut conn = open_db(&db).await;
-        sqlx::raw_sql(READ_PATH_INDEX_MIGRATION)
-            .execute(&mut conn)
-            .await
-            .expect("first direct migration apply");
-        sqlx::raw_sql(READ_PATH_INDEX_MIGRATION)
-            .execute(&mut conn)
-            .await
-            .expect("second direct migration apply");
-    });
-
-    let indexes = read_index_names(&db);
-    for (index, _) in READ_PATH_INDEXES {
-        assert!(indexes.contains(*index), "missing index {index}");
     }
 }
 

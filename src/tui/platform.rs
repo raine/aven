@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
 use std::process::Command as ProcessCommand;
 use std::sync::Mutex;
 #[cfg(not(test))]
@@ -16,6 +17,60 @@ use crossterm::terminal::supports_keyboard_enhancement;
 pub(crate) struct ClipboardImage {
     pub(crate) filename: String,
     pub(crate) bytes: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OperatingSystem {
+    Macos,
+    Linux,
+    Windows,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct ViewerCommand {
+    program: &'static str,
+    args: Vec<std::ffi::OsString>,
+}
+
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn open_image_in_default_viewer(path: &Path) -> Result<()> {
+    let os = if cfg!(target_os = "macos") {
+        OperatingSystem::Macos
+    } else if cfg!(target_os = "windows") {
+        OperatingSystem::Windows
+    } else {
+        OperatingSystem::Linux
+    };
+    let spec = default_image_viewer_command(os, path);
+    let mut child = ProcessCommand::new(spec.program)
+        .args(spec.args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .context("could not start the default image viewer")?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+fn default_image_viewer_command(os: OperatingSystem, path: &Path) -> ViewerCommand {
+    let path = path.as_os_str().to_owned();
+    match os {
+        OperatingSystem::Macos => ViewerCommand {
+            program: "open",
+            args: vec![path],
+        },
+        OperatingSystem::Linux => ViewerCommand {
+            program: "xdg-open",
+            args: vec![path],
+        },
+        OperatingSystem::Windows => ViewerCommand {
+            program: "rundll32.exe",
+            args: vec!["url.dll,FileProtocolHandler".into(), path],
+        },
+    }
 }
 #[cfg(not(test))]
 use crossterm::terminal::{
@@ -290,13 +345,55 @@ pub(crate) fn copy_to_clipboard(value: &str) -> Result<()> {
 }
 
 #[cfg(test)]
-pub(crate) fn copy_to_clipboard(_value: &str) -> Result<()> {
+thread_local! {
+    static TEST_CLIPBOARD: std::cell::RefCell<Option<String>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(test)]
+pub(crate) fn copy_to_clipboard(value: &str) -> Result<()> {
+    TEST_CLIPBOARD.with(|clipboard| clipboard.replace(Some(value.to_string())));
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn clipboard_text_for_test() -> Option<String> {
+    TEST_CLIPBOARD.with(|clipboard| clipboard.borrow().clone())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selects_platform_default_image_viewer_commands() {
+        let path = Path::new("/tmp/attachment image.png");
+        assert_eq!(
+            default_image_viewer_command(OperatingSystem::Macos, path),
+            ViewerCommand {
+                program: "open",
+                args: vec![path.as_os_str().to_owned()],
+            }
+        );
+        assert_eq!(
+            default_image_viewer_command(OperatingSystem::Linux, path),
+            ViewerCommand {
+                program: "xdg-open",
+                args: vec![path.as_os_str().to_owned()],
+            }
+        );
+        assert_eq!(
+            default_image_viewer_command(OperatingSystem::Windows, path),
+            ViewerCommand {
+                program: "rundll32.exe",
+                args: vec![
+                    "url.dll,FileProtocolHandler".into(),
+                    path.as_os_str().to_owned(),
+                ],
+            }
+        );
+    }
 
     #[test]
     fn kitty_keyboard_enhancement_pushes_and_pops_state() {

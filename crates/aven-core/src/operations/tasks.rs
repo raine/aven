@@ -278,13 +278,13 @@ pub async fn create_task_with_attachments(
                 }
             }
             Ok(_) => {
-                cleanup_created_objects(conn, blob_dir, &created_hashes).await;
                 cleanup_attachment_guards(conn, &staging_leases, &capacity_reservations).await;
+                cleanup_created_objects(conn, blob_dir, &created_hashes).await;
                 bail!("error attachment-staged-size-mismatch");
             }
             Err(error) => {
-                cleanup_created_objects(conn, blob_dir, &created_hashes).await;
                 cleanup_attachment_guards(conn, &staging_leases, &capacity_reservations).await;
+                cleanup_created_objects(conn, blob_dir, &created_hashes).await;
                 return Err(error);
             }
         }
@@ -328,8 +328,8 @@ pub async fn create_task_with_attachments(
     let (inserted, attachment_change_ids, task) = match database_result {
         Ok(value) => value,
         Err(error) => {
-            cleanup_created_objects(conn, blob_dir, &created_hashes).await;
             cleanup_attachment_guards(conn, &staging_leases, &capacity_reservations).await;
+            cleanup_created_objects(conn, blob_dir, &created_hashes).await;
             return Err(error);
         }
     };

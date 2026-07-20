@@ -12,7 +12,7 @@ pub enum AttachmentBytesState {
     Unavailable,
 }
 
-pub use blocking::run as run_blocking;
+pub use blocking::{run as run_blocking, run_preview};
 pub use decode::{decode_first_frame, validate_image_blocking};
 pub use lifecycle::{
     ByteCount, DEFAULT_MAINTENANCE_LIMIT, DEFAULT_ORIGINAL_QUOTA_BYTES,

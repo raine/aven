@@ -20,7 +20,7 @@ local:
   db_path: "/path/to/aven.sqlite"
   blob_dir: "/path/to/aven-blobs"
   inline_images: auto
-  image_optimization: paste
+  image_optimization: off
   attachment_lifecycle:
     grace_days: 7
     server_grace_days: 30
@@ -82,32 +82,50 @@ local:
 
 ## Attachment lifecycle
 
-Attachment originals use content-addressed storage under `local.blob_dir`, or beside the database when the setting is omitted.
+All image attachment settings are optional. The defaults support normal use without configuration.
 
-`local.inline_images` controls automatic TUI previews:
+### Storage location
 
-- `off` always uses textual placeholders.
-- `auto`, the default, enables detected iTerm2 and Kitty-family protocols outside tmux. Inside tmux it keeps textual placeholders.
-- `on` enables detected protocols and wraps supported image escapes for tmux.
+`local.blob_dir` selects the directory that stores attachment image files. Absolute paths are used as written. Relative paths are resolved beside the active database. When omitted, Aven creates a sidecar directory beside the database. Use `aven backup` when copying Aven data because copying only the SQLite database does not include these image files.
+
+### Image previews
+
+`local.inline_images` controls whether the TUI draws image previews or shows text labels. Locally available images remain focusable and can open in the operating system viewer in every mode:
+
+| Value | Behavior |
+| --- | --- |
+| `off` | Always show text labels without inline previews. |
+| `auto` | Show previews in supported terminals outside tmux and labels everywhere else. This is the default. |
+| `on` | Show previews in supported terminals and enable tmux passthrough. |
+
+Aven uses the iTerm2 inline-image protocol in iTerm2 and the Kitty graphics protocol in Kitty, WezTerm, and Ghostty. Setting `on` helps these protocols pass through tmux, but cannot add image support to another terminal. Sixel-only terminals show text labels.
+
+Detection uses terminal markers such as `TERM_PROGRAM`, `TERM`, `KITTY_WINDOW_ID`, `WEZTERM_PANE`, and `GHOSTTY_RESOURCES_DIR`. See [View image attachments](/tui/#view-image-attachments) for controls and [Troubleshoot image previews](/tips/#troubleshoot-image-previews) for setup help.
+
+### PNG optimization
 
 `local.image_optimization` controls lossless PNG optimization:
 
-- `off` preserves attachment bytes unless `attachment add --optimize` overrides it.
-- `paste`, the default, optimizes pasted images and preserves CLI file attachments.
-- `on` optimizes pasted images and CLI file attachments unless `--no-optimize` overrides it.
+| Value | Behavior |
+| --- | --- |
+| `off` | Preserve images unless `attachment add --optimize` overrides it. This is the default. |
+| `paste` | Optimize pasted images and preserve CLI file attachments. |
+| `on` | Optimize pasted images and CLI file attachments unless `--no-optimize` overrides it. |
 
-Optimization stores a validated lossless PNG result only when it is smaller than the input. Lazy PNG thumbnails live in `cache/previews/` and are disposable. They never participate in blob inventory, sync, backup, export, or import.
+Optimization applies only to PNG files. Aven preserves the original when optimization fails or does not reduce the file size, and validates any optimized file before storage. Cached previews are disposable, regenerate when needed, and are excluded from sync, backup, export, and import.
 
-`local.attachment_lifecycle` configures retention and capacity:
+### Retention and storage limits
 
-- `grace_days` controls local retention after the final live reference disappears. The default is 7 days.
-- `server_grace_days` controls server retention. The default is 30 days.
-- `quota_bytes` limits local unique original bytes. The default is 10 GiB.
-- `server_workspace_quota_bytes` limits distinct original hashes per server workspace. The default is 10 GiB.
-- `preview_quota_bytes` independently bounds disposable preview cache bytes. Preview bytes do not count toward original quotas.
-- `maintenance_limit` bounds objects processed in one maintenance run. The default is 128.
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `grace_days` | 7 days | Minimum age before an unused local image becomes eligible for cleanup. |
+| `server_grace_days` | 30 days | Minimum age before an unused server image becomes eligible for cleanup. |
+| `quota_bytes` | 10 GiB | Maximum unique attachment image storage on one device. |
+| `server_workspace_quota_bytes` | 10 GiB | Maximum unique attachment image storage for one server workspace. |
+| `preview_quota_bytes` | 512 MiB | Maximum disposable preview-cache size. |
+| `maintenance_limit` | 128 | Maximum files processed in one cleanup run. |
 
-A hash with a live task attachment, pending add, staging operation, reservation, transfer, read, or backup lease remains protected. `aven attachment prune` performs a dry run by default and requires `--apply` for deletion.
+Images used by tasks or attachment operations in progress are protected from cleanup. Identical images share storage and count once toward attachment quotas. The preview cache uses its separate quota and does not count toward image-file quotas. `aven attachment prune` performs a dry run unless you pass `--apply`.
 
 ## Workspace routes
 

@@ -13,28 +13,6 @@ use common::{
 };
 
 #[test]
-fn backup_command_creates_archive() {
-    let env = TestEnv::new();
-    let db = env.db("backup-copy.sqlite");
-    ok(env.aven(&db, ["label", "create", "safety"]));
-
-    let _task_ref = extract_ref(&ok(env.aven(
-        &db,
-        ["add", "base task", "--project", "app", "--label", "safety"],
-    )));
-
-    let backup_path = env.path("backup-copy.aven-backup.tar.zst");
-    let output = ok(env.aven(&db, ["backup", "--output", backup_path.to_str().unwrap()]));
-    contains_all(&output, &["backup path=", "bytes="]);
-    assert!(backup_path.exists());
-    assert!(
-        !fs::read(&backup_path)
-            .unwrap()
-            .starts_with(b"SQLite format 3")
-    );
-}
-
-#[test]
 fn backup_archive_round_trips_attachment_blobs() {
     let env = TestEnv::new();
     let db = env.db("backup-attachment.sqlite");

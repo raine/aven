@@ -166,8 +166,8 @@ pub enum InlineImagesConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ImageOptimizationConfig {
-    Off,
     #[default]
+    Off,
     Paste,
     On,
 }
@@ -678,14 +678,25 @@ mod tests {
     }
 
     #[test]
-    fn local_image_optimization_defaults_to_paste() {
+    fn local_image_optimization_defaults_to_off() {
         let config = AppConfig::default();
 
         assert_eq!(
             config.local.image_optimization,
-            ImageOptimizationConfig::Paste
+            ImageOptimizationConfig::Off
         );
-        assert!(config.local.image_optimization.optimizes_pasted_images());
+        assert!(!config.local.image_optimization.optimizes_pasted_images());
         assert!(!config.local.image_optimization.optimizes_file_attachments());
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        assert!(yaml.contains("image_optimization: off"));
+
+        for (value, expected) in [
+            ("paste", ImageOptimizationConfig::Paste),
+            ("on", ImageOptimizationConfig::On),
+        ] {
+            let parsed: AppConfig =
+                serde_yaml::from_str(&format!("local:\n  image_optimization: {value}\n")).unwrap();
+            assert_eq!(parsed.local.image_optimization, expected);
+        }
     }
 }

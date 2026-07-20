@@ -32,8 +32,8 @@ Use [Configuration](/configuration/) later when you want a specific database pat
 ## First session
 
 1. Press `a` to add a task.
-2. Fill in the title. Add description, project, status, or priority when useful.
-3. Press `Enter` on a task to open its detail view.
+2. Fill in the title. Add a description, project, status, or priority when useful, and attach a screenshot or diagram when visual context helps.
+3. Press `Enter` on a task to open its detail view, including image previews in supported terminals.
 4. Use `s` to change status, `d` to mark done, and `u` to undo a TUI change.
 5. Press `?` for help or `:` for the command palette.
 

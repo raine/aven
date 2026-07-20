@@ -302,6 +302,9 @@ impl App {
                 self.detail_context = false;
                 self.restore_detail_overlay(return_to_detail);
             }
+            Some(ConfirmSubmitRoute::DeleteAttachmentConfirm) => {
+                self.submit_delete_attachment().await?;
+            }
             Some(ConfirmSubmitRoute::UpdateConfirm) => {
                 self.confirm_update()?;
             }

@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use clap::builder::styling::{AnsiColor, Effects, Style, Styles};
-use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
+use clap::{ArgGroup, Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 const HEADING_STYLE: Style = AnsiColor::Blue.on_default().effects(Effects::BOLD);
 const LITERAL_STYLE: Style = AnsiColor::Magenta.on_default();
@@ -311,15 +311,76 @@ pub(crate) enum CodingAgentArg {
     Codex,
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TuiViewArg {
+    Queue,
+    Columns,
+    Open,
+    Inbox,
+    Active,
+    Backlog,
+    Todo,
+    Done,
+    Upcoming,
+    Conflicts,
+    Epics,
+    RecentActions,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TuiPriorityArg {
+    None,
+    Low,
+    Medium,
+    High,
+    Urgent,
+}
+
+impl TuiPriorityArg {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Urgent => "urgent",
+        }
+    }
+}
+
 #[derive(Args)]
+#[command(group(
+    ArgGroup::new("tui_composer")
+        .args(["add_task", "add_task_only"])
+        .multiple(false)
+))]
 pub(crate) struct TuiArgs {
+    /// Open this task's detail directly
+    #[arg(
+        value_name = "TASK_REF",
+        conflicts_with_all = ["project", "view", "label", "priority", "add_task", "add_task_only"]
+    )]
+    pub(crate) task_ref: Option<String>,
+    /// Start in this named view
+    #[arg(long, value_enum, conflicts_with = "add_task_only")]
+    pub(crate) view: Option<TuiViewArg>,
+    /// Start in project scope; omit the value to infer from the current directory
     #[arg(short = 'p', long, num_args = 0..=1, default_missing_value = "")]
     pub(crate) project: Option<String>,
+    /// Apply an initial label filter
+    #[arg(long, value_name = "LABEL", conflicts_with = "add_task_only")]
+    pub(crate) label: Option<String>,
+    /// Apply an initial priority filter
+    #[arg(long, value_enum, conflicts_with = "add_task_only")]
+    pub(crate) priority: Option<TuiPriorityArg>,
+    /// Open the add-task composer over the selected view
     #[arg(long)]
     pub(crate) add_task: bool,
+    /// Show only the add-task composer and exit after submission
     #[arg(long)]
     pub(crate) add_task_only: bool,
-    #[arg(long)]
+    /// Use natural-language input in the add-task composer
+    #[arg(long, requires = "tui_composer")]
     pub(crate) natural: bool,
 }
 
@@ -1064,6 +1125,112 @@ mod tests {
                 "task",
             ])
             .is_err()
+        );
+    }
+
+    #[test]
+    fn tui_launch_arguments_compose_browse_state() {
+        let parsed = Cli::try_parse_from([
+            "aven",
+            "tui",
+            "--project",
+            "app",
+            "--view",
+            "columns",
+            "--label",
+            "bug",
+            "--priority",
+            "urgent",
+            "--add-task",
+            "--natural",
+        ])
+        .unwrap();
+        let Commands::Tui(args) = parsed.command else {
+            panic!("expected tui command");
+        };
+        assert_eq!(args.project.as_deref(), Some("app"));
+        assert_eq!(args.view, Some(TuiViewArg::Columns));
+        assert_eq!(args.label.as_deref(), Some("bug"));
+        assert_eq!(args.priority, Some(TuiPriorityArg::Urgent));
+        assert!(args.add_task);
+        assert!(args.natural);
+    }
+
+    #[test]
+    fn tui_launch_parses_all_typed_values() {
+        for view in [
+            "queue",
+            "columns",
+            "open",
+            "inbox",
+            "active",
+            "backlog",
+            "todo",
+            "done",
+            "upcoming",
+            "conflicts",
+            "epics",
+            "recent-actions",
+        ] {
+            assert!(Cli::try_parse_from(["aven", "tui", "--view", view]).is_ok());
+        }
+        for priority in ["none", "low", "medium", "high", "urgent"] {
+            assert!(Cli::try_parse_from(["aven", "tui", "--priority", priority]).is_ok());
+        }
+        assert!(Cli::try_parse_from(["aven", "tui", "--view", "search"]).is_err());
+        assert!(Cli::try_parse_from(["aven", "tui", "--priority", "critical"]).is_err());
+    }
+
+    #[test]
+    fn tui_launch_parses_task_and_optional_project_value() {
+        let parsed = Cli::try_parse_from(["aven", "tui", "APP-1234"]).unwrap();
+        let Commands::Tui(args) = parsed.command else {
+            panic!("expected tui command");
+        };
+        assert_eq!(args.task_ref.as_deref(), Some("APP-1234"));
+        assert_eq!(args.project, None);
+
+        let parsed = Cli::try_parse_from(["aven", "tui", "-p", "app"]).unwrap();
+        let Commands::Tui(args) = parsed.command else {
+            panic!("expected tui command");
+        };
+        assert_eq!(args.project.as_deref(), Some("app"));
+        assert_eq!(args.task_ref, None);
+
+        let parsed = Cli::try_parse_from(["aven", "tui", "-p", "--view", "inbox"]).unwrap();
+        let Commands::Tui(args) = parsed.command else {
+            panic!("expected tui command");
+        };
+        assert_eq!(args.project.as_deref(), Some(""));
+        assert_eq!(args.view, Some(TuiViewArg::Inbox));
+    }
+
+    #[test]
+    fn tui_launch_rejects_conflicting_targets_and_modes() {
+        for arguments in [
+            vec!["aven", "tui", "APP-1234", "--view", "open"],
+            vec!["aven", "tui", "APP-1234", "--project", "app"],
+            vec!["aven", "tui", "APP-1234", "--label", "bug"],
+            vec!["aven", "tui", "APP-1234", "--priority", "high"],
+            vec!["aven", "tui", "APP-1234", "--add-task"],
+            vec!["aven", "tui", "--add-task", "--add-task-only"],
+            vec!["aven", "tui", "--add-task-only", "--view", "inbox"],
+            vec!["aven", "tui", "--add-task-only", "--label", "bug"],
+            vec!["aven", "tui", "--natural"],
+        ] {
+            assert!(Cli::try_parse_from(arguments).is_err());
+        }
+
+        assert!(
+            Cli::try_parse_from([
+                "aven",
+                "tui",
+                "--add-task-only",
+                "--project",
+                "app",
+                "--natural",
+            ])
+            .is_ok()
         );
     }
 }

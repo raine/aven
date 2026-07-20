@@ -7,8 +7,8 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Run the local read-only check set
-check: check-fast-readonly migration-order clippy test
+# Run the fast local read-only check set
+check: check-fast-readonly migration-order clippy
 
 # Run cheap read-only checks in parallel
 check-fast-readonly:
@@ -28,8 +28,8 @@ pre-commit: check
 # Run checks that are deferred until workmux merge
 pre-merge: sqlx-check-if-needed build
 
-# Run every check, including redundant compile gates
-check-full: check pre-merge
+# Run every check, including tests and redundant compile gates
+check-full: check test pre-merge
 
 # Configure Git to use the repository hooks
 install-hooks:

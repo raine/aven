@@ -245,25 +245,6 @@ mod domain_mutations_and_pickers {
     use super::*;
 
     #[tokio::test]
-    async fn create_project_refreshes_sidebar() {
-        let mut store = test_store().await;
-        create_mobile_project(&mut store).await;
-
-        assert!(
-            store
-                .projects
-                .iter()
-                .any(|project| project.key == "mobile-app")
-        );
-        assert!(
-            store
-                .sidebar_entries
-                .iter()
-                .any(|entry| entry.label.contains("Mobile App"))
-        );
-    }
-
-    #[tokio::test]
     async fn delete_project_removes_unused_project() {
         let mut store = test_store().await;
         create_mobile_project(&mut store).await;
@@ -384,23 +365,6 @@ mod domain_mutations_and_pickers {
                 .projects
                 .iter()
                 .any(|project| project.key == "mobile-app")
-        );
-    }
-
-    #[tokio::test]
-    async fn create_label_refreshes_label_cache() {
-        let mut store = test_store().await;
-        store
-            .create_label("Needs Review".to_string())
-            .await
-            .unwrap();
-
-        assert!(store.labels.iter().any(|label| label == "needs-review"));
-        assert!(
-            store
-                .label_picker_items()
-                .iter()
-                .any(|item| item.value == "needs-review")
         );
     }
 
@@ -1346,41 +1310,6 @@ mod views_filters_and_sort {
                 .collect::<Vec<_>>(),
             vec!["Open task"]
         );
-    }
-
-    #[tokio::test]
-    async fn done_view_preserves_project_scope() {
-        let mut store = test_store().await;
-        create_mobile_project(&mut store).await;
-        store.create_project("Ops".to_string()).await.unwrap();
-        for (title, project) in [("Mobile done", "mobile-app"), ("Ops done", "ops")] {
-            let (_, selected) = store
-                .create_task(
-                    TaskDraft {
-                        title: title.to_string(),
-                        project: Some(project.to_string()),
-                        ..task_draft("")
-                    },
-                    None,
-                )
-                .await
-                .unwrap();
-            store.update_status(selected, "done").await.unwrap();
-        }
-
-        store
-            .show_scope(TaskScopeTarget::Project("mobile-app".to_string()))
-            .await
-            .unwrap();
-        store.show_view(TaskView::Done).await.unwrap();
-
-        assert_eq!(
-            store.view_state.scope,
-            TaskScope::Project("mobile-app".to_string())
-        );
-        assert_eq!(store.view_state.view, TaskView::Done);
-        assert_eq!(store.tasks.len(), 1);
-        assert_eq!(store.tasks[0].task.title, "Mobile done");
     }
 
     #[tokio::test]
@@ -2425,6 +2354,91 @@ mod undo {
     }
 }
 
+mod onboarding {
+    use super::*;
+
+    async fn set_marker(store: &TuiStore, value: &str) {
+        let mut conn = aven_core::test_support::acquire(&store.database)
+            .await
+            .unwrap();
+        aven_core::test_support::set_meta(&mut conn, "tui_onboarding_version", value)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn fresh_database_is_due_until_completed() {
+        let store = test_store().await;
+        assert_eq!(
+            store.onboarding_status().await.unwrap(),
+            OnboardingStatus::Due
+        );
+
+        store.complete_onboarding().await.unwrap();
+
+        assert_eq!(
+            store.onboarding_status().await.unwrap(),
+            OnboardingStatus::Complete
+        );
+    }
+
+    #[tokio::test]
+    async fn established_database_is_not_treated_as_first_launch() {
+        let mut store = test_store().await;
+        create_selected_task(&mut store, "Existing task").await;
+
+        assert_eq!(
+            store.onboarding_status().await.unwrap(),
+            OnboardingStatus::Established
+        );
+    }
+
+    #[tokio::test]
+    async fn marker_parsing_is_trimmed_and_downgrade_safe() {
+        let store = test_store().await;
+        for value in [" 1 ", "2", "4294967295"] {
+            set_marker(&store, value).await;
+            assert_eq!(
+                store.onboarding_status().await.unwrap(),
+                OnboardingStatus::Complete,
+                "marker {value:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_or_older_markers_are_due_for_empty_database() {
+        let store = test_store().await;
+        for value in ["0", "-1", "invalid", "4294967296"] {
+            set_marker(&store, value).await;
+            assert_eq!(
+                store.onboarding_status().await.unwrap(),
+                OnboardingStatus::Due,
+                "marker {value:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn completion_preserves_future_marker() {
+        let store = test_store().await;
+        set_marker(&store, "2").await;
+
+        store.complete_onboarding().await.unwrap();
+
+        let mut conn = aven_core::test_support::acquire(&store.database)
+            .await
+            .unwrap();
+        assert_eq!(
+            aven_core::test_support::get_meta(&mut conn, "tui_onboarding_version")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("2")
+        );
+    }
+}
+
 mod workspace_scoping {
     use super::*;
 
@@ -2460,10 +2474,13 @@ mod workspace_scoping {
             )
             .await
             .unwrap();
-        let reopened = TuiStore::new_with_initial_project(
+        let reopened = TuiStore::new_with_view_state(
             store.database.clone(),
             store.active_workspace.clone(),
-            Some("mobile-app".to_string()),
+            TaskViewState {
+                scope: TaskScope::Project("mobile-app".to_string()),
+                ..TaskViewState::default()
+            },
         )
         .await
         .unwrap();

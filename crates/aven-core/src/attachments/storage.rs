@@ -117,11 +117,33 @@ pub async fn remove_staged_blob_if_unreferenced(
     .bind(sha256)
     .fetch_one(&mut *conn)
     .await;
+    let active_lease = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM blob_leases WHERE sha256 = ? AND expires_at > ?)",
+    )
+    .bind(sha256)
+    .bind(now())
+    .fetch_one(&mut *conn)
+    .await;
     if matches!(referenced, Ok(false))
         && matches!(pending_upload, Ok(false))
+        && matches!(active_lease, Ok(false))
         && let Ok(path) = object_path(blob_dir, sha256)
     {
-        let _ = fs::remove_file(path);
+        match fs::remove_file(path) {
+            Ok(()) => {
+                let _ = sqlx::query("DELETE FROM blob_inventory WHERE sha256 = ?")
+                    .bind(sha256)
+                    .execute(&mut *conn)
+                    .await;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let _ = sqlx::query("DELETE FROM blob_inventory WHERE sha256 = ?")
+                    .bind(sha256)
+                    .execute(&mut *conn)
+                    .await;
+            }
+            Err(_) => {}
+        }
     }
 }
 

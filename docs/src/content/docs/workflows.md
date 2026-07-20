@@ -13,7 +13,7 @@ The TUI is the fastest way to capture, triage, and inspect tasks when you are at
 aven tui
 ```
 
-Press `a` to open the task composer. Use [TUI](/tui/) for the full keyboard workflow, including LLM task intake, tmux popup capture, detail view, search, filters, and command palette.
+Press `a` to open the task composer. Attach a screenshot or diagram when visual context helps explain the work. Use [TUI](/tui/) for image attachment controls and the full keyboard workflow, including LLM task intake, tmux popup capture, detail view, search, filters, and command palette.
 
 ## LLM task intake
 

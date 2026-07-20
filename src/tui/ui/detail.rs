@@ -61,15 +61,29 @@ struct DetailContentRenderModel {
     body_start: usize,
     scrollbar_position: usize,
     image_placements: Vec<DetailBodyImagePlacement>,
+    attachment_placements: Vec<DetailBodyAttachmentPlacement>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct DetailInlineImageContext {
+    pub(crate) previews_enabled: bool,
     pub(crate) unavailable_hashes: HashSet<String>,
+    pub(crate) focused_attachment_id: Option<String>,
+}
+
+impl Default for DetailInlineImageContext {
+    fn default() -> Self {
+        Self {
+            previews_enabled: true,
+            unavailable_hashes: HashSet::new(),
+            focused_attachment_id: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DetailInlineImagePlacement {
+    pub(crate) attachment_id: String,
     pub(crate) source_hash: String,
     pub(crate) x: u16,
     pub(crate) y: u16,
@@ -79,6 +93,7 @@ pub(crate) struct DetailInlineImagePlacement {
 
 #[derive(Debug, Clone)]
 struct DetailBodyImagePlacement {
+    attachment_id: String,
     source_hash: String,
     line_index: usize,
     width: u16,
@@ -86,10 +101,18 @@ struct DetailBodyImagePlacement {
 }
 
 #[derive(Debug, Clone)]
+struct DetailBodyAttachmentPlacement {
+    attachment_id: String,
+    line_index: usize,
+    height: usize,
+}
+
+#[derive(Debug, Clone)]
 enum DetailBodyBlock {
     Line(Line<'static>),
     Image {
         placeholder: Line<'static>,
+        attachment_id: String,
         source_hash: String,
         width: u16,
         height: u16,
@@ -114,6 +137,14 @@ pub(crate) struct DetailChildHit {
     pub(crate) task_id: crate::ids::TaskId,
 }
 
+pub(crate) struct DetailAttachmentHit {
+    pub(crate) attachment_id: String,
+}
+
+pub(crate) struct DetailCopyHit {
+    pub(crate) value: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DetailMetadataTarget {
     Status,
@@ -130,6 +161,7 @@ fn render_detail(
     selection: Option<&DetailTextSelection>,
     widgets: &mut WidgetState,
     inline_images: Option<&DetailInlineImageContext>,
+    pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
 ) {
     let layout = detail_content_layout(frame.area());
     frame.render_widget(Clear, layout.body_area);
@@ -139,7 +171,7 @@ fn render_detail(
     }
 
     let selection = selection.filter(|selection| selection.terminal_width == frame.area().width);
-    let model = build_detail_content_model(
+    let model = build_detail_content_model_with_pending(
         item,
         layout.content_area,
         scroll,
@@ -147,6 +179,7 @@ fn render_detail(
         hovered_child_task_id,
         selection,
         inline_images,
+        pending_attachments,
     );
     render_detail_content_from_model(frame, layout.content_area, &model, widgets);
     if layout.metadata_area.width > 0 {
@@ -187,13 +220,31 @@ fn keycap_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+#[cfg(test)]
 pub(crate) fn detail_scroll_cap(
     item: &TaskListItem,
     terminal_width: u16,
     terminal_height: u16,
 ) -> u16 {
+    detail_scroll_cap_with_images(item, terminal_width, terminal_height, None)
+}
+
+pub(crate) fn detail_scroll_cap_with_images(
+    item: &TaskListItem,
+    terminal_width: u16,
+    terminal_height: u16,
+    inline_images: Option<&DetailInlineImageContext>,
+) -> u16 {
     let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    let model = build_detail_content_model(item, layout.content_area, 0, None, None, None, None);
+    let model = build_detail_content_model(
+        item,
+        layout.content_area,
+        0,
+        None,
+        None,
+        None,
+        inline_images,
+    );
     let sticky_height = model
         .sticky_lines
         .len()
@@ -206,6 +257,7 @@ pub(crate) fn detail_scroll_cap(
     ) as u16
 }
 
+#[cfg(test)]
 pub(crate) fn detail_section_scroll_target(
     item: &TaskListItem,
     scroll: u16,
@@ -213,19 +265,89 @@ pub(crate) fn detail_section_scroll_target(
     terminal_height: u16,
     reverse: bool,
 ) -> u16 {
+    detail_section_scroll_target_with_images(
+        item,
+        scroll,
+        terminal_width,
+        terminal_height,
+        reverse,
+        None,
+    )
+}
+
+pub(crate) fn detail_attachment_scroll_target(
+    item: &TaskListItem,
+    attachment_id: &str,
+    scroll: u16,
+    terminal_width: u16,
+    terminal_height: u16,
+    inline_images: &DetailInlineImageContext,
+) -> Option<u16> {
     let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    let model =
-        build_detail_content_model(item, layout.content_area, scroll, None, None, None, None);
+    let model = build_detail_content_model(
+        item,
+        layout.content_area,
+        0,
+        None,
+        None,
+        None,
+        Some(inline_images),
+    );
+    let sticky_height = model
+        .sticky_lines
+        .len()
+        .min(layout.content_area.height as usize);
+    let body_visible = (layout.content_area.height as usize).saturating_sub(sticky_height);
+    let placement = model
+        .attachment_placements
+        .iter()
+        .find(|placement| placement.attachment_id == attachment_id)?;
+    let frame_start = placement.line_index;
+    let frame_end = frame_start.saturating_add(placement.height.saturating_sub(1));
+    if body_visible == 0 {
+        return None;
+    }
+    let cap = model.content_height.saturating_sub(body_visible);
+    let scroll = (scroll as usize).min(cap);
+    let target = if placement.height > body_visible || frame_start < scroll {
+        frame_start
+    } else if frame_end >= scroll.saturating_add(body_visible) {
+        frame_end.saturating_add(1).saturating_sub(body_visible)
+    } else {
+        scroll
+    };
+    Some(target.min(cap) as u16)
+}
+
+pub(crate) fn detail_section_scroll_target_with_images(
+    item: &TaskListItem,
+    scroll: u16,
+    terminal_width: u16,
+    terminal_height: u16,
+    reverse: bool,
+    inline_images: Option<&DetailInlineImageContext>,
+) -> u16 {
+    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    let model = build_detail_content_model(
+        item,
+        layout.content_area,
+        scroll,
+        None,
+        None,
+        None,
+        inline_images,
+    );
     let sticky_height = model
         .sticky_lines
         .len()
         .min(layout.content_area.height as usize);
     let visible = (layout.content_area.height as usize).saturating_sub(sticky_height);
     let scroll_cap = model.content_height.saturating_sub(visible);
-    let mut targets = detail_section_body_indices(item, layout.content_area.width as usize)
-        .into_iter()
-        .map(|index| index.min(scroll_cap) as u16)
-        .collect::<Vec<_>>();
+    let mut targets =
+        detail_section_body_indices(item, layout.content_area.width as usize, inline_images)
+            .into_iter()
+            .map(|index| index.min(scroll_cap) as u16)
+            .collect::<Vec<_>>();
     targets.dedup();
 
     if reverse {
@@ -262,13 +384,38 @@ fn build_detail_content_model(
     selection: Option<&DetailTextSelection>,
     inline_images: Option<&DetailInlineImageContext>,
 ) -> DetailContentRenderModel {
-    let mut sticky_lines = detail_header_options(item, area.width as usize, inline_title_editor);
-    let (mut body_lines, image_placements) = detail_body_lines_with_images(
+    build_detail_content_model_with_pending(
         item,
-        area.width as usize,
+        area,
+        scroll,
+        inline_title_editor,
         hovered_child_task_id,
+        selection,
         inline_images,
-    );
+        &[],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_detail_content_model_with_pending(
+    item: &TaskListItem,
+    area: Rect,
+    scroll: u16,
+    inline_title_editor: Option<&TextInputView>,
+    hovered_child_task_id: Option<&str>,
+    selection: Option<&DetailTextSelection>,
+    inline_images: Option<&DetailInlineImageContext>,
+    pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
+) -> DetailContentRenderModel {
+    let mut sticky_lines = detail_header_options(item, area.width as usize, inline_title_editor);
+    let (mut body_lines, image_placements, attachment_placements) =
+        detail_body_lines_with_pending_images(
+            item,
+            area.width as usize,
+            hovered_child_task_id,
+            inline_images,
+            pending_attachments,
+        );
     if inline_title_editor.is_none()
         && let Some(selection) = selection.filter(|selection| selection.task_id == item.task.id)
     {
@@ -298,7 +445,31 @@ fn build_detail_content_model(
         body_start: start,
         scrollbar_position,
         image_placements,
+        attachment_placements,
     }
+}
+
+fn visible_detail_image_rect(
+    body_area: Rect,
+    model: &DetailContentRenderModel,
+    placement: &DetailBodyImagePlacement,
+) -> Option<Rect> {
+    let row = placement.line_index.checked_sub(model.body_start)?;
+    let frame_start = row.checked_sub(1)?;
+    let frame_end = row.saturating_add(placement.height as usize);
+    if frame_end >= body_area.height as usize || frame_start >= body_area.height as usize {
+        return None;
+    }
+    let width = placement.width.min(body_area.width.saturating_sub(4));
+    if placement.height == 0 || width == 0 {
+        return None;
+    }
+    Some(Rect::new(
+        body_area.x.saturating_add(3),
+        body_area.y.saturating_add(row as u16),
+        width,
+        placement.height,
+    ))
 }
 
 fn render_detail_content_from_model(
@@ -337,23 +508,14 @@ fn render_detail_content_from_model(
     widgets
         .inline_image_placements
         .extend(model.image_placements.iter().filter_map(|placement| {
-            let row = placement.line_index.checked_sub(model.body_start)?;
-            if row >= body_visible {
-                return None;
-            }
-            let visible_height = body_visible
-                .saturating_sub(row)
-                .min(placement.height as usize);
-            let visible_width = placement.width.min(body_area.width.saturating_sub(2));
-            if visible_height == 0 || visible_width == 0 {
-                return None;
-            }
+            let image = visible_detail_image_rect(body_area, model, placement)?;
             Some(DetailInlineImagePlacement {
+                attachment_id: placement.attachment_id.clone(),
                 source_hash: placement.source_hash.clone(),
-                x: body_area.x.saturating_add(2),
-                y: body_area.y.saturating_add(row as u16),
-                width: visible_width,
-                height: visible_height as u16,
+                x: image.x,
+                y: image.y,
+                width: image.width,
+                height: image.height,
             })
         }));
 }
@@ -378,17 +540,37 @@ fn detail_body_lines(
     detail_body_lines_with_images(item, width, hovered_child_task_id, None).0
 }
 
+#[cfg(test)]
 fn detail_body_lines_with_images(
     item: &TaskListItem,
     width: usize,
     hovered_child_task_id: Option<&str>,
     inline_images: Option<&DetailInlineImageContext>,
-) -> (Vec<Line<'static>>, Vec<DetailBodyImagePlacement>) {
+) -> (
+    Vec<Line<'static>>,
+    Vec<DetailBodyImagePlacement>,
+    Vec<DetailBodyAttachmentPlacement>,
+) {
+    detail_body_lines_with_pending_images(item, width, hovered_child_task_id, inline_images, &[])
+}
+
+fn detail_body_lines_with_pending_images(
+    item: &TaskListItem,
+    width: usize,
+    hovered_child_task_id: Option<&str>,
+    inline_images: Option<&DetailInlineImageContext>,
+    pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
+) -> (
+    Vec<Line<'static>>,
+    Vec<DetailBodyImagePlacement>,
+    Vec<DetailBodyAttachmentPlacement>,
+) {
     let mut lines = detail_epic_child_lines(item, width, hovered_child_task_id);
     if !lines.is_empty() {
         lines.push(Line::from(""));
     }
     let mut image_placements = Vec::new();
+    let mut attachment_placements = Vec::new();
     extend_detail_body_blocks(
         &mut lines,
         &mut image_placements,
@@ -401,14 +583,23 @@ fn detail_body_lines_with_images(
     extend_attachment_section(
         &mut lines,
         &mut image_placements,
+        &mut attachment_placements,
         &item.attachments,
         width,
         inline_images,
     );
+    extend_pending_attachment_section(
+        &mut lines,
+        &item.task.id,
+        pending_attachments,
+        item.attachments
+            .iter()
+            .any(|attachment| !attachment.deleted),
+    );
     lines.push(Line::from(""));
     lines.extend(detail_note_lines(item, width));
     lines.extend(detail_dependency_lines(item, width));
-    (lines, image_placements)
+    (lines, image_placements, attachment_placements)
 }
 
 fn detail_selectable_document(
@@ -536,10 +727,14 @@ fn highlight_selectable_line(
     line.spans = rebuilt;
 }
 
-fn detail_section_body_indices(item: &TaskListItem, width: usize) -> Vec<usize> {
+fn detail_section_body_indices(
+    item: &TaskListItem,
+    width: usize,
+    inline_images: Option<&DetailInlineImageContext>,
+) -> Vec<usize> {
     let epic_lines = detail_epic_child_lines(item, width, None);
     let description_index = epic_lines.len() + usize::from(!epic_lines.is_empty());
-    let notes_index = detail_description_lines(item, width, None).len();
+    let notes_index = detail_description_lines(item, width, None, inline_images).len();
     let mut indices = if item.task.is_epic {
         vec![0, description_index, notes_index]
     } else {
@@ -583,6 +778,7 @@ fn detail_description_lines(
     item: &TaskListItem,
     width: usize,
     hovered_child_task_id: Option<&str>,
+    inline_images: Option<&DetailInlineImageContext>,
 ) -> Vec<Line<'static>> {
     let mut lines = detail_epic_child_lines(item, width, hovered_child_task_id);
     if !lines.is_empty() {
@@ -594,7 +790,14 @@ fn detail_description_lines(
         Style::new().fg(FG_MUTED),
         MarkdownRenderContext,
     ));
-    extend_attachment_section(&mut lines, &mut Vec::new(), &item.attachments, width, None);
+    extend_attachment_section(
+        &mut lines,
+        &mut Vec::new(),
+        &mut Vec::new(),
+        &item.attachments,
+        width,
+        inline_images,
+    );
     lines.push(Line::from(""));
     lines
 }
@@ -971,6 +1174,7 @@ fn extend_detail_body_blocks(
             DetailBodyBlock::Line(line) => lines.push(quoted_line(line, style)),
             DetailBodyBlock::Image {
                 placeholder,
+                attachment_id,
                 source_hash,
                 width,
                 height,
@@ -985,6 +1189,7 @@ fn extend_detail_body_blocks(
                     )]));
                 }
                 placements.push(DetailBodyImagePlacement {
+                    attachment_id,
                     source_hash,
                     line_index,
                     width,
@@ -995,9 +1200,43 @@ fn extend_detail_body_blocks(
     }
 }
 
+fn extend_pending_attachment_section(
+    lines: &mut Vec<Line<'static>>,
+    task_id: &crate::ids::TaskId,
+    pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
+    has_live_attachments: bool,
+) {
+    let pending = pending_attachments
+        .iter()
+        .filter(|attachment| &attachment.task_id == task_id)
+        .collect::<Vec<_>>();
+    if pending.is_empty() {
+        return;
+    }
+    if !has_live_attachments {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "ATTACHMENTS",
+            Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+        )));
+    }
+    for attachment in pending {
+        let (label, color) = match attachment.status {
+            crate::tui::attachment_controller::PendingAttachmentStatus::Preparing => {
+                ("[image: preparing]", FG_MUTED)
+            }
+            crate::tui::attachment_controller::PendingAttachmentStatus::Failed => {
+                ("[image: failed]", crate::tui::theme::RED)
+            }
+        };
+        lines.push(quoted_line(Line::from(label), Style::new().fg(color)));
+    }
+}
+
 fn extend_attachment_section(
     lines: &mut Vec<Line<'static>>,
     placements: &mut Vec<DetailBodyImagePlacement>,
+    attachment_placements: &mut Vec<DetailBodyAttachmentPlacement>,
     attachments: &[AttachmentMetadataJson],
     width: usize,
     inline_images: Option<&DetailInlineImageContext>,
@@ -1018,23 +1257,58 @@ fn extend_attachment_section(
     for attachment in live {
         match attachment_detail_block(attachment, content_width, inline_images) {
             DetailBodyBlock::Line(line) => {
-                lines.push(quoted_line(line, Style::new().fg(FG_MUTED)));
+                let focused = inline_images.is_some_and(|context| {
+                    context.focused_attachment_id.as_deref()
+                        == Some(attachment.attachment_id.as_str())
+                });
+                attachment_placements.push(DetailBodyAttachmentPlacement {
+                    attachment_id: attachment.attachment_id.clone(),
+                    line_index: lines.len(),
+                    height: 1,
+                });
+                lines.push(quoted_line(
+                    line,
+                    Style::new().fg(if focused { ACCENT } else { FG_MUTED }),
+                ));
             }
             DetailBodyBlock::Image {
                 placeholder,
+                attachment_id,
                 source_hash,
                 width,
                 height,
             } => {
-                let line_index = lines.len().saturating_add(1);
+                let focused = inline_images.is_some_and(|context| {
+                    context.focused_attachment_id.as_deref() == Some(attachment_id.as_str())
+                });
+                attachment_placements.push(DetailBodyAttachmentPlacement {
+                    attachment_id: attachment_id.clone(),
+                    line_index: lines.len(),
+                    height: height as usize + 3,
+                });
+                let frame_style = Style::new().fg(if focused { ACCENT } else { BORDER });
                 lines.push(quoted_line(placeholder, Style::new().fg(FG_MUTED)));
+                lines.push(quoted_line(
+                    Line::from(format!("┌{}┐", "─".repeat(width as usize))),
+                    frame_style,
+                ));
+                let line_index = lines.len();
                 for _ in 0..height {
-                    lines.push(Line::from(vec![Span::styled(
-                        "│ ",
-                        Style::new().fg(BORDER),
-                    )]));
+                    lines.push(quoted_line(
+                        Line::from(vec![
+                            Span::styled("│", frame_style),
+                            Span::raw(" ".repeat(width as usize)),
+                            Span::styled("│", frame_style),
+                        ]),
+                        Style::new().fg(FG_MUTED),
+                    ));
                 }
+                lines.push(quoted_line(
+                    Line::from(format!("└{}┘", "─".repeat(width as usize))),
+                    frame_style,
+                ));
                 placements.push(DetailBodyImagePlacement {
+                    attachment_id,
                     source_hash,
                     line_index,
                     width,
@@ -1045,28 +1319,46 @@ fn extend_attachment_section(
     }
 }
 
+pub(crate) fn attachment_is_locally_openable(attachment: &AttachmentMetadataJson) -> bool {
+    !attachment.deleted
+        && attachment.has_blob
+        && attachment.bytes_state == crate::attachments::AttachmentBytesState::Present
+        && matches!(
+            attachment.media_type.as_str(),
+            "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+        )
+}
+
+pub(crate) fn attachment_is_locally_previewable(
+    attachment: &AttachmentMetadataJson,
+    unavailable_hashes: &HashSet<String>,
+) -> bool {
+    attachment_is_locally_openable(attachment)
+        && !unavailable_hashes.contains(&attachment.sha256)
+        && matches!(
+            (attachment.width, attachment.height),
+            (Some(width), Some(height)) if width > 0 && height > 0
+        )
+}
+
 fn attachment_detail_block(
     attachment: &AttachmentMetadataJson,
     content_width: usize,
     inline_images: Option<&DetailInlineImageContext>,
 ) -> DetailBodyBlock {
     let placeholder = Line::from(attachment_placeholder(attachment));
-    if !attachment.has_blob || !attachment.media_type.starts_with("image/") {
-        return DetailBodyBlock::Line(placeholder);
-    }
     let Some(inline_images) = inline_images else {
         return DetailBodyBlock::Line(placeholder);
     };
-    if inline_images
-        .unavailable_hashes
-        .contains(&attachment.sha256)
-        || !matches!((attachment.width, attachment.height), (Some(width), Some(height)) if width > 0 && height > 0)
+    if !inline_images.previews_enabled
+        || !attachment_is_locally_previewable(attachment, &inline_images.unavailable_hashes)
     {
         return DetailBodyBlock::Line(placeholder);
     }
-    let (width, height) = image_preview_size(attachment, content_width);
+    let (width, height) = image_preview_size(attachment, content_width.saturating_sub(4));
     DetailBodyBlock::Image {
         placeholder,
+        attachment_id: attachment.attachment_id.clone(),
         source_hash: attachment.sha256.clone(),
         width,
         height,
@@ -1380,6 +1672,63 @@ pub(crate) fn detail_selected_text(
     document.text.get(selection.range()).map(str::to_string)
 }
 
+pub(crate) fn detail_attachment_at_position(
+    item: &TaskListItem,
+    terminal_width: u16,
+    terminal_height: u16,
+    column: u16,
+    row: u16,
+    scroll: u16,
+    inline_images: &DetailInlineImageContext,
+) -> Option<DetailAttachmentHit> {
+    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    let model = build_detail_content_model(
+        item,
+        layout.content_area,
+        scroll,
+        None,
+        None,
+        None,
+        Some(inline_images),
+    );
+    let sticky_height = model
+        .sticky_lines
+        .len()
+        .min(layout.content_area.height as usize) as u16;
+    let body_area = Rect::new(
+        layout.content_area.x,
+        layout.content_area.y.saturating_add(sticky_height),
+        layout.content_area.width,
+        layout.content_area.height.saturating_sub(sticky_height),
+    );
+    for placement in &model.attachment_placements {
+        let attachment = item
+            .attachments
+            .iter()
+            .find(|attachment| attachment.attachment_id == placement.attachment_id)?;
+        if !attachment_is_locally_openable(attachment) {
+            continue;
+        }
+        let Some(start) = placement.line_index.checked_sub(model.body_start) else {
+            continue;
+        };
+        let end = start.saturating_add(placement.height);
+        if column >= body_area.x
+            && column < body_area.x.saturating_add(body_area.width)
+            && row >= body_area.y.saturating_add(start as u16)
+            && row
+                < body_area
+                    .y
+                    .saturating_add(end.min(body_area.height as usize) as u16)
+        {
+            return Some(DetailAttachmentHit {
+                attachment_id: placement.attachment_id.clone(),
+            });
+        }
+    }
+    None
+}
+
 pub(crate) fn detail_child_task_at_position(
     item: &TaskListItem,
     terminal_width: u16,
@@ -1450,6 +1799,44 @@ fn detail_epic_child_task_id_at_body_line(
     None
 }
 
+pub(crate) fn detail_copy_target_at(
+    item: &TaskListItem,
+    terminal_width: u16,
+    terminal_height: u16,
+    column: u16,
+    row: u16,
+) -> Option<DetailCopyHit> {
+    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    let header_ref_row = layout.content_area.y.saturating_add(2);
+    if row == header_ref_row
+        && column >= layout.content_area.x
+        && column
+            < layout
+                .content_area
+                .x
+                .saturating_add(UnicodeWidthStr::width(item.display_ref.as_str()) as u16)
+    {
+        return Some(DetailCopyHit {
+            value: item.display_ref.clone(),
+        });
+    }
+
+    if layout.metadata_area.width == 0 {
+        return None;
+    }
+    let body = detail_body_area(Rect::new(0, 0, terminal_width, terminal_height));
+    let line = metadata_content_row(layout.metadata_area, body, column, row)?;
+    let value = match line {
+        15 => item.display_ref.clone(),
+        18 => local_timestamp_display(&item.task.created_at),
+        21 => local_timestamp_display(&item.task.updated_at),
+        _ => return None,
+    };
+    let value_start = layout.metadata_area.x.saturating_add(2);
+    let value_end = value_start.saturating_add(UnicodeWidthStr::width(value.as_str()) as u16);
+    (column >= value_start && column < value_end).then_some(DetailCopyHit { value })
+}
+
 pub(crate) fn detail_metadata_target_at(
     terminal_width: u16,
     terminal_height: u16,
@@ -1481,6 +1868,112 @@ fn metadata_content_row(metadata_area: Rect, body: Rect, column: u16, row: u16) 
     Some(row.saturating_sub(body.y))
 }
 
+pub(crate) fn render_attachment_preview(
+    frame: &mut Frame,
+    item: &TaskListItem,
+    attachment_id: &str,
+    widgets: &mut WidgetState,
+    inline_images: Option<&DetailInlineImageContext>,
+) {
+    let area = detail_body_area(frame.area());
+    frame.render_widget(Clear, area);
+    let Some(attachment) = item.attachments.iter().find(|attachment| {
+        attachment.attachment_id == attachment_id
+            && !attachment.deleted
+            && attachment.has_blob
+            && attachment.bytes_state == crate::attachments::AttachmentBytesState::Present
+            && attachment.media_type.starts_with("image/")
+            && matches!(
+                (attachment.width, attachment.height),
+                (Some(width), Some(height)) if width > 0 && height > 0
+            )
+    }) else {
+        frame.render_widget(
+            Paragraph::new("attachment is unavailable")
+                .alignment(ratatui::layout::Alignment::Center)
+                .style(Style::new().fg(FG_MUTED).bg(BG)),
+            area,
+        );
+        return;
+    };
+    let title = attachment
+        .filename
+        .as_deref()
+        .or(attachment.alt_text.as_deref())
+        .unwrap_or("Image preview");
+    let block = Block::new()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(ACCENT))
+        .title(format!(" {title} "))
+        .style(Style::new().bg(BG));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let Some(inline_images) = inline_images else {
+        frame.render_widget(
+            Paragraph::new("preview unavailable")
+                .alignment(ratatui::layout::Alignment::Center)
+                .style(Style::new().fg(FG_MUTED).bg(BG)),
+            inner,
+        );
+        return;
+    };
+    if inline_images
+        .unavailable_hashes
+        .contains(&attachment.sha256)
+    {
+        frame.render_widget(
+            Paragraph::new("preview unavailable")
+                .alignment(ratatui::layout::Alignment::Center)
+                .style(Style::new().fg(FG_MUTED).bg(BG)),
+            inner,
+        );
+        return;
+    }
+    let (width, height) = fitted_image_size(attachment, inner.width, inner.height);
+    if width == 0 || height == 0 {
+        return;
+    }
+    let x = inner
+        .x
+        .saturating_add(inner.width.saturating_sub(width) / 2);
+    let y = inner
+        .y
+        .saturating_add(inner.height.saturating_sub(height) / 2);
+    widgets
+        .inline_image_placements
+        .push(DetailInlineImagePlacement {
+            attachment_id: attachment.attachment_id.clone(),
+            source_hash: attachment.sha256.clone(),
+            x,
+            y,
+            width,
+            height,
+        });
+}
+
+fn fitted_image_size(
+    attachment: &AttachmentMetadataJson,
+    max_width: u16,
+    max_height: u16,
+) -> (u16, u16) {
+    const CELL_HEIGHT_TO_WIDTH_RATIO: f64 = 2.0;
+    let (Some(pixel_width), Some(pixel_height)) = (attachment.width, attachment.height) else {
+        return (max_width, max_height);
+    };
+    if pixel_width <= 0 || pixel_height <= 0 || max_width == 0 || max_height == 0 {
+        return (0, 0);
+    }
+    let aspect = pixel_width as f64 / pixel_height as f64;
+    let width_at_max_height =
+        (max_height as f64 * aspect * CELL_HEIGHT_TO_WIDTH_RATIO).round() as u16;
+    if width_at_max_height <= max_width {
+        (width_at_max_height.max(1), max_height)
+    } else {
+        let height = ((max_width as f64 / aspect) / CELL_HEIGHT_TO_WIDTH_RATIO).round() as u16;
+        (max_width, height.max(1).min(max_height))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_detail_underlay(
     frame: &mut Frame,
@@ -1491,6 +1984,7 @@ pub(super) fn render_detail_underlay(
     hovered_child_task_id: Option<&str>,
     selection: Option<&DetailTextSelection>,
     inline_images: Option<&DetailInlineImageContext>,
+    pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
 ) {
     if let Some(task) = store.selected_task(widgets.table.selected()) {
         render_detail(
@@ -1502,6 +1996,7 @@ pub(super) fn render_detail_underlay(
             selection,
             widgets,
             inline_images,
+            pending_attachments,
         );
     }
 }
@@ -2054,6 +2549,27 @@ mod tests {
     }
 
     #[test]
+    fn detail_copy_targets_map_displayed_values() {
+        let item = detail_test_item();
+        let expected = [
+            (2, 5, item.display_ref.clone()),
+            (88, 17, item.display_ref.clone()),
+            (88, 20, local_timestamp_display(&item.task.created_at)),
+            (88, 23, local_timestamp_display(&item.task.updated_at)),
+        ];
+
+        for (column, row, value) in expected {
+            assert_eq!(
+                detail_copy_target_at(&item, 120, 30, column, row).map(|hit| hit.value),
+                Some(value)
+            );
+        }
+        assert!(detail_copy_target_at(&item, 120, 30, 87, 17).is_none());
+        assert!(detail_copy_target_at(&item, 120, 30, 88, 16).is_none());
+        assert!(detail_copy_target_at(&item, 80, 30, 70, 20).is_none());
+    }
+
+    #[test]
     fn detail_metadata_target_maps_status_and_priority_values() {
         assert_eq!(
             detail_metadata_target_at(120, 30, 88, 8),
@@ -2075,7 +2591,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let layout = detail_content_layout(Rect::new(0, 0, 80, 10));
-        let indices = detail_section_body_indices(&item, layout.content_area.width as usize);
+        let indices = detail_section_body_indices(&item, layout.content_area.width as usize, None);
 
         let notes = detail_section_scroll_target(&item, 0, 80, 10, false);
         let dependencies = detail_section_scroll_target(&item, notes, 80, 10, false);
@@ -2114,6 +2630,34 @@ mod tests {
         assert_eq!(model.sticky_lines[0].to_string(), "Fix token refresh race");
         assert_eq!(model.lines.len(), model.content_height.saturating_sub(4));
         assert!(model.scrollbar_position > 0);
+    }
+
+    #[test]
+    fn detail_renders_pending_and_failed_attachment_rows() {
+        let item = detail_test_item();
+        let pending = vec![
+            crate::tui::attachment_controller::PendingAttachmentView {
+                attachment_id: "PENDINGATTACH01".to_string(),
+                task_id: item.task.id.clone(),
+                status: crate::tui::attachment_controller::PendingAttachmentStatus::Preparing,
+            },
+            crate::tui::attachment_controller::PendingAttachmentView {
+                attachment_id: "PENDINGATTACH02".to_string(),
+                task_id: item.task.id.clone(),
+                status: crate::tui::attachment_controller::PendingAttachmentStatus::Failed,
+            },
+        ];
+
+        let rendered = detail_body_lines_with_pending_images(&item, 60, None, None, &pending)
+            .0
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("ATTACHMENTS"));
+        assert!(rendered.contains("[image: preparing]"));
+        assert!(rendered.contains("[image: failed]"));
     }
 
     #[test]
@@ -2170,7 +2714,7 @@ mod tests {
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
         let context = DetailInlineImageContext::default();
 
-        let (lines, placements) = detail_body_lines_with_images(&item, 80, None, Some(&context));
+        let (lines, placements, _) = detail_body_lines_with_images(&item, 80, None, Some(&context));
 
         assert_eq!(placements.len(), 1);
         assert_eq!(placements[0].height, 12);
@@ -2180,8 +2724,52 @@ mod tests {
                 .any(|line| line.to_string() == "│ [image: attachment]")
         );
         assert_eq!(
-            lines.iter().filter(|line| line.to_string() == "│ ").count(),
-            12
+            lines[placements[0].line_index - 1].to_string(),
+            format!("│ ┌{}┐", "─".repeat(placements[0].width as usize))
+        );
+        assert_eq!(
+            lines[placements[0].line_index + placements[0].height as usize].to_string(),
+            format!("│ └{}┘", "─".repeat(placements[0].width as usize))
+        );
+    }
+
+    #[test]
+    fn focused_preview_changes_border_style_without_moving_image() {
+        let mut item = detail_test_item();
+        item.task.description = String::new();
+        item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
+        let unfocused = DetailInlineImageContext::default();
+        let focused = DetailInlineImageContext {
+            focused_attachment_id: Some("ATTACHMENT000001".to_string()),
+            ..DetailInlineImageContext::default()
+        };
+
+        let (unfocused_lines, unfocused_placements, _) =
+            detail_body_lines_with_images(&item, 80, None, Some(&unfocused));
+        let (focused_lines, focused_placements, _) =
+            detail_body_lines_with_images(&item, 80, None, Some(&focused));
+
+        assert_eq!(unfocused_placements.len(), 1);
+        assert_eq!(
+            (
+                unfocused_placements[0].line_index,
+                unfocused_placements[0].width,
+                unfocused_placements[0].height,
+            ),
+            (
+                focused_placements[0].line_index,
+                focused_placements[0].width,
+                focused_placements[0].height,
+            )
+        );
+        let border_index = unfocused_placements[0].line_index - 1;
+        assert_eq!(
+            unfocused_lines[border_index].to_string(),
+            focused_lines[border_index].to_string()
+        );
+        assert_ne!(
+            unfocused_lines[border_index].spans[1].style,
+            focused_lines[border_index].spans[1].style
         );
     }
 
@@ -2194,7 +2782,8 @@ mod tests {
         item.attachments[0].height = Some(302);
         let context = DetailInlineImageContext::default();
 
-        let (_lines, placements) = detail_body_lines_with_images(&item, 200, None, Some(&context));
+        let (_lines, placements, _) =
+            detail_body_lines_with_images(&item, 200, None, Some(&context));
 
         assert_eq!(placements.len(), 1);
         assert_eq!(placements[0].height, 12);
@@ -2208,9 +2797,10 @@ mod tests {
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
         let context = DetailInlineImageContext {
             unavailable_hashes: [item.attachments[0].sha256.clone()].into_iter().collect(),
+            ..DetailInlineImageContext::default()
         };
 
-        let (lines, placements) = detail_body_lines_with_images(&item, 80, None, Some(&context));
+        let (lines, placements, _) = detail_body_lines_with_images(&item, 80, None, Some(&context));
 
         assert!(placements.is_empty());
         assert!(
@@ -2226,7 +2816,7 @@ mod tests {
         item.task.description = String::new();
         item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
 
-        let (lines, placements) = detail_body_lines_with_images(&item, 80, None, None);
+        let (lines, placements, _) = detail_body_lines_with_images(&item, 80, None, None);
 
         assert!(placements.is_empty());
         assert_eq!(
@@ -2264,7 +2854,7 @@ mod tests {
     }
 
     #[test]
-    fn detail_clips_emitted_preview_to_visible_viewport() {
+    fn detail_omits_preview_when_frame_is_clipped_by_viewport() {
         let model = DetailContentRenderModel {
             sticky_lines: Vec::new(),
             lines: vec![Line::from(""); 5],
@@ -2272,11 +2862,13 @@ mod tests {
             body_start: 0,
             scrollbar_position: 0,
             image_placements: vec![DetailBodyImagePlacement {
+                attachment_id: "ATTACHMENT000001".to_string(),
                 source_hash: "0".repeat(64),
                 line_index: 3,
                 width: 30,
                 height: 12,
             }],
+            attachment_placements: Vec::new(),
         };
         let mut widgets = WidgetState {
             sidebar: ListState::default(),
@@ -2298,9 +2890,219 @@ mod tests {
             })
             .unwrap();
 
+        assert!(widgets.inline_image_placements.is_empty());
+    }
+
+    #[test]
+    fn detail_attachment_hit_tracks_scroll_and_excludes_suppressed_preview() {
+        let mut item = detail_test_item();
+        item.task.description = String::new();
+        item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
+        let terminal = Rect::new(0, 0, 100, 40);
+        let layout = detail_content_layout(terminal);
+        let context = DetailInlineImageContext::default();
+        let scroll = 2;
+        let model = build_detail_content_model(
+            &item,
+            layout.content_area,
+            scroll,
+            None,
+            None,
+            None,
+            Some(&context),
+        );
+        let placement = &model.image_placements[0];
+        let body_y = layout.content_area.y.saturating_add(
+            model
+                .sticky_lines
+                .len()
+                .min(layout.content_area.height as usize) as u16,
+        );
+        let column = layout.content_area.x.saturating_add(2);
+        let row = body_y.saturating_add(
+            placement
+                .line_index
+                .saturating_sub(model.body_start)
+                .saturating_sub(1) as u16,
+        );
+
+        let hit = detail_attachment_at_position(
+            &item,
+            terminal.width,
+            terminal.height,
+            column,
+            row,
+            scroll,
+            &context,
+        );
+        assert_eq!(
+            hit.map(|hit| hit.attachment_id),
+            Some("ATTACHMENT000001".to_string())
+        );
+        let suppressed_context = DetailInlineImageContext {
+            unavailable_hashes: [item.attachments[0].sha256.clone()].into_iter().collect(),
+            ..DetailInlineImageContext::default()
+        };
+        assert!(
+            detail_attachment_at_position(
+                &item,
+                terminal.width,
+                terminal.height,
+                column,
+                row,
+                scroll,
+                &suppressed_context,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn duplicate_hash_hit_uses_the_visible_attachment_frame() {
+        let mut item = detail_test_item();
+        item.task.description = String::new();
+        item.attachments = vec![
+            attachment_metadata("FIRSTATTACHMENT", false, true),
+            attachment_metadata("SECONDATTACHMENT", false, true),
+        ];
+        assert_eq!(item.attachments[0].sha256, item.attachments[1].sha256);
+        let context = DetailInlineImageContext::default();
+        let terminal = Rect::new(0, 0, 80, 30);
+        let layout = detail_content_layout(terminal);
+        let model = build_detail_content_model(
+            &item,
+            layout.content_area,
+            0,
+            None,
+            None,
+            None,
+            Some(&context),
+        );
+        let sticky_height = model
+            .sticky_lines
+            .len()
+            .min(layout.content_area.height as usize) as u16;
+        let body_area = Rect::new(
+            layout.content_area.x,
+            layout.content_area.y.saturating_add(sticky_height),
+            layout.content_area.width,
+            layout.content_area.height.saturating_sub(sticky_height),
+        );
+        let cap = detail_scroll_cap_with_images(&item, 80, 30, Some(&context));
+        let (scroll, image) = (0..=cap)
+            .find_map(|scroll| {
+                let model = build_detail_content_model(
+                    &item,
+                    layout.content_area,
+                    scroll,
+                    None,
+                    None,
+                    None,
+                    Some(&context),
+                );
+                let first =
+                    visible_detail_image_rect(body_area, &model, &model.image_placements[0]);
+                let second =
+                    visible_detail_image_rect(body_area, &model, &model.image_placements[1]);
+                (first.is_none() && second.is_some()).then(|| (scroll, second.unwrap()))
+            })
+            .expect("only the second duplicate frame visible");
+        let hit = detail_attachment_at_position(
+            &item,
+            80,
+            30,
+            image.x.saturating_sub(1),
+            image.y.saturating_sub(1),
+            scroll,
+            &context,
+        )
+        .expect("visible duplicate hit");
+
+        assert_eq!(hit.attachment_id, "SECONDATTACHMENT");
+    }
+
+    #[test]
+    fn framed_preview_overflow_expands_scroll_and_reaches_hit_target() {
+        let mut item = detail_test_item();
+        item.task.description = String::new();
+        item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
+        let context = DetailInlineImageContext::default();
+        let width = 80;
+        let height = 26;
+        let text_only_cap = detail_scroll_cap(&item, width, height);
+        let preview_cap = detail_scroll_cap_with_images(&item, width, height, Some(&context));
+
+        assert!(preview_cap > text_only_cap);
+        let target =
+            detail_attachment_scroll_target(&item, "ATTACHMENT000001", 0, width, height, &context)
+                .expect("attachment scroll target");
+        assert!(target > text_only_cap);
+        let reached = (0..height).any(|row| {
+            (0..width).any(|column| {
+                detail_attachment_at_position(&item, width, height, column, row, target, &context)
+                    .is_some()
+            })
+        });
+        assert!(reached);
+    }
+
+    #[test]
+    fn large_attachment_preview_stays_inside_its_border() {
+        let mut item = detail_test_item();
+        item.task.description = String::new();
+        item.attachments = vec![attachment_metadata("ATTACHMENT000001", false, true)];
+        let context = DetailInlineImageContext::default();
+        let mut widgets = WidgetState {
+            sidebar: ListState::default(),
+            table: TableState::default(),
+            marked_task_ids: BTreeSet::new(),
+            inline_image_placements: Vec::new(),
+        };
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| {
+                render_detail(
+                    frame,
+                    &item,
+                    0,
+                    None,
+                    None,
+                    None,
+                    &mut widgets,
+                    Some(&context),
+                    &[],
+                );
+            })
+            .unwrap();
+        let thumbnail = widgets.inline_image_placements[0].clone();
+        widgets.inline_image_placements.clear();
+
+        terminal
+            .draw(|frame| {
+                render_attachment_preview(
+                    frame,
+                    &item,
+                    "ATTACHMENT000001",
+                    &mut widgets,
+                    Some(&context),
+                );
+            })
+            .unwrap();
+
         assert_eq!(widgets.inline_image_placements.len(), 1);
-        assert_eq!(widgets.inline_image_placements[0].width, 18);
-        assert_eq!(widgets.inline_image_placements[0].height, 2);
+        let placement = &widgets.inline_image_placements[0];
+        assert_eq!(placement.source_hash, thumbnail.source_hash);
+        assert_ne!(
+            (placement.x, placement.y, placement.width, placement.height),
+            (thumbnail.x, thumbnail.y, thumbnail.width, thumbnail.height)
+        );
+        let area = detail_body_area(Rect::new(0, 0, 100, 30));
+        assert!(placement.x > area.x);
+        assert!(placement.y > area.y);
+        assert!(placement.x.saturating_add(placement.width) < area.x + area.width);
+        assert!(placement.y.saturating_add(placement.height) < area.y + area.height);
     }
 
     fn attachment_metadata(

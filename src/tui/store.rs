@@ -4,6 +4,8 @@ mod config;
 mod conflicts;
 mod domain;
 mod epics;
+mod launch;
+mod onboarding;
 mod pickers;
 mod sidebar;
 mod sort;
@@ -24,6 +26,9 @@ use anyhow::Result;
 use aven_core::db::Database;
 
 pub(crate) use crate::query::RecentActionItem;
+pub(crate) use attachments::AttachmentWorkerContext;
+pub(crate) use launch::{TuiLaunch, TuiStartup};
+pub(crate) use onboarding::OnboardingStatus;
 pub(crate) use pickers::deleted_picker_items;
 pub(crate) use task_creation::task_creation_committed;
 pub(crate) use types::{
@@ -34,7 +39,6 @@ pub(crate) use types::{
 #[cfg(test)]
 pub(crate) use types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts};
 
-use crate::projects::inferred_existing_project_key_with_database;
 use crate::query::{ProjectListItem, SidebarCounts, TaskListItem};
 use crate::workspaces::Workspace;
 
@@ -63,39 +67,16 @@ pub(crate) struct ScopeRefreshResult {
 }
 
 impl TuiStore {
+    #[cfg(test)]
     pub(crate) async fn new(database: Database, workspace: Workspace) -> Result<Self> {
-        Self::new_with_initial_project(database, workspace, None).await
+        Self::new_with_view_state(database, workspace, TaskViewState::default()).await
     }
 
-    pub(crate) async fn new_for_inferred_project(
+    pub(crate) async fn new_with_view_state(
         database: Database,
         workspace: Workspace,
+        view_state: TaskViewState,
     ) -> Result<Self> {
-        let initial_project =
-            inferred_existing_project_key_with_database(&database, &workspace).await?;
-        Self::new_with_initial_project(database, workspace, initial_project).await
-    }
-
-    pub(crate) async fn new_for_project(
-        database: Database,
-        workspace: Workspace,
-        project: &str,
-    ) -> Result<Self> {
-        let project = database
-            .resolve_existing_project(&workspace.id, project)
-            .await?;
-        Self::new_with_initial_project(database, workspace, Some(project.key)).await
-    }
-
-    async fn new_with_initial_project(
-        database: Database,
-        workspace: Workspace,
-        initial_project: Option<String>,
-    ) -> Result<Self> {
-        let mut view_state = TaskViewState::default();
-        if let Some(project) = initial_project {
-            view_state.scope = TaskScope::Project(project);
-        }
         let mut store = Self {
             database,
             tasks: Vec::new(),

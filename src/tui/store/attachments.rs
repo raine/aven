@@ -1,35 +1,73 @@
 use std::path::Path;
 
 use anyhow::Result;
+use aven_core::db::Database;
 
-use crate::operations::AttachmentAddInput;
-use crate::tui::store::MutationMessage;
+use crate::attachments::export::{LeasedImageExport, lease_image_export};
+use crate::operations::TaskAttachmentAddInput;
 
 use super::TuiStore;
 
-impl TuiStore {
-    pub(crate) async fn add_attachment(
-        &mut self,
-        index: Option<usize>,
+#[derive(Clone)]
+pub(crate) struct AttachmentWorkerContext {
+    database: Database,
+    workspace: crate::workspaces::Workspace,
+}
+
+impl AttachmentWorkerContext {
+    pub(crate) async fn add_ordered_attachment(
+        &self,
         blob_dir: &Path,
         lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
-        input: AttachmentAddInput,
-    ) -> Result<Option<MutationMessage>> {
-        let Some(item) = self.selected_task(index).cloned() else {
-            return Ok(None);
-        };
-        let workspace = self.active_workspace.clone();
-        let add_outcome = self
+        task_id: &crate::ids::TaskId,
+        created_at: String,
+        input: TaskAttachmentAddInput,
+    ) -> Result<bool> {
+        Ok(self
             .database
-            .add_task_attachment(&workspace, blob_dir, lifecycle_policy, &item.task.id, input)
+            .add_ordered_task_attachment(
+                &self.workspace,
+                blob_dir,
+                lifecycle_policy,
+                task_id,
+                created_at,
+                input,
+            )
+            .await?
+            .created)
+    }
+}
+
+impl TuiStore {
+    pub(crate) fn attachment_worker_context(&self) -> AttachmentWorkerContext {
+        AttachmentWorkerContext {
+            database: self.database.clone(),
+            workspace: self.active_workspace.clone(),
+        }
+    }
+
+    pub(crate) async fn delete_attachment(&self, attachment_id: &str) -> Result<()> {
+        self.database
+            .delete_task_attachment(&self.active_workspace, attachment_id)
             .await?;
-        let message = if add_outcome.created {
-            "attached image"
-        } else {
-            "image already attached"
-        };
-        Ok(Some(
-            self.refresh_task_message(&item.task.id, message).await?,
-        ))
+        Ok(())
+    }
+
+    pub(crate) async fn lease_image_export(
+        &self,
+        blob_dir: &Path,
+        attachment_id: &str,
+    ) -> Result<LeasedImageExport> {
+        lease_image_export(
+            &self.database,
+            &self.active_workspace,
+            blob_dir,
+            attachment_id,
+        )
+        .await
+    }
+
+    pub(crate) async fn release_image_export(&self, export: &mut LeasedImageExport) -> Result<()> {
+        export.release().await
     }
 }

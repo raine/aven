@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use aven_core::db::Database;
 use ratatui::widgets::{ListState, TableState};
 
@@ -16,6 +16,17 @@ use crate::tui::store::{TaskOrder, TaskViewState, TuiStore};
 use crate::tui::toast::{Toast, ToastSeverity};
 
 pub(crate) const TASK_ROW_DOUBLE_CLICK: Duration = Duration::from_millis(500);
+pub(super) const MAX_EXTERNAL_IMAGE_EXPORTS: usize = 8;
+
+#[cfg(not(test))]
+fn default_image_viewer_launcher() -> fn(&std::path::Path) -> anyhow::Result<()> {
+    crate::tui::platform::open_image_in_default_viewer
+}
+
+#[cfg(test)]
+fn default_image_viewer_launcher() -> fn(&std::path::Path) -> anyhow::Result<()> {
+    |_| Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TaskRowClick {
@@ -121,6 +132,7 @@ pub(crate) struct App {
     pub(super) intake: IntakeController,
     pub(crate) widgets: WidgetState,
     pub(crate) overlay: Option<OverlayState>,
+    pub(super) onboarding_intro: Option<crate::tui::app_onboarding::OnboardingIntro>,
     pub(crate) notification: Option<Notification>,
     pub(super) pending_shortcut: ShortcutBuffer,
     pub(super) pending_shortcut_scroll: u16,
@@ -132,6 +144,7 @@ pub(crate) struct App {
     pub(super) conflict_flow: ConflictFlowState,
     pub(super) pending_rename_project: Option<String>,
     pub(super) pending_delete_project: Option<String>,
+    pub(super) pending_delete_attachment: Option<String>,
     pub(super) needs_terminal_clear: bool,
     pub(super) search: crate::tui::app_search::SearchController,
     pub(super) update: crate::tui::app_update::UpdateController,
@@ -139,27 +152,28 @@ pub(crate) struct App {
     pub(crate) last_task_click: Option<TaskRowClick>,
     pub(crate) hovered_detail_child_task_id: Option<crate::ids::TaskId>,
     pub(crate) selected_detail_child_task_id: Option<crate::ids::TaskId>,
+    pub(crate) selected_detail_attachment_id: Option<String>,
     pub(crate) detail_text_selection: Option<crate::tui::detail_selection::DetailTextSelection>,
     pub(crate) detail_text_dragging: bool,
     pub(super) previous_inline_image_placements: Vec<crate::tui::ui::DetailInlineImagePlacement>,
     pub(super) previous_inline_image_backend: crate::tui::inline_images::InlineImageBackend,
     pub(super) preview_controller: crate::tui::preview_controller::PreviewController,
+    pub(super) attachment_controller: crate::tui::attachment_controller::AttachmentController,
+    pub(super) image_viewer_launcher: fn(&std::path::Path) -> anyhow::Result<()>,
+    pub(super) external_image_exports: Vec<(String, tempfile::TempDir)>,
+    #[cfg(test)]
+    pub(crate) inline_image_context_override: Option<crate::tui::ui::DetailInlineImageContext>,
     pub(super) navigation_history: BoundedHistory<TaskViewState>,
     pub(super) detail_navigation_history: BoundedHistory<DetailNavigationState>,
 }
 
 impl App {
-    pub(crate) async fn new(
+    pub(crate) async fn new_with_view_state(
         database: Database,
         workspace: crate::workspaces::Workspace,
-        project: Option<&str>,
+        view_state: TaskViewState,
     ) -> Result<Self> {
-        let store = match project {
-            Some("") => TuiStore::new_for_inferred_project(database, workspace).await?,
-            Some(project) => TuiStore::new_for_project(database, workspace, project).await?,
-            None => TuiStore::new(database, workspace).await?,
-        };
-        Self::new_with_store(store)
+        Self::new_with_store(TuiStore::new_with_view_state(database, workspace, view_state).await?)
     }
 
     #[cfg(test)]
@@ -182,6 +196,7 @@ impl App {
                 inline_image_placements: Vec::new(),
             },
             overlay: None,
+            onboarding_intro: None,
             notification: None,
             pending_shortcut: ShortcutBuffer::default(),
             pending_shortcut_scroll: 0,
@@ -193,6 +208,7 @@ impl App {
             conflict_flow: ConflictFlowState::default(),
             pending_rename_project: None,
             pending_delete_project: None,
+            pending_delete_attachment: None,
             needs_terminal_clear: false,
             search: crate::tui::app_search::SearchController::new(),
             update: crate::tui::app_update::UpdateController::new(),
@@ -200,19 +216,47 @@ impl App {
             last_task_click: None,
             hovered_detail_child_task_id: None,
             selected_detail_child_task_id: None,
+            selected_detail_attachment_id: None,
             detail_text_selection: None,
             detail_text_dragging: false,
             previous_inline_image_placements: Vec::new(),
             previous_inline_image_backend: crate::tui::inline_images::InlineImageBackend::None,
             preview_controller: crate::tui::preview_controller::PreviewController::new(),
+            attachment_controller: crate::tui::attachment_controller::AttachmentController::new(),
+            image_viewer_launcher: default_image_viewer_launcher(),
+            external_image_exports: Vec::new(),
+            #[cfg(test)]
+            inline_image_context_override: None,
             navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
             detail_navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
         };
         app.restore_sidebar_selection();
         app.widgets
             .table
-            .select(Some(0).filter(|_| !app.store.tasks.is_empty()));
+            .select((app.store.main_row_count() > 0).then_some(0));
         Ok(app)
+    }
+
+    pub(crate) fn open_task_on_start(&mut self, task_id: &crate::ids::TaskId) -> Result<()> {
+        if !self.select_task_by_id(task_id) {
+            bail!("task target disappeared before the TUI loaded");
+        }
+        self.focus = Focus::Tasks;
+        self.overlay = Some(OverlayState::Detail { scroll: 0 });
+        Ok(())
+    }
+
+    pub(super) fn select_task_by_id(&mut self, task_id: &crate::ids::TaskId) -> bool {
+        let Some(index) = self
+            .store
+            .tasks
+            .iter()
+            .position(|item| &item.task.id == task_id)
+        else {
+            return false;
+        };
+        self.widgets.table.select(Some(index));
+        true
     }
 
     pub(crate) fn set_config(&mut self, config: AppConfig) {

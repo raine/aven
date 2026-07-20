@@ -5,7 +5,7 @@ description: Understand the aven task model.
 
 aven stores tasks in a local SQLite database. The TUI is the human interface, and the CLI is the automation and agent interface.
 
-Every command runs inside one active workspace. Inside that workspace, projects usually map to repositories or directories, and tasks carry status, priority, labels, descriptions, notes, refs, and relationships.
+Every command runs inside one active workspace. Inside that workspace, projects usually map to repositories or directories, and tasks carry status, priority, labels, descriptions, notes, image attachments, refs, and relationships.
 
 The queue is aven's default attention view for open tasks.
 
@@ -41,6 +41,14 @@ Priorities affect queue placement and sorting: `none`, `low`, `medium`, `high`, 
 Use descriptions for the main body of a task: problem statement, acceptance criteria, relevant links, and implementation details.
 
 Notes are append-style entries attached to a task. Use notes for decisions, blockers, partial progress, and follow-up details. Notes appear in full task reads and can be deleted when needed.
+
+## Image attachments
+
+Add screenshots, diagrams, and other images to a task when they help explain the work. Aven supports PNG, JPEG, GIF, and WebP images. Task detail shows attachments in a dedicated section beneath the description.
+
+You can attach images in the TUI while creating or viewing a task. From the command line, create the task first, then use [`aven attachment`](/command-reference/#aven-attachment). Supported terminals show image previews in task detail, while other terminals show a text placeholder. Locally available images can also open in the operating system viewer from either display. See [View image attachments](/tui/#view-image-attachments) for preview and viewer controls.
+
+[Sync can copy attachment images between devices](/sync/#image-attachments-during-sync). To move all local data yourself, including the image files stored on that device, use a [backup archive](/sync/#back-up-and-move-data). JSON export keeps the attachment records but leaves out the image files.
 
 ## Refs
 

@@ -6,7 +6,7 @@ git_common_dir="$(git rev-parse --git-common-dir)"
 hooks_dir="$git_common_dir/hooks"
 
 if (($# == 0)); then
-  set -- pre-commit commit-msg
+  set -- pre-commit commit-msg pre-push
 fi
 
 mkdir -p "$hooks_dir"

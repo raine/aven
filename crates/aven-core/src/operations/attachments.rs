@@ -56,6 +56,12 @@ pub struct AttachmentOutcome {
     pub has_blob: bool,
 }
 
+pub struct AttachmentReadLease {
+    pub sha256: String,
+    pub media_type: String,
+    pub lease_id: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct AttachmentReadItem {
     pub attachment: TaskAttachment,
@@ -203,6 +209,11 @@ pub(super) async fn insert_prepared_attachment(
     Ok(change_id)
 }
 
+struct AttachmentCommitIdentity {
+    attachment_id: Option<String>,
+    created_at: Option<String>,
+}
+
 pub async fn add_task_attachment(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
@@ -211,7 +222,43 @@ pub async fn add_task_attachment(
     task_id: &TaskId,
     input: AttachmentAddInput,
 ) -> Result<AttachmentAddOutcome> {
-    add_task_attachment_inner(conn, workspace, blob_dir, policy, task_id, None, input).await
+    add_task_attachment_inner(
+        conn,
+        workspace,
+        blob_dir,
+        policy,
+        task_id,
+        AttachmentCommitIdentity {
+            attachment_id: None,
+            created_at: None,
+        },
+        input,
+    )
+    .await
+}
+
+pub(crate) async fn add_ordered_task_attachment(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    blob_dir: &Path,
+    policy: crate::attachments::lifecycle::LifecyclePolicy,
+    task_id: &TaskId,
+    created_at: String,
+    input: TaskAttachmentAddInput,
+) -> Result<AttachmentAddOutcome> {
+    add_task_attachment_inner(
+        conn,
+        workspace,
+        blob_dir,
+        policy,
+        task_id,
+        AttachmentCommitIdentity {
+            attachment_id: Some(input.attachment_id),
+            created_at: Some(created_at),
+        },
+        input.input,
+    )
+    .await
 }
 
 async fn add_task_attachment_inner(
@@ -220,7 +267,7 @@ async fn add_task_attachment_inner(
     blob_dir: &Path,
     policy: crate::attachments::lifecycle::LifecyclePolicy,
     task_id: &TaskId,
-    attachment_id: Option<String>,
+    identity: AttachmentCommitIdentity,
     input: AttachmentAddInput,
 ) -> Result<AttachmentAddOutcome> {
     validate_filename(input.filename.as_deref())?;
@@ -299,8 +346,8 @@ async fn add_task_attachment_inner(
             return Ok::<_, anyhow::Error>((attachment_id, false));
         }
 
-        let attachment_id = attachment_id.unwrap_or_else(new_id);
-        let created_at = now();
+        let attachment_id = identity.attachment_id.unwrap_or_else(new_id);
+        let created_at = identity.created_at.unwrap_or_else(now);
         let change_id = append_change(
             &mut tx,
             ChangeEntity::Task,
@@ -343,7 +390,18 @@ async fn add_task_attachment_inner(
     }
     .await;
     let release_result = crate::attachments::lifecycle::release_lease(conn, &staging_lease).await;
-    let (attachment_id, created) = database_result?;
+    let (attachment_id, created) = match database_result {
+        Ok(result) => result,
+        Err(error) => {
+            crate::attachments::storage::remove_staged_blob_if_unreferenced(
+                conn,
+                blob_dir,
+                &stored.sha256,
+            )
+            .await;
+            return Err(error);
+        }
+    };
     release_result?;
     crate::attachments::lifecycle::reconcile_liveness(
         conn,
@@ -528,6 +586,22 @@ impl Database {
         add_task_attachment(&mut conn, workspace, blob_dir, policy, task_id, input).await
     }
 
+    pub async fn add_ordered_task_attachment(
+        &self,
+        workspace: &Workspace,
+        blob_dir: &Path,
+        policy: crate::attachments::lifecycle::LifecyclePolicy,
+        task_id: &TaskId,
+        created_at: String,
+        input: TaskAttachmentAddInput,
+    ) -> Result<AttachmentAddOutcome> {
+        let mut conn = self.acquire().await?;
+        add_ordered_task_attachment(
+            &mut conn, workspace, blob_dir, policy, task_id, created_at, input,
+        )
+        .await
+    }
+
     pub async fn attachment_by_id(
         &self,
         workspace: &Workspace,
@@ -588,6 +662,44 @@ impl Database {
             &crate::attachments::lifecycle::SystemClock,
         )
         .await
+    }
+
+    pub async fn acquire_live_attachment_read_lease(
+        &self,
+        workspace: &Workspace,
+        attachment_id: &str,
+    ) -> Result<AttachmentReadLease> {
+        let mut conn = self.acquire().await?;
+        let row = sqlx::query(
+            "SELECT ta.sha256, ta.media_type, bi.available
+             FROM task_attachments ta
+             JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
+             LEFT JOIN blob_inventory bi ON bi.sha256 = ta.sha256
+             WHERE ta.workspace_id = ? AND ta.attachment_id = ?
+               AND ta.deleted = 0 AND t.deleted = 0",
+        )
+        .bind(&workspace.id)
+        .bind(attachment_id)
+        .fetch_optional(&mut *conn)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("error attachment-invalidated"))?;
+        if !row.try_get::<bool, _>("available").unwrap_or(false) {
+            bail!("error attachment-blob-unavailable");
+        }
+        let sha256: String = row.get("sha256");
+        let media_type: String = row.get("media_type");
+        let lease_id = crate::attachments::lifecycle::acquire_lease(
+            &mut conn,
+            &sha256,
+            "read",
+            &crate::attachments::lifecycle::SystemClock,
+        )
+        .await?;
+        Ok(AttachmentReadLease {
+            sha256,
+            media_type,
+            lease_id,
+        })
     }
 
     pub async fn release_attachment_lease(&self, lease_id: &str) -> Result<()> {

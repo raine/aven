@@ -11,6 +11,7 @@ mod recent_actions;
 mod scroll;
 mod shortcuts;
 mod sidebar;
+mod splash;
 mod task_display;
 mod task_list;
 mod timestamps;
@@ -23,13 +24,14 @@ pub(crate) use self::sidebar::{sidebar_click_at_for, sidebar_layout_for};
 
 pub(crate) use self::columns::column_lane_at_position;
 use self::columns::render_columns;
-use self::detail::render_detail_underlay;
+use self::detail::{render_attachment_preview, render_detail_underlay};
 use self::footer::{FooterMode, footer_bar};
 use self::header::render_header;
 use self::overlays::{
     SearchRenderStatus, SearchRenderView, render_confirm, render_database_stats,
-    render_multiline_input, render_picker, render_search, render_sync_status, render_tag_combobox,
-    render_text_input, render_text_panel, render_update,
+    render_multiline_input, render_onboarding, render_onboarding_raised, render_picker,
+    render_search, render_sync_status, render_tag_combobox, render_text_input, render_text_panel,
+    render_update,
 };
 use self::recent_actions::render_recent_actions;
 use self::shortcuts::{render_command, render_detail_help, render_help, render_prefix_hints};
@@ -39,14 +41,19 @@ use self::toast::render_toast;
 
 pub(crate) use self::detail::{
     DetailInlineImageContext, DetailInlineImagePlacement, DetailMetadataTarget,
-    detail_child_task_at_position, detail_metadata_target_at, detail_scroll_cap,
-    detail_section_scroll_target, detail_selected_text, detail_text_cell_at_position,
+    attachment_is_locally_openable, attachment_is_locally_previewable,
+    detail_attachment_at_position, detail_attachment_scroll_target, detail_child_task_at_position,
+    detail_copy_target_at, detail_metadata_target_at, detail_scroll_cap_with_images,
+    detail_section_scroll_target_with_images, detail_selected_text, detail_text_cell_at_position,
 };
+#[cfg(test)]
+pub(crate) use self::detail::{detail_scroll_cap, detail_section_scroll_target};
 pub(crate) use self::overlays::{
     add_task_field_at, composer_help_scroll_cap, database_stats_scroll_cap, text_panel_scroll_cap,
 };
 pub(crate) use self::recent_actions::recent_action_at_position;
 pub(crate) use self::shortcuts::{detail_help_scroll_cap, help_scroll_cap, prefix_hint_scroll_cap};
+pub(crate) use self::splash::{render_dimmed_onboarding_splash, render_onboarding_splash};
 pub(crate) use self::task_list::{task_at_position, task_status_at_position};
 
 use ratatui::Frame;
@@ -73,10 +80,12 @@ pub(crate) enum ViewSurface {
 pub(crate) struct ViewState {
     pub(crate) focus: Focus,
     pub(crate) overlay: Option<OverlayView>,
+    pub(crate) onboarding_intro: Option<crate::tui::app_onboarding::OnboardingIntroVisual>,
     pub(crate) detail_underlay: bool,
     pub(crate) detail_underlay_scroll: u16,
     pub(crate) hovered_detail_child_task_id: Option<crate::ids::TaskId>,
     pub(crate) selected_detail_child_task_id: Option<crate::ids::TaskId>,
+    pub(crate) selected_detail_attachment_id: Option<String>,
     pub(crate) detail_text_selection: Option<crate::tui::detail_selection::DetailTextSelection>,
     pub(crate) notification: Option<Toast>,
     pub(crate) pending_shortcut: Vec<String>,
@@ -88,6 +97,7 @@ pub(crate) struct ViewState {
     pub(crate) update_badge: Option<crate::tui::app_update::UpdateBadgeView>,
     pub(crate) surface: ViewSurface,
     pub(crate) inline_images: Option<DetailInlineImageContext>,
+    pub(crate) pending_attachments: Vec<crate::tui::attachment_controller::PendingAttachmentView>,
 }
 
 impl ViewState {
@@ -97,12 +107,16 @@ impl ViewState {
             Some(FooterChoiceMode::Priority) => return FooterMode::PriorityChoice,
             None => {}
         }
-        if matches!(
+        if matches!(self.overlay, Some(OverlayView::AttachmentPreview { .. })) {
+            FooterMode::AttachmentPreview
+        } else if matches!(
             self.overlay,
             Some(OverlayView::Detail { .. } | OverlayView::DetailHelp { .. })
         ) {
             if self.selected_detail_child_task_id.is_some() {
                 FooterMode::DetailChildren
+            } else if self.selected_detail_attachment_id.is_some() {
+                FooterMode::DetailAttachment
             } else if self
                 .detail_text_selection
                 .as_ref()
@@ -126,6 +140,9 @@ fn detail_underlay_scroll(view: &ViewState) -> u16 {
     }
 }
 
+pub(crate) const MIN_TUI_WIDTH: u16 = 70;
+pub(crate) const MIN_TUI_HEIGHT: u16 = 18;
+
 pub(crate) fn render(
     frame: &mut Frame,
     store: &TuiStore,
@@ -140,13 +157,29 @@ pub(crate) fn render(
         return;
     }
 
-    if frame.area().width < 70 || frame.area().height < 18 {
+    if frame.area().width < MIN_TUI_WIDTH || frame.area().height < MIN_TUI_HEIGHT {
         frame.render_widget(
             Paragraph::new("terminal too small for aven tui")
                 .alignment(Alignment::Center)
                 .style(Style::new().fg(FG).bg(BG)),
             frame.area(),
         );
+        return;
+    }
+
+    if matches!(
+        view.overlay,
+        Some(OverlayView::Onboarding {
+            splash_underlay: true
+        })
+    ) {
+        if let Some(intro) = view.onboarding_intro {
+            render_onboarding_splash(frame, intro);
+            render_onboarding_raised(frame, intro.dialog_reveal);
+        } else {
+            render_dimmed_onboarding_splash(frame);
+            render_onboarding(frame);
+        }
         return;
     }
 
@@ -216,6 +249,7 @@ pub(crate) fn render(
             active_detail_child_task_id,
             view.detail_text_selection.as_ref(),
             view.inline_images.as_ref(),
+            &view.pending_attachments,
         );
     }
     if let Some(overlay) = &view.overlay {
@@ -228,6 +262,7 @@ pub(crate) fn render(
             active_detail_child_task_id,
             view.detail_text_selection.as_ref(),
             view.inline_images.as_ref(),
+            &view.pending_attachments,
         );
     }
     if !view.pending_shortcut.is_empty() && !add_task_dialog_prefix_active(view) {
@@ -581,6 +616,7 @@ fn order_menu_items() -> [(TaskOrder, &'static str, &'static str); 6] {
 
 fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title_editor: bool) {
     match overlay {
+        OverlayView::Onboarding { .. } => render_onboarding(frame),
         OverlayView::Help { scroll } => render_help(frame, *scroll),
         OverlayView::DetailHelp { scroll } => render_detail_help(frame, *scroll),
         OverlayView::Search {
@@ -635,7 +671,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
             render_database_stats(frame, stats, *scroll)
         }
         OverlayView::Update(state) => render_update(frame, state),
-        OverlayView::Detail { .. } => {}
+        OverlayView::Detail { .. } | OverlayView::AttachmentPreview { .. } => {}
     }
 }
 
@@ -649,7 +685,14 @@ fn render_overlay(
     active_detail_child_task_id: Option<&str>,
     detail_text_selection: Option<&crate::tui::detail_selection::DetailTextSelection>,
     inline_images: Option<&DetailInlineImageContext>,
+    pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
 ) {
+    if let OverlayView::AttachmentPreview { attachment_id, .. } = overlay {
+        if let Some(item) = store.selected_task(widgets.table.selected()) {
+            render_attachment_preview(frame, item, attachment_id, widgets, inline_images);
+        }
+        return;
+    }
     if matches!(
         overlay,
         OverlayView::Detail { .. } | OverlayView::DetailHelp { .. }
@@ -668,6 +711,7 @@ fn render_overlay(
             active_detail_child_task_id,
             detail_text_selection,
             inline_images.filter(|_| matches!(overlay, OverlayView::Detail { .. })),
+            pending_attachments,
         );
         if matches!(overlay, OverlayView::DetailHelp { .. }) {
             render_overlay_content(frame, overlay, inline_title_editor);

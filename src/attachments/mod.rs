@@ -1,7 +1,7 @@
 pub(crate) use aven_core::attachments::*;
 
 pub(crate) mod blocking {
-    pub(crate) use aven_core::attachments::run_blocking as run;
+    pub(crate) use aven_core::attachments::{run_blocking as run, run_preview};
 }
 
 pub(crate) mod decode {
@@ -18,6 +18,8 @@ pub(crate) mod lifecycle {
 pub(crate) mod optimization {
     pub(crate) use aven_core::attachments::ImageOptimizationPolicy;
 }
+
+pub(crate) mod export;
 
 pub(crate) mod storage {
     pub(crate) use aven_core::attachments::{object_path, sha256_hex};

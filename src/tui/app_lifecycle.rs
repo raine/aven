@@ -113,6 +113,7 @@ impl App {
     pub(crate) async fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
         let result = self.run_loop(terminal).await;
+        self.attachment_controller.shutdown().await;
         let _ = self.erase_previous_inline_images();
         execute!(
             std::io::stdout(),
@@ -132,6 +133,7 @@ impl App {
         self.open_add_task_on_start(natural).await?;
         execute!(std::io::stdout(), EnableBracketedPaste)?;
         let result = self.run_loop(terminal).await;
+        self.attachment_controller.shutdown().await;
         let _ = self.erase_previous_inline_images();
         execute!(std::io::stdout(), DisableBracketedPaste)?;
         result.map(|()| self.intake.take_message())
@@ -148,11 +150,19 @@ impl App {
     async fn run_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         let mut needs_redraw = true;
         while !self.should_quit {
+            if self.finish_onboarding_intro_if_elapsed() {
+                needs_redraw = true;
+            }
+
             if self.poll_pending_task_intake().await? {
                 needs_redraw = true;
             }
 
             if self.poll_search_preview().await? {
+                needs_redraw = true;
+            }
+
+            if self.poll_attachment_work().await? {
                 needs_redraw = true;
             }
 
@@ -188,6 +198,9 @@ impl App {
                 needs_redraw = true;
                 match event::read()? {
                     Event::Key(key) => {
+                        if self.skip_onboarding_intro() {
+                            continue;
+                        }
                         let result = self.dispatch_key(key, terminal.size()?).await;
                         if let Err(error) = result {
                             self.set_error(format!("{error:#}"));
@@ -354,9 +367,11 @@ impl App {
         }
 
         let selected_task = self.store.selected_task(self.widgets.table.selected());
+        let inline_images = self.inline_image_context();
         ViewState {
             focus: self.focus,
             overlay,
+            onboarding_intro: self.onboarding_intro_visual(),
             detail_underlay: self.detail_underlay(),
             detail_underlay_scroll: self.detail_context_scroll,
             hovered_detail_child_task_id: self.hovered_detail_child_task_id.clone(),
@@ -368,6 +383,18 @@ impl App {
                         task.epic_children
                             .iter()
                             .any(|child| &child.task_id == *task_id)
+                    })
+                })
+                .cloned(),
+            selected_detail_attachment_id: self
+                .selected_detail_attachment_id
+                .as_ref()
+                .filter(|attachment_id| {
+                    selected_task.is_some_and(|task| {
+                        task.attachments.iter().any(|attachment| {
+                            &attachment.attachment_id == *attachment_id
+                                && ui::attachment_is_locally_openable(attachment)
+                        })
                     })
                 })
                 .cloned(),
@@ -395,31 +422,48 @@ impl App {
             } else {
                 ViewSurface::Main
             },
-            inline_images: self.inline_image_context(),
+            inline_images,
+            pending_attachments: self.attachment_controller.views(),
         }
     }
 
-    fn inline_image_context(&self) -> Option<ui::DetailInlineImageContext> {
-        if self.intake.view().add_task_only
-            || self.notification.is_some()
-            || !self.pending_shortcut.is_empty()
-            || !self.detail_surface_accepts_inline_images()
-        {
+    pub(super) fn inline_image_context(&self) -> Option<ui::DetailInlineImageContext> {
+        if self.intake.view().add_task_only || !self.detail_surface_accepts_inline_images() {
             return None;
+        }
+        if !self.pending_shortcut.is_empty() {
+            return Some(ui::DetailInlineImageContext {
+                previews_enabled: false,
+                unavailable_hashes: Default::default(),
+                focused_attachment_id: self.selected_detail_attachment_id.clone(),
+            });
+        }
+        #[cfg(test)]
+        if let Some(context) = &self.inline_image_context_override {
+            return Some(context.clone());
         }
         let backend = active_backend_from_env(self.intake.config().local.inline_images);
         if backend == InlineImageBackend::None {
-            return None;
+            return Some(ui::DetailInlineImageContext {
+                previews_enabled: false,
+                unavailable_hashes: Default::default(),
+                focused_attachment_id: self.selected_detail_attachment_id.clone(),
+            });
         }
         let db_path = self.intake.db_path()?;
         let blob_dir = resolve_blob_dir(db_path, self.intake.config()).ok()?;
         Some(ui::DetailInlineImageContext {
+            previews_enabled: true,
             unavailable_hashes: self.preview_controller.suppressed_hashes(&blob_dir),
+            focused_attachment_id: self.selected_detail_attachment_id.clone(),
         })
     }
 
     fn detail_surface_accepts_inline_images(&self) -> bool {
-        matches!(self.overlay, None | Some(OverlayState::Detail { .. }))
+        matches!(
+            self.overlay,
+            None | Some(OverlayState::Detail { .. } | OverlayState::AttachmentPreview { .. })
+        )
     }
 
     pub(super) fn detail_underlay(&self) -> bool {
@@ -449,10 +493,10 @@ impl App {
                 .selected_task(selected)
                 .map(|item| item.task.id.clone())
         };
-        let detail_task = self
-            .detail_underlay()
-            .then(|| self.store.selected_task(selected).cloned())
-            .flatten();
+        let detail_task = (self.detail_underlay()
+            || matches!(self.overlay, Some(OverlayState::AttachmentPreview { .. })))
+        .then(|| self.store.selected_task(selected).cloned())
+        .flatten();
         let result = self
             .store
             .refresh_with_scope_fallback(selected_id.as_ref())
@@ -517,7 +561,7 @@ impl App {
     }
 
     pub(super) fn has_time_based_redraw(&self) -> bool {
-        self.notification.is_some() || self.refresh_is_due()
+        self.notification.is_some() || self.refresh_is_due() || self.onboarding_intro.is_some()
     }
 
     pub(super) fn next_poll_timeout(&self) -> Duration {
@@ -537,9 +581,14 @@ impl App {
             None => {}
         }
 
+        if let Some(intro_timeout) = self.onboarding_intro_timeout() {
+            timeout = timeout.min(intro_timeout);
+        }
+
         if self.intake.work_pending()
             || self.search_preview_work_pending()
             || self.preview_controller.work_pending()
+            || self.attachment_controller.work_pending()
             || self.update.work_pending()
         {
             timeout = timeout.min(INPUT_POLL_INTERVAL);
@@ -604,6 +653,7 @@ mod inline_image_lifecycle_tests {
 
     fn placement() -> ui::DetailInlineImagePlacement {
         ui::DetailInlineImagePlacement {
+            attachment_id: "ATTACHMENT000001".to_string(),
             source_hash: "0".repeat(64),
             x: 4,
             y: 7,

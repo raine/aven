@@ -8,10 +8,17 @@ use unicode_width::UnicodeWidthStr;
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayState {
+    Onboarding {
+        persist_on_exit: bool,
+    },
     Help {
         scroll: u16,
     },
     Detail {
+        scroll: u16,
+    },
+    AttachmentPreview {
+        attachment_id: String,
         scroll: u16,
     },
     DetailHelp {
@@ -379,6 +386,7 @@ pub(crate) enum OverlayRoute {
     DeleteProjectNameConfirm,
     DeleteProjectConfirm,
     DeleteTaskConfirm,
+    DeleteAttachmentConfirm,
     SwitchWorkspace,
     ConflictField,
     ConflictConfirm,
@@ -440,6 +448,7 @@ pub(crate) enum ConfirmSubmitRoute {
     ConfigInit,
     DeleteProjectConfirm,
     DeleteTaskConfirm,
+    DeleteAttachmentConfirm,
     UpdateConfirm,
 }
 
@@ -638,6 +647,10 @@ impl OverlayRoute {
                 confirm_submit: Some(ConfirmSubmitRoute::DeleteTaskConfirm),
                 ..OverlayRouteDescriptor::default()
             },
+            Self::DeleteAttachmentConfirm => OverlayRouteDescriptor {
+                confirm_submit: Some(ConfirmSubmitRoute::DeleteAttachmentConfirm),
+                ..OverlayRouteDescriptor::default()
+            },
             Self::SwitchWorkspace => OverlayRouteDescriptor {
                 picker_submit: Some(PickerSubmitRoute::SwitchWorkspace),
                 ..OverlayRouteDescriptor::default()
@@ -703,7 +716,7 @@ impl OverlayRoute {
 
 #[cfg(test)]
 impl OverlayRoute {
-    pub(crate) const ALL: [Self; 37] = [
+    pub(crate) const ALL: [Self; 38] = [
         Self::MessageOnly,
         Self::AddTaskTitle,
         Self::AddTaskDescription,
@@ -733,6 +746,7 @@ impl OverlayRoute {
         Self::DeleteProjectNameConfirm,
         Self::DeleteProjectConfirm,
         Self::DeleteTaskConfirm,
+        Self::DeleteAttachmentConfirm,
         Self::SwitchWorkspace,
         Self::ConflictField,
         Self::ConflictConfirm,

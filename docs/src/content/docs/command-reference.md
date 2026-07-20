@@ -179,7 +179,7 @@ aven list --deleted --json
 
 ### `aven search`
 
-Search task references, titles, descriptions, projects, labels, notes, statuses, and priorities across the active workspace. Done and canceled tasks participate in normal search. Deleted tasks require `--all`.
+Search task references, titles, descriptions, projects, labels, notes, statuses, priorities, and current attachment filenames and alternative text across the active workspace. Done and canceled tasks participate in normal search. Deleted tasks require `--all`.
 
 ```sh
 aven search <query>... [--limit <number>] [--all] [--json]
@@ -250,13 +250,82 @@ aven attachment prune [--dry-run | --apply] [--json]
 
 Attachment metadata determines identity, display order, and search matches. Attachment IDs are exact, workspace-scoped 16-character uppercase Crockford Base32 identifiers. Task-ref suffix and normalization rules do not apply. Live attachments appear in `(created_at, attachment_id)` order. Attachment `list` and `get` require `--all` to include tombstoned metadata. Human task sections, `aven context --json`, and `aven show --full --json` expose live attachments only. Compact `aven show --json` has no attachment array.
 
-Attachment command JSON exposes `attachment_id`, `task_id`, `sha256`, `byte_size`, `media_type`, `filename`, `alt_text`, derived dimensions, timestamps, deletion state, and `has_blob`. Add output also contains `optimized`. Task attachment objects from `context --json` and `show --full --json` omit `sha256` and expose the other metadata fields. Search matches live attachment filenames and alternative text.
+#### Add an image
 
-Aven accepts nonempty decoded PNG, JPEG, GIF, and WebP images up to 25 MiB of encoded data. Either edge can be at most 16,384 pixels, each frame can contain at most 40,000,000 pixels, and an animation can contain at most 100 frames. Filenames must contain 1-255 UTF-8 bytes with no control characters or path separators. Alternative text can contain at most 500 UTF-8 bytes and no control characters. Aven validates complete decoded content and any declared media type before storing bytes. Dimensions always come from decoded content. `--optimize` requests lossless PNG optimization, while `--no-optimize` preserves file bytes. Without either flag, `local.image_optimization` controls file attachments. Optimization uses the validated lossless PNG only when it is smaller than the input.
+Create the task first, then attach an image from a filesystem path:
 
-Attachment deletion is an idempotent tombstone operation, and there is no attachment restore command. Deleting an attachment or its task removes the live reference. After the grace period, pruning can make a later task restore metadata-only unless another live reference, the server, or a backup retains the bytes.
+```sh
+aven attachment add APP-7KQ9 ./diagram.png --alt "service layout"
+aven attachment add APP-7KQ9 ./capture --filename error.webp --media-type image/webp
+```
 
-`attachment prune` reports one batch of eligible unique-object counts and bytes without exposing attachment identifiers, filenames, hashes, or paths. The batch is capped by `local.attachment_lifecycle.maintenance_limit`, so repeated runs may be needed. Original-object deletion is a dry run unless `--apply` is passed. Preview-cache eviction to `preview_quota_bytes` runs in either mode because previews are disposable. Live references, unsynced adds, staging operations, upload reservations, active transfers, reads, and backups protect original objects from pruning. Original-object quotas count each physical hash once locally and each hash once per server workspace. Preview cache bytes use an independent disposable-cache limit.
+The filename defaults to the file's basename. Use `--filename` to choose another display name and `--alt` to add searchable alternative text. `--media-type` checks that the file has the expected format; it does not convert the image. The regular `aven add` command has no attachment option.
+
+#### List and retrieve images
+
+`list` shows a task's current attachments in the order they were added. Pass `--all` to include deleted attachments. Human-readable output is compact; use `--json` for filenames, alternative text, dimensions, and local file availability.
+
+```sh
+aven attachment list APP-7KQ9
+aven attachment list APP-7KQ9 --json
+```
+
+Copy the full attachment ID from this output when using `get` or `delete`. Attachment IDs are exact, workspace-scoped 16-character uppercase Crockford Base32 values and cannot be abbreviated like task refs.
+
+`get` prints attachment information by default. Add `--output` to save the image to a file. Aven refuses to overwrite an existing path.
+
+```sh
+aven attachment get 7KQ9A1X4MV2P8D6R
+aven attachment get 7KQ9A1X4MV2P8D6R --output ./diagram.png
+```
+
+Saving the file requires the image to be available on this device. In JSON output, `has_blob: true` means it is available. If it is not, run sync or restore a [backup that includes images](/sync/#back-up-and-move-data).
+
+#### Delete an attachment
+
+`delete` removes the attachment from its task. Repeating the command is safe. Aven has no attachment restore command.
+
+```sh
+aven attachment delete 7KQ9A1X4MV2P8D6R
+```
+
+The image file can remain during the configured grace period. While it remains available, retrieve it and add it again as a new attachment:
+
+```sh
+aven attachment list APP-7KQ9 --all
+aven attachment get 7KQ9A1X4MV2P8D6R --all --output ./recovered.png
+aven attachment add APP-7KQ9 ./recovered.png
+```
+
+Pruning can remove an unused image after the grace period. Normal sync downloads images for current attachments and does not restore a deleted attachment, so use a backup when the local file is unavailable.
+
+#### Supported images and optimization
+
+Aven checks the actual image rather than trusting its extension. It accepts nonempty PNG, JPEG, GIF, and WebP files with these limits:
+
+| Item | Limit |
+| --- | --- |
+| Image file | 25 MiB |
+| Width or height | 16,384 pixels |
+| Pixels in one frame | 40,000,000 |
+| Animation frames | 100 |
+| Pixels across an animation | 100,000,000 |
+| Filename | 1-255 UTF-8 bytes, with no control characters or path separators |
+| Alternative text | 500 UTF-8 bytes, with no control characters |
+
+Aven checks the complete image, including every animation frame, before attaching it. `--optimize` requests lossless PNG optimization, while `--no-optimize` preserves the file. Without either flag, [`local.image_optimization`](/configuration/#png-optimization) controls CLI attachments and defaults to `off`. Optimization applies only to PNG files. Aven preserves the original when optimization fails or does not reduce the file size, and validates any optimized file before storage.
+
+#### JSON output and search
+
+JSON output from `add`, `list`, `get`, and `delete` contains `attachment_id`, `task_id`, `sha256`, `byte_size`, `media_type`, `filename`, `alt_text`, `width`, `height`, `created_at`, `deleted`, `deleted_at`, and `has_blob`. Add output also contains `optimized`.
+
+`context --json` and `show --full --json` include current attachment information except `sha256`. Deleted attachments are excluded; use `attachment list --all` or `attachment get --all` to inspect them. Compact `show --json` has no attachment array. Search matches current attachment filenames and alternative text, not image contents or hashes.
+
+#### Clean up unused images
+
+`attachment prune` reports image files eligible for cleanup. It performs a dry run by default. Pass `--apply` to delete them. JSON output contains `mode`, `eligible_count`, `eligible_bytes`, `pruned_count`, and `pruned_bytes`.
+
+Cleanup honors the configured grace period and processes at most [`local.attachment_lifecycle.maintenance_limit`](/configuration/#retention-and-storage-limits) files per run, so large cleanups may require repeated runs. Images used by tasks or attachment operations in progress are protected. Identical images share storage and count once toward attachment quotas. Cached previews are disposable and may be cleaned during either a dry run or an applied cleanup.
 
 ### `aven edit`
 
@@ -548,7 +617,7 @@ aven sync [--server <url>]
 
 The server URL resolves from `--server`, then `AVEN_SYNC_SERVER`, then `sync.server_url`. When configured, `sync.auth_token` is sent as bearer authentication. Aven pins the normalized server URL in database metadata and rejects accidental reuse of one database with a different server.
 
-Output reports pushed and pulled change counts, uploaded and downloaded attachment blob counts and byte totals, remaining blob counts and bytes, the resulting server cursor, and completion state. Attachment transfers run in bounded rounds of up to 16 unique blobs and 64 MiB across uploads and downloads.
+Output reports pushed and pulled task changes, uploaded and downloaded image counts and sizes, remaining work, the resulting server cursor, and completion state. Large attachment backlogs transfer in bounded rounds, and `complete=false` means sync still has work to do.
 
 ```sh
 aven sync
@@ -652,24 +721,29 @@ aven daemon restart
 Open the terminal user interface.
 
 ```sh
-aven tui [-p [<project>] | --project [<project>]] [--add-task] [--add-task-only] [--natural]
+aven tui [<task-ref>] [--view <view>] [-p [<project>] | --project [<project>]] [--label <label>] [--priority <priority>] [--add-task | --add-task-only] [--natural]
 ```
 
-| Option | Description |
+| Argument or option | Description |
 | --- | --- |
+| `[<task-ref>]` | Open a task detail directly. Task refs cannot be combined with browse context or composer options. |
+| `--view <view>` | Start in `queue`, `columns`, `open`, `inbox`, `active`, `backlog`, `todo`, `done`, `upcoming`, `conflicts`, `epics`, or `recent-actions`. |
 | `-p`, `--project [<project>]` | Start in a project. Passing the flag without a value uses the project inferred from the current directory. Omitting the flag starts with workspace scope. |
-| `--add-task` | Open the add-task composer when the full TUI starts. |
-| `--add-task-only` | Run only the add-task popup and exit after submission or cancellation. |
-| `--natural` | Use natural-language intake when the startup add-task composer opens. |
+| `--label <label>` | Apply an initial label filter. |
+| `--priority <priority>` | Apply an initial `none`, `low`, `medium`, `high`, or `urgent` priority filter. |
+| `--add-task` | Open the add-task composer over the selected browse context. |
+| `--add-task-only` | Run only the add-task popup and exit after submission or cancellation. Project scope remains available. |
+| `--natural` | Use natural-language intake. Requires `--add-task` or `--add-task-only`. |
 
-`--natural` has an effect with `--add-task` or `--add-task-only`. `--add-task-only` takes precedence over the full TUI flow.
+Views, project scope, label, priority, and `--add-task` compose. The `recent-actions` view rejects label and priority filters because it displays change-log entries rather than tasks. `--add-task` and `--add-task-only` are mutually exclusive.
 
 ```sh
 aven tui
-aven tui --project aven
-aven tui -p
+aven tui --project aven --view todo --label bug
+aven tui --view columns
+aven tui AVN-7KQ9
 aven tui --add-task --natural
-aven tui --add-task-only
+aven tui --project aven --add-task-only
 ```
 
 ## Agent commands
@@ -737,9 +811,9 @@ Diagnose active configuration, routing, storage, sync, and daemon state.
 aven doctor [--integrity] [--json]
 ```
 
-The report includes config and database paths and their sources, current directory, workspace and project routing, database and workspace counts, client and sequence metadata, sync configuration and recent sync state, unresolved conflict count, daemon wake settings, and macOS service status. Attachment lifecycle rows report referenced, protected, grace-period, eligible, staging, trash, quota, reservation, and inconsistency counts and bytes.
+The report includes config and database paths and their sources, current directory, workspace and project routing, database and workspace counts, client and sequence metadata, sync configuration and recent sync state, unresolved conflict count, daemon wake settings, and macOS service status. Attachment checks report image storage, cleanup eligibility, quotas, operations in progress, and inconsistencies.
 
-Normal doctor checks attachment inventory, task and change links, inventory metadata, supported media types, positive sizes, missing available objects, and orphan object files. `--integrity` also runs SQLite quick-check and referential consistency checks across task, project, path, label, note, dependency, epic, conflict, field-version, and metadata records. Its deep attachment checks verify object hashes, encoded sizes, decoded image content, media types, and stored dimensions. `--json` preserves each result as a labeled row with `ok`, `error`, or `info` status.
+Normal doctor checks attachment records and local image availability. `--integrity` also runs SQLite and relationship checks across the database, verifies stored image hashes and sizes, decodes the images, and confirms their formats and dimensions. `--json` preserves each result as a labeled row with `ok`, `error`, or `info` status.
 
 ```sh
 aven doctor
@@ -773,9 +847,9 @@ aven backup [--output <path>]
 aven backup restore <path> --yes
 ```
 
-Without `--output`, backup creates a timestamped `.aven-backup.tar.zst` archive beside the active database. The archive contains a consistent SQLite backup, a manifest, and every locally available original attachment object. The SQLite database retains all blob inventory rows, including unavailable rows. The manifest and object payload contain only inventory rows marked locally available. Staging, preview cache, trash, and incomplete files are excluded. Aven validates each included object's hash, encoded size, media type, and decoded image content while creating the archive.
+Without `--output`, backup creates a timestamped `.aven-backup.tar.zst` archive beside the active database. The archive contains a consistent database backup and every attachment image available on this device. Attachment records for missing images remain in the database, but the missing files cannot be included. Cached previews and incomplete files are excluded. Aven validates every included image while creating the archive.
 
-`backup restore` requires `--yes`. Archive restore validates the entry structure, manifest, SQLite database, object set, hashes, image content, and canonical attachment metadata before replacement. It replaces the database and original-object set, creates SQLite and blob-directory safety copies, and excludes disposable or incomplete directories from the restored sidecar. Plain SQLite backup files remain accepted for database-only recovery.
+`backup restore` requires `--yes`. Restore checks the archive, database, attachment information, and image files before replacing local data. It creates safety copies of the existing database and attachment directory first. Plain SQLite backup files remain accepted for database-only recovery.
 
 ```sh
 aven backup
@@ -791,7 +865,7 @@ Export portable user and sync metadata as JSON.
 aven export --output <path>
 ```
 
-The versioned export includes workspaces, projects, project paths and aliases, labels, tasks, epic links, task labels, notes, dependencies, attachment metadata, blob inventory, changes, field versions, conflicts, and portable metadata. Attachment bytes are excluded and the top-level `blobs_included` field is `false`. Parent directories are created as needed. The command reports workspace and task counts and output size.
+The versioned export includes workspaces, projects, project paths and aliases, labels, tasks, epics, notes, dependencies, attachment information, changes, conflicts, and other portable data. Image files are excluded and the top-level `blobs_included` field is `false`. Parent directories are created as needed. The command reports workspace and task counts and output size.
 
 ```sh
 aven export --output ~/backups/aven.json
@@ -805,7 +879,7 @@ Replace local data from an aven JSON export.
 aven import <path> --yes
 ```
 
-Import requires explicit confirmation with `--yes`. Aven validates the export format, version, schema version, relationships, attachment IDs, hashes, media types, sizes, filenames, alternative text, dimensions, and inventory consistency. It creates a safety backup, replaces data in one transaction, preserves the target installation's client identity, resets server-specific sync state, and runs integrity checks before committing. Imported blob inventory is marked unavailable because JSON contains no bytes, and pending imported attachment operations do not create upload obligations.
+Import requires explicit confirmation with `--yes`. Aven validates the export, relationships, and attachment information before replacing local data. It creates a safety backup, preserves this installation's client identity, clears server-specific sync state, and runs integrity checks. Because JSON contains no image files, imported attachments are marked unavailable until sync or a backup restore supplies them.
 
 The export schema version must exactly match the installed aven schema.
 

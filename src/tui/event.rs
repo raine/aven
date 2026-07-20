@@ -39,6 +39,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::ToggleColumnsPreview
             | Action::GoBack
             | Action::ToggleHelp
+            | Action::ShowWelcome
             | Action::BeginSearch
             | Action::BeginCommand
             | Action::Refresh

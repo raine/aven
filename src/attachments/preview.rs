@@ -29,7 +29,7 @@ pub(crate) fn cached_preview_path(blob_dir: &Path, source_hash: &str) -> Result<
 pub(crate) async fn ensure_preview(blob_dir: &Path, source_hash: &str) -> Result<PathBuf> {
     let blob_dir = blob_dir.to_path_buf();
     let source_hash = source_hash.to_string();
-    blocking::run(move || ensure_preview_blocking(&blob_dir, &source_hash)).await
+    blocking::run_preview(move || ensure_preview_blocking(&blob_dir, &source_hash)).await
 }
 
 pub(crate) async fn load_preview_png(
@@ -39,7 +39,7 @@ pub(crate) async fn load_preview_png(
 ) -> Result<Vec<u8>> {
     let blob_dir = blob_dir.to_path_buf();
     let source_hash = source_hash.to_string();
-    blocking::run(move || {
+    blocking::run_preview(move || {
         let path = ensure_preview_blocking(&blob_dir, &source_hash)?;
         let bytes = read_validated_preview(&path)?;
         crate::attachments::lifecycle::prune_preview_cache(&blob_dir, preview_quota_bytes)?;

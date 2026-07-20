@@ -124,6 +124,14 @@ pub async fn list_labels_in_workspace(
     crate::labels::list_labels_in_workspace(conn, workspace_id, search).await
 }
 
+pub async fn get_meta(conn: &mut SqliteConnection, key: &str) -> Result<Option<String>> {
+    crate::db::get_meta(conn, key).await
+}
+
+pub async fn set_meta(conn: &mut SqliteConnection, key: &str, value: &str) -> Result<()> {
+    crate::db::set_meta(conn, key, value).await
+}
+
 #[cfg(test)]
 pub async fn test_conn() -> (tempfile::TempDir, PoolConnection<Sqlite>) {
     let temp = tempfile::tempdir().unwrap();
