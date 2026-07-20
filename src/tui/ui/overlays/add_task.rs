@@ -16,6 +16,7 @@ use super::picker::{
 };
 use super::shared::viewport_start_for_cursor;
 use super::tag_combobox::tag_combobox_lines;
+use crate::task_render::human_file_size;
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::{
     AddTaskMode, AddTaskView, ConfirmView, OverlayRoute, PickerView, TAG_COMBOBOX_VIEWPORT_ROWS,
@@ -28,6 +29,7 @@ use crate::tui::widgets::{priority_short, status_span};
 pub(crate) fn add_task_field_at(
     terminal: Rect,
     full_frame: bool,
+    has_attachments: bool,
     column: u16,
     row: u16,
 ) -> Option<AddTaskStep> {
@@ -70,16 +72,20 @@ pub(crate) fn add_task_field_at(
         };
         return AddTaskStep::ALL.get(index).copied();
     }
+    if relative_y == metadata_rows && has_attachments {
+        return Some(AddTaskStep::Images);
+    }
     if content.height <= 10 {
-        if relative_y == metadata_rows {
+        let title_y = metadata_rows + u16::from(has_attachments);
+        if relative_y == title_y {
             return Some(AddTaskStep::Title);
         }
-        if relative_y == metadata_rows + 1 {
+        if relative_y == title_y + 1 {
             return Some(AddTaskStep::Description);
         }
         return None;
     }
-    let title_y = metadata_rows + 1;
+    let title_y = metadata_rows + if has_attachments { 2 } else { 1 };
     if relative_y == title_y || relative_y == title_y + 1 {
         return Some(AddTaskStep::Title);
     }
@@ -105,6 +111,9 @@ pub(in crate::tui::ui) fn render_add_task_full_frame(frame: &mut Frame, state: &
 fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
     let mut lines = add_task_metadata_lines(state, content.width);
     if content.height <= 10 {
+        if !state.attachments.items.is_empty() && lines.len() + 3 < content.height as usize {
+            lines.push(add_task_attachment_line(state, content.width as usize));
+        }
         lines.push(compact_text_field(
             "Title",
             if state.title.is_empty() {
@@ -140,7 +149,12 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
         render_add_task_child(frame, state, content);
         return;
     }
-    lines.push(Line::from(""));
+    if state.attachments.items.is_empty() {
+        lines.push(Line::from(""));
+    } else {
+        lines.push(add_task_attachment_line(state, content.width as usize));
+        lines.push(Line::from(""));
+    }
     lines.push(add_task_field_label(
         "Title",
         state.focus == AddTaskStep::Title,
@@ -189,6 +203,52 @@ fn indent_add_task_input(line: Line<'static>) -> Line<'static> {
     spans.push(Span::raw("  "));
     spans.extend(line.spans);
     Line::from(spans)
+}
+
+fn add_task_attachment_line(state: &AddTaskView, width: usize) -> Line<'static> {
+    let active = state.focus == AddTaskStep::Images;
+    let count = state.attachments.items.len();
+    let selected = state.attachments.selected.min(count.saturating_sub(1));
+    let mut spans = vec![
+        Span::styled(if active { "▶ " } else { "  " }, Style::new().fg(FG)),
+        Span::styled(
+            format!("Images ({count})"),
+            if active {
+                Style::new().fg(FG).add_modifier(Modifier::BOLD)
+            } else {
+                Style::new().fg(FG_DIM)
+            },
+        ),
+    ];
+    if let Some(attachment) = state.attachments.items.get(selected) {
+        spans.push(Span::raw("  "));
+        if count > 1 {
+            if active {
+                spans.push(Span::styled("◀ ", Style::new().fg(FG_MUTED)));
+            }
+            spans.push(Span::styled(
+                format!("{}/{} ", selected + 1, count),
+                Style::new().fg(FG_DIM),
+            ));
+        }
+        spans.push(Span::raw(attachment.filename.clone()));
+        if let Some((width, height)) = attachment.dimensions {
+            spans.push(Span::styled(" · ", Style::new().fg(FG_DIM)));
+            spans.push(Span::styled(
+                format!("{width}×{height}"),
+                Style::new().fg(FG_MUTED),
+            ));
+        }
+        spans.push(Span::styled(" · ", Style::new().fg(FG_DIM)));
+        spans.push(Span::styled(
+            human_file_size(attachment.byte_size),
+            Style::new().fg(FG_MUTED),
+        ));
+        if active && count > 1 {
+            spans.push(Span::styled(" ▶", Style::new().fg(FG_MUTED)));
+        }
+    }
+    fit_line_to_width(Line::from(spans), width)
 }
 
 fn compact_text_field(label: &str, value: &str, active: bool) -> Line<'static> {
@@ -426,11 +486,12 @@ const COMPOSER_HELP_TOPICS: &[(&str, &str)] = &[
     ("Ctrl-Enter", "create from any field"),
     ("Ctrl-s", "portable create fallback"),
     ("Ctrl-n", "create with AI"),
+    ("Images", "Left/Right select; D removes the selected image"),
     ("F1", "open this help"),
     ("Ctrl-x Ctrl-e", "edit description externally"),
     ("Esc", "cancel or confirm discard"),
 ];
-const COMPOSER_HELP_HEIGHT: u16 = 18;
+const COMPOSER_HELP_HEIGHT: u16 = 19;
 const COMPOSER_HELP_FIXED_ROWS: u16 = 4;
 
 pub(crate) fn composer_help_scroll_cap(frame_height: u16, full_frame: bool) -> u16 {
@@ -842,6 +903,14 @@ pub(in crate::tui::ui) fn add_task_hint_line(
             ("Tab", "next"),
             ("^S", "create"),
             ("^N", "create with AI"),
+            ("F1", "help"),
+            ("Esc", "cancel"),
+        ]),
+        AddTaskStep::Images => dialog_hint_line(&[
+            ("←/→", "image"),
+            ("D", "remove"),
+            ("Tab", "next"),
+            ("^S", "create"),
             ("F1", "help"),
             ("Esc", "cancel"),
         ]),

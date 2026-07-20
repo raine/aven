@@ -86,6 +86,18 @@ impl App {
         })
     }
 
+    pub(super) async fn paste_image_from_empty_terminal_paste(&mut self) -> Result<bool> {
+        if self.detail_accepts_image_paste() {
+            self.paste_detail_image_from_clipboard().await?;
+            return Ok(true);
+        }
+        if self.add_task_accepts_image_paste() {
+            self.paste_add_task_image_from_clipboard().await?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     pub(super) async fn paste_detail_image_from_clipboard(&mut self) -> Result<()> {
         if !self.detail_accepts_image_paste() {
             self.set_info("open task detail to attach an image");
@@ -196,11 +208,44 @@ impl App {
             return Ok(());
         };
         if is_new {
+            self.sync_add_task_attachments();
+            if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
+                state.selected_attachment = state.attachments.len().saturating_sub(1);
+            }
             self.set_success("attached image");
         } else {
             self.set_info("image already attached");
         }
         Ok(())
+    }
+
+    pub(super) fn remove_selected_add_task_image(&mut self) {
+        let Some(index) = self.overlay.as_ref().and_then(|overlay| match overlay {
+            OverlayState::AddTask(state) => Some(state.selected_attachment),
+            _ => None,
+        }) else {
+            self.set_info("focus draft images to remove one");
+            return;
+        };
+        let Some(filename) = self.authoring.remove_add_task_attachment(index) else {
+            self.set_info("no draft images to remove");
+            return;
+        };
+        self.sync_add_task_attachments();
+        self.set_success(format!("removed draft image {filename}"));
+    }
+
+    fn sync_add_task_attachments(&mut self) {
+        let attachments = self.authoring.add_task_attachment_summaries();
+        if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
+            state.selected_attachment = state
+                .selected_attachment
+                .min(attachments.len().saturating_sub(1));
+            if attachments.is_empty() && state.focus == crate::tui::authoring::AddTaskStep::Images {
+                state.focus = crate::tui::authoring::AddTaskStep::Title;
+            }
+            state.attachments = attachments;
+        }
     }
 
     fn detail_accepts_image_paste(&self) -> bool {

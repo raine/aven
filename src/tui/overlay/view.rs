@@ -1,4 +1,4 @@
-use crate::tui::authoring::AddTaskStep;
+use crate::tui::authoring::{AddTaskStep, PendingTaskAttachmentSummary};
 use crate::tui::store::{TaskOrder, TuiDatabaseStats, TuiSyncStatus};
 
 use super::layout::TAG_COMBOBOX_VIEWPORT_ROWS;
@@ -68,6 +68,12 @@ pub(crate) struct TextPanelView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AddTaskAttachmentsView {
+    pub(crate) items: Box<[PendingTaskAttachmentSummary]>,
+    pub(crate) selected: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AddTaskView {
     pub(crate) title: String,
     pub(crate) title_cursor: usize,
@@ -83,6 +89,7 @@ pub(crate) struct AddTaskView {
     pub(crate) available_at_cursor: usize,
     pub(crate) due_on: String,
     pub(crate) due_on_cursor: usize,
+    pub(crate) attachments: Box<AddTaskAttachmentsView>,
     pub(crate) mode: AddTaskMode,
     pub(crate) title_error: bool,
     pub(crate) status_prefix_active: bool,
@@ -230,6 +237,10 @@ impl From<&OverlayState> for OverlayView {
                 available_at_cursor: state.available_at.cursor,
                 due_on: state.due_on.text.clone(),
                 due_on_cursor: state.due_on.cursor,
+                attachments: Box::new(AddTaskAttachmentsView {
+                    items: state.attachments.clone().into_boxed_slice(),
+                    selected: state.selected_attachment,
+                }),
                 mode: state.mode.clone(),
                 title_error: state.title_error,
                 status_prefix_active: false,

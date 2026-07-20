@@ -14,17 +14,19 @@ pub(crate) enum AddTaskStep {
     Title,
     AvailableAt,
     Due,
+    Images,
     Description,
 }
 
 impl AddTaskStep {
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 9] = [
         Self::Project,
         Self::Status,
         Self::Priority,
         Self::Labels,
         Self::AvailableAt,
         Self::Due,
+        Self::Images,
         Self::Title,
         Self::Description,
     ];
@@ -53,6 +55,13 @@ impl AddTaskStep {
                 | Self::Due
         )
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingTaskAttachmentSummary {
+    pub(crate) filename: String,
+    pub(crate) byte_size: i64,
+    pub(crate) dimensions: Option<(u32, u32)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -258,6 +267,42 @@ impl AuthoringState {
         draft.attachments.clone()
     }
 
+    pub(crate) fn add_task_attachment_summaries(&self) -> Vec<PendingTaskAttachmentSummary> {
+        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_ref() else {
+            return Vec::new();
+        };
+        draft
+            .attachments
+            .iter()
+            .map(|attachment| PendingTaskAttachmentSummary {
+                filename: pending_attachment_filename(attachment),
+                byte_size: attachment.input.bytes.len() as i64,
+                dimensions: image::ImageReader::new(std::io::Cursor::new(
+                    attachment.input.bytes.as_slice(),
+                ))
+                .with_guessed_format()
+                .ok()
+                .and_then(|reader| reader.into_dimensions().ok()),
+            })
+            .collect()
+    }
+
+    pub(crate) fn remove_add_task_attachment(&mut self, index: usize) -> Option<String> {
+        let Some(AuthoringFlow::AddTask(draft)) = self.flow.as_mut() else {
+            return None;
+        };
+        if index >= draft.attachments.len() {
+            return None;
+        }
+        let attachment = draft.attachments.remove(index);
+        Some(
+            attachment
+                .input
+                .filename
+                .unwrap_or_else(|| "pasted image".to_string()),
+        )
+    }
+
     pub(crate) fn clear_add_task(&mut self) {
         if matches!(self.flow, Some(AuthoringFlow::AddTask(_))) {
             self.flow = None;
@@ -434,6 +479,14 @@ impl AuthoringState {
     pub(crate) fn is_idle(&self) -> bool {
         self.flow.is_none()
     }
+}
+
+fn pending_attachment_filename(attachment: &PendingTaskAttachment) -> String {
+    attachment
+        .input
+        .filename
+        .clone()
+        .unwrap_or_else(|| "pasted image".to_string())
 }
 
 #[cfg(test)]

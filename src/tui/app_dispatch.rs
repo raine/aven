@@ -36,12 +36,22 @@ enum DetailFocusTarget {
     Attachment(String),
 }
 
+fn is_image_paste_key(key: KeyEvent) -> bool {
+    key.code == KeyCode::Char('v')
+        && key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)
+}
+
 impl App {
     pub(super) async fn dispatch_paste(&mut self, text: &str) -> Result<()> {
         if self.paste_detail_image_from_text(text).await? {
             return Ok(());
         }
         if self.paste_add_task_image_from_text(text)? {
+            return Ok(());
+        }
+        if text.is_empty() && self.paste_image_from_empty_terminal_paste().await? {
             return Ok(());
         }
         let Some(overlay) = self.overlay.take() else {
@@ -58,13 +68,11 @@ impl App {
     pub(crate) async fn dispatch_key(&mut self, key: KeyEvent, terminal_size: Size) -> Result<()> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.handle(Action::Quit).await
-        } else if key.code == KeyCode::Char('v')
-            && key.modifiers.contains(KeyModifiers::CONTROL)
+        } else if is_image_paste_key(key)
             && matches!(self.overlay, Some(OverlayState::Detail { .. }))
         {
             self.paste_detail_image_from_clipboard().await
-        } else if key.code == KeyCode::Char('v')
-            && key.modifiers.contains(KeyModifiers::CONTROL)
+        } else if is_image_paste_key(key)
             && matches!(
                 self.overlay,
                 Some(OverlayState::AddTask(_))
@@ -294,6 +302,7 @@ impl App {
                 crate::tui::ui::add_task_field_at(
                     Rect::new(0, 0, terminal_size.width, terminal_size.height),
                     self.intake.view().add_task_only,
+                    !state.attachments.is_empty(),
                     mouse.column,
                     mouse.row,
                 )
@@ -1223,6 +1232,20 @@ impl App {
             });
             return Ok(());
         }
+        let removes_add_task_image = matches!(
+            &overlay,
+            OverlayState::AddTask(state)
+                if matches!(state.mode, AddTaskMode::Compose)
+                    && state.focus == AddTaskStep::Images
+        );
+        if key.code == KeyCode::Char('D')
+            && matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT)
+            && removes_add_task_image
+        {
+            self.overlay = Some(overlay);
+            self.remove_selected_add_task_image();
+            return Ok(());
+        }
         if let OverlayState::Detail { scroll } = overlay {
             if key.code == KeyCode::Esc && self.detail_text_selection.take().is_some() {
                 self.detail_text_dragging = false;
@@ -1832,5 +1855,30 @@ impl App {
             }
             _ => self.overlay = Some(OverlayState::Help { scroll: 0 }),
         }
+    }
+}
+
+#[cfg(test)]
+mod image_paste_key_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_control_and_command_v() {
+        assert!(is_image_paste_key(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::CONTROL,
+        )));
+        assert!(is_image_paste_key(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::SUPER,
+        )));
+    }
+
+    #[test]
+    fn rejects_unmodified_v() {
+        assert!(!is_image_paste_key(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::NONE,
+        )));
     }
 }

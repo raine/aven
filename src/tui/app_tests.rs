@@ -1680,7 +1680,8 @@ mod attachment_paste {
         let (dir, pool, mut app) = test_app_with_pool().await;
         app.set_add_task_db_path(dir.path().join("test.db"));
         let image = dir.path().join("composer.png");
-        std::fs::write(&image, compressible_png_bytes()).unwrap();
+        let image_bytes = compressible_png_bytes();
+        std::fs::write(&image, &image_bytes).unwrap();
 
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         type_chars(&mut app, "Write docs").await;
@@ -1688,6 +1689,15 @@ mod attachment_paste {
         type_chars(&mut app, "Include setup details").await;
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
         app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::AddTask(state))
+                if state.focus == crate::tui::authoring::AddTaskStep::Description
+                    && state.description.lines.join("\n") == "Include setup details"
+                    && state.attachments.len() == 1
+                    && state.attachments[0].byte_size == image_bytes.len() as i64
+                    && state.attachments[0].dimensions == Some((16, 16))
+        ));
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
         assert!(toast_message(&app).is_some_and(|message| message.starts_with("created task ")));
@@ -1714,6 +1724,103 @@ mod attachment_paste {
             Some("pasted image")
         );
         assert!(attachments[0].has_blob);
+    }
+
+    #[tokio::test]
+    async fn add_task_removing_draft_image_preserves_fields_without_database_or_sync_changes() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        let image = dir.path().join("remove.png");
+        let retained = dir.path().join("retained.jpg");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+        std::fs::write(&retained, jpeg_bytes()).unwrap();
+        let changes_before: i64 = sqlx::query_scalar("SELECT count(*) FROM changes")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        type_chars(&mut app, "Keep this title").await;
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        app.dispatch_paste(retained.to_str().unwrap())
+            .await
+            .unwrap();
+        app.handle_overlay_key(key(KeyCode::Up)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Left)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Char('D')))
+            .await
+            .unwrap();
+
+        assert_eq!(app.authoring.add_task_attachments().len(), 1);
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_ref() else {
+            panic!("add task composer should remain open");
+        };
+        assert_eq!(state.title.as_str(), "Keep this title");
+        assert_eq!(state.focus, crate::tui::authoring::AddTaskStep::Images);
+        assert_eq!(
+            state
+                .attachments
+                .iter()
+                .map(|attachment| attachment.filename.as_str())
+                .collect::<Vec<_>>(),
+            vec!["retained.jpg"]
+        );
+        assert_eq!(state.selected_attachment, 0);
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("removed draft image remove.png")
+        );
+        app.handle_overlay_key(key(KeyCode::Char('D')))
+            .await
+            .unwrap();
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_ref() else {
+            panic!("add task composer should remain open");
+        };
+        assert_eq!(state.focus, crate::tui::authoring::AddTaskStep::Title);
+        assert!(state.attachments.is_empty());
+        let attachment_count: i64 = sqlx::query_scalar("SELECT count(*) FROM task_attachments")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let changes_after: i64 = sqlx::query_scalar("SELECT count(*) FROM changes")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(attachment_count, 0);
+        assert_eq!(changes_after, changes_before);
+    }
+
+    #[tokio::test]
+    async fn add_task_attachment_only_dismissal_confirms_and_discards_draft() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        let image = dir.path().join("discard.png");
+        std::fs::write(&image, compressible_png_bytes()).unwrap();
+
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_ref() else {
+            panic!("add task composer should remain open");
+        };
+        assert_eq!(state.attachments[0].filename, "discard.png");
+
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::AddTask(ref state))
+                if state.mode == crate::tui::overlay::AddTaskMode::ConfirmDiscard
+        ));
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(app.authoring.add_task_attachments().is_empty());
+        let task_count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(task_count, 0);
     }
 
     #[tokio::test]
@@ -4698,11 +4805,22 @@ mod authoring {
 
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+            panic!("expected composer");
+        };
+        state
+            .attachments
+            .push(crate::tui::authoring::PendingTaskAttachmentSummary {
+                filename: "draft.png".to_string(),
+                byte_size: 4,
+                dimensions: Some((1, 1)),
+            });
         for (column, row, expected) in [
             (29, 3, AddTaskStep::AvailableAt),
             (55, 3, AddTaskStep::Due),
-            (3, 5, AddTaskStep::Title),
-            (3, 8, AddTaskStep::Description),
+            (3, 4, AddTaskStep::Images),
+            (3, 6, AddTaskStep::Title),
+            (3, 9, AddTaskStep::Description),
         ] {
             app.dispatch_mouse(task_row_click(column, row), (80, 24).into())
                 .await

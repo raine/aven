@@ -1,11 +1,11 @@
 use super::*;
 use crate::query::SyncHistoryStats;
-use crate::tui::authoring::AddTaskStep;
+use crate::tui::authoring::{AddTaskStep, PendingTaskAttachmentSummary};
 use crate::tui::config_overlay::{CONFIG_STATUS_TITLE, DATABASE_STATS_TITLE};
 use crate::tui::overlay::{
-    AddTaskMode, AddTaskView, ConfirmView, MultilineInputView, OverlayRoute, OverlayState,
-    OverlayView, PickerItem, PickerMode, PickerState, PickerView, SearchPurpose, SearchResultItem,
-    TagComboboxView, TextInputView, TextPanelView,
+    AddTaskAttachmentsView, AddTaskMode, AddTaskView, ConfirmView, MultilineInputView,
+    OverlayRoute, OverlayState, OverlayView, PickerItem, PickerMode, PickerState, PickerView,
+    SearchPurpose, SearchResultItem, TagComboboxView, TextInputView, TextPanelView,
 };
 use crate::tui::store::{
     DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts, SyncStatusCheck, TuiDatabaseStats,
@@ -128,6 +128,18 @@ fn picker_item(label: &str, value: &str) -> PickerItem {
     }
 }
 
+fn pending_attachment(
+    filename: &str,
+    byte_size: i64,
+    dimensions: Option<(u32, u32)>,
+) -> PendingTaskAttachmentSummary {
+    PendingTaskAttachmentSummary {
+        filename: filename.to_string(),
+        byte_size,
+        dimensions,
+    }
+}
+
 fn add_task_view() -> AddTaskView {
     AddTaskView {
         title: String::new(),
@@ -144,6 +156,10 @@ fn add_task_view() -> AddTaskView {
         available_at_cursor: 0,
         due_on: String::new(),
         due_on_cursor: 0,
+        attachments: Box::new(AddTaskAttachmentsView {
+            items: Vec::new().into_boxed_slice(),
+            selected: 0,
+        }),
         mode: crate::tui::overlay::AddTaskMode::Compose,
         title_error: false,
         status_prefix_active: false,
@@ -771,8 +787,8 @@ mod add_task_overlay {
 
     #[test]
     fn composer_help_scroll_cap_matches_add_task_layout() {
-        assert_eq!(composer_help_scroll_cap(20, false), 2);
-        assert_eq!(composer_help_scroll_cap(20, true), 0);
+        assert_eq!(composer_help_scroll_cap(20, false), 3);
+        assert_eq!(composer_help_scroll_cap(20, true), 1);
         assert_eq!(composer_help_scroll_cap(30, false), 0);
     }
 
@@ -843,6 +859,60 @@ mod add_task_overlay {
         assert!(rendered.contains("n no"));
         assert!(rendered.contains("Esc cancel"));
         assert!(!rendered.contains("This draft has content"));
+    }
+
+    #[test]
+    fn add_task_overlay_shows_pending_images() {
+        let empty = render_overlay_view(OverlayView::AddTask(add_task_view()));
+        assert!(!empty.contains("Images ("));
+
+        let rendered = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            attachments: Box::new(AddTaskAttachmentsView {
+                items: vec![
+                    pending_attachment("diagram.png", 2048, Some((800, 600))),
+                    pending_attachment("screenshot.png", 1536, Some((1440, 900))),
+                ]
+                .into_boxed_slice(),
+                selected: 0,
+            }),
+            ..add_task_view()
+        }));
+        assert!(rendered.contains("Images (2)  1/2 diagram.png · 800×600 · 2.0 KiB"));
+        assert!(!rendered.contains("D remove"));
+
+        let focused = render_overlay_view(OverlayView::AddTask(AddTaskView {
+            attachments: Box::new(AddTaskAttachmentsView {
+                items: vec![
+                    pending_attachment("diagram.png", 2048, Some((800, 600))),
+                    pending_attachment("screenshot.png", 1536, Some((1440, 900))),
+                ]
+                .into_boxed_slice(),
+                selected: 1,
+            }),
+            focus: AddTaskStep::Images,
+            ..add_task_view()
+        }));
+        assert!(focused.contains("▶ Images (2)  ◀ 2/2 screenshot.png · 1440×900 · 1.5 KiB ▶"));
+        assert!(focused.contains("D remove"));
+
+        let buffer = overlay_buffer(OverlayView::AddTask(AddTaskView {
+            attachments: Box::new(AddTaskAttachmentsView {
+                items: vec![pending_attachment("diagram.png", 2048, Some((800, 600)))]
+                    .into_boxed_slice(),
+                selected: 0,
+            }),
+            ..add_task_view()
+        }));
+        let image_row = (0..buffer.area.height)
+            .find(|row| buffer_row(&buffer, *row).contains("Images (1)"))
+            .unwrap();
+        let image_line = buffer_row(&buffer, image_row);
+        assert!(image_line.contains("diagram.png · 800×600 · 2.0 KiB"));
+        assert!(!image_line.contains("1/1"));
+        let title_row = (0..buffer.area.height)
+            .find(|row| buffer_row(&buffer, *row).contains("Title"))
+            .unwrap();
+        assert_eq!(title_row, image_row + 2);
     }
 
     #[test]

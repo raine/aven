@@ -182,6 +182,23 @@ pub(crate) fn handle_generic_overlay_key(
                     state.focus_next(key.code == KeyCode::BackTab);
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
+                KeyCode::Left if state.focus == AddTaskStep::Images => {
+                    let count = state.attachments.len();
+                    if count > 0 {
+                        state.selected_attachment = state
+                            .selected_attachment
+                            .checked_sub(1)
+                            .unwrap_or(count - 1);
+                    }
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
+                KeyCode::Right if state.focus == AddTaskStep::Images => {
+                    let count = state.attachments.len();
+                    if count > 0 {
+                        state.selected_attachment = (state.selected_attachment + 1) % count;
+                    }
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
                 KeyCode::Left
                     if state.focus.is_metadata()
                         && !matches!(state.focus, AddTaskStep::AvailableAt | AddTaskStep::Due) =>
@@ -209,11 +226,27 @@ pub(crate) fn handle_generic_overlay_key(
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
                 KeyCode::Down if state.focus.is_metadata() => {
+                    state.focus = if state.attachments.is_empty() {
+                        AddTaskStep::Title
+                    } else {
+                        AddTaskStep::Images
+                    };
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
+                KeyCode::Up if state.focus == AddTaskStep::Images => {
+                    state.focus = AddTaskStep::Project;
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
+                KeyCode::Down if state.focus == AddTaskStep::Images => {
                     state.focus = AddTaskStep::Title;
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
                 KeyCode::Up if state.focus == AddTaskStep::Title => {
-                    state.focus = AddTaskStep::Project;
+                    state.focus = if state.attachments.is_empty() {
+                        AddTaskStep::Project
+                    } else {
+                        AddTaskStep::Images
+                    };
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
                 KeyCode::Down if state.focus == AddTaskStep::Title => {
@@ -791,6 +824,14 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::CONTROL)
     }
 
+    fn pending_attachment(filename: &str) -> crate::tui::authoring::PendingTaskAttachmentSummary {
+        crate::tui::authoring::PendingTaskAttachmentSummary {
+            filename: filename.to_string(),
+            byte_size: 4,
+            dimensions: Some((1, 1)),
+        }
+    }
+
     fn add_task_state(focus: AddTaskStep) -> Box<crate::tui::overlay::AddTaskState> {
         Box::new(crate::tui::overlay::AddTaskState {
             title: LineEdit::blank(),
@@ -809,6 +850,8 @@ mod tests {
             labels: Vec::new(),
             available_at: LineEdit::blank(),
             due_on: LineEdit::blank(),
+            attachments: Vec::new(),
+            selected_attachment: 0,
             mode: crate::tui::overlay::AddTaskMode::Compose,
             title_error: false,
         })
@@ -870,7 +913,9 @@ mod tests {
 
     #[test]
     fn add_task_tab_and_backtab_traverse_all_fields() {
-        let mut overlay = OverlayState::AddTask(add_task_state(AddTaskStep::Project));
+        let mut state = add_task_state(AddTaskStep::Project);
+        state.attachments.push(pending_attachment("draft.png"));
+        let mut overlay = OverlayState::AddTask(state);
         for expected in AddTaskStep::ALL.into_iter().skip(1) {
             let OverlayOutcome::None(next) = handle(key(KeyCode::Tab), overlay) else {
                 panic!("expected composer");
@@ -892,6 +937,53 @@ mod tests {
             panic!("expected reverse composer");
         };
         assert_eq!(state.focus, AddTaskStep::Description);
+    }
+
+    #[test]
+    fn add_task_tab_skips_empty_image_field() {
+        let state = add_task_state(AddTaskStep::Due);
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::Tab), OverlayState::AddTask(state))
+        else {
+            panic!("expected add task state");
+        };
+        assert_eq!(state.focus, AddTaskStep::Title);
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::BackTab), OverlayState::AddTask(state))
+        else {
+            panic!("expected add task state");
+        };
+        assert_eq!(state.focus, AddTaskStep::Due);
+    }
+
+    #[test]
+    fn add_task_image_field_cycles_selected_attachment() {
+        let mut state = add_task_state(AddTaskStep::Images);
+        state.attachments = vec![
+            pending_attachment("first.png"),
+            pending_attachment("second.png"),
+            pending_attachment("third.png"),
+        ];
+        state.selected_attachment = 1;
+
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::Right), OverlayState::AddTask(state))
+        else {
+            panic!("expected add task state");
+        };
+        assert_eq!(state.selected_attachment, 2);
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::Right), OverlayState::AddTask(state))
+        else {
+            panic!("expected add task state");
+        };
+        assert_eq!(state.selected_attachment, 0);
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::Left), OverlayState::AddTask(state))
+        else {
+            panic!("expected add task state");
+        };
+        assert_eq!(state.selected_attachment, 2);
     }
 
     #[test]
@@ -958,6 +1050,18 @@ mod tests {
             panic!("expected composer");
         };
         assert_eq!(state.mode, AddTaskMode::Compose);
+    }
+
+    #[test]
+    fn attachment_only_add_task_requires_discard_confirmation() {
+        let mut state = add_task_state(AddTaskStep::Title);
+        state.attachments = vec![pending_attachment("diagram.png")];
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::Esc), OverlayState::AddTask(state))
+        else {
+            panic!("expected discard confirmation");
+        };
+        assert_eq!(state.mode, AddTaskMode::ConfirmDiscard);
     }
 
     #[test]

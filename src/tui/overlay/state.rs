@@ -1,5 +1,5 @@
 use crate::query::SearchMatchedField;
-use crate::tui::authoring::AddTaskStep;
+use crate::tui::authoring::{AddTaskStep, PendingTaskAttachmentSummary};
 use crate::tui::overlay::text_input::LineEdit;
 use crate::tui::store::{TaskOrder, TaskView, TuiDatabaseStats, TuiSyncStatus};
 use crate::tui::text::{char_boundary_at_or_before, normalize_pasted_newlines};
@@ -800,6 +800,8 @@ pub(crate) struct AddTaskState {
     pub(crate) labels: Vec<String>,
     pub(crate) available_at: LineEdit,
     pub(crate) due_on: LineEdit,
+    pub(crate) attachments: Vec<PendingTaskAttachmentSummary>,
+    pub(crate) selected_attachment: usize,
     pub(crate) mode: AddTaskMode,
     pub(crate) title_error: bool,
 }
@@ -818,10 +820,14 @@ impl AddTaskState {
             || !self.labels.is_empty()
             || !self.available_at.text.trim().is_empty()
             || !self.due_on.text.trim().is_empty()
+            || !self.attachments.is_empty()
     }
 
     pub(crate) fn focus_next(&mut self, reverse: bool) {
         self.focus = self.focus.next(reverse);
+        if self.focus == AddTaskStep::Images && self.attachments.is_empty() {
+            self.focus = self.focus.next(reverse);
+        }
     }
 }
 

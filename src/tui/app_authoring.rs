@@ -45,6 +45,7 @@ impl App {
             return;
         };
         let selected_project = self.authoring.selected_add_task_project().flatten();
+        let attachments = self.authoring.add_task_attachment_summaries();
         let inferred_project = (selected_project.is_none() && context.project != "no project")
             .then(|| context.project.clone());
         self.overlay = Some(OverlayState::AddTask(Box::new(AddTaskState {
@@ -65,6 +66,8 @@ impl App {
             labels: context.labels,
             available_at: LineEdit::new(context.available_at),
             due_on: LineEdit::new(context.due_on),
+            selected_attachment: attachments.len().saturating_sub(1),
+            attachments,
             mode: crate::tui::overlay::AddTaskMode::Compose,
             title_error: false,
         })));

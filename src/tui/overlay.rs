@@ -30,6 +30,8 @@ pub(crate) use state::{
 pub(crate) use state::{ConfirmState, TextInputState};
 pub(crate) use tag_combobox::{tag_combobox_completion, tag_combobox_matches};
 pub(crate) use text_input::LineEdit;
+#[cfg(test)]
+pub(crate) use view::AddTaskAttachmentsView;
 pub(crate) use view::{
     AddTaskView, ConfirmView, HeaderMenuView, MultilineInputView, OrderMenuView, OverlayView,
     PickerView, TagComboboxView, TextInputView, TextPanelView,
