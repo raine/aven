@@ -13,6 +13,7 @@ pub mod operations;
 pub mod projects;
 pub mod query;
 pub mod queue;
+pub mod recurrence;
 pub mod refs;
 pub mod sync;
 mod task_enrichment;

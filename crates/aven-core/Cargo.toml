@@ -13,7 +13,8 @@ test-support = []
 
 [dependencies]
 anyhow = "1.0"
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+chrono-tz = "0.10.4"
 flate2 = "1.1"
 getrandom = "0.4"
 hex = "0.4"
