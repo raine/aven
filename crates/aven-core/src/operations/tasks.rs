@@ -1130,6 +1130,7 @@ pub async fn update_task_labels_in_workspace(
     remove_labels: &[String],
 ) -> Result<bool> {
     let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+    crate::operations::route_recurrence_task_field(conn, &workspace, task_id, "labels", "").await?;
     let mut changed = false;
     for label in resolve_labels_in_workspace(conn, &workspace.id, add_labels).await? {
         let rows_affected = sqlx::query(

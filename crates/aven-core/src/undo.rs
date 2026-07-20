@@ -526,6 +526,25 @@ async fn apply_undo_command(
                 bail!("error undo-state-changed task_id={task_id} field={field}");
             }
             if before != after {
+                let recurrence_undone = if task_field == TaskField::Status {
+                    crate::operations::undo_recurrence_resolution(
+                        conn,
+                        workspace_id,
+                        task_id,
+                        before,
+                        after,
+                    )
+                    .await?
+                } else {
+                    false
+                };
+                if recurrence_undone {
+                    return Ok(CommandOutcome {
+                        task_id: Some(task_id.clone()),
+                        include_deleted: None,
+                        project_rename: None,
+                    });
+                }
                 if task_field == TaskField::Project {
                     let project_id = before.parse().map_err(|_| {
                         anyhow::anyhow!("error undo-state-changed task_id={task_id} field={field}")

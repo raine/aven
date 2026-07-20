@@ -26,6 +26,15 @@ pub mod op_type {
     pub const LABEL_DELETE: &str = "label_delete";
     pub const CREATE_WORKSPACE: &str = "create_workspace";
     pub const SET_WORKSPACE_FIELD: &str = "set_workspace_field";
+    pub const CREATE_RECURRENCE_SERIES: &str = "create_recurrence_series";
+    pub const UPDATE_RECURRENCE_TEMPLATE: &str = "update_recurrence_template";
+    pub const PROJECT_RECURRENCE_OCCURRENCE: &str = "project_recurrence_occurrence";
+    pub const RESOLVE_RECURRENCE_OCCURRENCE: &str = "resolve_recurrence_occurrence";
+    pub const RECORD_RECURRENCE_OUTCOME: &str = "record_recurrence_outcome";
+    pub const SET_RECURRENCE_STATE: &str = "set_recurrence_state";
+    pub const OPEN_RECURRENCE_PAUSE: &str = "open_recurrence_pause";
+    pub const CLOSE_RECURRENCE_PAUSE: &str = "close_recurrence_pause";
+    pub const STOP_RECURRENCE_SERIES: &str = "stop_recurrence_series";
 }
 
 pub enum ChangeEntity {
@@ -34,6 +43,7 @@ pub enum ChangeEntity {
     Label,
     #[allow(dead_code)]
     Workspace,
+    RecurrenceSeries,
 }
 
 impl ChangeEntity {
@@ -43,6 +53,7 @@ impl ChangeEntity {
             Self::Project => "project",
             Self::Label => "label",
             Self::Workspace => "workspace",
+            Self::RecurrenceSeries => "recurrence_series",
         }
     }
 }

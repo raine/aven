@@ -8,6 +8,12 @@ use std::str::FromStr;
 use chrono::{NaiveDate, NaiveTime};
 use getrandom::fill as fill_random;
 use serde::{Deserialize, Deserializer, Serialize};
+use sqlx::database::Database;
+use sqlx::decode::Decode;
+use sqlx::encode::{Encode, IsNull};
+use sqlx::error::BoxDynError;
+use sqlx::sqlite::{Sqlite, SqliteTypeInfo, SqliteValueRef};
+use sqlx::types::Type;
 
 use crate::ids::{BASE32, encode_crockford};
 
@@ -91,6 +97,27 @@ impl<'de> Deserialize<'de> for RecurrenceSeriesId {
         String::deserialize(deserializer)?
             .parse()
             .map_err(serde::de::Error::custom)
+    }
+}
+
+impl Type<Sqlite> for RecurrenceSeriesId {
+    fn type_info() -> SqliteTypeInfo {
+        <String as Type<Sqlite>>::type_info()
+    }
+}
+
+impl Encode<'_, Sqlite> for RecurrenceSeriesId {
+    fn encode_by_ref(
+        &self,
+        buffer: &mut <Sqlite as Database>::ArgumentBuffer,
+    ) -> Result<IsNull, BoxDynError> {
+        <String as Encode<Sqlite>>::encode_by_ref(&self.0, buffer)
+    }
+}
+
+impl<'row> Decode<'row, Sqlite> for RecurrenceSeriesId {
+    fn decode(value: SqliteValueRef<'row>) -> Result<Self, BoxDynError> {
+        String::decode(value)?.parse().map_err(Into::into)
     }
 }
 

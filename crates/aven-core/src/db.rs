@@ -377,6 +377,80 @@ pub(crate) async fn insert_change(
     Ok(change_id)
 }
 
+pub(crate) struct IdentifiedChange<'a> {
+    pub change_id: &'a str,
+    pub entity_type: &'a str,
+    pub entity_id: &'a str,
+    pub field: Option<&'a str>,
+    pub op_type: &'a str,
+    pub payload: Value,
+    pub base_version: Option<&'a str>,
+    pub created_at: &'a str,
+}
+
+pub(crate) async fn insert_change_with_identity(
+    conn: &mut SqliteConnection,
+    change: IdentifiedChange<'_>,
+) -> Result<()> {
+    let IdentifiedChange {
+        change_id,
+        entity_type,
+        entity_id,
+        field,
+        op_type,
+        payload,
+        base_version,
+        created_at,
+    } = change;
+    let payload = payload.to_string();
+    let existing = sqlx::query(
+        "SELECT entity_type, entity_id, field, op_type, payload, base_version, created_at
+         FROM changes WHERE change_id = ?",
+    )
+    .bind(change_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    if let Some(existing) = existing {
+        let equal = existing.try_get::<String, _>("entity_type")? == entity_type
+            && existing.try_get::<String, _>("entity_id")? == entity_id
+            && existing.try_get::<Option<String>, _>("field")?.as_deref() == field
+            && existing.try_get::<String, _>("op_type")? == op_type
+            && existing.try_get::<String, _>("payload")? == payload
+            && existing
+                .try_get::<Option<String>, _>("base_version")?
+                .as_deref()
+                == base_version
+            && existing.try_get::<String, _>("created_at")? == created_at;
+        if equal {
+            return Ok(());
+        }
+        bail!("error recurrence-generation-conflict change_id={change_id}");
+    }
+
+    let client_id = get_meta(conn, "client_id")
+        .await?
+        .context("missing client id")?;
+    let local_seq = next_local_seq(conn).await?;
+    sqlx::query(
+        "INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id, field,
+         op_type, payload, base_version, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(change_id)
+    .bind(client_id)
+    .bind(local_seq)
+    .bind(entity_type)
+    .bind(entity_id)
+    .bind(field)
+    .bind(op_type)
+    .bind(payload)
+    .bind(base_version)
+    .bind(created_at)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 fn optional_task_date(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }

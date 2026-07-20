@@ -3,6 +3,7 @@ mod conflicts;
 mod dependencies;
 mod epics;
 mod projects;
+mod recurrence;
 mod tasks;
 
 #[cfg(feature = "test-support")]
@@ -31,6 +32,12 @@ pub use projects::{
     ProjectRenameOutcome,
 };
 pub(crate) use projects::{insert_project_metadata_change, set_project_metadata};
+pub use recurrence::{
+    RecurrenceCreateOutcome, RecurrenceReconcileOutcome, RecurrenceRecordOutcome,
+    RecurrenceResolveOutcome, RecurrenceSeriesDraft, RecurrenceStateOutcome,
+    RecurrenceTemplateUpdate, RecurrenceTemplateUpdateOutcome,
+};
+pub(crate) use recurrence::{route_recurrence_task_field, undo_recurrence_resolution};
 pub(crate) use tasks::update_task_labels_in_workspace;
 pub use tasks::{
     NoteDeleteOutcome, NoteOutcome, TaskCreationOptions, TaskCreationUndo, TaskDraft,

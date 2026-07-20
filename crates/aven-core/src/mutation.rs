@@ -209,6 +209,12 @@ pub(crate) async fn set_task_field(
     field: &str,
     value: &str,
 ) -> Result<bool> {
+    if let Some(changed) =
+        crate::operations::route_recurrence_task_field(conn, workspace, task_id, field, value)
+            .await?
+    {
+        return Ok(changed);
+    }
     let task_field = TaskField::parse_or_unknown(field)?;
     if task_field.is_project() {
         let project = resolve_or_create_project_in_workspace(conn, &workspace.id, value).await?;
@@ -224,6 +230,14 @@ pub(crate) async fn set_task_project(
     task_id: &crate::ids::TaskId,
     project: &Project,
 ) -> Result<bool> {
+    crate::operations::route_recurrence_task_field(
+        conn,
+        workspace,
+        task_id,
+        "project",
+        project.id.as_str(),
+    )
+    .await?;
     let field = TaskField::Project.as_str();
     let current = current_task(conn, &workspace.id, task_id).await?;
     if current.project_id == project.id {
