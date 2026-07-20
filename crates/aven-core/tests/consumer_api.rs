@@ -1,11 +1,19 @@
 use std::path::Path;
 
 use aven_core::api::{
-    ConflictChoice, ConflictField, CreateTask, ErrorCode, OptionalDateUpdate, Store, UpdateTask,
+    ConflictChoice, ConflictField, CorrectRecurrenceOutcome, CreateRecurrenceSeries, CreateTask,
+    ErrorCode, OptionalDateUpdate, OptionalLocalTimeUpdate, RecurrenceDuePolicy,
+    RecurrenceFrequency, RecurrenceHistoryKind, RecurrenceOutcome, RecurrenceRule,
+    RecurrenceScheduleInput, RecurrenceSeriesState, Store, UpdateRecurrenceTemplate, UpdateTask,
 };
 use aven_core::choices::{TaskPriority, TaskStatus};
 use aven_core::db::Database;
 use aven_core::ids::TaskId;
+use aven_core::operations::RecurrenceSeriesDraft;
+use aven_core::recurrence::{
+    RecurrenceDuePolicy as CoreDuePolicy, RecurrenceRule as CoreRule, RecurrenceSchedule,
+    TimeZoneId,
+};
 use aven_core::sync::wire::{
     MAX_PULL_BATCH, MAX_PUSH_BATCH, SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse,
 };
@@ -310,4 +318,318 @@ async fn consumer_api_completes_local_task_and_conflict_flows() {
         .await
         .unwrap_err();
     assert_eq!(missing_conflict.code, ErrorCode::NotFound);
+}
+
+fn daily_series(title: &str) -> CreateRecurrenceSeries {
+    CreateRecurrenceSeries {
+        title: title.to_string(),
+        description: "consumer recurrence".to_string(),
+        project: "Core".to_string(),
+        priority: TaskPriority::High,
+        initial_status: TaskStatus::Todo,
+        labels: Vec::new(),
+        schedule: RecurrenceScheduleInput {
+            rule: RecurrenceRule {
+                frequency: RecurrenceFrequency::Daily,
+                interval: 1,
+                weekdays: Vec::new(),
+            },
+            timezone: "UTC".to_string(),
+            start_on: chrono::Utc::now().date_naive().to_string(),
+            available_local_time: Some("09:30".to_string()),
+            due_policy: RecurrenceDuePolicy::SameDay,
+        },
+    }
+}
+
+#[tokio::test]
+async fn consumer_api_owns_recurrence_lifecycle_reports_and_mutation_routing() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path().join("recurrence.sqlite"))
+        .await
+        .unwrap();
+    let workspace = store.resolve_workspace("default").await.unwrap();
+    let created = store
+        .create_recurrence_series(&workspace.id, daily_series("daily review"))
+        .await
+        .unwrap();
+
+    assert_eq!(created.series.state, RecurrenceSeriesState::Active);
+    assert_eq!(created.task.status, TaskStatus::Todo);
+    assert_eq!(created.occurrence.task_id.as_ref(), Some(&created.task.id));
+    assert!(created.series_ref.starts_with("RCR-"));
+    assert_eq!(
+        store
+            .resolve_recurrence_ref(&workspace.id, created.task.id.as_str())
+            .await
+            .unwrap()
+            .series_ref,
+        created.series_ref
+    );
+
+    let listed = store.list_recurrence_series(&workspace.id).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].current_task_ref.is_some());
+    let shown = store
+        .show_recurrence_series(&workspace.id, &created.series_ref)
+        .await
+        .unwrap();
+    assert!(shown.labels.is_empty());
+    assert_eq!(
+        shown.current_occurrence.unwrap().task_id,
+        Some(created.task.id.clone())
+    );
+
+    let edited = store
+        .update_recurrence_template(
+            &workspace.id,
+            &created.series.id,
+            UpdateRecurrenceTemplate {
+                title: Some("future daily review".to_string()),
+                available_local_time: OptionalLocalTimeUpdate::Clear,
+                due_policy: Some(RecurrenceDuePolicy::None),
+                ..UpdateRecurrenceTemplate::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(edited.changed);
+    assert_eq!(
+        store
+            .fetch_task(&workspace.id, &created.task.id)
+            .await
+            .unwrap()
+            .title,
+        "daily review"
+    );
+
+    let paused = store
+        .pause_recurrence_series(&workspace.id, &created.series.id)
+        .await
+        .unwrap();
+    assert_eq!(paused.series.state, RecurrenceSeriesState::Paused);
+    assert!(
+        store
+            .recurrence_task_report(&workspace.id, false)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let resumed = store
+        .resume_recurrence_series(&workspace.id, &created.series.id)
+        .await
+        .unwrap();
+    assert_eq!(resumed.series.state, RecurrenceSeriesState::Active);
+    assert_eq!(
+        resumed.occurrence.unwrap().task_id,
+        Some(created.task.id.clone())
+    );
+
+    let first = store
+        .update_task(
+            &workspace.id,
+            &created.task.id,
+            UpdateTask {
+                status: Some(TaskStatus::Done),
+                ..UpdateTask::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.task.status, TaskStatus::Done);
+    let successor_ref = store.list_recurrence_series(&workspace.id).await.unwrap()[0]
+        .current_task_ref
+        .clone()
+        .unwrap();
+    let successor_series = store
+        .resolve_recurrence_ref(&workspace.id, &successor_ref)
+        .await
+        .unwrap();
+    assert_eq!(successor_series.series_id, created.series.id);
+    let successor_task = store
+        .show_recurrence_series(&workspace.id, &created.series_ref)
+        .await
+        .unwrap()
+        .current_occurrence
+        .unwrap()
+        .task_id
+        .unwrap();
+    assert_eq!(
+        store
+            .fetch_task(&workspace.id, &successor_task)
+            .await
+            .unwrap()
+            .title,
+        "future daily review"
+    );
+    store
+        .complete_recurrence_occurrence(&workspace.id, &successor_task)
+        .await
+        .unwrap();
+
+    let grouped = store
+        .recurrence_task_report(&workspace.id, false)
+        .await
+        .unwrap();
+    let expanded = store
+        .recurrence_task_report(&workspace.id, true)
+        .await
+        .unwrap();
+    assert_eq!(grouped.len(), 2);
+    assert_eq!(expanded.len(), 3);
+    assert_eq!(
+        grouped
+            .iter()
+            .find_map(|item| item.recurrence_group.as_ref())
+            .unwrap()
+            .counts
+            .completed,
+        2
+    );
+
+    let history = store
+        .recurrence_history(&workspace.id, &created.series_ref, 0, 100)
+        .await
+        .unwrap();
+    assert_eq!(history.series_ref, created.series_ref);
+    assert_eq!(
+        history
+            .items
+            .iter()
+            .filter(|row| row.kind == RecurrenceHistoryKind::Completed)
+            .count(),
+        2
+    );
+    assert!(history.items.iter().any(|row| {
+        row.kind == RecurrenceHistoryKind::Paused && row.interval_started_at.is_some()
+    }));
+
+    let invalid_correction = store
+        .correct_recurrence_outcome(
+            &workspace.id,
+            &created.series.id,
+            CorrectRecurrenceOutcome {
+                slot_on: "bad-date".to_string(),
+                outcome: RecurrenceOutcome::Skipped,
+                resolved_at: "bad-time".to_string(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(invalid_correction.code, ErrorCode::Validation);
+
+    let stopped = store
+        .stop_recurrence_series(&workspace.id, &created.series.id, true)
+        .await
+        .unwrap();
+    assert_eq!(stopped.series.state, RecurrenceSeriesState::Stopped);
+    assert_eq!(
+        stopped.occurrence.unwrap().outcome,
+        Some(RecurrenceOutcome::Skipped)
+    );
+}
+
+#[tokio::test]
+async fn consumer_api_corrects_a_derived_miss_without_creating_a_task() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("correction.sqlite");
+    let database = Database::open(&path).await.unwrap();
+    let workspace = database.list_workspaces().await.unwrap().remove(0);
+    let created_at = chrono::Utc::now() - chrono::Duration::days(3);
+    let start_on = created_at.date_naive();
+    let created = database
+        .create_recurrence_series_at(
+            &workspace,
+            RecurrenceSeriesDraft {
+                title: "correctable daily".to_string(),
+                description: String::new(),
+                project: "Core".to_string(),
+                priority: "none".to_string(),
+                initial_status: "todo".to_string(),
+                labels: Vec::new(),
+                schedule: RecurrenceSchedule::new(
+                    CoreRule::daily(),
+                    "UTC".parse::<TimeZoneId>().unwrap(),
+                    start_on,
+                    None,
+                    CoreDuePolicy::SameDay,
+                ),
+            },
+            created_at,
+        )
+        .await
+        .unwrap();
+    drop(database);
+
+    let store = Store::open(&path).await.unwrap();
+    let corrected_slot = (start_on + chrono::Duration::days(1)).to_string();
+    let corrected = store
+        .correct_recurrence_outcome(
+            &workspace.id,
+            &created.series.id,
+            CorrectRecurrenceOutcome {
+                slot_on: corrected_slot.clone(),
+                outcome: RecurrenceOutcome::Completed,
+                resolved_at: format!("{corrected_slot}T12:00:00Z"),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(corrected.occurrence.task_id, None);
+    assert_eq!(
+        corrected.occurrence.projection_state,
+        aven_core::api::RecurrenceProjectionState::Corrected
+    );
+    let history = store
+        .recurrence_history(&workspace.id, &created.series_ref, 0, 100)
+        .await
+        .unwrap();
+    let row = history
+        .items
+        .iter()
+        .find(|row| row.slot_on.as_deref() == Some(corrected_slot.as_str()))
+        .unwrap();
+    assert!(row.corrected);
+    assert!(!row.openable);
+    assert_eq!(row.task_id, None);
+}
+
+#[tokio::test]
+async fn consumer_recurrence_changes_survive_sync_round_trips() {
+    let directory = tempfile::tempdir().unwrap();
+    let first_path = directory.path().join("recurrence-first.sqlite");
+    let second_path = directory.path().join("recurrence-second.sqlite");
+    let server = Database::open(&directory.path().join("recurrence-server.sqlite"))
+        .await
+        .unwrap();
+    let first = Store::open(&first_path).await.unwrap();
+    let workspace = first.resolve_workspace("default").await.unwrap();
+    let created = first
+        .create_recurrence_series(&workspace.id, daily_series("synced daily"))
+        .await
+        .unwrap();
+    first
+        .pause_recurrence_series(&workspace.id, &created.series.id)
+        .await
+        .unwrap();
+    drop(first);
+
+    exchange(&first_path, &server).await;
+    exchange(&second_path, &server).await;
+
+    let second = Store::open(&second_path).await.unwrap();
+    let series = second.list_recurrence_series(&workspace.id).await.unwrap();
+    assert_eq!(series.len(), 1);
+    assert_eq!(series[0].series.id, created.series.id);
+    assert_eq!(series[0].series.state, RecurrenceSeriesState::Paused);
+    let history = second
+        .recurrence_history(&workspace.id, &series[0].series_ref, 0, 100)
+        .await
+        .unwrap();
+    assert!(
+        history
+            .items
+            .iter()
+            .any(|row| row.kind == RecurrenceHistoryKind::Paused)
+    );
 }

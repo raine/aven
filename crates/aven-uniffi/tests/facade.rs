@@ -1,6 +1,15 @@
+use std::io::Read;
+use std::sync::Arc;
+
+use aven_core::db::Database;
+use aven_core::sync::ServerSyncPage;
+use aven_core::sync::wire::{SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse};
 use aven_uniffi::{
-    AvenClient, AvenError, CreateTask, ErrorCode, OptionalDateUpdate, SyncHttpResponse,
-    TaskPriority, TaskStatus, UpdateTask,
+    AvenClient, AvenError, AvenSyncSession, CorrectRecurrenceOutcome, CreateRecurrenceSeries,
+    CreateTask, ErrorCode, OptionalDateUpdate, OptionalLocalTimeUpdate, RecurrenceDuePolicy,
+    RecurrenceFrequency, RecurrenceHistoryKind, RecurrenceOutcome, RecurrenceRule,
+    RecurrenceScheduleInput, RecurrenceSeriesState, SyncHttpResponse, TaskPriority, TaskStatus,
+    UpdateRecurrenceTemplate, UpdateTask,
 };
 
 fn error_parts(error: AvenError) -> (ErrorCode, String) {
@@ -103,6 +112,169 @@ fn local_task_flow_uses_typed_values_and_validates_ids() {
     assert!(!message.is_empty());
 }
 
+fn daily_series(title: &str) -> CreateRecurrenceSeries {
+    CreateRecurrenceSeries {
+        title: title.to_string(),
+        description: "Swift-safe recurrence".to_string(),
+        project: "swift-proof".to_string(),
+        priority: TaskPriority::High,
+        initial_status: TaskStatus::Todo,
+        labels: Vec::new(),
+        schedule: RecurrenceScheduleInput {
+            rule: RecurrenceRule {
+                frequency: RecurrenceFrequency::Daily,
+                interval: 1,
+                weekdays: Vec::new(),
+            },
+            timezone: "UTC".to_string(),
+            start_on: aven_core::ids::now()[..10].to_string(),
+            available_local_time: Some("08:45".to_string()),
+            due_policy: RecurrenceDuePolicy::SameDay,
+        },
+    }
+}
+
+#[test]
+fn recurrence_facade_exposes_lifecycle_history_reports_and_typed_ingress() {
+    let directory = tempfile::tempdir().unwrap();
+    let client = AvenClient::open(
+        directory
+            .path()
+            .join("recurrence.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    )
+    .unwrap();
+    let workspace = client.resolve_workspace("default".to_string()).unwrap();
+    let created = client
+        .create_recurrence_series(workspace.id.clone(), daily_series("facade daily"))
+        .unwrap();
+    assert_eq!(created.series.state, RecurrenceSeriesState::Active);
+    assert_eq!(
+        created.occurrence.task_id.as_deref(),
+        Some(created.task.id.as_str())
+    );
+
+    let resolution = client
+        .resolve_recurrence_ref(workspace.id.clone(), created.task.id.clone())
+        .unwrap();
+    assert_eq!(resolution.series_ref, created.series_ref);
+    let shown = client
+        .show_recurrence_series(workspace.id.clone(), created.series_ref.clone())
+        .unwrap();
+    assert_eq!(
+        shown.current_occurrence.unwrap().task_id,
+        Some(created.task.id.clone())
+    );
+
+    let edited = client
+        .update_recurrence_template(
+            workspace.id.clone(),
+            created.series.id.clone(),
+            UpdateRecurrenceTemplate {
+                title: Some("facade future".to_string()),
+                description: None,
+                project: None,
+                priority: None,
+                initial_status: None,
+                labels: None,
+                available_local_time: OptionalLocalTimeUpdate::Clear,
+                due_policy: Some(RecurrenceDuePolicy::None),
+            },
+        )
+        .unwrap();
+    assert!(edited.changed);
+
+    assert_eq!(
+        client
+            .pause_recurrence_series(workspace.id.clone(), created.series.id.clone())
+            .unwrap()
+            .series
+            .state,
+        RecurrenceSeriesState::Paused
+    );
+    assert!(
+        client
+            .recurrence_task_report(workspace.id.clone(), false)
+            .unwrap()
+            .is_empty()
+    );
+    client
+        .resume_recurrence_series(workspace.id.clone(), created.series.id.clone())
+        .unwrap();
+
+    let first = client
+        .complete_recurrence_occurrence(workspace.id.clone(), created.task.id.clone())
+        .unwrap();
+    assert_eq!(first.occurrence.outcome, Some(RecurrenceOutcome::Completed));
+    assert_eq!(first.successor.as_ref().unwrap().title, "facade future");
+    client
+        .skip_recurrence_occurrence(workspace.id.clone(), first.successor.unwrap().id)
+        .unwrap();
+
+    let grouped = client
+        .recurrence_task_report(workspace.id.clone(), false)
+        .unwrap();
+    let expanded = client
+        .recurrence_task_report(workspace.id.clone(), true)
+        .unwrap();
+    assert_eq!(grouped.len(), 2);
+    assert_eq!(expanded.len(), 3);
+    let counts = &grouped
+        .iter()
+        .find_map(|item| item.recurrence_group.as_ref())
+        .unwrap()
+        .counts;
+    assert_eq!(counts.completed, 1);
+    assert_eq!(counts.skipped, 1);
+
+    let history = client
+        .recurrence_history(workspace.id.clone(), created.series_ref.clone(), 0, 100)
+        .unwrap();
+    assert!(
+        history
+            .items
+            .iter()
+            .any(|row| row.kind == RecurrenceHistoryKind::Paused)
+    );
+    assert!(history.items.iter().any(|row| {
+        row.kind == RecurrenceHistoryKind::Completed && row.task_id.is_some() && row.openable
+    }));
+
+    let (code, message) = error_parts(
+        client
+            .correct_recurrence_outcome(
+                workspace.id.clone(),
+                created.series.id.clone(),
+                CorrectRecurrenceOutcome {
+                    slot_on: "2026-99-99".to_string(),
+                    outcome: RecurrenceOutcome::Completed,
+                    resolved_at: "invalid".to_string(),
+                },
+            )
+            .unwrap_err(),
+    );
+    assert_eq!(code, ErrorCode::Validation);
+    assert!(message.contains("slot_on"));
+
+    let (code, message) = error_parts(
+        client
+            .pause_recurrence_series(workspace.id.clone(), "bad".to_string())
+            .unwrap_err(),
+    );
+    assert_eq!(code, ErrorCode::Validation);
+    assert!(message.contains("invalid recurrence series id"));
+
+    let stopped = client
+        .stop_recurrence_series(workspace.id, created.series.id, true)
+        .unwrap();
+    assert_eq!(stopped.series.state, RecurrenceSeriesState::Stopped);
+    assert_eq!(
+        stopped.occurrence.unwrap().outcome,
+        Some(RecurrenceOutcome::Skipped)
+    );
+}
+
 #[test]
 fn sync_session_carries_opaque_context_and_accepts_response_bytes() {
     let directory = tempfile::tempdir().unwrap();
@@ -152,4 +324,101 @@ fn sync_session_carries_opaque_context_and_accepts_response_bytes() {
     assert_eq!(summary.blob_upload_remaining_bytes, 0);
     assert_eq!(summary.blob_download_remaining, 0);
     assert_eq!(summary.blob_download_remaining_bytes, 0);
+}
+
+fn exchange_facade_session(
+    session: &Arc<AvenSyncSession>,
+    server: &Database,
+    runtime: &tokio::runtime::Runtime,
+) -> Vec<String> {
+    let mut operations = Vec::new();
+    while let Some(prepared) = session.prepare_request().unwrap() {
+        assert_eq!(prepared.url, "https://sync.test/sync");
+        let body = if prepared
+            .headers
+            .iter()
+            .any(|header| header.name == "content-encoding" && header.value == "gzip")
+        {
+            let mut decoded = Vec::new();
+            flate2::read::GzDecoder::new(prepared.body.as_slice())
+                .read_to_end(&mut decoded)
+                .unwrap();
+            decoded
+        } else {
+            prepared.body.clone()
+        };
+        let request: SyncRequest = serde_json::from_slice(&body).unwrap();
+        operations.extend(request.changes.iter().map(|change| change.op_type.clone()));
+        let persisted = runtime
+            .block_on(server.persist_server_sync_page(ServerSyncPage {
+                request: request.clone(),
+            }))
+            .unwrap();
+        let cursor = persisted
+            .changes
+            .last()
+            .and_then(|change| change.server_seq)
+            .unwrap_or(request.after);
+        session
+            .accept_response(
+                prepared.context,
+                SyncHttpResponse {
+                    status: 200,
+                    headers: Vec::new(),
+                    body: serde_json::to_vec(&SyncResponse {
+                        protocol_version: SYNC_PROTOCOL_VERSION,
+                        cursor,
+                        has_more: persisted.has_more,
+                        push_acks: persisted.push_acks,
+                        changes: persisted.changes,
+                    })
+                    .unwrap(),
+                },
+            )
+            .unwrap();
+    }
+    operations
+}
+
+#[test]
+fn recurrence_operations_round_trip_through_facade_sync_sessions() {
+    let directory = tempfile::tempdir().unwrap();
+    let first_path = directory.path().join("sync-first.sqlite");
+    let second_path = directory.path().join("sync-second.sqlite");
+    let server_path = directory.path().join("sync-server.sqlite");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = runtime.block_on(Database::open(&server_path)).unwrap();
+
+    let first = AvenClient::open(first_path.to_string_lossy().into_owned()).unwrap();
+    let workspace = first.resolve_workspace("default".to_string()).unwrap();
+    let created = first
+        .create_recurrence_series(workspace.id.clone(), daily_series("facade synced"))
+        .unwrap();
+    first
+        .pause_recurrence_series(workspace.id.clone(), created.series.id.clone())
+        .unwrap();
+    let first_session = first
+        .start_sync_session("https://sync.test".to_string(), None, None)
+        .unwrap();
+    let operations = exchange_facade_session(&first_session, &server, &runtime);
+    assert!(
+        operations
+            .iter()
+            .any(|operation| operation == "create_recurrence_series")
+    );
+    assert!(
+        operations
+            .iter()
+            .any(|operation| operation == "open_recurrence_pause")
+    );
+
+    let second = AvenClient::open(second_path.to_string_lossy().into_owned()).unwrap();
+    let second_session = second
+        .start_sync_session("https://sync.test".to_string(), None, None)
+        .unwrap();
+    exchange_facade_session(&second_session, &server, &runtime);
+    let series = second.list_recurrence_series(workspace.id).unwrap();
+    assert_eq!(series.len(), 1);
+    assert_eq!(series[0].series.id, created.series.id);
+    assert_eq!(series[0].series.state, RecurrenceSeriesState::Paused);
 }

@@ -409,6 +409,8 @@ name = "aven-uniffi"
 version = "0.1.12"
 dependencies = [
  "aven-core",
+ "flate2",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

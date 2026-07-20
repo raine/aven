@@ -2,15 +2,34 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use anyhow::Error as InternalError;
+use chrono::{NaiveDate, NaiveTime, Weekday};
 
 use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::db::Database;
 use crate::ids::{ProjectId, TaskId, WorkspaceId};
-use crate::operations::{TaskDraft, TaskUpdate as InternalTaskUpdate};
-use crate::query::{SortDirection, TaskFilters, TaskQueryMode, TaskSort};
+use crate::operations::{
+    RecurrenceSeriesDraft, RecurrenceTemplateUpdate as InternalRecurrenceTemplateUpdate, TaskDraft,
+    TaskUpdate as InternalTaskUpdate,
+};
+use crate::query::{
+    RecurrenceCounts as InternalRecurrenceCounts,
+    RecurrenceHistoryEntry as InternalRecurrenceHistoryEntry,
+    RecurrenceHistoryKind as InternalRecurrenceHistoryKind,
+    RecurrenceSeriesDetail as InternalRecurrenceSeriesDetail,
+    RecurrenceSeriesSummary as InternalRecurrenceSeriesSummary, SortDirection, TaskFilters,
+    TaskListItem, TaskQueryMode, TaskSort,
+};
+use crate::recurrence::{
+    RecurrenceDuePolicy as InternalRecurrenceDuePolicy,
+    RecurrenceFrequency as InternalRecurrenceFrequency,
+    RecurrenceOutcome as InternalRecurrenceOutcome,
+    RecurrenceProjectionState as InternalRecurrenceProjectionState,
+    RecurrenceRule as InternalRecurrenceRule, RecurrenceSchedule, RecurrenceSeriesId,
+    RecurrenceSeriesState as InternalRecurrenceSeriesState, TimeZoneId, WeekdaySet,
+};
 use crate::sync::SyncSession;
 use crate::task_fields::TaskField;
-use crate::types::Task;
+use crate::types::{RecurrenceOccurrence, RecurrenceSeries, Task};
 use crate::workspaces::Workspace;
 
 #[derive(Clone)]
@@ -190,6 +209,278 @@ impl Store {
             .map_err(Error::from_internal)
     }
 
+    pub async fn create_recurrence_series(
+        &self,
+        workspace_id: &WorkspaceId,
+        input: CreateRecurrenceSeries,
+    ) -> Result<RecurrenceCreateResult, Error> {
+        validate_project(&input.project)?;
+        let workspace = self.workspace(workspace_id).await?;
+        let schedule = input.schedule.into_internal()?;
+        self.database
+            .create_recurrence_series(
+                &workspace,
+                RecurrenceSeriesDraft {
+                    title: input.title,
+                    description: input.description,
+                    project: input.project,
+                    priority: input.priority.as_str().to_string(),
+                    initial_status: input.initial_status.as_str().to_string(),
+                    labels: input.labels,
+                    schedule,
+                },
+            )
+            .await
+            .map(|outcome| RecurrenceCreateResult {
+                series: RecurrenceSeriesRecord::from(outcome.series),
+                series_ref: outcome.series_ref,
+                occurrence: RecurrenceOccurrenceRecord::from(outcome.occurrence),
+                task: TaskRecord::from(outcome.task),
+            })
+            .map_err(Error::from_internal)
+    }
+
+    pub async fn update_recurrence_template(
+        &self,
+        workspace_id: &WorkspaceId,
+        series_id: &RecurrenceSeriesId,
+        input: UpdateRecurrenceTemplate,
+    ) -> Result<RecurrenceTemplateUpdateResult, Error> {
+        if let Some(project) = input.project.as_deref() {
+            validate_project(project)?;
+        }
+        let workspace = self.workspace(workspace_id).await?;
+        self.database
+            .update_recurrence_template(
+                &workspace,
+                series_id,
+                InternalRecurrenceTemplateUpdate {
+                    title: input.title,
+                    description: input.description,
+                    project: input.project,
+                    priority: input.priority.map(|value| value.as_str().to_string()),
+                    initial_status: input.initial_status.map(|value| value.as_str().to_string()),
+                    labels: input.labels,
+                    available_local_time: input.available_local_time.into_internal()?,
+                    due_policy: input.due_policy.map(Into::into),
+                    ..InternalRecurrenceTemplateUpdate::default()
+                },
+            )
+            .await
+            .map(|outcome| RecurrenceTemplateUpdateResult {
+                series: RecurrenceSeriesRecord::from(outcome.series),
+                changed: outcome.changed,
+            })
+            .map_err(Error::from_internal)
+    }
+
+    pub async fn resolve_recurrence_ref(
+        &self,
+        workspace_id: &WorkspaceId,
+        input: &str,
+    ) -> Result<RecurrenceRefResolution, Error> {
+        let workspace = self.workspace(workspace_id).await?;
+        let series = self
+            .database
+            .resolve_recurrence_ref(&workspace, input)
+            .await
+            .map_err(Error::from_internal)?;
+        let series_ref = self
+            .database
+            .recurrence_series_ref(workspace_id, &series.id)
+            .await
+            .map_err(Error::from_internal)?;
+        Ok(RecurrenceRefResolution {
+            series_id: series.id,
+            series_ref,
+        })
+    }
+
+    pub async fn list_recurrence_series(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Vec<RecurrenceSeriesSummary>, Error> {
+        self.workspace(workspace_id).await?;
+        self.database
+            .list_recurrence_series(workspace_id)
+            .await
+            .map(|values| values.into_iter().map(Into::into).collect())
+            .map_err(Error::from_internal)
+    }
+
+    pub async fn show_recurrence_series(
+        &self,
+        workspace_id: &WorkspaceId,
+        input: &str,
+    ) -> Result<RecurrenceSeriesDetail, Error> {
+        let resolution = self.resolve_recurrence_ref(workspace_id, input).await?;
+        self.database
+            .recurrence_series_detail(workspace_id, &resolution.series_id)
+            .await
+            .map(Into::into)
+            .map_err(Error::from_internal)
+    }
+
+    pub async fn recurrence_history(
+        &self,
+        workspace_id: &WorkspaceId,
+        input: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<RecurrenceHistoryPage, Error> {
+        if limit == 0 || limit > 500 {
+            return Err(Error::new(
+                ErrorCode::Validation,
+                "recurrence history limit must be between 1 and 500".to_string(),
+            ));
+        }
+        let resolution = self.resolve_recurrence_ref(workspace_id, input).await?;
+        self.database
+            .recurrence_history(workspace_id, &resolution.series_id, offset, limit)
+            .await
+            .map(|page| RecurrenceHistoryPage {
+                series_ref: page.series_ref,
+                items: page.items.into_iter().map(Into::into).collect(),
+                offset: page.offset,
+                limit: page.limit,
+                total: page.total,
+                has_more: page.has_more,
+            })
+            .map_err(Error::from_internal)
+    }
+
+    pub async fn resolve_recurrence_occurrence(
+        &self,
+        workspace_id: &WorkspaceId,
+        task_id: &TaskId,
+        outcome: RecurrenceOutcome,
+    ) -> Result<RecurrenceResolveResult, Error> {
+        let workspace = self.workspace(workspace_id).await?;
+        self.database
+            .resolve_recurrence_occurrence(&workspace, task_id, outcome.into())
+            .await
+            .map(|value| RecurrenceResolveResult {
+                series: value.series.into(),
+                occurrence: value.resolved.into(),
+                task: value.task.into(),
+                successor: value.successor.map(Into::into),
+            })
+            .map_err(Error::from_internal)
+    }
+
+    pub async fn complete_recurrence_occurrence(
+        &self,
+        workspace_id: &WorkspaceId,
+        task_id: &TaskId,
+    ) -> Result<RecurrenceResolveResult, Error> {
+        self.resolve_recurrence_occurrence(workspace_id, task_id, RecurrenceOutcome::Completed)
+            .await
+    }
+
+    pub async fn skip_recurrence_occurrence(
+        &self,
+        workspace_id: &WorkspaceId,
+        task_id: &TaskId,
+    ) -> Result<RecurrenceResolveResult, Error> {
+        self.resolve_recurrence_occurrence(workspace_id, task_id, RecurrenceOutcome::Skipped)
+            .await
+    }
+
+    pub async fn correct_recurrence_outcome(
+        &self,
+        workspace_id: &WorkspaceId,
+        series_id: &RecurrenceSeriesId,
+        input: CorrectRecurrenceOutcome,
+    ) -> Result<RecurrenceRecordResult, Error> {
+        let slot_on = parse_date("slot_on", &input.slot_on)?;
+        validate_rfc3339("resolved_at", &input.resolved_at)?;
+        let workspace = self.workspace(workspace_id).await?;
+        let at = chrono::DateTime::parse_from_rfc3339(&crate::ids::now())
+            .map_err(|error| Error::from_internal(error.into()))?
+            .with_timezone(&chrono::Utc);
+        self.database
+            .record_recurrence_outcome(
+                &workspace,
+                series_id,
+                slot_on,
+                input.outcome.into(),
+                input.resolved_at,
+                at,
+            )
+            .await
+            .map(|value| RecurrenceRecordResult {
+                series: value.series.into(),
+                occurrence: value.occurrence.into(),
+            })
+            .map_err(Error::from_internal)
+    }
+
+    pub async fn pause_recurrence_series(
+        &self,
+        workspace_id: &WorkspaceId,
+        series_id: &RecurrenceSeriesId,
+    ) -> Result<RecurrenceStateResult, Error> {
+        let workspace = self.workspace(workspace_id).await?;
+        self.database
+            .pause_recurrence_series(&workspace, series_id)
+            .await
+            .map(Into::into)
+            .map_err(Error::from_internal)
+    }
+
+    pub async fn resume_recurrence_series(
+        &self,
+        workspace_id: &WorkspaceId,
+        series_id: &RecurrenceSeriesId,
+    ) -> Result<RecurrenceStateResult, Error> {
+        let workspace = self.workspace(workspace_id).await?;
+        let at = chrono::DateTime::parse_from_rfc3339(&crate::ids::now())
+            .map_err(|error| Error::from_internal(error.into()))?
+            .with_timezone(&chrono::Utc);
+        self.database
+            .resume_recurrence_series(&workspace, series_id, at)
+            .await
+            .map(Into::into)
+            .map_err(Error::from_internal)
+    }
+
+    pub async fn stop_recurrence_series(
+        &self,
+        workspace_id: &WorkspaceId,
+        series_id: &RecurrenceSeriesId,
+        skip_current: bool,
+    ) -> Result<RecurrenceStateResult, Error> {
+        let workspace = self.workspace(workspace_id).await?;
+        self.database
+            .stop_recurrence_series(&workspace, series_id, skip_current)
+            .await
+            .map(Into::into)
+            .map_err(Error::from_internal)
+    }
+
+    pub async fn recurrence_task_report(
+        &self,
+        workspace_id: &WorkspaceId,
+        expand_recurring: bool,
+    ) -> Result<Vec<TaskSummary>, Error> {
+        self.workspace(workspace_id).await?;
+        self.database
+            .list_task_items(
+                workspace_id,
+                TaskFilters {
+                    exclude_epics: true,
+                    expand_recurring,
+                    ..TaskFilters::default()
+                },
+                TaskQueryMode::Flat,
+                TaskSort::Created,
+                SortDirection::Asc,
+            )
+            .await
+            .map(|items| items.into_iter().map(TaskSummary::from).collect())
+            .map_err(Error::from_internal)
+    }
+
     pub async fn list_conflicts(
         &self,
         workspace_id: &WorkspaceId,
@@ -330,6 +621,37 @@ fn validate_date_update(field: &str, update: &OptionalDateUpdate) -> Result<(), 
     }
 }
 
+fn parse_date(field: &str, value: &str) -> Result<NaiveDate, Error> {
+    NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| {
+        Error::new(
+            ErrorCode::Validation,
+            format!("{field} must use YYYY-MM-DD"),
+        )
+    })
+}
+
+fn parse_local_time(field: &str, value: &str) -> Result<NaiveTime, Error> {
+    NaiveTime::parse_from_str(value, "%H:%M")
+        .or_else(|_| NaiveTime::parse_from_str(value, "%H:%M:%S"))
+        .map_err(|_| {
+            Error::new(
+                ErrorCode::Validation,
+                format!("{field} must use HH:MM or HH:MM:SS"),
+            )
+        })
+}
+
+fn validate_rfc3339(field: &str, value: &str) -> Result<(), Error> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|_| ())
+        .map_err(|_| {
+            Error::new(
+                ErrorCode::Validation,
+                format!("{field} must be an RFC 3339 timestamp"),
+            )
+        })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageLayout {
     pub root: PathBuf,
@@ -392,6 +714,578 @@ impl OptionalDateUpdate {
             Self::Unchanged => None,
             Self::Set(value) => Some(Some(value)),
             Self::Clear => Some(None),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecurrenceFrequency {
+    Daily,
+    Weekly,
+}
+
+impl From<RecurrenceFrequency> for InternalRecurrenceFrequency {
+    fn from(value: RecurrenceFrequency) -> Self {
+        match value {
+            RecurrenceFrequency::Daily => Self::Daily,
+            RecurrenceFrequency::Weekly => Self::Weekly,
+        }
+    }
+}
+
+impl From<InternalRecurrenceFrequency> for RecurrenceFrequency {
+    fn from(value: InternalRecurrenceFrequency) -> Self {
+        match value {
+            InternalRecurrenceFrequency::Daily => Self::Daily,
+            InternalRecurrenceFrequency::Weekly => Self::Weekly,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecurrenceWeekday {
+    Monday,
+    Tuesday,
+    Wednesday,
+    Thursday,
+    Friday,
+    Saturday,
+    Sunday,
+}
+
+impl From<RecurrenceWeekday> for Weekday {
+    fn from(value: RecurrenceWeekday) -> Self {
+        match value {
+            RecurrenceWeekday::Monday => Self::Mon,
+            RecurrenceWeekday::Tuesday => Self::Tue,
+            RecurrenceWeekday::Wednesday => Self::Wed,
+            RecurrenceWeekday::Thursday => Self::Thu,
+            RecurrenceWeekday::Friday => Self::Fri,
+            RecurrenceWeekday::Saturday => Self::Sat,
+            RecurrenceWeekday::Sunday => Self::Sun,
+        }
+    }
+}
+
+impl From<Weekday> for RecurrenceWeekday {
+    fn from(value: Weekday) -> Self {
+        match value {
+            Weekday::Mon => Self::Monday,
+            Weekday::Tue => Self::Tuesday,
+            Weekday::Wed => Self::Wednesday,
+            Weekday::Thu => Self::Thursday,
+            Weekday::Fri => Self::Friday,
+            Weekday::Sat => Self::Saturday,
+            Weekday::Sun => Self::Sunday,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceRule {
+    pub frequency: RecurrenceFrequency,
+    pub interval: u32,
+    pub weekdays: Vec<RecurrenceWeekday>,
+}
+
+impl RecurrenceRule {
+    fn into_internal(self) -> Result<InternalRecurrenceRule, Error> {
+        InternalRecurrenceRule::new(
+            self.frequency.into(),
+            self.interval,
+            WeekdaySet::from_weekdays(self.weekdays.into_iter().map(Into::into)),
+        )
+        .map_err(|error| Error::new(ErrorCode::Validation, error.to_string()))
+    }
+}
+
+impl From<InternalRecurrenceRule> for RecurrenceRule {
+    fn from(value: InternalRecurrenceRule) -> Self {
+        Self {
+            frequency: value.frequency().into(),
+            interval: value.interval(),
+            weekdays: value.weekdays_set().iter().map(Into::into).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecurrenceDuePolicy {
+    SameDay,
+    None,
+}
+
+impl From<RecurrenceDuePolicy> for InternalRecurrenceDuePolicy {
+    fn from(value: RecurrenceDuePolicy) -> Self {
+        match value {
+            RecurrenceDuePolicy::SameDay => Self::SameDay,
+            RecurrenceDuePolicy::None => Self::None,
+        }
+    }
+}
+
+impl From<InternalRecurrenceDuePolicy> for RecurrenceDuePolicy {
+    fn from(value: InternalRecurrenceDuePolicy) -> Self {
+        match value {
+            InternalRecurrenceDuePolicy::SameDay => Self::SameDay,
+            InternalRecurrenceDuePolicy::None => Self::None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecurrenceSeriesState {
+    Active,
+    Paused,
+    Stopped,
+}
+
+impl From<InternalRecurrenceSeriesState> for RecurrenceSeriesState {
+    fn from(value: InternalRecurrenceSeriesState) -> Self {
+        match value {
+            InternalRecurrenceSeriesState::Active => Self::Active,
+            InternalRecurrenceSeriesState::Paused => Self::Paused,
+            InternalRecurrenceSeriesState::Stopped => Self::Stopped,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecurrenceOutcome {
+    Completed,
+    Skipped,
+}
+
+impl From<RecurrenceOutcome> for InternalRecurrenceOutcome {
+    fn from(value: RecurrenceOutcome) -> Self {
+        match value {
+            RecurrenceOutcome::Completed => Self::Completed,
+            RecurrenceOutcome::Skipped => Self::Skipped,
+        }
+    }
+}
+
+impl From<InternalRecurrenceOutcome> for RecurrenceOutcome {
+    fn from(value: InternalRecurrenceOutcome) -> Self {
+        match value {
+            InternalRecurrenceOutcome::Completed => Self::Completed,
+            InternalRecurrenceOutcome::Skipped => Self::Skipped,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecurrenceProjectionState {
+    Projected,
+    Resolved,
+    Archived,
+    Corrected,
+}
+
+impl From<InternalRecurrenceProjectionState> for RecurrenceProjectionState {
+    fn from(value: InternalRecurrenceProjectionState) -> Self {
+        match value {
+            InternalRecurrenceProjectionState::Projected => Self::Projected,
+            InternalRecurrenceProjectionState::Resolved => Self::Resolved,
+            InternalRecurrenceProjectionState::Archived => Self::Archived,
+            InternalRecurrenceProjectionState::Corrected => Self::Corrected,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceScheduleInput {
+    pub rule: RecurrenceRule,
+    pub timezone: String,
+    pub start_on: String,
+    pub available_local_time: Option<String>,
+    pub due_policy: RecurrenceDuePolicy,
+}
+
+impl RecurrenceScheduleInput {
+    fn into_internal(self) -> Result<RecurrenceSchedule, Error> {
+        let timezone = self
+            .timezone
+            .parse::<TimeZoneId>()
+            .map_err(|error| Error::new(ErrorCode::Validation, error.to_string()))?;
+        let start_on = parse_date("start_on", &self.start_on)?;
+        let available_local_time = self
+            .available_local_time
+            .map(|value| parse_local_time("available_local_time", &value))
+            .transpose()?;
+        Ok(RecurrenceSchedule::new(
+            self.rule.into_internal()?,
+            timezone,
+            start_on,
+            available_local_time,
+            self.due_policy.into(),
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateRecurrenceSeries {
+    pub title: String,
+    pub description: String,
+    pub project: String,
+    pub priority: TaskPriority,
+    pub initial_status: TaskStatus,
+    pub labels: Vec<String>,
+    pub schedule: RecurrenceScheduleInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum OptionalLocalTimeUpdate {
+    #[default]
+    Unchanged,
+    Set(String),
+    Clear,
+}
+
+impl OptionalLocalTimeUpdate {
+    fn into_internal(self) -> Result<Option<Option<NaiveTime>>, Error> {
+        match self {
+            Self::Unchanged => Ok(None),
+            Self::Set(value) => Ok(Some(Some(parse_local_time(
+                "available_local_time",
+                &value,
+            )?))),
+            Self::Clear => Ok(Some(None)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct UpdateRecurrenceTemplate {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub project: Option<String>,
+    pub priority: Option<TaskPriority>,
+    pub initial_status: Option<TaskStatus>,
+    pub labels: Option<Vec<String>>,
+    pub available_local_time: OptionalLocalTimeUpdate,
+    pub due_policy: Option<RecurrenceDuePolicy>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CorrectRecurrenceOutcome {
+    pub slot_on: String,
+    pub outcome: RecurrenceOutcome,
+    pub resolved_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceSeriesRecord {
+    pub workspace_id: WorkspaceId,
+    pub id: RecurrenceSeriesId,
+    pub title: String,
+    pub description: String,
+    pub project_id: ProjectId,
+    pub priority: TaskPriority,
+    pub initial_status: TaskStatus,
+    pub rule: RecurrenceRule,
+    pub timezone: String,
+    pub start_on: String,
+    pub available_local_time: Option<String>,
+    pub due_policy: RecurrenceDuePolicy,
+    pub state: RecurrenceSeriesState,
+    pub stopped_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<RecurrenceSeries> for RecurrenceSeriesRecord {
+    fn from(value: RecurrenceSeries) -> Self {
+        Self {
+            workspace_id: value.workspace_id,
+            id: value.id,
+            title: value.title,
+            description: value.description,
+            project_id: value.project_id,
+            priority: value.priority,
+            initial_status: value.initial_status,
+            rule: value.rule.into(),
+            timezone: value.timezone.to_string(),
+            start_on: value.start_on.to_string(),
+            available_local_time: value
+                .available_local_time
+                .map(|time| time.format("%H:%M:%S").to_string()),
+            due_policy: value.due_policy.into(),
+            state: value.state.into(),
+            stopped_at: value.stopped_at,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceOccurrenceRecord {
+    pub series_id: RecurrenceSeriesId,
+    pub slot_on: String,
+    pub task_id: Option<TaskId>,
+    pub outcome: Option<RecurrenceOutcome>,
+    pub resolved_at: Option<String>,
+    pub projection_state: RecurrenceProjectionState,
+    pub archived_at: Option<String>,
+}
+
+impl From<RecurrenceOccurrence> for RecurrenceOccurrenceRecord {
+    fn from(value: RecurrenceOccurrence) -> Self {
+        Self {
+            series_id: value.series_id,
+            slot_on: value.slot_on.to_string(),
+            task_id: value.task_id,
+            outcome: value.outcome.map(Into::into),
+            resolved_at: value.resolved_at,
+            projection_state: value.projection_state.into(),
+            archived_at: value.archived_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceCreateResult {
+    pub series: RecurrenceSeriesRecord,
+    pub series_ref: String,
+    pub occurrence: RecurrenceOccurrenceRecord,
+    pub task: TaskRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceTemplateUpdateResult {
+    pub series: RecurrenceSeriesRecord,
+    pub changed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceResolveResult {
+    pub series: RecurrenceSeriesRecord,
+    pub occurrence: RecurrenceOccurrenceRecord,
+    pub task: TaskRecord,
+    pub successor: Option<TaskRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceRecordResult {
+    pub series: RecurrenceSeriesRecord,
+    pub occurrence: RecurrenceOccurrenceRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceStateResult {
+    pub series: RecurrenceSeriesRecord,
+    pub occurrence: Option<RecurrenceOccurrenceRecord>,
+}
+
+impl From<crate::operations::RecurrenceStateOutcome> for RecurrenceStateResult {
+    fn from(value: crate::operations::RecurrenceStateOutcome) -> Self {
+        Self {
+            series: value.series.into(),
+            occurrence: value.occurrence.map(Into::into),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceRefResolution {
+    pub series_id: RecurrenceSeriesId,
+    pub series_ref: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RecurrenceCounts {
+    pub completed: u64,
+    pub skipped: u64,
+    pub missed: u64,
+    pub pause_intervals: u64,
+    pub latest_slot_on: Option<String>,
+    pub latest_outcome: Option<RecurrenceOutcome>,
+}
+
+impl From<InternalRecurrenceCounts> for RecurrenceCounts {
+    fn from(value: InternalRecurrenceCounts) -> Self {
+        Self {
+            completed: value.completed as u64,
+            skipped: value.skipped as u64,
+            missed: value.missed as u64,
+            pause_intervals: value.pause_intervals as u64,
+            latest_slot_on: value.latest_slot_on,
+            latest_outcome: value.latest_outcome.map(Into::into),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceSeriesSummary {
+    pub series: RecurrenceSeriesRecord,
+    pub series_ref: String,
+    pub rule_label: String,
+    pub current_slot_on: Option<String>,
+    pub current_task_ref: Option<String>,
+    pub counts: RecurrenceCounts,
+}
+
+impl From<InternalRecurrenceSeriesSummary> for RecurrenceSeriesSummary {
+    fn from(value: InternalRecurrenceSeriesSummary) -> Self {
+        Self {
+            series: value.series.into(),
+            series_ref: value.series_ref,
+            rule_label: value.rule_label,
+            current_slot_on: value.current_slot_on,
+            current_task_ref: value.current_task_ref,
+            counts: value.counts.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceSeriesConflict {
+    pub field: String,
+    pub variant_a: String,
+    pub local_value: String,
+    pub variant_b: String,
+    pub remote_value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceSeriesDetail {
+    pub series: RecurrenceSeriesRecord,
+    pub labels: Vec<String>,
+    pub summary: RecurrenceSeriesSummary,
+    pub current_occurrence: Option<RecurrenceOccurrenceRecord>,
+    pub lifecycle_conflicts: Vec<RecurrenceSeriesConflict>,
+}
+
+impl From<InternalRecurrenceSeriesDetail> for RecurrenceSeriesDetail {
+    fn from(value: InternalRecurrenceSeriesDetail) -> Self {
+        Self {
+            series: value.series.into(),
+            labels: value.labels,
+            summary: value.summary.into(),
+            current_occurrence: value.current_occurrence.map(Into::into),
+            lifecycle_conflicts: value
+                .lifecycle_conflicts
+                .into_iter()
+                .map(|conflict| RecurrenceSeriesConflict {
+                    field: conflict.field,
+                    variant_a: conflict.variant_a,
+                    local_value: conflict.local_value,
+                    variant_b: conflict.variant_b,
+                    remote_value: conflict.remote_value,
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecurrenceHistoryKind {
+    Completed,
+    Skipped,
+    Missed,
+    Paused,
+}
+
+impl From<InternalRecurrenceHistoryKind> for RecurrenceHistoryKind {
+    fn from(value: InternalRecurrenceHistoryKind) -> Self {
+        match value {
+            InternalRecurrenceHistoryKind::Completed => Self::Completed,
+            InternalRecurrenceHistoryKind::Skipped => Self::Skipped,
+            InternalRecurrenceHistoryKind::Missed => Self::Missed,
+            InternalRecurrenceHistoryKind::Paused => Self::Paused,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceHistoryRow {
+    pub kind: RecurrenceHistoryKind,
+    pub slot_on: Option<String>,
+    pub interval_started_at: Option<String>,
+    pub interval_ended_at: Option<String>,
+    pub task_id: Option<TaskId>,
+    pub task_ref: Option<String>,
+    pub openable: bool,
+    pub corrected: bool,
+    pub archived_projection: bool,
+    pub resolved_at: Option<String>,
+}
+
+impl From<InternalRecurrenceHistoryEntry> for RecurrenceHistoryRow {
+    fn from(value: InternalRecurrenceHistoryEntry) -> Self {
+        Self {
+            kind: value.kind.into(),
+            slot_on: value.slot_on,
+            interval_started_at: value.interval_started_at,
+            interval_ended_at: value.interval_ended_at,
+            task_id: value.task_id,
+            task_ref: value.task_ref,
+            openable: value.openable,
+            corrected: value.corrected,
+            archived_projection: value.archived_projection,
+            resolved_at: value.resolved_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceHistoryPage {
+    pub series_ref: String,
+    pub items: Vec<RecurrenceHistoryRow>,
+    pub offset: usize,
+    pub limit: usize,
+    pub total: usize,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskRecurrenceSummary {
+    pub series_id: RecurrenceSeriesId,
+    pub series_ref: String,
+    pub slot_on: String,
+    pub rule_label: String,
+    pub timezone: String,
+    pub lifecycle: RecurrenceSeriesState,
+    pub outcome: Option<RecurrenceOutcome>,
+    pub projection_state: RecurrenceProjectionState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceTaskGroup {
+    pub series_id: RecurrenceSeriesId,
+    pub series_ref: String,
+    pub counts: RecurrenceCounts,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskSummary {
+    pub task: TaskRecord,
+    pub display_ref: String,
+    pub recurrence: Option<TaskRecurrenceSummary>,
+    pub recurrence_group: Option<RecurrenceTaskGroup>,
+}
+
+impl From<TaskListItem> for TaskSummary {
+    fn from(value: TaskListItem) -> Self {
+        Self {
+            task: value.task.into(),
+            display_ref: value.display_ref,
+            recurrence: value.recurrence.map(|summary| TaskRecurrenceSummary {
+                series_id: summary.series_id,
+                series_ref: summary.series_ref,
+                slot_on: summary.slot_on,
+                rule_label: summary.rule_label,
+                timezone: summary.timezone,
+                lifecycle: summary.lifecycle.into(),
+                outcome: summary.outcome.map(Into::into),
+                projection_state: summary.projection_state.into(),
+            }),
+            recurrence_group: value.recurrence_group.map(|group| RecurrenceTaskGroup {
+                series_id: group.series_id,
+                series_ref: group.series_ref,
+                counts: group.counts.into(),
+            }),
         }
     }
 }
@@ -542,11 +1436,13 @@ impl Error {
     }
 
     fn from_internal(error: InternalError) -> Self {
+        let message = error.to_string();
         let code = if error.chain().any(|cause| {
             cause
                 .downcast_ref::<crate::mutation::OpenConflictError>()
                 .is_some()
-        }) {
+        }) || message.contains("recurrence-conflicted-field")
+        {
             ErrorCode::OpenConflict
         } else if error.chain().any(|cause| {
             cause
@@ -556,6 +1452,8 @@ impl Error {
             .chain()
             .filter_map(|cause| cause.downcast_ref::<sqlx::Error>())
             .any(|error| matches!(error, sqlx::Error::RowNotFound))
+            || message.contains("recurrence-series-not-found")
+            || message.contains("recurrence-occurrence-not-found")
         {
             ErrorCode::NotFound
         } else if error
@@ -563,10 +1461,14 @@ impl Error {
             .any(|cause| cause.downcast_ref::<sqlx::Error>().is_some())
         {
             ErrorCode::Database
+        } else if message.starts_with("error recurrence-")
+            || message.starts_with("invalid recurrence")
+        {
+            ErrorCode::Validation
         } else {
             ErrorCode::Internal
         };
-        Self::new(code, error.to_string())
+        Self::new(code, message)
     }
 }
 
