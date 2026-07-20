@@ -45,6 +45,7 @@ pub(super) fn committed_mutation_error(source: anyhow::Error) -> anyhow::Error {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConflictTarget {
     pub(crate) task_id: crate::ids::TaskId,
+    pub(crate) recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
     pub(crate) display_ref: String,
     pub(crate) field: String,
     pub(crate) variant_a: String,

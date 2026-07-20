@@ -7,6 +7,7 @@ mod epics;
 mod launch;
 mod onboarding;
 mod pickers;
+mod recurrence;
 mod sidebar;
 mod sort;
 mod stats;
@@ -31,6 +32,7 @@ pub(crate) use epics::EpicContext;
 pub(crate) use launch::{TuiLaunch, TuiStartup};
 pub(crate) use onboarding::OnboardingStatus;
 pub(crate) use pickers::deleted_picker_items;
+pub(crate) use recurrence::{recurrence_draft, recurrence_history_lines};
 pub(crate) use task_commands::{PriorityMutation, TaskDateField, TaskTextField};
 pub(crate) use task_creation::task_creation_committed;
 pub(crate) use types::{
@@ -290,6 +292,9 @@ impl TuiStore {
                     self.view_state.sort_direction(),
                 )
                 .await?;
+            if self.view_state.view == TaskView::Conflicts {
+                self.append_recurrence_conflict_tasks().await?;
+            }
         }
         self.expand_visible_epics_by_default();
         self.load_epic_child_tasks(&workspace_id).await?;

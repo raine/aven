@@ -2451,6 +2451,39 @@ fn detail_metadata_lines(item: &TaskListItem, width: usize) -> Vec<Line<'static>
             Line::from(Span::styled(truncate_width(&date, width), value_style)),
         ]);
     }
+    if let Some(recurrence) = item.recurrence.as_ref() {
+        let outcome = recurrence
+            .outcome
+            .map(|value| value.as_str())
+            .unwrap_or("open");
+        lines.extend([
+            Line::from(""),
+            metadata_label("RECURRENCE"),
+            Line::from(Span::styled(
+                format!("↻ {}", recurrence.series_ref),
+                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(format!("schedule {}", recurrence.rule_label)),
+            Line::from(format!("slot {}", recurrence.slot_on)),
+            Line::from(format!("zone {}", recurrence.timezone)),
+            Line::from(format!("lifecycle {}", recurrence.lifecycle.as_str())),
+            Line::from(format!("outcome {outcome}")),
+            Line::from(format!(
+                "projection {}",
+                recurrence.projection_state.as_str()
+            )),
+            Line::from(Span::styled("history t r h", Style::new().fg(FG_MUTED))),
+        ]);
+    }
+    if let Some(group) = item.recurrence_group.as_ref() {
+        lines.extend([
+            Line::from(""),
+            metadata_label("SERIES HISTORY"),
+            Line::from(format!("completed {}", group.counts.completed)),
+            Line::from(format!("skipped {}", group.counts.skipped)),
+            Line::from(format!("missed {}", group.counts.missed)),
+        ]);
+    }
     lines.extend(detail_epic_metadata_lines(item));
     if item.has_conflict {
         lines.extend([
@@ -3514,6 +3547,50 @@ mod tests {
         assert!(rendered.contains("PRIORITY\n▲ urgent"));
         assert!(rendered.contains("LABELS\nbug, mobile"));
         assert!(rendered.contains("CONFLICTS\nyes"));
+    }
+
+    #[test]
+    fn detail_metadata_includes_recurrence_state_and_history() {
+        let mut item = detail_test_item();
+        let series_id: aven_core::recurrence::RecurrenceSeriesId =
+            "7KQ9A1X4MV2P8D6R".parse().unwrap();
+        item.recurrence = Some(crate::query::TaskRecurrenceSummary {
+            series_id: series_id.clone(),
+            series_ref: "RCR-A1".to_string(),
+            slot_on: "2026-07-20".to_string(),
+            rule_label: "weekdays at 09:00".to_string(),
+            timezone: "Europe/Helsinki".to_string(),
+            lifecycle: aven_core::recurrence::RecurrenceSeriesState::Paused,
+            outcome: Some(aven_core::recurrence::RecurrenceOutcome::Skipped),
+            projection_state: aven_core::recurrence::RecurrenceProjectionState::Archived,
+        });
+        item.recurrence_group = Some(crate::query::RecurrenceTaskGroup {
+            series_id,
+            series_ref: "RCR-A1".to_string(),
+            counts: crate::query::RecurrenceCounts {
+                series_ref: "RCR-A1".to_string(),
+                completed: 8,
+                skipped: 3,
+                missed: 2,
+                ..crate::query::RecurrenceCounts::default()
+            },
+        });
+
+        let rendered = detail_metadata_lines(&item, 31)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("RECURRENCE\n↻ RCR-A1"));
+        assert!(rendered.contains("schedule weekdays at 09:00"));
+        assert!(rendered.contains("slot 2026-07-20"));
+        assert!(rendered.contains("zone Europe/Helsinki"));
+        assert!(rendered.contains("lifecycle paused"));
+        assert!(rendered.contains("outcome skipped"));
+        assert!(rendered.contains("projection archived"));
+        assert!(rendered.contains("history t r h"));
+        assert!(rendered.contains("SERIES HISTORY\ncompleted 8\nskipped 3\nmissed 2"));
     }
 
     #[test]

@@ -2030,6 +2030,7 @@ mod conflicts {
             .resolve_conflict_value(
                 ConflictTarget {
                     task_id,
+                    recurrence_series_id: None,
                     display_ref: display_ref.clone(),
                     field: "title".to_string(),
                     variant_a: "a".to_string(),
@@ -2114,6 +2115,7 @@ mod conflicts {
             .resolve_conflict_value(
                 ConflictTarget {
                     task_id,
+                    recurrence_series_id: None,
                     display_ref: "APP-1".to_string(),
                     field: "title".to_string(),
                     variant_a: "a".to_string(),
@@ -3270,6 +3272,7 @@ mod undo {
             .resolve_conflict_value(
                 ConflictTarget {
                     task_id: task_id.clone(),
+                    recurrence_series_id: None,
                     display_ref,
                     field: "title".to_string(),
                     variant_a: "a".to_string(),
@@ -3333,6 +3336,7 @@ mod undo {
             .resolve_conflict_value(
                 ConflictTarget {
                     task_id: task_id.clone(),
+                    recurrence_series_id: None,
                     display_ref,
                     field: "project".to_string(),
                     variant_a: "a".to_string(),
@@ -4324,5 +4328,123 @@ mod dependency_actions {
             .unwrap();
         assert_eq!(store.tasks[selected].depends_on[0].task_id, blocker_id);
         assert_eq!(store.tasks[selected].unresolved_blocker_count, 1);
+    }
+}
+
+mod recurrence_surfaces {
+    use super::*;
+    use aven_core::recurrence::{
+        RecurrenceDuePolicy, RecurrenceRule, RecurrenceSchedule, TimeZoneId,
+    };
+    use chrono::Utc;
+
+    async fn create_daily(store: &mut TuiStore) -> (TaskId, usize) {
+        let schedule = RecurrenceSchedule::new(
+            RecurrenceRule::daily(),
+            "UTC".parse::<TimeZoneId>().unwrap(),
+            Utc::now().date_naive(),
+            None,
+            RecurrenceDuePolicy::SameDay,
+        );
+        let (_, selected) = store
+            .create_recurrence_series(
+                recurrence_draft(
+                    "Daily journal".to_string(),
+                    "Write one entry".to_string(),
+                    None,
+                    "medium".to_string(),
+                    "todo".to_string(),
+                    Vec::new(),
+                    schedule,
+                ),
+                None,
+            )
+            .await
+            .unwrap();
+        let selected = selected.unwrap();
+        (store.tasks[selected].task.id.clone(), selected)
+    }
+
+    #[tokio::test]
+    async fn recurrence_store_creation_hydrates_series_and_slot_metadata() {
+        let mut store = test_store().await;
+        let (_, selected) = create_daily(&mut store).await;
+
+        let recurrence = store.tasks[selected].recurrence.as_ref().unwrap();
+        assert!(recurrence.series_ref.starts_with("RCR-"));
+        assert_eq!(recurrence.rule_label, "daily");
+        assert_eq!(recurrence.timezone, "UTC");
+        assert_eq!(recurrence.slot_on, Utc::now().date_naive().to_string());
+    }
+
+    #[tokio::test]
+    async fn paused_projection_leaves_ordinary_views_but_direct_access_remains() {
+        let mut store = test_store().await;
+        let (task_id, selected) = create_daily(&mut store).await;
+
+        store
+            .pause_recurrence(Some(selected))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!store.tasks.iter().any(|item| item.task.id == task_id));
+
+        store.view_state.view = TaskView::Search;
+        store.view_state.filter_modifiers.task_ids = vec![task_id.clone()];
+        store.refresh(Some(&task_id)).await.unwrap();
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].task.id, task_id);
+        assert_eq!(
+            store.tasks[0].recurrence.as_ref().unwrap().lifecycle,
+            aven_core::recurrence::RecurrenceSeriesState::Paused
+        );
+    }
+
+    #[tokio::test]
+    async fn done_view_uses_one_grouped_series_history_row() {
+        let mut store = test_store().await;
+        let (_, selected) = create_daily(&mut store).await;
+        store.update_status(Some(selected), "done").await.unwrap();
+
+        store.show_view(TaskView::Done).await.unwrap();
+        assert_eq!(store.tasks.len(), 1);
+        let group = store.tasks[0].recurrence_group.as_ref().unwrap();
+        assert_eq!(group.counts.completed, 1);
+        assert_eq!(group.counts.skipped, 0);
+    }
+
+    #[tokio::test]
+    async fn lifecycle_conflict_appears_in_needs_action_with_series_target() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (_, selected) = create_daily(&mut store).await;
+        let recurrence = store.tasks[selected].recurrence.clone().unwrap();
+        let workspace_id = store.active_workspace.id.clone();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "INSERT INTO conflicts(
+                workspace_id, entity_type, entity_id, task_id, field, base_version,
+                local_value, remote_value, local_change_id, remote_change_id,
+                variant_a, variant_b, created_at, resolved
+             ) VALUES (?, 'recurrence_series', ?, '', 'state', NULL,
+                'active', 'paused', NULL, ?, 'local', 'remote', ?, 0)",
+        )
+        .bind(&workspace_id)
+        .bind(&recurrence.series_id)
+        .bind(crate::ids::new_id())
+        .bind(crate::ids::now())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        store.show_view(TaskView::Conflicts).await.unwrap();
+        assert_eq!(store.tasks.len(), 1);
+        assert!(store.tasks[0].has_conflict);
+        let targets = store.conflict_targets(Some(0)).await.unwrap().unwrap();
+        assert!(targets.iter().any(|target| {
+            target.field == "state"
+                && target.recurrence_series_id.as_ref() == Some(&recurrence.series_id)
+                && target.display_ref == recurrence.series_ref
+        }));
     }
 }

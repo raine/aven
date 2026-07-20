@@ -24,6 +24,7 @@ use crate::recurrence::{
 use crate::refs::get_task_in_workspace;
 use crate::task_fields::TaskField;
 use crate::types::{MutableEntityType, RecurrenceOccurrence, RecurrenceSeries, Task};
+use crate::undo::{UndoCommand, UndoContext, UndoPayload, record_tui_undo};
 use crate::workspaces::Workspace;
 
 #[cfg(test)]
@@ -169,8 +170,25 @@ impl Database {
         task_id: &TaskId,
         outcome: RecurrenceOutcome,
     ) -> Result<RecurrenceResolveOutcome> {
+        self.resolve_recurrence_occurrence_with_undo(
+            workspace,
+            task_id,
+            outcome,
+            UndoContext::None,
+        )
+        .await
+    }
+
+    pub async fn resolve_recurrence_occurrence_with_undo(
+        &self,
+        workspace: &Workspace,
+        task_id: &TaskId,
+        outcome: RecurrenceOutcome,
+        undo: UndoContext,
+    ) -> Result<RecurrenceResolveOutcome> {
         let mut conn = self.acquire().await?;
         let mut tx = begin_immediate(&mut conn).await?;
+        let before = get_task_in_workspace(&mut tx, workspace, task_id).await?;
         let result = resolve_recurrence_occurrence_in_transaction(
             &mut tx,
             workspace,
@@ -179,6 +197,24 @@ impl Database {
             &now(),
         )
         .await?;
+        if before.status != result.task.status
+            && let UndoContext::Tui { summary } = undo
+        {
+            record_tui_undo(
+                &mut tx,
+                &workspace.id,
+                &summary,
+                UndoPayload {
+                    commands: vec![UndoCommand::SetTaskField {
+                        task_id: task_id.clone(),
+                        field: "status".to_string(),
+                        before: before.status.as_str().to_string(),
+                        after: result.task.status.as_str().to_string(),
+                    }],
+                },
+            )
+            .await?;
+        }
         tx.commit().await?;
         Ok(result)
     }

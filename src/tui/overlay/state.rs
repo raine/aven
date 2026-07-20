@@ -352,6 +352,7 @@ pub(crate) enum TextIntent {
         selection: TaskSelection,
         mixed: bool,
     },
+    RecordRecurrenceOutcome,
     ResolveConflictManually {
         target: ConflictTarget,
     },
@@ -501,6 +502,15 @@ pub(crate) struct AddTaskState {
     pub(crate) due_on: LineEdit,
     pub(crate) attachments: Vec<PendingTaskAttachmentSummary>,
     pub(crate) selected_attachment: usize,
+    pub(crate) recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
+    pub(crate) repeat_rule: String,
+    pub(crate) repeat_weekdays: Vec<String>,
+    pub(crate) repeat_at: LineEdit,
+    pub(crate) repeat_due: String,
+    pub(crate) time_zone: LineEdit,
+    pub(crate) repeat_start_on: LineEdit,
+    pub(crate) recurrence_preview: Vec<String>,
+    pub(crate) recurrence_error: Option<String>,
     pub(crate) mode: AddTaskMode,
     pub(crate) title_error: bool,
 }
@@ -520,6 +530,8 @@ impl AddTaskState {
             || !self.available_at.text.trim().is_empty()
             || !self.due_on.text.trim().is_empty()
             || !self.attachments.is_empty()
+            || self.recurrence_series_id.is_some()
+            || self.repeat_rule != "none"
     }
 
     pub(crate) fn focus_next(&mut self, reverse: bool) {
@@ -527,6 +539,61 @@ impl AddTaskState {
         if self.focus == AddTaskStep::Images && self.attachments.is_empty() {
             self.focus = self.focus.next(reverse);
         }
+    }
+
+    pub(crate) fn recurrence_enabled(&self) -> bool {
+        self.repeat_rule != "none"
+    }
+
+    pub(crate) fn recurrence_rule_input(&self) -> Result<String, &'static str> {
+        match self.repeat_rule.as_str() {
+            "none" | "daily" | "weekdays" => Ok(self.repeat_rule.clone()),
+            "weekly" if self.repeat_weekdays.is_empty() => Ok("weekly".to_string()),
+            "weekly" => Ok(format!("weekly on {}", self.repeat_weekdays.join(","))),
+            rule if rule.starts_with("every ") && self.repeat_weekdays.is_empty() => {
+                Err("choose at least one weekday")
+            }
+            rule if rule.starts_with("every ") => {
+                Ok(format!("{rule} on {}", self.repeat_weekdays.join(",")))
+            }
+            _ => Err("choose a fixed recurrence rule"),
+        }
+    }
+
+    pub(crate) fn recurrence_schedule(
+        &self,
+    ) -> anyhow::Result<Option<aven_core::recurrence::RecurrenceSchedule>> {
+        if !self.recurrence_enabled() {
+            return Ok(None);
+        }
+        let rule = self.recurrence_rule_input().map_err(anyhow::Error::msg)?;
+        crate::commands::recurrence_schedule(
+            &rule,
+            Some(self.repeat_at.text.trim()).filter(|value| !value.is_empty()),
+            Some(&self.repeat_due),
+            Some(self.time_zone.text.trim()).filter(|value| !value.is_empty()),
+            Some(self.repeat_start_on.text.trim()).filter(|value| !value.is_empty()),
+        )
+        .map(Some)
+    }
+
+    pub(crate) fn refresh_recurrence_preview(&mut self) {
+        self.recurrence_preview.clear();
+        self.recurrence_error = None;
+        let Some(schedule) = (match self.recurrence_schedule() {
+            Ok(schedule) => schedule,
+            Err(error) => {
+                self.recurrence_error = Some(format!("{error:#}"));
+                return;
+            }
+        }) else {
+            return;
+        };
+        self.recurrence_preview = schedule
+            .slots_on_or_after(schedule.start_on)
+            .take(3)
+            .map(|date| date.format("%a %Y-%m-%d").to_string())
+            .collect();
     }
 }
 

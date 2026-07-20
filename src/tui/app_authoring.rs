@@ -11,7 +11,7 @@ use crate::tui::authoring::{
 use crate::tui::natural_add_runtime::task_intake_log_path;
 use crate::tui::overlay::{
     AddTaskMode, AddTaskState, LineEdit, MultilineInputState, MultilineIntent, OverlayState,
-    PickerIntent, PickerState, TagComboboxIntent,
+    PickerIntent, PickerItem, PickerState, TagComboboxIntent,
 };
 use crate::tui::platform::edit_text_externally;
 use crate::tui::store::TaskScope;
@@ -32,6 +32,16 @@ impl App {
         };
         self.authoring
             .begin_add_task(active_project, inferred_project);
+        let defaults = crate::commands::recurrence_schedule("daily", None, None, None, None)?;
+        self.authoring.apply_add_task_recurrence(
+            None,
+            "none".to_string(),
+            Vec::new(),
+            String::new(),
+            "same-day".to_string(),
+            defaults.timezone.to_string(),
+            defaults.start_on.to_string(),
+        );
         self.begin_add_task_title();
         Ok(())
     }
@@ -68,9 +78,21 @@ impl App {
             due_on: LineEdit::new(context.due_on),
             selected_attachment: attachments.len().saturating_sub(1),
             attachments,
+            recurrence_series_id: context.recurrence_series_id,
+            repeat_rule: context.repeat_rule,
+            repeat_weekdays: context.repeat_weekdays,
+            repeat_at: LineEdit::new(context.repeat_at),
+            repeat_due: context.repeat_due,
+            time_zone: LineEdit::new(context.time_zone),
+            repeat_start_on: LineEdit::new(context.repeat_start_on),
+            recurrence_preview: Vec::new(),
+            recurrence_error: None,
             mode: crate::tui::overlay::AddTaskMode::Compose,
             title_error: false,
         })));
+        if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
+            state.refresh_recurrence_preview();
+        }
     }
 
     pub(super) fn begin_add_task_step(&mut self) {
@@ -115,6 +137,15 @@ impl App {
                 .apply_add_task_available_at(state.available_at.text.clone());
             self.authoring
                 .apply_add_task_due_on(state.due_on.text.clone());
+            self.authoring.apply_add_task_recurrence(
+                state.recurrence_series_id.clone(),
+                state.repeat_rule.clone(),
+                state.repeat_weekdays.clone(),
+                state.repeat_at.text.clone(),
+                state.repeat_due.clone(),
+                state.time_zone.text.clone(),
+                state.repeat_start_on.text.clone(),
+            );
         }
         captured
     }
@@ -185,6 +216,61 @@ impl App {
                 };
                 AddTaskMode::Labels(labels)
             }
+            AddTaskStep::RepeatRule => AddTaskMode::Picker {
+                field: state.focus,
+                state: PickerState::new(
+                    PickerIntent::AddTaskStatus,
+                    "Add task: recurrence rule",
+                    [
+                        "none",
+                        "daily",
+                        "weekdays",
+                        "weekly",
+                        "every 2 weeks",
+                        "every 3 weeks",
+                    ]
+                    .into_iter()
+                    .map(|value| PickerItem {
+                        label: value.to_string(),
+                        value: value.to_string(),
+                        selected: value == state.repeat_rule,
+                    })
+                    .collect(),
+                    false,
+                ),
+            },
+            AddTaskStep::RepeatWeekdays => AddTaskMode::Picker {
+                field: state.focus,
+                state: PickerState::new(
+                    PickerIntent::AddTaskStatus,
+                    "Add task: recurring weekdays",
+                    ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+                        .into_iter()
+                        .map(|value| PickerItem {
+                            label: value.to_string(),
+                            value: value.to_string(),
+                            selected: state.repeat_weekdays.iter().any(|day| day == value),
+                        })
+                        .collect(),
+                    true,
+                ),
+            },
+            AddTaskStep::RepeatDue => AddTaskMode::Picker {
+                field: state.focus,
+                state: PickerState::new(
+                    PickerIntent::AddTaskStatus,
+                    "Add task: recurrence due policy",
+                    ["same-day", "none"]
+                        .into_iter()
+                        .map(|value| PickerItem {
+                            label: value.to_string(),
+                            value: value.to_string(),
+                            selected: value == state.repeat_due,
+                        })
+                        .collect(),
+                    false,
+                ),
+            },
             _ => AddTaskMode::Compose,
         };
         self.overlay = Some(OverlayState::AddTask(state));

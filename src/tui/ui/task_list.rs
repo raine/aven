@@ -1435,6 +1435,33 @@ fn task_preview_lines(item: &TaskListItem, width: usize, height: usize) -> Vec<L
     if let Some(availability) = availability_preview_line(item, now_seconds(), width) {
         lines.push(availability);
     }
+    if let Some(recurrence) = item.recurrence.as_ref() {
+        lines.push(Line::from(vec![
+            Span::styled("↻ ", Style::new().fg(ACCENT)),
+            Span::styled(
+                recurrence.series_ref.clone(),
+                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(
+                    " · slot {} · {} · {}",
+                    recurrence.slot_on,
+                    recurrence.rule_label,
+                    recurrence.lifecycle.as_str()
+                ),
+                Style::new().fg(FG_MUTED),
+            ),
+        ]));
+    }
+    if let Some(group) = item.recurrence_group.as_ref() {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "series history ✓{} completed · ↷{} skipped · ×{} missed",
+                group.counts.completed, group.counts.skipped, group.counts.missed
+            ),
+            Style::new().fg(FG_MUTED),
+        )));
+    }
     lines.push(Line::from(vec![
         Span::styled("labels ", Style::new().fg(FG_DIM)),
         Span::styled(labels, Style::new().fg(FG_MUTED)),
@@ -2536,5 +2563,55 @@ mod tests {
         assert!(rendered.contains("first child"));
         assert!(rendered.contains("  └─ APP-C002"));
         assert!(rendered.contains("second child"));
+    }
+
+    #[test]
+    fn recurring_rows_and_preview_show_series_context() {
+        let mut item = task_item("daily review");
+        let series_id: aven_core::recurrence::RecurrenceSeriesId =
+            "7KQ9A1X4MV2P8D6R".parse().unwrap();
+        item.recurrence = Some(crate::query::TaskRecurrenceSummary {
+            series_id: series_id.clone(),
+            series_ref: "RCR-A1".to_string(),
+            slot_on: "2026-07-20".to_string(),
+            rule_label: "daily at 09:00".to_string(),
+            timezone: "Europe/Helsinki".to_string(),
+            lifecycle: aven_core::recurrence::RecurrenceSeriesState::Active,
+            outcome: None,
+            projection_state: aven_core::recurrence::RecurrenceProjectionState::Projected,
+        });
+        item.recurrence_group = Some(crate::query::RecurrenceTaskGroup {
+            series_id,
+            series_ref: "RCR-A1".to_string(),
+            counts: crate::query::RecurrenceCounts {
+                series_ref: "RCR-A1".to_string(),
+                completed: 4,
+                skipped: 2,
+                missed: 1,
+                latest_slot_on: Some("2026-07-20".to_string()),
+                ..crate::query::RecurrenceCounts::default()
+            },
+        });
+
+        let row_text = title_cell(&item, 80).to_string();
+        assert!(row_text.contains("↻"));
+        assert!(row_text.contains("2026-07-20"));
+        assert!(row_text.contains("RCR-A1"));
+        assert!(row_text.contains("✓4"));
+        assert!(row_text.contains("↷2"));
+        assert!(row_text.contains("×1"));
+
+        let preview = task_preview_lines(&item, 80, 20)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(preview.contains("RCR-A1"));
+        assert!(preview.contains("slot 2026-07-20"));
+        assert!(preview.contains("daily at 09:00"));
+        assert!(preview.contains("active"));
+        assert!(preview.contains("4 completed"));
+        assert!(preview.contains("2 skipped"));
+        assert!(preview.contains("1 missed"));
     }
 }

@@ -69,7 +69,13 @@ pub(crate) fn age_style(created_at: &str, now_seconds: i64) -> Style {
 }
 
 pub(crate) fn title_cell(item: &TaskListItem, max_width: usize) -> Line<'static> {
-    let marker = if item.has_conflict { "⚡ " } else { "" };
+    let mut marker = String::new();
+    if item.has_conflict {
+        marker.push_str("⚡ ");
+    }
+    if item.recurrence.is_some() {
+        marker.push_str("↻ ");
+    }
     let content_width = max_width.saturating_sub(1);
     let title_style = if item.task.deleted {
         Style::new()
@@ -80,9 +86,24 @@ pub(crate) fn title_cell(item: &TaskListItem, max_width: usize) -> Line<'static>
     };
     let marker_width = marker.chars().count();
     let title_width = content_width.saturating_sub(marker_width);
-    let title = truncate_title(&item.task.title, title_width);
+    let title_text = if let Some(group) = item.recurrence_group.as_ref() {
+        format!(
+            "{} · {} {} ✓{} ↷{} ×{}",
+            item.task.title,
+            group.series_ref,
+            group.counts.latest_slot_on.as_deref().unwrap_or(""),
+            group.counts.completed,
+            group.counts.skipped,
+            group.counts.missed
+        )
+    } else if let Some(recurrence) = item.recurrence.as_ref() {
+        format!("{} · {}", item.task.title, recurrence.slot_on)
+    } else {
+        item.task.title.clone()
+    };
+    let title = truncate_title(&title_text, title_width);
     Line::from(vec![
-        Span::styled(marker.to_string(), Style::new().fg(ORANGE)),
+        Span::styled(marker, Style::new().fg(ORANGE)),
         Span::styled(title, title_style),
     ])
 }

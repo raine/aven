@@ -39,7 +39,7 @@ pub(crate) fn add_task_field_at(
         crate::tui::overlay::dialog_area(
             terminal,
             100,
-            terminal.height.saturating_sub(2).clamp(14, 22),
+            terminal.height.saturating_sub(2).clamp(18, 28),
         )
     };
     let content = Rect {
@@ -55,28 +55,35 @@ pub(crate) fn add_task_field_at(
     let relative_x = column.saturating_sub(content.x);
     let relative_y = row.saturating_sub(content.y);
     let metadata_rows = if content.width >= 120 {
-        1
-    } else if content.width >= 60 {
         2
-    } else {
+    } else if content.width >= 60 {
+        4
+    } else if content.width >= 40 {
         6
+    } else {
+        12
     };
     if relative_y < metadata_rows {
-        let index = if metadata_rows == 1 {
-            (relative_x as usize * 6 / content.width.max(1) as usize).min(5)
-        } else if metadata_rows == 2 {
+        let index = if metadata_rows == 2 {
+            let row_index = relative_y as usize;
+            row_index * 6 + (relative_x as usize * 6 / content.width.max(1) as usize).min(5)
+        } else if metadata_rows == 4 {
             let row_index = relative_y as usize;
             row_index * 3 + (relative_x as usize * 3 / content.width.max(1) as usize).min(2)
+        } else if metadata_rows == 6 {
+            let row_index = relative_y as usize;
+            row_index * 2 + (relative_x as usize * 2 / content.width.max(1) as usize).min(1)
         } else {
             relative_y as usize
         };
         return AddTaskStep::ALL.get(index).copied();
     }
-    if relative_y == metadata_rows && has_attachments {
+    let preview_rows = u16::from(content.height > 10);
+    if relative_y == metadata_rows + preview_rows && has_attachments {
         return Some(AddTaskStep::Images);
     }
     if content.height <= 10 {
-        let title_y = metadata_rows + u16::from(has_attachments);
+        let title_y = metadata_rows + preview_rows + u16::from(has_attachments);
         if relative_y == title_y {
             return Some(AddTaskStep::Title);
         }
@@ -85,7 +92,7 @@ pub(crate) fn add_task_field_at(
         }
         return None;
     }
-    let title_y = metadata_rows + if has_attachments { 2 } else { 1 };
+    let title_y = metadata_rows + preview_rows + if has_attachments { 2 } else { 1 };
     if relative_y == title_y || relative_y == title_y + 1 {
         return Some(AddTaskStep::Title);
     }
@@ -96,7 +103,7 @@ pub(crate) fn add_task_field_at(
 }
 
 pub(in crate::tui::ui) fn render_add_task(frame: &mut Frame, state: &AddTaskView) {
-    let height = frame.area().height.saturating_sub(2).clamp(14, 22);
+    let height = frame.area().height.saturating_sub(2).clamp(18, 28);
     let dialog = Dialog::new("Add task", 100, height);
     let content = dialog.render_block(frame);
     render_add_task_body(frame, state, content);
@@ -110,6 +117,9 @@ pub(in crate::tui::ui) fn render_add_task_full_frame(frame: &mut Frame, state: &
 
 fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
     let mut lines = add_task_metadata_lines(state, content.width);
+    if content.height > 10 {
+        lines.push(recurrence_preview_line(state, content.width as usize));
+    }
     if content.height <= 10 {
         if !state.attachments.items.is_empty() && lines.len() + 3 < content.height as usize {
             lines.push(add_task_attachment_line(state, content.width as usize));
@@ -279,14 +289,69 @@ fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>
         .collect::<Vec<_>>();
     owned.push(availability_metadata_field(state));
     owned.push(due_metadata_field(state));
+    owned.push(metadata_field(
+        AddTaskStep::RepeatRule,
+        "Repeat",
+        &state.repeat_rule,
+        state.focus,
+    ));
+    owned.push(metadata_field(
+        AddTaskStep::RepeatWeekdays,
+        "Weekdays",
+        &if state.repeat_weekdays.is_empty() {
+            "start day".to_string()
+        } else {
+            state.repeat_weekdays.join(",")
+        },
+        state.focus,
+    ));
+    owned.push(recurrence_inline_field(
+        state,
+        AddTaskStep::RepeatAt,
+        "At",
+        &state.repeat_at,
+        state.repeat_at_cursor,
+        "boundary",
+    ));
+    owned.push(metadata_field(
+        AddTaskStep::RepeatDue,
+        "Repeat due",
+        &state.repeat_due,
+        state.focus,
+    ));
+    owned.push(recurrence_inline_field(
+        state,
+        AddTaskStep::TimeZone,
+        "Zone",
+        &state.time_zone,
+        state.time_zone_cursor,
+        "IANA zone",
+    ));
+    owned.push(recurrence_inline_field(
+        state,
+        AddTaskStep::RepeatStartOn,
+        "Start",
+        &state.repeat_start_on,
+        state.repeat_start_on_cursor,
+        "YYYY-MM-DD",
+    ));
     if width >= 120 {
-        return vec![metadata_row(owned, width as usize)];
+        return vec![
+            metadata_row(owned[..6].to_vec(), width as usize),
+            metadata_row(owned[6..].to_vec(), width as usize),
+        ];
     }
     if width >= 60 {
-        return vec![
-            metadata_row(owned[..3].to_vec(), width as usize),
-            metadata_row(owned[3..].to_vec(), width as usize),
-        ];
+        return owned
+            .chunks(3)
+            .map(|chunk| metadata_row(chunk.to_vec(), width as usize))
+            .collect();
+    }
+    if width >= 40 {
+        return owned
+            .chunks(2)
+            .map(|chunk| metadata_row(chunk.to_vec(), width as usize))
+            .collect();
     }
     owned
         .into_iter()
@@ -336,6 +401,46 @@ fn due_metadata_field(state: &AddTaskView) -> Line<'static> {
         );
     }
     line
+}
+
+fn recurrence_inline_field(
+    state: &AddTaskView,
+    field: AddTaskStep,
+    label: &str,
+    value: &str,
+    cursor: usize,
+    placeholder: &'static str,
+) -> Line<'static> {
+    let mut line = metadata_field(
+        field,
+        label,
+        if value.is_empty() { placeholder } else { value },
+        state.focus,
+    );
+    if state.focus == field {
+        line.spans.pop();
+        line.spans
+            .extend(placeholder_input_line(value, Some(cursor), 48, placeholder).spans);
+    }
+    line
+}
+
+fn recurrence_preview_line(state: &AddTaskView, width: usize) -> Line<'static> {
+    let value = if let Some(error) = state.recurrence_error.as_deref() {
+        format!("Schedule error: {error}")
+    } else if state.repeat_rule == "none" {
+        "Schedule preview: choose Repeat to create a series".to_string()
+    } else if state.recurrence_preview.is_empty() {
+        "Schedule preview: no upcoming slots".to_string()
+    } else {
+        format!("Next slots: {}", state.recurrence_preview.join(" · "))
+    };
+    let style = if state.recurrence_error.is_some() {
+        Style::new().fg(Color::Red).add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(FG_DIM)
+    };
+    fit_line_to_width(Line::from(Span::styled(value, style)), width)
 }
 
 pub(in crate::tui::ui) fn metadata_field(
@@ -893,7 +998,10 @@ pub(in crate::tui::ui) fn add_task_hint_line(
         AddTaskStep::Project
         | AddTaskStep::Status
         | AddTaskStep::Priority
-        | AddTaskStep::Labels => dialog_hint_line(&[
+        | AddTaskStep::Labels
+        | AddTaskStep::RepeatRule
+        | AddTaskStep::RepeatWeekdays
+        | AddTaskStep::RepeatDue => dialog_hint_line(&[
             ("Enter", "choose"),
             ("←/→", "field"),
             ("Tab", "next"),
@@ -918,7 +1026,10 @@ pub(in crate::tui::ui) fn add_task_hint_line(
             ("F1", "help"),
             ("Esc", "cancel"),
         ]),
-        AddTaskStep::AvailableAt => dialog_hint_line(&[
+        AddTaskStep::AvailableAt
+        | AddTaskStep::RepeatAt
+        | AddTaskStep::TimeZone
+        | AddTaskStep::RepeatStartOn => dialog_hint_line(&[
             ("←/→", "cursor"),
             ("empty/now", "immediate"),
             ("Tab", "next"),

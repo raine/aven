@@ -66,6 +66,93 @@ impl App {
             }
         }
 
+        let recurrence_schedule = match state.recurrence_schedule() {
+            Ok(value) => value,
+            Err(error) => {
+                state.focus = AddTaskStep::RepeatRule;
+                state.mode = AddTaskMode::Compose;
+                state.recurrence_error = Some(format!("{error:#}"));
+                self.overlay = Some(OverlayState::AddTask(Box::new(state)));
+                self.set_warning(format!("{error:#}"));
+                return Ok(());
+            }
+        };
+        if recurrence_schedule.is_some()
+            && (!state.available_at.text.trim().is_empty() || !state.due_on.text.trim().is_empty())
+        {
+            state.focus = AddTaskStep::RepeatAt;
+            state.mode = AddTaskMode::Compose;
+            self.overlay = Some(OverlayState::AddTask(Box::new(state)));
+            self.set_warning(
+                "recurring tasks use recurrence availability and due policy; clear Available and Due",
+            );
+            return Ok(());
+        }
+        if recurrence_schedule.is_some() && self.authoring.add_task_has_pending_attachments() {
+            state.mode = AddTaskMode::Compose;
+            self.overlay = Some(OverlayState::AddTask(Box::new(state)));
+            self.set_warning("create the recurring task before adding occurrence attachments");
+            return Ok(());
+        }
+
+        if let Some(series_id) = state.recurrence_series_id.clone() {
+            let schedule = recurrence_schedule
+                .as_ref()
+                .expect("recurrence template editor retains its schedule");
+            let selected_task_id = self
+                .store
+                .selected_task(self.list.selected_task())
+                .map(|item| item.task.id.clone());
+            let message = self
+                .store
+                .update_recurrence_template(
+                    &series_id,
+                    aven_core::operations::RecurrenceTemplateUpdate {
+                        title: Some(title.to_string()),
+                        description: Some(state.description.lines.join("\n").trim().to_string()),
+                        project: state.selected_project.clone(),
+                        priority: Some(state.priority.clone()),
+                        initial_status: Some(state.status.clone()),
+                        labels: Some(state.labels.clone()),
+                        available_local_time: Some(schedule.available_local_time),
+                        due_policy: Some(schedule.due_policy),
+                        ..aven_core::operations::RecurrenceTemplateUpdate::default()
+                    },
+                    selected_task_id.as_ref(),
+                )
+                .await?;
+            self.list.select_task(message.selected);
+            self.set_success(message.message);
+            self.authoring.clear();
+            return Ok(());
+        }
+
+        if let Some(schedule) = recurrence_schedule {
+            let draft = crate::tui::store::recurrence_draft(
+                title.to_string(),
+                state.description.lines.join("\n").trim().to_string(),
+                state.selected_project.clone(),
+                state.priority.clone(),
+                state.status.clone(),
+                state.labels.clone(),
+                schedule,
+            );
+            let (message, selected) = self
+                .store
+                .create_recurrence_series(draft, self.list.selected_task())
+                .await?;
+            self.list.select_task(selected);
+            self.preserve_or_restore_sidebar_selection();
+            self.prune_task_marks();
+            self.set_success(message.clone());
+            if self.intake.view().add_task_only {
+                self.intake.set_message(message);
+                self.should_quit = true;
+            }
+            self.authoring.clear();
+            return Ok(());
+        }
+
         let available_at = if state.available_at.text.trim().is_empty() {
             None
         } else {
@@ -142,6 +229,9 @@ impl App {
             }
             TextIntent::EditDue { selection, mixed } => {
                 self.submit_edit_due(selection, mixed, value).await?;
+            }
+            TextIntent::RecordRecurrenceOutcome => {
+                self.submit_record_recurrence(value).await?;
             }
             TextIntent::ResolveConflictManually { target } => {
                 self.submit_manual_conflict_value(target, value).await?;

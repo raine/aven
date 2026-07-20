@@ -62,6 +62,13 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginEditAvailability
             | Action::BeginEditDue
             | Action::BeginEditLabels
+            | Action::SkipRecurrence
+            | Action::BeginRecordRecurrence
+            | Action::BeginEditRecurrenceTemplate
+            | Action::PauseRecurrence
+            | Action::ResumeRecurrence
+            | Action::StopRecurrence
+            | Action::ShowRecurrenceHistory
             | Action::Delete
             | Action::Restore
             | Action::ToggleEpicExpanded
@@ -230,6 +237,13 @@ mod tests {
                 "refresh",
                 "return-to-change",
                 "restore",
+                "recurrence-skip",
+                "recurrence-record",
+                "recurrence-edit-template",
+                "recurrence-pause",
+                "recurrence-resume",
+                "recurrence-stop",
+                "recurrence-history",
                 "rename-project",
                 "remove-project-path",
                 "remove-dependency",

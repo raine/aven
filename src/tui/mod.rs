@@ -17,6 +17,7 @@ mod app_navigation;
 mod app_onboarding;
 mod app_overlay_submit;
 mod app_projects;
+mod app_recurrence;
 mod app_search;
 mod app_update;
 mod attachment_controller;

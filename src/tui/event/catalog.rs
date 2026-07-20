@@ -533,6 +533,76 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
         Action::SetStatus(TaskStatus::Canceled),
     ),
+    CommandSpec::implemented(
+        "recurrence-skip",
+        "skip the current recurring occurrence",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('k')],
+            label: "t r k",
+        }],
+        Action::SkipRecurrence,
+    ),
+    CommandSpec::implemented(
+        "recurrence-record",
+        "record a historical recurring outcome",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('c')],
+            label: "t r c",
+        }],
+        Action::BeginRecordRecurrence,
+    ),
+    CommandSpec::implemented(
+        "recurrence-edit-template",
+        "edit the recurring template for future occurrences",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('e')],
+            label: "t r e",
+        }],
+        Action::BeginEditRecurrenceTemplate,
+    ),
+    CommandSpec::implemented(
+        "recurrence-pause",
+        "pause the selected recurring series",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('p')],
+            label: "t r p",
+        }],
+        Action::PauseRecurrence,
+    ),
+    CommandSpec::implemented(
+        "recurrence-resume",
+        "resume the selected recurring series",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('r')],
+            label: "t r r",
+        }],
+        Action::ResumeRecurrence,
+    ),
+    CommandSpec::implemented(
+        "recurrence-stop",
+        "stop future occurrences after the current task",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('s')],
+            label: "t r s",
+        }],
+        Action::StopRecurrence,
+    ),
+    CommandSpec::implemented(
+        "recurrence-history",
+        "show recurring series history",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('h')],
+            label: "t r h",
+        }],
+        Action::ShowRecurrenceHistory,
+    ),
     // Views
     CommandSpec::implemented(
         "view-queue",
@@ -1504,6 +1574,76 @@ pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
             label: "t d",
         }],
         Action::SetStatus(TaskStatus::Done),
+    ),
+    CommandSpec::implemented(
+        "detail-recurrence-skip",
+        "skip the current recurring occurrence",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('k')],
+            label: "t r k",
+        }],
+        Action::SkipRecurrence,
+    ),
+    CommandSpec::implemented(
+        "detail-recurrence-record",
+        "record a historical recurring outcome",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('c')],
+            label: "t r c",
+        }],
+        Action::BeginRecordRecurrence,
+    ),
+    CommandSpec::implemented(
+        "detail-recurrence-edit-template",
+        "edit the recurring template for future occurrences",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('e')],
+            label: "t r e",
+        }],
+        Action::BeginEditRecurrenceTemplate,
+    ),
+    CommandSpec::implemented(
+        "detail-recurrence-pause",
+        "pause the selected recurring series",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('p')],
+            label: "t r p",
+        }],
+        Action::PauseRecurrence,
+    ),
+    CommandSpec::implemented(
+        "detail-recurrence-resume",
+        "resume the selected recurring series",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('r')],
+            label: "t r r",
+        }],
+        Action::ResumeRecurrence,
+    ),
+    CommandSpec::implemented(
+        "detail-recurrence-stop",
+        "stop future occurrences after the current task",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('s')],
+            label: "t r s",
+        }],
+        Action::StopRecurrence,
+    ),
+    CommandSpec::implemented(
+        "detail-recurrence-history",
+        "show recurring series history",
+        "Tasks",
+        &[KeySequence {
+            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('h')],
+            label: "t r h",
+        }],
+        Action::ShowRecurrenceHistory,
     ),
     CommandSpec::implemented(
         "detail-delete",

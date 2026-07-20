@@ -162,6 +162,18 @@ fn add_task_view() -> AddTaskView {
             items: Vec::new().into_boxed_slice(),
             selected: 0,
         }),
+        recurrence_series_id: None,
+        repeat_rule: "none".to_string(),
+        repeat_weekdays: Vec::new(),
+        repeat_at: String::new(),
+        repeat_at_cursor: 0,
+        repeat_due: "same-day".to_string(),
+        time_zone: "UTC".to_string(),
+        time_zone_cursor: 0,
+        repeat_start_on: "2026-07-20".to_string(),
+        repeat_start_on_cursor: 0,
+        recurrence_preview: Vec::new(),
+        recurrence_error: None,
         mode: Box::new(crate::tui::overlay::AddTaskMode::Compose),
         title_error: false,
         status_prefix_active: false,
@@ -1244,6 +1256,55 @@ mod add_task_overlay {
             "Optional details, links, or handoff context..."
         );
         assert_eq!(line.spans[0].style.fg, Some(FG_DIM));
+    }
+
+    #[test]
+    fn recurring_composer_renders_schedule_fields_and_next_three_slots() {
+        let rendered = render_overlay_view_at(
+            OverlayView::AddTask(AddTaskView {
+                repeat_rule: "weekly".to_string(),
+                repeat_weekdays: vec!["mon".to_string(), "thu".to_string()],
+                repeat_at: "09:00".to_string(),
+                repeat_due: "same-day".to_string(),
+                time_zone: "Europe/Stockholm".to_string(),
+                repeat_start_on: "2026-07-20".to_string(),
+                recurrence_preview: vec![
+                    "Mon 2026-07-20".to_string(),
+                    "Thu 2026-07-23".to_string(),
+                    "Mon 2026-07-27".to_string(),
+                ],
+                ..add_task_view()
+            }),
+            120,
+            30,
+        );
+        for expected in [
+            "Repeat",
+            "Weekdays",
+            "Repeat due",
+            "Europe/Stockholm",
+            "Next slots",
+            "Mon 2026-07-20",
+            "Thu 2026-07-23",
+            "Mon 2026-07-27",
+        ] {
+            assert!(rendered.contains(expected), "missing {expected}");
+        }
+    }
+
+    #[test]
+    fn recurring_composer_keeps_validation_error_visible() {
+        let rendered = render_overlay_view_at(
+            OverlayView::AddTask(AddTaskView {
+                repeat_rule: "every 2 weeks".to_string(),
+                recurrence_error: Some("choose at least one weekday".to_string()),
+                ..add_task_view()
+            }),
+            100,
+            28,
+        );
+        assert!(rendered.contains("Schedule error"));
+        assert!(rendered.contains("choose at least one weekday"));
     }
 
     #[test]

@@ -5329,6 +5329,13 @@ mod authoring {
             AddTaskStep::Priority,
             AddTaskStep::Labels,
             AddTaskStep::AvailableAt,
+            AddTaskStep::Due,
+            AddTaskStep::RepeatRule,
+            AddTaskStep::RepeatWeekdays,
+            AddTaskStep::RepeatAt,
+            AddTaskStep::RepeatDue,
+            AddTaskStep::TimeZone,
+            AddTaskStep::RepeatStartOn,
         ] {
             app.handle_overlay_key(key(KeyCode::Right)).await.unwrap();
             assert!(matches!(
@@ -5339,7 +5346,7 @@ mod authoring {
         app.handle_overlay_key(key(KeyCode::Right)).await.unwrap();
         assert!(matches!(
             &app.overlay,
-            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::AvailableAt
+            Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Project
         ));
         app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
         assert!(matches!(
@@ -5394,9 +5401,9 @@ mod authoring {
         for (column, row, expected) in [
             (29, 3, AddTaskStep::AvailableAt),
             (55, 3, AddTaskStep::Due),
-            (3, 4, AddTaskStep::Images),
-            (3, 6, AddTaskStep::Title),
-            (3, 9, AddTaskStep::Description),
+            (3, 7, AddTaskStep::Images),
+            (3, 9, AddTaskStep::Title),
+            (3, 12, AddTaskStep::Description),
         ] {
             app.dispatch_mouse(task_row_click(column, row), (80, 24).into())
                 .await

@@ -680,8 +680,18 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(rendered.contains(":detail-edit-title         edit selected task title"));
-        assert!(rendered.contains(":detail-edit-description   edit selected task description"));
+        let title = rendered
+            .lines()
+            .find(|line| line.contains(":detail-edit-title"))
+            .unwrap();
+        let description = rendered
+            .lines()
+            .find(|line| line.contains(":detail-edit-description"))
+            .unwrap();
+        assert_eq!(
+            title.find("edit selected task title"),
+            description.find("edit selected task description")
+        );
     }
 
     #[test]

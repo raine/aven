@@ -39,9 +39,13 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
                 AddTaskStep::Title => state.title.insert_paste(text),
                 AddTaskStep::AvailableAt => state.available_at.insert_paste(text),
                 AddTaskStep::Due => state.due_on.insert_paste(text),
+                AddTaskStep::RepeatAt => state.repeat_at.insert_paste(text),
+                AddTaskStep::TimeZone => state.time_zone.insert_paste(text),
+                AddTaskStep::RepeatStartOn => state.repeat_start_on.insert_paste(text),
                 AddTaskStep::Description => state.description.insert_paste(text),
                 _ => {}
             }
+            state.refresh_recurrence_preview();
             OverlayState::AddTask(state)
         }
         OverlayState::TextInput(mut state) => {
@@ -123,8 +127,12 @@ pub(crate) fn handle_generic_overlay_key(
                                 }
                                 AddTaskStep::Status => state.status = value,
                                 AddTaskStep::Priority => state.priority = value,
+                                AddTaskStep::RepeatRule => state.repeat_rule = value,
+                                AddTaskStep::RepeatWeekdays => state.repeat_weekdays = values,
+                                AddTaskStep::RepeatDue => state.repeat_due = value,
                                 _ => {}
                             }
+                            state.refresh_recurrence_preview();
                         }
                         _ => {}
                     }
@@ -203,30 +211,12 @@ pub(crate) fn handle_generic_overlay_key(
                     }
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
-                KeyCode::Left
-                    if state.focus.is_metadata()
-                        && !matches!(state.focus, AddTaskStep::AvailableAt | AddTaskStep::Due) =>
-                {
-                    state.focus = match state.focus {
-                        AddTaskStep::Project => AddTaskStep::Due,
-                        AddTaskStep::Status => AddTaskStep::Project,
-                        AddTaskStep::Priority => AddTaskStep::Status,
-                        AddTaskStep::Labels => AddTaskStep::Priority,
-                        _ => state.focus,
-                    };
+                KeyCode::Left if state.focus.is_metadata() => {
+                    state.focus = state.focus.metadata_next(true);
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
-                KeyCode::Right
-                    if state.focus.is_metadata()
-                        && !matches!(state.focus, AddTaskStep::AvailableAt | AddTaskStep::Due) =>
-                {
-                    state.focus = match state.focus {
-                        AddTaskStep::Project => AddTaskStep::Status,
-                        AddTaskStep::Status => AddTaskStep::Priority,
-                        AddTaskStep::Priority => AddTaskStep::Labels,
-                        AddTaskStep::Labels => AddTaskStep::AvailableAt,
-                        _ => state.focus,
-                    };
+                KeyCode::Right if state.focus.is_metadata() => {
+                    state.focus = state.focus.metadata_next(false);
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
                 KeyCode::Down if state.focus.is_metadata() => {
@@ -268,8 +258,7 @@ pub(crate) fn handle_generic_overlay_key(
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
                 KeyCode::Char('?')
-                    if state.focus.is_metadata()
-                        && !matches!(state.focus, AddTaskStep::AvailableAt | AddTaskStep::Due) =>
+                    if state.focus.is_metadata() && !state.focus.is_inline_text() =>
                 {
                     state.mode = AddTaskMode::Help { scroll: 0 };
                     OverlayOutcome::None(OverlayState::AddTask(state))
@@ -291,11 +280,15 @@ pub(crate) fn handle_generic_overlay_key(
                         }
                         AddTaskStep::AvailableAt => state.available_at.handle_key(key),
                         AddTaskStep::Due => state.due_on.handle_key(key),
+                        AddTaskStep::RepeatAt => state.repeat_at.handle_key(key),
+                        AddTaskStep::TimeZone => state.time_zone.handle_key(key),
+                        AddTaskStep::RepeatStartOn => state.repeat_start_on.handle_key(key),
                         AddTaskStep::Description => {
                             edit_multiline_input(&mut state.description, key)
                         }
                         _ => {}
                     }
+                    state.refresh_recurrence_preview();
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
             }
@@ -898,6 +891,15 @@ mod tests {
             due_on: LineEdit::blank(),
             attachments: Vec::new(),
             selected_attachment: 0,
+            recurrence_series_id: None,
+            repeat_rule: "none".to_string(),
+            repeat_weekdays: Vec::new(),
+            repeat_at: LineEdit::blank(),
+            repeat_due: "same-day".to_string(),
+            time_zone: LineEdit::new("UTC".to_string()),
+            repeat_start_on: LineEdit::new("2026-07-20".to_string()),
+            recurrence_preview: Vec::new(),
+            recurrence_error: None,
             mode: crate::tui::overlay::AddTaskMode::Compose,
             title_error: false,
         })

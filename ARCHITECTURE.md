@@ -69,7 +69,7 @@
 #### Authoring flows
 
 - `src/tui/app_authoring.rs` coordinates task creation and natural-language intake. `AuthoringState` owns the active add-task draft together with an exhaustive origin: standalone creation or epic-child creation carrying its epic and search return state. Submission, retry, cancellation, discard confirmation, attachment preparation, and natural-add completion read that single flow.
-- The add-task overlay owns visible editor state, focus, validation, pending-image presentation, help, and child controls. Draft attachments remain in `AuthoringState` across nested controls and retries. Child controls preserve text and cursor state.
+- The add-task overlay owns visible editor state, focus, validation, pending-image presentation, core-validated recurrence schedule preview, help, and child controls. Draft attachments remain in `AuthoringState` across nested controls and retries. Child controls preserve text and cursor state. Recurrence lifecycle and history flows live in `src/tui/app_recurrence.rs`, while `src/tui/store/recurrence.rs` adapts them to core aggregate operations and reports.
 - `IntakeController` owns natural-add configuration, add-task-only mode, worker state, cancellation, and polling. `src/tui/natural_add_runtime.rs` owns worker command construction and process setup.
 - New task creation uses the current list index only as a selection anchor. `TaskSelection` remains reserved for mutations of captured existing tasks.
 

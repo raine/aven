@@ -17,17 +17,29 @@ pub(crate) enum AddTaskStep {
     AvailableAt,
     Due,
     Images,
+    RepeatRule,
+    RepeatWeekdays,
+    RepeatAt,
+    RepeatDue,
+    TimeZone,
+    RepeatStartOn,
     Description,
 }
 
 impl AddTaskStep {
-    pub(crate) const ALL: [Self; 9] = [
+    pub(crate) const ALL: [Self; 15] = [
         Self::Project,
         Self::Status,
         Self::Priority,
         Self::Labels,
         Self::AvailableAt,
         Self::Due,
+        Self::RepeatRule,
+        Self::RepeatWeekdays,
+        Self::RepeatAt,
+        Self::RepeatDue,
+        Self::TimeZone,
+        Self::RepeatStartOn,
         Self::Images,
         Self::Title,
         Self::Description,
@@ -55,7 +67,44 @@ impl AddTaskStep {
                 | Self::Labels
                 | Self::AvailableAt
                 | Self::Due
+                | Self::RepeatRule
+                | Self::RepeatWeekdays
+                | Self::RepeatAt
+                | Self::RepeatDue
+                | Self::TimeZone
+                | Self::RepeatStartOn
         )
+    }
+
+    pub(crate) fn is_inline_text(self) -> bool {
+        matches!(
+            self,
+            Self::AvailableAt | Self::Due | Self::RepeatAt | Self::TimeZone | Self::RepeatStartOn
+        )
+    }
+
+    pub(crate) fn metadata_next(self, reverse: bool) -> Self {
+        const FIELDS: [AddTaskStep; 12] = [
+            AddTaskStep::Project,
+            AddTaskStep::Status,
+            AddTaskStep::Priority,
+            AddTaskStep::Labels,
+            AddTaskStep::AvailableAt,
+            AddTaskStep::Due,
+            AddTaskStep::RepeatRule,
+            AddTaskStep::RepeatWeekdays,
+            AddTaskStep::RepeatAt,
+            AddTaskStep::RepeatDue,
+            AddTaskStep::TimeZone,
+            AddTaskStep::RepeatStartOn,
+        ];
+        let index = FIELDS.iter().position(|field| *field == self).unwrap_or(0);
+        let next = if reverse {
+            index.checked_sub(1).unwrap_or(FIELDS.len() - 1)
+        } else {
+            (index + 1) % FIELDS.len()
+        };
+        FIELDS[next]
     }
 }
 
@@ -105,6 +154,13 @@ struct AddTaskDraftState {
     labels: Vec<String>,
     available_at: String,
     due_on: String,
+    recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
+    repeat_rule: String,
+    repeat_weekdays: Vec<String>,
+    repeat_at: String,
+    repeat_due: String,
+    time_zone: String,
+    repeat_start_on: String,
     attachments: Vec<PendingTaskAttachment>,
     step: AddTaskStep,
 }
@@ -122,6 +178,13 @@ impl Default for AddTaskDraftState {
             labels: Vec::new(),
             available_at: String::new(),
             due_on: String::new(),
+            recurrence_series_id: None,
+            repeat_rule: "none".to_string(),
+            repeat_weekdays: Vec::new(),
+            repeat_at: String::new(),
+            repeat_due: "same-day".to_string(),
+            time_zone: String::new(),
+            repeat_start_on: String::new(),
             attachments: Vec::new(),
             step: AddTaskStep::Title,
         }
@@ -144,6 +207,13 @@ pub(crate) struct AddTaskContext {
     pub(crate) labels: Vec<String>,
     pub(crate) available_at: String,
     pub(crate) due_on: String,
+    pub(crate) recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
+    pub(crate) repeat_rule: String,
+    pub(crate) repeat_weekdays: Vec<String>,
+    pub(crate) repeat_at: String,
+    pub(crate) repeat_due: String,
+    pub(crate) time_zone: String,
+    pub(crate) repeat_start_on: String,
 }
 
 #[derive(Debug, Clone)]
@@ -176,6 +246,62 @@ impl AuthoringState {
             project: active_project,
             inferred_project,
             ..AddTaskDraftState::default()
+        });
+    }
+
+    pub(crate) fn begin_edit_recurrence_template(
+        &mut self,
+        detail: &aven_core::query::RecurrenceSeriesDetail,
+        project: String,
+    ) {
+        use aven_core::recurrence::RecurrenceFrequency;
+
+        let series = &detail.series;
+        let weekdays = series
+            .rule
+            .weekdays_set()
+            .to_string()
+            .split(',')
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let repeat_rule = match series.rule.frequency() {
+            RecurrenceFrequency::Daily => "daily".to_string(),
+            RecurrenceFrequency::Weekly
+                if series.rule.interval() == 1
+                    && series.rule.weekdays_set().to_string() == "mon,tue,wed,thu,fri" =>
+            {
+                "weekdays".to_string()
+            }
+            RecurrenceFrequency::Weekly if series.rule.interval() == 1 => "weekly".to_string(),
+            RecurrenceFrequency::Weekly => format!("every {} weeks", series.rule.interval()),
+        };
+        self.flow = Some(AddTaskDraftState {
+            origin: AddTaskOrigin::Standalone,
+            title: series.title.clone(),
+            description: series.description.clone(),
+            project: Some(project),
+            inferred_project: None,
+            status: series.initial_status.as_str().to_string(),
+            priority: series.priority.as_str().to_string(),
+            labels: detail.labels.clone(),
+            available_at: String::new(),
+            due_on: String::new(),
+            recurrence_series_id: Some(series.id.clone()),
+            repeat_rule,
+            repeat_weekdays: weekdays,
+            repeat_at: series
+                .available_local_time
+                .map(|value| value.format("%H:%M").to_string())
+                .unwrap_or_default(),
+            repeat_due: match series.due_policy {
+                aven_core::recurrence::RecurrenceDuePolicy::SameDay => "same-day".to_string(),
+                aven_core::recurrence::RecurrenceDuePolicy::None => "none".to_string(),
+            },
+            time_zone: series.timezone.to_string(),
+            repeat_start_on: series.start_on.to_string(),
+            attachments: Vec::new(),
+            step: AddTaskStep::Title,
         });
     }
 
@@ -228,6 +354,13 @@ impl AuthoringState {
             labels: draft.labels.clone(),
             available_at: draft.available_at.clone(),
             due_on: draft.due_on.clone(),
+            recurrence_series_id: draft.recurrence_series_id.clone(),
+            repeat_rule: draft.repeat_rule.clone(),
+            repeat_weekdays: draft.repeat_weekdays.clone(),
+            repeat_at: draft.repeat_at.clone(),
+            repeat_due: draft.repeat_due.clone(),
+            time_zone: draft.time_zone.clone(),
+            repeat_start_on: draft.repeat_start_on.clone(),
         })
     }
 
@@ -362,6 +495,30 @@ impl AuthoringState {
             return false;
         };
         draft.due_on = value;
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn apply_add_task_recurrence(
+        &mut self,
+        series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
+        repeat_rule: String,
+        repeat_weekdays: Vec<String>,
+        repeat_at: String,
+        repeat_due: String,
+        time_zone: String,
+        repeat_start_on: String,
+    ) -> bool {
+        let Some(draft) = self.flow.as_mut() else {
+            return false;
+        };
+        draft.recurrence_series_id = series_id;
+        draft.repeat_rule = repeat_rule;
+        draft.repeat_weekdays = repeat_weekdays;
+        draft.repeat_at = repeat_at;
+        draft.repeat_due = repeat_due;
+        draft.time_zone = time_zone;
+        draft.repeat_start_on = repeat_start_on;
         true
     }
 
