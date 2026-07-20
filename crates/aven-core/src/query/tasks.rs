@@ -81,8 +81,10 @@ pub async fn list_task_items_with_display_refs(
     push_filter_prefix(&mut query, &mut filters_added);
     query.push("t.workspace_id = ");
     query.push_bind(workspace_id.to_string());
-    push_filter_prefix(&mut query, &mut filters_added);
-    query.push(fragments::ordinary_task_clause("t"));
+    if filters.task_ids.is_empty() {
+        push_filter_prefix(&mut query, &mut filters_added);
+        query.push(fragments::ordinary_task_clause("t"));
+    }
     if filters.deleted_only {
         push_filter_prefix(&mut query, &mut filters_added);
         query.push("t.deleted = 1");

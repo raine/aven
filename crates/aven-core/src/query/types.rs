@@ -129,12 +129,22 @@ pub struct RecurrenceSeriesSummary {
     pub counts: RecurrenceCounts,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceSeriesConflict {
+    pub field: String,
+    pub variant_a: String,
+    pub local_value: String,
+    pub variant_b: String,
+    pub remote_value: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct RecurrenceSeriesDetail {
     pub series: RecurrenceSeries,
     pub labels: Vec<String>,
     pub summary: RecurrenceSeriesSummary,
     pub current_occurrence: Option<RecurrenceOccurrence>,
+    pub lifecycle_conflicts: Vec<RecurrenceSeriesConflict>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

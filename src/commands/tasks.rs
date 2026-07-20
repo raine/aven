@@ -17,8 +17,9 @@ use crate::query::{
 use crate::refs::DisplayRefContext;
 use crate::render::{KvLine, changed_text, print_json_pretty, quote};
 use crate::task_render::{
-    TaskConflictReport, TaskFullReport, attachment_metadata_json, print_full_task_report,
-    print_task_line_item, task_full_json, task_line_json_item,
+    TaskConflictReport, TaskFullReport, TaskRecurrenceGroupJson, TaskRecurrenceJson,
+    attachment_metadata_json, print_full_task_report, print_task_line_item, task_full_json,
+    task_line_json_item, task_recurrence_group_json, task_recurrence_json,
 };
 use crate::types::Task;
 use crate::workspaces::Workspace;
@@ -37,6 +38,66 @@ pub(crate) async fn cmd_add(
         "description",
     )?
     .unwrap_or_default();
+    if args.repeat.is_none()
+        && (args.repeat_at.is_some()
+            || args.repeat_due.is_some()
+            || args.time_zone.is_some()
+            || args.repeat_start_on.is_some())
+    {
+        bail!(
+            "error recurrence-flags-require-repeat hint=\"pass --repeat with recurrence scheduling flags\""
+        );
+    }
+    if let Some(rule) = args.repeat.as_deref() {
+        if args.available_at.is_some() || args.due.is_some() {
+            bail!(
+                "error recurrence-absolute-time-conflict hint=\"use --repeat-at for local availability and --repeat-due for same-day or no due date\""
+            );
+        }
+        if args.natural {
+            bail!(
+                "error natural-add-exclusive hint=\"use plain recurrence flags or --natural, not both\""
+            );
+        }
+        if args.epic {
+            bail!(
+                "error recurrence-epic-unsupported hint=\"create recurring work as an ordinary task\""
+            );
+        }
+        let project = resolve_add_project(database, workspace, args.project.as_deref()).await?;
+        let schedule = super::recurrence_schedule(
+            rule,
+            args.repeat_at.as_deref(),
+            args.repeat_due.as_deref(),
+            args.time_zone.as_deref(),
+            args.repeat_start_on.as_deref(),
+        )?;
+        let outcome = database
+            .create_recurrence_series(
+                workspace,
+                aven_core::operations::RecurrenceSeriesDraft {
+                    title: args.title,
+                    description,
+                    project,
+                    priority: args.priority,
+                    initial_status: "todo".to_string(),
+                    labels: args.label,
+                    schedule,
+                },
+            )
+            .await?;
+        let display_refs = database.display_ref_context(&workspace.id).await?;
+        println!(
+            "created {} occurrence={} slot={} status={} priority={} title={}",
+            outcome.series_ref,
+            display_refs.display_ref(&outcome.task),
+            outcome.occurrence.slot_on,
+            outcome.task.status,
+            outcome.task.priority,
+            quote(&outcome.task.title)
+        );
+        return Ok(());
+    }
     let mut draft = if args.natural {
         if !description.is_empty()
             || args.project.is_some()
@@ -106,6 +167,26 @@ pub(crate) async fn cmd_add(
     let display_refs = database.display_ref_context(&workspace.id).await?;
     print_created_task(&task, workspace, &display_refs);
     Ok(())
+}
+
+async fn resolve_add_project(
+    database: &Database,
+    workspace: &Workspace,
+    project: Option<&str>,
+) -> Result<String> {
+    if let Some(project) = project {
+        return crate::projects::resolve_project_key_for_add_with_database(
+            database,
+            &workspace.id,
+            project,
+        )
+        .await;
+    }
+    Ok(
+        crate::projects::inferred_project_key_for_add_with_database(database, workspace)
+            .await?
+            .unwrap_or_else(|| "default".to_string()),
+    )
 }
 
 pub(crate) async fn cmd_internal_natural_add(
@@ -252,25 +333,11 @@ pub(crate) async fn cmd_show(
             print_full_task_report(&report);
         }
     } else {
-        let item = database
-            .list_task_items(
-                &workspace.id,
-                TaskFilters {
-                    task_ids: vec![task.id.clone()],
-                    ..TaskFilters::default().include_deleted(task.deleted)
-                },
-                TaskQueryMode::Flat,
-                TaskSort::Updated,
-                SortDirection::Desc,
-            )
-            .await?
-            .into_iter()
-            .next()
-            .expect("task must exist after resolve");
+        let detail = database.task_detail(&task).await?;
         if args.json {
-            print_json_pretty(&task_line_json_item(&item))?;
+            print_json_pretty(&task_line_json_item(&detail.item))?;
         } else {
-            print_task_line_item(&item);
+            print_task_line_item(&detail.item);
         }
     }
     Ok(())
@@ -342,6 +409,8 @@ struct SearchJsonItem {
     score: i64,
     matched_field: query::SearchMatchedField,
     snippet: Option<String>,
+    recurrence: Option<TaskRecurrenceJson>,
+    recurrence_group: Option<TaskRecurrenceGroupJson>,
 }
 
 pub(crate) async fn cmd_search(
@@ -353,16 +422,18 @@ pub(crate) async fn cmd_search(
     if text.trim().is_empty() {
         bail!("error search-query-required hint=\"pass one or more search terms\"");
     }
-    let results = database
-        .search_task_items(
-            &workspace.id,
-            TaskSearchQuery {
-                text,
-                include_deleted: args.all,
-                limit: args.limit,
-            },
-        )
-        .await?;
+    let query = TaskSearchQuery {
+        text,
+        include_deleted: args.all,
+        limit: args.limit,
+    };
+    let results = if args.expand_recurring {
+        database
+            .search_task_occurrence_items(&workspace.id, query)
+            .await?
+    } else {
+        database.search_task_items(&workspace.id, query).await?
+    };
     if args.json {
         let items = results.iter().map(search_json_item).collect::<Vec<_>>();
         print_json_pretty(&items)?;
@@ -377,6 +448,33 @@ pub(crate) async fn cmd_search(
 fn print_search_result(result: &TaskSearchResult) {
     let item = &result.item;
     let labels = item.labels.join(",");
+    if let Some(group) = &item.recurrence_group {
+        let counts = &group.counts;
+        let line = KvLine::new(group.series_ref.clone())
+            .field("status", item.task.status)
+            .field("priority", item.task.priority)
+            .field("project", &item.task.project_key)
+            .field("labels", &labels)
+            .field("match", result.matched_field.as_str())
+            .field("score", result.score)
+            .optional(
+                "latest",
+                counts
+                    .latest_outcome
+                    .map(|value| value.as_str().to_string()),
+            )
+            .optional("slot", counts.latest_slot_on.clone())
+            .field("completed", counts.completed)
+            .field("skipped", counts.skipped)
+            .field("missed", counts.missed)
+            .quoted("title", &item.task.title)
+            .finish();
+        println!("{line}");
+        if let Some(snippet) = &result.snippet {
+            println!("  snippet={}", quote(snippet));
+        }
+        return;
+    }
     let line = KvLine::new(item.display_ref.clone())
         .field("status", item.task.status)
         .field("priority", item.task.priority)
@@ -395,8 +493,18 @@ fn print_search_result(result: &TaskSearchResult) {
 
 fn search_json_item(result: &TaskSearchResult) -> SearchJsonItem {
     SearchJsonItem {
-        r#ref: result.item.display_ref.clone(),
-        id: result.item.task.id.to_string(),
+        r#ref: result
+            .item
+            .recurrence_group
+            .as_ref()
+            .map(|group| group.series_ref.clone())
+            .unwrap_or_else(|| result.item.display_ref.clone()),
+        id: result
+            .item
+            .recurrence_group
+            .as_ref()
+            .map(|group| group.series_id.to_string())
+            .unwrap_or_else(|| result.item.task.id.to_string()),
         title: result.item.task.title.clone(),
         project: result.item.task.project_key.clone(),
         status: result.item.task.status.as_str().to_string(),
@@ -406,6 +514,12 @@ fn search_json_item(result: &TaskSearchResult) -> SearchJsonItem {
         score: result.score,
         matched_field: result.matched_field,
         snippet: result.snippet.clone(),
+        recurrence: result.item.recurrence.as_ref().map(task_recurrence_json),
+        recurrence_group: result
+            .item
+            .recurrence_group
+            .as_ref()
+            .map(task_recurrence_group_json),
     }
 }
 
@@ -424,6 +538,7 @@ fn list_task_filters(args: &ListArgs) -> TaskFilters {
         epics_only: args.epics,
         exclude_epics: args.ready,
         overdue_only: args.overdue,
+        expand_recurring: args.expand_recurring,
         availability,
         label: args.label.clone(),
         ..TaskFilters::default()

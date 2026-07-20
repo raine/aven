@@ -40,6 +40,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
             "bulk-update",
             "delete",
             "restore",
+            "recur",
         ],
     },
     HelpSection {
@@ -249,6 +250,8 @@ pub(crate) enum Commands {
     Delete(RefArgs),
     /// Restore a deleted task
     Restore(RefArgs),
+    /// Manage recurring task series
+    Recur(RecurCommand),
     /// Get, diff, and set long text fields safely
     Text(TextCommand),
     /// Manage labels
@@ -443,6 +446,16 @@ pub(crate) struct AddArgs {
     pub(crate) available_at: Option<String>,
     #[arg(long, value_name = "WHEN")]
     pub(crate) due: Option<String>,
+    #[arg(long, value_name = "RULE")]
+    pub(crate) repeat: Option<String>,
+    #[arg(long, value_name = "HH:MM")]
+    pub(crate) repeat_at: Option<String>,
+    #[arg(long, value_name = "same-day|none")]
+    pub(crate) repeat_due: Option<String>,
+    #[arg(long, value_name = "IANA_ZONE")]
+    pub(crate) time_zone: Option<String>,
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    pub(crate) repeat_start_on: Option<String>,
 }
 
 #[derive(Args)]
@@ -485,6 +498,8 @@ pub(crate) struct ListArgs {
     pub(crate) upcoming: bool,
     #[arg(long)]
     pub(crate) overdue: bool,
+    #[arg(long, help = "Show individual recurring occurrences")]
+    pub(crate) expand_recurring: bool,
     #[arg(long)]
     pub(crate) limit: Option<usize>,
     #[arg(long, help = "Print machine-readable JSON")]
@@ -498,8 +513,110 @@ pub(crate) struct TaskSearchArgs {
     pub(crate) limit: usize,
     #[arg(long, help = "Include deleted tasks")]
     pub(crate) all: bool,
+    #[arg(long, help = "Show individual recurring occurrences")]
+    pub(crate) expand_recurring: bool,
     #[arg(long, help = "Print machine-readable JSON")]
     pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct RecurCommand {
+    #[command(subcommand)]
+    pub(crate) command: RecurSubcommand,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum RecurSubcommand {
+    /// List recurring series
+    List(RecurListArgs),
+    /// Show a recurring series
+    Show(RecurShowArgs),
+    /// Show recurring series history
+    History(RecurHistoryArgs),
+    /// Edit the template used by future occurrences
+    Edit(RecurEditArgs),
+    /// Skip the current occurrence
+    Skip(RecurRefArgs),
+    /// Record an outcome for a past slot
+    Record(RecurRecordArgs),
+    /// Pause a recurring series
+    Pause(RecurRefArgs),
+    /// Resume a paused recurring series
+    Resume(RecurRefArgs),
+    /// Stop future scheduling
+    Stop(RecurStopArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct RecurListArgs {
+    #[arg(long, help = "Print machine-readable JSON")]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct RecurShowArgs {
+    pub(crate) series_ref: String,
+    #[arg(long, help = "Print machine-readable JSON")]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct RecurHistoryArgs {
+    pub(crate) series_ref: String,
+    #[arg(long, default_value_t = 0)]
+    pub(crate) offset: usize,
+    #[arg(long, default_value_t = 100)]
+    pub(crate) limit: usize,
+    #[arg(long, help = "Print machine-readable JSON")]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct RecurEditArgs {
+    pub(crate) series_ref: String,
+    #[arg(long)]
+    pub(crate) title: Option<String>,
+    #[arg(long)]
+    pub(crate) description: Option<String>,
+    #[arg(long)]
+    pub(crate) description_file: Option<PathBuf>,
+    #[arg(long)]
+    pub(crate) description_stdin: bool,
+    #[arg(long)]
+    pub(crate) project: Option<String>,
+    #[arg(long)]
+    pub(crate) status: Option<String>,
+    #[arg(long)]
+    pub(crate) priority: Option<String>,
+    #[arg(long, value_name = "LABEL")]
+    pub(crate) label: Vec<String>,
+    #[arg(long, value_name = "HH:MM|none")]
+    pub(crate) repeat_at: Option<String>,
+    #[arg(long, value_name = "same-day|none")]
+    pub(crate) repeat_due: Option<String>,
+}
+
+#[derive(Args)]
+pub(crate) struct RecurRefArgs {
+    pub(crate) series_ref: String,
+}
+
+#[derive(Args)]
+pub(crate) struct RecurRecordArgs {
+    pub(crate) series_ref: String,
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    pub(crate) slot: String,
+    #[arg(long, value_name = "completed|skipped")]
+    pub(crate) outcome: String,
+    #[arg(long, value_name = "RFC3339_TIMESTAMP")]
+    pub(crate) at: Option<String>,
+}
+
+#[derive(Args)]
+pub(crate) struct RecurStopArgs {
+    pub(crate) series_ref: String,
+    #[arg(long)]
+    pub(crate) skip_current: bool,
 }
 
 #[derive(Args)]

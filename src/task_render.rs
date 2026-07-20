@@ -7,6 +7,27 @@ use crate::render::{KvLine, print_multiline_block, quote, yes_no};
 
 pub(crate) fn print_task_line_item(item: &TaskListItem) {
     let labels = item.labels.join(",");
+    if let Some(group) = &item.recurrence_group {
+        let counts = &group.counts;
+        let line = KvLine::new(group.series_ref.clone())
+            .field("status", item.task.status)
+            .field("priority", item.task.priority)
+            .field("labels", &labels)
+            .optional(
+                "latest",
+                counts
+                    .latest_outcome
+                    .map(|value| value.as_str().to_string()),
+            )
+            .optional("slot", counts.latest_slot_on.clone())
+            .field("completed", counts.completed)
+            .field("skipped", counts.skipped)
+            .field("missed", counts.missed)
+            .quoted("title", &item.task.title)
+            .finish();
+        println!("{line}");
+        return;
+    }
     let line = KvLine::new(item.display_ref.clone())
         .field("status", item.task.status)
         .field("priority", item.task.priority)
@@ -16,6 +37,35 @@ pub(crate) fn print_task_line_item(item: &TaskListItem) {
         .optional("epic", item.task.is_epic.then(|| "yes".to_string()))
         .optional("available_at", item.task.available_at.clone())
         .optional("due_on", item.task.due_on.clone())
+        .optional(
+            "series",
+            item.recurrence
+                .as_ref()
+                .map(|value| value.series_ref.clone()),
+        )
+        .optional(
+            "slot",
+            item.recurrence.as_ref().map(|value| value.slot_on.clone()),
+        )
+        .optional(
+            "repeat",
+            item.recurrence
+                .as_ref()
+                .map(|value| value.rule_label.clone()),
+        )
+        .optional(
+            "series_state",
+            item.recurrence
+                .as_ref()
+                .map(|value| value.lifecycle.as_str().to_string()),
+        )
+        .optional(
+            "outcome",
+            item.recurrence
+                .as_ref()
+                .and_then(|value| value.outcome)
+                .map(|value| value.as_str().to_string()),
+        )
         .optional(
             "blocked_by",
             (item.unresolved_blocker_count > 0).then(|| item.unresolved_blocker_count.to_string()),
@@ -193,6 +243,30 @@ pub(crate) struct TaskEpicLinkJson {
 }
 
 #[derive(Serialize)]
+pub(crate) struct TaskRecurrenceJson {
+    pub(crate) series_ref: String,
+    pub(crate) series_id: String,
+    pub(crate) slot_on: String,
+    pub(crate) rule: String,
+    pub(crate) timezone: String,
+    pub(crate) lifecycle: String,
+    pub(crate) outcome: Option<String>,
+    pub(crate) projection_state: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct TaskRecurrenceGroupJson {
+    pub(crate) series_ref: String,
+    pub(crate) series_id: String,
+    pub(crate) completed: usize,
+    pub(crate) skipped: usize,
+    pub(crate) missed: usize,
+    pub(crate) pause_intervals: usize,
+    pub(crate) latest_slot_on: Option<String>,
+    pub(crate) latest_outcome: Option<String>,
+}
+
+#[derive(Serialize)]
 pub(crate) struct TaskLineJson {
     pub(crate) r#ref: String,
     pub(crate) id: String,
@@ -210,14 +284,24 @@ pub(crate) struct TaskLineJson {
     pub(crate) blocks: i64,
     pub(crate) available_at: String,
     pub(crate) due_on: String,
+    pub(crate) recurrence: Option<TaskRecurrenceJson>,
+    pub(crate) recurrence_group: Option<TaskRecurrenceGroupJson>,
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
 }
 
 pub(crate) fn task_line_json_item(item: &TaskListItem) -> TaskLineJson {
     TaskLineJson {
-        r#ref: item.display_ref.clone(),
-        id: item.task.id.to_string(),
+        r#ref: item
+            .recurrence_group
+            .as_ref()
+            .map(|group| group.series_ref.clone())
+            .unwrap_or_else(|| item.display_ref.clone()),
+        id: item
+            .recurrence_group
+            .as_ref()
+            .map(|group| group.series_id.to_string())
+            .unwrap_or_else(|| item.task.id.to_string()),
         title: item.task.title.clone(),
         project: item.task.project_key.clone(),
         status: item.task.status.to_string(),
@@ -232,8 +316,46 @@ pub(crate) fn task_line_json_item(item: &TaskListItem) -> TaskLineJson {
         blocks: item.dependent_count,
         available_at: item.task.available_at.clone().unwrap_or_default(),
         due_on: item.task.due_on.clone().unwrap_or_default(),
+        recurrence: item.recurrence.as_ref().map(task_recurrence_json),
+        recurrence_group: item
+            .recurrence_group
+            .as_ref()
+            .map(task_recurrence_group_json),
         created_at: item.task.created_at.clone(),
         updated_at: item.task.updated_at.clone(),
+    }
+}
+
+pub(crate) fn task_recurrence_json(
+    value: &crate::query::TaskRecurrenceSummary,
+) -> TaskRecurrenceJson {
+    TaskRecurrenceJson {
+        series_ref: value.series_ref.clone(),
+        series_id: value.series_id.to_string(),
+        slot_on: value.slot_on.clone(),
+        rule: value.rule_label.clone(),
+        timezone: value.timezone.clone(),
+        lifecycle: value.lifecycle.as_str().to_string(),
+        outcome: value.outcome.map(|outcome| outcome.as_str().to_string()),
+        projection_state: value.projection_state.as_str().to_string(),
+    }
+}
+
+pub(crate) fn task_recurrence_group_json(
+    value: &crate::query::RecurrenceTaskGroup,
+) -> TaskRecurrenceGroupJson {
+    TaskRecurrenceGroupJson {
+        series_ref: value.series_ref.clone(),
+        series_id: value.series_id.to_string(),
+        completed: value.counts.completed,
+        skipped: value.counts.skipped,
+        missed: value.counts.missed,
+        pause_intervals: value.counts.pause_intervals,
+        latest_slot_on: value.counts.latest_slot_on.clone(),
+        latest_outcome: value
+            .counts
+            .latest_outcome
+            .map(|outcome| outcome.as_str().to_string()),
     }
 }
 

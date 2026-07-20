@@ -36,8 +36,8 @@ use commands::{
     cmd_add, cmd_attachment, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
     cmd_delete_restore, cmd_demo, cmd_dep, cmd_doctor, cmd_edit, cmd_epic, cmd_export, cmd_import,
     cmd_internal_demo_snapshot, cmd_internal_natural_add, cmd_label, cmd_list, cmd_note,
-    cmd_note_delete, cmd_prime, cmd_project, cmd_search, cmd_self_update, cmd_show, cmd_skill,
-    cmd_skill_install, cmd_text, cmd_workspace,
+    cmd_note_delete, cmd_prime, cmd_project, cmd_recur, cmd_search, cmd_self_update, cmd_show,
+    cmd_skill, cmd_skill_install, cmd_text, cmd_workspace,
 };
 use sync::{run_server, sync_client};
 use workspaces::resolve_active_workspace_with_database;
@@ -95,6 +95,7 @@ enum DatabaseCommand {
     NoteDelete(cli::NoteDeleteArgs),
     Prime(cli::PrimeArgs),
     Project(cli::ProjectCommand),
+    Recur(cli::RecurCommand),
     Restore(cli::RefArgs),
     Search(cli::TaskSearchArgs),
     Show(cli::ShowArgs),
@@ -131,6 +132,7 @@ impl From<Commands> for CliDispatch {
             Commands::Text(args) => Self::database(DatabaseCommand::Text(args)),
             Commands::Label(args) => Self::database(DatabaseCommand::Label(args)),
             Commands::Project(args) => Self::database(DatabaseCommand::Project(args)),
+            Commands::Recur(args) => Self::database(DatabaseCommand::Recur(args)),
             Commands::Workspace(args) => Self::database(DatabaseCommand::Workspace(args)),
             Commands::Conflict(args) => Self::database(DatabaseCommand::Conflict(args)),
             Commands::Config(args) => Self::Standalone(StandaloneCommand::Config(args)),
@@ -292,6 +294,7 @@ async fn dispatch_database(
         DatabaseCommand::Import(args) => cmd_import(&database, &db_path, args).await,
         DatabaseCommand::Label(args) => cmd_label(&database, command_workspace(), args).await,
         DatabaseCommand::Project(args) => cmd_project(&database, command_workspace(), args).await,
+        DatabaseCommand::Recur(args) => cmd_recur(&database, command_workspace(), args).await,
         DatabaseCommand::Delete(args) => {
             cmd_delete_restore(&database, command_workspace(), args, true).await
         }

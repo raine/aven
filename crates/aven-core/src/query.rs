@@ -50,9 +50,9 @@ pub use types::RecentActionTarget;
 pub use types::{
     AttachmentMetadata, ProjectListItem, RecentActionItem, RecurrenceCounts,
     RecurrenceHistoryEntry, RecurrenceHistoryKind, RecurrenceHistoryPage, RecurrenceReconciliation,
-    RecurrenceSeriesDetail, RecurrenceSeriesSummary, RecurrenceTaskGroup, SidebarCounts,
-    SortDirection, TaskAvailabilityFilter, TaskDependencyLink, TaskFilters, TaskListItem, TaskNote,
-    TaskQueryMode, TaskRecurrenceSummary, TaskSort,
+    RecurrenceSeriesConflict, RecurrenceSeriesDetail, RecurrenceSeriesSummary, RecurrenceTaskGroup,
+    SidebarCounts, SortDirection, TaskAvailabilityFilter, TaskDependencyLink, TaskFilters,
+    TaskListItem, TaskNote, TaskQueryMode, TaskRecurrenceSummary, TaskSort,
 };
 
 impl Database {

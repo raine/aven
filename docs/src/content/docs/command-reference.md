@@ -118,11 +118,16 @@ aven add <title> [options]
 | `--priority <priority>` | Set the priority. Defaults to `none`. |
 | `--available-at <when>` | Defer the task until a calendar expression or timestamp. See [Availability input](#availability-input). |
 | `--due <when>` | Set a date-only deadline. See [Due date input](#due-date-input). |
+| `--repeat <rule>` | Create a recurring series with the fixed grammar documented below. |
+| `--repeat-at <HH:MM>` | Make each occurrence available at this local time in the series time zone. |
+| `--repeat-due <same-day\|none>` | Set the occurrence due policy. Defaults to `same-day`. |
+| `--time-zone <IANA-zone>` | Own slot dates and local times in this IANA time zone. Defaults to the device zone. |
+| `--repeat-start-on <YYYY-MM-DD>` | Set the first eligible calendar date. Defaults to the creation date in the series zone. |
 | `--label <label>` | Add a label. Repeat for multiple labels. Labels must already exist. |
 | `--epic` | Create an epic container. |
 | `--natural` | Parse the title as natural-language task intake using the configured agent command. |
 
-A plain task starts with status `inbox`. `--natural` cannot be combined with a description source, `--project`, a non-default priority, `--label`, `--available-at`, or `--due`. Natural intake can infer a title, description, project, status, priority, labels, availability, due date, and epic state from the request.
+A plain task starts with status `inbox`. A recurring task starts with status `todo` and prints both its stable series ref and first occurrence task ref. Recurrence rules are exactly `daily`, `weekdays`, `weekly`, `weekly on mon,wed,fri`, and `every N weeks on mon,thu`, with canonical Monday-to-Sunday weekday abbreviations. `weekly` uses the weekday of the start date, and weeks begin on Monday. `--available-at` and `--due` cannot be combined with `--repeat`; use `--repeat-at` and `--repeat-due` instead. `--natural` cannot be combined with a description source, `--project`, a non-default priority, `--label`, scheduling flags, or `--due`. Natural intake can infer a title, description, project, status, priority, labels, availability, due date, and epic state from the request.
 
 The command prints the created task's qualified reference and bare suffix.
 
@@ -131,6 +136,7 @@ aven add "Fix conflict display" --project aven --priority high --label bug
 aven add "Review launch notes" --available-at "next monday at 9am"
 aven add "Submit expense report" --due "next fri"
 aven add "Add release automation" --epic
+aven add "Daily journal" --repeat daily --repeat-at 09:00 --time-zone Europe/Stockholm
 aven add --natural "high priority docs task for the aven project"
 ```
 
@@ -155,6 +161,7 @@ aven list [options]
 | `--epics` | Show epic containers only. |
 | `--upcoming` | Show open, live tasks with a future availability time, ordered by availability time from earliest to latest. |
 | `--overdue` | Show open, live tasks with a due date before today, ordered by due date from oldest to newest. |
+| `--expand-recurring` | Show individual recurring occurrence rows instead of grouped terminal series rows. |
 | `--limit <number>` | Return at most this many tasks after sorting and filtering. |
 | `--json` | Print a JSON array. |
 
@@ -190,6 +197,7 @@ aven search <query>... [--limit <number>] [--all] [--json]
 | `<query>...` | One or more search terms. Multiple shell arguments are joined with spaces. |
 | `--limit <number>` | Maximum result count. Defaults to `50`. |
 | `--all` | Include deleted tasks. |
+| `--expand-recurring` | Return individual recurring occurrence matches instead of one grouped series result. |
 | `--json` | Print ranked results as JSON, including score, matched field, and optional snippet. |
 
 Text output identifies the matched field and score and prints a snippet when available. Ref-shaped input can resolve a deleted task when `--all` is present.
@@ -208,7 +216,7 @@ Print a complete context snapshot for one task.
 aven context <task-ref> [--json]
 ```
 
-The snapshot includes stable identity, display reference, task fields, description, project and workspace metadata, labels, notes, dependencies, dependents, epic membership, deletion state, and unresolved conflicts. It also derives whether the task is blocked, has conflicts, or blocks open work.
+The snapshot includes stable identity, display reference, task fields, description, project and workspace metadata, labels, notes, dependencies, dependents, epic membership, recurrence series metadata, deletion state, and unresolved conflicts. It also derives whether the task is blocked, has conflicts, or blocks open work.
 
 ```sh
 aven context APP-7KQ9
@@ -235,6 +243,32 @@ aven show APP-7KQ9
 aven show APP-7KQ9 --full
 aven show APP-7KQ9 --full --json
 ```
+
+### `aven recur`
+
+Inspect and mutate recurring series. Series commands accept a stable `RCR-7KP2` series ref or any linked occurrence task ref.
+
+```sh
+aven recur list [--json]
+aven recur show <series-or-task-ref> [--json]
+aven recur history <series-or-task-ref> [--offset <number>] [--limit <number>] [--json]
+aven recur edit <series-or-task-ref> [template options]
+aven recur skip <series-or-task-ref>
+aven recur record <series-or-task-ref> --slot <YYYY-MM-DD> --outcome <completed|skipped> [--at <RFC3339>]
+aven recur pause <series-or-task-ref>
+aven recur resume <series-or-task-ref>
+aven recur stop <series-or-task-ref> [--skip-current]
+```
+
+`list` prints one row per series with its lifecycle, fixed rule, time zone, current occurrence ref, and historical counts. `show` adds the future-occurrence template, current projection, and unresolved lifecycle conflicts. `history` combines completed and skipped tasks, derived misses, archived projected misses with task refs, taskless corrected outcomes, and pause intervals. Series list, show, and history JSON are versioned reports with `version: 1` and a typed `kind`.
+
+`edit` accepts `--title`, description input flags, `--project`, `--status`, `--priority`, repeated `--label`, `--repeat-at <HH:MM|none>`, and `--repeat-due <same-day|none>`. Template edits affect future occurrences. The fixed rule, start date, and time zone stay immutable for the series.
+
+`skip` resolves the current occurrence as skipped through the same aggregate transition as setting its ordinary task status to `canceled`. `record` corrects one valid past slot without creating a task or advancing current work. `pause` hides the preserved current occurrence from ordinary active views. `resume` omits slots inside the pause interval. `stop` keeps the current occurrence as the final ordinary task; `--skip-current` resolves it immediately.
+
+Done lists and search group recurrence-linked history by series. Pass `--expand-recurring` to `list` or `search` for occurrence-level task rows. Task JSON includes a nullable `recurrence` object and a nullable `recurrence_group` object.
+
+List-like reports reconcile a bounded recurrence candidate set before reading current state. When a slot boundary has passed, a report can append one bounded projection operation per changed series, archiving one superseded projection and materializing one current projection.
 
 ### `aven attachment`
 

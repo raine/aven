@@ -51,6 +51,7 @@ pub async fn task_detail_with_display_refs(
         &task.workspace_id,
         TaskFilters {
             task_ids: vec![task.id.clone()],
+            expand_recurring: true,
             ..TaskFilters::default().include_deleted(task.deleted)
         },
         TaskQueryMode::Flat,

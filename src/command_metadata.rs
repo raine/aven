@@ -1,6 +1,6 @@
 use crate::cli::{
     Commands, ConflictSubcommand, DepSubcommand, EpicSubcommand, LabelSubcommand,
-    ProjectPathSubcommand, ProjectSubcommand, TextSubcommand,
+    ProjectPathSubcommand, ProjectSubcommand, RecurSubcommand, TextSubcommand,
 };
 use crate::logging;
 
@@ -108,6 +108,11 @@ impl Commands {
                 needs_workspace: true,
                 wakes_daemon: args.command.wakes_daemon(),
             },
+            Self::Recur(args) => CommandMetadata {
+                log_mode: logging::LogMode::Cli,
+                needs_workspace: true,
+                wakes_daemon: args.command.wakes_daemon(),
+            },
             Self::Workspace(_) => CommandMetadata::cli_workspace_wake(),
             Self::Dep(args) => CommandMetadata {
                 log_mode: logging::LogMode::Cli,
@@ -137,6 +142,12 @@ impl Commands {
             Self::Demo => CommandMetadata::standalone_tui(),
             Self::Internal(_) => CommandMetadata::cli(),
         }
+    }
+}
+
+impl RecurSubcommand {
+    pub(crate) fn wakes_daemon(&self) -> bool {
+        !matches!(self, Self::List(_) | Self::Show(_) | Self::History(_))
     }
 }
 

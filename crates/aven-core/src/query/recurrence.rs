@@ -15,8 +15,8 @@ use crate::types::{RecurrenceOccurrence, RecurrencePauseInterval, RecurrenceSeri
 
 use super::types::{
     RecurrenceCounts, RecurrenceHistoryEntry, RecurrenceHistoryKind, RecurrenceHistoryPage,
-    RecurrenceReconciliation, RecurrenceSeriesDetail, RecurrenceSeriesSummary, RecurrenceTaskGroup,
-    TaskListItem, TaskRecurrenceSummary,
+    RecurrenceReconciliation, RecurrenceSeriesConflict, RecurrenceSeriesDetail,
+    RecurrenceSeriesSummary, RecurrenceTaskGroup, TaskListItem, TaskRecurrenceSummary,
 };
 
 const SQLITE_BIND_CHUNK_SIZE: usize = 900;
@@ -284,11 +284,32 @@ pub(crate) async fn recurrence_series_detail(
         load_current_occurrences(conn, workspace_id, std::slice::from_ref(series_id))
             .await?
             .remove(series_id);
+    let lifecycle_conflicts = sqlx::query(
+        "SELECT field, variant_a, local_value, variant_b, remote_value
+         FROM conflicts
+         WHERE workspace_id = ? AND entity_type = 'recurrence_series'
+           AND entity_id = ? AND field IN ('state', 'stopped_at') AND resolved = 0
+         ORDER BY field, id",
+    )
+    .bind(workspace_id)
+    .bind(series_id)
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|row| RecurrenceSeriesConflict {
+        field: row.get("field"),
+        variant_a: row.get("variant_a"),
+        local_value: row.get("local_value"),
+        variant_b: row.get("variant_b"),
+        remote_value: row.get("remote_value"),
+    })
+    .collect();
     Ok(RecurrenceSeriesDetail {
         series,
         labels,
         summary,
         current_occurrence,
+        lifecycle_conflicts,
     })
 }
 

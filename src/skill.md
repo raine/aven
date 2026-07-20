@@ -73,6 +73,54 @@ aven delete APP-7KQ9
 aven restore APP-7KQ9
 ```
 
+## Recurring tasks
+
+```sh
+aven add "Daily journal" --repeat daily --repeat-at 09:00 \
+  --repeat-due same-day --time-zone Europe/Stockholm \
+  --repeat-start-on 2026-07-20
+aven recur list
+aven recur show RCR-7KP2
+aven recur history RCR-7KP2
+aven recur edit RCR-7KP2 --title "Future journal" --priority high
+aven recur skip RCR-7KP2
+aven recur record RCR-7KP2 --slot 2026-07-17 --outcome completed \
+  --at 2026-07-17T18:30:00+02:00
+aven recur pause RCR-7KP2
+aven recur resume RCR-7KP2
+aven recur stop RCR-7KP2
+aven recur stop RCR-7KP2 --skip-current
+aven list --status done --expand-recurring
+aven search "daily journal" --expand-recurring
+```
+
+- Series refs use the `RCR-7KP2` form. Use the series ref for recurrence
+  commands and durable references. A current or historical occurrence task ref
+  also resolves to its series for convenience.
+- Recurrence rules use the fixed grammar `daily`, `weekdays`, `weekly`, `weekly
+  on mon,wed,fri`, or `every N weeks on mon,thu`. Weeks begin on Monday.
+  Completion-relative, monthly, yearly, cron, and bare every-N-day rules are
+  outside this model.
+- `--repeat-at` is a local `HH:MM` time in the series IANA time zone.
+  `--repeat-due` is `same-day` or `none`. Ordinary `--available-at` and `--due`
+  are absolute task fields and cannot be combined with `--repeat`.
+- A series projects at most one current ordinary task. Complete the occurrence
+  with `edit <task-ref> --status done`, or skip it with `recur skip`. A canceled
+  recurrence occurrence renders as skipped on recurrence surfaces.
+- Series template edits affect future occurrences. Schedule rule, start date,
+  and time zone are fixed for a series. Stop the series and create a replacement
+  to change its calendar lattice.
+- Paused occurrences stay addressable by task ref but leave ordinary active
+  views. Stopping keeps the current occurrence as the final task unless
+  `--skip-current` resolves it immediately.
+- Done and search group recurring history by series. Use `--expand-recurring`
+  for occurrence task rows and `recur history` for completed, skipped, missed,
+  paused, corrected, and archived outcomes.
+- List-like reports reconcile a bounded set of recurring series before reading.
+  After a scheduled slot boundary, one report can append one bounded projection
+  operation per changed series, including archiving one superseded projection
+  and materializing one current projection.
+
 - Use `aven <command> --help` to find maintenance commands for renaming,
   deletion, backup, export, import, and integrity checks.
 
@@ -199,13 +247,16 @@ aven restore APP-7KQ9
 ## Structured output
 
 - Human-readable output is the default and preferred for agent use.
-- `--json` is available on `context`, `search`, `list`, `show`,
+- `--json` is available on `context`, `search`, `list`, `show`, `recur list`,
+  `recur show`, `recur history`,
   `attachment list`, `attachment get`, `attachment add`, `attachment delete`,
   `attachment prune`, `dep list`,
   `epic list`, `project list`, `label list`, `conflict list`, `conflict show`,
   `prime`, and `doctor`.
 - JSON task objects include `available_at`, `due_on`, `is_epic`, `epic_parent`,
-  and `epic_children`. An empty `available_at` means the task is immediately
+  `epic_children`, a nullable `recurrence` object, and a nullable
+  `recurrence_group` object. Recurrence series list, detail, and history reports
+  carry `version: 1` and a typed `kind`. An empty `available_at` means the task is immediately
   available. An empty `due_on` means the task has no deadline. Use the epic
   fields to distinguish epic membership from dependency ordering.
 - Use `--limit <n>` with list-style reads such as `list`, `project list`,

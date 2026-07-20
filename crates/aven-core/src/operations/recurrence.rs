@@ -894,7 +894,7 @@ pub async fn resume_recurrence_series(
     series_id: &RecurrenceSeriesId,
     at: DateTime<Utc>,
 ) -> Result<RecurrenceStateOutcome> {
-    let resumed_at = format_utc(at);
+    let mut resumed_at = format_utc(at);
     let mut tx = begin_immediate(conn).await?;
     let series = load_series(&mut tx, &workspace.id, series_id).await?;
     ensure!(
@@ -915,6 +915,7 @@ pub async fn resume_recurrence_series(
     .context("error recurrence-open-pause-missing")?;
     let interval_id: String = interval.get("id");
     let paused_at: String = interval.get("paused_at");
+    resumed_at = timestamp_strictly_after(&paused_at, &resumed_at)?;
     let suspended_slot_text: String = interval.get("suspended_slot_on");
     let suspended_slot = (!suspended_slot_text.is_empty())
         .then(|| suspended_slot_text.parse::<NaiveDate>())
@@ -2045,6 +2046,17 @@ fn retryable_reconcile_error(error: &anyhow::Error) -> bool {
         .and_then(sqlx::Error::as_database_error)
         .and_then(|error| error.code())
         .is_some_and(|code| matches!(code.as_ref(), "5" | "6" | "19"))
+}
+
+fn timestamp_strictly_after(earlier: &str, candidate: &str) -> Result<String> {
+    if candidate > earlier {
+        return Ok(candidate.to_string());
+    }
+    let earlier = DateTime::parse_from_rfc3339(earlier)?.with_timezone(&Utc);
+    let adjusted = earlier
+        .checked_add_signed(chrono::Duration::seconds(1))
+        .context("recurrence lifecycle timestamp is out of range")?;
+    Ok(format_utc(adjusted))
 }
 
 fn format_local_time(value: Option<NaiveTime>) -> String {

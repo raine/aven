@@ -7,8 +7,8 @@ use crate::cli::ContextArgs;
 use crate::query::{self, TaskDependencyItem};
 use crate::render::{print_json_pretty, print_multiline_block, quote};
 use crate::task_render::{
-    AttachmentMetadataJson, TaskEpicLinkJson, attachment_metadata_json, print_attachment_section,
-    task_epic_link_json,
+    AttachmentMetadataJson, TaskEpicLinkJson, TaskRecurrenceJson, attachment_metadata_json,
+    print_attachment_section, task_epic_link_json, task_recurrence_json,
 };
 use crate::types::Task;
 use crate::workspaces::Workspace;
@@ -42,6 +42,7 @@ struct TaskContextSnapshot {
     has_open_dependents: bool,
     epic_parent: Option<TaskEpicLinkJson>,
     epic_children: Vec<TaskEpicLinkJson>,
+    recurrence: Option<TaskRecurrenceJson>,
     attachments: Vec<AttachmentMetadataJson>,
 }
 
@@ -130,6 +131,7 @@ async fn task_context_snapshot(
         .task_detail_with_display_refs(task, &display_refs)
         .await?;
     let labels = detail.item.labels.clone();
+    let recurrence = detail.item.recurrence.as_ref().map(task_recurrence_json);
     let epic_parent = detail.item.epic_parent.as_ref().map(task_epic_link_json);
     let epic_children = detail
         .item
@@ -217,6 +219,7 @@ async fn task_context_snapshot(
         has_open_dependents,
         epic_parent,
         epic_children,
+        recurrence,
         attachments,
     })
 }
@@ -295,6 +298,18 @@ fn print_task_context(snapshot: &TaskContextSnapshot) {
         "available_at={} due_on={}",
         snapshot.task.available_at, snapshot.task.due_on
     );
+    if let Some(recurrence) = &snapshot.recurrence {
+        println!(
+            "recurrence series={} slot={} rule={} timezone={} lifecycle={} outcome={} projection={}",
+            recurrence.series_ref,
+            recurrence.slot_on,
+            quote(&recurrence.rule),
+            recurrence.timezone,
+            recurrence.lifecycle,
+            recurrence.outcome.as_deref().unwrap_or(""),
+            recurrence.projection_state,
+        );
+    }
     if !snapshot.task.description.is_empty() {
         print_multiline_block("description", &snapshot.task.description);
     }
