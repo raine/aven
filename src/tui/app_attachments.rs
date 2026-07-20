@@ -13,6 +13,7 @@ use crate::tui::attachment_controller::{
 use crate::tui::authoring::PendingTaskAttachment;
 use crate::tui::overlay::{MultilineInputState, OverlayRoute, OverlayState};
 use crate::tui::platform::{ClipboardImage, read_clipboard_image, read_clipboard_text};
+use crate::tui::ui::attachment_is_locally_openable;
 
 pub(crate) const DELETE_ATTACHMENT_TITLE: &str = "Remove image";
 
@@ -51,14 +52,38 @@ impl App {
             self.restore_detail_overlay(true);
             return Ok(());
         };
+        let replacement_attachment_id = self.attachment_focus_after_delete(&attachment_id);
         self.store.delete_attachment(&attachment_id).await?;
         self.selected_detail_attachment_id = None;
         self.external_image_exports
             .retain(|(retained_id, _)| retained_id != &attachment_id);
         self.refresh().await?;
+        if replacement_attachment_id.is_some() {
+            self.selected_detail_child_task_id = None;
+            self.selected_detail_attachment_id = replacement_attachment_id;
+        }
         self.set_success("removed image");
         self.restore_detail_overlay(true);
         Ok(())
+    }
+
+    fn attachment_focus_after_delete(&self, attachment_id: &str) -> Option<String> {
+        let attachment_ids = self
+            .store
+            .selected_task(self.widgets.table.selected())?
+            .attachments
+            .iter()
+            .filter(|attachment| attachment_is_locally_openable(attachment))
+            .map(|attachment| attachment.attachment_id.clone())
+            .collect::<Vec<_>>();
+        let index = attachment_ids
+            .iter()
+            .position(|candidate| candidate == attachment_id)?;
+        attachment_ids.get(index + 1).cloned().or_else(|| {
+            index
+                .checked_sub(1)
+                .and_then(|previous| attachment_ids.get(previous).cloned())
+        })
     }
 
     pub(super) async fn paste_detail_image_from_clipboard(&mut self) -> Result<()> {

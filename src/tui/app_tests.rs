@@ -1336,6 +1336,42 @@ mod attachment_paste {
     }
 
     #[tokio::test]
+    async fn removing_focused_attachment_selects_the_next_attachment() {
+        let (dir, _pool, mut app) = test_app_with_pool().await;
+        app.set_add_task_db_path(dir.path().join("test.db"));
+        create_and_select_task(&mut app, test_task_draft("image target")).await;
+        let first = dir.path().join("first.png");
+        let second = dir.path().join("second.jpg");
+        std::fs::write(&first, compressible_png_bytes()).unwrap();
+        std::fs::write(&second, jpeg_bytes()).unwrap();
+        app.overlay = Some(OverlayState::Detail { scroll: 7 });
+        app.dispatch_paste(first.to_str().unwrap()).await.unwrap();
+        app.dispatch_paste(second.to_str().unwrap()).await.unwrap();
+        finish_attachment_work(&mut app).await;
+        let first_id = app.store.tasks[0].attachments[0].attachment_id.clone();
+        let second_id = app.store.tasks[0].attachments[1].attachment_id.clone();
+        app.selected_detail_attachment_id = Some(first_id);
+        app.overlay = Some(OverlayState::Detail { scroll: 7 });
+
+        app.dispatch_key(shift_key(KeyCode::Char('D')), (100, 30).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('y')), (100, 30).into())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 7 })
+        ));
+        assert_eq!(
+            app.selected_detail_attachment_id.as_deref(),
+            Some(second_id.as_str())
+        );
+        assert_eq!(app.store.tasks[0].attachments.len(), 1);
+    }
+
+    #[tokio::test]
     async fn attachment_preview_remove_can_be_cancelled() {
         let (dir, _pool, mut app) = test_app_with_pool().await;
         app.set_add_task_db_path(dir.path().join("test.db"));
