@@ -8,6 +8,7 @@ pub(crate) use self::header::{HeaderTarget, header_target_at};
 mod input;
 mod overlays;
 mod recent_actions;
+mod recurrence;
 mod scroll;
 mod shortcuts;
 mod sidebar;
@@ -34,6 +35,7 @@ use self::overlays::{
     render_update,
 };
 use self::recent_actions::render_recent_actions;
+use self::recurrence::{render_recurrence_detail, render_recurrence_series};
 use self::shortcuts::{render_command, render_detail_help, render_help, render_prefix_hints};
 use self::sidebar::{render_sidebar, render_sidebar_overlay};
 use self::task_list::render_tasks;
@@ -57,6 +59,7 @@ pub(crate) use self::overlays::{
     add_task_field_at, composer_help_scroll_cap, database_stats_scroll_cap, text_panel_scroll_cap,
 };
 pub(crate) use self::recent_actions::recent_action_at_position;
+pub(crate) use self::recurrence::recurrence_series_at_position;
 pub(crate) use self::shortcuts::{detail_help_scroll_cap, help_scroll_cap, prefix_hint_scroll_cap};
 pub(crate) use self::splash::{render_dimmed_onboarding_splash, render_onboarding_splash};
 pub(crate) use self::task_list::{task_at_position, task_status_at_position};
@@ -278,21 +281,27 @@ pub(crate) fn render(
     );
 
     if view.detail_underlay {
-        render_detail_underlay(
-            frame,
-            store,
-            widgets,
-            list.selected_task(),
-            detail_underlay_scroll(view),
-            inline_detail_title_editor,
-            view.detail_focus.as_ref(),
-            view.detail_hover.as_ref(),
-            &view.detail_expanded_sections,
-            view.detail_text_selection.as_ref(),
-            view.inline_images.as_ref(),
-            &view.pending_attachments,
-            view.removed_epic_child.as_ref(),
-        );
+        if store.view_state.view == TaskView::Recurring {
+            if let Some(detail) = store.recurrence_detail.as_ref() {
+                render_recurrence_detail(frame, detail, detail_underlay_scroll(view));
+            }
+        } else {
+            render_detail_underlay(
+                frame,
+                store,
+                widgets,
+                list.selected_task(),
+                detail_underlay_scroll(view),
+                inline_detail_title_editor,
+                view.detail_focus.as_ref(),
+                view.detail_hover.as_ref(),
+                &view.detail_expanded_sections,
+                view.detail_text_selection.as_ref(),
+                view.inline_images.as_ref(),
+                &view.pending_attachments,
+                view.removed_epic_child.as_ref(),
+            );
+        }
     }
     if let Some(overlay) = &view.overlay {
         render_overlay(
@@ -330,6 +339,8 @@ fn render_main_surface(
 ) {
     if store.view_state.view == TaskView::RecentActions {
         render_recent_actions(frame, store, list, focus, area);
+    } else if store.view_state.view == TaskView::Recurring {
+        render_recurrence_series(frame, store, list, focus, area);
     } else if store.view_state.view == TaskView::Columns {
         let marked_task_ids = list.marked_task_ids().clone();
         render_columns(

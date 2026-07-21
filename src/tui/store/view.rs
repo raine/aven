@@ -6,8 +6,8 @@ use tokio::task::JoinHandle;
 use crate::query::{self, SortDirection, TaskSearchQuery};
 
 use super::{
-    ClosedTaskVisibility, SidebarEntryTarget, TaskFilterModifiers, TaskOrder, TaskScope,
-    TaskScopeTarget, TaskView, TuiStore,
+    ClosedTaskVisibility, MainRowSelection, SidebarEntryTarget, TaskFilterModifiers, TaskOrder,
+    TaskScope, TaskScopeTarget, TaskView, TuiStore,
 };
 
 async fn search_preview_with_database(
@@ -78,8 +78,9 @@ impl TuiStore {
     pub(crate) async fn restore_view_state(
         &mut self,
         view_state: super::TaskViewState,
+        selected: Option<&MainRowSelection>,
     ) -> Result<super::ScopeRefreshResult> {
-        self.refresh_with_view_state(view_state, None).await
+        self.refresh_replacement(selected, Some(view_state), None).await
     }
 
     pub(crate) async fn show_scope(&mut self, target: TaskScopeTarget) -> Result<Option<usize>> {
@@ -98,6 +99,7 @@ impl TuiStore {
     pub(crate) async fn clear_filters(&mut self) -> Result<Option<usize>> {
         let mut view_state = self.view_state.clone();
         view_state.filter_modifiers = TaskFilterModifiers::default();
+        view_state.recurring = super::RecurringSeriesViewState::default();
         Ok(self
             .refresh_with_view_state(view_state, None)
             .await?
@@ -218,6 +220,58 @@ impl TuiStore {
             .selected)
     }
 
+    pub(crate) async fn set_recurring_search(
+        &mut self,
+        input: String,
+        selected_id: Option<&aven_core::recurrence::RecurrenceSeriesId>,
+    ) -> Result<Option<usize>> {
+        let mut view_state = self.view_state.clone();
+        view_state.recurring.search =
+            (!input.trim().is_empty()).then(|| input.trim().to_string());
+        let selected = selected_id.cloned().map(MainRowSelection::RecurrenceSeries);
+        Ok(self
+            .refresh_replacement(selected.as_ref(), Some(view_state), None)
+            .await?
+            .selected)
+    }
+
+    pub(crate) async fn cycle_recurring_lifecycle(
+        &mut self,
+        selected_id: Option<&aven_core::recurrence::RecurrenceSeriesId>,
+    ) -> Result<Option<usize>> {
+        use crate::query::RecurrenceSeriesLifecycleFilter as Filter;
+        let mut view_state = self.view_state.clone();
+        view_state.recurring.lifecycle = match view_state.recurring.lifecycle {
+            Filter::ActiveOrPaused => Filter::Active,
+            Filter::Active => Filter::Paused,
+            Filter::Paused => Filter::Stopped,
+            Filter::Stopped => Filter::All,
+            Filter::All => Filter::ActiveOrPaused,
+        };
+        let selected = selected_id.cloned().map(MainRowSelection::RecurrenceSeries);
+        Ok(self
+            .refresh_replacement(selected.as_ref(), Some(view_state), None)
+            .await?
+            .selected)
+    }
+
+    pub(crate) async fn show_task_by_id(
+        &mut self,
+        task_id: crate::ids::TaskId,
+    ) -> Result<Option<usize>> {
+        let mut view_state = self.view_state.clone();
+        view_state.scope = TaskScope::Workspace;
+        view_state.view = TaskView::Search;
+        view_state.filter_modifiers = TaskFilterModifiers {
+            task_ids: vec![task_id.clone()],
+            ..TaskFilterModifiers::default()
+        };
+        Ok(self
+            .refresh_with_view_state(view_state, Some(&task_id))
+            .await?
+            .selected)
+    }
+
     pub(super) fn set_view_order(view_state: &mut super::TaskViewState, order: TaskOrder) {
         if view_state.view == TaskView::Queue {
             view_state.view = TaskView::Open;
@@ -233,6 +287,33 @@ impl TuiStore {
             view_state.view = TaskView::Open;
         }
         view_state.direction = view_state.direction.toggled();
+    }
+
+    pub(super) fn restored_main_selection(
+        &self,
+        selected: Option<&MainRowSelection>,
+    ) -> Option<usize> {
+        match self.view_state.view {
+            TaskView::Recurring => {
+                if self.recurrence_series.is_empty() {
+                    return None;
+                }
+                selected
+                    .and_then(|selected| match selected {
+                        MainRowSelection::RecurrenceSeries(id) => self
+                            .recurrence_series
+                            .iter()
+                            .position(|item| &item.series.id == id),
+                        MainRowSelection::Task(_) => None,
+                    })
+                    .or(Some(0))
+            }
+            TaskView::RecentActions => (!self.recent_actions.is_empty()).then_some(0),
+            _ => self.restored_task_selection(selected.and_then(|selected| match selected {
+                MainRowSelection::Task(id) => Some(id),
+                MainRowSelection::RecurrenceSeries(_) => None,
+            })),
+        }
     }
 
     pub(super) fn restored_task_selection(

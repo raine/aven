@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::layout::{Rect, Size};
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::tui::app::{App, DetailSection, DetailTargetId, Focus, FooterChoiceMode};
 use crate::tui::authoring::AddTaskStep;
@@ -236,6 +236,21 @@ impl App {
                 return Ok(());
             }
             MouseInput::StatusPress => {
+                if self.store.view_state.view == TaskView::Recurring {
+                    if self.overlay.is_none()
+                        && let Some(hit) = crate::tui::ui::recurrence_series_at_position(
+                            &self.store,
+                            self.list.table_state(),
+                            self.task_area_for_mouse(terminal_size),
+                            mouse.column,
+                            mouse.row,
+                        )
+                    {
+                        self.list.focus_tasks();
+                        self.list.select_task(Some(hit.series_index));
+                    }
+                    return Ok(());
+                }
                 return self
                     .handle_task_status_right_click(mouse, terminal_size)
                     .await;
@@ -392,6 +407,27 @@ impl App {
                 self.list.focus_tasks();
                 self.list.select_task(Some(action_index));
                 self.list.clear_task_click();
+            }
+            PointerEvent::SelectSeries(hit) => {
+                self.list.focus_tasks();
+                self.list.select_task(Some(hit.series_index));
+                let now = Instant::now();
+                let is_double_click = self.last_series_click.as_ref().is_some_and(|previous| {
+                    previous.series_id == hit.series_id
+                        && previous.viewport_row == hit.viewport_row
+                        && now.duration_since(previous.at) <= Duration::from_millis(500)
+                });
+                if is_double_click {
+                    self.last_series_click = None;
+                    self.store.load_recurrence_series_detail(&hit.series_id).await?;
+                    self.detail = crate::tui::detail_session::DetailSession::open(0);
+                } else {
+                    self.last_series_click = Some(crate::tui::app::SeriesRowClick {
+                        series_id: hit.series_id,
+                        viewport_row: hit.viewport_row,
+                        at: now,
+                    });
+                }
             }
             PointerEvent::EditStatus(hit) => {
                 self.list.clear_task_click();

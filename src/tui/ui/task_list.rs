@@ -495,12 +495,14 @@ fn empty_task_prompt(store: &TuiStore) -> EmptyTaskPrompt {
             key: "f d",
             action: "Include closed epics",
         },
-        TaskView::Columns | TaskView::RecentActions | TaskView::Search => EmptyTaskPrompt {
-            title: "No tasks here",
-            detail: "Your queue has the wider view.",
-            key: "v q",
-            action: "View queue",
-        },
+        TaskView::Columns | TaskView::Recurring | TaskView::RecentActions | TaskView::Search => {
+            EmptyTaskPrompt {
+                title: "No tasks here",
+                detail: "Your queue has the wider view.",
+                key: "v q",
+                action: "View queue",
+            }
+        }
     }
 }
 

@@ -79,6 +79,168 @@ async fn list(
 }
 
 #[tokio::test]
+async fn recurring_series_list_defaults_to_active_and_paused() {
+    let (_temp, database, workspace) = setup().await;
+    let active = create(&database, &workspace, "Active", 20).await;
+    let paused = create(&database, &workspace, "Paused", 20).await;
+    database
+        .pause_recurrence_series(&workspace, &paused.series.id)
+        .await
+        .unwrap();
+    let stopped = create(&database, &workspace, "Stopped", 20).await;
+    database
+        .stop_recurrence_series(&workspace, &stopped.series.id, false)
+        .await
+        .unwrap();
+
+    let items = database
+        .list_recurrence_series_view_at(
+            &workspace.id,
+            at(24, 12),
+            crate::query::RecurrenceSeriesListQuery::default(),
+        )
+        .await
+        .unwrap();
+    let ids = items
+        .iter()
+        .map(|item| item.series.id.clone())
+        .collect::<std::collections::HashSet<_>>();
+
+    assert_eq!(
+        ids,
+        [active.series.id, paused.series.id].into_iter().collect()
+    );
+    assert!(items.iter().all(|item| item.current_occurrence.is_some()));
+}
+
+#[tokio::test]
+async fn recurring_series_list_filters_lifecycle_and_searches_title_or_ref() {
+    let (_temp, database, workspace) = setup().await;
+    let active = create(&database, &workspace, "Quarterly Review", 20).await;
+    let stopped = create(&database, &workspace, "Retired Review", 20).await;
+    database
+        .stop_recurrence_series(&workspace, &stopped.series.id, false)
+        .await
+        .unwrap();
+
+    let stopped_items = database
+        .list_recurrence_series_view_at(
+            &workspace.id,
+            at(24, 12),
+            crate::query::RecurrenceSeriesListQuery {
+                lifecycle: crate::query::RecurrenceSeriesLifecycleFilter::Stopped,
+                ..crate::query::RecurrenceSeriesListQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(stopped_items.len(), 1);
+    assert_eq!(stopped_items[0].series.id, stopped.series.id);
+
+    let all = database
+        .list_recurrence_series_view_at(
+            &workspace.id,
+            at(24, 12),
+            crate::query::RecurrenceSeriesListQuery {
+                lifecycle: crate::query::RecurrenceSeriesLifecycleFilter::All,
+                ..crate::query::RecurrenceSeriesListQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    let active_ref = all
+        .iter()
+        .find(|item| item.series.id == active.series.id)
+        .unwrap()
+        .series_ref
+        .to_lowercase();
+    for search in ["quarterly".to_string(), active_ref] {
+        let matches = database
+            .list_recurrence_series_view_at(
+                &workspace.id,
+                at(24, 12),
+                crate::query::RecurrenceSeriesListQuery {
+                    lifecycle: crate::query::RecurrenceSeriesLifecycleFilter::All,
+                    search: Some(search),
+                    ..crate::query::RecurrenceSeriesListQuery::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].series.id, active.series.id);
+    }
+}
+
+#[tokio::test]
+async fn recurring_series_list_respects_project_scope() {
+    let (_temp, database, workspace) = setup().await;
+    let mobile = database
+        .create_project(&workspace, "Mobile")
+        .await
+        .unwrap()
+        .project;
+    let default = create(&database, &workspace, "Default review", 20).await;
+    let mut mobile_draft = draft("Mobile review", 20);
+    mobile_draft.project = mobile.key.clone();
+    let mobile_series = database
+        .create_recurrence_series_at(&workspace, mobile_draft, at(20, 12))
+        .await
+        .unwrap();
+
+    let items = database
+        .list_recurrence_series_view_at(
+            &workspace.id,
+            at(24, 12),
+            crate::query::RecurrenceSeriesListQuery {
+                project: Some(mobile.key),
+                ..crate::query::RecurrenceSeriesListQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].series.id, mobile_series.series.id);
+    assert_ne!(items[0].series.id, default.series.id);
+}
+
+#[tokio::test]
+async fn recurring_series_list_statement_shapes_stay_bounded_with_history() {
+    let (_temp, database, workspace) = setup().await;
+    let created = create(&database, &workspace, "Bounded review", 1).await;
+    let mut task_id = created.task.id;
+    let mut conn = database.acquire().await.unwrap();
+    for day in 1..=24 {
+        let mut tx = crate::db::begin_immediate(&mut conn).await.unwrap();
+        let outcome = crate::operations::recurrence::resolve_recurrence_occurrence_in_transaction(
+            &mut tx,
+            &workspace,
+            &task_id,
+            RecurrenceOutcome::Completed,
+            &format!("2026-07-{day:02}T12:00:00Z"),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        task_id = outcome.successor.unwrap().id;
+    }
+
+    conn.clear_cached_statements().await.unwrap();
+    let items = super::list_recurrence_series_view(
+        &mut conn,
+        &workspace.id,
+        &crate::query::RecurrenceSeriesListQuery::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(items.len(), 1);
+    assert!(items[0].current_occurrence.is_some());
+    assert!(conn.cached_statements_size() <= 8);
+}
+
+#[tokio::test]
 async fn reconciliation_keeps_one_active_row_and_hydrates_in_batch() {
     let (_temp, database, workspace) = setup().await;
     let created = create(&database, &workspace, "daily report", 20).await;

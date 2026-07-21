@@ -212,8 +212,18 @@ impl App {
 
     async fn accept_search_input(&mut self, input: String) -> Result<()> {
         let previous = self.store.view_state.clone();
-        self.list
-            .select_task(self.store.accept_search(&input).await?);
+        let selected = if self.store.view_state.view == crate::tui::store::TaskView::Recurring {
+            let selected_id = self
+                .store
+                .selected_recurrence_series(self.list.selected_task())
+                .map(|item| item.series.id.clone());
+            self.store
+                .set_recurring_search(input, selected_id.as_ref())
+                .await?
+        } else {
+            self.store.accept_search(&input).await?
+        };
+        self.list.select_task(selected);
         self.push_navigation_state(previous);
         Ok(())
     }
@@ -366,6 +376,11 @@ impl App {
     }
 
     pub(super) fn schedule_search_preview(&mut self, state: &mut SearchState) {
+        if self.store.view_state.view == crate::tui::store::TaskView::Recurring {
+            state.clear_results();
+            self.clear_live_search_preview();
+            return;
+        }
         let query = state.current_query();
         if query.is_empty() {
             if matches!(state.intent, SearchIntent::AddEpicChild { .. }) {

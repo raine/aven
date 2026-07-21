@@ -122,6 +122,25 @@ pub async fn sidebar_counts_for_scope_in_workspace(
         .fetch_one(&mut *conn)
         .await?
     };
+    let recurring = if let Some(project_id) = project_id.as_ref() {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM recurrence_series
+             WHERE workspace_id = ? AND project_id = ? AND deleted = 0
+               AND state IN ('active', 'paused')",
+        )
+        .bind(workspace_id)
+        .bind(project_id)
+        .fetch_one(&mut *conn)
+        .await?
+    } else {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM recurrence_series
+             WHERE workspace_id = ? AND deleted = 0 AND state IN ('active', 'paused')",
+        )
+        .bind(workspace_id)
+        .fetch_one(&mut *conn)
+        .await?
+    };
     Ok(SidebarCounts {
         open: row.get("open_count"),
         inbox: row.get("inbox_count"),
@@ -131,6 +150,7 @@ pub async fn sidebar_counts_for_scope_in_workspace(
         conflicts: row.get("conflicts_count"),
         done: row.get::<i64, _>("done_count") + recurring_done,
         epics: row.get("epics_count"),
+        recurring,
         upcoming: row.get("upcoming_count"),
     })
 }

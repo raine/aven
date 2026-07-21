@@ -416,6 +416,7 @@ fn active_view_label(store: &TuiStore) -> &'static str {
         TaskView::Search => "search",
         TaskView::RecentActions => "recent",
         TaskView::Epics => "epics",
+        TaskView::Recurring => "recurring",
     }
 }
 
@@ -432,6 +433,9 @@ fn metric(label: &str, count: i64, color: Color, active: bool) -> Vec<Span<'stat
 }
 
 fn active_order_spans(store: &TuiStore) -> Vec<Span<'static>> {
+    if store.view_state.view == TaskView::Recurring {
+        return Vec::new();
+    }
     let mut spans = vec![
         separator(),
         Span::styled("order ", Style::new().fg(FG_DIM)),
@@ -453,6 +457,21 @@ fn active_order_spans(store: &TuiStore) -> Vec<Span<'static>> {
 }
 
 fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
+    if store.view_state.view == TaskView::Recurring {
+        let mut parts = vec![vec![filter_part(format!(
+            "lifecycle={}",
+            store.view_state.recurring.lifecycle.as_str()
+        ))]];
+        if let Some(search) = store.view_state.recurring.search.as_deref() {
+            parts.push(vec![filter_part(format!("search={search}"))]);
+        }
+        let mut spans = vec![
+            separator(),
+            Span::styled("filter ", Style::new().fg(FG_DIM)),
+        ];
+        spans.extend(join_filter_parts(parts));
+        return spans;
+    }
     let modifiers = &store.view_state.filter_modifiers;
     let mut parts = Vec::new();
     if let Some(label) = &modifiers.label {
@@ -572,6 +591,7 @@ mod tests {
             done: 4,
             upcoming: 0,
             epics: 0,
+            recurring: 0,
         };
         store
     }
@@ -600,6 +620,7 @@ mod tests {
             },
             order: TaskOrder::Priority,
             direction: crate::query::SortDirection::Desc,
+            recurring: Default::default(),
             expanded_epic_ids: std::collections::BTreeSet::new(),
             collapsed_epic_ids: std::collections::BTreeSet::new(),
         };

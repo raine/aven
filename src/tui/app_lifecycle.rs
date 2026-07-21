@@ -26,7 +26,7 @@ use crate::tui::inline_images::{InlineImageBackend, active_backend_from_env};
 use crate::tui::overlay::OverlayView::AddTask;
 use crate::tui::overlay::{OverlayState, OverlayView};
 use crate::tui::preview_controller::PreviewKey;
-use crate::tui::store::TaskView;
+use crate::tui::store::{MainRowSelection, TaskView};
 use crate::tui::ui::{self, ViewState, ViewSurface};
 
 impl App {
@@ -420,13 +420,26 @@ impl App {
                         .map(|action| action.change_id.clone()),
                 )
             });
-        let selected_id = if self.store.view_state.view == TaskView::RecentActions {
-            None
-        } else {
-            self.store
+        let selected_id = match self.store.view_state.view {
+            TaskView::RecentActions => None,
+            TaskView::Recurring => self
+                .store
+                .selected_recurrence_series(selected)
+                .map(|item| MainRowSelection::RecurrenceSeries(item.series.id.clone())),
+            _ => self
+                .store
                 .selected_task(selected)
-                .map(|item| item.task.id.clone())
+                .map(|item| MainRowSelection::Task(item.task.id.clone())),
         };
+        let recurrence_detail_id = (self.store.view_state.view == TaskView::Recurring
+            && matches!(self.overlay, Some(OverlayState::Detail { .. })))
+        .then(|| {
+            self.store
+                .recurrence_detail
+                .as_ref()
+                .map(|detail| detail.series.id.clone())
+        })
+        .flatten();
         let detail_task = (self.detail_underlay()
             || matches!(self.overlay, Some(OverlayState::AttachmentPreview { .. })))
         .then(|| self.store.selected_task(selected).cloned())
@@ -468,6 +481,20 @@ impl App {
                 result.selected
             });
         self.list.select_task(selected);
+        if let Some(series_id) = recurrence_detail_id {
+            let selected_matches = self
+                .store
+                .selected_recurrence_series(selected)
+                .is_some_and(|item| item.series.id == series_id);
+            if selected_matches {
+                self.store.load_recurrence_series_detail(&series_id).await?;
+            } else {
+                self.store.recurrence_detail = None;
+                self.detail.close();
+                self.overlay = None;
+                self.set_warning("recurring series is no longer visible");
+            }
+        }
         let removed_epic_child = self
             .detail
             .state()

@@ -85,6 +85,7 @@ pub(crate) enum Action {
     ClearFilters,
     ToggleClosedFilter,
     ToggleDeletedFilter,
+    CycleRecurringLifecycleFilter,
     ShowView(TaskView),
     ShowWorkspaceScope,
     BeginConflictList,

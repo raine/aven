@@ -25,6 +25,11 @@ impl TuiStore {
             view_entry("Conflicts", self.counts.conflicts, TaskView::Conflicts),
             view_entry("Epics", self.counts.epics, TaskView::Epics),
             view_entry(
+                "Recurring Tasks",
+                self.counts.recurring,
+                TaskView::Recurring,
+            ),
+            view_entry(
                 "Recent actions",
                 self.recent_actions.len() as i64,
                 TaskView::RecentActions,

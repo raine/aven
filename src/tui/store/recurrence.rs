@@ -7,6 +7,22 @@ use chrono::{DateTime, NaiveDate, Utc};
 use super::{MutationMessage, TuiStore};
 
 impl TuiStore {
+    pub(crate) async fn load_recurrence_series_detail(
+        &mut self,
+        series_id: &RecurrenceSeriesId,
+    ) -> Result<()> {
+        let detail = self
+            .database
+            .recurrence_series_detail(&self.active_workspace.id, series_id)
+            .await?;
+        anyhow::ensure!(
+            &detail.series.id == series_id,
+            "recurrence detail identity changed while loading"
+        );
+        self.recurrence_detail = Some(detail);
+        Ok(())
+    }
+
     pub(crate) async fn create_recurrence_series(
         &mut self,
         mut draft: RecurrenceSeriesDraft,

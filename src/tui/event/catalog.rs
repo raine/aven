@@ -645,6 +645,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::ShowView(TaskView::Epics),
     ),
     CommandSpec::implemented(
+        "view-recurring",
+        "show recurring tasks",
+        "Views",
+        &[KeySequence {
+            codes: &[KeyCode::Char('v'), KeyCode::Char('u')],
+            label: "v u",
+        }],
+        Action::ShowView(TaskView::Recurring),
+    ),
+    CommandSpec::implemented(
         "view-recent",
         "show recent actions",
         "Views",
@@ -1174,6 +1184,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             label: "f p",
         }],
         Action::BeginFilterPriority,
+    ),
+    CommandSpec::implemented(
+        "filter-recurring-lifecycle",
+        "cycle recurring series lifecycle",
+        "Filters",
+        &[KeySequence {
+            codes: &[KeyCode::Char('f'), KeyCode::Char('r')],
+            label: "f r",
+        }],
+        Action::CycleRecurringLifecycleFilter,
     ),
     CommandSpec::implemented(
         "filter-clear",

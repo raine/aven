@@ -15,8 +15,10 @@ use crate::types::{RecurrenceOccurrence, RecurrencePauseInterval, RecurrenceSeri
 
 use super::types::{
     RecurrenceCounts, RecurrenceHistoryEntry, RecurrenceHistoryKind, RecurrenceHistoryPage,
-    RecurrenceReconciliation, RecurrenceSeriesConflict, RecurrenceSeriesDetail,
-    RecurrenceSeriesSummary, RecurrenceTaskGroup, TaskListItem, TaskRecurrenceSummary,
+    RecurrenceOccurrenceLink, RecurrenceReconciliation, RecurrenceSeriesConflict,
+    RecurrenceSeriesDetail, RecurrenceSeriesLifecycleFilter, RecurrenceSeriesListItem,
+    RecurrenceSeriesListQuery, RecurrenceSeriesSummary, RecurrenceTaskGroup, TaskListItem,
+    TaskRecurrenceSummary,
 };
 
 const SQLITE_BIND_CHUNK_SIZE: usize = 900;
@@ -226,6 +228,116 @@ pub(crate) async fn task_recurrence_summaries(
         }
     }
     Ok(summaries)
+}
+
+pub(crate) async fn list_recurrence_series_view(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    query: &RecurrenceSeriesListQuery,
+) -> Result<Vec<RecurrenceSeriesListItem>> {
+    let mut sql = QueryBuilder::<Sqlite>::new(
+        "SELECT s.workspace_id, s.id, s.title, s.description, s.project_id, s.priority,
+                s.initial_status, s.frequency, s.interval, s.weekdays, s.timezone, s.start_on,
+                s.available_local_time, s.due_policy, s.state, s.stopped_at, s.created_at,
+                s.updated_at, s.deleted
+         FROM recurrence_series s",
+    );
+    if query.project.is_some() {
+        sql.push(" JOIN projects p ON p.workspace_id = s.workspace_id AND p.id = s.project_id");
+    }
+    sql.push(" WHERE s.workspace_id = ");
+    sql.push_bind(workspace_id);
+    sql.push(" AND s.deleted = 0");
+    match query.lifecycle {
+        RecurrenceSeriesLifecycleFilter::ActiveOrPaused => {
+            sql.push(" AND s.state IN ('active', 'paused')");
+        }
+        RecurrenceSeriesLifecycleFilter::Active => {
+            sql.push(" AND s.state = 'active'");
+        }
+        RecurrenceSeriesLifecycleFilter::Paused => {
+            sql.push(" AND s.state = 'paused'");
+        }
+        RecurrenceSeriesLifecycleFilter::Stopped => {
+            sql.push(" AND s.state = 'stopped'");
+        }
+        RecurrenceSeriesLifecycleFilter::All => {}
+    }
+    if let Some(project) = query.project.as_deref() {
+        sql.push(" AND p.key = ");
+        sql.push_bind(project);
+    }
+    sql.push(" ORDER BY s.title COLLATE NOCASE, s.id");
+    let series = sql
+        .build()
+        .fetch_all(&mut *conn)
+        .await?
+        .iter()
+        .map(recurrence_series_from_row)
+        .collect::<Result<Vec<_>>>()?;
+    let ids = series
+        .iter()
+        .map(|item| item.id.clone())
+        .collect::<Vec<_>>();
+    let refs = SeriesRefContext::load(conn, workspace_id).await?;
+    let current = load_projected_occurrences(conn, workspace_id, &ids).await?;
+    let display_refs = DisplayRefContext::for_workspace(conn, workspace_id).await?;
+    let current_task_ids = current
+        .values()
+        .filter_map(|occurrence| occurrence.task_id.clone())
+        .collect::<Vec<_>>();
+    let task_refs =
+        load_task_display_refs(conn, workspace_id, &current_task_ids, &display_refs).await?;
+    for occurrence in current.values() {
+        let task_id = occurrence.task_id.as_ref().with_context(|| {
+            format!(
+                "projected recurrence occurrence has no task series_id={}",
+                occurrence.series_id
+            )
+        })?;
+        ensure!(
+            task_refs.contains_key(task_id),
+            "projected recurrence task is missing series_id={} task_id={task_id}",
+            occurrence.series_id
+        );
+    }
+    let search = query
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_lowercase);
+
+    Ok(series
+        .into_iter()
+        .filter_map(|series| {
+            let series_ref = refs.display_ref(&series.id);
+            if search.as_deref().is_some_and(|needle| {
+                !series.title.to_lowercase().contains(needle)
+                    && !series_ref.to_lowercase().contains(needle)
+            }) {
+                return None;
+            }
+            let current_occurrence = current.get(&series.id).and_then(|occurrence| {
+                let task_id = occurrence.task_id.as_ref()?;
+                Some(RecurrenceOccurrenceLink {
+                    slot_on: occurrence.slot_on.to_string(),
+                    task_id: task_id.clone(),
+                    task_ref: task_refs.get(task_id)?.clone(),
+                })
+            });
+            Some(RecurrenceSeriesListItem {
+                rule_label: rule_label(
+                    series.rule.frequency().as_str().to_string(),
+                    series.rule.interval(),
+                    series.rule.weekdays_set().to_string(),
+                ),
+                series,
+                series_ref,
+                current_occurrence,
+            })
+        })
+        .collect())
 }
 
 pub(crate) async fn list_recurrence_series(
@@ -602,6 +714,35 @@ fn slot_is_paused(
                 .as_deref()
                 .is_none_or(|resumed_at| boundary.as_str() < resumed_at)
     }))
+}
+
+async fn load_projected_occurrences(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    series_ids: &[RecurrenceSeriesId],
+) -> Result<HashMap<RecurrenceSeriesId, RecurrenceOccurrence>> {
+    let mut by_series = HashMap::new();
+    for chunk in series_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT workspace_id, series_id, slot_on, task_id, outcome, resolved_at,
+                    outcome_change_id, projection_state, archived_at
+             FROM recurrence_occurrences WHERE workspace_id = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(" AND projection_state = 'projected' AND series_id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for series_id in chunk {
+                separated.push_bind(series_id);
+            }
+        }
+        query.push(") ORDER BY series_id");
+        for row in query.build().fetch_all(&mut *conn).await? {
+            let occurrence = recurrence_occurrence_from_row(&row)?;
+            by_series.insert(occurrence.series_id.clone(), occurrence);
+        }
+    }
+    Ok(by_series)
 }
 
 async fn load_current_occurrences(

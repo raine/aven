@@ -62,7 +62,7 @@
 #### Application and navigation state
 
 - `App` composes flow controllers, cohesive surfaces, and simple application scalars. `ListSurface` owns browse focus, widget selection, visible marks, sidebar state, navigation history, and list click recognition. `DetailSession` owns detail activity, interaction state, and linked-detail history. `InlineImageSurface` owns terminal image placement, cleanup, and external-viewer retention.
-- `TaskViewState` owns task-list scope, view, filters, ordering, and direction. `src/tui/columns.rs` derives configured column grouping and navigation while retaining global task indexes. `TaskSelection` captures stable existing-task targets for edit flows, resolving visible marks before the selected row.
+- `TaskViewState` owns task-list scope, view, filters, ordering, direction, and recurring-series lifecycle or text filters. `src/tui/columns.rs` derives configured column grouping and navigation while retaining global task indexes. `TaskSelection` captures stable existing-task targets for edit flows, resolving visible marks before the selected row. The Recurring view renders series rows as the main list and loads one series detail projection for navigation into its applicable occurrence.
 - Linked detail navigation loads exact workspace-scoped tasks through `TuiStore`. `DetailSnapshot` provides linked-history and recent-change restoration. Modal overlays layer over an active detail session without owning parallel return flags.
 - `SearchController`, `IntakeController`, `AttachmentController`, `PreviewController`, and `UpdateController` own their asynchronous work and lifecycle transitions. Attachment preparation and preview generation use separate bounded blocking pools.
 

@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use aven_core::recurrence::{RecurrenceOutcome, RecurrenceSeriesState};
 use chrono::{DateTime, NaiveDate};
 
-use crate::tui::app::App;
+use crate::tui::app::{App, SeriesDetailReturn};
 use crate::tui::overlay::{OverlayState, TextIntent, TextPanelState};
 
 fn parse_historical_outcome(value: &str) -> Result<(NaiveDate, RecurrenceOutcome, Option<String>)> {
@@ -29,6 +29,40 @@ fn parse_historical_outcome(value: &str) -> Result<(NaiveDate, RecurrenceOutcome
 }
 
 impl App {
+    pub(super) async fn open_recurrence_occurrence(&mut self) -> Result<()> {
+        let Some(detail) = self.store.recurrence_detail.as_ref() else {
+            self.set_warning("recurring series detail is unavailable");
+            return Ok(());
+        };
+        let Some(task_id) = detail
+            .current_occurrence
+            .as_ref()
+            .and_then(|occurrence| occurrence.task_id.clone())
+        else {
+            self.set_warning("recurring series has no applicable occurrence task");
+            return Ok(());
+        };
+        let series_id = detail.series.id.clone();
+        let scroll = self.detail.state().map_or(0, |detail| detail.scroll());
+        let previous = self.store.view_state.clone();
+        let selected = self.store.show_task_by_id(task_id).await?;
+        let Some(selected) = selected else {
+            let restore = crate::tui::store::MainRowSelection::RecurrenceSeries(series_id.clone());
+            self.store
+                .restore_view_state(previous, Some(&restore))
+                .await?;
+            self.store.load_recurrence_series_detail(&series_id).await?;
+            self.set_warning("occurrence task is unavailable");
+            return Ok(());
+        };
+        self.push_navigation_state(previous);
+        self.series_detail_return = Some(SeriesDetailReturn { series_id, scroll });
+        self.list.select_task(Some(selected));
+        self.detail = crate::tui::detail_session::DetailSession::open(0);
+        self.overlay = None;
+        Ok(())
+    }
+
     pub(super) async fn show_recurrence_history(&mut self) -> Result<()> {
         let Some(page) = self
             .store

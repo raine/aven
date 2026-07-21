@@ -3,6 +3,7 @@ use anyhow::Result;
 use crate::tui::app::{App, TaskCopyKind, TaskRefKind};
 use crate::tui::conflict_flow::ConflictResolutionChoice;
 use crate::tui::event::Action;
+use crate::tui::store::TaskView;
 
 impl App {
     pub(in crate::tui) async fn execute(&mut self, action: Action) -> Result<()> {
@@ -76,6 +77,25 @@ impl App {
             Action::ClearFilters => self.clear_filters().await?,
             Action::ToggleClosedFilter => self.toggle_closed_filter().await?,
             Action::ToggleDeletedFilter => self.toggle_deleted_filter().await?,
+            Action::CycleRecurringLifecycleFilter => {
+                if self.store.view_state.view == TaskView::Recurring {
+                    let selected_id = self
+                        .store
+                        .selected_recurrence_series(self.list.selected_task())
+                        .map(|item| item.series.id.clone());
+                    let selected = self
+                        .store
+                        .cycle_recurring_lifecycle(selected_id.as_ref())
+                        .await?;
+                    self.list.select_task(selected);
+                    self.set_info(format!(
+                        "recurring lifecycle {}",
+                        self.store.view_state.recurring.lifecycle.as_str()
+                    ));
+                } else {
+                    self.set_warning("recurring lifecycle filter is available in Recurring Tasks");
+                }
+            }
             Action::ShowView(view) => self.show_view(view).await?,
             Action::ShowWorkspaceScope => {
                 self.show_scope(crate::tui::store::TaskScopeTarget::Workspace)

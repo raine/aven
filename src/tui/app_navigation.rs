@@ -223,6 +223,20 @@ impl App {
     pub(super) async fn activate_or_toggle_detail(&mut self) -> Result<()> {
         if self.list.focus() == Focus::Sidebar {
             self.apply_sidebar_selection().await?;
+        } else if self.store.view_state.view == crate::tui::store::TaskView::Recurring {
+            if self.detail.is_active() {
+                self.open_recurrence_occurrence().await?;
+            } else if let Some(series_id) = self
+                .store
+                .selected_recurrence_series(self.list.selected_task())
+                .map(|item| item.series.id.clone())
+            {
+                self.store.load_recurrence_series_detail(&series_id).await?;
+                self.detail = crate::tui::detail_session::DetailSession::open(0);
+                self.overlay = None;
+            } else {
+                self.set_warning("no recurring series selected");
+            }
         } else if self.detail.is_active() {
             self.clear_detail_session();
         } else if self.store.view_state.view == crate::tui::store::TaskView::RecentActions {
@@ -263,6 +277,9 @@ impl App {
         let had_overlay = self.overlay.take().is_some();
         if !had_overlay && self.detail.is_active() {
             self.detail.close();
+            if self.store.view_state.view == crate::tui::store::TaskView::Recurring {
+                self.store.recurrence_detail = None;
+            }
         } else if !had_overlay && self.list.focus() == Focus::Sidebar {
             self.list.focus_tasks();
             self.preserve_or_restore_sidebar_selection();

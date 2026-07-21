@@ -36,20 +36,25 @@ pub(crate) use recurrence::{recurrence_draft, recurrence_history_lines};
 pub(crate) use task_commands::{PriorityMutation, TaskDateField, TaskTextField};
 pub(crate) use task_creation::task_creation_committed;
 pub(crate) use types::{
-    ClosedTaskVisibility, ConflictTarget, MutationMessage, SidebarEntry, SidebarEntryTarget,
-    SyncStatusCheck, TaskFilterModifiers, TaskListRenderMode, TaskOrder, TaskScope,
-    TaskScopeTarget, TaskView, TaskViewState, TuiDatabaseStats, TuiSyncStatus, mutation_committed,
+    ClosedTaskVisibility, ConflictTarget, MainRowSelection, MutationMessage,
+    RecurringSeriesViewState, SidebarEntry, SidebarEntryTarget, SyncStatusCheck,
+    TaskFilterModifiers, TaskListRenderMode, TaskOrder, TaskScope, TaskScopeTarget, TaskView,
+    TaskViewState, TuiDatabaseStats, TuiSyncStatus, mutation_committed,
 };
 #[cfg(test)]
 pub(crate) use types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts};
 
-use crate::query::{ProjectListItem, SidebarCounts, TaskListItem};
+use crate::query::{
+    ProjectListItem, RecurrenceSeriesDetail, RecurrenceSeriesListItem, SidebarCounts, TaskListItem,
+};
 use crate::workspaces::Workspace;
 
 #[derive(Clone)]
 pub(crate) struct TuiStore {
     database: Database,
     pub(crate) tasks: Vec<TaskListItem>,
+    pub(crate) recurrence_series: Vec<RecurrenceSeriesListItem>,
+    pub(crate) recurrence_detail: Option<RecurrenceSeriesDetail>,
     pub(crate) recent_actions: Vec<RecentActionItem>,
     pub(crate) projects: Vec<ProjectListItem>,
     pub(crate) labels: Vec<String>,
@@ -93,6 +98,8 @@ impl TuiStore {
         let mut store = Self {
             database,
             tasks: Vec::new(),
+            recurrence_series: Vec::new(),
+            recurrence_detail: None,
             recent_actions: Vec::new(),
             projects: Vec::new(),
             labels: Vec::new(),
@@ -162,11 +169,18 @@ impl TuiStore {
         selected.and_then(|index| self.recent_actions.get(index))
     }
 
+    pub(crate) fn selected_recurrence_series(
+        &self,
+        selected: Option<usize>,
+    ) -> Option<&RecurrenceSeriesListItem> {
+        selected.and_then(|index| self.recurrence_series.get(index))
+    }
+
     pub(crate) fn main_row_count(&self) -> usize {
-        if self.view_state.view == TaskView::RecentActions {
-            self.recent_actions.len()
-        } else {
-            self.tasks.len()
+        match self.view_state.view {
+            TaskView::RecentActions => self.recent_actions.len(),
+            TaskView::Recurring => self.recurrence_series.len(),
+            _ => self.tasks.len(),
         }
     }
 
@@ -174,17 +188,18 @@ impl TuiStore {
         &mut self,
         selected_id: Option<&crate::ids::TaskId>,
     ) -> Result<Option<usize>> {
+        let selected = selected_id.cloned().map(MainRowSelection::Task);
         Ok(self
-            .refresh_with_scope_fallback(selected_id)
+            .refresh_with_scope_fallback(selected.as_ref())
             .await?
             .selected)
     }
 
     pub(crate) async fn refresh_with_scope_fallback(
         &mut self,
-        selected_id: Option<&crate::ids::TaskId>,
+        selected: Option<&MainRowSelection>,
     ) -> Result<ScopeRefreshResult> {
-        self.refresh_replacement(selected_id, None, None).await
+        self.refresh_replacement(selected, None, None).await
     }
 
     pub(crate) async fn refresh_preserving_visible_deleted(
@@ -219,7 +234,8 @@ impl TuiStore {
         view_state: TaskViewState,
         selected_id: Option<&crate::ids::TaskId>,
     ) -> Result<ScopeRefreshResult> {
-        self.refresh_replacement(selected_id, Some(view_state), None)
+        let selected = selected_id.cloned().map(MainRowSelection::Task);
+        self.refresh_replacement(selected.as_ref(), Some(view_state), None)
             .await
     }
 
@@ -232,9 +248,9 @@ impl TuiStore {
             .await
     }
 
-    async fn refresh_replacement(
+    pub(super) async fn refresh_replacement(
         &mut self,
-        selected_id: Option<&crate::ids::TaskId>,
+        selected: Option<&MainRowSelection>,
         view_state: Option<TaskViewState>,
         active_workspace: Option<Workspace>,
     ) -> Result<ScopeRefreshResult> {
@@ -249,7 +265,7 @@ impl TuiStore {
         {
             replacement.fail_next_refresh = self.fail_next_refresh.take();
         }
-        let result = replacement.refresh_in_place(selected_id).await?;
+        let result = replacement.refresh_in_place(selected).await?;
         #[cfg(test)]
         {
             replacement.fail_next_refresh = None;
@@ -260,7 +276,7 @@ impl TuiStore {
 
     async fn refresh_in_place(
         &mut self,
-        selected_id: Option<&crate::ids::TaskId>,
+        selected: Option<&MainRowSelection>,
     ) -> Result<ScopeRefreshResult> {
         let workspace_id = self.active_workspace.id.clone();
         self.workspaces = self.database.list_workspaces().await?;
@@ -280,7 +296,17 @@ impl TuiStore {
         self.inject_refresh_failure(RefreshFailureStage::Tasks)?;
         if self.view_state.view == TaskView::RecentActions {
             self.tasks.clear();
+            self.recurrence_series.clear();
+            self.recurrence_detail = None;
+        } else if self.view_state.view == TaskView::Recurring {
+            self.tasks.clear();
+            self.recurrence_series = self
+                .database
+                .list_recurrence_series_view(&workspace_id, self.view_state.recurrence_query())
+                .await?;
         } else {
+            self.recurrence_series.clear();
+            self.recurrence_detail = None;
             let filters = self.view_state.filters();
             self.tasks = self
                 .database
@@ -303,7 +329,7 @@ impl TuiStore {
         self.rebuild_sidebar();
         self.last_refresh = Instant::now();
         Ok(ScopeRefreshResult {
-            selected: self.restored_task_selection(selected_id),
+            selected: self.restored_main_selection(selected),
             fallback_scope,
         })
     }

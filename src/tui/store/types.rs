@@ -57,7 +57,8 @@ pub(crate) struct ConflictTarget {
 use std::collections::BTreeSet;
 
 use crate::query::{
-    SortDirection, SyncHistoryStats, TaskAvailabilityFilter, TaskFilters, TaskQueryMode, TaskSort,
+    RecurrenceSeriesLifecycleFilter, RecurrenceSeriesListQuery, SortDirection, SyncHistoryStats,
+    TaskAvailabilityFilter, TaskFilters, TaskQueryMode, TaskSort,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +81,7 @@ pub(crate) enum TaskView {
     Conflicts,
     Search,
     Epics,
+    Recurring,
     RecentActions,
 }
 
@@ -95,6 +97,18 @@ pub(crate) enum ClosedTaskVisibility {
     Default,
     Included,
     Only,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct RecurringSeriesViewState {
+    pub(crate) lifecycle: RecurrenceSeriesLifecycleFilter,
+    pub(crate) search: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MainRowSelection {
+    Task(crate::ids::TaskId),
+    RecurrenceSeries(aven_core::recurrence::RecurrenceSeriesId),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -134,6 +148,7 @@ pub(crate) struct TaskViewState {
     pub(crate) filter_modifiers: TaskFilterModifiers,
     pub(crate) order: TaskOrder,
     pub(crate) direction: SortDirection,
+    pub(crate) recurring: RecurringSeriesViewState,
     pub(crate) expanded_epic_ids: BTreeSet<crate::ids::TaskId>,
     pub(crate) collapsed_epic_ids: BTreeSet<crate::ids::TaskId>,
 }
@@ -146,6 +161,7 @@ impl Default for TaskViewState {
             filter_modifiers: TaskFilterModifiers::default(),
             order: TaskOrder::Created,
             direction: SortDirection::Asc,
+            recurring: RecurringSeriesViewState::default(),
             expanded_epic_ids: BTreeSet::new(),
             collapsed_epic_ids: BTreeSet::new(),
         }
@@ -214,7 +230,7 @@ impl TaskViewState {
             TaskView::Search => {
                 filters.include_deleted = true;
             }
-            TaskView::RecentActions => {}
+            TaskView::Recurring | TaskView::RecentActions => {}
         }
         if self.view.supports_closed_filter() {
             match self.filter_modifiers.closed {
@@ -229,10 +245,23 @@ impl TaskViewState {
         filters
     }
 
+    pub(crate) fn recurrence_query(&self) -> RecurrenceSeriesListQuery {
+        RecurrenceSeriesListQuery {
+            lifecycle: self.recurring.lifecycle,
+            project: match &self.scope {
+                TaskScope::Workspace => None,
+                TaskScope::Project(project) => Some(project.clone()),
+            },
+            search: self.recurring.search.clone(),
+        }
+    }
+
     pub(crate) fn query_mode(&self) -> TaskQueryMode {
         match self.view {
             TaskView::Queue => TaskQueryMode::RankedQueue,
-            TaskView::Columns | TaskView::RecentActions => TaskQueryMode::Flat,
+            TaskView::Columns | TaskView::Recurring | TaskView::RecentActions => {
+                TaskQueryMode::Flat
+            }
             _ => TaskQueryMode::Flat,
         }
     }
@@ -259,7 +288,7 @@ impl TaskViewState {
             TaskView::Columns => TaskListRenderMode::Columns,
             TaskView::Upcoming => TaskListRenderMode::Upcoming,
             TaskView::Epics => TaskListRenderMode::Epics,
-            TaskView::RecentActions => TaskListRenderMode::Flat,
+            TaskView::Recurring | TaskView::RecentActions => TaskListRenderMode::Flat,
             _ => TaskListRenderMode::Flat,
         }
     }

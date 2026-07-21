@@ -29,6 +29,7 @@ const CONFLICT_MARKER: &str = "\u{f071}";
 const SEARCH_MARKER: &str = "\u{f002}";
 const RECENT_MARKER: &str = "\u{f1da}";
 const EPIC_MARKER: &str = "\u{f005}";
+const RECURRING_MARKER: &str = "\u{f021}";
 const OPEN_MARKER: &str = "\u{f07c}";
 const WORKSPACE_MARKER: &str = "\u{f0e8}";
 const PROJECT_MARKER: &str = "\u{f07b}";
@@ -293,6 +294,7 @@ fn sidebar_icon(entry: &SidebarEntry) -> &'static str {
         Some(SidebarEntryTarget::View(TaskView::Search)) => SEARCH_MARKER,
         Some(SidebarEntryTarget::View(TaskView::RecentActions)) => RECENT_MARKER,
         Some(SidebarEntryTarget::View(TaskView::Epics)) => EPIC_MARKER,
+        Some(SidebarEntryTarget::View(TaskView::Recurring)) => RECURRING_MARKER,
         Some(SidebarEntryTarget::View(TaskView::Open)) => OPEN_MARKER,
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => WORKSPACE_MARKER,
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(_))) => PROJECT_MARKER,
@@ -314,6 +316,7 @@ fn sidebar_label(entry: &SidebarEntry) -> String {
         Some(SidebarEntryTarget::View(TaskView::Search)) => "Search".to_string(),
         Some(SidebarEntryTarget::View(TaskView::RecentActions)) => "Recent actions".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Epics)) => "Epics".to_string(),
+        Some(SidebarEntryTarget::View(TaskView::Recurring)) => "Recurring Tasks".to_string(),
         Some(SidebarEntryTarget::View(TaskView::Open)) => "Open".to_string(),
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => "Workspace".to_string(),
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(_))) => entry

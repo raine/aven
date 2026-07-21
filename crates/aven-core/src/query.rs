@@ -49,10 +49,12 @@ pub(crate) use tasks::{list_task_items_in_workspace, list_task_items_with_displa
 pub use types::RecentActionTarget;
 pub use types::{
     AttachmentMetadata, ProjectListItem, RecentActionItem, RecurrenceCounts,
-    RecurrenceHistoryEntry, RecurrenceHistoryKind, RecurrenceHistoryPage, RecurrenceReconciliation,
-    RecurrenceSeriesConflict, RecurrenceSeriesDetail, RecurrenceSeriesSummary, RecurrenceTaskGroup,
-    SidebarCounts, SortDirection, TaskAvailabilityFilter, TaskDependencyLink, TaskFilters,
-    TaskListItem, TaskNote, TaskQueryMode, TaskRecurrenceSummary, TaskSort,
+    RecurrenceHistoryEntry, RecurrenceHistoryKind, RecurrenceHistoryPage, RecurrenceOccurrenceLink,
+    RecurrenceReconciliation, RecurrenceSeriesConflict, RecurrenceSeriesDetail,
+    RecurrenceSeriesLifecycleFilter, RecurrenceSeriesListItem, RecurrenceSeriesListQuery,
+    RecurrenceSeriesSummary, RecurrenceTaskGroup, SidebarCounts, SortDirection,
+    TaskAvailabilityFilter, TaskDependencyLink, TaskFilters, TaskListItem, TaskNote, TaskQueryMode,
+    TaskRecurrenceSummary, TaskSort,
 };
 
 impl Database {
@@ -95,6 +97,28 @@ impl Database {
     ) -> Result<RecurrenceReconciliation> {
         let at = DateTime::parse_from_rfc3339(&crate::ids::now())?.with_timezone(&Utc);
         self.reconcile_recurrence_reports_at(workspace_id, at).await
+    }
+
+    pub async fn list_recurrence_series_view_at(
+        &self,
+        workspace_id: &WorkspaceId,
+        at: DateTime<Utc>,
+        query: RecurrenceSeriesListQuery,
+    ) -> Result<Vec<RecurrenceSeriesListItem>> {
+        self.reconcile_recurrence_reports_at(workspace_id, at)
+            .await?;
+        let mut conn = self.acquire().await?;
+        recurrence::list_recurrence_series_view(&mut conn, workspace_id, &query).await
+    }
+
+    pub async fn list_recurrence_series_view(
+        &self,
+        workspace_id: &WorkspaceId,
+        query: RecurrenceSeriesListQuery,
+    ) -> Result<Vec<RecurrenceSeriesListItem>> {
+        let at = DateTime::parse_from_rfc3339(&crate::ids::now())?.with_timezone(&Utc);
+        self.list_recurrence_series_view_at(workspace_id, at, query)
+            .await
     }
 
     pub async fn list_recurrence_series_at(

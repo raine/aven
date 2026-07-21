@@ -13,6 +13,13 @@ pub(crate) struct PointerTaskHit {
     pub(crate) viewport_row: u16,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PointerSeriesHit {
+    pub(crate) series_index: usize,
+    pub(crate) series_id: aven_core::recurrence::RecurrenceSeriesId,
+    pub(crate) viewport_row: u16,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MouseInput {
     PrefixScroll(isize),
@@ -44,6 +51,7 @@ pub(crate) fn route_mouse(kind: MouseEventKind, prefix_hints: bool) -> MouseInpu
 pub(crate) struct TaskSurfaceHits {
     pub(crate) lane_status: Option<TaskStatus>,
     pub(crate) recent_action: Option<usize>,
+    pub(crate) series: Option<PointerSeriesHit>,
     pub(crate) status: Option<PointerTaskHit>,
     pub(crate) task: Option<PointerTaskHit>,
     pub(crate) sidebar_entry: Option<usize>,
@@ -53,6 +61,7 @@ pub(crate) struct TaskSurfaceHits {
 pub(crate) enum PointerEvent {
     MoveToColumn(TaskStatus),
     SelectRecentAction(usize),
+    SelectSeries(PointerSeriesHit),
     EditStatus(PointerTaskHit),
     SelectTask(PointerTaskHit),
     SelectSidebar(usize),
@@ -98,6 +107,22 @@ pub(crate) fn route_task_surface(view: TaskSurfaceView<'_>, column: u16, row: u1
                     .map(|hit| hit.action_index)
             })
             .flatten(),
+        series: (outside_sidebar && store.view_state.view == TaskView::Recurring)
+            .then(|| {
+                crate::tui::ui::recurrence_series_at_position(
+                    store,
+                    list.table_state(),
+                    task_area,
+                    column,
+                    row,
+                )
+                .map(|hit| PointerSeriesHit {
+                    series_index: hit.series_index,
+                    series_id: hit.series_id,
+                    viewport_row: hit.viewport_row,
+                })
+            })
+            .flatten(),
         status: outside_sidebar
             .then(|| task_status_at_position(store, list.table_state(), task_area, column, row))
             .flatten()
@@ -132,6 +157,8 @@ fn route_task_surface_hits(hits: TaskSurfaceHits) -> PointerEvent {
         PointerEvent::MoveToColumn(status)
     } else if let Some(index) = hits.recent_action {
         PointerEvent::SelectRecentAction(index)
+    } else if let Some(hit) = hits.series {
+        PointerEvent::SelectSeries(hit)
     } else if let Some(hit) = hits.status {
         PointerEvent::EditStatus(hit)
     } else if let Some(hit) = hits.task {

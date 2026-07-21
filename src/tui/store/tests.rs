@@ -4339,6 +4339,10 @@ mod recurrence_surfaces {
     use chrono::Utc;
 
     async fn create_daily(store: &mut TuiStore) -> (TaskId, usize) {
+        create_daily_named(store, "Daily journal").await
+    }
+
+    async fn create_daily_named(store: &mut TuiStore, title: &str) -> (TaskId, usize) {
         let schedule = RecurrenceSchedule::new(
             RecurrenceRule::daily(),
             "UTC".parse::<TimeZoneId>().unwrap(),
@@ -4349,7 +4353,7 @@ mod recurrence_surfaces {
         let (_, selected) = store
             .create_recurrence_series(
                 recurrence_draft(
-                    "Daily journal".to_string(),
+                    title.to_string(),
                     "Write one entry".to_string(),
                     None,
                     "medium".to_string(),
@@ -4363,6 +4367,96 @@ mod recurrence_surfaces {
             .unwrap();
         let selected = selected.unwrap();
         (store.tasks[selected].task.id.clone(), selected)
+    }
+
+    #[tokio::test]
+    async fn recurring_series_view_includes_paused_and_filters_stopped() {
+        let mut store = test_store().await;
+        let (_, selected) = create_daily(&mut store).await;
+        let series_id = store.tasks[selected]
+            .recurrence
+            .as_ref()
+            .unwrap()
+            .series_id
+            .clone();
+        let (_, stopped_selected) = create_daily_named(&mut store, "Stopped journal").await;
+        let stopped_id = store.tasks[stopped_selected]
+            .recurrence
+            .as_ref()
+            .unwrap()
+            .series_id
+            .clone();
+        store
+            .database
+            .stop_recurrence_series(&store.active_workspace, &stopped_id, false)
+            .await
+            .unwrap();
+        store
+            .database
+            .pause_recurrence_series(&store.active_workspace, &series_id)
+            .await
+            .unwrap();
+
+        store.show_view(TaskView::Recurring).await.unwrap();
+        assert_eq!(store.recurrence_series.len(), 1);
+        assert_eq!(store.recurrence_series[0].series.id, series_id);
+        assert!(store.tasks.is_empty());
+
+        store.view_state.recurring.lifecycle =
+            crate::query::RecurrenceSeriesLifecycleFilter::Stopped;
+        store.refresh(None).await.unwrap();
+        assert_eq!(store.recurrence_series.len(), 1);
+        assert_eq!(store.recurrence_series[0].series.id, stopped_id);
+        assert_eq!(
+            store.recurrence_series[0].series.state,
+            aven_core::recurrence::RecurrenceSeriesState::Stopped
+        );
+    }
+
+    #[tokio::test]
+    async fn recurring_series_search_and_refresh_restore_series_identity() {
+        let mut store = test_store().await;
+        create_daily_named(&mut store, "Alpha journal").await;
+        create_daily_named(&mut store, "Beta journal").await;
+        store.show_view(TaskView::Recurring).await.unwrap();
+        let beta = store
+            .recurrence_series
+            .iter()
+            .find(|item| item.series.title == "Beta journal")
+            .unwrap()
+            .series
+            .id
+            .clone();
+
+        let selected = store
+            .set_recurring_search("beta".to_string(), Some(&beta))
+            .await
+            .unwrap();
+        assert_eq!(store.recurrence_series.len(), 1);
+        assert_eq!(
+            store
+                .selected_recurrence_series(selected)
+                .unwrap()
+                .series
+                .id,
+            beta
+        );
+
+        store.view_state.recurring.search = None;
+        let selection = MainRowSelection::RecurrenceSeries(beta.clone());
+        let selected = store
+            .refresh_with_scope_fallback(Some(&selection))
+            .await
+            .unwrap()
+            .selected;
+        assert_eq!(
+            store
+                .selected_recurrence_series(selected)
+                .unwrap()
+                .series
+                .id,
+            beta
+        );
     }
 
     #[tokio::test]

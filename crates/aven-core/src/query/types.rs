@@ -108,6 +108,50 @@ pub struct TaskRecurrenceSummary {
     pub projection_state: RecurrenceProjectionState,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RecurrenceSeriesLifecycleFilter {
+    #[default]
+    ActiveOrPaused,
+    Active,
+    Paused,
+    Stopped,
+    All,
+}
+
+impl RecurrenceSeriesLifecycleFilter {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ActiveOrPaused => "active-or-paused",
+            Self::Active => "active",
+            Self::Paused => "paused",
+            Self::Stopped => "stopped",
+            Self::All => "all",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecurrenceSeriesListQuery {
+    pub lifecycle: RecurrenceSeriesLifecycleFilter,
+    pub project: Option<String>,
+    pub search: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurrenceOccurrenceLink {
+    pub slot_on: String,
+    pub task_id: TaskId,
+    pub task_ref: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecurrenceSeriesListItem {
+    pub series: RecurrenceSeries,
+    pub series_ref: String,
+    pub rule_label: String,
+    pub current_occurrence: Option<RecurrenceOccurrenceLink>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecurrenceCounts {
     pub series_ref: String,
@@ -315,5 +359,6 @@ pub struct SidebarCounts {
     pub conflicts: i64,
     pub done: i64,
     pub epics: i64,
+    pub recurring: i64,
     pub upcoming: i64,
 }

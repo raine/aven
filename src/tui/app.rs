@@ -149,6 +149,19 @@ pub(crate) struct RemovedEpicChild {
     pub(crate) original_position: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SeriesRowClick {
+    pub(crate) series_id: aven_core::recurrence::RecurrenceSeriesId,
+    pub(crate) viewport_row: u16,
+    pub(crate) at: Instant,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SeriesDetailReturn {
+    pub(super) series_id: aven_core::recurrence::RecurrenceSeriesId,
+    pub(super) scroll: u16,
+}
+
 pub(crate) struct App {
     pub(crate) store: TuiStore,
     pub(crate) should_quit: bool,
@@ -167,6 +180,8 @@ pub(crate) struct App {
     pub(super) search: crate::tui::app_search::SearchController,
     pub(super) update: crate::tui::app_update::UpdateController,
     pub(super) next_refresh_at: Instant,
+    pub(crate) last_series_click: Option<SeriesRowClick>,
+    pub(super) series_detail_return: Option<SeriesDetailReturn>,
     pub(super) inline_images: InlineImageSurface,
     pub(super) preview_controller: crate::tui::preview_controller::PreviewController,
     pub(super) attachment_controller: crate::tui::attachment_controller::AttachmentController,
@@ -211,6 +226,8 @@ impl App {
             search: crate::tui::app_search::SearchController::new(),
             update: crate::tui::app_update::UpdateController::new(),
             next_refresh_at,
+            last_series_click: None,
+            series_detail_return: None,
             inline_images: InlineImageSurface::new(),
             preview_controller: crate::tui::preview_controller::PreviewController::new(),
             attachment_controller: crate::tui::attachment_controller::AttachmentController::new(),
@@ -346,11 +363,40 @@ impl App {
             self.set_info("no previous navigation state");
             return Ok(());
         };
-        let result = self.store.restore_view_state(previous).await?;
+        let return_anchor = self.series_detail_return.take();
+        let selected = return_anchor.as_ref().map(|anchor| {
+            crate::tui::store::MainRowSelection::RecurrenceSeries(anchor.series_id.clone())
+        });
+        let result = self
+            .store
+            .restore_view_state(previous, selected.as_ref())
+            .await?;
         self.apply_filter_selection(result.selected);
+        let mut navigation_warning = false;
+        if let Some(anchor) = return_anchor
+            && self.store.view_state.view == crate::tui::store::TaskView::Recurring
+        {
+            if self
+                .store
+                .selected_recurrence_series(result.selected)
+                .is_some_and(|item| item.series.id == anchor.series_id)
+            {
+                self.store
+                    .load_recurrence_series_detail(&anchor.series_id)
+                    .await?;
+                self.detail = crate::tui::detail_session::DetailSession::open(anchor.scroll);
+                self.overlay = None;
+            } else {
+                self.store.recurrence_detail = None;
+                self.detail.close();
+                self.overlay = None;
+                self.set_warning("recurring series is hidden by the restored filters");
+                navigation_warning = true;
+            }
+        }
         if let Some(project) = result.fallback_scope {
             self.set_warning(format!("project scope {project} is no longer available"));
-        } else {
+        } else if !navigation_warning {
             self.set_info("returned to previous navigation state");
         }
         Ok(())

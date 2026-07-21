@@ -1,6 +1,7 @@
 use super::*;
 use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::operations::TaskDraft;
+use crate::query::RecurrenceSeriesLifecycleFilter;
 use crate::tui::app_conflicts::CONFLICT_CONFIRM_LOCAL_TITLE;
 use crate::tui::app_edit::{
     EDIT_AVAILABILITY_TITLE, EDIT_DESCRIPTION_TITLE, EDIT_DUE_TITLE, EDIT_LABELS_TITLE,
@@ -24,6 +25,7 @@ use crate::tui::store::{
 };
 use crate::tui::toast::ToastSeverity;
 use crate::tui::ui::ViewSurface;
+use aven_core::recurrence::{RecurrenceDuePolicy, RecurrenceRule, RecurrenceSchedule, TimeZoneId};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use sqlx::SqlitePool;
 
@@ -53,6 +55,118 @@ async fn test_app() -> App {
         .await
         .unwrap();
     App::new_for_tests(database).await.unwrap()
+}
+
+async fn add_recurring_series(
+    app: &mut App,
+    title: &str,
+) -> (
+    crate::ids::TaskId,
+    aven_core::recurrence::RecurrenceSeriesId,
+) {
+    let schedule = RecurrenceSchedule::new(
+        RecurrenceRule::daily(),
+        "UTC".parse::<TimeZoneId>().unwrap(),
+        chrono::Utc::now().date_naive(),
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    let (_, selected) = app
+        .store
+        .create_recurrence_series(
+            crate::tui::store::recurrence_draft(
+                title.to_string(),
+                "Series detail".to_string(),
+                None,
+                "medium".to_string(),
+                "todo".to_string(),
+                Vec::new(),
+                schedule,
+            ),
+            None,
+        )
+        .await
+        .unwrap();
+    let item = &app.store.tasks[selected.unwrap()];
+    (
+        item.task.id.clone(),
+        item.recurrence.as_ref().unwrap().series_id.clone(),
+    )
+}
+
+#[tokio::test]
+async fn recurring_series_detail_opens_hidden_occurrence_and_returns() {
+    let mut app = test_app().await;
+    let (task_id, series_id) = add_recurring_series(&mut app, "Daily review").await;
+    let selected = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == task_id)
+        .unwrap();
+    app.store
+        .pause_recurrence(Some(selected))
+        .await
+        .unwrap()
+        .unwrap();
+    app.widgets
+        .table
+        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+
+    let terminal = ratatui::layout::Size::new(120, 40);
+    app.dispatch_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), terminal)
+        .await
+        .unwrap();
+    assert_eq!(
+        app.store.recurrence_detail.as_ref().unwrap().series.id,
+        series_id
+    );
+    assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+
+    app.dispatch_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), terminal)
+        .await
+        .unwrap();
+    assert_eq!(app.store.view_state.view, TaskView::Search);
+    assert_eq!(app.store.tasks[0].task.id, task_id);
+    assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+
+    app.go_back().await.unwrap();
+    assert_eq!(app.store.view_state.view, TaskView::Recurring);
+    assert_eq!(
+        app.store
+            .selected_recurrence_series(app.widgets.table.selected())
+            .unwrap()
+            .series
+            .id,
+        series_id
+    );
+    assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+}
+
+#[tokio::test]
+async fn recurring_series_lifecycle_filter_reveals_stopped_series() {
+    let mut app = test_app().await;
+    let (task_id, series_id) = add_recurring_series(&mut app, "Finite review").await;
+    let selected = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == task_id)
+        .unwrap();
+    app.store
+        .stop_recurrence(Some(selected))
+        .await
+        .unwrap()
+        .unwrap();
+    app.widgets
+        .table
+        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+    assert!(app.store.recurrence_series.is_empty());
+
+    app.store.view_state.recurring.lifecycle = RecurrenceSeriesLifecycleFilter::Stopped;
+    app.refresh().await.unwrap();
+    assert_eq!(app.store.recurrence_series.len(), 1);
+    assert_eq!(app.store.recurrence_series[0].series.id, series_id);
 }
 
 fn png_bytes(width: u32, height: u32) -> Vec<u8> {
