@@ -186,8 +186,19 @@ pub(super) fn task_list_scroll(
     if viewport_rows == 0 || view.rows.len() <= viewport_rows {
         return 0;
     }
-    let max_scroll = view.rows.len().saturating_sub(viewport_rows);
     let hard_max_scroll = view.rows.len().saturating_sub(1);
+    let base_max_scroll = view.rows.len().saturating_sub(viewport_rows);
+    let max_scroll = if matches!(
+        view.rows.get(base_max_scroll),
+        Some(TaskListRow::Task { .. })
+    ) && matches!(
+        view.rows.get(base_max_scroll.saturating_sub(1)),
+        Some(TaskListRow::Group(_))
+    ) {
+        base_max_scroll.saturating_add(1).min(hard_max_scroll)
+    } else {
+        base_max_scroll
+    };
     let scroll = current_scroll.min(max_scroll);
     if task_list_visible_rows(view, scroll, viewport_rows)
         .iter()
@@ -523,6 +534,31 @@ mod tests {
                 .iter()
                 .any(|(row_index, _)| *row_index == 3)
         );
+    }
+
+    #[test]
+    fn upward_selection_from_bottom_keeps_final_queue_group_visible() {
+        let mut epic = task_item_with("epic", "todo", QueueBand::Epics);
+        epic.task.is_epic = true;
+        let tasks = vec![
+            task_item_with("focus", "todo", QueueBand::Focus),
+            task_item_with("soon", "todo", QueueBand::Soon),
+            task_item_with("triage", "inbox", QueueBand::Triage),
+            task_item_with("later", "backlog", QueueBand::Later),
+            epic,
+        ];
+        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
+
+        let bottom_scroll = task_list_scroll(0, 9, &view, 5);
+        let upward_scroll = task_list_scroll(bottom_scroll, 7, &view, 5);
+        let visible_rows = task_list_visible_rows(&view, upward_scroll, 5)
+            .into_iter()
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+
+        assert_eq!(bottom_scroll, 6);
+        assert_eq!(upward_scroll, bottom_scroll);
+        assert_eq!(visible_rows, vec![6, 7, 8, 9]);
     }
 
     #[test]
