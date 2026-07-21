@@ -104,8 +104,11 @@ Use `Tab` and `Shift+Tab` to move through every field. Press `Enter` to edit the
 
 Attach images from the composer or task detail:
 
-- On macOS, copy an image and press `Ctrl-v`.
+- On macOS or Linux, copy a PNG, JPEG, GIF, or WebP image and press `Ctrl-v`.
+- On Linux, install `wl-paste` from `wl-clipboard` for Wayland or `xclip` for X11. Aven prefers the session's native backend and falls back to the other backend in mixed Wayland and XWayland sessions.
 - On any platform, use the terminal's paste action to insert one local image path or `file://` URL.
+
+Some terminals represent an image paste as an empty bracketed-paste event. In that case, the terminal's usual paste action, such as `Cmd-v` on macOS, triggers the same direct clipboard image read.
 
 Images that cannot be added stay marked as failed for the current session. Pasting the same image repeatedly adds it once.
 
