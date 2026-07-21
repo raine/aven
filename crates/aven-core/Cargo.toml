@@ -1,9 +1,11 @@
 [package]
 name = "aven-core"
-version = "0.1.12"
+version = "0.1.13"
 edition = "2024"
 rust-version = "1.96"
 license = "MIT"
+description = "Core library for the Aven local-first task manager"
+repository = "https://github.com/raine/aven"
 build = "build.rs"
 
 [features]

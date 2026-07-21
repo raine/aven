@@ -159,21 +159,21 @@ test:
 sqlx-prepare:
     #!/usr/bin/env bash
     set -euo pipefail
-    db="target/sqlx-prepare.sqlite"
+    db="$(pwd)/target/sqlx-prepare.sqlite"
     rm -f "$db"
     DATABASE_URL="sqlite://$db" cargo sqlx database create
     DATABASE_URL="sqlite://$db" cargo sqlx migrate run --source crates/aven-core/migrations
-    DATABASE_URL="sqlite://$db" cargo sqlx prepare --workspace -- --all-targets
+    (cd crates/aven-core && DATABASE_URL="sqlite://$db" cargo sqlx prepare -- --all-targets)
 
 # Check sqlx offline query metadata
 sqlx-check:
     #!/usr/bin/env bash
     set -euo pipefail
-    db="target/sqlx-check.sqlite"
+    db="$(pwd)/target/sqlx-check.sqlite"
     rm -f "$db"
     scripts/quiet-check sqlx-create env DATABASE_URL="sqlite://$db" cargo sqlx database create
     scripts/quiet-check sqlx-migrate env DATABASE_URL="sqlite://$db" cargo sqlx migrate run --source crates/aven-core/migrations
-    scripts/quiet-check sqlx-check env DATABASE_URL="sqlite://$db" cargo sqlx prepare --workspace --check -- --all-targets --locked
+    (cd crates/aven-core && ../../scripts/quiet-check sqlx-check env DATABASE_URL="sqlite://$db" cargo sqlx prepare --check -- --all-targets --locked)
 
 # Check sqlx offline query metadata when SQLx inputs changed
 sqlx-check-if-needed:
@@ -198,7 +198,7 @@ sqlx-check-if-needed:
       build.rs
       ':(glob)**/build.rs'
       crates/aven-core/migrations
-      .sqlx
+      crates/aven-core/.sqlx
       ':(glob)**/*.rs'
     )
     if git diff --quiet "${merge_bases[0]}" HEAD -- "${sqlx_paths[@]}"; then

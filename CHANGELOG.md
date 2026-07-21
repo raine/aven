@@ -3,11 +3,11 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## Unreleased
+## v0.1.13 (2026-07-21)
 
 - [Attach images to tasks](/concepts/#image-attachments) from the TUI or CLI,
-  sync them between devices, preview them inline, and open them in the system
-  viewer.
+  sync them between devices, preview and switch between them inline, inspect
+  their metadata, and open them in the system viewer.
 - Click task references and timestamps in task details to copy their displayed
   values.
 
