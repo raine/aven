@@ -322,6 +322,13 @@ impl App {
             _ => None,
         });
         if let Some(field) = add_task_field {
+            let editable = matches!(
+                self.overlay.as_ref(),
+                Some(OverlayState::AddTask(state)) if state.is_step_editable(field)
+            );
+            if !editable {
+                return Ok(());
+            }
             if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
                 state.focus = field;
             }

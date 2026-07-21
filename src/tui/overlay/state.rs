@@ -1,10 +1,13 @@
 use crate::query::SearchMatchedField;
-use crate::tui::authoring::{AddTaskStep, PendingTaskAttachmentSummary};
+use crate::tui::authoring::{
+    AddTaskStep, InitialStatusOrigin, PendingTaskAttachmentSummary,
+};
 use crate::tui::conflict_flow::ConflictResolutionChoice;
 use crate::tui::overlay::text_input::LineEdit;
 use crate::tui::store::{ConflictTarget, TaskOrder, TaskView, TuiDatabaseStats, TuiSyncStatus};
 use crate::tui::task_selection::TaskSelection;
 use crate::tui::text::{char_boundary_at_or_before, normalize_pasted_newlines};
+use chrono::{DateTime, Utc};
 use unicode_width::UnicodeWidthStr;
 
 #[allow(dead_code)]
@@ -480,6 +483,10 @@ pub(crate) enum AddTaskMode {
         state: PickerState,
     },
     Labels(TagComboboxState),
+    CustomRepeatInterval {
+        input: LineEdit,
+        error: Option<String>,
+    },
     Help {
         scroll: u16,
     },
@@ -496,6 +503,7 @@ pub(crate) struct AddTaskState {
     pub(crate) selected_project: Option<String>,
     pub(crate) initial_project: Option<String>,
     pub(crate) status: String,
+    pub(crate) status_origin: InitialStatusOrigin,
     pub(crate) priority: String,
     pub(crate) labels: Vec<String>,
     pub(crate) available_at: LineEdit,
@@ -503,11 +511,12 @@ pub(crate) struct AddTaskState {
     pub(crate) attachments: Vec<PendingTaskAttachmentSummary>,
     pub(crate) selected_attachment: usize,
     pub(crate) recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
+    pub(crate) template_schedule: Option<aven_core::recurrence::RecurrenceSchedule>,
     pub(crate) repeat_rule: String,
     pub(crate) repeat_weekdays: Vec<String>,
     pub(crate) repeat_at: LineEdit,
     pub(crate) repeat_due: String,
-    pub(crate) time_zone: LineEdit,
+    pub(crate) time_zone: String,
     pub(crate) repeat_start_on: LineEdit,
     pub(crate) recurrence_preview: Vec<String>,
     pub(crate) recurrence_error: Option<String>,
@@ -535,14 +544,54 @@ impl AddTaskState {
     }
 
     pub(crate) fn focus_next(&mut self, reverse: bool) {
-        self.focus = self.focus.next(reverse);
-        if self.focus == AddTaskStep::Images && self.attachments.is_empty() {
+        for _ in 0..AddTaskStep::ALL.len() {
             self.focus = self.focus.next(reverse);
+            let has_visible_image_step =
+                self.focus != AddTaskStep::Images || !self.attachments.is_empty();
+            if has_visible_image_step && self.is_step_editable(self.focus) {
+                break;
+            }
         }
     }
 
+    pub(crate) fn focus_metadata_next(&mut self, reverse: bool) {
+        for _ in 0..AddTaskStep::ALL.len() {
+            self.focus = self.focus.metadata_next(reverse);
+            if self.is_step_editable(self.focus) {
+                break;
+            }
+        }
+    }
+
+    pub(crate) fn is_step_editable(&self, step: AddTaskStep) -> bool {
+        if step == AddTaskStep::TimeZone {
+            return false;
+        }
+        self.template_schedule.is_none()
+            || !matches!(
+                step,
+                AddTaskStep::RepeatRule | AddTaskStep::RepeatWeekdays | AddTaskStep::RepeatStartOn
+            )
+    }
+
+    pub(crate) fn set_repeat_rule(&mut self, repeat_rule: String) {
+        let enabled = repeat_rule != "none";
+        match (enabled, self.status_origin) {
+            (true, InitialStatusOrigin::UntouchedDefault) if self.status == "inbox" => {
+                self.status = "todo".to_string();
+                self.status_origin = InitialStatusOrigin::RecurrenceDefault;
+            }
+            (false, InitialStatusOrigin::RecurrenceDefault) => {
+                self.status = "inbox".to_string();
+                self.status_origin = InitialStatusOrigin::UntouchedDefault;
+            }
+            _ => {}
+        }
+        self.repeat_rule = repeat_rule;
+    }
+
     pub(crate) fn recurrence_enabled(&self) -> bool {
-        self.repeat_rule != "none"
+        self.template_schedule.is_some() || self.repeat_rule != "none"
     }
 
     pub(crate) fn recurrence_rule_input(&self) -> Result<String, &'static str> {
@@ -566,18 +615,40 @@ impl AddTaskState {
         if !self.recurrence_enabled() {
             return Ok(None);
         }
+        let repeat_at = Some(self.repeat_at.text.trim()).filter(|value| !value.is_empty());
+        let start_on = Some(self.repeat_start_on.text.trim()).filter(|value| !value.is_empty());
+        if let Some(template) = self.template_schedule.as_ref() {
+            let mutable = crate::commands::recurrence_schedule(
+                "daily",
+                repeat_at,
+                Some(&self.repeat_due),
+                Some(template.timezone.as_str()),
+                Some(&template.start_on.to_string()),
+            )?;
+            return Ok(Some(aven_core::recurrence::RecurrenceSchedule::new(
+                template.rule,
+                template.timezone.clone(),
+                template.start_on,
+                mutable.available_local_time,
+                mutable.due_policy,
+            )));
+        }
         let rule = self.recurrence_rule_input().map_err(anyhow::Error::msg)?;
         crate::commands::recurrence_schedule(
             &rule,
-            Some(self.repeat_at.text.trim()).filter(|value| !value.is_empty()),
+            repeat_at,
             Some(&self.repeat_due),
-            Some(self.time_zone.text.trim()).filter(|value| !value.is_empty()),
-            Some(self.repeat_start_on.text.trim()).filter(|value| !value.is_empty()),
+            Some(self.time_zone.trim()).filter(|value| !value.is_empty()),
+            start_on,
         )
         .map(Some)
     }
 
     pub(crate) fn refresh_recurrence_preview(&mut self) {
+        self.refresh_recurrence_preview_at(Utc::now());
+    }
+
+    pub(crate) fn refresh_recurrence_preview_at(&mut self, now: DateTime<Utc>) {
         self.recurrence_preview.clear();
         self.recurrence_error = None;
         let Some(schedule) = (match self.recurrence_schedule() {
@@ -589,8 +660,21 @@ impl AddTaskState {
         }) else {
             return;
         };
+        if schedule.rule.frequency() == aven_core::recurrence::RecurrenceFrequency::Weekly
+            && schedule.rule.interval() > 5200
+        {
+            self.recurrence_error =
+                Some("preview unavailable for intervals above 5200 weeks".to_string());
+            return;
+        }
+        let zone = schedule
+            .timezone
+            .as_str()
+            .parse::<chrono_tz::Tz>()
+            .expect("core-validated time zone parses with chrono-tz");
+        let from = schedule.start_on.max(now.with_timezone(&zone).date_naive());
         self.recurrence_preview = schedule
-            .slots_on_or_after(schedule.start_on)
+            .slots_on_or_after(from)
             .take(3)
             .map(|date| date.format("%a %Y-%m-%d").to_string())
             .collect();

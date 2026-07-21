@@ -104,14 +104,24 @@ pub(crate) fn add_task_field_at(
 
 pub(in crate::tui::ui) fn render_add_task(frame: &mut Frame, state: &AddTaskView) {
     let height = frame.area().height.saturating_sub(2).clamp(18, 28);
-    let dialog = Dialog::new("Add task", 100, height);
+    let title = if state.editing_template {
+        "Edit recurring template"
+    } else {
+        "Add task"
+    };
+    let dialog = Dialog::new(title, 100, height);
     let content = dialog.render_block(frame);
     render_add_task_body(frame, state, content);
 }
 
 pub(in crate::tui::ui) fn render_add_task_full_frame(frame: &mut Frame, state: &AddTaskView) {
     let area = frame.area();
-    let content = Dialog::new("Add task", area.width, area.height).render_block_at(frame, area);
+    let title = if state.editing_template {
+        "Edit recurring template"
+    } else {
+        "Add task"
+    };
+    let content = Dialog::new(title, area.width, area.height).render_block_at(frame, area);
     render_add_task_body(frame, state, content);
 }
 
@@ -291,18 +301,29 @@ fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>
     owned.push(due_metadata_field(state));
     owned.push(metadata_field(
         AddTaskStep::RepeatRule,
-        "Repeat",
+        if state.editing_template {
+            "Repeat fixed"
+        } else {
+            "Repeat"
+        },
         &state.repeat_rule,
         state.focus,
     ));
+    let weekdays = if state.repeat_rule == "daily" {
+        "n/a".to_string()
+    } else if state.repeat_weekdays.is_empty() {
+        "start day".to_string()
+    } else {
+        state.repeat_weekdays.join(",")
+    };
     owned.push(metadata_field(
         AddTaskStep::RepeatWeekdays,
-        "Weekdays",
-        &if state.repeat_weekdays.is_empty() {
-            "start day".to_string()
+        if state.editing_template {
+            "Weekdays fixed"
         } else {
-            state.repeat_weekdays.join(",")
+            "Weekdays"
         },
+        &weekdays,
         state.focus,
     ));
     owned.push(recurrence_inline_field(
@@ -319,22 +340,29 @@ fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>
         &state.repeat_due,
         state.focus,
     ));
-    owned.push(recurrence_inline_field(
-        state,
+    owned.push(metadata_field(
         AddTaskStep::TimeZone,
-        "Zone",
+        "Zone fixed",
         &state.time_zone,
-        state.time_zone_cursor,
-        "IANA zone",
+        state.focus,
     ));
-    owned.push(recurrence_inline_field(
-        state,
-        AddTaskStep::RepeatStartOn,
-        "Start",
-        &state.repeat_start_on,
-        state.repeat_start_on_cursor,
-        "YYYY-MM-DD",
-    ));
+    if state.editing_template {
+        owned.push(metadata_field(
+            AddTaskStep::RepeatStartOn,
+            "Start fixed",
+            &state.repeat_start_on,
+            state.focus,
+        ));
+    } else {
+        owned.push(recurrence_inline_field(
+            state,
+            AddTaskStep::RepeatStartOn,
+            "Start",
+            &state.repeat_start_on,
+            state.repeat_start_on_cursor,
+            "YYYY-MM-DD",
+        ));
+    }
     if width >= 120 {
         return vec![
             metadata_row(owned[..6].to_vec(), width as usize),
@@ -660,6 +688,23 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
                 visible_indices,
             };
             (view.title.clone(), tag_combobox_lines(&view), 64, BG_PANEL)
+        }
+        AddTaskMode::CustomRepeatInterval { input, error } => {
+            let mut lines = vec![
+                Line::from(Span::styled(
+                    "Weeks between repeats:",
+                    Style::new().fg(FG_DIM),
+                )),
+                placeholder_input_line(&input.text, Some(input.cursor), 48, "4"),
+            ];
+            if let Some(error) = error {
+                lines.push(Line::from(Span::styled(
+                    error.clone(),
+                    Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+                )));
+            }
+            lines.push(dialog_hint_line(&[("Enter", "apply"), ("Esc", "cancel")]));
+            ("Add task: repeat interval".to_string(), lines, 58, BG_ALT)
         }
         AddTaskMode::Help { .. } => unreachable!("composer help renders separately"),
         AddTaskMode::ConfirmDiscard => unreachable!("discard confirmation renders above"),

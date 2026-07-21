@@ -4441,6 +4441,168 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn add_task_every_four_weeks_uses_local_zone_and_recurring_default() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        let (expected_zone, expected_start) = {
+            let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+                panic!("expected composer");
+            };
+            state.title = LineEdit::new("Four week planning".to_string());
+            state.repeat_weekdays = vec!["mon".to_string(), "thu".to_string()];
+            state.set_repeat_rule("every 4 weeks".to_string());
+            (state.time_zone.clone(), state.repeat_start_on.text.clone())
+        };
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        let row = sqlx::query_as::<_, (String, i64, String, String, String)>(
+            "SELECT initial_status, interval, weekdays, timezone, start_on FROM recurrence_series WHERE title = ?",
+        )
+        .bind("Four week planning")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.0, "todo");
+        assert_eq!(row.1, 4);
+        assert_eq!(row.2, "mon,thu");
+        assert_eq!(row.3, expected_zone);
+        assert_eq!(row.4, expected_start);
+        let message = toast_message(&app).unwrap();
+        assert!(message.contains("every 4 weeks on mon,thu"));
+        assert!(message.contains(&format!("zone {expected_zone}")));
+    }
+
+    #[tokio::test]
+    async fn add_task_recurring_preserves_each_explicit_open_status() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        for status in ["inbox", "backlog", "todo", "active"] {
+            app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+            let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+                panic!("expected composer");
+            };
+            state.title = LineEdit::new(format!("Explicit {status}"));
+            state.status = status.to_string();
+            state.status_origin = crate::tui::authoring::InitialStatusOrigin::Explicit;
+            state.set_repeat_rule("daily".to_string());
+            app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+            let stored: String =
+                sqlx::query_scalar("SELECT initial_status FROM recurrence_series WHERE title = ?")
+                    .bind(format!("Explicit {status}"))
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(stored, status);
+        }
+    }
+
+    #[tokio::test]
+    async fn add_task_recurring_terminal_status_persists_nothing() {
+        for status in ["done", "canceled"] {
+            let (_dir, pool, mut app) = test_app_with_pool().await;
+            let labels_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM labels")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+            let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+                panic!("expected composer");
+            };
+            state.title = LineEdit::new(format!("Terminal {status}"));
+            state.status = status.to_string();
+            state.status_origin = crate::tui::authoring::InitialStatusOrigin::Explicit;
+            state.labels = vec![format!("unpersisted-{status}")];
+            state.set_repeat_rule("daily".to_string());
+            app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+            assert!(matches!(
+                &app.overlay,
+                Some(OverlayState::AddTask(state)) if state.focus == AddTaskStep::Status
+            ));
+            assert_eq!(
+                toast_message(&app).as_deref(),
+                Some(
+                    "recurring tasks require an open initial status: inbox, backlog, todo, or active"
+                )
+            );
+            let labels_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM labels")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            let series: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM recurrence_series")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            let tasks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(labels_after, labels_before);
+            assert_eq!(series, 0);
+            assert_eq!(tasks, 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn add_task_template_preserves_frozen_schedule_identity() {
+        let (dir, pool, mut app) = test_app_with_pool().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+            panic!("expected composer");
+        };
+        state.title = LineEdit::new("Frozen schedule".to_string());
+        state.repeat_weekdays = vec!["mon".to_string(), "thu".to_string()];
+        state.set_repeat_rule("every 4 weeks".to_string());
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        let before = sqlx::query_as::<_, (String, i64, String, String, String)>(
+            "SELECT id, interval, weekdays, timezone, start_on FROM recurrence_series WHERE title = ?",
+        )
+        .bind("Frozen schedule")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let database = aven_core::db::Database::open(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let series_id = before
+            .0
+            .parse::<aven_core::recurrence::RecurrenceSeriesId>()
+            .unwrap();
+        let detail = database
+            .recurrence_series_detail(&app.store.active_workspace.id, &series_id)
+            .await
+            .unwrap();
+        app.authoring
+            .begin_edit_recurrence_template(&detail, String::new());
+        app.begin_add_task_step();
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+            panic!("expected template composer");
+        };
+        state.title = LineEdit::new("Updated template".to_string());
+        state.selected_project = None;
+        state.repeat_rule = "daily".to_string();
+        state.repeat_weekdays.clear();
+        state.time_zone = "UTC".to_string();
+        state.repeat_start_on = LineEdit::new("2030-01-01".to_string());
+        state.repeat_at = LineEdit::new("09:00".to_string());
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        let after = sqlx::query_as::<_, (String, i64, String, String, String, String)>(
+            "SELECT id, interval, weekdays, timezone, start_on, available_local_time FROM recurrence_series WHERE title = ?",
+        )
+        .bind("Updated template")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            (&after.0, after.1, &after.2, &after.3, &after.4),
+            (&before.0, before.1, &before.2, &before.3, &before.4)
+        );
+        assert_eq!(after.5, "09:00:00");
+    }
+
+    #[tokio::test]
     async fn add_task_status_hotkey_selects_direct_status() {
         let mut app = test_app().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
@@ -5448,7 +5610,6 @@ mod authoring {
             AddTaskStep::RepeatWeekdays,
             AddTaskStep::RepeatAt,
             AddTaskStep::RepeatDue,
-            AddTaskStep::TimeZone,
             AddTaskStep::RepeatStartOn,
         ] {
             app.handle_overlay_key(key(KeyCode::Right)).await.unwrap();

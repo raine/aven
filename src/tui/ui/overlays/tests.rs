@@ -163,13 +163,13 @@ fn add_task_view() -> AddTaskView {
             selected: 0,
         }),
         recurrence_series_id: None,
+        editing_template: false,
         repeat_rule: "none".to_string(),
         repeat_weekdays: Vec::new(),
         repeat_at: String::new(),
         repeat_at_cursor: 0,
         repeat_due: "same-day".to_string(),
         time_zone: "UTC".to_string(),
-        time_zone_cursor: 0,
         repeat_start_on: "2026-07-20".to_string(),
         repeat_start_on_cursor: 0,
         recurrence_preview: Vec::new(),
@@ -1305,6 +1305,58 @@ mod add_task_overlay {
         );
         assert!(rendered.contains("Schedule error"));
         assert!(rendered.contains("choose at least one weekday"));
+    }
+
+    #[test]
+    fn add_task_creation_renders_local_zone_read_only() {
+        let rendered = render_overlay_view_at(
+            OverlayView::AddTask(AddTaskView {
+                time_zone: "Europe/Stockholm".to_string(),
+                ..add_task_view()
+            }),
+            39,
+            30,
+        );
+        assert!(rendered.contains("Europe/Stockholm"));
+        assert!(rendered.contains("fixed"));
+    }
+
+    #[test]
+    fn add_task_template_renders_schedule_identity_read_only() {
+        let rendered = render_overlay_view_at(
+            OverlayView::AddTask(AddTaskView {
+                editing_template: true,
+                repeat_rule: "every 4 weeks".to_string(),
+                repeat_weekdays: vec!["mon".to_string(), "thu".to_string()],
+                time_zone: "Europe/Stockholm".to_string(),
+                repeat_start_on: "2026-07-20".to_string(),
+                ..add_task_view()
+            }),
+            39,
+            30,
+        );
+        assert!(rendered.contains("Edit recurring template"));
+        assert!(rendered.matches("fixed").count() >= 4);
+        assert!(rendered.contains("every 4 weeks"));
+    }
+
+    #[test]
+    fn add_task_custom_interval_error_is_visible() {
+        let rendered = render_overlay_view_at(
+            OverlayView::AddTask(AddTaskView {
+                mode: AddTaskMode::CustomRepeatInterval {
+                    input: crate::tui::overlay::LineEdit::new("0".to_string()),
+                    error: Some("enter a whole number of weeks from 1 to 5200".to_string()),
+                },
+                ..add_task_view()
+            }),
+            100,
+            28,
+        );
+        assert!(rendered.contains("Weeks between repeats"));
+        assert!(rendered.contains("from 1 to 5200"));
+        assert!(rendered.contains("Enter apply"));
+        assert!(rendered.contains("Esc cancel"));
     }
 
     #[test]

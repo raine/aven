@@ -35,6 +35,7 @@ impl App {
         let defaults = crate::commands::recurrence_schedule("daily", None, None, None, None)?;
         self.authoring.apply_add_task_recurrence(
             None,
+            None,
             "none".to_string(),
             Vec::new(),
             String::new(),
@@ -72,6 +73,7 @@ impl App {
             selected_project: selected_project.clone(),
             initial_project: selected_project,
             status: context.status,
+            status_origin: context.status_origin,
             priority: context.priority,
             labels: context.labels,
             available_at: LineEdit::new(context.available_at),
@@ -79,11 +81,12 @@ impl App {
             selected_attachment: attachments.len().saturating_sub(1),
             attachments,
             recurrence_series_id: context.recurrence_series_id,
+            template_schedule: context.template_schedule,
             repeat_rule: context.repeat_rule,
             repeat_weekdays: context.repeat_weekdays,
             repeat_at: LineEdit::new(context.repeat_at),
             repeat_due: context.repeat_due,
-            time_zone: LineEdit::new(context.time_zone),
+            time_zone: context.time_zone,
             repeat_start_on: LineEdit::new(context.repeat_start_on),
             recurrence_preview: Vec::new(),
             recurrence_error: None,
@@ -129,7 +132,8 @@ impl App {
         if captured {
             self.authoring
                 .apply_add_task_project(state.selected_project.clone().into_iter().collect());
-            self.authoring.apply_add_task_status(&state.status);
+            self.authoring
+                .capture_add_task_status(state.status.clone(), state.status_origin);
             self.authoring
                 .apply_add_task_priority_value(&state.priority);
             self.authoring.apply_add_task_labels(state.labels.clone());
@@ -139,11 +143,12 @@ impl App {
                 .apply_add_task_due_on(state.due_on.text.clone());
             self.authoring.apply_add_task_recurrence(
                 state.recurrence_series_id.clone(),
+                state.template_schedule.clone(),
                 state.repeat_rule.clone(),
                 state.repeat_weekdays.clone(),
                 state.repeat_at.text.clone(),
                 state.repeat_due.clone(),
-                state.time_zone.text.clone(),
+                state.time_zone.clone(),
                 state.repeat_start_on.text.clone(),
             );
         }
@@ -151,9 +156,10 @@ impl App {
     }
 
     pub(super) fn set_add_task_status(&mut self, status: &str) {
-        if let Some(status) = self.authoring.apply_add_task_status(status) {
+        if let Some(status) = self.authoring.apply_add_task_status_choice(status) {
             if let Some(OverlayState::AddTask(state)) = self.overlay.as_mut() {
                 state.status = status.clone();
+                state.status_origin = crate::tui::authoring::InitialStatusOrigin::Explicit;
             } else {
                 self.begin_add_task_step();
             }
@@ -176,6 +182,11 @@ impl App {
         let Some(OverlayState::AddTask(mut state)) = self.overlay.take() else {
             return;
         };
+        if !state.is_step_editable(state.focus) {
+            state.mode = AddTaskMode::Compose;
+            self.overlay = Some(OverlayState::AddTask(state));
+            return;
+        }
         state.mode = match state.focus {
             AddTaskStep::Project => AddTaskMode::Picker {
                 field: state.focus,
@@ -228,12 +239,22 @@ impl App {
                         "weekly",
                         "every 2 weeks",
                         "every 3 weeks",
+                        crate::tui::authoring::CUSTOM_REPEAT_INTERVAL,
                     ]
                     .into_iter()
-                    .map(|value| PickerItem {
-                        label: value.to_string(),
-                        value: value.to_string(),
-                        selected: value == state.repeat_rule,
+                    .map(|value| {
+                        let selected = if value == crate::tui::authoring::CUSTOM_REPEAT_INTERVAL {
+                            state.repeat_rule.starts_with("every ")
+                                && state.repeat_rule != "every 2 weeks"
+                                && state.repeat_rule != "every 3 weeks"
+                        } else {
+                            value == state.repeat_rule
+                        };
+                        PickerItem {
+                            label: value.to_string(),
+                            value: value.to_string(),
+                            selected,
+                        }
                     })
                     .collect(),
                     false,

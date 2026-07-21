@@ -6,6 +6,14 @@ use crate::tui::store::EpicContext;
 pub(crate) const ADD_NOTE_TITLE: &str = "Add note";
 pub(crate) const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: project";
 pub(crate) const ADD_TASK_LABELS_TITLE: &str = "Add task: labels";
+pub(crate) const CUSTOM_REPEAT_INTERVAL: &str = "custom interval...";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InitialStatusOrigin {
+    UntouchedDefault,
+    RecurrenceDefault,
+    Explicit,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AddTaskStep {
@@ -79,7 +87,7 @@ impl AddTaskStep {
     pub(crate) fn is_inline_text(self) -> bool {
         matches!(
             self,
-            Self::AvailableAt | Self::Due | Self::RepeatAt | Self::TimeZone | Self::RepeatStartOn
+            Self::AvailableAt | Self::Due | Self::RepeatAt | Self::RepeatStartOn
         )
     }
 
@@ -150,11 +158,13 @@ struct AddTaskDraftState {
     project: Option<String>,
     inferred_project: Option<String>,
     status: String,
+    status_origin: InitialStatusOrigin,
     priority: String,
     labels: Vec<String>,
     available_at: String,
     due_on: String,
     recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
+    template_schedule: Option<aven_core::recurrence::RecurrenceSchedule>,
     repeat_rule: String,
     repeat_weekdays: Vec<String>,
     repeat_at: String,
@@ -174,11 +184,13 @@ impl Default for AddTaskDraftState {
             project: None,
             inferred_project: None,
             status: "inbox".to_string(),
+            status_origin: InitialStatusOrigin::UntouchedDefault,
             priority: "none".to_string(),
             labels: Vec::new(),
             available_at: String::new(),
             due_on: String::new(),
             recurrence_series_id: None,
+            template_schedule: None,
             repeat_rule: "none".to_string(),
             repeat_weekdays: Vec::new(),
             repeat_at: String::new(),
@@ -203,11 +215,13 @@ pub(crate) struct AddTaskContext {
     pub(crate) step: AddTaskStep,
     pub(crate) project: String,
     pub(crate) status: String,
+    pub(crate) status_origin: InitialStatusOrigin,
     pub(crate) priority: String,
     pub(crate) labels: Vec<String>,
     pub(crate) available_at: String,
     pub(crate) due_on: String,
     pub(crate) recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
+    pub(crate) template_schedule: Option<aven_core::recurrence::RecurrenceSchedule>,
     pub(crate) repeat_rule: String,
     pub(crate) repeat_weekdays: Vec<String>,
     pub(crate) repeat_at: String,
@@ -276,6 +290,13 @@ impl AuthoringState {
             RecurrenceFrequency::Weekly if series.rule.interval() == 1 => "weekly".to_string(),
             RecurrenceFrequency::Weekly => format!("every {} weeks", series.rule.interval()),
         };
+        let template_schedule = aven_core::recurrence::RecurrenceSchedule::new(
+            series.rule.clone(),
+            series.timezone.clone(),
+            series.start_on,
+            series.available_local_time,
+            series.due_policy,
+        );
         self.flow = Some(AddTaskDraftState {
             origin: AddTaskOrigin::Standalone,
             title: series.title.clone(),
@@ -283,11 +304,13 @@ impl AuthoringState {
             project: Some(project),
             inferred_project: None,
             status: series.initial_status.as_str().to_string(),
+            status_origin: InitialStatusOrigin::Explicit,
             priority: series.priority.as_str().to_string(),
             labels: detail.labels.clone(),
             available_at: String::new(),
             due_on: String::new(),
             recurrence_series_id: Some(series.id.clone()),
+            template_schedule: Some(template_schedule),
             repeat_rule,
             repeat_weekdays: weekdays,
             repeat_at: series
@@ -350,11 +373,13 @@ impl AuthoringState {
             step: draft.step,
             project: project.to_string(),
             status: draft.status.clone(),
+            status_origin: draft.status_origin,
             priority: draft.priority.clone(),
             labels: draft.labels.clone(),
             available_at: draft.available_at.clone(),
             due_on: draft.due_on.clone(),
             recurrence_series_id: draft.recurrence_series_id.clone(),
+            template_schedule: draft.template_schedule.clone(),
             repeat_rule: draft.repeat_rule.clone(),
             repeat_weekdays: draft.repeat_weekdays.clone(),
             repeat_at: draft.repeat_at.clone(),
@@ -369,13 +394,30 @@ impl AuthoringState {
         Some(draft.project.clone())
     }
 
-    pub(crate) fn apply_add_task_status(&mut self, status: &str) -> Option<String> {
+    pub(crate) fn apply_add_task_status_choice(&mut self, status: &str) -> Option<String> {
         let draft = self.flow.as_mut()?;
         if !crate::choices::STATUSES.contains(&status) {
             return None;
         }
         draft.status = status.to_string();
+        draft.status_origin = InitialStatusOrigin::Explicit;
         Some(draft.status.clone())
+    }
+
+    pub(crate) fn capture_add_task_status(
+        &mut self,
+        status: String,
+        origin: InitialStatusOrigin,
+    ) -> bool {
+        let Some(draft) = self.flow.as_mut() else {
+            return false;
+        };
+        if !crate::choices::STATUSES.contains(&status.as_str()) {
+            return false;
+        }
+        draft.status = status;
+        draft.status_origin = origin;
+        true
     }
 
     pub(crate) fn add_pending_add_task_attachment(
@@ -502,6 +544,7 @@ impl AuthoringState {
     pub(crate) fn apply_add_task_recurrence(
         &mut self,
         series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
+        template_schedule: Option<aven_core::recurrence::RecurrenceSchedule>,
         repeat_rule: String,
         repeat_weekdays: Vec<String>,
         repeat_at: String,
@@ -513,6 +556,7 @@ impl AuthoringState {
             return false;
         };
         draft.recurrence_series_id = series_id;
+        draft.template_schedule = template_schedule;
         draft.repeat_rule = repeat_rule;
         draft.repeat_weekdays = repeat_weekdays;
         draft.repeat_at = repeat_at;
@@ -538,6 +582,11 @@ impl AuthoringState {
         draft.title = task.title;
         draft.description = task.description;
         draft.project = task.project;
+        draft.status_origin = if task.status == "inbox" {
+            InitialStatusOrigin::UntouchedDefault
+        } else {
+            InitialStatusOrigin::Explicit
+        };
         draft.status = task.status;
         draft.priority = task.priority;
         draft.labels = task.labels;
@@ -623,12 +672,43 @@ mod tests {
         state.begin_add_task(None, None);
 
         assert_eq!(state.add_task_context().unwrap().status, "inbox");
-        assert_eq!(state.apply_add_task_status("todo").as_deref(), Some("todo"));
+        assert_eq!(
+            state.apply_add_task_status_choice("todo").as_deref(),
+            Some("todo")
+        );
         assert!(matches!(
             state.submit_add_task(),
             AddTaskTitleSubmit::ReopenTitle { .. }
         ));
         assert_eq!(state.add_task_context().unwrap().status, "todo");
+    }
+
+    #[test]
+    fn add_task_status_origin_survives_capture_round_trip() {
+        let mut state = AuthoringState::default();
+        state.begin_add_task(None, None);
+        assert!(
+            state.capture_add_task_status(
+                "todo".to_string(),
+                InitialStatusOrigin::RecurrenceDefault,
+            )
+        );
+
+        let context = state.add_task_context().unwrap();
+        assert_eq!(context.status, "todo");
+        assert_eq!(
+            context.status_origin,
+            InitialStatusOrigin::RecurrenceDefault
+        );
+
+        assert_eq!(
+            state.apply_add_task_status_choice("inbox").as_deref(),
+            Some("inbox")
+        );
+        assert_eq!(
+            state.add_task_context().unwrap().status_origin,
+            InitialStatusOrigin::Explicit
+        );
     }
 
     #[test]

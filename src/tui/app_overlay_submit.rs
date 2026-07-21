@@ -8,6 +8,40 @@ use crate::tui::overlay::{
     PickerIntent, TagComboboxIntent, TextIntent,
 };
 
+fn recurrence_schedule_summary(schedule: &aven_core::recurrence::RecurrenceSchedule) -> String {
+    use aven_core::recurrence::{RecurrenceDuePolicy, RecurrenceFrequency};
+
+    let rule = match schedule.rule.frequency() {
+        RecurrenceFrequency::Daily => "daily".to_string(),
+        RecurrenceFrequency::Weekly
+            if schedule.rule.interval() == 1
+                && schedule.rule.weekdays_set().to_string() == "mon,tue,wed,thu,fri" =>
+        {
+            "weekdays".to_string()
+        }
+        RecurrenceFrequency::Weekly if schedule.rule.interval() == 1 => {
+            format!("weekly on {}", schedule.rule.weekdays_set())
+        }
+        RecurrenceFrequency::Weekly => format!(
+            "every {} weeks on {}",
+            schedule.rule.interval(),
+            schedule.rule.weekdays_set()
+        ),
+    };
+    let at = schedule
+        .available_local_time
+        .map(|value| value.format("%H:%M").to_string())
+        .unwrap_or_else(|| "boundary".to_string());
+    let due = match schedule.due_policy {
+        RecurrenceDuePolicy::SameDay => "same-day",
+        RecurrenceDuePolicy::None => "none",
+    };
+    format!(
+        "{rule}; start {}; zone {}; at {at}; due {due}",
+        schedule.start_on, schedule.timezone
+    )
+}
+
 impl App {
     pub(super) async fn handle_overlay_submit(&mut self, submit: OverlaySubmit) -> Result<()> {
         match submit {
@@ -55,17 +89,6 @@ impl App {
             return Ok(());
         }
 
-        for label in state.labels.clone() {
-            let label = crate::labels::normalize_label(&label);
-            if !self.store.labels.contains(&label)
-                && let Err(error) = self.store.create_label(label).await
-            {
-                state.mode = AddTaskMode::Compose;
-                self.overlay = Some(OverlayState::AddTask(Box::new(state)));
-                return Err(error);
-            }
-        }
-
         let recurrence_schedule = match state.recurrence_schedule() {
             Ok(value) => value,
             Err(error) => {
@@ -77,6 +100,21 @@ impl App {
                 return Ok(());
             }
         };
+        let recurring = state.template_schedule.is_some() || recurrence_schedule.is_some();
+        if recurring
+            && !matches!(
+                crate::choices::TaskStatus::parse(&state.status),
+                Ok(status) if status.is_open()
+            )
+        {
+            state.focus = AddTaskStep::Status;
+            state.mode = AddTaskMode::Compose;
+            self.overlay = Some(OverlayState::AddTask(Box::new(state)));
+            self.set_warning(
+                "recurring tasks require an open initial status: inbox, backlog, todo, or active",
+            );
+            return Ok(());
+        }
         if recurrence_schedule.is_some()
             && (!state.available_at.text.trim().is_empty() || !state.due_on.text.trim().is_empty())
         {
@@ -95,10 +133,22 @@ impl App {
             return Ok(());
         }
 
+        for label in state.labels.clone() {
+            let label = crate::labels::normalize_label(&label);
+            if !self.store.labels.contains(&label)
+                && let Err(error) = self.store.create_label(label).await
+            {
+                state.mode = AddTaskMode::Compose;
+                self.overlay = Some(OverlayState::AddTask(Box::new(state)));
+                return Err(error);
+            }
+        }
+
         if let Some(series_id) = state.recurrence_series_id.clone() {
             let schedule = recurrence_schedule
                 .as_ref()
                 .expect("recurrence template editor retains its schedule");
+            let schedule_summary = recurrence_schedule_summary(schedule);
             let selected_task_id = self
                 .store
                 .selected_task(self.list.selected_task())
@@ -116,18 +166,21 @@ impl App {
                         labels: Some(state.labels.clone()),
                         available_local_time: Some(schedule.available_local_time),
                         due_policy: Some(schedule.due_policy),
-                        ..aven_core::operations::RecurrenceTemplateUpdate::default()
+                        rule: None,
+                        start_on: None,
+                        timezone: None,
                     },
                     selected_task_id.as_ref(),
                 )
                 .await?;
             self.list.select_task(message.selected);
-            self.set_success(message.message);
+            self.set_success(format!("{}; {schedule_summary}", message.message));
             self.authoring.clear();
             return Ok(());
         }
 
         if let Some(schedule) = recurrence_schedule {
+            let schedule_summary = recurrence_schedule_summary(&schedule);
             let draft = crate::tui::store::recurrence_draft(
                 title.to_string(),
                 state.description.lines.join("\n").trim().to_string(),
@@ -144,7 +197,7 @@ impl App {
             self.list.select_task(selected);
             self.preserve_or_restore_sidebar_selection();
             self.prune_task_marks();
-            self.set_success(message.clone());
+            self.set_success(format!("{message}; {schedule_summary}"));
             if self.intake.view().add_task_only {
                 self.intake.set_message(message);
                 self.should_quit = true;
@@ -288,7 +341,7 @@ impl App {
             }
             PickerIntent::AddTaskStatus => {
                 if let Some(value) = values.first() {
-                    self.authoring.apply_add_task_status(value);
+                    self.authoring.apply_add_task_status_choice(value);
                     self.begin_add_task_step();
                 }
             }
