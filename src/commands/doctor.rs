@@ -200,6 +200,8 @@ pub(crate) async fn cmd_doctor(
     let config_file = app_config::config_file_path();
     let db_source = if db_flag_set {
         "--db"
+    } else if app_config::debug_db_path_from_env().is_some() {
+        "AVEN_DEV_DB"
     } else if std::env::var_os("AVEN_DB").is_some() {
         "AVEN_DB"
     } else if config.local.db_path.is_some() {

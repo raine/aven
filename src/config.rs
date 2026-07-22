@@ -434,16 +434,46 @@ pub fn default_db_path() -> Result<PathBuf> {
 }
 
 pub fn resolve_db_path(flag: Option<PathBuf>, config: &AppConfig) -> Result<PathBuf> {
+    resolve_db_path_from(
+        flag,
+        env::var_os("AVEN_DB").map(PathBuf::from),
+        debug_db_path_from_env(),
+        config,
+        cfg!(debug_assertions),
+    )
+}
+
+fn resolve_db_path_from(
+    flag: Option<PathBuf>,
+    env_db: Option<PathBuf>,
+    dev_db: Option<PathBuf>,
+    config: &AppConfig,
+    debug_build: bool,
+) -> Result<PathBuf> {
     if let Some(path) = flag {
         return Ok(path);
     }
-    if let Ok(path) = env::var("AVEN_DB") {
-        return Ok(PathBuf::from(path));
+    if debug_build && let Some(path) = dev_db {
+        return Ok(path);
+    }
+    if let Some(path) = env_db {
+        return Ok(path);
     }
     if let Some(path) = &config.local.db_path {
         return expand_tilde(path);
     }
+    if debug_build {
+        bail!("error debug-database-required hint=\"set AVEN_DEV_DB, set AVEN_DB, or pass --db\"");
+    }
     default_db_path()
+}
+
+pub fn debug_db_path_from_env() -> Option<PathBuf> {
+    if cfg!(debug_assertions) {
+        env::var_os("AVEN_DEV_DB").map(PathBuf::from)
+    } else {
+        None
+    }
 }
 
 #[allow(dead_code)]
@@ -645,6 +675,67 @@ mod tests {
 
         loaded.validate().unwrap();
         assert_eq!(loaded.tui.columns, config.tui.columns);
+    }
+
+    #[test]
+    fn debug_database_resolution_requires_an_explicit_path() {
+        let config = AppConfig::default();
+        let error = resolve_db_path_from(None, None, None, &config, true).unwrap_err();
+
+        assert!(format!("{error:#}").contains("debug-database-required"));
+    }
+
+    #[test]
+    fn debug_database_resolution_uses_dev_environment_path() {
+        let config = AppConfig::default();
+        let dev_db = PathBuf::from("/tmp/aven-dev.sqlite");
+
+        assert_eq!(
+            resolve_db_path_from(None, None, Some(dev_db.clone()), &config, true).unwrap(),
+            dev_db
+        );
+    }
+
+    #[test]
+    fn debug_database_resolution_prefers_dev_environment_path() {
+        let config = AppConfig::default();
+        let dev_db = PathBuf::from("/tmp/aven-dev.sqlite");
+        let env_db = PathBuf::from("/tmp/aven-env.sqlite");
+
+        assert_eq!(
+            resolve_db_path_from(None, Some(env_db), Some(dev_db.clone()), &config, true,).unwrap(),
+            dev_db
+        );
+    }
+
+    #[test]
+    fn database_flag_overrides_debug_environment_path() {
+        let config = AppConfig::default();
+        let dev_db = Some(PathBuf::from("/tmp/aven-dev.sqlite"));
+        let flag_db = PathBuf::from("/tmp/aven-flag.sqlite");
+
+        assert_eq!(
+            resolve_db_path_from(Some(flag_db.clone()), None, dev_db, &config, true).unwrap(),
+            flag_db
+        );
+    }
+
+    #[test]
+    fn release_database_resolution_ignores_dev_environment_path() {
+        let mut config = AppConfig::default();
+        config.local.db_path = Some(PathBuf::from("/tmp/configured.sqlite"));
+
+        assert_eq!(
+            resolve_db_path_from(
+                None,
+                None,
+                Some(PathBuf::from("/tmp/aven-dev.sqlite")),
+                &config,
+                false,
+            )
+            .unwrap(),
+            PathBuf::from("/tmp/configured.sqlite")
+        );
     }
 
     #[test]
