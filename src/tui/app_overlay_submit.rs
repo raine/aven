@@ -142,9 +142,6 @@ impl App {
                         labels: Some(state.labels.clone()),
                         available_local_time: Some(schedule.available_local_time),
                         due_policy: Some(schedule.due_policy),
-                        rule: None,
-                        start_on: None,
-                        timezone: None,
                     },
                     selected_task_id.as_ref(),
                 )

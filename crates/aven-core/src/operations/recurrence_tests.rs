@@ -364,7 +364,7 @@ async fn create_rolls_back_series_task_and_changes_on_materialization_failure() 
 }
 
 #[tokio::test]
-async fn template_edits_apply_only_to_future_occurrences_and_reject_schedule_edits() {
+async fn template_edits_apply_only_to_future_occurrences() {
     let (_temp, mut conn, workspace) = setup().await;
     let created = create_daily(&mut conn, &workspace).await;
     let original_task_id = created.task.id.clone();
@@ -403,15 +403,6 @@ async fn template_edits_apply_only_to_future_occurrences_and_reject_schedule_edi
             .await
             .unwrap();
     assert_eq!(labels, vec!["future"]);
-
-    let immutable = RecurrenceTemplateUpdate {
-        rule: Some(RecurrenceRule::weekdays()),
-        ..Default::default()
-    };
-    let error = update_recurrence_template(&mut conn, &workspace, &created.series.id, immutable)
-        .await
-        .unwrap_err();
-    assert!(error.to_string().contains("recurrence-schedule-immutable"));
 }
 
 #[tokio::test]

@@ -4,7 +4,7 @@ use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::ids::{ProjectId, TaskId, WorkspaceId};
 use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceOutcome, RecurrenceProjectionState, RecurrenceRule,
-    RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId,
+    RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId,
 };
 
 #[derive(Debug, Clone)]
@@ -47,6 +47,18 @@ pub struct RecurrenceSeries {
     pub created_at: String,
     pub updated_at: String,
     pub deleted: bool,
+}
+
+impl RecurrenceSeries {
+    pub fn schedule(&self) -> RecurrenceSchedule {
+        RecurrenceSchedule::new(
+            self.rule,
+            self.timezone.clone(),
+            self.start_on,
+            self.available_local_time,
+            self.due_policy,
+        )
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -266,7 +266,6 @@ async fn edit(database: &Database, workspace: &Workspace, args: RecurEditArgs) -
                 labels: (!args.label.is_empty()).then_some(args.label),
                 available_local_time,
                 due_policy,
-                ..RecurrenceTemplateUpdate::default()
             },
         )
         .await?;

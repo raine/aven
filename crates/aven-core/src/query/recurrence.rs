@@ -8,7 +8,7 @@ use crate::db::{recurrence_occurrence_from_row, recurrence_series_from_row};
 use crate::ids::{TaskId, WorkspaceId};
 use crate::recurrence::{
     RecurrenceOutcome, RecurrenceProjectionState, RecurrenceSchedule, RecurrenceSeriesId,
-    RecurrenceSeriesState, live_slot_on, slot_values,
+    RecurrenceSeriesState, live_slot_on, recurrence_series_display_ref, slot_values,
 };
 use crate::refs::DisplayRefContext;
 use crate::types::{RecurrenceOccurrence, RecurrencePauseInterval, RecurrenceSeries};
@@ -54,41 +54,7 @@ pub(crate) async fn group_search_task_items(
     items: Vec<TaskListItem>,
     at: DateTime<Utc>,
 ) -> Result<Vec<TaskListItem>> {
-    let series_ids = items
-        .iter()
-        .filter_map(|item| {
-            item.recurrence
-                .as_ref()
-                .map(|value| value.series_id.clone())
-        })
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    if series_ids.is_empty() {
-        return Ok(items);
-    }
-    let series = load_series_for_ids(conn, workspace_id, &series_ids).await?;
-    let counts = recurrence_counts_batch(conn, workspace_id, &series, at).await?;
-    let mut seen = HashSet::new();
-    let mut grouped = Vec::with_capacity(items.len());
-    for mut item in items {
-        let Some(summary) = item.recurrence.as_ref() else {
-            grouped.push(item);
-            continue;
-        };
-        if !seen.insert(summary.series_id.clone()) {
-            continue;
-        }
-        let mut group_counts = counts.get(&summary.series_id).cloned().unwrap_or_default();
-        group_counts.series_ref = summary.series_ref.clone();
-        item.recurrence_group = Some(RecurrenceTaskGroup {
-            series_id: summary.series_id.clone(),
-            series_ref: summary.series_ref.clone(),
-            counts: group_counts,
-        });
-        grouped.push(item);
-    }
-    Ok(grouped)
+    group_task_items(conn, workspace_id, items, at, |_| true).await
 }
 
 pub(crate) async fn group_terminal_task_items(
@@ -97,9 +63,22 @@ pub(crate) async fn group_terminal_task_items(
     items: Vec<TaskListItem>,
     at: DateTime<Utc>,
 ) -> Result<Vec<TaskListItem>> {
+    group_task_items(conn, workspace_id, items, at, |item| {
+        item.task.status.is_terminal()
+    })
+    .await
+}
+
+async fn group_task_items(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    items: Vec<TaskListItem>,
+    at: DateTime<Utc>,
+    include: fn(&TaskListItem) -> bool,
+) -> Result<Vec<TaskListItem>> {
     let series_ids = items
         .iter()
-        .filter(|item| item.task.status.is_terminal())
+        .filter(|item| include(item))
         .filter_map(|item| {
             item.recurrence
                 .as_ref()
@@ -120,7 +99,7 @@ pub(crate) async fn group_terminal_task_items(
             grouped.push(item);
             continue;
         };
-        if !item.task.status.is_terminal() {
+        if !include(&item) {
             grouped.push(item);
             continue;
         }
@@ -393,7 +372,7 @@ pub(crate) async fn recurrence_series_detail(
         .pop()
         .expect("one series produces one summary");
     let current_occurrence =
-        load_current_occurrences(conn, workspace_id, std::slice::from_ref(series_id))
+        load_projected_occurrences(conn, workspace_id, std::slice::from_ref(series_id))
             .await?
             .remove(series_id);
     let lifecycle_conflicts = sqlx::query(
@@ -433,7 +412,13 @@ pub(crate) async fn recurrence_history(
     offset: usize,
     limit: usize,
 ) -> Result<RecurrenceHistoryPage> {
-    let detail = recurrence_series_detail(conn, workspace_id, series_id, at).await?;
+    let series = load_series_for_ids(conn, workspace_id, std::slice::from_ref(series_id))
+        .await?
+        .pop()
+        .with_context(|| format!("error recurrence-series-not-found series_id={series_id}"))?;
+    let series_ref = SeriesRefContext::load(conn, workspace_id)
+        .await?
+        .display_ref(series_id);
     let occurrences = load_occurrences(conn, workspace_id, series_id).await?;
     let pauses = load_pause_intervals(conn, workspace_id, series_id).await?;
     let display_refs = DisplayRefContext::for_workspace(conn, workspace_id).await?;
@@ -447,7 +432,7 @@ pub(crate) async fn recurrence_history(
         )
         .collect::<Vec<_>>();
     let task_refs = load_task_display_refs(conn, workspace_id, &task_ids, &display_refs).await?;
-    let mut entries = build_history_entries(&detail.series, &occurrences, &pauses, at, &task_refs)?;
+    let mut entries = build_history_entries(&series, &occurrences, &pauses, at, &task_refs)?;
     entries.sort_by(|left, right| {
         right
             .sort_key()
@@ -458,7 +443,7 @@ pub(crate) async fn recurrence_history(
     let limit = limit.clamp(1, 500);
     let items = entries.into_iter().skip(offset).take(limit).collect();
     Ok(RecurrenceHistoryPage {
-        series_ref: detail.summary.series_ref,
+        series_ref,
         items,
         offset,
         limit,
@@ -478,7 +463,7 @@ async fn summaries_for_series(
         .map(|item| item.id.clone())
         .collect::<Vec<_>>();
     let refs = SeriesRefContext::load(conn, workspace_id).await?;
-    let current = load_current_occurrences(conn, workspace_id, &ids).await?;
+    let current = load_projected_occurrences(conn, workspace_id, &ids).await?;
     let display_refs = DisplayRefContext::for_workspace(conn, workspace_id).await?;
     let current_task_ids = current
         .values()
@@ -573,7 +558,7 @@ fn build_history_entries(
     at: DateTime<Utc>,
     task_refs: &HashMap<TaskId, String>,
 ) -> Result<Vec<RecurrenceHistoryEntry>> {
-    let schedule = schedule_for_series(series);
+    let schedule = series.schedule();
     let live_slot = live_slot_on(&series.rule, series.start_on, at, &series.timezone);
     let projected_slot = occurrences
         .iter()
@@ -745,25 +730,6 @@ async fn load_projected_occurrences(
     Ok(by_series)
 }
 
-async fn load_current_occurrences(
-    conn: &mut SqliteConnection,
-    workspace_id: &WorkspaceId,
-    series_ids: &[RecurrenceSeriesId],
-) -> Result<HashMap<RecurrenceSeriesId, RecurrenceOccurrence>> {
-    let all = load_occurrences_for_series(conn, workspace_id, series_ids).await?;
-    Ok(all
-        .into_iter()
-        .filter_map(|(series_id, occurrences)| {
-            occurrences
-                .into_iter()
-                .find(|value| {
-                    matches!(value.projection_state, RecurrenceProjectionState::Projected)
-                })
-                .map(|value| (series_id, value))
-        })
-        .collect())
-}
-
 async fn load_occurrences(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
@@ -914,16 +880,6 @@ async fn load_task_display_refs(
     Ok(refs)
 }
 
-fn schedule_for_series(series: &RecurrenceSeries) -> RecurrenceSchedule {
-    RecurrenceSchedule::new(
-        series.rule,
-        series.timezone.clone(),
-        series.start_on,
-        series.available_local_time,
-        series.due_policy,
-    )
-}
-
 fn rule_label(frequency: String, interval: u32, weekdays: String) -> String {
     match (frequency.as_str(), interval, weekdays.as_str()) {
         ("daily", _, _) => "daily".to_string(),
@@ -953,24 +909,8 @@ impl SeriesRefContext {
     }
 
     pub(crate) fn display_ref(&self, series_id: &RecurrenceSeriesId) -> String {
-        let id = series_id.as_str();
-        let shared = self
-            .ids
-            .iter()
-            .filter(|candidate| candidate.as_str() != id)
-            .map(|candidate| common_prefix_len(id, candidate.as_str()))
-            .max()
-            .unwrap_or(0);
-        let length = 4.max(shared.saturating_add(1)).min(id.len());
-        format!("RCR-{}", &id[..length])
+        recurrence_series_display_ref(series_id, &self.ids)
     }
-}
-
-fn common_prefix_len(left: &str, right: &str) -> usize {
-    left.bytes()
-        .zip(right.bytes())
-        .take_while(|(left, right)| left == right)
-        .count()
 }
 
 pub(crate) fn validate_reconciliation(result: &RecurrenceReconciliation) -> Result<()> {

@@ -49,6 +49,26 @@ impl RecurrenceSeriesId {
     }
 }
 
+pub(crate) fn recurrence_series_display_ref(
+    series_id: &RecurrenceSeriesId,
+    ids: &[RecurrenceSeriesId],
+) -> String {
+    let id = series_id.as_str();
+    let shared = ids
+        .iter()
+        .filter(|candidate| candidate.as_str() != id)
+        .map(|candidate| {
+            id.bytes()
+                .zip(candidate.as_str().bytes())
+                .take_while(|(left, right)| left == right)
+                .count()
+        })
+        .max()
+        .unwrap_or(0);
+    let length = 4.max(shared.saturating_add(1)).min(id.len());
+    format!("RCR-{}", &id[..length])
+}
+
 impl Default for RecurrenceSeriesId {
     fn default() -> Self {
         Self::new()

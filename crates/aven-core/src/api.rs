@@ -263,7 +263,6 @@ impl Store {
                     labels: input.labels,
                     available_local_time: input.available_local_time.into_internal()?,
                     due_policy: input.due_policy.map(Into::into),
-                    ..InternalRecurrenceTemplateUpdate::default()
                 },
             )
             .await

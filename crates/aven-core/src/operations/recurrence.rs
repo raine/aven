@@ -17,9 +17,9 @@ use crate::labels::resolve_labels_in_workspace;
 use crate::mutation::apply_field_value_in_workspace;
 use crate::projects::resolve_or_create_project_in_workspace;
 use crate::recurrence::{
-    RecurrenceDuePolicy, RecurrenceOutcome, RecurrenceProjectionState, RecurrenceRule,
-    RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId,
-    derive_occurrence_identity, is_slot, live_slot_on, next_slot_after, slot_cutoff, slot_values,
+    RecurrenceDuePolicy, RecurrenceOutcome, RecurrenceProjectionState, RecurrenceSchedule,
+    RecurrenceSeriesId, RecurrenceSeriesState, derive_occurrence_identity, is_slot, live_slot_on,
+    next_slot_after, recurrence_series_display_ref, slot_cutoff, slot_values,
 };
 use crate::refs::get_task_in_workspace;
 use crate::task_fields::TaskField;
@@ -33,7 +33,6 @@ mod tests;
 
 const RECONCILE_ATTEMPTS: usize = 3;
 const SERIES_REF_PREFIX: &str = "RCR";
-const DISPLAY_SUFFIX_FLOOR: usize = 4;
 const SERIES_TEMPLATE_FIELDS: &[&str] = &[
     "title",
     "description",
@@ -69,9 +68,6 @@ pub struct RecurrenceTemplateUpdate {
     pub labels: Option<Vec<String>>,
     pub available_local_time: Option<Option<NaiveTime>>,
     pub due_policy: Option<RecurrenceDuePolicy>,
-    pub rule: Option<RecurrenceRule>,
-    pub start_on: Option<NaiveDate>,
-    pub timezone: Option<TimeZoneId>,
 }
 
 #[derive(Debug, Clone)]
@@ -426,11 +422,6 @@ pub async fn update_recurrence_template(
     series_id: &RecurrenceSeriesId,
     update: RecurrenceTemplateUpdate,
 ) -> Result<RecurrenceTemplateUpdateOutcome> {
-    if update.rule.is_some() || update.start_on.is_some() || update.timezone.is_some() {
-        bail!(
-            "error recurrence-schedule-immutable hint=\"stop this series and create a replacement\""
-        );
-    }
     if let Some(priority) = update.priority.as_deref() {
         TaskPriority::parse(priority)?;
     }
@@ -640,7 +631,7 @@ pub(crate) async fn reconcile_recurrence_series_in_transaction(
         });
     }
 
-    let schedule = schedule_for_series(&series);
+    let schedule = series.schedule();
     let target = projection_slot_at(&schedule, at)?;
     if projected
         .as_ref()
@@ -781,13 +772,8 @@ pub(crate) async fn resolve_recurrence_occurrence_in_transaction(
     };
     let successor_task_id = successor_slot
         .map(|slot| {
-            derive_occurrence_identity(
-                &workspace.id,
-                &series.id,
-                &schedule_for_series(&series),
-                slot,
-            )
-            .map(|identity| identity.task_id)
+            derive_occurrence_identity(&workspace.id, &series.id, &series.schedule(), slot)
+                .map(|identity| identity.task_id)
         })
         .transpose()?;
     let outcome_change_id = append_change(
@@ -874,7 +860,7 @@ pub async fn record_recurrence_outcome(
     );
     let mut tx = begin_immediate(conn).await?;
     let series = load_series(&mut tx, &workspace.id, series_id).await?;
-    let schedule = schedule_for_series(&series);
+    let schedule = series.schedule();
     ensure!(
         is_slot(&series.rule, series.start_on, slot_on),
         "error recurrence-slot-off-lattice slot={slot_on}"
@@ -1108,7 +1094,7 @@ pub async fn resume_recurrence_series(
     )
     .await?;
 
-    let schedule = schedule_for_series(&series);
+    let schedule = series.schedule();
     let mut occurrence = load_projected_occurrence(&mut tx, &workspace.id, series_id).await?;
     let suspended_still_live = if let Some(suspended_slot) = suspended_slot {
         occurrence
@@ -1426,7 +1412,7 @@ async fn materialize_occurrence(
     labels: &[String],
     slot_on: NaiveDate,
 ) -> Result<RecurrenceOccurrence> {
-    let schedule = schedule_for_series(series);
+    let schedule = series.schedule();
     let slot = slot_values(&schedule, slot_on)?;
     let identity = derive_occurrence_identity(&workspace.id, &series.id, &schedule, slot_on)?;
     if let Some(existing) = load_occurrence(conn, &workspace.id, &series.id, slot_on).await? {
@@ -1917,16 +1903,6 @@ async fn load_occurrence_for_task(
     row.as_ref().map(recurrence_occurrence_from_row).transpose()
 }
 
-fn schedule_for_series(series: &RecurrenceSeries) -> RecurrenceSchedule {
-    RecurrenceSchedule::new(
-        series.rule,
-        series.timezone.clone(),
-        series.start_on,
-        series.available_local_time,
-        series.due_policy,
-    )
-}
-
 fn projection_slot_at(schedule: &RecurrenceSchedule, at: DateTime<Utc>) -> Result<NaiveDate> {
     if let Some(slot) = live_slot_on(&schedule.rule, schedule.start_on, at, &schedule.timezone) {
         return Ok(slot);
@@ -1993,7 +1969,7 @@ async fn slot_is_paused(
     .fetch_all(&mut *conn)
     .await?;
     let series = load_series(conn, workspace_id, series_id).await?;
-    let boundary = slot_values(&schedule_for_series(&series), slot_on)?.boundary_at;
+    let boundary = slot_values(&series.schedule(), slot_on)?.boundary_at;
     Ok(boundaries.into_iter().any(|row| {
         let paused_at: String = row.get("paused_at");
         let resumed_at: String = row.get("resumed_at");
@@ -2048,26 +2024,17 @@ async fn recurrence_series_ref(
     workspace_id: &WorkspaceId,
     series_id: &RecurrenceSeriesId,
 ) -> Result<String> {
-    let ids: Vec<String> =
-        sqlx::query_scalar("SELECT id FROM recurrence_series WHERE workspace_id = ? ORDER BY id")
-            .bind(workspace_id)
-            .fetch_all(&mut *conn)
-            .await?;
-    let id = series_id.as_str();
+    let ids = sqlx::query_scalar::<_, RecurrenceSeriesId>(
+        "SELECT id FROM recurrence_series WHERE workspace_id = ? ORDER BY id",
+    )
+    .bind(workspace_id)
+    .fetch_all(&mut *conn)
+    .await?;
     ensure!(
-        ids.iter().any(|candidate| candidate == id),
+        ids.iter().any(|candidate| candidate == series_id),
         "error recurrence-series-not-found series_id={series_id}"
     );
-    let shared = ids
-        .iter()
-        .filter(|candidate| candidate.as_str() != id)
-        .map(|candidate| common_prefix_len(id, candidate))
-        .max()
-        .unwrap_or(0);
-    let length = DISPLAY_SUFFIX_FLOOR
-        .max(shared.saturating_add(1))
-        .min(id.len());
-    Ok(format!("{SERIES_REF_PREFIX}-{}", &id[..length]))
+    Ok(recurrence_series_display_ref(series_id, &ids))
 }
 
 fn split_ref(input: &str) -> (Option<String>, String) {
@@ -2084,13 +2051,6 @@ fn split_ref(input: &str) -> (Option<String>, String) {
         })
         .collect();
     (hint.map(|value| value.to_ascii_uppercase()), suffix)
-}
-
-fn common_prefix_len(left: &str, right: &str) -> usize {
-    left.bytes()
-        .zip(right.bytes())
-        .take_while(|(left, right)| left == right)
-        .count()
 }
 
 async fn ensure_change_is_latest_series_transition(
@@ -2140,7 +2100,7 @@ async fn ensure_successor_untouched(
     let identity = derive_occurrence_identity(
         workspace_id,
         &series.id,
-        &schedule_for_series(series),
+        &series.schedule(),
         occurrence.slot_on,
     )?;
     ensure!(
@@ -2149,7 +2109,7 @@ async fn ensure_successor_untouched(
     );
     let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
     let labels = load_series_labels(conn, workspace_id, &series.id).await?;
-    let slot = slot_values(&schedule_for_series(series), occurrence.slot_on)?;
+    let slot = slot_values(&series.schedule(), occurrence.slot_on)?;
     verify_materialized_occurrence(
         conn, &workspace, series, &labels, &slot, &identity, occurrence,
     )
@@ -2216,7 +2176,7 @@ async fn remove_materialized_occurrence(
     let identity = derive_occurrence_identity(
         workspace_id,
         &series.id,
-        &schedule_for_series(series),
+        &series.schedule(),
         occurrence.slot_on,
     )?;
     sqlx::query(
