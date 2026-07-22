@@ -223,9 +223,18 @@ install-release:
     install_root="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}"
     AVEN_INSTALL_DIR="$install_root/bin" bash scripts/install
 
-# Install debug binary globally via symlink
+# Install debug binary globally when the daemon is not installed
 install-dev:
-    cargo build && ln -sf $(pwd)/target/debug/aven ~/.cargo/bin/aven
+    #!/usr/bin/env bash
+    set -euo pipefail
+    daemon_plist="$HOME/Library/LaunchAgents/com.raine.aven.daemon.plist"
+    if [[ -f "$daemon_plist" ]]; then
+        echo "Error: install-dev cannot replace the binary used by the installed daemon" >&2
+        echo "Use 'just install' for a daemon-safe local installation, or uninstall the daemon first" >&2
+        exit 1
+    fi
+    cargo build
+    ln -sf "$(pwd)/target/debug/aven" "$HOME/.cargo/bin/aven"
 
 # Run the application against the dev database when configured
 run *ARGS:
