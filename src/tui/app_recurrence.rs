@@ -84,13 +84,17 @@ struct RecurrenceTarget {
     series_ref: String,
     state: RecurrenceSeriesState,
     current: Option<CurrentOccurrenceTarget>,
-    project_key: String,
     detail: aven_core::query::RecurrenceSeriesDetail,
 }
 
 impl RecurrenceTarget {
     fn unavailable_reason(&self, action: RecurrenceActionKind) -> Option<&'static str> {
-        recurrence_unavailable_reason(self.state, self.current.is_some(), action)
+        let current = if self.current.is_some() {
+            CurrentOccurrenceAvailability::Present
+        } else {
+            CurrentOccurrenceAvailability::Absent
+        };
+        recurrence_unavailable_reason(self.state, current, action)
     }
 
     fn selected_task_id(&self) -> Option<&TaskId> {
@@ -98,9 +102,16 @@ impl RecurrenceTarget {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CurrentOccurrenceAvailability {
+    Present,
+    Absent,
+    Unknown,
+}
+
 fn recurrence_unavailable_reason(
     state: RecurrenceSeriesState,
-    has_current: bool,
+    current: CurrentOccurrenceAvailability,
     action: RecurrenceActionKind,
 ) -> Option<&'static str> {
     use RecurrenceActionKind::{
@@ -110,7 +121,7 @@ fn recurrence_unavailable_reason(
 
     match (state, action) {
         (_, History | RecordHistorical | EditTemplate) => None,
-        (_, SkipCurrent) if has_current => None,
+        (_, SkipCurrent) if current != CurrentOccurrenceAvailability::Absent => None,
         (_, SkipCurrent) => Some("series has no current occurrence to skip"),
         (Active, Pause | Stop) => None,
         (Active, Resume) => Some("series is already active"),
@@ -219,7 +230,11 @@ impl App {
                     (
                         item.series.id.clone(),
                         item.series.state,
-                        item.current_occurrence.is_some(),
+                        if item.current_occurrence.is_some() {
+                            CurrentOccurrenceAvailability::Present
+                        } else {
+                            CurrentOccurrenceAvailability::Absent
+                        },
                     )
                 })
         } else {
@@ -230,15 +245,20 @@ impl App {
                     (
                         summary.series_id.clone(),
                         summary.lifecycle,
-                        summary.outcome.is_none()
+                        if summary.outcome.is_none()
                             && matches!(
                                 summary.projection_state,
                                 RecurrenceProjectionState::Projected
-                            ),
+                            )
+                        {
+                            CurrentOccurrenceAvailability::Present
+                        } else {
+                            CurrentOccurrenceAvailability::Unknown
+                        },
                     )
                 })
         };
-        let Some((series_id, state, has_current)) = selected else {
+        let Some((series_id, state, current)) = selected else {
             return (None, Vec::new());
         };
         let target = RecurrenceTargetId {
@@ -260,7 +280,7 @@ impl App {
                 let kind = action
                     .recurrence_kind()
                     .expect("recurrence command has a recurrence action kind");
-                recurrence_unavailable_reason(state, has_current, kind)
+                recurrence_unavailable_reason(state, current, kind)
                     .map(|reason| CommandAvailabilityOverride { action, reason })
             })
             .collect();
@@ -297,7 +317,6 @@ impl App {
             .store
             .recurrence_detail_for_series(&id.series_id)
             .await?;
-        let project_key = self.store.recurrence_project_key(&detail).await?;
         let current = detail.current_occurrence.as_ref().and_then(|occurrence| {
             if occurrence.outcome.is_some()
                 || !matches!(
@@ -317,7 +336,6 @@ impl App {
             series_ref: detail.summary.series_ref.clone(),
             state: detail.series.state,
             current,
-            project_key,
             detail,
         }))
     }
@@ -353,8 +371,13 @@ impl App {
                 self.open_recurrence_history(&target.id, true).await?;
             }
             RecurrenceActionKind::EditTemplate => {
+                let Some(project) = self.store.find_recurrence_project(&target.detail).await?
+                else {
+                    self.set_warning("recurring template project is unavailable");
+                    return Ok(());
+                };
                 self.authoring
-                    .begin_edit_recurrence_template(&target.detail, target.project_key);
+                    .begin_edit_recurrence_template(&target.detail, project.key);
                 self.begin_add_task_step();
             }
             RecurrenceActionKind::Pause => {
@@ -886,28 +909,79 @@ mod tests {
 
         for state in [Active, Paused, Stopped] {
             assert_eq!(
-                recurrence_unavailable_reason(state, true, SkipCurrent),
+                recurrence_unavailable_reason(
+                    state,
+                    CurrentOccurrenceAvailability::Present,
+                    SkipCurrent
+                ),
                 None
             );
-            assert!(recurrence_unavailable_reason(state, false, SkipCurrent).is_some());
-            assert_eq!(recurrence_unavailable_reason(state, true, History), None);
+            assert!(
+                recurrence_unavailable_reason(
+                    state,
+                    CurrentOccurrenceAvailability::Absent,
+                    SkipCurrent
+                )
+                .is_some()
+            );
             assert_eq!(
-                recurrence_unavailable_reason(state, true, RecordHistorical),
+                recurrence_unavailable_reason(
+                    state,
+                    CurrentOccurrenceAvailability::Present,
+                    History
+                ),
                 None
             );
             assert_eq!(
-                recurrence_unavailable_reason(state, true, EditTemplate),
+                recurrence_unavailable_reason(
+                    state,
+                    CurrentOccurrenceAvailability::Present,
+                    RecordHistorical
+                ),
+                None
+            );
+            assert_eq!(
+                recurrence_unavailable_reason(
+                    state,
+                    CurrentOccurrenceAvailability::Present,
+                    EditTemplate
+                ),
                 None
             );
         }
-        assert_eq!(recurrence_unavailable_reason(Active, true, Pause), None);
-        assert_eq!(recurrence_unavailable_reason(Active, true, Stop), None);
-        assert!(recurrence_unavailable_reason(Active, true, Resume).is_some());
-        assert_eq!(recurrence_unavailable_reason(Paused, true, Resume), None);
-        assert_eq!(recurrence_unavailable_reason(Paused, true, Stop), None);
-        assert!(recurrence_unavailable_reason(Paused, true, Pause).is_some());
+        assert_eq!(
+            recurrence_unavailable_reason(Active, CurrentOccurrenceAvailability::Present, Pause),
+            None
+        );
+        assert_eq!(
+            recurrence_unavailable_reason(Active, CurrentOccurrenceAvailability::Present, Stop),
+            None
+        );
+        assert!(
+            recurrence_unavailable_reason(Active, CurrentOccurrenceAvailability::Present, Resume)
+                .is_some()
+        );
+        assert_eq!(
+            recurrence_unavailable_reason(Paused, CurrentOccurrenceAvailability::Present, Resume),
+            None
+        );
+        assert_eq!(
+            recurrence_unavailable_reason(Paused, CurrentOccurrenceAvailability::Present, Stop),
+            None
+        );
+        assert!(
+            recurrence_unavailable_reason(Paused, CurrentOccurrenceAvailability::Present, Pause)
+                .is_some()
+        );
         for action in [Pause, Resume, Stop] {
-            assert!(recurrence_unavailable_reason(Stopped, true, action).is_some());
+            assert!(
+                recurrence_unavailable_reason(
+                    Stopped,
+                    CurrentOccurrenceAvailability::Present,
+                    action
+                )
+                .is_some()
+            );
         }
     }
 }

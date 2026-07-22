@@ -253,9 +253,8 @@ async fn add_recurrence_history_fixture(
         .reconcile_recurrence_series(&app.store.active_workspace, &created.series.id, at)
         .await
         .unwrap();
-    app.widgets
-        .table
-        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
     (created.task.id, created.series.id)
 }
 
@@ -464,16 +463,20 @@ async fn recurrence_history_right_click_uses_the_correction_action() {
         .items
         .get(index)
         .map(crate::tui::overlay::recurrence_history_entry_key);
-    let item_count = history.page.items.len();
     let terminal = ratatui::layout::Size::new(120, 40);
-    let layout = crate::tui::ui::recurrence_history_layout_for_test(terminal, item_count);
+    let view = crate::tui::overlay::RecurrenceHistoryView {
+        page: history.page.clone(),
+        selected: history.selected.clone(),
+        mode: history.mode.clone(),
+    };
+    let layout = crate::tui::ui::recurrence_history_layout_for_test(&view, terminal);
     app.overlay = Some(OverlayState::RecurrenceHistory(history));
 
     app.dispatch_mouse(
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Right),
             column: layout.rows.x,
-            row: layout.rows.y + index as u16,
+            row: layout.rows.y + ((index - layout.first_visible) as u16 * layout.entry_height),
             modifiers: KeyModifiers::NONE,
         },
         terminal,
@@ -497,9 +500,8 @@ async fn recurring_series_detail_opens_hidden_occurrence_and_returns() {
         .pause_recurrence(&series_id, Some(&task_id))
         .await
         .unwrap();
-    app.widgets
-        .table
-        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
 
     let terminal = ratatui::layout::Size::new(120, 40);
     app.dispatch_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), terminal)
@@ -532,6 +534,261 @@ async fn recurring_series_detail_opens_hidden_occurrence_and_returns() {
 }
 
 #[tokio::test]
+async fn recurrence_actions_do_not_create_projects_for_deleted_template_project() {
+    let (mut app, database) = recurrence_history_test_app().await;
+    let (_, series_id) = add_recurrence_history_fixture(&mut app, &database).await;
+    let project_key = app.store.projects[0].key.clone();
+    app.store.delete_project(&project_key).await.unwrap();
+    assert!(
+        database
+            .list_projects(&app.store.active_workspace.id, None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let target = crate::tui::app_recurrence::RecurrenceTargetId {
+        workspace_id: app.store.active_workspace.id.clone(),
+        series_id: series_id.clone(),
+    };
+
+    app.run_recurrence_action(
+        target.clone(),
+        crate::tui::app_recurrence::RecurrenceActionKind::History,
+    )
+    .await
+    .unwrap();
+    app.overlay = None;
+    app.run_recurrence_action(
+        target.clone(),
+        crate::tui::app_recurrence::RecurrenceActionKind::Pause,
+    )
+    .await
+    .unwrap();
+    app.run_recurrence_action(
+        target,
+        crate::tui::app_recurrence::RecurrenceActionKind::EditTemplate,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("recurring template project is unavailable")
+    );
+    assert!(
+        database
+            .list_projects(&app.store.active_workspace.id, None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn recurrence_template_update_restores_series_identity_after_reordering() {
+    let mut app = test_app().await;
+    add_recurring_series(&mut app, "Alpha series").await;
+    let (_, edited_series_id) = add_recurring_series(&mut app, "Zulu series").await;
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+    let edited_index = app
+        .store
+        .recurrence_series
+        .iter()
+        .position(|item| item.series.id == edited_series_id)
+        .unwrap();
+    app.widgets.table.select(Some(edited_index));
+    app.store
+        .load_recurrence_series_detail(&edited_series_id)
+        .await
+        .unwrap();
+
+    let message = app
+        .store
+        .update_recurrence_template(
+            &edited_series_id,
+            aven_core::operations::RecurrenceTemplateUpdate {
+                title: Some("Aardvark series".to_string()),
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    app.widgets.table.select(message.selected);
+
+    assert_eq!(
+        app.store
+            .selected_recurrence_series(app.widgets.table.selected())
+            .unwrap()
+            .series
+            .id,
+        edited_series_id
+    );
+    assert_eq!(
+        app.store.recurrence_detail.as_ref().unwrap().series.title,
+        "Aardvark series"
+    );
+}
+
+#[tokio::test]
+async fn recurrence_palette_skip_uses_live_projection_after_historical_navigation() {
+    let (mut app, database) = recurrence_history_test_app().await;
+    let (archived_task_id, series_id) = add_recurrence_history_fixture(&mut app, &database).await;
+    app.execute_selected_recurrence_action(Action::ShowRecurrenceHistory)
+        .await
+        .unwrap();
+    app.handle_overlay_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE))
+        .await
+        .unwrap();
+    let Some(OverlayState::RecurrenceHistory(mut history)) = app.overlay.take() else {
+        panic!("expected recurrence history");
+    };
+    let archived = history
+        .page
+        .items
+        .iter()
+        .find(|entry| entry.task_id.as_ref() == Some(&archived_task_id))
+        .unwrap();
+    history.selected = Some(crate::tui::overlay::recurrence_history_entry_key(archived));
+    app.overlay = Some(OverlayState::RecurrenceHistory(history));
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    let live_task_id = database
+        .recurrence_series_detail(&app.store.active_workspace.id, &series_id)
+        .await
+        .unwrap()
+        .current_occurrence
+        .unwrap()
+        .task_id
+        .unwrap();
+    let (target, unavailable) = app.recurrence_command_context();
+    assert!(
+        unavailable
+            .iter()
+            .all(|override_| override_.action != Action::SkipRecurrence)
+    );
+    app.execute_targeted_recurrence_action(target, Action::SkipRecurrence)
+        .await
+        .unwrap();
+
+    let live_task = database
+        .resolve_task_ref(&app.store.active_workspace, live_task_id.as_ref())
+        .await
+        .unwrap();
+    assert_eq!(live_task.status.as_str(), "canceled");
+    assert_eq!(app.store.tasks[0].task.id, archived_task_id);
+}
+
+#[tokio::test]
+async fn recurrence_detail_restoration_accepts_matching_series_selection() {
+    let mut app = test_app().await;
+    let (_, series_id) = add_recurring_series(&mut app, "Detail restore").await;
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+    app.store
+        .load_recurrence_series_detail(&series_id)
+        .await
+        .unwrap();
+    app.detail.close();
+    app.overlay = None;
+
+    app.restore_detail_overlay_at_scroll(true, 7);
+
+    assert_eq!(app.detail.state().map(|detail| detail.scroll()), Some(7));
+    assert!(app.overlay.is_none());
+}
+
+#[tokio::test]
+async fn recurrence_series_detail_restores_after_lifecycle_history_and_stop_round_trips() {
+    let mut app = test_app().await;
+    let (_, series_id) = add_recurring_series(&mut app, "Detail round trips").await;
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+    let terminal = ratatui::layout::Size::new(120, 40);
+    app.dispatch_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), terminal)
+        .await
+        .unwrap();
+
+    dispatch_keys(
+        &mut app,
+        terminal,
+        &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('p')],
+    )
+    .await;
+    assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+    assert_eq!(
+        app.store.recurrence_detail.as_ref().unwrap().series.state,
+        aven_core::recurrence::RecurrenceSeriesState::Paused
+    );
+
+    dispatch_keys(
+        &mut app,
+        terminal,
+        &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('h')],
+    )
+    .await;
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::RecurrenceHistory(_))
+    ));
+    app.dispatch_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), terminal)
+        .await
+        .unwrap();
+    assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+
+    dispatch_keys(
+        &mut app,
+        terminal,
+        &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('s')],
+    )
+    .await;
+    assert!(matches!(app.overlay, Some(OverlayState::Picker(_))));
+    app.dispatch_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), terminal)
+        .await
+        .unwrap();
+    assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+    assert_eq!(
+        app.store.recurrence_detail.as_ref().unwrap().series.id,
+        series_id
+    );
+}
+
+#[tokio::test]
+async fn recurrence_series_detail_return_survives_intermediate_back_navigation() {
+    let mut app = test_app().await;
+    let (_, series_id) = add_recurring_series(&mut app, "Multi-hop return").await;
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
+    app.activate_or_toggle_detail().await.unwrap();
+    app.overlay = Some(OverlayState::Detail { scroll: 5 });
+    app.open_recurrence_occurrence().await.unwrap();
+    app.show_view(TaskView::Open).await.unwrap();
+
+    app.go_back().await.unwrap();
+    assert_eq!(app.store.view_state.view, TaskView::Search);
+    assert!(app.series_detail_return.is_some());
+
+    app.go_back().await.unwrap();
+    assert_eq!(app.store.view_state.view, TaskView::Recurring);
+    assert_eq!(
+        app.store
+            .selected_recurrence_series(app.widgets.table.selected())
+            .unwrap()
+            .series
+            .id,
+        series_id
+    );
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Detail { scroll: 5 })
+    ));
+    assert!(app.series_detail_return.is_none());
+}
+
+#[tokio::test]
 async fn recurring_series_lifecycle_filter_reveals_stopped_series() {
     let mut app = test_app().await;
     let (task_id, series_id) = add_recurring_series(&mut app, "Finite review").await;
@@ -539,9 +796,8 @@ async fn recurring_series_lifecycle_filter_reveals_stopped_series() {
         .stop_recurrence(&series_id, Some(&task_id), false)
         .await
         .unwrap();
-    app.widgets
-        .table
-        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
     assert!(app.store.recurrence_series.is_empty());
 
     app.store.view_state.recurring.lifecycle = RecurrenceSeriesLifecycleFilter::Stopped;
@@ -777,9 +1033,8 @@ async fn recurrence_stop_journey_persists_keep_skip_and_cancel() {
 async fn recurrence_stop_rejects_invalid_picker_value() {
     let mut app = test_app().await;
     let (_task_id, series_id) = add_recurring_series(&mut app, "Invalid stop").await;
-    app.widgets
-        .table
-        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
     let target = Some(OverlayTarget::RecurrenceSeries {
         workspace_id: app.store.active_workspace.id.clone(),
         series_id: series_id.clone(),
@@ -806,9 +1061,8 @@ async fn recurrence_overlay_retains_series_identity_across_selection_change() {
     let mut app = test_app().await;
     let (_, first_id) = add_recurring_series(&mut app, "Alpha series").await;
     let (_, second_id) = add_recurring_series(&mut app, "Beta series").await;
-    app.widgets
-        .table
-        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
     let first_index = app
         .store
         .recurrence_series
@@ -859,9 +1113,8 @@ async fn recurrence_palette_disables_invalid_lifecycle_action_with_reason() {
         .pause_recurrence(&series_id, Some(&task_id))
         .await
         .unwrap();
-    app.widgets
-        .table
-        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+    app.list
+        .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
     app.begin_command();
     let Some(OverlayState::Command { state }) = app.overlay.as_mut() else {
         panic!("expected command palette");

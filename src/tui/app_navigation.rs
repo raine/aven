@@ -270,6 +270,31 @@ impl App {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(super) fn restore_detail_overlay_at_scroll(&mut self, return_to_detail: bool, scroll: u16) {
+        if !return_to_detail {
+            return;
+        }
+        let recurring = self.store.view_state.view == crate::tui::store::TaskView::Recurring;
+        let detail_is_available = if recurring {
+            self.store
+                .selected_recurrence_series(self.list.selected_task())
+                .zip(self.store.recurrence_detail.as_ref())
+                .is_some_and(|(selected, detail)| selected.series.id == detail.series.id)
+        } else {
+            self.store.selected_task(self.list.selected_task()).is_some()
+        };
+        if detail_is_available {
+            self.detail = crate::tui::detail_session::DetailSession::open(scroll);
+            self.overlay = None;
+        } else {
+            self.detail.close();
+            if recurring {
+                self.store.recurrence_detail = None;
+            }
+        }
+    }
+
     pub(super) fn cancel_overlay(&mut self) {
         self.pending_shortcut.clear();
         self.authoring.clear();

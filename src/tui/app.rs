@@ -282,6 +282,7 @@ impl App {
 
     pub(super) fn clear_navigation_history(&mut self) {
         self.list.clear_navigation();
+        self.series_detail_return = None;
     }
 
     #[cfg(test)]
@@ -365,19 +366,20 @@ impl App {
             self.set_info("no previous navigation state");
             return Ok(());
         };
-        let return_anchor = self.series_detail_return.take();
-        let selected = return_anchor.as_ref().map(|anchor| {
-            crate::tui::store::MainRowSelection::RecurrenceSeries(anchor.series_id.clone())
-        });
+        let returns_to_series = previous.view == crate::tui::store::TaskView::Recurring;
+        let selected = returns_to_series
+            .then_some(self.series_detail_return.as_ref())
+            .flatten()
+            .map(|anchor| {
+                crate::tui::store::MainRowSelection::RecurrenceSeries(anchor.series_id.clone())
+            });
         let result = self
             .store
             .restore_view_state(previous, selected.as_ref())
             .await?;
         self.apply_filter_selection(result.selected);
         let mut navigation_warning = false;
-        if let Some(anchor) = return_anchor
-            && self.store.view_state.view == crate::tui::store::TaskView::Recurring
-        {
+        if returns_to_series && let Some(anchor) = self.series_detail_return.take() {
             if self
                 .store
                 .selected_recurrence_series(result.selected)

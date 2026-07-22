@@ -68,17 +68,13 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn recurrence_project_key(
+    pub(crate) async fn find_recurrence_project(
         &self,
         detail: &RecurrenceSeriesDetail,
-    ) -> Result<String> {
+    ) -> Result<Option<aven_core::types::Project>> {
         self.database
-            .resolve_project_for_stored_value(
-                &self.active_workspace.id,
-                &detail.series.project_id.to_string(),
-            )
+            .find_project_by_id(&self.active_workspace.id, &detail.series.project_id)
             .await
-            .map(|project| project.key)
     }
 
     pub(crate) async fn recurrence_history_for_series(
@@ -107,7 +103,16 @@ impl TuiStore {
             .database
             .update_recurrence_template(&self.active_workspace, series_id, update)
             .await?;
-        let selected = self.refresh(selected_task_id).await?;
+        let selected = self
+            .refresh_after_recurrence_mutation(series_id, selected_task_id)
+            .await?;
+        if self
+            .recurrence_detail
+            .as_ref()
+            .is_some_and(|detail| detail.series.id == *series_id)
+        {
+            self.load_recurrence_series_detail(series_id).await?;
+        }
         let verb = if outcome.changed { "updated" } else { "kept" };
         Ok(MutationMessage::new(
             format!("{verb} recurring template {series_ref}"),

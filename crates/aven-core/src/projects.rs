@@ -18,6 +18,23 @@ impl Database {
         find_project_in_workspace(&mut conn, workspace_id, input).await
     }
 
+    pub async fn find_project_by_id(
+        &self,
+        workspace_id: &WorkspaceId,
+        project_id: &ProjectId,
+    ) -> Result<Option<Project>> {
+        let mut conn = self.acquire().await?;
+        let row = sqlx::query(
+            "SELECT id, workspace_id, key, name, prefix
+             FROM projects WHERE workspace_id = ? AND id = ? AND deleted = 0",
+        )
+        .bind(workspace_id)
+        .bind(project_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+        Ok(row.map(project_from_row))
+    }
+
     pub async fn resolve_existing_project(
         &self,
         workspace_id: &WorkspaceId,

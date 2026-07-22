@@ -17,15 +17,27 @@ const HISTORY_WIDTH: u16 = 112;
 pub(crate) struct RecurrenceHistoryLayout {
     pub(crate) area: Rect,
     pub(crate) rows: Rect,
+    pub(crate) entry_height: u16,
+    pub(crate) first_visible: usize,
+    pub(crate) visible_entries: usize,
 }
 
 pub(crate) fn recurrence_history_layout(
+    state: &RecurrenceHistoryView,
     terminal: Size,
-    item_count: usize,
 ) -> RecurrenceHistoryLayout {
-    let mode_rows = 4;
-    let height = (item_count as u16)
+    let mode_rows = mode_lines(&state.mode).len() as u16;
+    let item_count = state.page.items.len();
+    let width = HISTORY_WIDTH.min(terminal.width);
+    let inner_width = width.saturating_sub(4);
+    let entry_height = if inner_width < 76 { 3 } else { 2 };
+    let max_row_height = terminal.height.saturating_sub(mode_rows.saturating_add(2));
+    let visible_entries = item_count.min((max_row_height / entry_height) as usize);
+    let rows_height = (visible_entries as u16).saturating_mul(entry_height);
+    let content_height = if visible_entries == 0 { 1 } else { rows_height };
+    let height = content_height
         .saturating_add(mode_rows)
+        .saturating_add(2)
         .clamp(6, terminal.height);
     let area = crate::tui::overlay::dialog_area(
         Rect::new(0, 0, terminal.width, terminal.height),
@@ -38,13 +50,28 @@ pub(crate) fn recurrence_history_layout(
         area.width.saturating_sub(4),
         area.height.saturating_sub(2),
     );
-    let rows = Rect::new(
-        inner.x,
-        inner.y,
-        inner.width,
-        (item_count as u16).min(inner.height.saturating_sub(1)),
-    );
-    RecurrenceHistoryLayout { area, rows }
+    let selected_index = state.selected.as_ref().and_then(|selected| {
+        state
+            .page
+            .items
+            .iter()
+            .position(|entry| recurrence_history_entry_key(entry) == *selected)
+    });
+    let first_visible = if visible_entries == 0 {
+        0
+    } else {
+        selected_index
+            .map(|selected| selected.saturating_add(1).saturating_sub(visible_entries))
+            .unwrap_or(0)
+    };
+    let rows = Rect::new(inner.x, inner.y, inner.width, rows_height);
+    RecurrenceHistoryLayout {
+        area,
+        rows,
+        entry_height,
+        first_visible,
+        visible_entries,
+    }
 }
 
 pub(crate) fn recurrence_history_entry_at(
@@ -53,7 +80,7 @@ pub(crate) fn recurrence_history_entry_at(
     column: u16,
     row: u16,
 ) -> Option<usize> {
-    let layout = recurrence_history_layout(terminal, state.page.items.len());
+    let layout = recurrence_history_layout(state, terminal);
     if column < layout.rows.x
         || column >= layout.rows.right()
         || row < layout.rows.y
@@ -61,7 +88,13 @@ pub(crate) fn recurrence_history_entry_at(
     {
         return None;
     }
-    let index = row.saturating_sub(layout.rows.y) as usize;
+    let visual_index = row
+        .saturating_sub(layout.rows.y)
+        .checked_div(layout.entry_height)? as usize;
+    if visual_index >= layout.visible_entries {
+        return None;
+    }
+    let index = layout.first_visible + visual_index;
     (index < state.page.items.len()).then_some(index)
 }
 
@@ -80,11 +113,15 @@ pub(in crate::tui::ui) fn render_recurrence_history(
         )
     };
     let title = format!("Recurrence history: {} ({range})", state.page.series_ref);
+    let terminal = Size::new(frame.area().width, frame.area().height);
+    let layout = recurrence_history_layout(state, terminal);
     let mut lines = state
         .page
         .items
         .iter()
-        .map(|entry| history_line(entry, state.selected.as_ref()))
+        .skip(layout.first_visible)
+        .take(layout.visible_entries)
+        .flat_map(|entry| history_lines(entry, state.selected.as_ref(), layout.entry_height))
         .collect::<Vec<_>>();
     if lines.is_empty() {
         lines.push(Line::styled(
@@ -97,10 +134,11 @@ pub(in crate::tui::ui) fn render_recurrence_history(
     Dialog::new(&title, HISTORY_WIDTH, height).render_text(frame, Text::from(lines));
 }
 
-fn history_line<'a>(
+fn history_lines<'a>(
     entry: &'a RecurrenceHistoryEntry,
     selected: Option<&RecurrenceHistoryEntryKey>,
-) -> Line<'a> {
+    entry_height: u16,
+) -> Vec<Line<'a>> {
     let is_selected = selected.is_some_and(|key| *key == recurrence_history_entry_key(entry));
     let identity = match entry.kind {
         RecurrenceHistoryKind::Paused => format!(
@@ -139,13 +177,41 @@ fn history_line<'a>(
     } else {
         Style::new().fg(FG)
     };
-    Line::from(vec![
-        Span::styled(if is_selected { "> " } else { "  " }, style),
-        Span::styled(
-            format!("{identity:<25} {kind:<9} resolved {resolved:<25} task {task:<12} {markers}"),
-            style,
-        ),
-    ])
+    let prefix = if is_selected { "> " } else { "  " };
+    match entry_height {
+        1 => vec![Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(
+                format!(
+                    "{identity:<25} {kind:<9} resolved {resolved:<25} task {task:<12} {markers}"
+                ),
+                style,
+            ),
+        ])],
+        2 => vec![
+            Line::styled(format!("{prefix}{identity} {kind}"), style),
+            Line::styled(
+                format!("  resolved {resolved}  task {task}  {markers}"),
+                style,
+            ),
+        ],
+        _ => vec![
+            Line::styled(format!("{prefix}{identity} {kind}"), style),
+            Line::styled(format!("  resolved {resolved}"), style),
+            Line::styled(format!("  task {task}  {markers}"), style),
+        ],
+    }
+}
+
+#[cfg(test)]
+fn history_line<'a>(
+    entry: &'a RecurrenceHistoryEntry,
+    selected: Option<&RecurrenceHistoryEntryKey>,
+) -> Line<'a> {
+    history_lines(entry, selected, 1)
+        .into_iter()
+        .next()
+        .expect("history entry renders at least one line")
 }
 
 fn mode_lines(mode: &RecurrenceHistoryMode) -> Vec<Line<'_>> {
@@ -193,6 +259,8 @@ mod tests {
     use super::*;
     use crate::tui::overlay::RecurrenceHistoryMode;
     use aven_core::query::RecurrenceHistoryPage;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     #[test]
     fn recurrence_history_line_renders_timestamp_ref_and_markers() {
@@ -257,6 +325,61 @@ mod tests {
     }
 
     #[test]
+    fn recurrence_history_narrow_rows_keep_metadata_and_hit_testing_aligned() {
+        let entry = RecurrenceHistoryEntry {
+            kind: RecurrenceHistoryKind::Completed,
+            slot_on: Some("2026-07-20".to_string()),
+            interval_started_at: None,
+            interval_ended_at: None,
+            task_id: None,
+            task_ref: Some("AVN-1234".to_string()),
+            openable: false,
+            corrected: true,
+            archived_projection: true,
+            resolved_at: Some("2026-07-20T12:34:56Z".to_string()),
+        };
+        let view = RecurrenceHistoryView {
+            page: RecurrenceHistoryPage {
+                series_ref: "RCR-TEST".to_string(),
+                items: vec![entry],
+                offset: 0,
+                limit: 10,
+                total: 1,
+                has_more: false,
+            },
+            selected: Some(RecurrenceHistoryEntryKey::Slot("2026-07-20".to_string())),
+            mode: RecurrenceHistoryMode::Browse,
+        };
+
+        for width in [60, 80, 112] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            terminal
+                .draw(|frame| render_recurrence_history(frame, &view))
+                .unwrap();
+            let rendered = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(rendered.contains("2026-07-20T12:34:56Z"));
+            assert!(rendered.contains("AVN-1234"));
+            assert!(rendered.contains("corrected"));
+            assert!(rendered.contains("archived"));
+
+            let terminal_size = Size::new(width, 24);
+            let layout = recurrence_history_layout(&view, terminal_size);
+            for row in layout.rows.y..layout.rows.y + layout.entry_height {
+                assert_eq!(
+                    recurrence_history_entry_at(&view, terminal_size, layout.rows.x, row),
+                    Some(0)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn recurrence_history_hit_test_ignores_footer_rows() {
         let entry = RecurrenceHistoryEntry {
             kind: RecurrenceHistoryKind::Missed,
@@ -283,7 +406,7 @@ mod tests {
             mode: RecurrenceHistoryMode::Browse,
         };
         let terminal = Size::new(80, 12);
-        let layout = recurrence_history_layout(terminal, 1);
+        let layout = recurrence_history_layout(&view, terminal);
 
         assert_eq!(
             recurrence_history_entry_at(&view, terminal, layout.rows.x, layout.rows.y,),
