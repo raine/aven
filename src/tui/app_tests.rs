@@ -1243,7 +1243,7 @@ async fn sidebar_click_selects_project_scope_in_wide_layout() {
         .unwrap();
     app.refresh().await.unwrap();
 
-    let project_row = app
+    let project_index = app
         .store
         .sidebar_entries
         .iter()
@@ -1254,25 +1254,39 @@ async fn sidebar_click_selects_project_scope_in_wide_layout() {
                     if project == "mobile-app"
             )
         })
-        .unwrap() as u16;
+        .expect("mobile-app sidebar entry");
     let terminal_size: ratatui::layout::Size = (140, 24).into();
     let layout = crate::tui::ui::sidebar_layout(
         ratatui::layout::Rect::new(0, 0, terminal_size.width, terminal_size.height),
         Focus::Tasks,
     )
-    .unwrap();
-    let row = layout.content.y + project_row;
+    .expect("wide sidebar layout");
+    assert!(project_index >= usize::from(layout.content.height));
 
-    app.dispatch_mouse(click_at(layout.content.x, row), terminal_size)
-        .await
-        .unwrap();
+    app.widgets.sidebar.select(Some(project_index));
+    let _ = render_app_buffer(&mut app, terminal_size.width, terminal_size.height);
+    let offset = app.widgets.sidebar.offset();
+    assert!(offset > 0, "render must scroll the project into view");
+    let visible_index = project_index
+        .checked_sub(offset)
+        .expect("sidebar offset must not exceed the selected project index");
+    let visible_row = u16::try_from(visible_index).expect("visible row must fit in u16");
+    assert!(visible_row < layout.content.height);
+    assert_eq!(app.store.view_state.scope, TaskScope::Workspace);
+
+    app.dispatch_mouse(
+        click_at(layout.content.x, layout.content.y + visible_row),
+        terminal_size,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         app.store.view_state.scope,
         TaskScope::Project("mobile-app".to_string())
     );
     assert_eq!(app.list.focus(), Focus::Tasks);
-    assert_eq!(app.list.selected_sidebar(), Some(project_row as usize));
+    assert_eq!(app.list.selected_sidebar(), Some(project_index));
     assert!(app.overlay.is_none());
 }
 

@@ -89,6 +89,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::ClearFilters
             | Action::ToggleClosedFilter
             | Action::ToggleDeletedFilter
+            | Action::CycleRecurringLifecycleFilter
             | Action::ShowView(_)
             | Action::ShowWorkspaceScope
             | Action::BeginConflictList
@@ -250,9 +251,11 @@ mod tests {
                 "remove-dependency",
                 "move-right",
                 "move-column-right",
+                "view-recurring",
                 "view-recent",
                 "copy-ref",
                 "task-child-remove",
+                "filter-recurring-lifecycle",
                 "order-reverse",
                 "conflict-use-remote"
             ]
