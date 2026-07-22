@@ -211,10 +211,17 @@ sqlx-check-if-needed:
 static-analysis:
     @checkle run static-analysis
 
-# Install release binary globally and restart the local daemon when sync is enabled
+# Install release binary globally from local source and restart the local daemon when sync is enabled
 install:
     env SQLX_OFFLINE=true cargo install --offline --path . --locked
     if [[ "$("$HOME/.cargo/bin/aven" config get sync.enabled)" == "true" ]]; then "$HOME/.cargo/bin/aven" daemon install; fi
+
+# Install release binary globally from GitHub releases
+install-release:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    install_root="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}"
+    AVEN_INSTALL_DIR="$install_root/bin" bash scripts/install
 
 # Install debug binary globally via symlink
 install-dev:
