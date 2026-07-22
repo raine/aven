@@ -40,6 +40,10 @@ const READ_PATH_INDEXES: &[(&str, &str)] = &[
         "idx_task_labels_workspace_label_task",
         "CREATE INDEX idx_task_labels_workspace_label_task ON task_labels(workspace_id, label, task_id)",
     ),
+    (
+        "idx_changes_recurrence_resolution",
+        "CREATE INDEX idx_changes_recurrence_resolution ON changes(change_id) WHERE entity_type = 'recurrence_series' AND op_type = 'resolve_recurrence_occurrence'",
+    ),
 ];
 
 #[test]
@@ -203,6 +207,17 @@ fn common_read_filters_have_workspace_scoped_query_plans() {
              WHERE workspace_id = ? AND deleted = 0 AND status = ?",
             &["0000000000000000", "active"],
             "idx_tasks_workspace_deleted_status_updated",
+        )
+        .await;
+
+        assert_plan_uses(
+            &mut conn,
+            "EXPLAIN QUERY PLAN
+             SELECT 1 FROM changes
+             WHERE entity_type = 'recurrence_series'
+               AND op_type = 'resolve_recurrence_occurrence'",
+            &[],
+            "idx_changes_recurrence_resolution",
         )
         .await;
     });
