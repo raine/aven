@@ -30,6 +30,8 @@ pub(crate) fn add_task_field_at(
     terminal: Rect,
     full_frame: bool,
     has_attachments: bool,
+    recurring: bool,
+    repeat_visible: bool,
     column: u16,
     row: u16,
 ) -> Option<AddTaskStep> {
@@ -54,31 +56,49 @@ pub(crate) fn add_task_field_at(
     }
     let relative_x = column.saturating_sub(content.x);
     let relative_y = row.saturating_sub(content.y);
-    let metadata_rows = if content.width >= 120 {
-        2
-    } else if content.width >= 60 {
-        4
-    } else if content.width >= 40 {
-        6
+    let repeat_visible = recurring || repeat_visible;
+    let steps = metadata_steps(recurring, repeat_visible);
+    let metadata_rows = if content.width >= 80 {
+        if repeat_visible { 4 } else { 2 }
     } else {
-        12
+        steps.len().div_ceil(metadata_columns(content.width)) as u16
     };
     if relative_y < metadata_rows {
-        let index = if metadata_rows == 2 {
-            let row_index = relative_y as usize;
-            row_index * 6 + (relative_x as usize * 6 / content.width.max(1) as usize).min(5)
-        } else if metadata_rows == 4 {
-            let row_index = relative_y as usize;
-            row_index * 3 + (relative_x as usize * 3 / content.width.max(1) as usize).min(2)
-        } else if metadata_rows == 6 {
-            let row_index = relative_y as usize;
-            row_index * 2 + (relative_x as usize * 2 / content.width.max(1) as usize).min(1)
-        } else {
-            relative_y as usize
-        };
-        return AddTaskStep::ALL.get(index).copied();
+        if content.width >= 80 {
+            return match relative_y {
+                0 => Some(
+                    [
+                        AddTaskStep::Project,
+                        AddTaskStep::Status,
+                        AddTaskStep::Priority,
+                    ][(relative_x as usize * 3 / content.width.max(1) as usize).min(2)],
+                ),
+                1 if recurring => Some(
+                    [
+                        AddTaskStep::Labels,
+                        AddTaskStep::RepeatAt,
+                        AddTaskStep::RepeatDue,
+                    ][(relative_x as usize * 3 / content.width.max(1) as usize).min(2)],
+                ),
+                1 => Some(
+                    [
+                        AddTaskStep::Labels,
+                        AddTaskStep::AvailableAt,
+                        AddTaskStep::Due,
+                    ][(relative_x as usize * 3 / content.width.max(1) as usize).min(2)],
+                ),
+                2 if repeat_visible => Some(AddTaskStep::RepeatRule),
+                3 if recurring => Some(AddTaskStep::RepeatStartOn),
+                _ => None,
+            };
+        }
+        let columns = metadata_columns(content.width);
+        let index = relative_y as usize * columns
+            + (relative_x as usize * columns / content.width.max(1) as usize)
+                .min(columns.saturating_sub(1));
+        return steps.get(index).copied();
     }
-    let preview_rows = u16::from(content.height > 10);
+    let preview_rows = u16::from(content.height > 10 && repeat_visible);
     if relative_y == metadata_rows + preview_rows && has_attachments {
         return Some(AddTaskStep::Images);
     }
@@ -127,7 +147,7 @@ pub(in crate::tui::ui) fn render_add_task_full_frame(frame: &mut Frame, state: &
 
 fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
     let mut lines = add_task_metadata_lines(state, content.width);
-    if content.height > 10 {
+    if content.height > 10 && recurrence_visible(state) {
         lines.push(recurrence_preview_line(state, content.width as usize));
     }
     if content.height <= 10 {
@@ -160,6 +180,7 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
             state.focus,
             state.status_prefix_active,
             state.priority_prefix_active,
+            !recurrence_visible(state),
         ));
         frame.render_widget(
             Paragraph::new(Text::from(lines))
@@ -210,6 +231,7 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect) {
         state.focus,
         state.status_prefix_active,
         state.priority_prefix_active,
+        !recurrence_active(state),
     ));
     frame.render_widget(
         Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),
@@ -286,104 +308,150 @@ fn compact_text_field(label: &str, value: &str, active: bool) -> Line<'static> {
     ])
 }
 
-fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>> {
-    let fields = [
-        (AddTaskStep::Project, "Project", state.project.clone()),
-        (AddTaskStep::Status, "Status", state.status.clone()),
-        (AddTaskStep::Priority, "Priority", state.priority.clone()),
-        (AddTaskStep::Labels, "Labels", labels_display(&state.labels)),
+const REPEAT_EXAMPLE: &str = "daily or every Friday";
+
+fn recurrence_active(state: &AddTaskView) -> bool {
+    state.editing_template
+        || crate::tui::recurrence_text::canonical_rule_input(&state.repeat_rule)
+            .is_ok_and(|rule| rule.is_some())
+}
+
+fn recurrence_visible(state: &AddTaskView) -> bool {
+    state.editing_template
+        || !matches!(state.repeat_rule.trim(), "" | "none")
+        || state.focus == AddTaskStep::RepeatRule
+}
+
+fn metadata_steps(recurring: bool, repeat_visible: bool) -> Vec<AddTaskStep> {
+    let mut steps = vec![
+        AddTaskStep::Project,
+        AddTaskStep::Status,
+        AddTaskStep::Priority,
+        AddTaskStep::Labels,
     ];
-    let mut owned = fields
-        .into_iter()
-        .map(|(field, label, value)| metadata_field(field, label, &value, state.focus))
-        .collect::<Vec<_>>();
-    owned.push(availability_metadata_field(state));
-    owned.push(due_metadata_field(state));
-    owned.push(metadata_field(
-        AddTaskStep::RepeatRule,
-        if state.editing_template {
-            "Repeat fixed"
-        } else {
-            "Repeat"
-        },
-        &state.repeat_rule,
-        state.focus,
-    ));
-    let weekdays = if state.repeat_rule == "daily" {
-        "n/a".to_string()
-    } else if state.repeat_weekdays.is_empty() {
-        "start day".to_string()
-    } else {
-        state.repeat_weekdays.join(",")
-    };
-    owned.push(metadata_field(
-        AddTaskStep::RepeatWeekdays,
-        if state.editing_template {
-            "Weekdays fixed"
-        } else {
-            "Weekdays"
-        },
-        &weekdays,
-        state.focus,
-    ));
-    owned.push(recurrence_inline_field(
-        state,
-        AddTaskStep::RepeatAt,
-        "At",
-        &state.repeat_at,
-        state.repeat_at_cursor,
-        "boundary",
-    ));
-    owned.push(metadata_field(
-        AddTaskStep::RepeatDue,
-        "Repeat due",
-        &state.repeat_due,
-        state.focus,
-    ));
-    owned.push(metadata_field(
-        AddTaskStep::TimeZone,
-        "Zone fixed",
-        &state.time_zone,
-        state.focus,
-    ));
-    if state.editing_template {
-        owned.push(metadata_field(
+    if recurring {
+        steps.extend([
+            AddTaskStep::RepeatAt,
+            AddTaskStep::RepeatDue,
+            AddTaskStep::RepeatRule,
             AddTaskStep::RepeatStartOn,
-            "Start fixed",
-            &state.repeat_start_on,
-            state.focus,
-        ));
+        ]);
     } else {
+        steps.extend([AddTaskStep::AvailableAt, AddTaskStep::Due]);
+        if repeat_visible {
+            steps.extend([AddTaskStep::RepeatRule, AddTaskStep::RepeatStartOn]);
+        }
+    }
+    steps
+}
+
+fn metadata_columns(width: u16) -> usize {
+    match width {
+        100.. => 4,
+        60.. => 3,
+        40.. => 2,
+        _ => 1,
+    }
+}
+
+fn add_task_metadata_lines(state: &AddTaskView, width: u16) -> Vec<Line<'static>> {
+    let recurring = recurrence_active(state);
+    let repeat_visible = recurrence_visible(state);
+    let mut owned = vec![
+        metadata_field(AddTaskStep::Project, "Project", &state.project, state.focus),
+        metadata_field(AddTaskStep::Status, "Status", &state.status, state.focus),
+        metadata_field(
+            AddTaskStep::Priority,
+            "Priority",
+            &state.priority,
+            state.focus,
+        ),
+        metadata_field(
+            AddTaskStep::Labels,
+            "Labels",
+            &labels_display(&state.labels),
+            state.focus,
+        ),
+    ];
+    if recurring {
         owned.push(recurrence_inline_field(
             state,
-            AddTaskStep::RepeatStartOn,
-            "Start",
-            &state.repeat_start_on,
-            state.repeat_start_on_cursor,
-            "YYYY-MM-DD",
+            AddTaskStep::RepeatAt,
+            "Available",
+            &state.repeat_at,
+            state.repeat_at_cursor,
+            "Start of day",
         ));
+        owned.push(metadata_field(
+            AddTaskStep::RepeatDue,
+            "Due",
+            if state.repeat_due == "same-day" {
+                "Same day"
+            } else {
+                "None"
+            },
+            state.focus,
+        ));
+        owned.push(recurrence_inline_field(
+            state,
+            AddTaskStep::RepeatRule,
+            "Repeat",
+            &state.repeat_rule,
+            state.repeat_rule_cursor,
+            REPEAT_EXAMPLE,
+        ));
+        let starts = chrono::NaiveDate::parse_from_str(&state.repeat_start_on, "%Y-%m-%d")
+            .map(|date| date.format("%b %-d").to_string())
+            .unwrap_or_else(|_| state.repeat_start_on.clone());
+        owned.push(if state.editing_template {
+            metadata_field(AddTaskStep::RepeatStartOn, "Starts", &starts, state.focus)
+        } else {
+            let mut line =
+                metadata_field(AddTaskStep::RepeatStartOn, "Starts", &starts, state.focus);
+            if state.focus == AddTaskStep::RepeatStartOn {
+                line.spans.pop();
+                line.spans.extend(
+                    placeholder_input_line(
+                        &state.repeat_start_on,
+                        Some(state.repeat_start_on_cursor),
+                        48,
+                        "Today",
+                    )
+                    .spans,
+                );
+            }
+            line
+        });
+    } else {
+        owned.push(availability_metadata_field(state));
+        owned.push(due_metadata_field(state));
+        if repeat_visible {
+            owned.push(recurrence_inline_field(
+                state,
+                AddTaskStep::RepeatRule,
+                "Repeat",
+                &state.repeat_rule,
+                state.repeat_rule_cursor,
+                REPEAT_EXAMPLE,
+            ));
+            owned.push(Line::from(""));
+        }
     }
-    if width >= 120 {
-        return vec![
-            metadata_row(owned[..6].to_vec(), width as usize),
-            metadata_row(owned[6..].to_vec(), width as usize),
+    if width >= 80 {
+        let mut lines = vec![
+            metadata_row(owned[..3].to_vec(), width as usize),
+            metadata_row(owned[3..6].to_vec(), width as usize),
         ];
+        if repeat_visible {
+            lines.push(fit_line_to_width(owned[6].clone(), width as usize));
+            lines.push(fit_line_to_width(owned[7].clone(), width as usize));
+        }
+        return lines;
     }
-    if width >= 60 {
-        return owned
-            .chunks(3)
-            .map(|chunk| metadata_row(chunk.to_vec(), width as usize))
-            .collect();
-    }
-    if width >= 40 {
-        return owned
-            .chunks(2)
-            .map(|chunk| metadata_row(chunk.to_vec(), width as usize))
-            .collect();
-    }
+    let columns = metadata_columns(width);
     owned
-        .into_iter()
-        .map(|line| fit_line_to_width(line, width as usize))
+        .chunks(columns)
+        .map(|chunk| metadata_row(chunk.to_vec(), width as usize))
         .collect()
 }
 
@@ -454,21 +522,24 @@ fn recurrence_inline_field(
 }
 
 fn recurrence_preview_line(state: &AddTaskView, width: usize) -> Line<'static> {
-    let value = if let Some(error) = state.recurrence_error.as_deref() {
-        format!("Schedule error: {error}")
-    } else if state.repeat_rule == "none" {
-        "Schedule preview: choose Repeat to create a series".to_string()
+    let value = if state.recurrence_error.is_some() {
+        format!("Repeat: Try {REPEAT_EXAMPLE}")
+    } else if matches!(state.repeat_rule.trim(), "" | "none") {
+        String::new()
     } else if state.recurrence_preview.is_empty() {
-        "Schedule preview: no upcoming slots".to_string()
+        "Next: No upcoming dates".to_string()
     } else {
-        format!("Next slots: {}", state.recurrence_preview.join(" · "))
+        format!("Next: {}", state.recurrence_preview.join(", "))
     };
     let style = if state.recurrence_error.is_some() {
         Style::new().fg(Color::Red).add_modifier(Modifier::BOLD)
     } else {
         Style::new().fg(FG_DIM)
     };
-    fit_line_to_width(Line::from(Span::styled(value, style)), width)
+    fit_line_to_width(
+        Line::from(vec![Span::raw("  "), Span::styled(value, style)]),
+        width,
+    )
 }
 
 pub(in crate::tui::ui) fn metadata_field(
@@ -688,23 +759,6 @@ fn render_add_task_child(frame: &mut Frame, state: &AddTaskView, content: Rect) 
                 visible_indices,
             };
             (view.title.clone(), tag_combobox_lines(&view), 64, BG_PANEL)
-        }
-        AddTaskMode::CustomRepeatInterval { input, error } => {
-            let mut lines = vec![
-                Line::from(Span::styled(
-                    "Weeks between repeats:",
-                    Style::new().fg(FG_DIM),
-                )),
-                placeholder_input_line(&input.text, Some(input.cursor), 48, "4"),
-            ];
-            if let Some(error) = error {
-                lines.push(Line::from(Span::styled(
-                    error.clone(),
-                    Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
-                )));
-            }
-            lines.push(dialog_hint_line(&[("Enter", "apply"), ("Esc", "cancel")]));
-            ("Add task: repeat interval".to_string(), lines, 58, BG_ALT)
         }
         AddTaskMode::Help { .. } => unreachable!("composer help renders separately"),
         AddTaskMode::ConfirmDiscard => unreachable!("discard confirmation renders above"),
@@ -1031,6 +1085,7 @@ pub(in crate::tui::ui) fn add_task_hint_line(
     focus: AddTaskStep,
     status_prefix_active: bool,
     priority_prefix_active: bool,
+    show_repeat_shortcut: bool,
 ) -> Line<'static> {
     if status_prefix_active {
         return add_task_status_hint_line();
@@ -1044,8 +1099,6 @@ pub(in crate::tui::ui) fn add_task_hint_line(
         | AddTaskStep::Status
         | AddTaskStep::Priority
         | AddTaskStep::Labels
-        | AddTaskStep::RepeatRule
-        | AddTaskStep::RepeatWeekdays
         | AddTaskStep::RepeatDue => dialog_hint_line(&[
             ("Enter", "choose"),
             ("←/→", "field"),
@@ -1063,6 +1116,15 @@ pub(in crate::tui::ui) fn add_task_hint_line(
             ("F1", "help"),
             ("Esc", "cancel"),
         ]),
+        AddTaskStep::Title if show_repeat_shortcut => dialog_hint_line(&[
+            ("Enter", "create"),
+            ("↑/↓", "field"),
+            ("Tab", "next"),
+            ("^N", "create with AI"),
+            ("F2", "repeat"),
+            ("F1", "help"),
+            ("Esc", "cancel"),
+        ]),
         AddTaskStep::Title => dialog_hint_line(&[
             ("Enter", "create"),
             ("↑/↓", "field"),
@@ -1072,6 +1134,7 @@ pub(in crate::tui::ui) fn add_task_hint_line(
             ("Esc", "cancel"),
         ]),
         AddTaskStep::AvailableAt
+        | AddTaskStep::RepeatRule
         | AddTaskStep::RepeatAt
         | AddTaskStep::TimeZone
         | AddTaskStep::RepeatStartOn => dialog_hint_line(&[
@@ -1088,6 +1151,14 @@ pub(in crate::tui::ui) fn add_task_hint_line(
             ("Tab", "next"),
             ("^S", "create"),
             ("F1", "formats"),
+            ("Esc", "cancel"),
+        ]),
+        AddTaskStep::Description if show_repeat_shortcut => dialog_hint_line(&[
+            ("Ctrl-Enter / ^S", "create"),
+            ("Tab", "next"),
+            ("^N", "create with AI"),
+            ("F2", "repeat"),
+            ("F1", "help"),
             ("Esc", "cancel"),
         ]),
         AddTaskStep::Description => dialog_hint_line(&[

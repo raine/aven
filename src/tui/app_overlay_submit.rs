@@ -8,40 +8,6 @@ use crate::tui::overlay::{
     PickerIntent, TagComboboxIntent, TextIntent,
 };
 
-fn recurrence_schedule_summary(schedule: &aven_core::recurrence::RecurrenceSchedule) -> String {
-    use aven_core::recurrence::{RecurrenceDuePolicy, RecurrenceFrequency};
-
-    let rule = match schedule.rule.frequency() {
-        RecurrenceFrequency::Daily => "daily".to_string(),
-        RecurrenceFrequency::Weekly
-            if schedule.rule.interval() == 1
-                && schedule.rule.weekdays_set().to_string() == "mon,tue,wed,thu,fri" =>
-        {
-            "weekdays".to_string()
-        }
-        RecurrenceFrequency::Weekly if schedule.rule.interval() == 1 => {
-            format!("weekly on {}", schedule.rule.weekdays_set())
-        }
-        RecurrenceFrequency::Weekly => format!(
-            "every {} weeks on {}",
-            schedule.rule.interval(),
-            schedule.rule.weekdays_set()
-        ),
-    };
-    let at = schedule
-        .available_local_time
-        .map(|value| value.format("%H:%M").to_string())
-        .unwrap_or_else(|| "boundary".to_string());
-    let due = match schedule.due_policy {
-        RecurrenceDuePolicy::SameDay => "same-day",
-        RecurrenceDuePolicy::None => "none",
-    };
-    format!(
-        "{rule}; start {}; zone {}; at {at}; due {due}",
-        schedule.start_on, schedule.timezone
-    )
-}
-
 impl App {
     pub(super) async fn handle_overlay_submit(&mut self, submit: OverlaySubmit) -> Result<()> {
         match submit {
@@ -126,6 +92,17 @@ impl App {
             );
             return Ok(());
         }
+        if recurrence_schedule.is_some()
+            && state.recurrence_series_id.is_none()
+            && state.selected_project.is_none()
+            && state.inferred_project.is_none()
+        {
+            state.focus = AddTaskStep::Project;
+            state.mode = AddTaskMode::Compose;
+            self.overlay = Some(OverlayState::AddTask(Box::new(state)));
+            self.set_warning("Choose a project for this recurring task");
+            return Ok(());
+        }
         if recurrence_schedule.is_some() && self.authoring.add_task_has_pending_attachments() {
             state.mode = AddTaskMode::Compose;
             self.overlay = Some(OverlayState::AddTask(Box::new(state)));
@@ -148,7 +125,6 @@ impl App {
             let schedule = recurrence_schedule
                 .as_ref()
                 .expect("recurrence template editor retains its schedule");
-            let schedule_summary = recurrence_schedule_summary(schedule);
             let selected_task_id = self
                 .store
                 .selected_task(self.list.selected_task())
@@ -174,17 +150,19 @@ impl App {
                 )
                 .await?;
             self.list.select_task(message.selected);
-            self.set_success(format!("{}; {schedule_summary}", message.message));
+            self.set_success(message.message);
             self.authoring.clear();
             return Ok(());
         }
 
         if let Some(schedule) = recurrence_schedule {
-            let schedule_summary = recurrence_schedule_summary(&schedule);
             let draft = crate::tui::store::recurrence_draft(
                 title.to_string(),
                 state.description.lines.join("\n").trim().to_string(),
-                state.selected_project.clone(),
+                state
+                    .selected_project
+                    .clone()
+                    .or_else(|| state.inferred_project.clone()),
                 state.priority.clone(),
                 state.status.clone(),
                 state.labels.clone(),
@@ -197,7 +175,7 @@ impl App {
             self.list.select_task(selected);
             self.preserve_or_restore_sidebar_selection();
             self.prune_task_marks();
-            self.set_success(format!("{message}; {schedule_summary}"));
+            self.set_success(message.clone());
             if self.intake.view().add_task_only {
                 self.intake.set_message(message);
                 self.should_quit = true;

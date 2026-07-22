@@ -34,7 +34,7 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
         let text = Text::from(vec![
             input,
             Line::from(""),
-            add_task_hint_line(AddTaskStep::Title, false, false),
+            add_task_hint_line(AddTaskStep::Title, false, false, false),
         ]);
         frame.render_widget(
             Paragraph::new(text).style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),

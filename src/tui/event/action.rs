@@ -60,7 +60,6 @@ pub(crate) enum Action {
     BeginEditDue,
     BeginEditLabels,
     SkipRecurrence,
-    BeginRecordRecurrence,
     BeginEditRecurrenceTemplate,
     PauseRecurrence,
     ResumeRecurrence,
@@ -126,7 +125,6 @@ impl Action {
 
         match self {
             Self::SkipRecurrence => Some(RecurrenceActionKind::SkipCurrent),
-            Self::BeginRecordRecurrence => Some(RecurrenceActionKind::RecordHistorical),
             Self::BeginEditRecurrenceTemplate => Some(RecurrenceActionKind::EditTemplate),
             Self::PauseRecurrence => Some(RecurrenceActionKind::Pause),
             Self::ResumeRecurrence => Some(RecurrenceActionKind::Resume),

@@ -64,7 +64,6 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::BeginEditDue
             | Action::BeginEditLabels
             | Action::SkipRecurrence
-            | Action::BeginRecordRecurrence
             | Action::BeginEditRecurrenceTemplate
             | Action::PauseRecurrence
             | Action::ResumeRecurrence
@@ -240,7 +239,6 @@ mod tests {
                 "return-to-change",
                 "restore",
                 "recurrence-skip",
-                "recurrence-record",
                 "recurrence-edit-template",
                 "recurrence-pause",
                 "recurrence-resume",

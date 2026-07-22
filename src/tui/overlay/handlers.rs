@@ -35,15 +35,13 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
             OverlayState::Command { state }
         }
         OverlayState::AddTask(mut state) => {
-            if let AddTaskMode::CustomRepeatInterval { input, error } = &mut state.mode {
-                input.insert_paste(text);
-                *error = None;
-                return OverlayState::AddTask(state);
-            }
             match state.focus {
                 AddTaskStep::Title => state.title.insert_paste(text),
                 AddTaskStep::AvailableAt => state.available_at.insert_paste(text),
                 AddTaskStep::Due => state.due_on.insert_paste(text),
+                AddTaskStep::RepeatRule if state.is_step_editable(state.focus) => {
+                    state.repeat_rule.insert_paste(text)
+                }
                 AddTaskStep::RepeatAt => state.repeat_at.insert_paste(text),
                 AddTaskStep::RepeatStartOn if state.is_step_editable(state.focus) => {
                     state.repeat_start_on.insert_paste(text)
@@ -51,6 +49,7 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
                 AddTaskStep::Description => state.description.insert_paste(text),
                 _ => {}
             }
+            state.refresh_repeat_status();
             state.refresh_recurrence_preview();
             OverlayState::AddTask(state)
         }
@@ -58,14 +57,7 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
             state.input.insert_paste(text);
             OverlayState::TextInput(state)
         }
-        OverlayState::RecurrenceHistory(mut state) => {
-            if let super::state::RecurrenceHistoryMode::ResolutionTime { input, .. } =
-                &mut state.mode
-            {
-                input.insert_paste(text);
-            }
-            OverlayState::RecurrenceHistory(state)
-        }
+        OverlayState::RecurrenceHistory(state) => OverlayState::RecurrenceHistory(state),
         OverlayState::MultilineInput(mut state) => {
             if state.mode == MultilineInputMode::Compose {
                 state.insert_paste(text);
@@ -145,23 +137,6 @@ pub(crate) fn handle_generic_overlay_key(
                                         crate::tui::authoring::InitialStatusOrigin::Explicit;
                                 }
                                 AddTaskStep::Priority => state.priority = value,
-                                AddTaskStep::RepeatRule
-                                    if value == crate::tui::authoring::CUSTOM_REPEAT_INTERVAL =>
-                                {
-                                    let interval = state
-                                        .repeat_rule
-                                        .strip_prefix("every ")
-                                        .and_then(|value| value.strip_suffix(" weeks"))
-                                        .unwrap_or_default()
-                                        .to_string();
-                                    state.mode = AddTaskMode::CustomRepeatInterval {
-                                        input: crate::tui::overlay::LineEdit::new(interval),
-                                        error: None,
-                                    };
-                                    return OverlayOutcome::None(OverlayState::AddTask(state));
-                                }
-                                AddTaskStep::RepeatRule => state.set_repeat_rule(value),
-                                AddTaskStep::RepeatWeekdays => state.repeat_weekdays = values,
                                 AddTaskStep::RepeatDue => state.repeat_due = value,
                                 _ => {}
                             }
@@ -183,34 +158,6 @@ pub(crate) fn handle_generic_overlay_key(
                             state.labels = values;
                         }
                         _ => {}
-                    }
-                    return OverlayOutcome::None(OverlayState::AddTask(state));
-                }
-                AddTaskMode::CustomRepeatInterval {
-                    mut input,
-                    error: _,
-                } => {
-                    match key.code {
-                        KeyCode::Esc => state.mode = AddTaskMode::Compose,
-                        KeyCode::Enter => match input.text.trim().parse::<u32>() {
-                            Ok(interval @ 1..=5200) => {
-                                state.set_repeat_rule(format!("every {interval} weeks"));
-                                state.mode = AddTaskMode::Compose;
-                                state.refresh_recurrence_preview();
-                            }
-                            _ => {
-                                state.mode = AddTaskMode::CustomRepeatInterval {
-                                    input,
-                                    error: Some(
-                                        "enter a whole number of weeks from 1 to 5200".to_string(),
-                                    ),
-                                };
-                            }
-                        },
-                        _ => {
-                            input.handle_key(key);
-                            state.mode = AddTaskMode::CustomRepeatInterval { input, error: None };
-                        }
                     }
                     return OverlayOutcome::None(OverlayState::AddTask(state));
                 }
@@ -314,6 +261,10 @@ pub(crate) fn handle_generic_overlay_key(
                     state.focus = AddTaskStep::Title;
                     OverlayOutcome::None(OverlayState::AddTask(state))
                 }
+                KeyCode::F(2) => {
+                    state.focus = AddTaskStep::RepeatRule;
+                    OverlayOutcome::None(OverlayState::AddTask(state))
+                }
                 KeyCode::F(1) => {
                     state.mode = AddTaskMode::Help { scroll: 0 };
                     OverlayOutcome::None(OverlayState::AddTask(state))
@@ -341,6 +292,10 @@ pub(crate) fn handle_generic_overlay_key(
                         }
                         AddTaskStep::AvailableAt => state.available_at.handle_key(key),
                         AddTaskStep::Due => state.due_on.handle_key(key),
+                        AddTaskStep::RepeatRule if state.is_step_editable(state.focus) => {
+                            state.repeat_rule.handle_key(key);
+                            state.refresh_repeat_status();
+                        }
                         AddTaskStep::RepeatAt => state.repeat_at.handle_key(key),
                         AddTaskStep::RepeatStartOn if state.is_step_editable(state.focus) => {
                             state.repeat_start_on.handle_key(key)
@@ -959,8 +914,7 @@ mod tests {
             selected_attachment: 0,
             recurrence_series_id: None,
             template_schedule: None,
-            repeat_rule: "none".to_string(),
-            repeat_weekdays: Vec::new(),
+            repeat_rule: LineEdit::blank(),
             repeat_at: LineEdit::blank(),
             repeat_due: "same-day".to_string(),
             time_zone: "UTC".to_string(),
@@ -1029,7 +983,7 @@ mod tests {
     #[test]
     fn add_task_recurrence_defaults_only_untouched_inbox_to_todo() {
         let mut untouched = add_task_state(AddTaskStep::RepeatRule);
-        untouched.set_repeat_rule("weekly".to_string());
+        untouched.set_repeat_rule("daily".to_string());
         assert_eq!(untouched.status, "todo");
         assert_eq!(
             untouched.status_origin,
@@ -1040,6 +994,19 @@ mod tests {
         explicit.status_origin = crate::tui::authoring::InitialStatusOrigin::Explicit;
         explicit.set_repeat_rule("weekly".to_string());
         assert_eq!(explicit.status, "inbox");
+    }
+
+    #[test]
+    fn add_task_partial_recurrence_keeps_one_off_defaults() {
+        let mut state = add_task_state(AddTaskStep::RepeatRule);
+        state.set_repeat_rule("d".to_string());
+        assert_eq!(state.status, "inbox");
+        assert_eq!(
+            state.status_origin,
+            crate::tui::authoring::InitialStatusOrigin::UntouchedDefault
+        );
+        assert!(state.is_step_editable(AddTaskStep::AvailableAt));
+        assert!(!state.is_step_editable(AddTaskStep::RepeatAt));
     }
 
     #[test]
@@ -1054,83 +1021,6 @@ mod tests {
         explicit.status_origin = crate::tui::authoring::InitialStatusOrigin::Explicit;
         explicit.set_repeat_rule("none".to_string());
         assert_eq!(explicit.status, "todo");
-    }
-
-    #[test]
-    fn add_task_custom_interval_accepts_four_and_preserves_weekdays() {
-        let mut state = add_task_state(AddTaskStep::RepeatRule);
-        state.repeat_weekdays = vec!["mon".to_string(), "thu".to_string()];
-        state.mode = AddTaskMode::CustomRepeatInterval {
-            input: LineEdit::new("4".to_string()),
-            error: None,
-        };
-        let OverlayOutcome::None(OverlayState::AddTask(state)) =
-            handle(key(KeyCode::Enter), OverlayState::AddTask(state))
-        else {
-            panic!("expected add task state");
-        };
-
-        assert_eq!(state.repeat_rule, "every 4 weeks");
-        assert_eq!(
-            state.repeat_weekdays,
-            vec!["mon".to_string(), "thu".to_string()]
-        );
-        let schedule = state.recurrence_schedule().unwrap().unwrap();
-        assert_eq!(schedule.rule.interval(), 4);
-        assert!(state.recurrence_error.is_none());
-        assert!(!state.recurrence_preview.is_empty());
-    }
-
-    #[test]
-    fn add_task_custom_interval_rejects_invalid_values_and_supports_paste() {
-        for value in ["", "zero", "0", "-1", "4294967296", "5201"] {
-            let mut state = add_task_state(AddTaskStep::RepeatRule);
-            state.repeat_rule = "weekly".to_string();
-            state.mode = AddTaskMode::CustomRepeatInterval {
-                input: LineEdit::new(value.to_string()),
-                error: None,
-            };
-            let OverlayOutcome::None(OverlayState::AddTask(state)) =
-                handle(key(KeyCode::Enter), OverlayState::AddTask(state))
-            else {
-                panic!("expected add task state");
-            };
-            assert_eq!(state.repeat_rule, "weekly");
-            assert!(matches!(
-                state.mode,
-                AddTaskMode::CustomRepeatInterval { error: Some(_), .. }
-            ));
-        }
-
-        let mut state = add_task_state(AddTaskStep::RepeatRule);
-        state.mode = AddTaskMode::CustomRepeatInterval {
-            input: LineEdit::blank(),
-            error: Some("old".to_string()),
-        };
-        let OverlayState::AddTask(state) =
-            handle_generic_overlay_paste("4", OverlayState::AddTask(state))
-        else {
-            panic!("expected add task state");
-        };
-        assert!(matches!(
-            state.mode,
-            AddTaskMode::CustomRepeatInterval { ref input, error: None }
-                if input.text == "4"
-        ));
-
-        let mut state = add_task_state(AddTaskStep::RepeatRule);
-        state.repeat_rule = "weekly".to_string();
-        state.mode = AddTaskMode::CustomRepeatInterval {
-            input: LineEdit::new("4".to_string()),
-            error: None,
-        };
-        let OverlayOutcome::None(OverlayState::AddTask(state)) =
-            handle(key(KeyCode::Esc), OverlayState::AddTask(state))
-        else {
-            panic!("expected add task state");
-        };
-        assert_eq!(state.repeat_rule, "weekly");
-        assert_eq!(state.mode, AddTaskMode::Compose);
     }
 
     #[test]
@@ -1183,11 +1073,17 @@ mod tests {
         let mut state = add_task_state(AddTaskStep::Project);
         state.attachments.push(pending_attachment("draft.png"));
         let mut overlay = OverlayState::AddTask(state);
-        for expected in AddTaskStep::ALL
-            .into_iter()
-            .filter(|step| *step != AddTaskStep::TimeZone)
-            .skip(1)
-        {
+        for expected in [
+            AddTaskStep::Status,
+            AddTaskStep::Priority,
+            AddTaskStep::Labels,
+            AddTaskStep::AvailableAt,
+            AddTaskStep::Due,
+            AddTaskStep::RepeatRule,
+            AddTaskStep::Images,
+            AddTaskStep::Title,
+            AddTaskStep::Description,
+        ] {
             let OverlayOutcome::None(next) = handle(key(KeyCode::Tab), overlay) else {
                 panic!("expected composer");
             };
@@ -1224,7 +1120,7 @@ mod tests {
         else {
             panic!("expected add task state");
         };
-        assert_eq!(state.focus, AddTaskStep::RepeatStartOn);
+        assert_eq!(state.focus, AddTaskStep::RepeatRule);
     }
 
     #[test]
@@ -1344,6 +1240,17 @@ mod tests {
             ),
             OverlayOutcome::Cancelled
         ));
+    }
+
+    #[test]
+    fn add_task_f2_focuses_repeat() {
+        let state = add_task_state(AddTaskStep::Title);
+        let OverlayOutcome::None(OverlayState::AddTask(state)) =
+            handle(key(KeyCode::F(2)), OverlayState::AddTask(state))
+        else {
+            panic!("expected composer");
+        };
+        assert_eq!(state.focus, AddTaskStep::RepeatRule);
     }
 
     #[test]

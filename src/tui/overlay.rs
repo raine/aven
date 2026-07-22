@@ -24,9 +24,9 @@ pub(crate) use state::{
     HeaderMenuAction, HeaderMenuItem, HeaderMenuKind, HeaderMenuState, MultilineInputMode,
     MultilineInputState, MultilineIntent, OrderMenuState, OverlayOutcome, OverlayState, OverlaySubmit,
     OverlayTarget, PickerIntent, PickerItem, PickerMode, PickerState, RECURRENCE_HISTORY_PAGE_SIZE,
-    RecurrenceHistoryAction, RecurrenceHistoryEntryKey, RecurrenceHistoryMode,
-    RecurrenceHistoryState, SearchIntent, SearchResultItem, SearchState, TagComboboxIntent,
-    TextIntent, TextPanelState, UpdateOverlayState, recurrence_history_correction_block_reason,
+    RecurrenceHistoryAction, RecurrenceHistoryEntryKey, RecurrenceHistoryState, SearchIntent,
+    SearchResultItem, SearchState, TagComboboxIntent, TextIntent, TextPanelState,
+    UpdateOverlayState,
 };
 #[cfg(test)]
 pub(crate) use state::{ConfirmState, TextInputState};

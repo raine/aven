@@ -353,192 +353,6 @@ async fn recurrence_history_enter_opens_the_linked_archived_task() {
 }
 
 #[tokio::test]
-async fn recurrence_history_ineligible_correction_preserves_history_state() {
-    let (mut app, database) = recurrence_history_test_app().await;
-    let (archived_task_id, _) = add_recurrence_history_fixture(&mut app, &database).await;
-    select_archived_occurrence_in_history(&mut app, &archived_task_id).await;
-    let Some(OverlayState::RecurrenceHistory(history)) = app.overlay.as_ref() else {
-        panic!("expected recurrence history");
-    };
-    let expected = (**history).clone();
-
-    app.handle_overlay_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE))
-        .await
-        .unwrap();
-
-    let Some(OverlayState::RecurrenceHistory(actual)) = app.overlay.as_ref() else {
-        panic!("expected preserved recurrence history");
-    };
-    assert_eq!(**actual, expected);
-    assert_eq!(
-        toast_message(&app).as_deref(),
-        Some("this slot has an archived occurrence")
-    );
-}
-
-#[tokio::test]
-async fn recurrence_history_correction_is_seeded_and_reloads_timestamp() {
-    let (mut app, database) = recurrence_history_test_app().await;
-    add_recurrence_history_fixture(&mut app, &database).await;
-    app.execute_selected_recurrence_action(Action::ShowRecurrenceHistory)
-        .await
-        .unwrap();
-    let Some(OverlayState::RecurrenceHistory(mut history)) = app.overlay.take() else {
-        panic!("expected recurrence history");
-    };
-    let index = history
-        .page
-        .items
-        .iter()
-        .position(|entry| {
-            crate::tui::overlay::recurrence_history_correction_block_reason(entry).is_none()
-        })
-        .unwrap();
-    let slot = history.page.items[index].slot_on.clone().unwrap();
-    history.selected = Some(index);
-    app.overlay = Some(OverlayState::RecurrenceHistory(history));
-
-    app.handle_overlay_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE))
-        .await
-        .unwrap();
-    let Some(OverlayState::RecurrenceHistory(history)) = app.overlay.as_ref() else {
-        panic!("expected recurrence history outcome mode");
-    };
-    let crate::tui::overlay::RecurrenceHistoryMode::Outcome { slot_on, selected } = &history.mode
-    else {
-        panic!("expected seeded outcome picker");
-    };
-    assert_eq!(slot_on.to_string(), slot);
-    assert_eq!(
-        *selected,
-        aven_core::recurrence::RecurrenceOutcome::Completed
-    );
-
-    for (code, expected) in [
-        (
-            KeyCode::Char('j'),
-            aven_core::recurrence::RecurrenceOutcome::Skipped,
-        ),
-        (
-            KeyCode::Char('k'),
-            aven_core::recurrence::RecurrenceOutcome::Completed,
-        ),
-        (
-            KeyCode::Down,
-            aven_core::recurrence::RecurrenceOutcome::Skipped,
-        ),
-        (
-            KeyCode::Up,
-            aven_core::recurrence::RecurrenceOutcome::Completed,
-        ),
-    ] {
-        app.handle_overlay_key(KeyEvent::new(code, KeyModifiers::NONE))
-            .await
-            .unwrap();
-        let Some(OverlayState::RecurrenceHistory(history)) = app.overlay.as_ref() else {
-            panic!("expected recurrence history outcome mode");
-        };
-        let crate::tui::overlay::RecurrenceHistoryMode::Outcome { selected, .. } = &history.mode
-        else {
-            panic!("expected outcome mode");
-        };
-        assert_eq!(*selected, expected);
-    }
-
-    app.handle_overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
-        .await
-        .unwrap();
-    let Some(OverlayState::RecurrenceHistory(history)) = app.overlay.as_ref() else {
-        panic!("expected recurrence history browse mode");
-    };
-    assert!(matches!(
-        history.mode,
-        crate::tui::overlay::RecurrenceHistoryMode::Browse
-    ));
-    app.handle_overlay_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE))
-        .await
-        .unwrap();
-    app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-        .await
-        .unwrap();
-    app.handle_overlay_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE))
-        .await
-        .unwrap();
-    let timestamp = "026-07-20T12:34:56Z";
-    for character in timestamp.chars() {
-        app.handle_overlay_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE))
-            .await
-            .unwrap();
-    }
-    app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-        .await
-        .unwrap();
-
-    let Some(OverlayState::RecurrenceHistory(history)) = app.overlay.as_ref() else {
-        panic!("expected corrected history");
-    };
-    let corrected = history
-        .page
-        .items
-        .iter()
-        .find(|entry| entry.slot_on.as_deref() == Some(slot.as_str()))
-        .unwrap();
-    assert!(corrected.corrected);
-    assert_eq!(
-        corrected.resolved_at.as_deref(),
-        Some("2026-07-20T12:34:56Z")
-    );
-}
-
-#[tokio::test]
-async fn recurrence_history_right_click_uses_the_correction_action() {
-    let (mut app, database) = recurrence_history_test_app().await;
-    add_recurrence_history_fixture(&mut app, &database).await;
-    app.execute_selected_recurrence_action(Action::ShowRecurrenceHistory)
-        .await
-        .unwrap();
-    let Some(OverlayState::RecurrenceHistory(mut history)) = app.overlay.take() else {
-        panic!("expected recurrence history");
-    };
-    let index = history
-        .page
-        .items
-        .iter()
-        .position(|entry| {
-            crate::tui::overlay::recurrence_history_correction_block_reason(entry).is_none()
-        })
-        .unwrap();
-    history.selected = Some(index);
-    let terminal = ratatui::layout::Size::new(120, 40);
-    let view = crate::tui::overlay::RecurrenceHistoryView {
-        page: history.page.clone(),
-        selected: history.selected,
-        mode: history.mode.clone(),
-    };
-    let layout = crate::tui::ui::recurrence_history_layout_for_test(&view, terminal);
-    app.overlay = Some(OverlayState::RecurrenceHistory(history));
-
-    app.dispatch_mouse(
-        MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Right),
-            column: layout.rows.x,
-            row: layout.rows.y + ((index - layout.first_visible) as u16 * layout.entry_height),
-            modifiers: KeyModifiers::NONE,
-        },
-        terminal,
-    )
-    .await
-    .unwrap();
-    let Some(OverlayState::RecurrenceHistory(history)) = app.overlay.as_ref() else {
-        panic!("expected history outcome mode");
-    };
-    assert!(matches!(
-        history.mode,
-        crate::tui::overlay::RecurrenceHistoryMode::Outcome { .. }
-    ));
-}
-
-#[tokio::test]
 async fn recurring_series_detail_opens_hidden_occurrence_and_returns() {
     let mut app = test_app().await;
     let (task_id, series_id) = add_recurring_series(&mut app, "Daily review").await;
@@ -577,6 +391,50 @@ async fn recurring_series_detail_opens_hidden_occurrence_and_returns() {
         series_id
     );
     assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+}
+
+#[tokio::test]
+async fn recurring_series_list_and_detail_use_compact_natural_language() {
+    let mut app = test_app().await;
+    add_recurring_series(&mut app, "Natural recurring detail").await;
+    app.widgets
+        .table
+        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+
+    let list = render_app_text(&mut app, 120, 30);
+    assert!(list.contains("Every day"));
+    assert!(!list.contains("Etc/UTC"));
+    assert!(!list.contains("daily ·"));
+
+    app.dispatch_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        (120, 30).into(),
+    )
+    .await
+    .unwrap();
+    let detail = render_app_text(&mut app, 120, 30);
+    for expected in [
+        "Every day",
+        "Available    Start of day",
+        "Due          Same day",
+        "Enter Open task",
+        "e Edit",
+        "p Pause",
+        "h History",
+        "s Stop",
+        "Esc Close",
+    ] {
+        assert!(detail.contains(expected), "missing detail text: {expected}");
+    }
+    assert!(!detail.contains("Time zone"));
+    assert!(!detail.contains("fixed"));
+    assert!(
+        detail
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count()
+            < 24
+    );
 }
 
 #[tokio::test]
@@ -732,7 +590,8 @@ async fn recurrence_creation_in_recurring_view_reports_filtered_series_and_prese
         .unwrap();
     app.widgets.table.select(selected);
 
-    assert!(message.contains("hidden by current filters"));
+    assert!(message.starts_with("Created recurring task RCR-"));
+    assert!(!message.contains("hidden"));
     assert_eq!(
         app.store
             .selected_recurrence_series(app.widgets.table.selected())
@@ -5686,8 +5545,7 @@ mod authoring {
                 panic!("expected composer");
             };
             state.title = LineEdit::new("Four week planning".to_string());
-            state.repeat_weekdays = vec!["mon".to_string(), "thu".to_string()];
-            state.set_repeat_rule("every 4 weeks".to_string());
+            state.set_repeat_rule("every 4 weeks on Monday and Thursday".to_string());
             (state.time_zone.clone(), state.repeat_start_on.text.clone())
         };
         app.handle_overlay_key(ctrl_s()).await.unwrap();
@@ -5705,8 +5563,9 @@ mod authoring {
         assert_eq!(row.3, expected_zone);
         assert_eq!(row.4, expected_start);
         let message = toast_message(&app).unwrap();
-        assert!(message.contains("every 4 weeks on mon,thu"));
-        assert!(message.contains(&format!("zone {expected_zone}")));
+        assert!(message.starts_with("Created recurring task RCR-"));
+        assert!(!message.contains(&expected_zone));
+        assert!(!message.contains('('));
     }
 
     #[tokio::test]
@@ -5781,6 +5640,43 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn recurring_creation_without_inferred_project_preserves_the_draft() {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+            panic!("expected composer");
+        };
+        state.title = LineEdit::new("Keep this recurring draft".to_string());
+        state.selected_project = None;
+        state.inferred_project = None;
+        state.project = "no project".to_string();
+        state.set_repeat_rule("daily".to_string());
+
+        app.handle_overlay_key(ctrl_s()).await.unwrap();
+
+        let Some(OverlayState::AddTask(state)) = app.overlay.as_ref() else {
+            panic!("expected preserved composer");
+        };
+        assert_eq!(state.focus, AddTaskStep::Project);
+        assert_eq!(state.title.text, "Keep this recurring draft");
+        assert_eq!(state.repeat_rule.text, "daily");
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("Choose a project for this recurring task")
+        );
+        let series: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM recurrence_series")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let tasks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(series, 0);
+        assert_eq!(tasks, 0);
+    }
+
+    #[tokio::test]
     async fn add_task_template_preserves_frozen_schedule_identity() {
         let (dir, pool, mut app) = test_app_with_pool().await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
@@ -5788,8 +5684,7 @@ mod authoring {
             panic!("expected composer");
         };
         state.title = LineEdit::new("Frozen schedule".to_string());
-        state.repeat_weekdays = vec!["mon".to_string(), "thu".to_string()];
-        state.set_repeat_rule("every 4 weeks".to_string());
+        state.set_repeat_rule("every 4 weeks on Monday and Thursday".to_string());
         app.handle_overlay_key(ctrl_s()).await.unwrap();
 
         let before = sqlx::query_as::<_, (String, i64, String, String, String)>(
@@ -5818,8 +5713,7 @@ mod authoring {
         };
         state.title = LineEdit::new("Updated template".to_string());
         state.selected_project = None;
-        state.repeat_rule = "daily".to_string();
-        state.repeat_weekdays.clear();
+        state.repeat_rule = LineEdit::new("daily".to_string());
         state.time_zone = "UTC".to_string();
         state.repeat_start_on = LineEdit::new("2030-01-01".to_string());
         state.repeat_at = LineEdit::new("09:00".to_string());
@@ -6844,10 +6738,6 @@ mod authoring {
             AddTaskStep::AvailableAt,
             AddTaskStep::Due,
             AddTaskStep::RepeatRule,
-            AddTaskStep::RepeatWeekdays,
-            AddTaskStep::RepeatAt,
-            AddTaskStep::RepeatDue,
-            AddTaskStep::RepeatStartOn,
         ] {
             app.handle_overlay_key(key(KeyCode::Right)).await.unwrap();
             assert!(matches!(
@@ -6913,9 +6803,9 @@ mod authoring {
         for (column, row, expected) in [
             (29, 3, AddTaskStep::AvailableAt),
             (55, 3, AddTaskStep::Due),
-            (3, 7, AddTaskStep::Images),
-            (3, 9, AddTaskStep::Title),
-            (3, 12, AddTaskStep::Description),
+            (3, 4, AddTaskStep::Images),
+            (3, 7, AddTaskStep::Title),
+            (3, 10, AddTaskStep::Description),
         ] {
             app.dispatch_mouse(task_row_click(column, row), (80, 24).into())
                 .await

@@ -164,8 +164,8 @@ fn add_task_view() -> AddTaskView {
         }),
         recurrence_series_id: None,
         editing_template: false,
-        repeat_rule: "none".to_string(),
-        repeat_weekdays: Vec::new(),
+        repeat_rule: String::new(),
+        repeat_rule_cursor: 0,
         repeat_at: String::new(),
         repeat_at_cursor: 0,
         repeat_due: "same-day".to_string(),
@@ -1114,7 +1114,7 @@ mod add_task_overlay {
     #[test]
     fn hint_lines_style_keys() {
         let add_task_keys =
-            styled_key_contents(add_task_hint_line(AddTaskStep::Title, false, false));
+            styled_key_contents(add_task_hint_line(AddTaskStep::Title, false, false, false));
         assert_eq!(
             add_task_keys,
             vec!["Enter", "↑/↓", "Tab", "^N", "F1", "Esc"]
@@ -1123,8 +1123,12 @@ mod add_task_overlay {
         let multiline_keys = styled_key_contents(multiline_hint_line());
         assert_eq!(multiline_keys, vec!["Ctrl-Enter / ^S", "Esc"]);
 
-        let add_task_description_keys =
-            styled_key_contents(add_task_hint_line(AddTaskStep::Description, false, false));
+        let add_task_description_keys = styled_key_contents(add_task_hint_line(
+            AddTaskStep::Description,
+            false,
+            false,
+            false,
+        ));
         assert_eq!(
             add_task_description_keys,
             vec!["Ctrl-Enter / ^S", "Tab", "^N", "F1", "Esc"]
@@ -1259,19 +1263,18 @@ mod add_task_overlay {
     }
 
     #[test]
-    fn recurring_composer_renders_schedule_fields_and_next_three_slots() {
+    fn recurring_composer_renders_plain_fields_and_concise_preview() {
         let rendered = render_overlay_view_at(
             OverlayView::AddTask(AddTaskView {
-                repeat_rule: "weekly".to_string(),
-                repeat_weekdays: vec!["mon".to_string(), "thu".to_string()],
+                repeat_rule: "every Monday and Thursday".to_string(),
                 repeat_at: "09:00".to_string(),
                 repeat_due: "same-day".to_string(),
                 time_zone: "Europe/Stockholm".to_string(),
                 repeat_start_on: "2026-07-20".to_string(),
                 recurrence_preview: vec![
-                    "Mon 2026-07-20".to_string(),
-                    "Thu 2026-07-23".to_string(),
-                    "Mon 2026-07-27".to_string(),
+                    "Mon Jul 20".to_string(),
+                    "Thu Jul 23".to_string(),
+                    "Mon Jul 27".to_string(),
                 ],
                 ..add_task_view()
             }),
@@ -1279,84 +1282,88 @@ mod add_task_overlay {
             30,
         );
         for expected in [
-            "Repeat",
-            "Weekdays",
-            "Repeat due",
-            "Europe/Stockholm",
-            "Next slots",
-            "Mon 2026-07-20",
-            "Thu 2026-07-23",
-            "Mon 2026-07-27",
+            "Repeat: every Monday and Thursday",
+            "Available: 09:00",
+            "Due: Same day",
+            "Starts: Jul 20",
+            "Next: Mon Jul 20, Thu Jul 23, Mon Jul 27",
         ] {
             assert!(rendered.contains(expected), "missing {expected}");
         }
+        assert!(!rendered.contains("Europe/Stockholm"));
+        assert!(!rendered.contains("Repeat due"));
+        assert!(!rendered.contains("Next slots"));
     }
 
     #[test]
-    fn recurring_composer_keeps_validation_error_visible() {
+    fn recurring_composer_keeps_validation_guidance_visible() {
         let rendered = render_overlay_view_at(
             OverlayView::AddTask(AddTaskView {
-                repeat_rule: "every 2 weeks".to_string(),
-                recurrence_error: Some("choose at least one weekday".to_string()),
+                repeat_rule: "sometimes".to_string(),
+                recurrence_error: Some(crate::tui::recurrence_text::rule_guidance().to_string()),
                 ..add_task_view()
             }),
             100,
             28,
         );
-        assert!(rendered.contains("Schedule error"));
-        assert!(rendered.contains("choose at least one weekday"));
+        assert!(rendered.contains("Repeat:"));
+        assert!(rendered.contains("Try daily"));
     }
 
     #[test]
-    fn add_task_creation_renders_local_zone_read_only() {
+    fn one_off_composer_omits_recurrence_defaults_and_zone() {
         let rendered = render_overlay_view_at(
             OverlayView::AddTask(AddTaskView {
                 time_zone: "Europe/Stockholm".to_string(),
                 ..add_task_view()
             }),
-            39,
+            100,
             30,
         );
-        assert!(rendered.contains("Europe/Stockholm"));
-        assert!(rendered.contains("fixed"));
+        assert!(rendered.contains("Available: Now"));
+        assert!(rendered.contains("Due: None"));
+        assert!(rendered.contains("F2 repeat"));
+        assert!(!rendered.contains("Repeat:"));
+        assert!(!rendered.contains("Try daily"));
+        assert!(!rendered.contains("Europe/Stockholm"));
+        assert!(!rendered.contains("Start of day"));
+        assert!(!rendered.contains("Same day"));
     }
 
     #[test]
-    fn add_task_template_renders_schedule_identity_read_only() {
+    fn focused_repeat_field_uses_concise_inline_placeholder() {
+        let rendered = render_overlay_view_at(
+            OverlayView::AddTask(AddTaskView {
+                focus: AddTaskStep::RepeatRule,
+                ..add_task_view()
+            }),
+            100,
+            30,
+        );
+        assert!(rendered.contains("Repeat: daily or every Friday"));
+        assert!(!rendered.contains("Try daily"));
+    }
+
+    #[test]
+    fn add_task_template_renders_natural_schedule_without_fixed_labels() {
         let rendered = render_overlay_view_at(
             OverlayView::AddTask(AddTaskView {
                 editing_template: true,
-                repeat_rule: "every 4 weeks".to_string(),
-                repeat_weekdays: vec!["mon".to_string(), "thu".to_string()],
+                repeat_rule: "Every 4 weeks on Monday and Thursday".to_string(),
                 time_zone: "Europe/Stockholm".to_string(),
                 repeat_start_on: "2026-07-20".to_string(),
                 ..add_task_view()
             }),
-            39,
+            100,
             30,
         );
         assert!(rendered.contains("Edit recurring template"));
-        assert!(rendered.matches("fixed").count() >= 4);
-        assert!(rendered.contains("every 4 weeks"));
-    }
-
-    #[test]
-    fn add_task_custom_interval_error_is_visible() {
-        let rendered = render_overlay_view_at(
-            OverlayView::AddTask(AddTaskView {
-                mode: AddTaskMode::CustomRepeatInterval {
-                    input: crate::tui::overlay::LineEdit::new("0".to_string()),
-                    error: Some("enter a whole number of weeks from 1 to 5200".to_string()),
-                },
-                ..add_task_view()
-            }),
-            100,
-            28,
-        );
-        assert!(rendered.contains("Weeks between repeats"));
-        assert!(rendered.contains("from 1 to 5200"));
-        assert!(rendered.contains("Enter apply"));
-        assert!(rendered.contains("Esc cancel"));
+        assert!(rendered.contains("Every 4 weeks on Monday and Thursday"));
+        assert!(rendered.contains("Available: Start of day"));
+        assert!(rendered.contains("Due: Same day"));
+        assert!(rendered.contains("Starts: Jul 20"));
+        assert!(!rendered.contains("fixed"));
+        assert!(!rendered.contains("Europe/Stockholm"));
     }
 
     #[test]

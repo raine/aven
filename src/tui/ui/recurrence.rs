@@ -128,7 +128,7 @@ fn render_row(
         .as_ref()
         .map(|occurrence| format!("{} {}", occurrence.slot_on, occurrence.task_ref))
         .unwrap_or_else(|| "-".to_string());
-    let schedule = format!("{} · {}", item.rule_label, item.series.timezone);
+    let schedule = crate::tui::recurrence_text::natural_rule_label(item.series.rule);
     let values = [
         item.series.title.as_str(),
         item.series_ref.as_str(),
@@ -192,17 +192,6 @@ pub(super) fn render_recurrence_detail(
     detail: &RecurrenceSeriesDetail,
     scroll: u16,
 ) {
-    let area = frame.area();
-    let width = area.width.saturating_sub(8).min(100);
-    let height = area.height.saturating_sub(4);
-    let dialog = Rect::new(
-        area.x
-            .saturating_add((area.width.saturating_sub(width)) / 2),
-        area.y.saturating_add(2),
-        width,
-        height,
-    );
-    frame.render_widget(Clear, dialog);
     let current = detail
         .current_occurrence
         .as_ref()
@@ -214,19 +203,23 @@ pub(super) fn render_recurrence_detail(
                     .summary
                     .current_slot_on
                     .as_deref()
-                    .unwrap_or("unknown slot"),
+                    .unwrap_or("unknown date"),
                 detail
                     .summary
                     .current_task_ref
                     .as_deref()
                     .unwrap_or("unknown task")
             )
-        })
-        .unwrap_or_else(|| "none".to_string());
-    let labels = if detail.labels.is_empty() {
-        "none".to_string()
-    } else {
-        detail.labels.join(", ")
+        });
+    let starts = detail.series.start_on.format("%b %-d");
+    let available = detail
+        .series
+        .available_local_time
+        .map(|time| time.format("%H:%M").to_string())
+        .unwrap_or_else(|| "Start of day".to_string());
+    let due = match detail.series.due_policy {
+        aven_core::recurrence::RecurrenceDuePolicy::SameDay => "Same day",
+        aven_core::recurrence::RecurrenceDuePolicy::None => "None",
     };
     let mut lines = vec![
         Line::from(vec![Span::styled(
@@ -239,23 +232,33 @@ pub(super) fn render_recurrence_detail(
             detail.series.state.as_str()
         )),
         Line::from(""),
-        Line::from(format!("Schedule     {}", detail.summary.rule_label)),
-        Line::from(format!("Time zone    {}", detail.series.timezone)),
-        Line::from(format!("Starts       {}", detail.series.start_on)),
         Line::from(format!(
-            "Due policy   {}",
-            detail.series.due_policy.as_str()
+            "Repeat       {}",
+            crate::tui::recurrence_text::natural_rule_label(detail.series.rule)
         )),
-        Line::from(format!("Priority     {}", detail.series.priority.as_str())),
-        Line::from(format!(
-            "Status       {}",
-            detail.series.initial_status.as_str()
-        )),
-        Line::from(format!("Labels       {labels}")),
-        Line::from(format!("Occurrence   {current}")),
-        Line::from(""),
-        Line::from(detail.series.description.clone()),
+        Line::from(format!("Available    {available}")),
+        Line::from(format!("Due          {due}")),
+        Line::from(format!("Starts       {starts}")),
     ];
+    if detail.series.priority.as_str() != "none" {
+        lines.push(Line::from(format!(
+            "Priority     {}",
+            detail.series.priority.as_str()
+        )));
+    }
+    if !detail.labels.is_empty() {
+        lines.push(Line::from(format!(
+            "Labels       {}",
+            detail.labels.join(", ")
+        )));
+    }
+    if let Some(current) = current.as_deref() {
+        lines.push(Line::from(format!("Current task {current}")));
+    }
+    if !detail.series.description.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(detail.series.description.clone()));
+    }
     if !detail.lifecycle_conflicts.is_empty() {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![Span::styled(
@@ -269,18 +272,39 @@ pub(super) fn render_recurrence_detail(
             ))
         }));
     }
-    if detail
-        .current_occurrence
-        .as_ref()
-        .and_then(|item| item.task_id.as_ref())
-        .is_some()
-    {
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![Span::styled(
-            "Enter open occurrence",
-            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-        )]));
+    lines.push(Line::from(""));
+    let mut actions = Vec::new();
+    if current.is_some() {
+        actions.push("Enter Open task");
     }
+    actions.push("e Edit");
+    match detail.series.state {
+        aven_core::recurrence::RecurrenceSeriesState::Active => actions.push("p Pause"),
+        aven_core::recurrence::RecurrenceSeriesState::Paused => actions.push("p Resume"),
+        aven_core::recurrence::RecurrenceSeriesState::Stopped => {}
+    }
+    actions.push("h History");
+    if detail.series.state != aven_core::recurrence::RecurrenceSeriesState::Stopped {
+        actions.push("s Stop");
+    }
+    actions.push("Esc Close");
+    lines.push(Line::from(vec![Span::styled(
+        actions.join("  "),
+        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+    )]));
+
+    let area = frame.area();
+    let width = area.width.saturating_sub(4).min(76);
+    let height = (lines.len() as u16 + 2).min(area.height.saturating_sub(2));
+    let dialog = Rect::new(
+        area.x
+            .saturating_add((area.width.saturating_sub(width)) / 2),
+        area.y
+            .saturating_add((area.height.saturating_sub(height)) / 2),
+        width,
+        height,
+    );
+    frame.render_widget(Clear, dialog);
     frame.render_widget(
         Paragraph::new(Text::from(lines))
             .block(

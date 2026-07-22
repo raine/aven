@@ -329,6 +329,8 @@ impl App {
                     Rect::new(0, 0, terminal_size.width, terminal_size.height),
                     self.intake.view().add_task_only,
                     !state.attachments.is_empty(),
+                    state.recurrence_valid(),
+                    state.recurrence_enabled() || state.focus == AddTaskStep::RepeatRule,
                     mouse.column,
                     mouse.row,
                 )
@@ -1059,6 +1061,37 @@ impl App {
                 }
                 self.show_detail(scroll);
                 return Ok(());
+            }
+            if self.store.view_state.view == TaskView::Recurring {
+                let recurrence_action = if key.modifiers.is_empty()
+                    && self.pending_shortcut.is_empty()
+                {
+                    match key.code {
+                        KeyCode::Char('e') => Some(Action::BeginEditRecurrenceTemplate),
+                        KeyCode::Char('h') => Some(Action::ShowRecurrenceHistory),
+                        KeyCode::Char('s') => Some(Action::StopRecurrence),
+                        KeyCode::Char('p') => self.store.recurrence_detail.as_ref().map(|detail| {
+                            if detail.series.state
+                                == aven_core::recurrence::RecurrenceSeriesState::Paused
+                            {
+                                Action::ResumeRecurrence
+                            } else {
+                                Action::PauseRecurrence
+                            }
+                        }),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                if let Some(action) = recurrence_action {
+                    self.execute_selected_recurrence_action(action).await?;
+                    return Ok(());
+                }
+                if key.code == KeyCode::Enter && key.modifiers.is_empty() {
+                    self.open_recurrence_occurrence().await?;
+                    return Ok(());
+                }
             }
             if key.code == KeyCode::Char('q') && key.modifiers.is_empty() {
                 self.close_detail_session().await?;

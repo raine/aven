@@ -39,6 +39,7 @@ mod navigation;
 mod overlay;
 mod platform;
 mod preview_controller;
+mod recurrence_text;
 mod shortcut_buffer;
 mod store;
 mod task_selection;

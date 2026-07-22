@@ -29,7 +29,10 @@ impl TuiStore {
         current_selected_index: Option<usize>,
     ) -> Result<(String, Option<usize>)> {
         if draft.project.is_empty() {
-            draft.project = self.inferred_add_project().await?.unwrap_or_default();
+            draft.project = self
+                .inferred_add_project()
+                .await?
+                .context("choose a project for this recurring task")?;
         }
         let recurring_view = self.view_state.view == super::TaskView::Recurring;
         let previous_task_id = (!recurring_view)
@@ -62,16 +65,8 @@ impl TuiStore {
                     .position(|item| &item.series.id == series_id)
             });
             let selected = created_index.or(previous_index).or(refreshed.selected);
-            let suffix = if created_index.is_some() {
-                ""
-            } else {
-                " hidden by current filters"
-            };
             return Ok((
-                format!(
-                    "created recurring task {} ({}){suffix}",
-                    outcome.series_ref, outcome.task.id
-                ),
+                format!("Created recurring task {}", outcome.series_ref),
                 selected,
             ));
         }
@@ -82,16 +77,8 @@ impl TuiStore {
             .iter()
             .position(|item| item.task.id == task_id)
             .or_else(|| self.restored_task_selection(previous_task_id.as_ref()));
-        let suffix = if self.tasks.iter().any(|item| item.task.id == task_id) {
-            ""
-        } else {
-            " hidden by current filters"
-        };
         Ok((
-            format!(
-                "created recurring task {} ({}){suffix}",
-                outcome.series_ref, outcome.task.id
-            ),
+            format!("Created recurring task {}", outcome.series_ref),
             selected,
         ))
     }
@@ -180,46 +167,6 @@ impl TuiStore {
             .await?;
         Ok(MutationMessage::new(
             format!("skipped {series_ref} slot {slot_on}"),
-            selected,
-        ))
-    }
-
-    pub(crate) async fn record_recurrence_outcome(
-        &mut self,
-        series_id: &RecurrenceSeriesId,
-        slot_on: NaiveDate,
-        outcome: RecurrenceOutcome,
-        resolved_at: Option<String>,
-    ) -> Result<MutationMessage> {
-        let now = Utc::now();
-        let resolved_at = resolved_at
-            .map(|value| {
-                DateTime::parse_from_rfc3339(&value)
-                    .map(|value| value.with_timezone(&Utc).to_rfc3339())
-                    .context("use an RFC 3339 outcome time")
-            })
-            .transpose()?
-            .unwrap_or_else(|| now.to_rfc3339());
-        let result = self
-            .database
-            .record_recurrence_outcome(
-                &self.active_workspace,
-                series_id,
-                slot_on,
-                outcome,
-                resolved_at,
-                now,
-            )
-            .await?;
-        let series_ref = self
-            .database
-            .recurrence_series_ref(&self.active_workspace.id, &result.series.id)
-            .await?;
-        let selected = self
-            .refresh_after_recurrence_mutation(series_id, None)
-            .await?;
-        Ok(MutationMessage::new(
-            format!("recorded {} {} on {slot_on}", series_ref, outcome.as_str()),
             selected,
         ))
     }

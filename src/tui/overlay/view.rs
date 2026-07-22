@@ -132,7 +132,6 @@ pub(crate) struct AddTaskAttachmentsView {
 pub(crate) struct RecurrenceHistoryView {
     pub(crate) page: aven_core::query::RecurrenceHistoryPage,
     pub(crate) selected: Option<usize>,
-    pub(crate) mode: super::state::RecurrenceHistoryMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,7 +154,7 @@ pub(crate) struct AddTaskView {
     pub(crate) recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
     pub(crate) editing_template: bool,
     pub(crate) repeat_rule: String,
-    pub(crate) repeat_weekdays: Vec<String>,
+    pub(crate) repeat_rule_cursor: usize,
     pub(crate) repeat_at: String,
     pub(crate) repeat_at_cursor: usize,
     pub(crate) repeat_due: String,
@@ -407,8 +406,8 @@ impl From<&OverlayState> for OverlayView {
                 }),
                 recurrence_series_id: state.recurrence_series_id.clone(),
                 editing_template: state.template_schedule.is_some(),
-                repeat_rule: state.repeat_rule.clone(),
-                repeat_weekdays: state.repeat_weekdays.clone(),
+                repeat_rule: state.repeat_rule.text.clone(),
+                repeat_rule_cursor: state.repeat_rule.cursor,
                 repeat_at: state.repeat_at.text.clone(),
                 repeat_at_cursor: state.repeat_at.cursor,
                 repeat_due: state.repeat_due.clone(),
@@ -484,7 +483,6 @@ impl From<&OverlayState> for OverlayView {
             RecurrenceHistory(state) => Self::RecurrenceHistory(RecurrenceHistoryView {
                 page: state.page.clone(),
                 selected: state.selected,
-                mode: state.mode.clone(),
             }),
             SyncStatus(state) => Self::SyncStatus(state.clone()),
             DatabaseStats { stats, scroll } => Self::DatabaseStats {

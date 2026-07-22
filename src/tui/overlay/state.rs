@@ -9,9 +9,9 @@ use crate::tui::overlay::text_input::LineEdit;
 use crate::tui::store::{ConflictTarget, TaskOrder, TaskView, TuiDatabaseStats, TuiSyncStatus};
 use crate::tui::task_selection::TaskSelection;
 use crate::tui::text::{char_boundary_at_or_before, normalize_pasted_newlines};
-use aven_core::query::{RecurrenceHistoryEntry, RecurrenceHistoryKind, RecurrenceHistoryPage};
-use aven_core::recurrence::{RecurrenceOutcome, RecurrenceSeriesId};
-use chrono::{DateTime, NaiveDate, Utc};
+use aven_core::query::{RecurrenceHistoryEntry, RecurrenceHistoryPage};
+use aven_core::recurrence::RecurrenceSeriesId;
+use chrono::{DateTime, Utc};
 use unicode_width::UnicodeWidthStr;
 
 #[allow(dead_code)]
@@ -220,21 +220,6 @@ pub(crate) enum RecurrenceHistoryEntryKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RecurrenceHistoryAction {
     OpenTask,
-    Correct,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum RecurrenceHistoryMode {
-    Browse,
-    Outcome {
-        slot_on: NaiveDate,
-        selected: RecurrenceOutcome,
-    },
-    ResolutionTime {
-        slot_on: NaiveDate,
-        outcome: RecurrenceOutcome,
-        input: LineEdit,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -244,7 +229,6 @@ pub(crate) struct RecurrenceHistoryState {
     pub(crate) as_of: DateTime<Utc>,
     pub(crate) page: RecurrenceHistoryPage,
     pub(crate) selected: Option<usize>,
-    pub(crate) mode: RecurrenceHistoryMode,
 }
 
 impl RecurrenceHistoryState {
@@ -261,10 +245,10 @@ impl RecurrenceHistoryState {
             as_of,
             page,
             selected,
-            mode: RecurrenceHistoryMode::Browse,
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn selected_index(&self) -> Option<usize> {
         self.selected
     }
@@ -304,7 +288,6 @@ impl RecurrenceHistoryState {
                 (!self.page.items.is_empty())
                     .then(|| fallback_index.min(self.page.items.len().saturating_sub(1)))
             });
-        self.mode = RecurrenceHistoryMode::Browse;
     }
 }
 
@@ -313,25 +296,6 @@ fn recurrence_history_entry_key(entry: &RecurrenceHistoryEntry) -> RecurrenceHis
         (Some(slot), None) => RecurrenceHistoryEntryKey::Slot(slot.clone()),
         (None, Some(started_at)) => RecurrenceHistoryEntryKey::PauseStartedAt(started_at.clone()),
         _ => panic!("history entry must identify one slot or pause interval"),
-    }
-}
-
-pub(crate) fn recurrence_history_correction_block_reason(
-    entry: &RecurrenceHistoryEntry,
-) -> Option<&'static str> {
-    match entry.kind {
-        RecurrenceHistoryKind::Paused => Some("pause intervals cannot be corrected"),
-        RecurrenceHistoryKind::Completed | RecurrenceHistoryKind::Skipped if entry.corrected => {
-            Some("this slot already has a correction")
-        }
-        RecurrenceHistoryKind::Completed | RecurrenceHistoryKind::Skipped => {
-            Some("this slot already has an outcome")
-        }
-        RecurrenceHistoryKind::Missed if entry.archived_projection || entry.task_id.is_some() => {
-            Some("this slot has an archived occurrence")
-        }
-        RecurrenceHistoryKind::Missed if entry.slot_on.is_some() => None,
-        RecurrenceHistoryKind::Missed => Some("this history entry has no correctable slot"),
     }
 }
 
@@ -639,10 +603,6 @@ pub(crate) enum AddTaskMode {
         state: PickerState,
     },
     Labels(TagComboboxState),
-    CustomRepeatInterval {
-        input: LineEdit,
-        error: Option<String>,
-    },
     Help {
         scroll: u16,
     },
@@ -668,8 +628,7 @@ pub(crate) struct AddTaskState {
     pub(crate) selected_attachment: usize,
     pub(crate) recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
     pub(crate) template_schedule: Option<aven_core::recurrence::RecurrenceSchedule>,
-    pub(crate) repeat_rule: String,
-    pub(crate) repeat_weekdays: Vec<String>,
+    pub(crate) repeat_rule: LineEdit,
     pub(crate) repeat_at: LineEdit,
     pub(crate) repeat_due: String,
     pub(crate) time_zone: String,
@@ -696,7 +655,7 @@ impl AddTaskState {
             || !self.due_on.text.trim().is_empty()
             || !self.attachments.is_empty()
             || self.recurrence_series_id.is_some()
-            || self.repeat_rule != "none"
+            || !matches!(self.repeat_rule.text.trim(), "" | "none")
     }
 
     pub(crate) fn focus_next(&mut self, reverse: bool) {
@@ -723,15 +682,28 @@ impl AddTaskState {
         if step == AddTaskStep::TimeZone {
             return false;
         }
+        if self.recurrence_valid() {
+            if matches!(step, AddTaskStep::AvailableAt | AddTaskStep::Due) {
+                return false;
+            }
+        } else if matches!(
+            step,
+            AddTaskStep::RepeatAt | AddTaskStep::RepeatDue | AddTaskStep::RepeatStartOn
+        ) {
+            return false;
+        }
         self.template_schedule.is_none()
-            || !matches!(
-                step,
-                AddTaskStep::RepeatRule | AddTaskStep::RepeatWeekdays | AddTaskStep::RepeatStartOn
-            )
+            || !matches!(step, AddTaskStep::RepeatRule | AddTaskStep::RepeatStartOn)
     }
 
+    #[cfg(test)]
     pub(crate) fn set_repeat_rule(&mut self, repeat_rule: String) {
-        let enabled = repeat_rule != "none";
+        self.repeat_rule = LineEdit::new(repeat_rule);
+        self.refresh_repeat_status();
+    }
+
+    pub(crate) fn refresh_repeat_status(&mut self) {
+        let enabled = self.recurrence_valid();
         match (enabled, self.status_origin) {
             (true, InitialStatusOrigin::UntouchedDefault) if self.status == "inbox" => {
                 self.status = "todo".to_string();
@@ -743,26 +715,21 @@ impl AddTaskState {
             }
             _ => {}
         }
-        self.repeat_rule = repeat_rule;
     }
 
     pub(crate) fn recurrence_enabled(&self) -> bool {
-        self.template_schedule.is_some() || self.repeat_rule != "none"
+        self.template_schedule.is_some() || !matches!(self.repeat_rule.text.trim(), "" | "none")
     }
 
-    pub(crate) fn recurrence_rule_input(&self) -> Result<String, &'static str> {
-        match self.repeat_rule.as_str() {
-            "none" | "daily" | "weekdays" => Ok(self.repeat_rule.clone()),
-            "weekly" if self.repeat_weekdays.is_empty() => Ok("weekly".to_string()),
-            "weekly" => Ok(format!("weekly on {}", self.repeat_weekdays.join(","))),
-            rule if rule.starts_with("every ") && self.repeat_weekdays.is_empty() => {
-                Err("choose at least one weekday")
-            }
-            rule if rule.starts_with("every ") => {
-                Ok(format!("{rule} on {}", self.repeat_weekdays.join(",")))
-            }
-            _ => Err("choose a fixed recurrence rule"),
-        }
+    pub(crate) fn recurrence_valid(&self) -> bool {
+        self.template_schedule.is_some()
+            || self
+                .recurrence_rule_input()
+                .is_ok_and(|rule| rule.is_some())
+    }
+
+    pub(crate) fn recurrence_rule_input(&self) -> anyhow::Result<Option<String>> {
+        crate::tui::recurrence_text::canonical_rule_input(&self.repeat_rule.text)
     }
 
     pub(crate) fn recurrence_schedule(
@@ -789,7 +756,9 @@ impl AddTaskState {
                 mutable.due_policy,
             )));
         }
-        let rule = self.recurrence_rule_input().map_err(anyhow::Error::msg)?;
+        let Some(rule) = self.recurrence_rule_input()? else {
+            return Ok(None);
+        };
         crate::commands::recurrence_schedule(
             &rule,
             repeat_at,
@@ -832,7 +801,7 @@ impl AddTaskState {
         self.recurrence_preview = schedule
             .slots_on_or_after(from)
             .take(3)
-            .map(|date| date.format("%a %Y-%m-%d").to_string())
+            .map(|date| date.format("%a %b %-d").to_string())
             .collect();
     }
 }
@@ -1209,6 +1178,7 @@ impl OverlayState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aven_core::query::RecurrenceHistoryKind;
 
     #[test]
     fn picker_builder_uses_intent_mode_and_first_selected_item() {
@@ -1320,18 +1290,6 @@ mod tests {
         assert_eq!(state.selected_index(), Some(0));
     }
 
-    #[test]
-    fn recurrence_history_correction_matrix_is_explicit() {
-        let derived = history_entry("2026-07-22");
-        assert_eq!(recurrence_history_correction_block_reason(&derived), None);
-
-        let mut completed = history_entry("2026-07-20");
-        completed.kind = RecurrenceHistoryKind::Completed;
-        assert_eq!(
-            recurrence_history_correction_block_reason(&completed),
-            Some("this slot already has an outcome")
-        );
-    }
 
     fn history_entry(slot_on: &str) -> RecurrenceHistoryEntry {
         RecurrenceHistoryEntry {

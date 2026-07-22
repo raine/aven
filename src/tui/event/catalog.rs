@@ -544,16 +544,6 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::SkipRecurrence,
     ),
     CommandSpec::implemented(
-        "recurrence-record",
-        "record a historical recurring outcome",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('c')],
-            label: "t r c",
-        }],
-        Action::BeginRecordRecurrence,
-    ),
-    CommandSpec::implemented(
         "recurrence-edit-template",
         "edit the recurring template for future occurrences",
         "Tasks",
@@ -1604,16 +1594,6 @@ pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
             label: "t r k",
         }],
         Action::SkipRecurrence,
-    ),
-    CommandSpec::implemented(
-        "detail-recurrence-record",
-        "record a historical recurring outcome",
-        "Tasks",
-        &[KeySequence {
-            codes: &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('c')],
-            label: "t r c",
-        }],
-        Action::BeginRecordRecurrence,
     ),
     CommandSpec::implemented(
         "detail-recurrence-edit-template",

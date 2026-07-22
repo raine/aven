@@ -36,8 +36,7 @@ impl App {
         self.authoring.apply_add_task_recurrence(
             None,
             None,
-            "none".to_string(),
-            Vec::new(),
+            String::new(),
             String::new(),
             "same-day".to_string(),
             defaults.timezone.to_string(),
@@ -82,8 +81,7 @@ impl App {
             attachments,
             recurrence_series_id: context.recurrence_series_id,
             template_schedule: context.template_schedule,
-            repeat_rule: context.repeat_rule,
-            repeat_weekdays: context.repeat_weekdays,
+            repeat_rule: LineEdit::new(context.repeat_rule),
             repeat_at: LineEdit::new(context.repeat_at),
             repeat_due: context.repeat_due,
             time_zone: context.time_zone,
@@ -144,8 +142,7 @@ impl App {
             self.authoring.apply_add_task_recurrence(
                 state.recurrence_series_id.clone(),
                 state.template_schedule.clone(),
-                state.repeat_rule.clone(),
-                state.repeat_weekdays.clone(),
+                state.repeat_rule.text.clone(),
                 state.repeat_at.text.clone(),
                 state.repeat_due.clone(),
                 state.time_zone.clone(),
@@ -227,55 +224,7 @@ impl App {
                 };
                 AddTaskMode::Labels(labels)
             }
-            AddTaskStep::RepeatRule => AddTaskMode::Picker {
-                field: state.focus,
-                state: PickerState::new(
-                    PickerIntent::AddTaskStatus,
-                    "Add task: recurrence rule",
-                    [
-                        "none",
-                        "daily",
-                        "weekdays",
-                        "weekly",
-                        "every 2 weeks",
-                        "every 3 weeks",
-                        crate::tui::authoring::CUSTOM_REPEAT_INTERVAL,
-                    ]
-                    .into_iter()
-                    .map(|value| {
-                        let selected = if value == crate::tui::authoring::CUSTOM_REPEAT_INTERVAL {
-                            state.repeat_rule.starts_with("every ")
-                                && state.repeat_rule != "every 2 weeks"
-                                && state.repeat_rule != "every 3 weeks"
-                        } else {
-                            value == state.repeat_rule
-                        };
-                        PickerItem {
-                            label: value.to_string(),
-                            value: value.to_string(),
-                            selected,
-                        }
-                    })
-                    .collect(),
-                    false,
-                ),
-            },
-            AddTaskStep::RepeatWeekdays => AddTaskMode::Picker {
-                field: state.focus,
-                state: PickerState::new(
-                    PickerIntent::AddTaskStatus,
-                    "Add task: recurring weekdays",
-                    ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
-                        .into_iter()
-                        .map(|value| PickerItem {
-                            label: value.to_string(),
-                            value: value.to_string(),
-                            selected: state.repeat_weekdays.iter().any(|day| day == value),
-                        })
-                        .collect(),
-                    true,
-                ),
-            },
+            AddTaskStep::RepeatRule => AddTaskMode::Compose,
             AddTaskStep::RepeatDue => AddTaskMode::Picker {
                 field: state.focus,
                 state: PickerState::new(

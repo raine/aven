@@ -5,6 +5,20 @@ use crate::tui::conflict_flow::ConflictResolutionChoice;
 use crate::tui::event::Action;
 use crate::tui::store::TaskView;
 
+fn recurring_lifecycle_message(
+    lifecycle: crate::query::RecurrenceSeriesLifecycleFilter,
+) -> &'static str {
+    match lifecycle {
+        crate::query::RecurrenceSeriesLifecycleFilter::ActiveOrPaused => {
+            "Showing active and paused recurring tasks"
+        }
+        crate::query::RecurrenceSeriesLifecycleFilter::Active => "Showing active recurring tasks",
+        crate::query::RecurrenceSeriesLifecycleFilter::Paused => "Showing paused recurring tasks",
+        crate::query::RecurrenceSeriesLifecycleFilter::Stopped => "Showing stopped recurring tasks",
+        crate::query::RecurrenceSeriesLifecycleFilter::All => "Showing all recurring tasks",
+    }
+}
+
 impl App {
     pub(in crate::tui) async fn execute(&mut self, action: Action) -> Result<()> {
         match action {
@@ -55,7 +69,6 @@ impl App {
             Action::BeginEditDue => self.begin_edit_due(),
             Action::BeginEditLabels => self.begin_edit_labels(),
             action @ (Action::SkipRecurrence
-            | Action::BeginRecordRecurrence
             | Action::BeginEditRecurrenceTemplate
             | Action::PauseRecurrence
             | Action::ResumeRecurrence
@@ -90,9 +103,8 @@ impl App {
                         .cycle_recurring_lifecycle(selected_id.as_ref())
                         .await?;
                     self.list.select_task(selected);
-                    self.set_info(format!(
-                        "recurring lifecycle {}",
-                        self.store.view_state.recurring.lifecycle.as_str()
+                    self.set_info(recurring_lifecycle_message(
+                        self.store.view_state.recurring.lifecycle,
                     ));
                 } else {
                     self.set_warning("recurring lifecycle filter is available in Recurring Tasks");

@@ -20,8 +20,6 @@ mod toast;
 mod truncate;
 
 #[cfg(test)]
-pub(crate) use self::overlays::recurrence_history_layout as recurrence_history_layout_for_test;
-#[cfg(test)]
 pub(crate) use self::sidebar::sidebar_layout;
 pub(crate) use self::sidebar::{sidebar_click_at_for, sidebar_layout_for};
 

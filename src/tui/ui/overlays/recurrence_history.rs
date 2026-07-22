@@ -1,13 +1,12 @@
 use aven_core::query::{RecurrenceHistoryEntry, RecurrenceHistoryKind};
-use aven_core::recurrence::RecurrenceOutcome;
 use ratatui::Frame;
 use ratatui::layout::{Rect, Size};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Text};
 
 use super::super::dialog::{Dialog, dialog_hint_line};
-use crate::tui::overlay::{RecurrenceHistoryMode, RecurrenceHistoryView};
-use crate::tui::theme::{ACCENT, FG, FG_MUTED, SELECTED_BG};
+use crate::tui::overlay::RecurrenceHistoryView;
+use crate::tui::theme::{FG, FG_MUTED, SELECTED_BG};
 
 const HISTORY_WIDTH: u16 = 112;
 
@@ -33,18 +32,18 @@ pub(crate) fn recurrence_history_layout(
     state: &RecurrenceHistoryView,
     terminal: Size,
 ) -> RecurrenceHistoryLayout {
-    let mode_rows = mode_lines(&state.mode).len() as u16;
+    let footer_rows = 2;
     let item_count = state.page.items.len();
     let bounds = Rect::new(0, 0, terminal.width, terminal.height);
     let max_area = crate::tui::overlay::dialog_area(bounds, HISTORY_WIDTH, terminal.height);
     let max_inner = history_inner_area(max_area);
     let entry_height = if max_inner.width < 76 { 3 } else { 2 };
-    let available_rows = max_inner.height.saturating_sub(mode_rows);
+    let available_rows = max_inner.height.saturating_sub(footer_rows);
     let visible_entries = item_count.min((available_rows / entry_height) as usize);
     let rows_height = (visible_entries as u16).saturating_mul(entry_height);
     let content_height = if visible_entries == 0 { 1 } else { rows_height };
     let height = content_height
-        .saturating_add(mode_rows)
+        .saturating_add(footer_rows)
         .saturating_add(2)
         .max(6);
     let area = crate::tui::overlay::dialog_area(bounds, HISTORY_WIDTH, height);
@@ -125,7 +124,13 @@ pub(in crate::tui::ui) fn render_recurrence_history(
             Style::new().fg(FG_MUTED),
         ));
     }
-    lines.extend(mode_lines(&state.mode));
+    lines.push(Line::default());
+    lines.push(dialog_hint_line(&[
+        ("j/k", "select"),
+        ("PgUp/PgDn", "page"),
+        ("Enter", "open task"),
+        ("Esc", "close"),
+    ]));
     let height = (lines.len() as u16).saturating_add(2).max(6);
     Dialog::new(&title, HISTORY_WIDTH, height).render_text(frame, Text::from(lines));
 }
@@ -191,57 +196,9 @@ fn history_lines(
     }
 }
 
-fn mode_lines(mode: &RecurrenceHistoryMode) -> Vec<Line<'_>> {
-    let mut lines = vec![Line::default()];
-    match mode {
-        RecurrenceHistoryMode::Browse => lines.push(dialog_hint_line(&[
-            ("j/k", "select"),
-            ("PgUp/PgDn", "page"),
-            ("Enter", "open"),
-            ("c", "correct"),
-            ("Esc", "close"),
-        ])),
-        RecurrenceHistoryMode::Outcome { slot_on, selected } => {
-            lines.push(Line::styled(
-                format!("Correct {slot_on}"),
-                Style::new().fg(ACCENT),
-            ));
-            lines.extend(
-                [
-                    ("Completed", RecurrenceOutcome::Completed),
-                    ("Skipped", RecurrenceOutcome::Skipped),
-                ]
-                .into_iter()
-                .map(|(label, outcome)| {
-                    let prefix = if outcome == *selected { "> " } else { "  " };
-                    Line::from(format!("{prefix}{label}"))
-                }),
-            );
-            lines.push(dialog_hint_line(&[("Enter", "choose"), ("Esc", "back")]));
-        }
-        RecurrenceHistoryMode::ResolutionTime {
-            slot_on,
-            outcome,
-            input,
-        } => {
-            lines.push(Line::styled(
-                format!("{} {slot_on}", outcome.as_str()),
-                Style::new().fg(ACCENT),
-            ));
-            lines.push(Line::from(format!(
-                "Resolution time (blank uses now): {}",
-                input.text
-            )));
-            lines.push(dialog_hint_line(&[("Enter", "record"), ("Esc", "back")]));
-        }
-    }
-    lines
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::overlay::RecurrenceHistoryMode;
     use aven_core::query::RecurrenceHistoryPage;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -311,7 +268,6 @@ mod tests {
                 has_more: false,
             },
             selected: Some(0),
-            mode: RecurrenceHistoryMode::Browse,
         };
 
         for width in [60, 80, 112] {
@@ -344,9 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn recurrence_history_full_page_reserves_mode_rows_and_footer_hints() {
-        use crate::tui::overlay::{LineEdit, RecurrenceHistoryMode};
-
+    fn recurrence_history_full_page_reserves_footer_hints() {
         let items = (1..=10)
             .map(|day| RecurrenceHistoryEntry {
                 kind: RecurrenceHistoryKind::Missed,
@@ -361,73 +315,42 @@ mod tests {
                 resolved_at: None,
             })
             .collect::<Vec<_>>();
-        let page = RecurrenceHistoryPage {
-            series_ref: "RCR-TEST".to_string(),
-            items,
-            offset: 0,
-            limit: 10,
-            total: 10,
-            has_more: false,
+        let view = RecurrenceHistoryView {
+            page: RecurrenceHistoryPage {
+                series_ref: "RCR-TEST".to_string(),
+                items,
+                offset: 0,
+                limit: 10,
+                total: 10,
+                has_more: false,
+            },
+            selected: Some(0),
         };
-        let slot_on = chrono::NaiveDate::from_ymd_opt(2026, 7, 20).unwrap();
-        let cases = [
-            (
-                RecurrenceHistoryMode::Browse,
-                9,
-                vec!["PgUp/PgDn", "Esc close"],
-            ),
-            (
-                RecurrenceHistoryMode::Outcome {
-                    slot_on,
-                    selected: RecurrenceOutcome::Completed,
-                },
-                7,
-                vec!["Correct 2026-07-20", "Completed", "Skipped", "Enter choose"],
-            ),
-            (
-                RecurrenceHistoryMode::ResolutionTime {
-                    slot_on,
-                    outcome: RecurrenceOutcome::Completed,
-                    input: LineEdit::new("2026-07-20T12:34:56Z".to_string()),
-                },
-                8,
-                vec!["Resolution time", "2026-07-20T12:34:56Z", "Enter record"],
-            ),
-        ];
         let terminal_size = Size::new(120, 24);
-
-        for (mode, expected_capacity, expected_text) in cases {
-            let view = RecurrenceHistoryView {
-                page: page.clone(),
-                selected: Some(0),
-                mode,
-            };
-            let layout = recurrence_history_layout(&view, terminal_size);
-            let inner = history_inner_area(layout.area);
-
-            assert_eq!(layout.visible_entries, expected_capacity);
-            assert!(layout.rows.height + mode_lines(&view.mode).len() as u16 <= inner.height);
-            for row in layout.rows.bottom()..inner.bottom() {
-                assert_eq!(
-                    recurrence_history_entry_at(&view, terminal_size, layout.rows.x, row,),
-                    None
-                );
-            }
-
-            let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
-            terminal
-                .draw(|frame| render_recurrence_history(frame, &view))
-                .unwrap();
-            let rendered = terminal
-                .backend()
-                .buffer()
-                .content()
-                .iter()
-                .map(|cell| cell.symbol())
-                .collect::<String>();
-            for text in expected_text {
-                assert!(rendered.contains(text), "missing rendered control: {text}");
-            }
+        let layout = recurrence_history_layout(&view, terminal_size);
+        let inner = history_inner_area(layout.area);
+        assert!(layout.rows.height + 2 <= inner.height);
+        for row in layout.rows.bottom()..inner.bottom() {
+            assert_eq!(
+                recurrence_history_entry_at(&view, terminal_size, layout.rows.x, row),
+                None
+            );
         }
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        terminal
+            .draw(|frame| render_recurrence_history(frame, &view))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("PgUp/PgDn"));
+        assert!(rendered.contains("Enter open task"));
+        assert!(rendered.contains("Esc close"));
+        assert!(!rendered.contains("correct"));
     }
 }

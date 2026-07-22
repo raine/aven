@@ -6,7 +6,6 @@ use crate::tui::store::EpicContext;
 pub(crate) const ADD_NOTE_TITLE: &str = "Add note";
 pub(crate) const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: project";
 pub(crate) const ADD_TASK_LABELS_TITLE: &str = "Add task: labels";
-pub(crate) const CUSTOM_REPEAT_INTERVAL: &str = "custom interval...";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InitialStatusOrigin {
@@ -26,7 +25,6 @@ pub(crate) enum AddTaskStep {
     Due,
     Images,
     RepeatRule,
-    RepeatWeekdays,
     RepeatAt,
     RepeatDue,
     TimeZone,
@@ -35,7 +33,7 @@ pub(crate) enum AddTaskStep {
 }
 
 impl AddTaskStep {
-    pub(crate) const ALL: [Self; 15] = [
+    pub(crate) const ALL: [Self; 14] = [
         Self::Project,
         Self::Status,
         Self::Priority,
@@ -43,7 +41,6 @@ impl AddTaskStep {
         Self::AvailableAt,
         Self::Due,
         Self::RepeatRule,
-        Self::RepeatWeekdays,
         Self::RepeatAt,
         Self::RepeatDue,
         Self::TimeZone,
@@ -76,7 +73,6 @@ impl AddTaskStep {
                 | Self::AvailableAt
                 | Self::Due
                 | Self::RepeatRule
-                | Self::RepeatWeekdays
                 | Self::RepeatAt
                 | Self::RepeatDue
                 | Self::TimeZone
@@ -92,7 +88,7 @@ impl AddTaskStep {
     }
 
     pub(crate) fn metadata_next(self, reverse: bool) -> Self {
-        const FIELDS: [AddTaskStep; 12] = [
+        const FIELDS: [AddTaskStep; 11] = [
             AddTaskStep::Project,
             AddTaskStep::Status,
             AddTaskStep::Priority,
@@ -100,7 +96,6 @@ impl AddTaskStep {
             AddTaskStep::AvailableAt,
             AddTaskStep::Due,
             AddTaskStep::RepeatRule,
-            AddTaskStep::RepeatWeekdays,
             AddTaskStep::RepeatAt,
             AddTaskStep::RepeatDue,
             AddTaskStep::TimeZone,
@@ -166,7 +161,6 @@ struct AddTaskDraftState {
     recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
     template_schedule: Option<aven_core::recurrence::RecurrenceSchedule>,
     repeat_rule: String,
-    repeat_weekdays: Vec<String>,
     repeat_at: String,
     repeat_due: String,
     time_zone: String,
@@ -191,8 +185,7 @@ impl Default for AddTaskDraftState {
             due_on: String::new(),
             recurrence_series_id: None,
             template_schedule: None,
-            repeat_rule: "none".to_string(),
-            repeat_weekdays: Vec::new(),
+            repeat_rule: String::new(),
             repeat_at: String::new(),
             repeat_due: "same-day".to_string(),
             time_zone: String::new(),
@@ -223,7 +216,6 @@ pub(crate) struct AddTaskContext {
     pub(crate) recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
     pub(crate) template_schedule: Option<aven_core::recurrence::RecurrenceSchedule>,
     pub(crate) repeat_rule: String,
-    pub(crate) repeat_weekdays: Vec<String>,
     pub(crate) repeat_at: String,
     pub(crate) repeat_due: String,
     pub(crate) time_zone: String,
@@ -268,28 +260,8 @@ impl AuthoringState {
         detail: &aven_core::query::RecurrenceSeriesDetail,
         project: String,
     ) {
-        use aven_core::recurrence::RecurrenceFrequency;
-
         let series = &detail.series;
-        let weekdays = series
-            .rule
-            .weekdays_set()
-            .to_string()
-            .split(',')
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .collect::<Vec<_>>();
-        let repeat_rule = match series.rule.frequency() {
-            RecurrenceFrequency::Daily => "daily".to_string(),
-            RecurrenceFrequency::Weekly
-                if series.rule.interval() == 1
-                    && series.rule.weekdays_set().to_string() == "mon,tue,wed,thu,fri" =>
-            {
-                "weekdays".to_string()
-            }
-            RecurrenceFrequency::Weekly if series.rule.interval() == 1 => "weekly".to_string(),
-            RecurrenceFrequency::Weekly => format!("every {} weeks", series.rule.interval()),
-        };
+        let repeat_rule = crate::tui::recurrence_text::natural_rule_label(series.rule);
         let template_schedule = aven_core::recurrence::RecurrenceSchedule::new(
             series.rule.clone(),
             series.timezone.clone(),
@@ -312,7 +284,6 @@ impl AuthoringState {
             recurrence_series_id: Some(series.id.clone()),
             template_schedule: Some(template_schedule),
             repeat_rule,
-            repeat_weekdays: weekdays,
             repeat_at: series
                 .available_local_time
                 .map(|value| value.format("%H:%M").to_string())
@@ -381,7 +352,6 @@ impl AuthoringState {
             recurrence_series_id: draft.recurrence_series_id.clone(),
             template_schedule: draft.template_schedule.clone(),
             repeat_rule: draft.repeat_rule.clone(),
-            repeat_weekdays: draft.repeat_weekdays.clone(),
             repeat_at: draft.repeat_at.clone(),
             repeat_due: draft.repeat_due.clone(),
             time_zone: draft.time_zone.clone(),
@@ -546,7 +516,6 @@ impl AuthoringState {
         series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
         template_schedule: Option<aven_core::recurrence::RecurrenceSchedule>,
         repeat_rule: String,
-        repeat_weekdays: Vec<String>,
         repeat_at: String,
         repeat_due: String,
         time_zone: String,
@@ -558,7 +527,6 @@ impl AuthoringState {
         draft.recurrence_series_id = series_id;
         draft.template_schedule = template_schedule;
         draft.repeat_rule = repeat_rule;
-        draft.repeat_weekdays = repeat_weekdays;
         draft.repeat_at = repeat_at;
         draft.repeat_due = repeat_due;
         draft.time_zone = time_zone;
