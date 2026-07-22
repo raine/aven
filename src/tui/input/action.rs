@@ -54,13 +54,15 @@ impl App {
             Action::BeginEditAvailability => self.begin_edit_availability(),
             Action::BeginEditDue => self.begin_edit_due(),
             Action::BeginEditLabels => self.begin_edit_labels(),
-            Action::SkipRecurrence => self.skip_recurrence().await?,
-            Action::BeginRecordRecurrence => self.begin_record_recurrence(),
-            Action::BeginEditRecurrenceTemplate => self.begin_edit_recurrence_template().await?,
-            Action::PauseRecurrence => self.pause_recurrence().await?,
-            Action::ResumeRecurrence => self.resume_recurrence().await?,
-            Action::StopRecurrence => self.stop_recurrence().await?,
-            Action::ShowRecurrenceHistory => self.show_recurrence_history().await?,
+            action @ (Action::SkipRecurrence
+            | Action::BeginRecordRecurrence
+            | Action::BeginEditRecurrenceTemplate
+            | Action::PauseRecurrence
+            | Action::ResumeRecurrence
+            | Action::StopRecurrence
+            | Action::ShowRecurrenceHistory) => {
+                self.execute_selected_recurrence_action(action).await?
+            }
             Action::Delete => self.begin_delete_task(),
             Action::Restore => self.update_deleted(false).await?,
             Action::BeginStatusPicker => self.begin_status_picker(),

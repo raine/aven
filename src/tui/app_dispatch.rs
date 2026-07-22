@@ -8,8 +8,8 @@ use crate::tui::app::{App, DetailSection, DetailTargetId, Focus, FooterChoiceMod
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::detail_session::DetailTargetActivation;
 use crate::tui::event::{
-    Action, CommandCompletion, CommandLookup, command_cycle_options, complete_command,
-    lookup_command,
+    Action, CommandCompletion, CommandSpecLookup, command_cycle_options, complete_command,
+    lookup_command_spec,
 };
 use crate::tui::input::key::{
     ImagePasteTarget, KeyInput, KeyRouteState, NormalKeyInput, route_key, route_normal_key,
@@ -248,6 +248,12 @@ impl App {
                     {
                         self.list.focus_tasks();
                         self.list.select_task(Some(hit.series_index));
+                        self.last_series_click = None;
+                        let target = crate::tui::app_recurrence::RecurrenceTargetId {
+                            workspace_id: self.store.active_workspace.id.clone(),
+                            series_id: hit.series_id,
+                        };
+                        self.begin_recurrence_context_menu(target).await?;
                     }
                     return Ok(());
                 }
@@ -917,9 +923,7 @@ impl App {
             OverlayState::Command { mut state } => match key.code {
                 KeyCode::Esc => {}
                 KeyCode::Enter => {
-                    if let Some(action) = self.accept_command_input(state.input.as_str()) {
-                        self.execute(action).await?;
-                    } else {
+                    if !self.accept_command_input(&state).await? {
                         self.overlay = Some(OverlayState::Command { state });
                     }
                 }
@@ -1506,23 +1510,41 @@ impl App {
         }
     }
 
-    fn accept_command_input(&mut self, input: &str) -> Option<Action> {
-        match lookup_command(input) {
-            CommandLookup::Found(action) => {
+    async fn accept_command_input(&mut self, state: &CommandState) -> Result<bool> {
+        let input = state.input.as_str();
+        match lookup_command_spec(input) {
+            CommandSpecLookup::Found(command) => {
                 self.pending_shortcut.clear();
-                Some(action)
+                if let Some(unavailable) = state
+                    .unavailable
+                    .iter()
+                    .find(|override_| override_.action == command.action)
+                {
+                    self.set_warning(format!(
+                        ":{} is disabled: {}",
+                        command.name, unavailable.reason
+                    ));
+                    return Ok(true);
+                }
+                if command.action.recurrence_kind().is_some() {
+                    self.execute_targeted_recurrence_action(state.target.clone(), command.action)
+                        .await?;
+                } else {
+                    self.execute(command.action).await?;
+                }
+                Ok(true)
             }
-            CommandLookup::Empty => {
+            CommandSpecLookup::Empty => {
                 self.set_info("empty command");
-                None
+                Ok(false)
             }
-            CommandLookup::Ambiguous => {
+            CommandSpecLookup::Ambiguous => {
                 self.set_warning(format!("ambiguous command: {}", input.trim()));
-                None
+                Ok(false)
             }
-            CommandLookup::Missing => {
+            CommandSpecLookup::Missing => {
                 self.set_warning(format!("unknown command: {}", input.trim()));
-                None
+                Ok(false)
             }
         }
     }

@@ -269,9 +269,11 @@ impl App {
 
     pub(crate) fn begin_command(&mut self) {
         self.pending_shortcut.clear();
-        self.overlay = Some(OverlayState::Command {
-            state: crate::tui::overlay::CommandState::blank(),
-        });
+        let (target, unavailable) = self.recurrence_command_context();
+        let mut state = crate::tui::overlay::CommandState::blank();
+        state.target = target;
+        state.unavailable = unavailable;
+        self.overlay = Some(OverlayState::Command { state });
     }
 
     pub(super) fn push_navigation_state(&mut self, previous: TaskViewState) {

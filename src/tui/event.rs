@@ -12,9 +12,10 @@ pub(crate) use self::catalog::{
 };
 #[allow(unused_imports)]
 pub(crate) use self::lookup::{
-    CommandCompletion, CommandLookup, ShortcutLookup, command_cycle_options, complete_command,
-    key_label, lookup_command, matching_commands, prefix_hint_commands, resolve_shortcut,
-    resolve_shortcut_for, resolve_shortcut_in, shortcut_label,
+    CommandCompletion, CommandLookup, CommandSpecLookup, ShortcutLookup, command_cycle_options,
+    complete_command, key_label, lookup_command, lookup_command_spec, matching_commands,
+    prefix_hint_commands, resolve_shortcut, resolve_shortcut_for, resolve_shortcut_in,
+    shortcut_label,
 };
 
 #[cfg(test)]

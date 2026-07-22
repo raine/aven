@@ -705,12 +705,14 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
             cursor,
             cycle_input,
             highlighted,
+            unavailable,
         } => render_command(
             frame,
             input,
             *cursor,
             cycle_input.as_deref(),
             highlighted.as_deref(),
+            unavailable,
         ),
         OverlayView::AddTask(state) => self::overlays::render_add_task(frame, state),
         OverlayView::TextInput(state)

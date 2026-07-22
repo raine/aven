@@ -1,12 +1,15 @@
+use crate::ids::WorkspaceId;
 use crate::query::SearchMatchedField;
 use crate::tui::authoring::{
     AddTaskStep, InitialStatusOrigin, PendingTaskAttachmentSummary,
 };
 use crate::tui::conflict_flow::ConflictResolutionChoice;
+use crate::tui::event::Action;
 use crate::tui::overlay::text_input::LineEdit;
 use crate::tui::store::{ConflictTarget, TaskOrder, TaskView, TuiDatabaseStats, TuiSyncStatus};
 use crate::tui::task_selection::TaskSelection;
 use crate::tui::text::{char_boundary_at_or_before, normalize_pasted_newlines};
+use aven_core::recurrence::RecurrenceSeriesId;
 use chrono::{DateTime, Utc};
 use unicode_width::UnicodeWidthStr;
 
@@ -143,11 +146,27 @@ impl SearchState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum OverlayTarget {
+    RecurrenceSeries {
+        workspace_id: WorkspaceId,
+        series_id: RecurrenceSeriesId,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CommandAvailabilityOverride {
+    pub(crate) action: Action,
+    pub(crate) reason: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CommandState {
     pub(crate) input: LineEdit,
     pub(crate) cycle_input: Option<String>,
     pub(crate) cycle_index: usize,
     pub(crate) highlighted: Option<String>,
+    pub(crate) target: Option<OverlayTarget>,
+    pub(crate) unavailable: Vec<CommandAvailabilityOverride>,
 }
 
 impl CommandState {
@@ -157,6 +176,8 @@ impl CommandState {
             cycle_input: None,
             cycle_index: 0,
             highlighted: None,
+            target: None,
+            unavailable: Vec::new(),
         }
     }
 
@@ -167,6 +188,8 @@ impl CommandState {
             cycle_input: None,
             cycle_index: 0,
             highlighted: None,
+            target: None,
+            unavailable: Vec::new(),
         }
     }
 
@@ -355,7 +378,9 @@ pub(crate) enum TextIntent {
         selection: TaskSelection,
         mixed: bool,
     },
-    RecordRecurrenceOutcome,
+    RecordRecurrenceOutcome {
+        target: OverlayTarget,
+    },
     ResolveConflictManually {
         target: ConflictTarget,
     },
@@ -423,6 +448,12 @@ pub(crate) enum PickerIntent {
     },
     RemoveDependency {
         selection: crate::tui::task_selection::TaskSelection,
+    },
+    RecurrenceActions {
+        target: OverlayTarget,
+    },
+    StopRecurrence {
+        target: OverlayTarget,
     },
 }
 

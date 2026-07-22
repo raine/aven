@@ -4476,10 +4476,15 @@ mod recurrence_surfaces {
         let mut store = test_store().await;
         let (task_id, selected) = create_daily(&mut store).await;
 
-        store
-            .pause_recurrence(Some(selected))
-            .await
+        let series_id = store.tasks[selected]
+            .recurrence
+            .as_ref()
             .unwrap()
+            .series_id
+            .clone();
+        store
+            .pause_recurrence(&series_id, Some(&task_id))
+            .await
             .unwrap();
         assert!(!store.tasks.iter().any(|item| item.task.id == task_id));
 

@@ -98,16 +98,9 @@ async fn add_recurring_series(
 async fn recurring_series_detail_opens_hidden_occurrence_and_returns() {
     let mut app = test_app().await;
     let (task_id, series_id) = add_recurring_series(&mut app, "Daily review").await;
-    let selected = app
-        .store
-        .tasks
-        .iter()
-        .position(|item| item.task.id == task_id)
-        .unwrap();
     app.store
-        .pause_recurrence(Some(selected))
+        .pause_recurrence(&series_id, Some(&task_id))
         .await
-        .unwrap()
         .unwrap();
     app.widgets
         .table
@@ -147,16 +140,9 @@ async fn recurring_series_detail_opens_hidden_occurrence_and_returns() {
 async fn recurring_series_lifecycle_filter_reveals_stopped_series() {
     let mut app = test_app().await;
     let (task_id, series_id) = add_recurring_series(&mut app, "Finite review").await;
-    let selected = app
-        .store
-        .tasks
-        .iter()
-        .position(|item| item.task.id == task_id)
-        .unwrap();
     app.store
-        .stop_recurrence(Some(selected))
+        .stop_recurrence(&series_id, Some(&task_id), false)
         .await
-        .unwrap()
         .unwrap();
     app.widgets
         .table
@@ -167,6 +153,213 @@ async fn recurring_series_lifecycle_filter_reveals_stopped_series() {
     app.refresh().await.unwrap();
     assert_eq!(app.store.recurrence_series.len(), 1);
     assert_eq!(app.store.recurrence_series[0].series.id, series_id);
+}
+
+#[tokio::test]
+async fn recurrence_stop_picker_defaults_to_keep_and_cancellation_is_inert() {
+    let mut app = test_app().await;
+    let (_task_id, series_id) = add_recurring_series(&mut app, "Safe stop").await;
+    app.widgets
+        .table
+        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+
+    app.execute_selected_recurrence_action(Action::StopRecurrence)
+        .await
+        .unwrap();
+    let Some(OverlayState::Picker(picker)) = app.overlay.as_ref() else {
+        panic!("expected stop picker");
+    };
+    assert_eq!(picker.route, OverlayRoute::StopRecurrence);
+    assert_eq!(picker.items[0].value, "keep");
+    assert_eq!(picker.selected, 0);
+    assert_eq!(
+        app.store
+            .recurrence_detail_for_series(&series_id)
+            .await
+            .unwrap()
+            .series
+            .state,
+        aven_core::recurrence::RecurrenceSeriesState::Active
+    );
+
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .await
+        .unwrap();
+    assert_eq!(
+        app.store
+            .recurrence_detail_for_series(&series_id)
+            .await
+            .unwrap()
+            .series
+            .state,
+        aven_core::recurrence::RecurrenceSeriesState::Active
+    );
+
+    let target = Some(OverlayTarget::RecurrenceSeries {
+        workspace_id: app.store.active_workspace.id.clone(),
+        series_id: series_id.clone(),
+    });
+    app.submit_stop_recurrence(target, Some("unknown"))
+        .await
+        .unwrap();
+    assert_eq!(toast_message(&app).as_deref(), Some("invalid stop outcome"));
+    assert_eq!(
+        app.store
+            .recurrence_detail_for_series(&series_id)
+            .await
+            .unwrap()
+            .series
+            .state,
+        aven_core::recurrence::RecurrenceSeriesState::Active
+    );
+}
+
+#[tokio::test]
+async fn recurrence_stop_keep_and_skip_apply_the_selected_atomic_outcome() {
+    for skip_current in [false, true] {
+        let mut app = test_app().await;
+        let (task_id, series_id) = add_recurring_series(&mut app, "Final occurrence").await;
+        app.widgets
+            .table
+            .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+        app.execute_selected_recurrence_action(Action::StopRecurrence)
+            .await
+            .unwrap();
+        if skip_current {
+            app.handle_overlay_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+                .await
+                .unwrap();
+        }
+        app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            app.store
+                .recurrence_detail_for_series(&series_id)
+                .await
+                .unwrap()
+                .series
+                .state,
+            aven_core::recurrence::RecurrenceSeriesState::Stopped
+        );
+        assert_eq!(
+            app.store.view_state.recurring.lifecycle,
+            RecurrenceSeriesLifecycleFilter::All
+        );
+        assert_eq!(
+            app.store
+                .selected_recurrence_series(app.widgets.table.selected())
+                .unwrap()
+                .series
+                .id,
+            series_id
+        );
+        assert!(toast_message(&app).unwrap().contains(if skip_current {
+            "skipped current occurrence"
+        } else {
+            "kept current occurrence"
+        }));
+
+        app.store.show_task_by_id(task_id).await.unwrap();
+        let task = &app.store.tasks[0];
+        assert_eq!(
+            task.task.status.as_str(),
+            if skip_current { "canceled" } else { "todo" }
+        );
+        assert_eq!(
+            task.recurrence.as_ref().unwrap().outcome.is_some(),
+            skip_current
+        );
+    }
+}
+
+#[tokio::test]
+async fn recurrence_overlay_retains_series_identity_across_selection_change() {
+    let mut app = test_app().await;
+    let (_, first_id) = add_recurring_series(&mut app, "Alpha series").await;
+    let (_, second_id) = add_recurring_series(&mut app, "Beta series").await;
+    app.widgets
+        .table
+        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+    let first_index = app
+        .store
+        .recurrence_series
+        .iter()
+        .position(|item| item.series.id == first_id)
+        .unwrap();
+    let second_index = app
+        .store
+        .recurrence_series
+        .iter()
+        .position(|item| item.series.id == second_id)
+        .unwrap();
+    app.widgets.table.select(Some(first_index));
+    app.execute_selected_recurrence_action(Action::StopRecurrence)
+        .await
+        .unwrap();
+    app.widgets.table.select(Some(second_index));
+
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        app.store
+            .recurrence_detail_for_series(&first_id)
+            .await
+            .unwrap()
+            .series
+            .state,
+        aven_core::recurrence::RecurrenceSeriesState::Stopped
+    );
+    assert_eq!(
+        app.store
+            .recurrence_detail_for_series(&second_id)
+            .await
+            .unwrap()
+            .series
+            .state,
+        aven_core::recurrence::RecurrenceSeriesState::Active
+    );
+}
+
+#[tokio::test]
+async fn recurrence_palette_disables_invalid_lifecycle_action_with_reason() {
+    let mut app = test_app().await;
+    let (task_id, series_id) = add_recurring_series(&mut app, "Paused command").await;
+    app.store
+        .pause_recurrence(&series_id, Some(&task_id))
+        .await
+        .unwrap();
+    app.widgets
+        .table
+        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+    app.begin_command();
+    let Some(OverlayState::Command { state }) = app.overlay.as_mut() else {
+        panic!("expected command palette");
+    };
+    state.input = LineEdit::new("recurrence-pause".to_string());
+
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
+    assert!(
+        toast_message(&app)
+            .unwrap()
+            .contains("series is already paused")
+    );
+
+    app.notification = None;
+    app.execute_selected_recurrence_action(Action::PauseRecurrence)
+        .await
+        .unwrap();
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("series is already paused")
+    );
 }
 
 fn png_bytes(width: u32, height: u32) -> Vec<u8> {
@@ -4021,6 +4214,7 @@ mod filters_and_workspaces {
             scroll: 0,
             multi: false,
             mode: PickerMode::Navigate,
+            target: None,
         }));
 
         app.dispatch_mouse(header_click(2), (140, 24).into())
@@ -4235,6 +4429,30 @@ mod task_row_mouse {
         panic!("expected status hit target");
     }
 
+    fn recurrence_right_click_event(
+        app: &App,
+        size: (u16, u16),
+        series_index: usize,
+    ) -> MouseEvent {
+        let task_area = task_list_area(size);
+        for row in task_area.y..task_area.y.saturating_add(task_area.height) {
+            for column in task_area.x..task_area.x.saturating_add(task_area.width) {
+                if crate::tui::ui::recurrence_series_at_position(
+                    &app.store,
+                    &app.widgets.table,
+                    task_area,
+                    column,
+                    row,
+                )
+                .is_some_and(|hit| hit.series_index == series_index)
+                {
+                    return right_click(column, row);
+                }
+            }
+        }
+        panic!("expected recurrence series hit target");
+    }
+
     #[tokio::test]
     async fn task_row_click_selects_task() {
         let mut app = test_app().await;
@@ -4265,6 +4483,78 @@ mod task_row_mouse {
             Some(FooterChoiceMode::Status)
         );
         assert!(app.overlay.is_none());
+    }
+
+    #[tokio::test]
+    async fn recurrence_context_menu_matches_lifecycle() {
+        let mut app = test_app().await;
+        let (task_id, series_id) = add_recurring_series(&mut app, "Context series").await;
+        app.widgets
+            .table
+            .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+        let size = (140, 24);
+
+        let click = recurrence_right_click_event(&app, size, 0);
+        app.dispatch_mouse(click, size.into()).await.unwrap();
+        let Some(OverlayState::Picker(picker)) = app.overlay.as_ref() else {
+            panic!("expected recurrence context menu");
+        };
+        assert_eq!(picker.route, OverlayRoute::RecurrenceActions);
+        let values = picker
+            .items
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>();
+        assert!(values.contains(&"pause"));
+        assert!(values.contains(&"stop"));
+        assert!(!values.contains(&"resume"));
+
+        app.cancel_overlay();
+        app.store
+            .pause_recurrence(&series_id, Some(&task_id))
+            .await
+            .unwrap();
+        let click = recurrence_right_click_event(&app, size, 0);
+        app.dispatch_mouse(click, size.into()).await.unwrap();
+        let Some(OverlayState::Picker(picker)) = app.overlay.as_ref() else {
+            panic!("expected paused recurrence context menu");
+        };
+        let values = picker
+            .items
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>();
+        assert!(values.contains(&"resume"));
+        assert!(values.contains(&"stop"));
+        assert!(!values.contains(&"pause"));
+
+        app.cancel_overlay();
+        let mut app = test_app().await;
+        add_recurring_series(&mut app, "Stopped context").await;
+        app.widgets
+            .table
+            .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+        app.execute_selected_recurrence_action(Action::StopRecurrence)
+            .await
+            .unwrap();
+        app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .await
+            .unwrap();
+        let click = recurrence_right_click_event(&app, size, 0);
+        app.dispatch_mouse(click, size.into()).await.unwrap();
+        let Some(OverlayState::Picker(picker)) = app.overlay.as_ref() else {
+            panic!("expected stopped recurrence context menu");
+        };
+        let values = picker
+            .items
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>();
+        assert!(!values.contains(&"pause"));
+        assert!(!values.contains(&"resume"));
+        assert!(!values.contains(&"stop"));
+        assert!(values.contains(&"history"));
+        assert!(values.contains(&"edit-template"));
     }
 
     #[tokio::test]

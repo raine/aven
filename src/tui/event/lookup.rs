@@ -2,10 +2,19 @@ use crossterm::event::KeyCode;
 
 use super::{Action, COMMANDS, CommandContext, CommandSpec, KeySequence};
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CommandLookup {
     Empty,
     Found(Action),
+    Ambiguous,
+    Missing,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum CommandSpecLookup {
+    Empty,
+    Found(&'static CommandSpec),
     Ambiguous,
     Missing,
 }
@@ -234,6 +243,33 @@ pub(crate) fn prefix_hint_commands(
         .collect()
 }
 
+pub(crate) fn lookup_command_spec(input: &str) -> CommandSpecLookup {
+    let input = normalize_command_input(input);
+    if input.is_empty() {
+        return CommandSpecLookup::Empty;
+    }
+    let matches = COMMANDS
+        .iter()
+        .filter_map(|command| command_match_rank(command, input).map(|rank| (rank, command)))
+        .collect::<Vec<_>>();
+    let Some(best_rank) = matches.iter().map(|(rank, _)| *rank).min() else {
+        return CommandSpecLookup::Missing;
+    };
+    let mut best_matches = matches
+        .into_iter()
+        .filter(|(rank, _)| *rank == best_rank)
+        .map(|(_, command)| command);
+    let Some(command) = best_matches.next() else {
+        return CommandSpecLookup::Missing;
+    };
+    if best_matches.next().is_some() {
+        CommandSpecLookup::Ambiguous
+    } else {
+        CommandSpecLookup::Found(command)
+    }
+}
+
+#[allow(dead_code)]
 pub(crate) fn lookup_command(input: &str) -> CommandLookup {
     let input = normalize_command_input(input);
     if input.is_empty() {

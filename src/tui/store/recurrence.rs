@@ -59,36 +59,35 @@ impl TuiStore {
         ))
     }
 
-    pub(crate) async fn recurrence_detail_for_task(
+    pub(crate) async fn recurrence_detail_for_series(
         &self,
-        index: Option<usize>,
-    ) -> Result<Option<RecurrenceSeriesDetail>> {
-        let Some(summary) = self
-            .selected_task(index)
-            .and_then(|item| item.recurrence.as_ref())
-        else {
-            return Ok(None);
-        };
+        series_id: &RecurrenceSeriesId,
+    ) -> Result<RecurrenceSeriesDetail> {
         self.database
-            .recurrence_series_detail(&self.active_workspace.id, &summary.series_id)
+            .recurrence_series_detail(&self.active_workspace.id, series_id)
             .await
-            .map(Some)
     }
 
-    pub(crate) async fn recurrence_history_for_task(
+    pub(crate) async fn recurrence_project_key(
         &self,
-        index: Option<usize>,
-    ) -> Result<Option<RecurrenceHistoryPage>> {
-        let Some(summary) = self
-            .selected_task(index)
-            .and_then(|item| item.recurrence.as_ref())
-        else {
-            return Ok(None);
-        };
+        detail: &RecurrenceSeriesDetail,
+    ) -> Result<String> {
         self.database
-            .recurrence_history(&self.active_workspace.id, &summary.series_id, 0, 200)
+            .resolve_project_for_stored_value(
+                &self.active_workspace.id,
+                &detail.series.project_id.to_string(),
+            )
             .await
-            .map(Some)
+            .map(|project| project.key)
+    }
+
+    pub(crate) async fn recurrence_history_for_series(
+        &self,
+        series_id: &RecurrenceSeriesId,
+    ) -> Result<RecurrenceHistoryPage> {
+        self.database
+            .recurrence_history(&self.active_workspace.id, series_id, 0, 200)
+            .await
     }
 
     pub(crate) async fn update_recurrence_template(
@@ -115,27 +114,29 @@ impl TuiStore {
 
     pub(crate) async fn skip_recurrence(
         &mut self,
-        index: Option<usize>,
-    ) -> Result<Option<MutationMessage>> {
-        let Some(item) = self.selected_task(index).cloned() else {
-            return Ok(None);
-        };
-        let Some(summary) = item.recurrence.as_ref() else {
-            return Ok(None);
-        };
+        series_id: &RecurrenceSeriesId,
+        task_id: &crate::ids::TaskId,
+        slot_on: NaiveDate,
+    ) -> Result<MutationMessage> {
+        let series_ref = self
+            .database
+            .recurrence_series_ref(&self.active_workspace.id, series_id)
+            .await?;
         self.database
             .resolve_recurrence_occurrence_with_undo(
                 &self.active_workspace,
-                &item.task.id,
+                task_id,
                 RecurrenceOutcome::Skipped,
-                crate::undo::UndoContext::tui(format!("skip {}", summary.series_ref)),
+                crate::undo::UndoContext::tui(format!("skip {series_ref}")),
             )
             .await?;
-        let selected = self.refresh(None).await?;
-        Ok(Some(MutationMessage::new(
-            format!("skipped {} slot {}", summary.series_ref, summary.slot_on),
+        let selected = self
+            .refresh_after_recurrence_mutation(series_id, Some(task_id))
+            .await?;
+        Ok(MutationMessage::new(
+            format!("skipped {series_ref} slot {slot_on}"),
             selected,
-        )))
+        ))
     }
 
     pub(crate) async fn record_recurrence_outcome(
@@ -169,7 +170,9 @@ impl TuiStore {
             .database
             .recurrence_series_ref(&self.active_workspace.id, &result.series.id)
             .await?;
-        let selected = self.refresh(None).await?;
+        let selected = self
+            .refresh_after_recurrence_mutation(series_id, None)
+            .await?;
         Ok(MutationMessage::new(
             format!("recorded {} {} on {slot_on}", series_ref, outcome.as_str()),
             selected,
@@ -178,65 +181,98 @@ impl TuiStore {
 
     pub(crate) async fn pause_recurrence(
         &mut self,
-        index: Option<usize>,
-    ) -> Result<Option<MutationMessage>> {
-        self.set_recurrence_state(index, RecurrenceStateAction::Pause)
+        series_id: &RecurrenceSeriesId,
+        selected_task_id: Option<&crate::ids::TaskId>,
+    ) -> Result<MutationMessage> {
+        self.set_recurrence_state(series_id, selected_task_id, RecurrenceStateAction::Pause)
             .await
     }
 
     pub(crate) async fn resume_recurrence(
         &mut self,
-        index: Option<usize>,
-    ) -> Result<Option<MutationMessage>> {
-        self.set_recurrence_state(index, RecurrenceStateAction::Resume)
+        series_id: &RecurrenceSeriesId,
+        selected_task_id: Option<&crate::ids::TaskId>,
+    ) -> Result<MutationMessage> {
+        self.set_recurrence_state(series_id, selected_task_id, RecurrenceStateAction::Resume)
             .await
     }
 
     pub(crate) async fn stop_recurrence(
         &mut self,
-        index: Option<usize>,
-    ) -> Result<Option<MutationMessage>> {
-        self.set_recurrence_state(index, RecurrenceStateAction::Stop)
-            .await
+        series_id: &RecurrenceSeriesId,
+        selected_task_id: Option<&crate::ids::TaskId>,
+        skip_current: bool,
+    ) -> Result<MutationMessage> {
+        let series_ref = self
+            .database
+            .recurrence_series_ref(&self.active_workspace.id, series_id)
+            .await?;
+        self.database
+            .stop_recurrence_series(&self.active_workspace, series_id, skip_current)
+            .await?;
+        if self.view_state.view == super::TaskView::Recurring {
+            self.view_state.recurring.lifecycle =
+                aven_core::query::RecurrenceSeriesLifecycleFilter::All;
+        }
+        let selected = self
+            .refresh_after_recurrence_mutation(series_id, selected_task_id)
+            .await?;
+        let outcome = if skip_current {
+            "skipped current occurrence"
+        } else {
+            "kept current occurrence"
+        };
+        Ok(MutationMessage::new(
+            format!("stopped recurring series {series_ref}; {outcome}"),
+            selected,
+        ))
     }
 
     async fn set_recurrence_state(
         &mut self,
-        index: Option<usize>,
+        series_id: &RecurrenceSeriesId,
+        selected_task_id: Option<&crate::ids::TaskId>,
         action: RecurrenceStateAction,
-    ) -> Result<Option<MutationMessage>> {
-        let Some(item) = self.selected_task(index).cloned() else {
-            return Ok(None);
-        };
-        let Some(summary) = item.recurrence.as_ref() else {
-            return Ok(None);
-        };
+    ) -> Result<MutationMessage> {
+        let series_ref = self
+            .database
+            .recurrence_series_ref(&self.active_workspace.id, series_id)
+            .await?;
         match action {
             RecurrenceStateAction::Pause => {
                 self.database
-                    .pause_recurrence_series(&self.active_workspace, &summary.series_id)
+                    .pause_recurrence_series(&self.active_workspace, series_id)
                     .await?;
             }
             RecurrenceStateAction::Resume => {
                 self.database
-                    .resume_recurrence_series(
-                        &self.active_workspace,
-                        &summary.series_id,
-                        Utc::now(),
-                    )
-                    .await?;
-            }
-            RecurrenceStateAction::Stop => {
-                self.database
-                    .stop_recurrence_series(&self.active_workspace, &summary.series_id, false)
+                    .resume_recurrence_series(&self.active_workspace, series_id, Utc::now())
                     .await?;
             }
         }
-        let selected = self.refresh(Some(&item.task.id)).await?;
-        Ok(Some(MutationMessage::new(
-            format!("{} recurring series {}", action.verb(), summary.series_ref),
+        let selected = self
+            .refresh_after_recurrence_mutation(series_id, selected_task_id)
+            .await?;
+        Ok(MutationMessage::new(
+            format!("{} recurring series {series_ref}", action.verb()),
             selected,
-        )))
+        ))
+    }
+
+    async fn refresh_after_recurrence_mutation(
+        &mut self,
+        series_id: &RecurrenceSeriesId,
+        selected_task_id: Option<&crate::ids::TaskId>,
+    ) -> Result<Option<usize>> {
+        if self.view_state.view == super::TaskView::Recurring {
+            return Ok(self
+                .refresh_with_scope_fallback(Some(&super::MainRowSelection::RecurrenceSeries(
+                    series_id.clone(),
+                )))
+                .await?
+                .selected);
+        }
+        self.refresh(selected_task_id).await
     }
 }
 
@@ -244,7 +280,6 @@ impl TuiStore {
 enum RecurrenceStateAction {
     Pause,
     Resume,
-    Stop,
 }
 
 impl RecurrenceStateAction {
@@ -252,7 +287,6 @@ impl RecurrenceStateAction {
         match self {
             Self::Pause => "paused",
             Self::Resume => "resumed",
-            Self::Stop => "stopped",
         }
     }
 }

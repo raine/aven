@@ -398,12 +398,27 @@ pub(super) fn render_command(
     cursor: usize,
     cycle_input: Option<&str>,
     highlighted: Option<&str>,
+    unavailable: &[crate::tui::overlay::CommandAvailabilityOverride],
 ) {
     let matches = matching_commands(cycle_input.unwrap_or(input));
     let height = (matches.len().min(8) as u16).saturating_add(3);
 
     let mut lines = vec![input_line(":", input, cursor)];
     for command in matches.into_iter().take(8) {
+        let unavailable_reason = unavailable
+            .iter()
+            .find(|override_| override_.action == command.action)
+            .map(|override_| override_.reason);
+        let display = unavailable_reason.map(|reason| CommandSpec {
+            description: reason,
+            action: crate::tui::event::Action::Disabled {
+                name: command.name,
+                reason,
+            },
+            lifecycle: CommandLifecycle::Disabled { reason },
+            ..*command
+        });
+        let command = display.as_ref().unwrap_or(command);
         let line = if highlighted == Some(command.name) {
             command_line_with_highlight(command, true)
         } else {
@@ -597,7 +612,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_command(frame, input, cursor, None, None))
+            .draw(|frame| render_command(frame, input, cursor, None, None, &[]))
             .unwrap();
         buffer_text(terminal.backend())
     }
@@ -611,7 +626,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_command(frame, input, cursor, cycle_input, highlighted))
+            .draw(|frame| render_command(frame, input, cursor, cycle_input, highlighted, &[]))
             .unwrap();
         terminal.backend().buffer().clone()
     }
@@ -1035,6 +1050,32 @@ mod tests {
                 CommandLifecycle::Disabled { .. } => assert!(rendered.contains("disabled")),
             }
         }
+    }
+
+    #[test]
+    fn recurrence_palette_renders_disabled_reason() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let unavailable = [crate::tui::overlay::CommandAvailabilityOverride {
+            action: crate::tui::event::Action::PauseRecurrence,
+            reason: "series is already paused",
+        }];
+        terminal
+            .draw(|frame| {
+                render_command(
+                    frame,
+                    "recurrence-pause",
+                    "recurrence-pause".len(),
+                    None,
+                    None,
+                    &unavailable,
+                )
+            })
+            .unwrap();
+        let rendered = buffer_text(terminal.backend());
+
+        assert!(rendered.contains("disabled"));
+        assert!(rendered.contains("series is already paused"));
     }
 
     #[test]

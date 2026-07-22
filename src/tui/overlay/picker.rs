@@ -223,6 +223,7 @@ mod tests {
             scroll: 0,
             multi: false,
             mode: PickerMode::Navigate,
+            target: None,
         }
     }
 
@@ -242,6 +243,7 @@ mod tests {
             scroll: 0,
             multi: true,
             mode: PickerMode::Navigate,
+            target: None,
         }
     }
 
@@ -267,6 +269,7 @@ mod tests {
             scroll: 0,
             multi: false,
             mode: PickerMode::Navigate,
+            target: None,
         };
         normalize_picker_selection(&mut state);
         assert_eq!(state.selected, 0);
@@ -288,6 +291,7 @@ mod tests {
             scroll: 0,
             multi: false,
             mode: PickerMode::Navigate,
+            target: None,
         };
 
         assert_eq!(visible_picker_indices(&state), vec![0]);
@@ -308,6 +312,7 @@ mod tests {
             scroll: 0,
             multi: false,
             mode: PickerMode::Navigate,
+            target: None,
         };
 
         assert_eq!(visible_picker_indices(&state), vec![0]);

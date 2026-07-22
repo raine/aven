@@ -95,6 +95,7 @@ pub(crate) enum OverlayView {
         cursor: usize,
         cycle_input: Option<String>,
         highlighted: Option<String>,
+        unavailable: Vec<super::state::CommandAvailabilityOverride>,
     },
     AddTask(AddTaskView),
     TextInput(TextInputView),
@@ -182,7 +183,7 @@ impl From<&TextIntent> for TextInputKind {
             TextIntent::ConfirmDeleteProject { .. } => Self::ConfirmDeleteProject,
             TextIntent::EditTitle { .. } => Self::EditTitle,
             TextIntent::EditAvailability { .. } | TextIntent::EditDue { .. } => Self::EditDate,
-            TextIntent::RecordRecurrenceOutcome => Self::RecordRecurrenceOutcome,
+            TextIntent::RecordRecurrenceOutcome { .. } => Self::RecordRecurrenceOutcome,
             TextIntent::ResolveConflictManually { .. } => Self::ConflictManual,
         }
     }
@@ -377,6 +378,7 @@ impl From<&OverlayState> for OverlayView {
                 cursor: state.input.cursor,
                 cycle_input: state.cycle_input.clone(),
                 highlighted: state.highlighted.clone(),
+                unavailable: state.unavailable.clone(),
             },
             AddTask(state) => Self::AddTask(AddTaskView {
                 title: state.title.text.clone(),

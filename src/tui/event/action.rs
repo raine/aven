@@ -119,6 +119,23 @@ pub(crate) enum Action {
 }
 
 impl Action {
+    pub(crate) const fn recurrence_kind(
+        self,
+    ) -> Option<crate::tui::app_recurrence::RecurrenceActionKind> {
+        use crate::tui::app_recurrence::RecurrenceActionKind;
+
+        match self {
+            Self::SkipRecurrence => Some(RecurrenceActionKind::SkipCurrent),
+            Self::BeginRecordRecurrence => Some(RecurrenceActionKind::RecordHistorical),
+            Self::BeginEditRecurrenceTemplate => Some(RecurrenceActionKind::EditTemplate),
+            Self::PauseRecurrence => Some(RecurrenceActionKind::Pause),
+            Self::ResumeRecurrence => Some(RecurrenceActionKind::Resume),
+            Self::StopRecurrence => Some(RecurrenceActionKind::Stop),
+            Self::ShowRecurrenceHistory => Some(RecurrenceActionKind::History),
+            _ => None,
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) fn from_search_key(code: KeyCode) -> Self {
         match code {
