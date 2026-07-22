@@ -23,8 +23,11 @@ pub(crate) use state::{
     AddTaskMode, AddTaskState, CommandAvailabilityOverride, CommandState, ConfirmIntent,
     HeaderMenuAction, HeaderMenuItem, HeaderMenuKind, HeaderMenuState, MultilineInputMode,
     MultilineInputState, MultilineIntent, OrderMenuState, OverlayOutcome, OverlayState, OverlaySubmit,
-    OverlayTarget, PickerIntent, PickerItem, PickerMode, PickerState, SearchIntent, SearchResultItem,
-    SearchState, TagComboboxIntent, TextIntent, TextPanelState, UpdateOverlayState,
+    OverlayTarget, PickerIntent, PickerItem, PickerMode, PickerState, RECURRENCE_HISTORY_PAGE_SIZE,
+    RecurrenceHistoryAction, RecurrenceHistoryEntryKey, RecurrenceHistoryMode,
+    RecurrenceHistoryState, SearchIntent, SearchResultItem, SearchState, TagComboboxIntent,
+    TextIntent, TextPanelState, UpdateOverlayState, recurrence_history_correction_block_reason,
+    recurrence_history_entry_key,
 };
 #[cfg(test)]
 pub(crate) use state::{ConfirmState, TextInputState};
@@ -34,6 +37,6 @@ pub(crate) use text_input::LineEdit;
 pub(crate) use view::{AddTaskAttachmentsView, TagComboboxKind};
 pub(crate) use view::{
     AddTaskView, ConfirmView, HeaderMenuView, MultilineInputKind, MultilineInputView,
-    OrderMenuView, OverlayView, PickerKind, PickerView, SearchKind, TagComboboxView, TextInputKind,
-    TextInputView, TextPanelView,
+    OrderMenuView, OverlayView, PickerKind, PickerView, RecurrenceHistoryView, SearchKind,
+    TagComboboxView, TextInputKind, TextInputView, TextPanelView,
 };

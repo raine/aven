@@ -9,8 +9,9 @@ use crate::tui::overlay::text_input::LineEdit;
 use crate::tui::store::{ConflictTarget, TaskOrder, TaskView, TuiDatabaseStats, TuiSyncStatus};
 use crate::tui::task_selection::TaskSelection;
 use crate::tui::text::{char_boundary_at_or_before, normalize_pasted_newlines};
-use aven_core::recurrence::RecurrenceSeriesId;
-use chrono::{DateTime, Utc};
+use aven_core::query::{RecurrenceHistoryEntry, RecurrenceHistoryKind, RecurrenceHistoryPage};
+use aven_core::recurrence::{RecurrenceOutcome, RecurrenceSeriesId};
+use chrono::{DateTime, NaiveDate, Utc};
 use unicode_width::UnicodeWidthStr;
 
 #[allow(dead_code)]
@@ -43,6 +44,7 @@ pub(crate) enum OverlayState {
     OrderMenu(OrderMenuState),
     Confirm(ConfirmState),
     TextPanel(TextPanelState),
+    RecurrenceHistory(Box<RecurrenceHistoryState>),
     SyncStatus(Box<TuiSyncStatus>),
     DatabaseStats {
         stats: Box<TuiDatabaseStats>,
@@ -205,6 +207,142 @@ pub(crate) struct TextPanelState {
     pub(crate) title: String,
     pub(crate) lines: Vec<String>,
     pub(crate) scroll: u16,
+}
+
+pub(crate) const RECURRENCE_HISTORY_PAGE_SIZE: usize = 10;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum RecurrenceHistoryEntryKey {
+    Slot(String),
+    PauseStartedAt(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecurrenceHistoryAction {
+    OpenTask,
+    Correct,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RecurrenceHistoryMode {
+    Browse,
+    Outcome {
+        slot_on: NaiveDate,
+        picker: PickerState,
+    },
+    ResolutionTime {
+        slot_on: NaiveDate,
+        outcome: RecurrenceOutcome,
+        input: LineEdit,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecurrenceHistoryState {
+    pub(crate) workspace_id: WorkspaceId,
+    pub(crate) series_id: RecurrenceSeriesId,
+    pub(crate) as_of: DateTime<Utc>,
+    pub(crate) page: RecurrenceHistoryPage,
+    pub(crate) selected: Option<RecurrenceHistoryEntryKey>,
+    pub(crate) mode: RecurrenceHistoryMode,
+}
+
+impl RecurrenceHistoryState {
+    pub(crate) fn new(
+        workspace_id: WorkspaceId,
+        series_id: RecurrenceSeriesId,
+        as_of: DateTime<Utc>,
+        page: RecurrenceHistoryPage,
+    ) -> Self {
+        let selected = page.items.first().map(recurrence_history_entry_key);
+        Self {
+            workspace_id,
+            series_id,
+            as_of,
+            page,
+            selected,
+            mode: RecurrenceHistoryMode::Browse,
+        }
+    }
+
+    pub(crate) fn selected_index(&self) -> Option<usize> {
+        let selected = self.selected.as_ref()?;
+        self.page
+            .items
+            .iter()
+            .position(|entry| recurrence_history_entry_key(entry) == *selected)
+    }
+
+    pub(crate) fn selected_entry(&self) -> Option<&RecurrenceHistoryEntry> {
+        self.selected_index()
+            .and_then(|index| self.page.items.get(index))
+    }
+
+    pub(crate) fn move_selection(&mut self, delta: isize) {
+        let Some(current) = self.selected_index() else {
+            self.selected = self.page.items.first().map(recurrence_history_entry_key);
+            return;
+        };
+        let last = self.page.items.len().saturating_sub(1);
+        let selected = current.saturating_add_signed(delta).min(last);
+        self.selected = self
+            .page
+            .items
+            .get(selected)
+            .map(recurrence_history_entry_key);
+    }
+
+    pub(crate) fn replace_page(
+        &mut self,
+        page: RecurrenceHistoryPage,
+        preferred: Option<RecurrenceHistoryEntryKey>,
+        fallback_index: usize,
+    ) {
+        self.page = page;
+        self.selected = preferred
+            .filter(|key| {
+                self.page
+                    .items
+                    .iter()
+                    .any(|entry| recurrence_history_entry_key(entry) == *key)
+            })
+            .or_else(|| {
+                self.page
+                    .items
+                    .get(fallback_index.min(self.page.items.len().saturating_sub(1)))
+                    .map(recurrence_history_entry_key)
+            });
+        self.mode = RecurrenceHistoryMode::Browse;
+    }
+}
+
+pub(crate) fn recurrence_history_entry_key(
+    entry: &RecurrenceHistoryEntry,
+) -> RecurrenceHistoryEntryKey {
+    match (entry.slot_on.as_ref(), entry.interval_started_at.as_ref()) {
+        (Some(slot), None) => RecurrenceHistoryEntryKey::Slot(slot.clone()),
+        (None, Some(started_at)) => RecurrenceHistoryEntryKey::PauseStartedAt(started_at.clone()),
+        _ => panic!("history entry must identify one slot or pause interval"),
+    }
+}
+
+pub(crate) fn recurrence_history_correction_block_reason(
+    entry: &RecurrenceHistoryEntry,
+) -> Option<&'static str> {
+    match entry.kind {
+        RecurrenceHistoryKind::Paused => Some("pause intervals cannot be corrected"),
+        RecurrenceHistoryKind::Completed | RecurrenceHistoryKind::Skipped if entry.corrected => {
+            Some("this slot already has a correction")
+        }
+        RecurrenceHistoryKind::Completed | RecurrenceHistoryKind::Skipped => {
+            Some("this slot already has an outcome")
+        }
+        RecurrenceHistoryKind::Missed if entry.archived_projection || entry.task_id.is_some() => {
+            Some("this slot has an archived occurrence")
+        }
+        RecurrenceHistoryKind::Missed if entry.slot_on.is_some() => None,
+        RecurrenceHistoryKind::Missed => Some("this history entry has no correctable slot"),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -378,9 +516,6 @@ pub(crate) enum TextIntent {
         selection: TaskSelection,
         mixed: bool,
     },
-    RecordRecurrenceOutcome {
-        target: OverlayTarget,
-    },
     ResolveConflictManually {
         target: ConflictTarget,
     },
@@ -455,6 +590,7 @@ pub(crate) enum PickerIntent {
     StopRecurrence {
         target: OverlayTarget,
     },
+    RecurrenceHistoryOutcome,
 }
 
 impl PickerIntent {

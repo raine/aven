@@ -191,6 +191,14 @@ impl App {
         mouse: MouseEvent,
         terminal_size: Size,
     ) -> Result<()> {
+        if matches!(self.overlay, Some(OverlayState::RecurrenceHistory(_))) {
+            let Some(OverlayState::RecurrenceHistory(state)) = self.overlay.take() else {
+                unreachable!("history overlay was matched")
+            };
+            return self
+                .handle_recurrence_history_mouse(*state, mouse, terminal_size)
+                .await;
+        }
         match route_mouse(mouse.kind, self.prefix_hints_active()) {
             MouseInput::PrefixScroll(delta) => {
                 self.dispatch_prefix_hint_scroll(delta, terminal_size);
@@ -919,6 +927,9 @@ impl App {
                     .await?
             }
             OverlayState::Search(state) => self.handle_search_key(state, key).await?,
+            OverlayState::RecurrenceHistory(state) => {
+                self.handle_recurrence_history_key(*state, key).await?
+            }
             OverlayState::Update(state) => self.handle_update_overlay_key(state, key).await,
             OverlayState::Command { mut state } => match key.code {
                 KeyCode::Esc => {}

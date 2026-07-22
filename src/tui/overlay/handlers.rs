@@ -58,6 +58,14 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
             state.input.insert_paste(text);
             OverlayState::TextInput(state)
         }
+        OverlayState::RecurrenceHistory(mut state) => {
+            if let super::state::RecurrenceHistoryMode::ResolutionTime { input, .. } =
+                &mut state.mode
+            {
+                input.insert_paste(text);
+            }
+            OverlayState::RecurrenceHistory(state)
+        }
         OverlayState::MultilineInput(mut state) => {
             if state.mode == MultilineInputMode::Compose {
                 state.insert_paste(text);
@@ -431,6 +439,9 @@ pub(crate) fn handle_generic_overlay_key(
                 }
                 ScrollKeyOutcome::Ignored => OverlayOutcome::None(OverlayState::TextPanel(state)),
             }
+        }
+        OverlayState::RecurrenceHistory(state) => {
+            OverlayOutcome::None(OverlayState::RecurrenceHistory(state))
         }
         OverlayState::SyncStatus(state) => match key.code {
             KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,

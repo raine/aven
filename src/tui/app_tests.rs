@@ -94,6 +94,292 @@ async fn add_recurring_series(
     )
 }
 
+async fn recurrence_history_test_app() -> (App, aven_core::db::Database) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history-test.db");
+    let pool = crate::test_support::open_db(&path).await.unwrap();
+    reset_default_workspace(&pool).await;
+    let database = aven_core::db::Database::open(&path).await.unwrap();
+    let app = App::new_for_tests(database.clone()).await.unwrap();
+    (app, database)
+}
+
+async fn add_recurrence_history_fixture(
+    app: &mut App,
+    database: &aven_core::db::Database,
+) -> (
+    crate::ids::TaskId,
+    aven_core::recurrence::RecurrenceSeriesId,
+) {
+    let at = chrono::Utc::now();
+    let created_at = at - chrono::Duration::days(15);
+    let schedule = RecurrenceSchedule::new(
+        RecurrenceRule::daily(),
+        "UTC".parse::<TimeZoneId>().unwrap(),
+        created_at.date_naive(),
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    app.store
+        .create_project("History".to_string())
+        .await
+        .unwrap();
+    let created = database
+        .create_recurrence_series_at(
+            &app.store.active_workspace,
+            crate::tui::store::recurrence_draft(
+                "History fixture".to_string(),
+                "History detail".to_string(),
+                Some(app.store.projects[0].key.clone()),
+                "medium".to_string(),
+                "todo".to_string(),
+                Vec::new(),
+                schedule,
+            ),
+            created_at,
+        )
+        .await
+        .unwrap();
+    database
+        .reconcile_recurrence_series(&app.store.active_workspace, &created.series.id, at)
+        .await
+        .unwrap();
+    app.widgets
+        .table
+        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+    (created.task.id, created.series.id)
+}
+
+#[tokio::test]
+async fn recurrence_history_pagination_replaces_the_resident_page() {
+    let (mut app, database) = recurrence_history_test_app().await;
+    let (_, series_id) = add_recurrence_history_fixture(&mut app, &database).await;
+
+    app.execute_selected_recurrence_action(Action::ShowRecurrenceHistory)
+        .await
+        .unwrap();
+    let Some(OverlayState::RecurrenceHistory(first)) = app.overlay.as_ref() else {
+        panic!("expected recurrence history");
+    };
+    assert_eq!(first.series_id, series_id);
+    assert_eq!(first.page.offset, 0);
+    assert_eq!(
+        first.page.items.len(),
+        crate::tui::overlay::RECURRENCE_HISTORY_PAGE_SIZE
+    );
+    assert!(first.page.has_more);
+    let as_of = first.as_of;
+
+    app.handle_overlay_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE))
+        .await
+        .unwrap();
+    let Some(OverlayState::RecurrenceHistory(second)) = app.overlay.as_ref() else {
+        panic!("expected second history page");
+    };
+    assert_eq!(second.page.offset, second.page.limit);
+    assert_eq!(second.as_of, as_of);
+    assert!(second.page.items.len() <= second.page.limit);
+
+    app.handle_overlay_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
+        .await
+        .unwrap();
+    let Some(OverlayState::RecurrenceHistory(first_again)) = app.overlay.as_ref() else {
+        panic!("expected first history page");
+    };
+    assert_eq!(first_again.page.offset, 0);
+    assert_eq!(first_again.as_of, as_of);
+}
+
+#[tokio::test]
+async fn recurrence_history_enter_opens_the_linked_archived_task() {
+    let (mut app, database) = recurrence_history_test_app().await;
+    let (archived_task_id, _) = add_recurrence_history_fixture(&mut app, &database).await;
+    app.execute_selected_recurrence_action(Action::ShowRecurrenceHistory)
+        .await
+        .unwrap();
+    app.handle_overlay_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE))
+        .await
+        .unwrap();
+    let Some(OverlayState::RecurrenceHistory(mut history)) = app.overlay.take() else {
+        panic!("expected recurrence history");
+    };
+    let archived = history
+        .page
+        .items
+        .iter()
+        .find(|entry| entry.task_id.as_ref() == Some(&archived_task_id))
+        .unwrap();
+    history.selected = Some(crate::tui::overlay::recurrence_history_entry_key(archived));
+    app.overlay = Some(OverlayState::RecurrenceHistory(history));
+
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    assert_eq!(app.store.view_state.view, TaskView::Search);
+    assert_eq!(app.store.tasks[0].task.id, archived_task_id);
+    assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+}
+
+#[tokio::test]
+async fn recurrence_history_ineligible_correction_preserves_history_state() {
+    let (mut app, database) = recurrence_history_test_app().await;
+    let (archived_task_id, _) = add_recurrence_history_fixture(&mut app, &database).await;
+    app.execute_selected_recurrence_action(Action::ShowRecurrenceHistory)
+        .await
+        .unwrap();
+    app.handle_overlay_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE))
+        .await
+        .unwrap();
+    let Some(OverlayState::RecurrenceHistory(mut history)) = app.overlay.take() else {
+        panic!("expected recurrence history");
+    };
+    let archived = history
+        .page
+        .items
+        .iter()
+        .find(|entry| entry.task_id.as_ref() == Some(&archived_task_id))
+        .unwrap();
+    history.selected = Some(crate::tui::overlay::recurrence_history_entry_key(archived));
+    let expected = history.clone();
+    app.overlay = Some(OverlayState::RecurrenceHistory(history));
+
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    let Some(OverlayState::RecurrenceHistory(actual)) = app.overlay.as_ref() else {
+        panic!("expected preserved recurrence history");
+    };
+    assert_eq!(**actual, *expected);
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("this slot has an archived occurrence")
+    );
+}
+
+#[tokio::test]
+async fn recurrence_history_correction_is_seeded_and_reloads_timestamp() {
+    let (mut app, database) = recurrence_history_test_app().await;
+    add_recurrence_history_fixture(&mut app, &database).await;
+    app.execute_selected_recurrence_action(Action::ShowRecurrenceHistory)
+        .await
+        .unwrap();
+    let Some(OverlayState::RecurrenceHistory(mut history)) = app.overlay.take() else {
+        panic!("expected recurrence history");
+    };
+    let missed = history
+        .page
+        .items
+        .iter()
+        .find(|entry| {
+            crate::tui::overlay::recurrence_history_correction_block_reason(entry).is_none()
+        })
+        .unwrap();
+    let slot = missed.slot_on.clone().unwrap();
+    history.selected = Some(crate::tui::overlay::recurrence_history_entry_key(missed));
+    app.overlay = Some(OverlayState::RecurrenceHistory(history));
+
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+    let Some(OverlayState::RecurrenceHistory(history)) = app.overlay.as_ref() else {
+        panic!("expected recurrence history outcome mode");
+    };
+    let crate::tui::overlay::RecurrenceHistoryMode::Outcome { slot_on, picker } = &history.mode
+    else {
+        panic!("expected seeded outcome picker");
+    };
+    assert_eq!(slot_on.to_string(), slot);
+    assert_eq!(
+        picker
+            .items
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>(),
+        vec!["completed", "skipped"]
+    );
+
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .await
+        .unwrap();
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+    let timestamp = "026-07-20T12:34:56Z";
+    for character in timestamp.chars() {
+        app.handle_overlay_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE))
+            .await
+            .unwrap();
+    }
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    let Some(OverlayState::RecurrenceHistory(history)) = app.overlay.as_ref() else {
+        panic!("expected corrected history");
+    };
+    let corrected = history
+        .page
+        .items
+        .iter()
+        .find(|entry| entry.slot_on.as_deref() == Some(slot.as_str()))
+        .unwrap();
+    assert!(corrected.corrected);
+    assert_eq!(
+        corrected.resolved_at.as_deref(),
+        Some("2026-07-20T12:34:56Z")
+    );
+}
+
+#[tokio::test]
+async fn recurrence_history_right_click_uses_the_correction_action() {
+    let (mut app, database) = recurrence_history_test_app().await;
+    add_recurrence_history_fixture(&mut app, &database).await;
+    app.execute_selected_recurrence_action(Action::ShowRecurrenceHistory)
+        .await
+        .unwrap();
+    let Some(OverlayState::RecurrenceHistory(mut history)) = app.overlay.take() else {
+        panic!("expected recurrence history");
+    };
+    let index = history
+        .page
+        .items
+        .iter()
+        .position(|entry| {
+            crate::tui::overlay::recurrence_history_correction_block_reason(entry).is_none()
+        })
+        .unwrap();
+    history.selected = history
+        .page
+        .items
+        .get(index)
+        .map(crate::tui::overlay::recurrence_history_entry_key);
+    let item_count = history.page.items.len();
+    let terminal = ratatui::layout::Size::new(120, 40);
+    let layout = crate::tui::ui::recurrence_history_layout_for_test(terminal, item_count);
+    app.overlay = Some(OverlayState::RecurrenceHistory(history));
+
+    app.dispatch_mouse(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: layout.rows.x,
+            row: layout.rows.y + index as u16,
+            modifiers: KeyModifiers::NONE,
+        },
+        terminal,
+    )
+    .await
+    .unwrap();
+    let Some(OverlayState::RecurrenceHistory(history)) = app.overlay.as_ref() else {
+        panic!("expected history outcome mode");
+    };
+    assert!(matches!(
+        history.mode,
+        crate::tui::overlay::RecurrenceHistoryMode::Outcome { .. }
+    ));
+}
+
 #[tokio::test]
 async fn recurring_series_detail_opens_hidden_occurrence_and_returns() {
     let mut app = test_app().await;

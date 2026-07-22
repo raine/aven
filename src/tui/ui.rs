@@ -20,6 +20,8 @@ mod toast;
 mod truncate;
 
 #[cfg(test)]
+pub(crate) use self::overlays::recurrence_history_layout as recurrence_history_layout_for_test;
+#[cfg(test)]
 pub(crate) use self::sidebar::sidebar_layout;
 pub(crate) use self::sidebar::{sidebar_click_at_for, sidebar_layout_for};
 
@@ -28,11 +30,12 @@ use self::columns::render_columns;
 use self::detail::{render_attachment_preview, render_detail_underlay};
 use self::footer::{FooterMode, footer_bar};
 use self::header::render_header;
+pub(crate) use self::overlays::recurrence_history_entry_at;
 use self::overlays::{
     SearchRenderStatus, SearchRenderView, render_confirm, render_database_stats,
     render_multiline_input, render_onboarding, render_onboarding_raised, render_picker,
-    render_search, render_sync_status, render_tag_combobox, render_text_input, render_text_panel,
-    render_update,
+    render_recurrence_history, render_search, render_sync_status, render_tag_combobox,
+    render_text_input, render_text_panel, render_update,
 };
 use self::recent_actions::render_recent_actions;
 use self::recurrence::{render_recurrence_detail, render_recurrence_series};
@@ -725,6 +728,7 @@ fn render_overlay_content(frame: &mut Frame, overlay: &OverlayView, inline_title
         OverlayView::OrderMenu(state) => render_order_menu(frame, state),
         OverlayView::Confirm(state) => render_confirm(frame, state),
         OverlayView::TextPanel(state) => render_text_panel(frame, state),
+        OverlayView::RecurrenceHistory(state) => render_recurrence_history(frame, state),
         OverlayView::SyncStatus(state) => render_sync_status(frame, state),
         OverlayView::DatabaseStats { stats, scroll } => {
             render_database_stats(frame, stats, *scroll)

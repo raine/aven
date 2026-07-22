@@ -106,6 +106,7 @@ pub(crate) enum OverlayView {
     OrderMenu(OrderMenuView),
     Confirm(ConfirmView),
     TextPanel(TextPanelView),
+    RecurrenceHistory(RecurrenceHistoryView),
     SyncStatus(Box<TuiSyncStatus>),
     DatabaseStats {
         stats: Box<TuiDatabaseStats>,
@@ -125,6 +126,13 @@ pub(crate) struct TextPanelView {
 pub(crate) struct AddTaskAttachmentsView {
     pub(crate) items: Box<[PendingTaskAttachmentSummary]>,
     pub(crate) selected: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecurrenceHistoryView {
+    pub(crate) page: aven_core::query::RecurrenceHistoryPage,
+    pub(crate) selected: Option<super::state::RecurrenceHistoryEntryKey>,
+    pub(crate) mode: super::state::RecurrenceHistoryMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,7 +178,6 @@ pub(crate) enum TextInputKind {
     ConfirmDeleteProject,
     EditTitle,
     EditDate,
-    RecordRecurrenceOutcome,
     ConflictManual,
 }
 
@@ -183,7 +190,6 @@ impl From<&TextIntent> for TextInputKind {
             TextIntent::ConfirmDeleteProject { .. } => Self::ConfirmDeleteProject,
             TextIntent::EditTitle { .. } => Self::EditTitle,
             TextIntent::EditAvailability { .. } | TextIntent::EditDue { .. } => Self::EditDate,
-            TextIntent::RecordRecurrenceOutcome { .. } => Self::RecordRecurrenceOutcome,
             TextIntent::ResolveConflictManually { .. } => Self::ConflictManual,
         }
     }
@@ -474,6 +480,11 @@ impl From<&OverlayState> for OverlayView {
                 title: state.title.clone(),
                 lines: state.lines.clone(),
                 scroll: state.scroll,
+            }),
+            RecurrenceHistory(state) => Self::RecurrenceHistory(RecurrenceHistoryView {
+                page: state.page.clone(),
+                selected: state.selected.clone(),
+                mode: state.mode.clone(),
             }),
             SyncStatus(state) => Self::SyncStatus(state.clone()),
             DatabaseStats { stats, scroll } => Self::DatabaseStats {

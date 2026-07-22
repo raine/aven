@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use aven_core::operations::{RecurrenceSeriesDraft, RecurrenceTemplateUpdate};
-use aven_core::query::{RecurrenceHistoryKind, RecurrenceHistoryPage, RecurrenceSeriesDetail};
+use aven_core::query::{RecurrenceHistoryPage, RecurrenceSeriesDetail};
 use aven_core::recurrence::{RecurrenceOutcome, RecurrenceSchedule, RecurrenceSeriesId};
 use chrono::{DateTime, NaiveDate, Utc};
 
@@ -84,9 +84,12 @@ impl TuiStore {
     pub(crate) async fn recurrence_history_for_series(
         &self,
         series_id: &RecurrenceSeriesId,
+        as_of: DateTime<Utc>,
+        offset: usize,
+        limit: usize,
     ) -> Result<RecurrenceHistoryPage> {
         self.database
-            .recurrence_history(&self.active_workspace.id, series_id, 0, 200)
+            .recurrence_history_at(&self.active_workspace.id, series_id, as_of, offset, limit)
             .await
     }
 
@@ -289,42 +292,6 @@ impl RecurrenceStateAction {
             Self::Resume => "resumed",
         }
     }
-}
-
-pub(crate) fn recurrence_history_lines(page: &RecurrenceHistoryPage) -> Vec<String> {
-    let mut lines = vec![format!("series {}", page.series_ref)];
-    for item in &page.items {
-        let kind = match item.kind {
-            RecurrenceHistoryKind::Completed => "completed",
-            RecurrenceHistoryKind::Skipped => "skipped",
-            RecurrenceHistoryKind::Missed => "missed",
-            RecurrenceHistoryKind::Paused => "paused",
-        };
-        if let Some(slot) = item.slot_on.as_deref() {
-            let task_ref = item
-                .task_ref
-                .as_deref()
-                .map(|value| format!(" {value}"))
-                .unwrap_or_default();
-            let corrected = if item.corrected { " corrected" } else { "" };
-            let archived = if item.archived_projection {
-                " archived projection"
-            } else {
-                ""
-            };
-            lines.push(format!("{slot}  {kind}{task_ref}{corrected}{archived}"));
-        } else {
-            lines.push(format!(
-                "{}  paused until {}",
-                item.interval_started_at.as_deref().unwrap_or("unknown"),
-                item.interval_ended_at.as_deref().unwrap_or("present")
-            ));
-        }
-    }
-    if page.has_more {
-        lines.push(format!("{} more entries", page.total - page.items.len()));
-    }
-    lines
 }
 
 pub(crate) fn recurrence_draft(

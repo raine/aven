@@ -32,7 +32,7 @@ pub(crate) use epics::EpicContext;
 pub(crate) use launch::{TuiLaunch, TuiStartup};
 pub(crate) use onboarding::OnboardingStatus;
 pub(crate) use pickers::deleted_picker_items;
-pub(crate) use recurrence::{recurrence_draft, recurrence_history_lines};
+pub(crate) use recurrence::recurrence_draft;
 pub(crate) use task_commands::{PriorityMutation, TaskDateField, TaskTextField};
 pub(crate) use task_creation::task_creation_committed;
 pub(crate) use types::{

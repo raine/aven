@@ -233,7 +233,7 @@ impl RecurrenceHistoryEntry {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecurrenceHistoryPage {
     pub series_ref: String,
     pub items: Vec<RecurrenceHistoryEntry>,

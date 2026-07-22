@@ -1,15 +1,17 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use aven_core::ids::{TaskId, WorkspaceId};
 use aven_core::recurrence::{
     RecurrenceOutcome, RecurrenceProjectionState, RecurrenceSeriesId, RecurrenceSeriesState,
 };
-use chrono::{DateTime, NaiveDate};
+use chrono::{DateTime, NaiveDate, Utc};
 
 use crate::tui::app::{App, SeriesDetailReturn};
 use crate::tui::event::Action;
 use crate::tui::overlay::{
-    CommandAvailabilityOverride, OverlayState, OverlayTarget, PickerIntent, PickerItem,
-    TextIntent, TextPanelState,
+    CommandAvailabilityOverride, OverlayState, OverlayTarget, PickerIntent, PickerItem, PickerState,
+    RECURRENCE_HISTORY_PAGE_SIZE, RecurrenceHistoryAction, RecurrenceHistoryEntryKey,
+    RecurrenceHistoryMode, RecurrenceHistoryState, recurrence_history_correction_block_reason,
+    recurrence_history_entry_key,
 };
 use crate::tui::store::TaskView;
 
@@ -137,27 +139,21 @@ impl TryFrom<&str> for StopDisposition {
     }
 }
 
-fn parse_historical_outcome(value: &str) -> Result<(NaiveDate, RecurrenceOutcome, Option<String>)> {
-    let words = value.split_whitespace().collect::<Vec<_>>();
-    if !(2..=3).contains(&words.len()) {
-        bail!("use YYYY-MM-DD completed|skipped [RFC3339 time]");
+fn recurrence_correction_rejection(error: &anyhow::Error) -> Option<&'static str> {
+    let message = format!("{error:#}");
+    if message.contains("recurrence-correction-not-past") {
+        Some("the selected slot is no longer historical")
+    } else if message.contains("recurrence-slot-paused") {
+        Some("the selected slot falls inside a pause interval")
+    } else if message.contains("recurrence-outcome-exists") {
+        Some("an outcome already exists for the selected slot")
+    } else if message.contains("recurrence-slot-outside-lifetime") {
+        Some("the selected slot is outside the series lifetime")
+    } else if message.contains("recurrence-slot-off-lattice") {
+        Some("the selected slot is outside the recurrence schedule")
+    } else {
+        None
     }
-    let slot = NaiveDate::parse_from_str(words[0], "%Y-%m-%d")
-        .context("use a real historical date in YYYY-MM-DD form")?;
-    let outcome = match words[1] {
-        "completed" => RecurrenceOutcome::Completed,
-        "skipped" => RecurrenceOutcome::Skipped,
-        _ => bail!("outcome must be completed or skipped"),
-    };
-    let resolved_at = words
-        .get(2)
-        .map(|value| {
-            DateTime::parse_from_rfc3339(value)
-                .context("historical time must use RFC3339 form")
-                .map(|parsed| parsed.to_rfc3339())
-        })
-        .transpose()?;
-    Ok((slot, outcome, resolved_at))
 }
 
 impl App {
@@ -353,7 +349,9 @@ impl App {
                 self.apply_recurrence_message(&id.series_id, message)
                     .await?;
             }
-            RecurrenceActionKind::RecordHistorical => self.begin_record_recurrence(&target),
+            RecurrenceActionKind::RecordHistorical => {
+                self.open_recurrence_history(&target.id, true).await?;
+            }
             RecurrenceActionKind::EditTemplate => {
                 self.authoring
                     .begin_edit_recurrence_template(&target.detail, target.project_key);
@@ -377,14 +375,7 @@ impl App {
             }
             RecurrenceActionKind::Stop => self.begin_stop_recurrence(&target),
             RecurrenceActionKind::History => {
-                let page = self
-                    .store
-                    .recurrence_history_for_series(&id.series_id)
-                    .await?;
-                self.overlay = Some(OverlayState::TextPanel(TextPanelState::new(
-                    format!("Recurrence history: {}", page.series_ref),
-                    crate::tui::store::recurrence_history_lines(&page),
-                )));
+                self.open_recurrence_history(&target.id, false).await?;
             }
         }
         Ok(())
@@ -485,14 +476,348 @@ impl App {
         ));
     }
 
-    fn begin_record_recurrence(&mut self, target: &RecurrenceTarget) {
-        self.overlay = Some(OverlayState::blank_text_input(
-            TextIntent::RecordRecurrenceOutcome {
-                target: Self::overlay_target(&target.id),
+    async fn open_recurrence_history(
+        &mut self,
+        target: &RecurrenceTargetId,
+        prefer_correction: bool,
+    ) -> Result<()> {
+        let as_of = Utc::now();
+        let page = self
+            .store
+            .recurrence_history_for_series(
+                &target.series_id,
+                as_of,
+                0,
+                RECURRENCE_HISTORY_PAGE_SIZE,
+            )
+            .await?;
+        let mut state = RecurrenceHistoryState::new(
+            target.workspace_id.clone(),
+            target.series_id.clone(),
+            as_of,
+            page,
+        );
+        if prefer_correction {
+            state.selected = state
+                .page
+                .items
+                .iter()
+                .find(|entry| recurrence_history_correction_block_reason(entry).is_none())
+                .map(recurrence_history_entry_key)
+                .or(state.selected);
+            self.set_success("select a missed slot and press c to record an outcome");
+        }
+        self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+        Ok(())
+    }
+
+    async fn load_recurrence_history_page(
+        &mut self,
+        mut state: RecurrenceHistoryState,
+        offset: usize,
+        preferred: Option<RecurrenceHistoryEntryKey>,
+        fallback_index: usize,
+    ) -> Result<()> {
+        let mut page = self
+            .store
+            .recurrence_history_for_series(
+                &state.series_id,
+                state.as_of,
+                offset,
+                RECURRENCE_HISTORY_PAGE_SIZE,
+            )
+            .await?;
+        if page.items.is_empty() && page.offset > 0 && page.total > 0 {
+            let last_offset = ((page.total - 1) / page.limit) * page.limit;
+            page = self
+                .store
+                .recurrence_history_for_series(
+                    &state.series_id,
+                    state.as_of,
+                    last_offset,
+                    RECURRENCE_HISTORY_PAGE_SIZE,
+                )
+                .await?;
+        }
+        state.replace_page(page, preferred, fallback_index);
+        self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+        Ok(())
+    }
+
+    pub(super) async fn handle_recurrence_history_key(
+        &mut self,
+        mut state: RecurrenceHistoryState,
+        key: crossterm::event::KeyEvent,
+    ) -> Result<()> {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        match &mut state.mode {
+            RecurrenceHistoryMode::Browse => match key.code {
+                KeyCode::Esc => {}
+                KeyCode::Down | KeyCode::Char('j') => {
+                    state.move_selection(1);
+                    self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    state.move_selection(-1);
+                    self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+                }
+                KeyCode::PageDown if state.page.has_more => {
+                    let offset = state.page.offset.saturating_add(state.page.limit);
+                    self.load_recurrence_history_page(state, offset, None, 0)
+                        .await?;
+                }
+                KeyCode::PageUp if state.page.offset > 0 => {
+                    let offset = state.page.offset.saturating_sub(state.page.limit);
+                    self.load_recurrence_history_page(state, offset, None, 0)
+                        .await?;
+                }
+                KeyCode::Enter => {
+                    self.run_recurrence_history_action(state, RecurrenceHistoryAction::OpenTask)
+                        .await?;
+                }
+                KeyCode::Char('c') if key.modifiers == KeyModifiers::NONE => {
+                    self.run_recurrence_history_action(state, RecurrenceHistoryAction::Correct)
+                        .await?;
+                }
+                _ => {
+                    self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+                }
             },
-            format!("Record historical outcome: {}", target.series_ref),
-            "YYYY-MM-DD completed|skipped [RFC3339 time]",
-        ));
+            RecurrenceHistoryMode::Outcome { slot_on, picker } => match key.code {
+                KeyCode::Esc => {
+                    state.mode = RecurrenceHistoryMode::Browse;
+                    self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    picker.selected = picker
+                        .selected
+                        .saturating_add(1)
+                        .min(picker.items.len().saturating_sub(1));
+                    self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    picker.selected = picker.selected.saturating_sub(1);
+                    self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+                }
+                KeyCode::Enter => {
+                    let outcome = picker.items.get(picker.selected).and_then(|item| {
+                        match item.value.as_str() {
+                            "completed" => Some(RecurrenceOutcome::Completed),
+                            "skipped" => Some(RecurrenceOutcome::Skipped),
+                            _ => None,
+                        }
+                    });
+                    if let Some(outcome) = outcome {
+                        state.mode = RecurrenceHistoryMode::ResolutionTime {
+                            slot_on: *slot_on,
+                            outcome,
+                            input: crate::tui::overlay::LineEdit::blank(),
+                        };
+                    }
+                    self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+                }
+                _ => {
+                    self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+                }
+            },
+            RecurrenceHistoryMode::ResolutionTime {
+                slot_on,
+                outcome,
+                input,
+            } => match key.code {
+                KeyCode::Esc => {
+                    state.mode = RecurrenceHistoryMode::Browse;
+                    self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+                }
+                KeyCode::Enter => {
+                    let slot_on = *slot_on;
+                    let outcome = *outcome;
+                    let resolved_at = if input.text.trim().is_empty() {
+                        None
+                    } else {
+                        match DateTime::parse_from_rfc3339(input.text.trim()) {
+                            Ok(value) => Some(value.to_rfc3339()),
+                            Err(_) => {
+                                self.set_warning("resolution time must use RFC3339 form");
+                                self.overlay =
+                                    Some(OverlayState::RecurrenceHistory(Box::new(state)));
+                                return Ok(());
+                            }
+                        }
+                    };
+                    self.submit_recurrence_history_correction(state, slot_on, outcome, resolved_at)
+                        .await?;
+                }
+                _ => {
+                    input.handle_key(key);
+                    self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+                }
+            },
+        }
+        Ok(())
+    }
+
+    pub(super) async fn handle_recurrence_history_mouse(
+        &mut self,
+        mut state: RecurrenceHistoryState,
+        mouse: crossterm::event::MouseEvent,
+        terminal_size: ratatui::layout::Size,
+    ) -> Result<()> {
+        use crossterm::event::{MouseButton, MouseEventKind};
+
+        if !matches!(state.mode, RecurrenceHistoryMode::Browse) {
+            state.mode = RecurrenceHistoryMode::Browse;
+            self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+            return Ok(());
+        }
+        let view = crate::tui::overlay::RecurrenceHistoryView {
+            page: state.page.clone(),
+            selected: state.selected.clone(),
+            mode: state.mode.clone(),
+        };
+        match mouse.kind {
+            MouseEventKind::ScrollDown => state.move_selection(1),
+            MouseEventKind::ScrollUp => state.move_selection(-1),
+            MouseEventKind::Down(MouseButton::Left | MouseButton::Right) => {
+                let Some(index) = crate::tui::ui::recurrence_history_entry_at(
+                    &view,
+                    terminal_size,
+                    mouse.column,
+                    mouse.row,
+                ) else {
+                    return Ok(());
+                };
+                state.selected = state
+                    .page
+                    .items
+                    .get(index)
+                    .map(recurrence_history_entry_key);
+                if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
+                    let action = state.selected_entry().and_then(|entry| {
+                        if entry.openable && entry.task_id.is_some() {
+                            Some(RecurrenceHistoryAction::OpenTask)
+                        } else if recurrence_history_correction_block_reason(entry).is_none() {
+                            Some(RecurrenceHistoryAction::Correct)
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(action) = action {
+                        return self.run_recurrence_history_action(state, action).await;
+                    }
+                    self.set_warning("this history entry has no available actions");
+                }
+            }
+            _ => {}
+        }
+        self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+        Ok(())
+    }
+
+    async fn run_recurrence_history_action(
+        &mut self,
+        mut state: RecurrenceHistoryState,
+        action: RecurrenceHistoryAction,
+    ) -> Result<()> {
+        if state.workspace_id != self.store.active_workspace.id {
+            self.set_warning("recurring series target is unavailable");
+            self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+            return Ok(());
+        }
+        let Some(entry) = state.selected_entry().cloned() else {
+            self.set_warning("recurrence history has no selected entry");
+            self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+            return Ok(());
+        };
+        match action {
+            RecurrenceHistoryAction::OpenTask => {
+                let Some(task_id) = entry.task_id.filter(|_| entry.openable) else {
+                    self.set_warning("this history entry has no linked task");
+                    self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+                    return Ok(());
+                };
+                let previous = self.store.view_state.clone();
+                let Some(selected) = self.store.show_task_by_id(task_id).await? else {
+                    self.store.restore_view_state(previous, None).await?;
+                    self.set_warning("linked occurrence task is unavailable");
+                    self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+                    return Ok(());
+                };
+                self.push_navigation_state(previous);
+                self.list.select_task(Some(selected));
+                self.detail = crate::tui::detail_session::DetailSession::open(0);
+                self.overlay = None;
+            }
+            RecurrenceHistoryAction::Correct => {
+                if let Some(reason) = recurrence_history_correction_block_reason(&entry) {
+                    self.set_warning(reason);
+                    self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+                    return Ok(());
+                }
+                let slot_on = NaiveDate::parse_from_str(
+                    entry.slot_on.as_deref().unwrap_or_default(),
+                    "%Y-%m-%d",
+                )
+                .context("invalid recurrence history slot")?;
+                state.mode = RecurrenceHistoryMode::Outcome {
+                    slot_on,
+                    picker: PickerState::new(
+                        PickerIntent::RecurrenceHistoryOutcome,
+                        format!("Correct {slot_on}"),
+                        vec![
+                            PickerItem {
+                                label: "Completed".to_string(),
+                                value: "completed".to_string(),
+                                selected: true,
+                            },
+                            PickerItem {
+                                label: "Skipped".to_string(),
+                                value: "skipped".to_string(),
+                                selected: false,
+                            },
+                        ],
+                        false,
+                    ),
+                };
+                self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+            }
+        }
+        Ok(())
+    }
+
+    async fn submit_recurrence_history_correction(
+        &mut self,
+        state: RecurrenceHistoryState,
+        slot_on: NaiveDate,
+        outcome: RecurrenceOutcome,
+        resolved_at: Option<String>,
+    ) -> Result<()> {
+        let preferred = Some(RecurrenceHistoryEntryKey::Slot(slot_on.to_string()));
+        let fallback_index = state.selected_index().unwrap_or(0);
+        match self
+            .store
+            .record_recurrence_outcome(&state.series_id, slot_on, outcome, resolved_at)
+            .await
+        {
+            Ok(message) => {
+                let offset = state.page.offset;
+                self.set_success(message.message);
+                self.load_recurrence_history_page(state, offset, preferred, fallback_index)
+                    .await?;
+            }
+            Err(error) => {
+                let Some(warning) = recurrence_correction_rejection(&error) else {
+                    self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
+                    return Err(error);
+                };
+                let offset = state.page.offset;
+                self.load_recurrence_history_page(state, offset, preferred, fallback_index)
+                    .await?;
+                self.set_warning(warning);
+            }
+        }
+        Ok(())
     }
 
     pub(super) async fn submit_recurrence_action(
@@ -546,34 +871,6 @@ impl App {
             .await?;
         self.apply_recurrence_message(&id.series_id, message).await
     }
-
-    pub(super) async fn submit_record_recurrence(
-        &mut self,
-        target: Option<OverlayTarget>,
-        value: String,
-    ) -> Result<()> {
-        let Some(id) = Self::recurrence_target_id(target.clone()) else {
-            self.set_warning("recurring series target is unavailable");
-            return Ok(());
-        };
-        let parsed = parse_historical_outcome(&value);
-        let (slot, outcome, resolved_at) = match parsed {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                self.set_warning(error.to_string());
-                let Some(recurrence) = self.load_recurrence_target(&id).await? else {
-                    return Ok(());
-                };
-                self.begin_record_recurrence(&recurrence);
-                return Ok(());
-            }
-        };
-        let message = self
-            .store
-            .record_recurrence_outcome(&id.series_id, slot, outcome, resolved_at)
-            .await?;
-        self.apply_recurrence_message(&id.series_id, message).await
-    }
 }
 
 #[cfg(test)]
@@ -612,47 +909,5 @@ mod tests {
         for action in [Pause, Resume, Stop] {
             assert!(recurrence_unavailable_reason(Stopped, true, action).is_some());
         }
-    }
-
-    #[test]
-    fn historical_outcome_parser_accepts_supported_actions() {
-        let (slot, outcome, resolved_at) =
-            parse_historical_outcome("2026-07-18 completed 2026-07-18T09:15:00+03:00").unwrap();
-
-        assert_eq!(slot, NaiveDate::from_ymd_opt(2026, 7, 18).unwrap());
-        assert_eq!(outcome, RecurrenceOutcome::Completed);
-        assert_eq!(resolved_at.as_deref(), Some("2026-07-18T09:15:00+03:00"));
-        assert_eq!(
-            parse_historical_outcome("2026-07-19 skipped").unwrap().1,
-            RecurrenceOutcome::Skipped
-        );
-    }
-
-    #[test]
-    fn historical_outcome_parser_returns_accessible_errors() {
-        assert!(
-            parse_historical_outcome("2026-07-18")
-                .unwrap_err()
-                .to_string()
-                .contains("YYYY-MM-DD completed|skipped")
-        );
-        assert!(
-            parse_historical_outcome("not-a-date completed")
-                .unwrap_err()
-                .to_string()
-                .contains("real historical date")
-        );
-        assert!(
-            parse_historical_outcome("2026-07-18 missed")
-                .unwrap_err()
-                .to_string()
-                .contains("completed or skipped")
-        );
-        assert!(
-            parse_historical_outcome("2026-07-18 completed tomorrow")
-                .unwrap_err()
-                .to_string()
-                .contains("RFC3339")
-        );
     }
 }

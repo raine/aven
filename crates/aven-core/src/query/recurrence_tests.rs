@@ -418,6 +418,59 @@ async fn paused_and_archived_tasks_leave_all_open_paths_but_stopped_final_stays_
 }
 
 #[tokio::test]
+async fn recurrence_history_pages_preserve_metadata_and_boundaries() {
+    let (_temp, database, workspace) = setup().await;
+    let created = create(&database, &workspace, "paged history", 20).await;
+    database
+        .reconcile_recurrence_series(&workspace, &created.series.id, at(24, 12))
+        .await
+        .unwrap();
+    database
+        .record_recurrence_outcome(
+            &workspace,
+            &created.series.id,
+            NaiveDate::from_ymd_opt(2026, 7, 22).unwrap(),
+            RecurrenceOutcome::Completed,
+            "2026-07-22T18:00:00Z".to_string(),
+            at(24, 12),
+        )
+        .await
+        .unwrap();
+
+    let first = database
+        .recurrence_history_at(&workspace.id, &created.series.id, at(24, 12), 0, 2)
+        .await
+        .unwrap();
+    let second = database
+        .recurrence_history_at(&workspace.id, &created.series.id, at(24, 12), 2, 2)
+        .await
+        .unwrap();
+
+    assert_eq!(first.items.len(), 2);
+    assert_eq!(first.offset, 0);
+    assert_eq!(first.limit, 2);
+    assert!(first.has_more);
+    assert_eq!(second.items.len(), 2);
+    assert_eq!(second.offset, 2);
+    assert!(!second.has_more);
+    assert_eq!(first.total, second.total);
+    let corrected = first
+        .items
+        .iter()
+        .chain(&second.items)
+        .find(|entry| entry.corrected)
+        .unwrap();
+    assert_eq!(
+        corrected.resolved_at.as_deref(),
+        Some("2026-07-22T18:00:00Z")
+    );
+    for entry in first.items.iter().chain(&second.items) {
+        assert_ne!(entry.slot_on.is_some(), entry.interval_started_at.is_some());
+        assert_eq!(entry.openable, entry.task_id.is_some());
+    }
+}
+
+#[tokio::test]
 async fn history_combines_grouped_explicit_corrected_archived_and_derived_rows() {
     let (_temp, database, workspace) = setup().await;
     let created = create(&database, &workspace, "history fixture", 20).await;

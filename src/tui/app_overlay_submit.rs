@@ -283,9 +283,6 @@ impl App {
             TextIntent::EditDue { selection, mixed } => {
                 self.submit_edit_due(selection, mixed, value).await?;
             }
-            TextIntent::RecordRecurrenceOutcome { target } => {
-                self.submit_record_recurrence(Some(target), value).await?;
-            }
             TextIntent::ResolveConflictManually { target } => {
                 self.submit_manual_conflict_value(target, value).await?;
             }
@@ -404,6 +401,9 @@ impl App {
             PickerIntent::StopRecurrence { target } => {
                 self.submit_stop_recurrence(Some(target), values.first().map(String::as_str))
                     .await?;
+            }
+            PickerIntent::RecurrenceHistoryOutcome => {
+                unreachable!("recurrence history handles its nested picker directly")
             }
             PickerIntent::RemoveDependency { selection } => match values.first() {
                 Some(depends_on_task_id) => {

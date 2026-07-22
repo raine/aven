@@ -4,6 +4,7 @@ mod database_stats;
 mod multiline;
 mod onboarding;
 mod picker;
+mod recurrence_history;
 mod search;
 mod shared;
 mod sync_status;
@@ -23,6 +24,10 @@ pub(super) use multiline::{
 };
 pub(super) use onboarding::{render_onboarding, render_onboarding_raised};
 pub(super) use picker::render_picker;
+pub(crate) use recurrence_history::recurrence_history_entry_at;
+#[cfg(test)]
+pub(crate) use recurrence_history::recurrence_history_layout;
+pub(super) use recurrence_history::render_recurrence_history;
 pub(super) use search::{SearchRenderStatus, SearchRenderView, render_search};
 pub(super) use shared::tail_viewport_start;
 pub(super) use sync_status::render_sync_status;
