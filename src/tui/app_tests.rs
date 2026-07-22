@@ -71,6 +71,37 @@ async fn add_recurring_series(
         None,
         RecurrenceDuePolicy::SameDay,
     );
+    add_recurring_series_with_schedule(app, title, schedule).await
+}
+
+async fn add_stable_journey_series(
+    app: &mut App,
+    title: &str,
+) -> (
+    crate::ids::TaskId,
+    aven_core::recurrence::RecurrenceSeriesId,
+) {
+    use chrono::Datelike;
+
+    let today = chrono::Utc::now().date_naive();
+    let schedule = RecurrenceSchedule::new(
+        RecurrenceRule::weekly(today.weekday()),
+        "UTC".parse::<TimeZoneId>().unwrap(),
+        today,
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    add_recurring_series_with_schedule(app, title, schedule).await
+}
+
+async fn add_recurring_series_with_schedule(
+    app: &mut App,
+    title: &str,
+    schedule: RecurrenceSchedule,
+) -> (
+    crate::ids::TaskId,
+    aven_core::recurrence::RecurrenceSeriesId,
+) {
     let (_, selected) = app
         .store
         .create_recurrence_series(
@@ -92,6 +123,84 @@ async fn add_recurring_series(
         item.task.id.clone(),
         item.recurrence.as_ref().unwrap().series_id.clone(),
     )
+}
+
+#[derive(Debug, PartialEq, Eq, sqlx::FromRow)]
+struct PersistedOccurrence {
+    task_id: String,
+    slot_on: String,
+    task_status: Option<String>,
+    outcome: String,
+    projection_state: String,
+    resolved_at: String,
+    archived_at: String,
+}
+
+#[derive(Debug, PartialEq, Eq, sqlx::FromRow)]
+struct PersistedPauseInterval {
+    paused_at: String,
+    resumed_at: String,
+    suspended_slot_on: String,
+    suspended_task_id: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct PersistedRecurrence {
+    series_state: String,
+    stopped_at: String,
+    occurrences: Vec<PersistedOccurrence>,
+    pause_intervals: Vec<PersistedPauseInterval>,
+}
+
+async fn persisted_recurrence(
+    pool: &SqlitePool,
+    workspace_id: &crate::ids::WorkspaceId,
+    series_id: &aven_core::recurrence::RecurrenceSeriesId,
+) -> PersistedRecurrence {
+    let (series_state, stopped_at) = sqlx::query_as::<_, (String, String)>(
+        "SELECT state, stopped_at FROM recurrence_series
+         WHERE workspace_id = ? AND id = ?",
+    )
+    .bind(workspace_id)
+    .bind(series_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let occurrences = sqlx::query_as::<_, PersistedOccurrence>(
+        "SELECT o.task_id, o.slot_on, t.status AS task_status, o.outcome,
+                o.projection_state, o.resolved_at, o.archived_at
+         FROM recurrence_occurrences o
+         LEFT JOIN tasks t
+           ON t.workspace_id = o.workspace_id AND t.id = o.task_id
+         WHERE o.workspace_id = ? AND o.series_id = ? ORDER BY o.slot_on",
+    )
+    .bind(workspace_id)
+    .bind(series_id)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let pause_intervals = sqlx::query_as::<_, PersistedPauseInterval>(
+        "SELECT paused_at, resumed_at, suspended_slot_on, suspended_task_id
+         FROM recurrence_pause_intervals
+         WHERE workspace_id = ? AND series_id = ? ORDER BY paused_at",
+    )
+    .bind(workspace_id)
+    .bind(series_id)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    PersistedRecurrence {
+        series_state,
+        stopped_at,
+        occurrences,
+        pause_intervals,
+    }
+}
+
+async fn dispatch_keys(app: &mut App, size: ratatui::layout::Size, codes: &[KeyCode]) {
+    for code in codes {
+        app.dispatch_key(key(*code), size).await.unwrap();
+    }
 }
 
 async fn recurrence_history_test_app() -> (App, aven_core::db::Database) {
@@ -442,52 +551,244 @@ async fn recurring_series_lifecycle_filter_reveals_stopped_series() {
 }
 
 #[tokio::test]
-async fn recurrence_stop_picker_defaults_to_keep_and_cancellation_is_inert() {
+async fn recurrence_pause_resume_journey_preserves_selection_and_occurrence() {
+    let (_dir, pool, mut app) = test_app_with_pool().await;
+    let (_task_id, series_id) = add_stable_journey_series(&mut app, "Pause resume journey").await;
+    let size: ratatui::layout::Size = (140, 24).into();
+    dispatch_keys(&mut app, size, &[KeyCode::Char('v'), KeyCode::Char('u')]).await;
+    assert_eq!(app.store.view_state.view, TaskView::Recurring);
+    let workspace_id = app.store.active_workspace.id.clone();
+    let before = persisted_recurrence(&pool, &workspace_id, &series_id).await;
+    assert_eq!(before.series_state, "active");
+    assert_eq!(before.occurrences.len(), 1);
+    let rendered = render_app_text(&mut app, size.width, size.height);
+    assert!(
+        rendered.contains("Recurring Tasks")
+            && rendered.contains("Pause resume journey")
+            && rendered.contains("active"),
+        "pause/resume journey: expected the active series in Recurring Tasks"
+    );
+
+    dispatch_keys(
+        &mut app,
+        size,
+        &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('p')],
+    )
+    .await;
+
+    let paused = persisted_recurrence(&pool, &workspace_id, &series_id).await;
+    assert_eq!(
+        paused.series_state, "paused",
+        "pause/resume journey: keyboard Pause did not persist"
+    );
+    assert_eq!(
+        paused.occurrences, before.occurrences,
+        "pause/resume journey: Pause changed the live occurrence"
+    );
+    assert_eq!(paused.pause_intervals.len(), 1);
+    assert!(paused.pause_intervals[0].resumed_at.is_empty());
+    assert_eq!(
+        paused.pause_intervals[0].suspended_task_id,
+        before.occurrences[0].task_id
+    );
+    assert_eq!(
+        app.store
+            .selected_recurrence_series(app.widgets.table.selected())
+            .unwrap()
+            .series
+            .id,
+        series_id,
+        "pause/resume journey: Pause lost the selected series"
+    );
+    let rendered = render_app_text(&mut app, size.width, size.height);
+    assert!(
+        rendered.contains("Pause resume journey") && rendered.contains("paused"),
+        "pause/resume journey: paused series disappeared from Recurring Tasks"
+    );
+
+    let click = recurrence_right_click_event(&app, (size.width, size.height), 0);
+    app.dispatch_mouse(click, size).await.unwrap();
+    let resume_row = match app.overlay.as_ref() {
+        Some(OverlayState::Picker(picker)) => {
+            assert_eq!(picker.route, OverlayRoute::RecurrenceActions);
+            picker
+                .items
+                .iter()
+                .position(|item| item.value == "resume")
+                .expect("pause/resume journey: paused series has no Resume action")
+                as u16
+        }
+        _ => panic!("pause/resume journey: right-click did not open recurrence actions"),
+    };
+    let click = picker_row_click(&app, resume_row, size);
+    app.dispatch_mouse(click, size).await.unwrap();
+
+    let resumed = persisted_recurrence(&pool, &workspace_id, &series_id).await;
+    assert_eq!(
+        resumed.series_state, "active",
+        "pause/resume journey: mouse Resume did not persist"
+    );
+    assert_eq!(
+        resumed.occurrences, before.occurrences,
+        "pause/resume journey: Resume changed the live occurrence"
+    );
+    assert_eq!(resumed.pause_intervals.len(), 1);
+    assert!(!resumed.pause_intervals[0].resumed_at.is_empty());
+    assert_eq!(
+        app.store
+            .selected_recurrence_series(app.widgets.table.selected())
+            .unwrap()
+            .series
+            .id,
+        series_id,
+        "pause/resume journey: Resume lost the selected series"
+    );
+    assert!(
+        app.overlay.is_none(),
+        "pause/resume journey: Resume left the context menu open"
+    );
+    let rendered = render_app_text(&mut app, size.width, size.height);
+    assert!(
+        rendered.contains("Pause resume journey") && rendered.contains("active"),
+        "pause/resume journey: resumed series did not render as active"
+    );
+}
+
+#[tokio::test]
+async fn recurrence_stop_journey_persists_keep_skip_and_cancel() {
+    for choice in ["cancel", "keep", "skip"] {
+        let (_dir, pool, mut app) = test_app_with_pool().await;
+        let (_task_id, series_id) = add_stable_journey_series(&mut app, "Stop journey").await;
+        let size: ratatui::layout::Size = (140, 24).into();
+        dispatch_keys(&mut app, size, &[KeyCode::Char('v'), KeyCode::Char('u')]).await;
+        assert_eq!(app.store.view_state.view, TaskView::Recurring);
+        let workspace_id = app.store.active_workspace.id.clone();
+        let before = persisted_recurrence(&pool, &workspace_id, &series_id).await;
+
+        dispatch_keys(
+            &mut app,
+            size,
+            &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char('s')],
+        )
+        .await;
+        let Some(OverlayState::Picker(picker)) = app.overlay.as_ref() else {
+            panic!("stop journey: keyboard Stop did not open a picker for {choice}");
+        };
+        assert_eq!(picker.route, OverlayRoute::StopRecurrence);
+        assert_eq!(
+            picker
+                .items
+                .iter()
+                .map(|item| item.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["keep", "skip"]
+        );
+        assert_eq!(
+            picker.selected, 0,
+            "stop journey: Keep was not the safe default for {choice}"
+        );
+        assert_eq!(
+            persisted_recurrence(&pool, &workspace_id, &series_id).await,
+            before,
+            "stop journey: opening the picker mutated persistence for {choice}"
+        );
+
+        match choice {
+            "cancel" => app.dispatch_key(key(KeyCode::Esc), size).await.unwrap(),
+            "keep" => app.dispatch_key(key(KeyCode::Enter), size).await.unwrap(),
+            "skip" => {
+                app.dispatch_key(key(KeyCode::Down), size).await.unwrap();
+                app.dispatch_key(key(KeyCode::Enter), size).await.unwrap();
+            }
+            _ => unreachable!(),
+        }
+
+        let after = persisted_recurrence(&pool, &workspace_id, &series_id).await;
+        if choice == "cancel" {
+            assert_eq!(
+                after, before,
+                "stop journey: Escape mutated recurrence persistence"
+            );
+            assert!(
+                app.overlay.is_none(),
+                "stop journey: Escape left the picker open"
+            );
+            continue;
+        }
+
+        assert_eq!(
+            after.series_state, "stopped",
+            "stop journey: {choice} did not stop the series"
+        );
+        assert_eq!(
+            after.occurrences.len(),
+            1,
+            "stop journey: {choice} created a successor"
+        );
+        let occurrence = &after.occurrences[0];
+        assert_eq!(occurrence.task_id, before.occurrences[0].task_id);
+        assert_eq!(occurrence.slot_on, before.occurrences[0].slot_on);
+        assert_eq!(
+            occurrence.task_status.as_deref(),
+            Some(if choice == "skip" { "canceled" } else { "todo" })
+        );
+        assert_eq!(
+            occurrence.outcome,
+            if choice == "skip" { "skipped" } else { "" }
+        );
+        assert_eq!(
+            occurrence.projection_state,
+            if choice == "skip" {
+                "resolved"
+            } else {
+                "projected"
+            }
+        );
+        assert_eq!(
+            app.store.view_state.recurring.lifecycle,
+            RecurrenceSeriesLifecycleFilter::All,
+            "stop journey: {choice} did not reveal the stopped series"
+        );
+        assert_eq!(
+            app.store
+                .selected_recurrence_series(app.widgets.table.selected())
+                .unwrap()
+                .series
+                .id,
+            series_id,
+            "stop journey: {choice} lost the selected series"
+        );
+        assert!(
+            app.overlay.is_none(),
+            "stop journey: {choice} left the picker open"
+        );
+        assert!(
+            toast_message(&app).is_some_and(|message| message.contains(if choice == "skip" {
+                "skipped current occurrence"
+            } else {
+                "kept current occurrence"
+            })),
+            "stop journey: {choice} produced the wrong success message"
+        );
+    }
+}
+
+#[tokio::test]
+async fn recurrence_stop_rejects_invalid_picker_value() {
     let mut app = test_app().await;
-    let (_task_id, series_id) = add_recurring_series(&mut app, "Safe stop").await;
+    let (_task_id, series_id) = add_recurring_series(&mut app, "Invalid stop").await;
     app.widgets
         .table
         .select(app.store.show_view(TaskView::Recurring).await.unwrap());
-
-    app.execute_selected_recurrence_action(Action::StopRecurrence)
-        .await
-        .unwrap();
-    let Some(OverlayState::Picker(picker)) = app.overlay.as_ref() else {
-        panic!("expected stop picker");
-    };
-    assert_eq!(picker.route, OverlayRoute::StopRecurrence);
-    assert_eq!(picker.items[0].value, "keep");
-    assert_eq!(picker.selected, 0);
-    assert_eq!(
-        app.store
-            .recurrence_detail_for_series(&series_id)
-            .await
-            .unwrap()
-            .series
-            .state,
-        aven_core::recurrence::RecurrenceSeriesState::Active
-    );
-
-    app.handle_overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
-        .await
-        .unwrap();
-    assert_eq!(
-        app.store
-            .recurrence_detail_for_series(&series_id)
-            .await
-            .unwrap()
-            .series
-            .state,
-        aven_core::recurrence::RecurrenceSeriesState::Active
-    );
-
     let target = Some(OverlayTarget::RecurrenceSeries {
         workspace_id: app.store.active_workspace.id.clone(),
         series_id: series_id.clone(),
     });
+
     app.submit_stop_recurrence(target, Some("unknown"))
         .await
         .unwrap();
+
     assert_eq!(toast_message(&app).as_deref(), Some("invalid stop outcome"));
     assert_eq!(
         app.store
@@ -498,66 +799,6 @@ async fn recurrence_stop_picker_defaults_to_keep_and_cancellation_is_inert() {
             .state,
         aven_core::recurrence::RecurrenceSeriesState::Active
     );
-}
-
-#[tokio::test]
-async fn recurrence_stop_keep_and_skip_apply_the_selected_atomic_outcome() {
-    for skip_current in [false, true] {
-        let mut app = test_app().await;
-        let (task_id, series_id) = add_recurring_series(&mut app, "Final occurrence").await;
-        app.widgets
-            .table
-            .select(app.store.show_view(TaskView::Recurring).await.unwrap());
-        app.execute_selected_recurrence_action(Action::StopRecurrence)
-            .await
-            .unwrap();
-        if skip_current {
-            app.handle_overlay_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
-                .await
-                .unwrap();
-        }
-        app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-            .await
-            .unwrap();
-
-        assert_eq!(
-            app.store
-                .recurrence_detail_for_series(&series_id)
-                .await
-                .unwrap()
-                .series
-                .state,
-            aven_core::recurrence::RecurrenceSeriesState::Stopped
-        );
-        assert_eq!(
-            app.store.view_state.recurring.lifecycle,
-            RecurrenceSeriesLifecycleFilter::All
-        );
-        assert_eq!(
-            app.store
-                .selected_recurrence_series(app.widgets.table.selected())
-                .unwrap()
-                .series
-                .id,
-            series_id
-        );
-        assert!(toast_message(&app).unwrap().contains(if skip_current {
-            "skipped current occurrence"
-        } else {
-            "kept current occurrence"
-        }));
-
-        app.store.show_task_by_id(task_id).await.unwrap();
-        let task = &app.store.tasks[0];
-        assert_eq!(
-            task.task.status.as_str(),
-            if skip_current { "canceled" } else { "todo" }
-        );
-        assert_eq!(
-            task.recurrence.as_ref().unwrap().outcome.is_some(),
-            skip_current
-        );
-    }
 }
 
 #[tokio::test]
@@ -886,6 +1127,42 @@ fn right_click(column: u16, row: u16) -> MouseEvent {
         row,
         modifiers: KeyModifiers::NONE,
     }
+}
+
+fn task_list_area(size: (u16, u16)) -> ratatui::layout::Rect {
+    let (width, height) = size;
+    let body = ratatui::layout::Rect::new(0, 2, width, height.saturating_sub(4));
+    if body.width < 100 {
+        body
+    } else {
+        let sidebar_width = body.width.min(26);
+        ratatui::layout::Rect::new(
+            sidebar_width,
+            body.y,
+            body.width.saturating_sub(sidebar_width),
+            body.height,
+        )
+    }
+}
+
+fn recurrence_right_click_event(app: &App, size: (u16, u16), series_index: usize) -> MouseEvent {
+    let task_area = task_list_area(size);
+    for row in task_area.y..task_area.y.saturating_add(task_area.height) {
+        for column in task_area.x..task_area.x.saturating_add(task_area.width) {
+            if crate::tui::ui::recurrence_series_at_position(
+                &app.store,
+                &app.widgets.table,
+                task_area,
+                column,
+                row,
+            )
+            .is_some_and(|hit| hit.series_index == series_index)
+            {
+                return right_click(column, row);
+            }
+        }
+    }
+    panic!("expected recurrence series hit target");
 }
 
 fn wheel_down(column: u16, row: u16) -> MouseEvent {
@@ -4677,22 +4954,6 @@ mod task_row_mouse {
     use super::*;
     use ratatui::layout::Rect;
 
-    fn task_list_area(size: (u16, u16)) -> Rect {
-        let (width, height) = size;
-        let body = Rect::new(0, 2, width, height.saturating_sub(4));
-        if body.width < 100 {
-            body
-        } else {
-            let sidebar_width = body.width.min(26);
-            Rect::new(
-                sidebar_width,
-                body.y,
-                body.width.saturating_sub(sidebar_width),
-                body.height,
-            )
-        }
-    }
-
     fn row_column_task_click_event(size: (u16, u16), viewport_row: u16) -> MouseEvent {
         let task_area = task_list_area(size);
         task_row_click(task_area.x + 1, task_area.y + 1 + viewport_row)
@@ -4713,30 +4974,6 @@ mod task_row_mouse {
             }
         }
         panic!("expected status hit target");
-    }
-
-    fn recurrence_right_click_event(
-        app: &App,
-        size: (u16, u16),
-        series_index: usize,
-    ) -> MouseEvent {
-        let task_area = task_list_area(size);
-        for row in task_area.y..task_area.y.saturating_add(task_area.height) {
-            for column in task_area.x..task_area.x.saturating_add(task_area.width) {
-                if crate::tui::ui::recurrence_series_at_position(
-                    &app.store,
-                    &app.widgets.table,
-                    task_area,
-                    column,
-                    row,
-                )
-                .is_some_and(|hit| hit.series_index == series_index)
-                {
-                    return right_click(column, row);
-                }
-            }
-        }
-        panic!("expected recurrence series hit target");
     }
 
     #[tokio::test]
