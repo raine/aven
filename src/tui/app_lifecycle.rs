@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 pub(super) const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(120);
 pub(super) const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const INLINE_IMAGE_EMISSION_DELAY: Duration = Duration::from_millis(50);
 const TOAST_TTL: Duration = Duration::from_secs(4);
 
 use anyhow::Result;
@@ -75,6 +76,30 @@ fn inline_image_emissions_after_draw(
         .filter(|placement| !previous.contains(placement))
         .cloned()
         .collect()
+}
+
+fn inline_image_emission_is_deferred(
+    current: &[ui::DetailInlineImagePlacement],
+    deferred: &mut Vec<ui::DetailInlineImagePlacement>,
+    emission_at: &mut Option<Instant>,
+    now: Instant,
+) -> bool {
+    if current.is_empty() {
+        deferred.clear();
+        *emission_at = None;
+        return false;
+    }
+    if current != deferred {
+        current.clone_into(deferred);
+        *emission_at = Some(now + INLINE_IMAGE_EMISSION_DELAY);
+        return true;
+    }
+    if emission_at.is_some_and(|deadline| now < deadline) {
+        return true;
+    }
+    deferred.clear();
+    *emission_at = None;
+    false
 }
 
 fn write_inline_image_cleanup(
@@ -296,6 +321,21 @@ impl App {
 
         let pending_emissions =
             inline_image_emissions_after_draw(&current, &self.previous_inline_image_placements);
+        if pending_emissions.is_empty() {
+            if current.is_empty() {
+                self.deferred_inline_image_placements.clear();
+                self.inline_image_emission_at = None;
+            }
+            return Ok(());
+        }
+        if inline_image_emission_is_deferred(
+            &current,
+            &mut self.deferred_inline_image_placements,
+            &mut self.inline_image_emission_at,
+            Instant::now(),
+        ) {
+            return Ok(());
+        }
         let mut stdout = std::io::stdout();
         for placement in pending_emissions {
             let key = PreviewKey::new(&blob_dir, &placement.source_hash, preview_quota_bytes);
@@ -336,6 +376,8 @@ impl App {
     }
 
     fn erase_previous_inline_images(&mut self) -> Result<bool> {
+        self.deferred_inline_image_placements.clear();
+        self.inline_image_emission_at = None;
         if self.previous_inline_image_placements.is_empty() {
             return Ok(false);
         }
@@ -561,7 +603,12 @@ impl App {
     }
 
     pub(super) fn has_time_based_redraw(&self) -> bool {
-        self.notification.is_some() || self.refresh_is_due() || self.onboarding_intro.is_some()
+        self.notification.is_some()
+            || self.refresh_is_due()
+            || self.onboarding_intro.is_some()
+            || self
+                .inline_image_emission_at
+                .is_some_and(|deadline| Instant::now() >= deadline)
     }
 
     pub(super) fn next_poll_timeout(&self) -> Duration {
@@ -583,6 +630,14 @@ impl App {
 
         if let Some(intro_timeout) = self.onboarding_intro_timeout() {
             timeout = timeout.min(intro_timeout);
+        }
+
+        if let Some(emission_at) = self.inline_image_emission_at {
+            timeout = timeout.min(
+                emission_at
+                    .checked_duration_since(Instant::now())
+                    .unwrap_or_default(),
+            );
         }
 
         if self.intake.work_pending()
@@ -660,6 +715,65 @@ mod inline_image_lifecycle_tests {
             width: 20,
             height: 6,
         }
+    }
+
+    #[test]
+    fn changed_inline_image_placements_wait_for_scroll_to_settle() {
+        let first = placement();
+        let mut second = first.clone();
+        second.y += 1;
+        let start = Instant::now();
+        let mut deferred = Vec::new();
+        let mut emission_at = None;
+
+        assert!(inline_image_emission_is_deferred(
+            std::slice::from_ref(&first),
+            &mut deferred,
+            &mut emission_at,
+            start,
+        ));
+        assert!(inline_image_emission_is_deferred(
+            std::slice::from_ref(&first),
+            &mut deferred,
+            &mut emission_at,
+            start + INLINE_IMAGE_EMISSION_DELAY / 2,
+        ));
+        assert!(inline_image_emission_is_deferred(
+            std::slice::from_ref(&second),
+            &mut deferred,
+            &mut emission_at,
+            start + INLINE_IMAGE_EMISSION_DELAY,
+        ));
+        assert!(inline_image_emission_is_deferred(
+            std::slice::from_ref(&second),
+            &mut deferred,
+            &mut emission_at,
+            start + INLINE_IMAGE_EMISSION_DELAY * 3 / 2,
+        ));
+        assert!(!inline_image_emission_is_deferred(
+            std::slice::from_ref(&second),
+            &mut deferred,
+            &mut emission_at,
+            start + INLINE_IMAGE_EMISSION_DELAY * 2,
+        ));
+        assert!(deferred.is_empty());
+        assert!(emission_at.is_none());
+    }
+
+    #[test]
+    fn empty_inline_image_view_cancels_deferred_emission() {
+        let start = Instant::now();
+        let mut deferred = vec![placement()];
+        let mut emission_at = Some(start + INLINE_IMAGE_EMISSION_DELAY);
+
+        assert!(!inline_image_emission_is_deferred(
+            &[],
+            &mut deferred,
+            &mut emission_at,
+            start,
+        ));
+        assert!(deferred.is_empty());
+        assert!(emission_at.is_none());
     }
 
     #[test]
