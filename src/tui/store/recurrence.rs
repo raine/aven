@@ -31,20 +31,57 @@ impl TuiStore {
         if draft.project.is_empty() {
             draft.project = self.inferred_add_project().await?.unwrap_or_default();
         }
-        let previous_id = self
-            .selected_task(current_selected_index)
-            .map(|item| item.task.id.clone());
+        let recurring_view = self.view_state.view == super::TaskView::Recurring;
+        let previous_task_id = (!recurring_view)
+            .then(|| {
+                self.selected_task(current_selected_index)
+                    .map(|item| item.task.id.clone())
+            })
+            .flatten();
+        let previous_series_id = recurring_view
+            .then(|| {
+                self.selected_recurrence_series(current_selected_index)
+                    .map(|item| item.series.id.clone())
+            })
+            .flatten();
         let outcome = self
             .database
             .create_recurrence_series(&self.active_workspace, draft)
             .await?;
+        if recurring_view {
+            let created_id = outcome.series.id.clone();
+            let requested = super::MainRowSelection::RecurrenceSeries(created_id.clone());
+            let refreshed = self.refresh_with_scope_fallback(Some(&requested)).await?;
+            let created_index = self
+                .recurrence_series
+                .iter()
+                .position(|item| item.series.id == created_id);
+            let previous_index = previous_series_id.as_ref().and_then(|series_id| {
+                self.recurrence_series
+                    .iter()
+                    .position(|item| &item.series.id == series_id)
+            });
+            let selected = created_index.or(previous_index).or(refreshed.selected);
+            let suffix = if created_index.is_some() {
+                ""
+            } else {
+                " hidden by current filters"
+            };
+            return Ok((
+                format!(
+                    "created recurring task {} ({}){suffix}",
+                    outcome.series_ref, outcome.task.id
+                ),
+                selected,
+            ));
+        }
         let task_id = outcome.task.id.clone();
         self.refresh(None).await?;
         let selected = self
             .tasks
             .iter()
             .position(|item| item.task.id == task_id)
-            .or_else(|| self.restored_task_selection(previous_id.as_ref()));
+            .or_else(|| self.restored_task_selection(previous_task_id.as_ref()));
         let suffix = if self.tasks.iter().any(|item| item.task.id == task_id) {
             ""
         } else {

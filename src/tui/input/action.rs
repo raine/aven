@@ -34,7 +34,7 @@ impl App {
             Action::ToggleHelp => self.toggle_help_at_height(24),
             Action::ShowWelcome => self.show_welcome(),
             Action::BeginSearch => self.begin_search(),
-            Action::BeginCommand => self.begin_command(),
+            Action::BeginCommand => self.begin_command().await,
             Action::Refresh => self.refresh().await?,
             Action::SetOrder(order) => self.set_sort(order).await?,
             Action::ReverseSort => self.reverse_sort().await?,

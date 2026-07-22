@@ -66,6 +66,16 @@ impl RecurrenceActionKind {
     }
 }
 
+pub(super) const RECURRENCE_COMMAND_ACTIONS: [Action; 7] = [
+    Action::SkipRecurrence,
+    Action::BeginRecordRecurrence,
+    Action::BeginEditRecurrenceTemplate,
+    Action::PauseRecurrence,
+    Action::ResumeRecurrence,
+    Action::StopRecurrence,
+    Action::ShowRecurrenceHistory,
+];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RecurrenceTargetId {
     pub(crate) workspace_id: WorkspaceId,
@@ -106,7 +116,6 @@ impl RecurrenceTarget {
 enum CurrentOccurrenceAvailability {
     Present,
     Absent,
-    Unknown,
 }
 
 fn recurrence_unavailable_reason(
@@ -121,7 +130,7 @@ fn recurrence_unavailable_reason(
 
     match (state, action) {
         (_, History | RecordHistorical | EditTemplate) => None,
-        (_, SkipCurrent) if current != CurrentOccurrenceAvailability::Absent => None,
+        (_, SkipCurrent) if current == CurrentOccurrenceAvailability::Present => None,
         (_, SkipCurrent) => Some("series has no current occurrence to skip"),
         (Active, Pause | Stop) => None,
         (Active, Resume) => Some("series is already active"),
@@ -220,71 +229,27 @@ impl App {
         })
     }
 
-    pub(crate) fn recurrence_command_context(
+    pub(crate) async fn recurrence_command_context(
         &self,
-    ) -> (Option<OverlayTarget>, Vec<CommandAvailabilityOverride>) {
-        let selected = if self.store.view_state.view == TaskView::Recurring {
-            self.store
-                .selected_recurrence_series(self.list.selected_task())
-                .map(|item| {
-                    (
-                        item.series.id.clone(),
-                        item.series.state,
-                        if item.current_occurrence.is_some() {
-                            CurrentOccurrenceAvailability::Present
-                        } else {
-                            CurrentOccurrenceAvailability::Absent
-                        },
-                    )
-                })
-        } else {
-            self.store
-                .selected_task(self.list.selected_task())
-                .and_then(|item| item.recurrence.as_ref())
-                .map(|summary| {
-                    (
-                        summary.series_id.clone(),
-                        summary.lifecycle,
-                        if summary.outcome.is_none()
-                            && matches!(
-                                summary.projection_state,
-                                RecurrenceProjectionState::Projected
-                            )
-                        {
-                            CurrentOccurrenceAvailability::Present
-                        } else {
-                            CurrentOccurrenceAvailability::Unknown
-                        },
-                    )
-                })
+    ) -> Result<(Option<OverlayTarget>, Vec<CommandAvailabilityOverride>)> {
+        let Some(id) = self.selected_recurrence_target_id() else {
+            return Ok((None, Vec::new()));
         };
-        let Some((series_id, state, current)) = selected else {
-            return (None, Vec::new());
+        let Some(target) = self.load_recurrence_target(&id).await? else {
+            return Ok((None, Vec::new()));
         };
-        let target = RecurrenceTargetId {
-            workspace_id: self.store.active_workspace.id.clone(),
-            series_id,
-        };
-        let actions = [
-            Action::SkipRecurrence,
-            Action::BeginRecordRecurrence,
-            Action::BeginEditRecurrenceTemplate,
-            Action::PauseRecurrence,
-            Action::ResumeRecurrence,
-            Action::StopRecurrence,
-            Action::ShowRecurrenceHistory,
-        ];
-        let unavailable = actions
+        let unavailable = RECURRENCE_COMMAND_ACTIONS
             .into_iter()
             .filter_map(|action| {
                 let kind = action
                     .recurrence_kind()
                     .expect("recurrence command has a recurrence action kind");
-                recurrence_unavailable_reason(state, current, kind)
+                target
+                    .unavailable_reason(kind)
                     .map(|reason| CommandAvailabilityOverride { action, reason })
             })
             .collect();
-        (Some(Self::overlay_target(&target)), unavailable)
+        Ok((Some(Self::overlay_target(&id)), unavailable))
     }
 
     fn overlay_target(target: &RecurrenceTargetId) -> OverlayTarget {

@@ -267,9 +267,33 @@ impl App {
         self.intake.set_db_path(db_path);
     }
 
-    pub(crate) fn begin_command(&mut self) {
+    pub(crate) async fn begin_command(&mut self) {
         self.pending_shortcut.clear();
-        let (target, unavailable) = self.recurrence_command_context();
+        let (target, unavailable) = match self.recurrence_command_context().await {
+            Ok(context) => context,
+            Err(error) => {
+                let target = self.selected_recurrence_target_id().map(|target| {
+                    crate::tui::overlay::OverlayTarget::RecurrenceSeries {
+                        workspace_id: target.workspace_id,
+                        series_id: target.series_id,
+                    }
+                });
+                let unavailable = target
+                    .as_ref()
+                    .map(|_| {
+                        crate::tui::app_recurrence::RECURRENCE_COMMAND_ACTIONS
+                            .into_iter()
+                            .map(|action| crate::tui::overlay::CommandAvailabilityOverride {
+                                action,
+                                reason: "recurrence availability could not be loaded",
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                self.set_error(format!("{error:#}"));
+                (target, unavailable)
+            }
+        };
         let mut state = crate::tui::overlay::CommandState::blank();
         state.target = target;
         state.unavailable = unavailable;

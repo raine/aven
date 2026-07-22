@@ -64,14 +64,29 @@ async fn add_recurring_series(
     crate::ids::TaskId,
     aven_core::recurrence::RecurrenceSeriesId,
 ) {
-    let schedule = RecurrenceSchedule::new(
+    add_recurring_series_with_schedule(app, title, recurrence_test_schedule()).await
+}
+
+fn recurrence_test_schedule() -> RecurrenceSchedule {
+    RecurrenceSchedule::new(
         RecurrenceRule::daily(),
         "UTC".parse::<TimeZoneId>().unwrap(),
         chrono::Utc::now().date_naive(),
         None,
         RecurrenceDuePolicy::SameDay,
-    );
-    add_recurring_series_with_schedule(app, title, schedule).await
+    )
+}
+
+fn recurrence_test_draft(title: &str) -> aven_core::operations::RecurrenceSeriesDraft {
+    crate::tui::store::recurrence_draft(
+        title.to_string(),
+        "Series detail".to_string(),
+        None,
+        "medium".to_string(),
+        "todo".to_string(),
+        Vec::new(),
+        recurrence_test_schedule(),
+    )
 }
 
 async fn add_stable_journey_series(
@@ -632,6 +647,78 @@ async fn recurrence_template_update_restores_series_identity_after_reordering() 
 }
 
 #[tokio::test]
+async fn recurrence_creation_in_recurring_view_selects_created_series() {
+    let mut app = test_app().await;
+    add_recurring_series(&mut app, "Anchor series").await;
+    app.widgets
+        .table
+        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+
+    let (message, selected) = app
+        .store
+        .create_recurrence_series(
+            recurrence_test_draft("Created series"),
+            app.widgets.table.selected(),
+        )
+        .await
+        .unwrap();
+    app.widgets.table.select(selected);
+
+    let selected = app
+        .store
+        .selected_recurrence_series(app.widgets.table.selected())
+        .unwrap();
+    assert_eq!(selected.series.title, "Created series");
+    assert!(!message.contains("hidden by current filters"));
+}
+
+#[tokio::test]
+async fn recurrence_creation_in_recurring_view_reports_filtered_series_and_preserves_selection() {
+    let mut app = test_app().await;
+    add_recurring_series(&mut app, "Keep Alpha").await;
+    let (_, selected_series_id) = add_recurring_series(&mut app, "Keep Zulu").await;
+    app.widgets
+        .table
+        .select(app.store.show_view(TaskView::Recurring).await.unwrap());
+    app.store.view_state.recurring.search = Some("Keep".to_string());
+    let selected = app.store.refresh(None).await.unwrap();
+    app.widgets.table.select(selected);
+    let selected_index = app
+        .store
+        .recurrence_series
+        .iter()
+        .position(|item| item.series.id == selected_series_id)
+        .unwrap();
+    app.widgets.table.select(Some(selected_index));
+
+    let (message, selected) = app
+        .store
+        .create_recurrence_series(
+            recurrence_test_draft("Filtered series"),
+            app.widgets.table.selected(),
+        )
+        .await
+        .unwrap();
+    app.widgets.table.select(selected);
+
+    assert!(message.contains("hidden by current filters"));
+    assert_eq!(
+        app.store
+            .selected_recurrence_series(app.widgets.table.selected())
+            .unwrap()
+            .series
+            .id,
+        selected_series_id
+    );
+    assert!(
+        app.store
+            .recurrence_series
+            .iter()
+            .all(|item| item.series.title != "Filtered series")
+    );
+}
+
+#[tokio::test]
 async fn recurrence_palette_skip_uses_live_projection_after_historical_navigation() {
     let (mut app, database) = recurrence_history_test_app().await;
     let (archived_task_id, series_id) = add_recurrence_history_fixture(&mut app, &database).await;
@@ -664,13 +751,23 @@ async fn recurrence_palette_skip_uses_live_projection_after_historical_navigatio
         .unwrap()
         .task_id
         .unwrap();
-    let (target, unavailable) = app.recurrence_command_context();
+    app.overlay = None;
+    app.dispatch_key(
+        KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE),
+        ratatui::layout::Size::new(120, 24),
+    )
+    .await
+    .unwrap();
+    let Some(OverlayState::Command { state }) = app.overlay.take() else {
+        panic!("expected command palette");
+    };
     assert!(
-        unavailable
+        state
+            .unavailable
             .iter()
             .all(|override_| override_.action != Action::SkipRecurrence)
     );
-    app.execute_targeted_recurrence_action(target, Action::SkipRecurrence)
+    app.execute_targeted_recurrence_action(state.target, Action::SkipRecurrence)
         .await
         .unwrap();
 
@@ -680,6 +777,67 @@ async fn recurrence_palette_skip_uses_live_projection_after_historical_navigatio
         .unwrap();
     assert_eq!(live_task.status.as_str(), "canceled");
     assert_eq!(app.store.tasks[0].task.id, archived_task_id);
+}
+
+#[tokio::test]
+async fn recurrence_palette_disables_skip_for_historical_task_without_live_projection() {
+    let (mut app, database) = recurrence_history_test_app().await;
+    let (archived_task_id, series_id) = add_recurrence_history_fixture(&mut app, &database).await;
+    app.execute_selected_recurrence_action(Action::ShowRecurrenceHistory)
+        .await
+        .unwrap();
+    app.handle_overlay_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE))
+        .await
+        .unwrap();
+    let Some(OverlayState::RecurrenceHistory(mut history)) = app.overlay.take() else {
+        panic!("expected recurrence history");
+    };
+    let archived = history
+        .page
+        .items
+        .iter()
+        .find(|entry| entry.task_id.as_ref() == Some(&archived_task_id))
+        .unwrap();
+    history.selected = Some(crate::tui::overlay::recurrence_history_entry_key(archived));
+    app.overlay = Some(OverlayState::RecurrenceHistory(history));
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    database
+        .stop_recurrence_series(&app.store.active_workspace, &series_id, true)
+        .await
+        .unwrap();
+    assert!(
+        database
+            .recurrence_series_detail(&app.store.active_workspace.id, &series_id)
+            .await
+            .unwrap()
+            .current_occurrence
+            .is_none()
+    );
+
+    app.overlay = None;
+    app.dispatch_key(
+        KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE),
+        ratatui::layout::Size::new(120, 24),
+    )
+    .await
+    .unwrap();
+    let Some(OverlayState::Command { state }) = app.overlay.as_ref() else {
+        panic!("expected command palette");
+    };
+    assert!(matches!(
+        &state.target,
+        Some(OverlayTarget::RecurrenceSeries {
+            series_id: target_series_id,
+            ..
+        }) if target_series_id == &series_id
+    ));
+    assert!(state.unavailable.iter().any(|override_| {
+        override_.action == Action::SkipRecurrence
+            && override_.reason == "series has no current occurrence to skip"
+    }));
 }
 
 #[tokio::test]
@@ -1115,7 +1273,7 @@ async fn recurrence_palette_disables_invalid_lifecycle_action_with_reason() {
         .unwrap();
     app.list
         .select_task(app.store.show_view(TaskView::Recurring).await.unwrap());
-    app.begin_command();
+    app.begin_command().await;
     let Some(OverlayState::Command { state }) = app.overlay.as_mut() else {
         panic!("expected command palette");
     };
@@ -2105,7 +2263,7 @@ mod keyboard_dispatch {
     async fn command_panel_runs_sidebar_toggle() {
         let mut app = test_app().await;
 
-        app.begin_command();
+        app.begin_command().await;
         type_chars(&mut app, "toggle-sidebar").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
@@ -2190,7 +2348,7 @@ mod keyboard_dispatch {
         assert_eq!(app.store.view_state.order, TaskOrder::DueOn);
         assert_eq!(toast_message(&app).as_deref(), Some("order due asc"));
 
-        app.begin_command();
+        app.begin_command().await;
         type_chars(&mut app, "add-project-path").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         assert_eq!(
@@ -3302,7 +3460,7 @@ mod command_and_config_overlays {
     async fn command_overlay_executes_unique_lookup_and_keeps_overlay_on_errors() {
         let mut app = test_app().await;
 
-        app.begin_command();
+        app.begin_command().await;
         for ch in "ref".chars() {
             app.handle_overlay_key(key(KeyCode::Char(ch)))
                 .await
@@ -3311,7 +3469,7 @@ mod command_and_config_overlays {
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
         assert!(app.overlay.is_none());
 
-        app.begin_command();
+        app.begin_command().await;
         app.handle_overlay_key(key(KeyCode::Char('s')))
             .await
             .unwrap();
@@ -3319,7 +3477,7 @@ mod command_and_config_overlays {
         assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
         assert_eq!(toast_message(&app).as_deref(), Some("ambiguous command: s"));
 
-        app.begin_command();
+        app.begin_command().await;
         for ch in "zzzz".chars() {
             app.handle_overlay_key(key(KeyCode::Char(ch)))
                 .await
@@ -3337,7 +3495,7 @@ mod command_and_config_overlays {
     async fn command_overlay_tab_completes_unique_suffix_alias() {
         let mut app = test_app().await;
 
-        app.begin_command();
+        app.begin_command().await;
         type_chars(&mut app, ":todo").await;
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
 
@@ -3402,7 +3560,7 @@ mod command_and_config_overlays {
     async fn command_overlay_tab_cycles_ambiguous_matches() {
         let mut app = test_app().await;
 
-        app.begin_command();
+        app.begin_command().await;
         type_chars(&mut app, "stat").await;
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         assert!(matches!(
@@ -3429,7 +3587,7 @@ mod command_and_config_overlays {
     async fn command_overlay_tab_cycles_from_exact_alias_match() {
         let mut app = test_app().await;
 
-        app.begin_command();
+        app.begin_command().await;
         type_chars(&mut app, ":todo").await;
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         assert!(matches!(
@@ -3452,7 +3610,7 @@ mod command_and_config_overlays {
     async fn command_overlay_edit_resets_completion_cycle() {
         let mut app = test_app().await;
 
-        app.begin_command();
+        app.begin_command().await;
         type_chars(&mut app, "stat").await;
         app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
         app.handle_overlay_key(key(KeyCode::Backspace))
@@ -3919,7 +4077,7 @@ mod command_and_config_overlays {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Stats target")).await;
 
-        app.begin_command();
+        app.begin_command().await;
         type_chars(&mut app, "database-stats").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
@@ -3960,7 +4118,7 @@ mod command_and_config_overlays {
     #[tokio::test]
     async fn command_panel_runs_config_show() {
         let mut app = test_app().await;
-        app.begin_command();
+        app.begin_command().await;
         type_chars(&mut app, "config-show").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
@@ -3979,7 +4137,7 @@ mod command_and_config_overlays {
             .unwrap();
         drop(conn);
 
-        app.begin_command();
+        app.begin_command().await;
         type_chars(&mut app, "workspace-switch").await;
         app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
@@ -11136,7 +11294,7 @@ mod task_editing {
             .await
             .unwrap();
 
-        app.begin_command();
+        app.begin_command().await;
         for ch in "undo".chars() {
             app.handle_overlay_key(key(KeyCode::Char(ch)))
                 .await
