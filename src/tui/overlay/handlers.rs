@@ -1212,7 +1212,7 @@ mod tests {
 
     #[test]
     fn add_task_tab_skips_empty_image_field() {
-        let state = add_task_state(AddTaskStep::Due);
+        let state = add_task_state(AddTaskStep::RepeatStartOn);
         let OverlayOutcome::None(OverlayState::AddTask(state)) =
             handle(key(KeyCode::Tab), OverlayState::AddTask(state))
         else {
@@ -1224,7 +1224,7 @@ mod tests {
         else {
             panic!("expected add task state");
         };
-        assert_eq!(state.focus, AddTaskStep::Due);
+        assert_eq!(state.focus, AddTaskStep::RepeatStartOn);
     }
 
     #[test]
