@@ -172,11 +172,9 @@ The detail view shows the task description, notes, metadata, availability, and d
 
 Attachments appear in an `ATTACHMENTS` section below the description, in the order they were added. iTerm2, Kitty, WezTerm, and Ghostty can show inline previews. Other terminals show a text label instead, so the attachment remains visible even when the terminal cannot display the image.
 
-A placeholder can also mean that the image is still downloading (`[image: pending download]`) or is unavailable on this device (`[image: unavailable bytes]`). Run `aven sync` to fetch images available from your sync server. If a preview you expect stays textual, see [Troubleshoot image previews](/tips/#troubleshoot-image-previews).
+![Aven task detail showing two attached Wayfinder design concepts with the first inline preview focused](/task-attachments.webp)
 
-Locally available images participate in detail focus in every terminal. `Tab` focuses the first available child task or image, and `Shift+Tab` focuses the last. Use `j/k` or the arrow keys to move among focused items. A focused inline image has a complete border, while a focused text label uses the focus color, and detail scrolls to reveal either form. Press `Enter` to open the focused image in a large in-TUI preview when inline previews are supported. When an inline preview is unavailable, `Enter` opens the image in the operating system's default viewer. Press `o` on any focused image to use the operating system viewer directly.
-
-In the large preview, use `j/k` or the arrow keys to switch directly between previewable images, press `o` to open the current image in the operating system viewer, and press `Esc` to return to task detail with the image still focused. `Tab`, `Shift+Tab`, or `Esc` clears detail focus. Clicking a locally available inline image opens the large preview, including while its preview is loading. Clicking a locally available text label opens the operating system viewer. Images that are pending download, unavailable on this device, deleted, or not a supported image format do not receive image focus.
+<p class="media-caption">Kitty showing an inline image attachment preview in task detail.</p>
 
 Overdue and due-today labels are highlighted while future deadlines remain visible as dates. Use `j/k`, arrows, `Ctrl-d`, `Ctrl-u`, `PageDown`, `PageUp`, or the mouse wheel to scroll. Use `[` and `]` to switch tasks while staying in detail. With no child task or image focused, press `Esc`, `Enter`, or `q` to return to the list. Clicking status or priority opens the matching menu and returns to detail after selection. To save an image as a regular file, use [`aven attachment get`](/command-reference/#aven-attachment).
 
