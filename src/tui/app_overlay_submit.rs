@@ -402,9 +402,6 @@ impl App {
                 self.submit_stop_recurrence(Some(target), values.first().map(String::as_str))
                     .await?;
             }
-            PickerIntent::RecurrenceHistoryOutcome => {
-                unreachable!("recurrence history handles its nested picker directly")
-            }
             PickerIntent::RemoveDependency { selection } => match values.first() {
                 Some(depends_on_task_id) => {
                     self.submit_remove_dependency(selection, depends_on_task_id.parse()?)

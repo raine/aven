@@ -1,14 +1,12 @@
 use aven_core::query::{RecurrenceHistoryEntry, RecurrenceHistoryKind};
+use aven_core::recurrence::RecurrenceOutcome;
 use ratatui::Frame;
 use ratatui::layout::{Rect, Size};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span, Text};
+use ratatui::text::{Line, Text};
 
 use super::super::dialog::{Dialog, dialog_hint_line};
-use crate::tui::overlay::{
-    RecurrenceHistoryEntryKey, RecurrenceHistoryMode, RecurrenceHistoryView,
-    recurrence_history_entry_key,
-};
+use crate::tui::overlay::{RecurrenceHistoryMode, RecurrenceHistoryView};
 use crate::tui::theme::{ACCENT, FG, FG_MUTED, SELECTED_BG};
 
 const HISTORY_WIDTH: u16 = 112;
@@ -51,13 +49,7 @@ pub(crate) fn recurrence_history_layout(
         .max(6);
     let area = crate::tui::overlay::dialog_area(bounds, HISTORY_WIDTH, height);
     let inner = history_inner_area(area);
-    let selected_index = state.selected.as_ref().and_then(|selected| {
-        state
-            .page
-            .items
-            .iter()
-            .position(|entry| recurrence_history_entry_key(entry) == *selected)
-    });
+    let selected_index = state.selected;
     let first_visible = if visible_entries == 0 {
         0
     } else {
@@ -120,9 +112,12 @@ pub(in crate::tui::ui) fn render_recurrence_history(
         .page
         .items
         .iter()
+        .enumerate()
         .skip(layout.first_visible)
         .take(layout.visible_entries)
-        .flat_map(|entry| history_lines(entry, state.selected.as_ref(), layout.entry_height))
+        .flat_map(|(index, entry)| {
+            history_lines(entry, state.selected == Some(index), layout.entry_height)
+        })
         .collect::<Vec<_>>();
     if lines.is_empty() {
         lines.push(Line::styled(
@@ -135,12 +130,11 @@ pub(in crate::tui::ui) fn render_recurrence_history(
     Dialog::new(&title, HISTORY_WIDTH, height).render_text(frame, Text::from(lines));
 }
 
-fn history_lines<'a>(
-    entry: &'a RecurrenceHistoryEntry,
-    selected: Option<&RecurrenceHistoryEntryKey>,
+fn history_lines(
+    entry: &RecurrenceHistoryEntry,
+    is_selected: bool,
     entry_height: u16,
-) -> Vec<Line<'a>> {
-    let is_selected = selected.is_some_and(|key| *key == recurrence_history_entry_key(entry));
+) -> Vec<Line<'_>> {
     let identity = match entry.kind {
         RecurrenceHistoryKind::Paused => format!(
             "{} to {}",
@@ -179,40 +173,22 @@ fn history_lines<'a>(
         Style::new().fg(FG)
     };
     let prefix = if is_selected { "> " } else { "  " };
-    match entry_height {
-        1 => vec![Line::from(vec![
-            Span::styled(prefix, style),
-            Span::styled(
-                format!(
-                    "{identity:<25} {kind:<9} resolved {resolved:<25} task {task:<12} {markers}"
-                ),
-                style,
-            ),
-        ])],
-        2 => vec![
+    if entry_height == 2 {
+        vec![
             Line::styled(format!("{prefix}{identity} {kind}"), style),
             Line::styled(
                 format!("  resolved {resolved}  task {task}  {markers}"),
                 style,
             ),
-        ],
-        _ => vec![
+        ]
+    } else {
+        debug_assert_eq!(entry_height, 3);
+        vec![
             Line::styled(format!("{prefix}{identity} {kind}"), style),
             Line::styled(format!("  resolved {resolved}"), style),
             Line::styled(format!("  task {task}  {markers}"), style),
-        ],
+        ]
     }
-}
-
-#[cfg(test)]
-fn history_line<'a>(
-    entry: &'a RecurrenceHistoryEntry,
-    selected: Option<&RecurrenceHistoryEntryKey>,
-) -> Line<'a> {
-    history_lines(entry, selected, 1)
-        .into_iter()
-        .next()
-        .expect("history entry renders at least one line")
 }
 
 fn mode_lines(mode: &RecurrenceHistoryMode) -> Vec<Line<'_>> {
@@ -225,15 +201,22 @@ fn mode_lines(mode: &RecurrenceHistoryMode) -> Vec<Line<'_>> {
             ("c", "correct"),
             ("Esc", "close"),
         ])),
-        RecurrenceHistoryMode::Outcome { slot_on, picker } => {
+        RecurrenceHistoryMode::Outcome { slot_on, selected } => {
             lines.push(Line::styled(
                 format!("Correct {slot_on}"),
                 Style::new().fg(ACCENT),
             ));
-            lines.extend(picker.items.iter().enumerate().map(|(index, item)| {
-                let prefix = if index == picker.selected { "> " } else { "  " };
-                Line::from(format!("{prefix}{}", item.label))
-            }));
+            lines.extend(
+                [
+                    ("Completed", RecurrenceOutcome::Completed),
+                    ("Skipped", RecurrenceOutcome::Skipped),
+                ]
+                .into_iter()
+                .map(|(label, outcome)| {
+                    let prefix = if outcome == *selected { "> " } else { "  " };
+                    Line::from(format!("{prefix}{label}"))
+                }),
+            );
             lines.push(dialog_hint_line(&[("Enter", "choose"), ("Esc", "back")]));
         }
         RecurrenceHistoryMode::ResolutionTime {
@@ -264,34 +247,6 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     #[test]
-    fn recurrence_history_line_renders_timestamp_ref_and_markers() {
-        let entry = RecurrenceHistoryEntry {
-            kind: RecurrenceHistoryKind::Completed,
-            slot_on: Some("2026-07-20".to_string()),
-            interval_started_at: None,
-            interval_ended_at: None,
-            task_id: None,
-            task_ref: Some("AVN-1234".to_string()),
-            openable: false,
-            corrected: true,
-            archived_projection: true,
-            resolved_at: Some("2026-07-20T12:34:56Z".to_string()),
-        };
-
-        let rendered = history_line(
-            &entry,
-            Some(&RecurrenceHistoryEntryKey::Slot("2026-07-20".to_string())),
-        )
-        .to_string();
-
-        assert!(rendered.contains("2026-07-20"));
-        assert!(rendered.contains("completed"));
-        assert!(rendered.contains("2026-07-20T12:34:56Z"));
-        assert!(rendered.contains("AVN-1234"));
-        assert!(rendered.contains("corrected,archived"));
-    }
-
-    #[test]
     fn recurrence_history_pause_and_miss_markers_are_explicit() {
         let missed = RecurrenceHistoryEntry {
             kind: RecurrenceHistoryKind::Missed,
@@ -318,8 +273,15 @@ mod tests {
             resolved_at: None,
         };
 
-        assert!(history_line(&missed, None).to_string().contains("missed"));
-        let pause = history_line(&pause, None).to_string();
+        assert!(
+            history_lines(&missed, false, 2)
+                .iter()
+                .any(|line| line.to_string().contains("missed"))
+        );
+        let pause = history_lines(&pause, false, 2)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<String>();
         assert!(pause.contains("paused"));
         assert!(pause.contains("present"));
         assert!(pause.contains("pause"));
@@ -348,7 +310,7 @@ mod tests {
                 total: 1,
                 has_more: false,
             },
-            selected: Some(RecurrenceHistoryEntryKey::Slot("2026-07-20".to_string())),
+            selected: Some(0),
             mode: RecurrenceHistoryMode::Browse,
         };
 
@@ -364,6 +326,7 @@ mod tests {
                 .iter()
                 .map(|cell| cell.symbol())
                 .collect::<String>();
+            assert!(rendered.contains("completed"));
             assert!(rendered.contains("2026-07-20T12:34:56Z"));
             assert!(rendered.contains("AVN-1234"));
             assert!(rendered.contains("corrected"));
@@ -382,10 +345,7 @@ mod tests {
 
     #[test]
     fn recurrence_history_full_page_reserves_mode_rows_and_footer_hints() {
-        use crate::tui::overlay::{
-            LineEdit, OverlayRoute, PickerItem, PickerState, RecurrenceHistoryMode,
-        };
-        use aven_core::recurrence::RecurrenceOutcome;
+        use crate::tui::overlay::{LineEdit, RecurrenceHistoryMode};
 
         let items = (1..=10)
             .map(|day| RecurrenceHistoryEntry {
@@ -419,23 +379,7 @@ mod tests {
             (
                 RecurrenceHistoryMode::Outcome {
                     slot_on,
-                    picker: PickerState::new(
-                        OverlayRoute::MessageOnly,
-                        format!("Correct {slot_on}"),
-                        vec![
-                            PickerItem {
-                                label: "Completed".to_string(),
-                                value: "completed".to_string(),
-                                selected: true,
-                            },
-                            PickerItem {
-                                label: "Skipped".to_string(),
-                                value: "skipped".to_string(),
-                                selected: false,
-                            },
-                        ],
-                        false,
-                    ),
+                    selected: RecurrenceOutcome::Completed,
                 },
                 7,
                 vec!["Correct 2026-07-20", "Completed", "Skipped", "Enter choose"],
@@ -455,7 +399,7 @@ mod tests {
         for (mode, expected_capacity, expected_text) in cases {
             let view = RecurrenceHistoryView {
                 page: page.clone(),
-                selected: Some(RecurrenceHistoryEntryKey::Slot("2026-07-01".to_string())),
+                selected: Some(0),
                 mode,
             };
             let layout = recurrence_history_layout(&view, terminal_size);
@@ -485,44 +429,5 @@ mod tests {
                 assert!(rendered.contains(text), "missing rendered control: {text}");
             }
         }
-    }
-
-    #[test]
-    fn recurrence_history_hit_test_ignores_footer_rows() {
-        let entry = RecurrenceHistoryEntry {
-            kind: RecurrenceHistoryKind::Missed,
-            slot_on: Some("2026-07-19".to_string()),
-            interval_started_at: None,
-            interval_ended_at: None,
-            task_id: None,
-            task_ref: None,
-            openable: false,
-            corrected: false,
-            archived_projection: false,
-            resolved_at: None,
-        };
-        let view = RecurrenceHistoryView {
-            page: RecurrenceHistoryPage {
-                series_ref: "RCR-TEST".to_string(),
-                items: vec![entry],
-                offset: 0,
-                limit: 10,
-                total: 1,
-                has_more: false,
-            },
-            selected: Some(RecurrenceHistoryEntryKey::Slot("2026-07-19".to_string())),
-            mode: RecurrenceHistoryMode::Browse,
-        };
-        let terminal = Size::new(80, 12);
-        let layout = recurrence_history_layout(&view, terminal);
-
-        assert_eq!(
-            recurrence_history_entry_at(&view, terminal, layout.rows.x, layout.rows.y,),
-            Some(0)
-        );
-        assert_eq!(
-            recurrence_history_entry_at(&view, terminal, layout.rows.x, layout.rows.bottom(),),
-            None
-        );
     }
 }

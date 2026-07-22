@@ -8,10 +8,9 @@ use chrono::{DateTime, NaiveDate, Utc};
 use crate::tui::app::{App, SeriesDetailReturn};
 use crate::tui::event::Action;
 use crate::tui::overlay::{
-    CommandAvailabilityOverride, OverlayState, OverlayTarget, PickerIntent, PickerItem, PickerState,
+    CommandAvailabilityOverride, OverlayState, OverlayTarget, PickerIntent, PickerItem,
     RECURRENCE_HISTORY_PAGE_SIZE, RecurrenceHistoryAction, RecurrenceHistoryEntryKey,
     RecurrenceHistoryMode, RecurrenceHistoryState, recurrence_history_correction_block_reason,
-    recurrence_history_entry_key,
 };
 use crate::tui::store::TaskView;
 
@@ -490,8 +489,7 @@ impl App {
                 .page
                 .items
                 .iter()
-                .find(|entry| recurrence_history_correction_block_reason(entry).is_none())
-                .map(recurrence_history_entry_key)
+                .position(|entry| recurrence_history_correction_block_reason(entry).is_none())
                 .or(state.selected);
             self.set_success("select a missed slot and press c to record an outcome");
         }
@@ -572,37 +570,25 @@ impl App {
                     self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
                 }
             },
-            RecurrenceHistoryMode::Outcome { slot_on, picker } => match key.code {
+            RecurrenceHistoryMode::Outcome { slot_on, selected } => match key.code {
                 KeyCode::Esc => {
                     state.mode = RecurrenceHistoryMode::Browse;
                     self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    picker.selected = picker
-                        .selected
-                        .saturating_add(1)
-                        .min(picker.items.len().saturating_sub(1));
+                    *selected = RecurrenceOutcome::Skipped;
                     self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
-                    picker.selected = picker.selected.saturating_sub(1);
+                    *selected = RecurrenceOutcome::Completed;
                     self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
                 }
                 KeyCode::Enter => {
-                    let outcome = picker.items.get(picker.selected).and_then(|item| {
-                        match item.value.as_str() {
-                            "completed" => Some(RecurrenceOutcome::Completed),
-                            "skipped" => Some(RecurrenceOutcome::Skipped),
-                            _ => None,
-                        }
-                    });
-                    if let Some(outcome) = outcome {
-                        state.mode = RecurrenceHistoryMode::ResolutionTime {
-                            slot_on: *slot_on,
-                            outcome,
-                            input: crate::tui::overlay::LineEdit::blank(),
-                        };
-                    }
+                    state.mode = RecurrenceHistoryMode::ResolutionTime {
+                        slot_on: *slot_on,
+                        outcome: *selected,
+                        input: crate::tui::overlay::LineEdit::blank(),
+                    };
                     self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
                 }
                 _ => {
@@ -661,7 +647,7 @@ impl App {
         }
         let view = crate::tui::overlay::RecurrenceHistoryView {
             page: state.page.clone(),
-            selected: state.selected.clone(),
+            selected: state.selected,
             mode: state.mode.clone(),
         };
         match mouse.kind {
@@ -676,11 +662,7 @@ impl App {
                 ) else {
                     return Ok(());
                 };
-                state.selected = state
-                    .page
-                    .items
-                    .get(index)
-                    .map(recurrence_history_entry_key);
+                state.selected = Some(index);
                 if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
                     let action = state.selected_entry().and_then(|entry| {
                         if entry.openable && entry.task_id.is_some() {
@@ -750,23 +732,7 @@ impl App {
                 .context("invalid recurrence history slot")?;
                 state.mode = RecurrenceHistoryMode::Outcome {
                     slot_on,
-                    picker: PickerState::new(
-                        PickerIntent::RecurrenceHistoryOutcome,
-                        format!("Correct {slot_on}"),
-                        vec![
-                            PickerItem {
-                                label: "Completed".to_string(),
-                                value: "completed".to_string(),
-                                selected: true,
-                            },
-                            PickerItem {
-                                label: "Skipped".to_string(),
-                                value: "skipped".to_string(),
-                                selected: false,
-                            },
-                        ],
-                        false,
-                    ),
+                    selected: RecurrenceOutcome::Completed,
                 };
                 self.overlay = Some(OverlayState::RecurrenceHistory(Box::new(state)));
             }

@@ -27,7 +27,6 @@ pub(crate) use state::{
     RecurrenceHistoryAction, RecurrenceHistoryEntryKey, RecurrenceHistoryMode,
     RecurrenceHistoryState, SearchIntent, SearchResultItem, SearchState, TagComboboxIntent,
     TextIntent, TextPanelState, UpdateOverlayState, recurrence_history_correction_block_reason,
-    recurrence_history_entry_key,
 };
 #[cfg(test)]
 pub(crate) use state::{ConfirmState, TextInputState};

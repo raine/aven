@@ -228,7 +228,7 @@ pub(crate) enum RecurrenceHistoryMode {
     Browse,
     Outcome {
         slot_on: NaiveDate,
-        picker: PickerState,
+        selected: RecurrenceOutcome,
     },
     ResolutionTime {
         slot_on: NaiveDate,
@@ -243,7 +243,7 @@ pub(crate) struct RecurrenceHistoryState {
     pub(crate) series_id: RecurrenceSeriesId,
     pub(crate) as_of: DateTime<Utc>,
     pub(crate) page: RecurrenceHistoryPage,
-    pub(crate) selected: Option<RecurrenceHistoryEntryKey>,
+    pub(crate) selected: Option<usize>,
     pub(crate) mode: RecurrenceHistoryMode,
 }
 
@@ -254,7 +254,7 @@ impl RecurrenceHistoryState {
         as_of: DateTime<Utc>,
         page: RecurrenceHistoryPage,
     ) -> Self {
-        let selected = page.items.first().map(recurrence_history_entry_key);
+        let selected = (!page.items.is_empty()).then_some(0);
         Self {
             workspace_id,
             series_id,
@@ -266,30 +266,24 @@ impl RecurrenceHistoryState {
     }
 
     pub(crate) fn selected_index(&self) -> Option<usize> {
-        let selected = self.selected.as_ref()?;
-        self.page
-            .items
-            .iter()
-            .position(|entry| recurrence_history_entry_key(entry) == *selected)
+        self.selected
     }
 
     pub(crate) fn selected_entry(&self) -> Option<&RecurrenceHistoryEntry> {
-        self.selected_index()
-            .and_then(|index| self.page.items.get(index))
+        self.selected.and_then(|index| self.page.items.get(index))
     }
 
     pub(crate) fn move_selection(&mut self, delta: isize) {
-        let Some(current) = self.selected_index() else {
-            self.selected = self.page.items.first().map(recurrence_history_entry_key);
+        if self.page.items.is_empty() {
+            self.selected = None;
+            return;
+        }
+        let Some(current) = self.selected else {
+            self.selected = Some(0);
             return;
         };
         let last = self.page.items.len().saturating_sub(1);
-        let selected = current.saturating_add_signed(delta).min(last);
-        self.selected = self
-            .page
-            .items
-            .get(selected)
-            .map(recurrence_history_entry_key);
+        self.selected = Some(current.saturating_add_signed(delta).min(last));
     }
 
     pub(crate) fn replace_page(
@@ -300,25 +294,21 @@ impl RecurrenceHistoryState {
     ) {
         self.page = page;
         self.selected = preferred
-            .filter(|key| {
+            .and_then(|key| {
                 self.page
                     .items
                     .iter()
-                    .any(|entry| recurrence_history_entry_key(entry) == *key)
+                    .position(|entry| recurrence_history_entry_key(entry) == key)
             })
             .or_else(|| {
-                self.page
-                    .items
-                    .get(fallback_index.min(self.page.items.len().saturating_sub(1)))
-                    .map(recurrence_history_entry_key)
+                (!self.page.items.is_empty())
+                    .then(|| fallback_index.min(self.page.items.len().saturating_sub(1)))
             });
         self.mode = RecurrenceHistoryMode::Browse;
     }
 }
 
-pub(crate) fn recurrence_history_entry_key(
-    entry: &RecurrenceHistoryEntry,
-) -> RecurrenceHistoryEntryKey {
+fn recurrence_history_entry_key(entry: &RecurrenceHistoryEntry) -> RecurrenceHistoryEntryKey {
     match (entry.slot_on.as_ref(), entry.interval_started_at.as_ref()) {
         (Some(slot), None) => RecurrenceHistoryEntryKey::Slot(slot.clone()),
         (None, Some(started_at)) => RecurrenceHistoryEntryKey::PauseStartedAt(started_at.clone()),
@@ -590,7 +580,6 @@ pub(crate) enum PickerIntent {
     StopRecurrence {
         target: OverlayTarget,
     },
-    RecurrenceHistoryOutcome,
 }
 
 impl PickerIntent {
@@ -1296,5 +1285,66 @@ mod tests {
         };
         assert_eq!(multiline.intent, MultilineIntent::AddTaskNatural);
         assert_eq!(multiline.lines, vec!["one".to_string(), "two".to_string()]);
+    }
+
+    #[test]
+    fn recurrence_history_selection_uses_resident_indexes_and_reload_identity() {
+        let workspace_id = WorkspaceId::new();
+        let series_id = RecurrenceSeriesId::new();
+        let page = RecurrenceHistoryPage {
+            series_ref: "RCR-TEST".to_string(),
+            items: vec![history_entry("2026-07-22"), history_entry("2026-07-21")],
+            offset: 0,
+            limit: 10,
+            total: 2,
+            has_more: false,
+        };
+        let mut state = RecurrenceHistoryState::new(workspace_id, series_id, Utc::now(), page);
+
+        assert_eq!(state.selected_index(), Some(0));
+        state.move_selection(1);
+        assert_eq!(state.selected_index(), Some(1));
+        let selected = state.selected_entry().map(recurrence_history_entry_key);
+        state.replace_page(
+            RecurrenceHistoryPage {
+                series_ref: "RCR-TEST".to_string(),
+                items: vec![history_entry("2026-07-21"), history_entry("2026-07-20")],
+                offset: 1,
+                limit: 10,
+                total: 2,
+                has_more: false,
+            },
+            selected,
+            0,
+        );
+        assert_eq!(state.selected_index(), Some(0));
+    }
+
+    #[test]
+    fn recurrence_history_correction_matrix_is_explicit() {
+        let derived = history_entry("2026-07-22");
+        assert_eq!(recurrence_history_correction_block_reason(&derived), None);
+
+        let mut completed = history_entry("2026-07-20");
+        completed.kind = RecurrenceHistoryKind::Completed;
+        assert_eq!(
+            recurrence_history_correction_block_reason(&completed),
+            Some("this slot already has an outcome")
+        );
+    }
+
+    fn history_entry(slot_on: &str) -> RecurrenceHistoryEntry {
+        RecurrenceHistoryEntry {
+            kind: RecurrenceHistoryKind::Missed,
+            slot_on: Some(slot_on.to_string()),
+            interval_started_at: None,
+            interval_ended_at: None,
+            task_id: None,
+            task_ref: None,
+            openable: false,
+            corrected: false,
+            archived_projection: false,
+            resolved_at: None,
+        }
     }
 }

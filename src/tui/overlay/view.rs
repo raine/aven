@@ -131,7 +131,7 @@ pub(crate) struct AddTaskAttachmentsView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecurrenceHistoryView {
     pub(crate) page: aven_core::query::RecurrenceHistoryPage,
-    pub(crate) selected: Option<super::state::RecurrenceHistoryEntryKey>,
+    pub(crate) selected: Option<usize>,
     pub(crate) mode: super::state::RecurrenceHistoryMode,
 }
 
@@ -483,7 +483,7 @@ impl From<&OverlayState> for OverlayView {
             }),
             RecurrenceHistory(state) => Self::RecurrenceHistory(RecurrenceHistoryView {
                 page: state.page.clone(),
-                selected: state.selected.clone(),
+                selected: state.selected,
                 mode: state.mode.clone(),
             }),
             SyncStatus(state) => Self::SyncStatus(state.clone()),
