@@ -96,7 +96,8 @@ sync:
   server_url: "http://127.0.0.1:9"
 "#,
     );
-    contains_all(&fail(env.aven_config(["daemon"])), &["error sync-disabled"]);
+    let db = env.db("daemon.sqlite");
+    contains_all(&fail(env.aven(&db, ["daemon"])), &["error sync-disabled"]);
 
     let env = TestEnv::new();
     env.write_config(
@@ -105,8 +106,9 @@ sync:
   enabled: true
 "#,
     );
+    let db = env.db("daemon.sqlite");
     contains_all(
-        &fail(env.aven_config(["daemon"])),
+        &fail(env.aven(&db, ["daemon"])),
         &["error sync-server-required"],
     );
 
@@ -121,8 +123,9 @@ daemon:
   wake_addr: "not-an-address"
 "#,
     );
+    let db = env.db("daemon.sqlite");
     contains_all(
-        &fail(env.aven_config(["daemon"])),
+        &fail(env.aven(&db, ["daemon"])),
         &["invalid daemon wake address"],
     );
 
@@ -137,8 +140,9 @@ daemon:
   wake_addr: "0.0.0.0:47631"
 "#,
     );
+    let db = env.db("daemon.sqlite");
     contains_all(
-        &fail(env.aven_config(["daemon"])),
+        &fail(env.aven(&db, ["daemon"])),
         &["error daemon-wake-requires-loopback"],
     );
 }

@@ -291,12 +291,13 @@ fn daemon_sync_logging_redacts_task_content() {
 #[test]
 fn delete_operation_logging_redacts_user_authored_names() {
     let env = TestEnv::new();
+    let db = env.db("delete.sqlite");
     let log = env.path("delete.log");
-    ok(env.aven_config(["project", "create", "secret delete project"]));
-    ok(env.aven_config(["label", "create", "secret-delete-label"]));
+    ok(env.aven(&db, ["project", "create", "secret delete project"]));
+    ok(env.aven(&db, ["label", "create", "secret-delete-label"]));
 
     let run_delete = |args: &[&str]| {
-        let mut cmd = common::command();
+        let mut cmd = common::command_with_db(&db);
         cmd.env("XDG_STATE_HOME", env.state_dir())
             .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
             .env_remove("AVEN_DB")
