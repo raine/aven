@@ -3,6 +3,13 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.14 (2026-07-23)
+
+- Explore Aven with `aven demo`, which opens a fresh sample workspace and
+  discards all changes when you exit.
+- Task details remain responsive while scrolling through inline image previews,
+  which reappear as soon as scrolling settles.
+
 ## v0.1.13 (2026-07-21)
 
 - [Attach images to tasks](/concepts/#image-attachments) from the TUI or CLI,
