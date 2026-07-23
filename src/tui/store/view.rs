@@ -200,7 +200,7 @@ impl TuiStore {
             .or(Some(0))
     }
 
-    pub(super) fn restored_task_selection_at_index(
+    pub(crate) fn restored_task_selection_at_index(
         &self,
         selected: Option<usize>,
     ) -> Option<usize> {

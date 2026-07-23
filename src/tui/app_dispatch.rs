@@ -1374,8 +1374,10 @@ impl App {
             match outcome {
                 OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
                 OverlayOutcome::Cancelled => {
-                    self.cancel_authoring_overlay();
-                    self.refresh().await?;
+                    if !self.restore_last_change_return().await? {
+                        self.cancel_authoring_overlay();
+                        self.refresh().await?;
+                    }
                 }
                 OverlayOutcome::Submitted(submit) => self.handle_overlay_submit(submit).await?,
             }
@@ -1605,6 +1607,10 @@ impl App {
         match self.pending_shortcut.resolve_detail(key) {
             DetailShortcutResolution::Action(Action::GoBack) => {
                 self.pending_shortcut_scroll = 0;
+                if self.last_change_return.is_some() {
+                    self.restore_last_change_return().await?;
+                    return Ok(Some(self.overlay.take()));
+                }
                 if self.go_back_in_detail() {
                     return Ok(Some(self.overlay.take()));
                 }
@@ -1663,6 +1669,7 @@ impl App {
                 }
             }
             Action::GoBack => self.go_back().await?,
+            Action::ReturnToLastChange => self.return_to_last_change().await?,
             Action::ToggleHelp => self.toggle_help_at_height(24),
             Action::ShowWelcome => self.show_welcome(),
             Action::BeginSearch => self.begin_search(),

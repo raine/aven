@@ -190,6 +190,8 @@ impl App {
         match action {
             HeaderMenuAction::Workspace(workspace) => {
                 let (message, selected) = self.store.switch_workspace(workspace).await?;
+                self.last_changed_task_id = None;
+                self.last_change_return = None;
                 self.clear_navigation_history();
                 self.apply_filter_selection(selected);
                 self.set_success(message);
@@ -327,6 +329,8 @@ impl App {
             return Ok(());
         };
         let (message, selected) = self.store.switch_workspace(workspace).await?;
+        self.last_changed_task_id = None;
+        self.last_change_return = None;
         self.clear_navigation_history();
         self.apply_filter_selection(selected);
         self.set_success(message);

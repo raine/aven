@@ -25,12 +25,13 @@ pub(crate) const REMOVE_DEPENDENCY_TITLE: &str = "Remove dependency";
 impl App {
     pub(super) async fn update_status(&mut self, status: &'static str) -> Result<()> {
         let task_ids = self.marked_task_ids_in_view();
+        let preserve_task = self.status_change_preserves_task();
+        let changed_task_id = self.changed_status_target(&task_ids, status);
+        let viewport_row = (!preserve_task)
+            .then(|| self.selected_task_viewport_row())
+            .flatten();
         let result = if task_ids.is_empty() {
-            let preserve_done_detail = status == "done"
-                && (self.store.view_state.view == crate::tui::store::TaskView::Columns
-                    || self.detail_context
-                    || matches!(self.overlay, Some(OverlayState::Detail { .. })));
-            if preserve_done_detail {
+            if preserve_task {
                 self.store
                     .update_status_preserving_task(self.widgets.table.selected(), status)
                     .await?
@@ -39,17 +40,85 @@ impl App {
                     .update_status(self.widgets.table.selected(), status)
                     .await?
             }
+        } else if preserve_task {
+            self.store
+                .update_status_for_tasks_preserving_task(
+                    self.widgets.table.selected(),
+                    &task_ids,
+                    status,
+                )
+                .await?
         } else {
             self.store
                 .update_status_for_tasks(self.widgets.table.selected(), &task_ids, status)
                 .await?
         };
         if let Some(result) = result {
-            self.apply_mutation_result(result);
+            self.apply_status_mutation_result(result, changed_task_id, viewport_row);
         } else {
             self.set_info("no selected task to edit");
         }
         Ok(())
+    }
+
+    fn status_change_preserves_task(&self) -> bool {
+        self.store.view_state.view == crate::tui::store::TaskView::Columns
+            || self.detail_context
+            || matches!(self.overlay, Some(OverlayState::Detail { .. }))
+    }
+
+    fn changed_status_target(
+        &self,
+        task_ids: &[crate::ids::TaskId],
+        status: &str,
+    ) -> Option<crate::ids::TaskId> {
+        let selected = self
+            .store
+            .selected_task(self.widgets.table.selected())
+            .filter(|item| item.task.status.as_str() != status);
+        if task_ids.is_empty() {
+            return selected.map(|item| item.task.id.clone());
+        }
+        if let Some(item) = selected
+            && task_ids.contains(&item.task.id)
+        {
+            return Some(item.task.id.clone());
+        }
+        self.store
+            .tasks
+            .iter()
+            .find(|item| task_ids.contains(&item.task.id) && item.task.status.as_str() != status)
+            .map(|item| item.task.id.clone())
+    }
+
+    fn selected_task_viewport_row(&self) -> Option<usize> {
+        let selected = self.widgets.table.selected()?;
+        crate::tui::ui::task_visual_row(&self.store, selected)
+            .map(|row| row.saturating_sub(self.widgets.table.offset()))
+    }
+
+    fn apply_status_mutation_result(
+        &mut self,
+        mut result: crate::tui::store::MutationMessage,
+        changed_task_id: Option<crate::ids::TaskId>,
+        viewport_row: Option<usize>,
+    ) {
+        if let Some(task_id) = changed_task_id {
+            let selection_changed = result
+                .selected
+                .and_then(|index| self.store.tasks.get(index))
+                .is_none_or(|item| item.task.id != task_id);
+            self.last_changed_task_id = Some(task_id);
+            if selection_changed {
+                result.message.push_str(" · g . return");
+            }
+        }
+        self.apply_mutation_result(result);
+        if let (Some(viewport_row), Some(selected)) = (viewport_row, self.widgets.table.selected())
+            && let Some(visual_row) = crate::tui::ui::task_visual_row(&self.store, selected)
+        {
+            *self.widgets.table.offset_mut() = visual_row.saturating_sub(viewport_row);
+        }
     }
 
     pub(super) async fn move_tasks_by_column(&mut self, delta: isize) -> Result<()> {
@@ -490,12 +559,13 @@ impl App {
 
     pub(super) async fn submit_edit_status(&mut self, status: String) -> Result<()> {
         let task_ids = self.marked_task_ids_in_view();
+        let preserve_task = self.status_change_preserves_task();
+        let changed_task_id = self.changed_status_target(&task_ids, &status);
+        let viewport_row = (!preserve_task)
+            .then(|| self.selected_task_viewport_row())
+            .flatten();
         let result = if task_ids.is_empty() {
-            let preserve_done_detail = status == "done"
-                && (self.store.view_state.view == crate::tui::store::TaskView::Columns
-                    || self.detail_context
-                    || matches!(self.overlay, Some(OverlayState::Detail { .. })));
-            if preserve_done_detail {
+            if preserve_task {
                 self.store
                     .update_status_preserving_task(self.widgets.table.selected(), &status)
                     .await
@@ -504,12 +574,29 @@ impl App {
                     .update_status(self.widgets.table.selected(), &status)
                     .await
             }
+        } else if preserve_task {
+            self.store
+                .update_status_for_tasks_preserving_task(
+                    self.widgets.table.selected(),
+                    &task_ids,
+                    &status,
+                )
+                .await
         } else {
             self.store
                 .update_status_for_tasks(self.widgets.table.selected(), &task_ids, &status)
                 .await
         };
-        self.apply_edit_mutation(result, |app| app.begin_status_picker());
+        match result {
+            Ok(Some(result)) => {
+                self.apply_status_mutation_result(result, changed_task_id, viewport_row)
+            }
+            Ok(None) => self.set_info("no selected task to edit"),
+            Err(error) => {
+                self.set_error(format!("{error:#}"));
+                self.begin_status_picker();
+            }
+        }
         Ok(())
     }
 

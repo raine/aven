@@ -82,13 +82,12 @@ impl TuiStore {
         .await?;
         let message = format!("set {} status={status}", item.display_ref);
         item.task = task;
-        let result = match (status, refresh) {
-            ("done", StatusRefresh::PreserveTask) => {
+        let result = match refresh {
+            StatusRefresh::PreserveTask => {
                 self.refresh_preserved_task_message(index, item, message)
                     .await?
             }
-            ("done", StatusRefresh::Default) => self.refresh_index_message(index, message).await?,
-            _ => self.refresh_task_message(&item.task.id, message).await?,
+            StatusRefresh::Default => self.refresh_index_message(index, message).await?,
         };
         Ok(Some(result))
     }
@@ -636,6 +635,37 @@ impl TuiStore {
         task_ids: &[crate::ids::TaskId],
         status: &str,
     ) -> Result<Option<MutationMessage>> {
+        self.update_status_for_tasks_with_refresh(
+            current_selected_index,
+            task_ids,
+            status,
+            StatusRefresh::Default,
+        )
+        .await
+    }
+
+    pub(crate) async fn update_status_for_tasks_preserving_task(
+        &mut self,
+        current_selected_index: Option<usize>,
+        task_ids: &[crate::ids::TaskId],
+        status: &str,
+    ) -> Result<Option<MutationMessage>> {
+        self.update_status_for_tasks_with_refresh(
+            current_selected_index,
+            task_ids,
+            status,
+            StatusRefresh::PreserveTask,
+        )
+        .await
+    }
+
+    async fn update_status_for_tasks_with_refresh(
+        &mut self,
+        current_selected_index: Option<usize>,
+        task_ids: &[crate::ids::TaskId],
+        status: &str,
+        refresh: StatusRefresh,
+    ) -> Result<Option<MutationMessage>> {
         let targets = self.tasks_matching_ids(task_ids);
         if targets.is_empty() {
             return Ok(None);
@@ -676,10 +706,17 @@ impl TuiStore {
         } else {
             format!("set status on {changed} tasks")
         };
-        Ok(Some(
-            self.refresh_after_task_batch(current_selected_index, &targets, message)
-                .await?,
-        ))
+        let result = match refresh {
+            StatusRefresh::Default => {
+                self.refresh_index_message(current_selected_index, message)
+                    .await?
+            }
+            StatusRefresh::PreserveTask => {
+                self.refresh_after_task_batch(current_selected_index, &targets, message)
+                    .await?
+            }
+        };
+        Ok(Some(result))
     }
 
     pub(crate) async fn update_status_changes_for_tasks(

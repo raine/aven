@@ -177,6 +177,10 @@ fn task_list_status_area(
     Layout::horizontal(columns).areas::<8>(row_area)[5]
 }
 
+pub(crate) fn task_visual_row(store: &TuiStore, task_index: usize) -> Option<usize> {
+    TaskListView::new(store).visual_row_for(task_index)
+}
+
 pub(super) fn render_tasks(
     frame: &mut Frame,
     store: &TuiStore,

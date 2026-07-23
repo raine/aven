@@ -384,6 +384,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         Action::GoBack,
     ),
     CommandSpec::implemented(
+        "return-to-change",
+        "select the task most recently changed",
+        "Navigation",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('.')],
+            label: "g .",
+        }],
+        Action::ReturnToLastChange,
+    ),
+    CommandSpec::implemented(
         "toggle-sidebar",
         "toggle the sidebar",
         "Navigation",
@@ -1319,6 +1329,16 @@ pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
             label: "g [",
         }],
         Action::GoBack,
+    ),
+    CommandSpec::implemented(
+        "detail-return-to-change",
+        "select the task most recently changed",
+        "Navigation",
+        &[KeySequence {
+            codes: &[KeyCode::Char('g'), KeyCode::Char('.')],
+            label: "g .",
+        }],
+        Action::ReturnToLastChange,
     ),
     CommandSpec::implemented(
         "detail-edit-title",

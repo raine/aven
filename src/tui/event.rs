@@ -38,6 +38,7 @@ fn implemented_action_is_handled(action: Action) -> bool {
             | Action::ToggleDetail
             | Action::ToggleColumnsPreview
             | Action::GoBack
+            | Action::ReturnToLastChange
             | Action::ToggleHelp
             | Action::ShowWelcome
             | Action::BeginSearch
@@ -224,6 +225,7 @@ mod tests {
             command_cycle_options("r"),
             vec![
                 "refresh",
+                "return-to-change",
                 "restore",
                 "rename-project",
                 "remove-project-path",
@@ -515,6 +517,14 @@ mod tests {
     }
 
     #[test]
+    fn normal_context_resolves_last_change_shortcut() {
+        assert_eq!(
+            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('.')]),
+            ShortcutLookup::Found(Action::ReturnToLastChange)
+        );
+    }
+
+    #[test]
     fn detail_context_resolves_detail_shortcuts() {
         assert_eq!(
             resolve_shortcut_for(CommandContext::Detail, &[KeyCode::Char('e')]),
@@ -538,6 +548,13 @@ mod tests {
                 &[KeyCode::Char('g'), KeyCode::Char('[')]
             ),
             ShortcutLookup::Found(Action::GoBack)
+        );
+        assert_eq!(
+            resolve_shortcut_for(
+                CommandContext::Detail,
+                &[KeyCode::Char('g'), KeyCode::Char('.')]
+            ),
+            ShortcutLookup::Found(Action::ReturnToLastChange)
         );
         assert_eq!(
             resolve_shortcut_for(

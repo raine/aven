@@ -125,6 +125,14 @@ pub(super) struct DetailNavigationState {
     pub(super) scroll: u16,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct LastChangeReturnState {
+    pub(super) view_state: TaskViewState,
+    pub(super) selected_task_id: Option<crate::ids::TaskId>,
+    pub(super) selected_index: Option<usize>,
+    pub(super) table_offset: usize,
+}
+
 pub(crate) struct App {
     pub(crate) store: TuiStore,
     pub(crate) should_quit: bool,
@@ -167,6 +175,8 @@ pub(crate) struct App {
     pub(crate) inline_image_context_override: Option<crate::tui::ui::DetailInlineImageContext>,
     pub(super) navigation_history: BoundedHistory<TaskViewState>,
     pub(super) detail_navigation_history: BoundedHistory<DetailNavigationState>,
+    pub(super) last_changed_task_id: Option<crate::ids::TaskId>,
+    pub(super) last_change_return: Option<LastChangeReturnState>,
 }
 
 impl App {
@@ -233,6 +243,8 @@ impl App {
             inline_image_context_override: None,
             navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
             detail_navigation_history: BoundedHistory::new(NAVIGATION_HISTORY_LIMIT),
+            last_changed_task_id: None,
+            last_change_return: None,
         };
         app.restore_sidebar_selection();
         app.widgets

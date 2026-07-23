@@ -474,6 +474,125 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
+    async fn queue_status_change_keeps_selection_at_ranked_position() {
+        let mut store = test_store().await;
+        for title in ["First", "Selected", "Third"] {
+            create_selected_task(&mut store, title).await;
+        }
+        store.show_view(TaskView::Queue).await.unwrap();
+        let selected = 1;
+        let selected_id = store.tasks[selected].task.id.clone();
+
+        let result = store
+            .update_status(Some(selected), "active")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result.selected, Some(selected));
+        assert_ne!(store.tasks[selected].task.id, selected_id);
+        assert_eq!(
+            store
+                .tasks
+                .iter()
+                .position(|item| item.task.id == selected_id),
+            Some(0)
+        );
+    }
+
+    #[tokio::test]
+    async fn filtered_status_change_selects_successor_then_previous_at_end() {
+        let mut store = test_store().await;
+        for title in ["First", "Second", "Third"] {
+            let (_, selected) = create_selected_task(&mut store, title).await;
+            store.update_status(Some(selected), "todo").await.unwrap();
+        }
+        store.show_view(TaskView::Todo).await.unwrap();
+        let second = 1;
+        let predecessor_id = store.tasks[second - 1].task.id.clone();
+        let successor_id = store.tasks[second + 1].task.id.clone();
+
+        let result = store
+            .update_status(Some(second), "done")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.selected, Some(second));
+        assert_eq!(store.tasks[second].task.id, successor_id);
+
+        let result = store
+            .update_status(result.selected, "done")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.selected, Some(0));
+        assert_eq!(store.tasks[0].task.id, predecessor_id);
+    }
+
+    #[tokio::test]
+    async fn unchanged_status_keeps_selected_task_at_its_position() {
+        let mut store = test_store().await;
+        for title in ["First", "Selected", "Third"] {
+            create_selected_task(&mut store, title).await;
+        }
+        store.show_view(TaskView::Queue).await.unwrap();
+        let selected = 1;
+        let selected_id = store.tasks[selected].task.id.clone();
+
+        let result = store
+            .update_status(Some(selected), "inbox")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result.selected, Some(selected));
+        assert_eq!(store.tasks[selected].task.id, selected_id);
+    }
+
+    #[tokio::test]
+    async fn marked_status_change_keeps_selection_at_ranked_position() {
+        let mut store = test_store().await;
+        for title in ["First", "Selected", "Third", "Fourth"] {
+            create_selected_task(&mut store, title).await;
+        }
+        store.show_view(TaskView::Queue).await.unwrap();
+        let selected = 2;
+        let targets = vec![
+            store.tasks[0].task.id.clone(),
+            store.tasks[selected].task.id.clone(),
+        ];
+
+        let result = store
+            .update_status_for_tasks(Some(selected), &targets, "active")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result.selected, Some(selected));
+        assert_eq!(store.tasks[selected].task.status, TaskStatus::Inbox);
+    }
+
+    #[tokio::test]
+    async fn preserving_status_change_follows_task_after_queue_reorder() {
+        let mut store = test_store().await;
+        for title in ["First", "Selected", "Third"] {
+            create_selected_task(&mut store, title).await;
+        }
+        store.show_view(TaskView::Queue).await.unwrap();
+        let selected = 1;
+        let selected_id = store.tasks[selected].task.id.clone();
+
+        let result = store
+            .update_status_preserving_task(Some(selected), "active")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result.selected, Some(0));
+        assert_eq!(store.tasks[0].task.id, selected_id);
+    }
+
+    #[tokio::test]
     async fn update_status_preserving_task_keeps_done_item_in_filtered_view() {
         let mut store = test_store().await;
         let _ = store
@@ -2850,6 +2969,44 @@ mod epics {
                 .contains(&parent_task_id)
         );
         assert!(store.tasks.iter().any(|task| task.task.id == child_id));
+    }
+
+    #[tokio::test]
+    async fn status_change_from_collapsed_epic_selects_remaining_row() {
+        let mut store = test_store().await;
+        let (first_parent_id, _, _) = create_epic_child_pair(&mut store).await;
+        store.show_view(TaskView::Queue).await.unwrap();
+        let (second_parent_id, _, _) = create_epic_child_pair(&mut store).await;
+        let first_parent = store
+            .tasks
+            .iter()
+            .position(|task| task.task.id == first_parent_id)
+            .unwrap();
+        store
+            .toggle_selected_epic(Some(first_parent))
+            .await
+            .unwrap()
+            .unwrap();
+        let first_parent = store
+            .tasks
+            .iter()
+            .position(|task| task.task.id == first_parent_id)
+            .unwrap();
+
+        let result = store
+            .update_status(Some(first_parent), "done")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result.selected, Some(0));
+        assert_eq!(store.tasks[0].task.id, second_parent_id);
+        assert!(
+            !store
+                .view_state
+                .collapsed_epic_ids
+                .contains(&first_parent_id)
+        );
     }
 
     #[tokio::test]

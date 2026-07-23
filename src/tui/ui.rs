@@ -37,6 +37,7 @@ use self::recent_actions::render_recent_actions;
 use self::shortcuts::{render_command, render_detail_help, render_help, render_prefix_hints};
 use self::sidebar::{render_sidebar, render_sidebar_overlay};
 use self::task_list::render_tasks;
+pub(crate) use self::task_list::task_visual_row;
 use self::toast::render_toast;
 
 pub(crate) use self::detail::{

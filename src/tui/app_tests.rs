@@ -6973,6 +6973,75 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn queue_status_change_preserves_viewport_row_and_recalls_changed_task() {
+        let mut app = test_app().await;
+        for title in ["First", "Changed", "Third"] {
+            create_and_select_task(&mut app, test_task_draft(title)).await;
+        }
+        app.show_view(TaskView::Queue).await.unwrap();
+        let selected = 1;
+        let changed_id = app.store.tasks[selected].task.id.clone();
+        app.widgets.table.select(Some(selected));
+        *app.widgets.table.offset_mut() = 1;
+
+        app.update_status("active").await.unwrap();
+
+        assert_eq!(app.widgets.table.selected(), Some(selected));
+        assert_ne!(app.store.tasks[selected].task.id, changed_id);
+        assert_eq!(app.widgets.table.offset(), 2);
+        assert_eq!(app.last_changed_task_id.as_ref(), Some(&changed_id));
+        assert!(toast_message(&app).unwrap().contains("g . return"));
+
+        app.execute(Action::ReturnToLastChange).await.unwrap();
+
+        assert_eq!(
+            app.store
+                .selected_task(app.widgets.table.selected())
+                .unwrap()
+                .task
+                .id,
+            changed_id
+        );
+    }
+
+    #[tokio::test]
+    async fn recalling_filtered_status_change_returns_from_detail_to_queue_anchor() {
+        let mut app = test_app().await;
+        for title in ["First", "Changed", "Third"] {
+            create_and_select_task(&mut app, test_task_draft(title)).await;
+        }
+        app.show_view(TaskView::Queue).await.unwrap();
+        let selected = 1;
+        let changed_id = app.store.tasks[selected].task.id.clone();
+        app.widgets.table.select(Some(selected));
+        *app.widgets.table.offset_mut() = 1;
+
+        app.update_status("done").await.unwrap();
+        let replacement_id = app.store.tasks[selected].task.id.clone();
+        let return_offset = app.widgets.table.offset();
+        app.execute(Action::ReturnToLastChange).await.unwrap();
+
+        assert_eq!(app.store.view_state.view, TaskView::Search);
+        assert!(matches!(app.overlay, Some(OverlayState::Detail { .. })));
+        assert_eq!(app.store.tasks.len(), 1);
+        assert_eq!(app.store.tasks[0].task.id, changed_id);
+
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert_eq!(app.store.view_state.view, TaskView::Queue);
+        assert!(app.overlay.is_none());
+        assert_eq!(app.widgets.table.offset(), return_offset);
+        assert_eq!(
+            app.store
+                .selected_task(app.widgets.table.selected())
+                .unwrap()
+                .task
+                .id,
+            replacement_id
+        );
+    }
+
+    #[tokio::test]
     async fn detail_status_picker_done_keeps_same_task() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Next target")).await;

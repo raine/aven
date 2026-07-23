@@ -51,15 +51,16 @@ impl TaskListView {
     }
 
     pub(super) fn visual_row(&self, selected_task: usize) -> usize {
-        self.rows
-            .iter()
-            .position(|row| match row {
-                TaskListRow::EpicChild { task_index, .. } | TaskListRow::Task { task_index } => {
-                    *task_index == selected_task
-                }
-                _ => false,
-            })
-            .unwrap_or(0)
+        self.visual_row_for(selected_task).unwrap_or(0)
+    }
+
+    pub(super) fn visual_row_for(&self, selected_task: usize) -> Option<usize> {
+        self.rows.iter().position(|row| match row {
+            TaskListRow::EpicChild { task_index, .. } | TaskListRow::Task { task_index } => {
+                *task_index == selected_task
+            }
+            _ => false,
+        })
     }
 }
 

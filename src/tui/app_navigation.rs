@@ -1,8 +1,9 @@
 use anyhow::Result;
 
-use crate::tui::app::{App, Focus};
+use crate::tui::app::{App, Focus, LastChangeReturnState};
 use crate::tui::navigation::{next_index, next_selectable_sidebar};
 use crate::tui::overlay::{OverlayRoute, OverlayState, PickerItem};
+use crate::tui::store::{TaskFilterModifiers, TaskScope, TaskView, TaskViewState};
 
 impl App {
     pub(super) fn restore_sidebar_selection(&mut self) {
@@ -269,6 +270,96 @@ impl App {
             self.focus = Focus::Tasks;
             self.preserve_or_restore_sidebar_selection();
         }
+    }
+
+    pub(super) async fn return_to_last_change(&mut self) -> Result<()> {
+        let Some(task_id) = self.last_changed_task_id.clone() else {
+            self.set_info("no recently changed task");
+            return Ok(());
+        };
+
+        if let Some(index) = self
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == task_id)
+            && crate::tui::ui::task_visual_row(&self.store, index).is_some()
+        {
+            self.focus = Focus::Tasks;
+            self.widgets.table.select(Some(index));
+            if matches!(self.overlay, Some(OverlayState::Detail { .. })) {
+                self.overlay = Some(OverlayState::Detail { scroll: 0 });
+            }
+            return Ok(());
+        }
+
+        let selected_index = self.widgets.table.selected();
+        let return_state = LastChangeReturnState {
+            view_state: self.store.view_state.clone(),
+            selected_task_id: self
+                .store
+                .selected_task(selected_index)
+                .map(|item| item.task.id.clone()),
+            selected_index,
+            table_offset: self.widgets.table.offset(),
+        };
+        self.store.view_state = TaskViewState {
+            scope: TaskScope::Workspace,
+            view: TaskView::Search,
+            filter_modifiers: TaskFilterModifiers {
+                task_ids: vec![task_id.clone()],
+                ..TaskFilterModifiers::default()
+            },
+            ..TaskViewState::default()
+        };
+        let selected = self.store.refresh(Some(&task_id)).await?;
+        let Some(selected) = selected.filter(|index| {
+            self.store
+                .tasks
+                .get(*index)
+                .is_some_and(|item| item.task.id == task_id)
+        }) else {
+            self.store.view_state = return_state.view_state;
+            self.store
+                .refresh(return_state.selected_task_id.as_ref())
+                .await?;
+            let selected = self
+                .store
+                .restored_task_selection_at_index(return_state.selected_index);
+            self.widgets.table.select(selected);
+            *self.widgets.table.offset_mut() = return_state.table_offset;
+            self.last_changed_task_id = None;
+            self.set_warning("recently changed task is unavailable");
+            return Ok(());
+        };
+        self.last_change_return = Some(return_state);
+        self.focus = Focus::Tasks;
+        self.widgets.table.select(Some(selected));
+        self.overlay = Some(OverlayState::Detail { scroll: 0 });
+        Ok(())
+    }
+
+    pub(super) async fn restore_last_change_return(&mut self) -> Result<bool> {
+        let Some(return_state) = self.last_change_return.take() else {
+            return Ok(false);
+        };
+        self.cancel_authoring_overlay();
+        self.overlay = None;
+        self.detail_context = false;
+        self.store.view_state = return_state.view_state;
+        let selected = self
+            .store
+            .refresh(return_state.selected_task_id.as_ref())
+            .await?
+            .or_else(|| {
+                self.store
+                    .restored_task_selection_at_index(return_state.selected_index)
+            });
+        self.widgets.table.select(selected);
+        *self.widgets.table.offset_mut() = return_state.table_offset;
+        self.preserve_or_restore_sidebar_selection();
+        self.prune_task_marks();
+        Ok(true)
     }
 
     pub(super) fn apply_mutation_result(&mut self, result: crate::tui::store::MutationMessage) {
