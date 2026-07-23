@@ -222,7 +222,6 @@ pub enum RecurrenceProjectionState {
     Projected,
     Resolved,
     Archived,
-    Corrected,
 }
 
 impl RecurrenceProjectionState {
@@ -231,7 +230,6 @@ impl RecurrenceProjectionState {
             Self::Projected => "projected",
             Self::Resolved => "resolved",
             Self::Archived => "archived",
-            Self::Corrected => "corrected",
         }
     }
 
@@ -240,7 +238,6 @@ impl RecurrenceProjectionState {
             "projected" => Ok(Self::Projected),
             "resolved" => Ok(Self::Resolved),
             "archived" => Ok(Self::Archived),
-            "corrected" => Ok(Self::Corrected),
             _ => Err(InvalidRecurrenceValue::new("projection state", value)),
         }
     }

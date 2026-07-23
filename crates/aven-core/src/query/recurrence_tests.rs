@@ -59,6 +59,46 @@ async fn create(
         .unwrap()
 }
 
+async fn resolve_at(
+    database: &crate::db::Database,
+    workspace: &Workspace,
+    task_id: &TaskId,
+    outcome: RecurrenceOutcome,
+    resolved_at: DateTime<Utc>,
+) -> crate::operations::RecurrenceResolveOutcome {
+    let mut conn = database.acquire().await.unwrap();
+    let mut tx = crate::db::begin_immediate(&mut conn).await.unwrap();
+    let result = crate::operations::recurrence::resolve_recurrence_occurrence_in_transaction(
+        &mut tx,
+        workspace,
+        task_id,
+        outcome,
+        &resolved_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    result
+}
+
+async fn stop_at(
+    database: &crate::db::Database,
+    workspace: &Workspace,
+    series_id: &RecurrenceSeriesId,
+    stopped_at: DateTime<Utc>,
+) {
+    let mut conn = database.acquire().await.unwrap();
+    crate::operations::recurrence::stop_recurrence_series(
+        &mut conn,
+        workspace,
+        series_id,
+        false,
+        &stopped_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+    )
+    .await
+    .unwrap();
+}
+
 async fn list(
     database: &crate::db::Database,
     workspace: &Workspace,
@@ -400,10 +440,7 @@ async fn paused_and_archived_tasks_leave_all_open_paths_but_stopped_final_stays_
     );
 
     let stopped = create(&database, &workspace, "stopped fixture", 20).await;
-    database
-        .stop_recurrence_series(&workspace, &stopped.series.id, false)
-        .await
-        .unwrap();
+    stop_at(&database, &workspace, &stopped.series.id, at(20, 13)).await;
     let visible = list(
         &database,
         &workspace,
@@ -425,18 +462,6 @@ async fn recurrence_history_pages_preserve_metadata_and_boundaries() {
         .reconcile_recurrence_series(&workspace, &created.series.id, at(24, 12))
         .await
         .unwrap();
-    database
-        .record_recurrence_outcome(
-            &workspace,
-            &created.series.id,
-            NaiveDate::from_ymd_opt(2026, 7, 22).unwrap(),
-            RecurrenceOutcome::Completed,
-            "2026-07-22T18:00:00Z".to_string(),
-            at(24, 12),
-        )
-        .await
-        .unwrap();
-
     let first = database
         .recurrence_history_at(&workspace.id, &created.series.id, at(24, 12), 0, 2)
         .await
@@ -454,16 +479,6 @@ async fn recurrence_history_pages_preserve_metadata_and_boundaries() {
     assert_eq!(second.offset, 2);
     assert!(!second.has_more);
     assert_eq!(first.total, second.total);
-    let corrected = first
-        .items
-        .iter()
-        .chain(&second.items)
-        .find(|entry| entry.corrected)
-        .unwrap();
-    assert_eq!(
-        corrected.resolved_at.as_deref(),
-        Some("2026-07-22T18:00:00Z")
-    );
     for entry in first.items.iter().chain(&second.items) {
         assert_ne!(entry.slot_on.is_some(), entry.interval_started_at.is_some());
         assert_eq!(entry.openable, entry.task_id.is_some());
@@ -471,42 +486,33 @@ async fn recurrence_history_pages_preserve_metadata_and_boundaries() {
 }
 
 #[tokio::test]
-async fn history_combines_grouped_explicit_corrected_archived_and_derived_rows() {
+async fn history_combines_task_outcomes_archived_and_derived_rows() {
     let (_temp, database, workspace) = setup().await;
     let created = create(&database, &workspace, "history fixture", 20).await;
-    database
-        .resolve_recurrence_occurrence(&workspace, &created.task.id, RecurrenceOutcome::Completed)
-        .await
-        .unwrap();
+    resolve_at(
+        &database,
+        &workspace,
+        &created.task.id,
+        RecurrenceOutcome::Completed,
+        at(20, 18),
+    )
+    .await;
     database
         .reconcile_recurrence_series(&workspace, &created.series.id, at(24, 12))
         .await
         .unwrap();
-    database
-        .record_recurrence_outcome(
-            &workspace,
-            &created.series.id,
-            NaiveDate::from_ymd_opt(2026, 7, 22).unwrap(),
-            RecurrenceOutcome::Completed,
-            "2026-07-22T18:00:00Z".to_string(),
-            at(24, 12),
-        )
-        .await
-        .unwrap();
-
     let history = database
         .recurrence_history_at(&workspace.id, &created.series.id, at(24, 12), 0, 20)
         .await
         .unwrap();
     assert_eq!(history.total, 4);
-    let corrected = history
+    let derived_22 = history
         .items
         .iter()
         .find(|item| item.slot_on.as_deref() == Some("2026-07-22"))
         .unwrap();
-    assert_eq!(corrected.kind, RecurrenceHistoryKind::Completed);
-    assert!(corrected.corrected);
-    assert!(!corrected.openable);
+    assert_eq!(derived_22.kind, RecurrenceHistoryKind::Missed);
+    assert!(!derived_22.openable);
     let archived = history
         .items
         .iter()
@@ -536,8 +542,8 @@ async fn history_combines_grouped_explicit_corrected_archived_and_derived_rows()
     .await;
     assert_eq!(grouped.len(), 1);
     let group = grouped[0].recurrence_group.as_ref().unwrap();
-    assert_eq!(group.counts.completed, 2);
-    assert_eq!(group.counts.missed, 2);
+    assert_eq!(group.counts.completed, 1);
+    assert_eq!(group.counts.missed, 3);
 
     let expanded = list(
         &database,
@@ -610,10 +616,14 @@ async fn refs_and_recent_actions_resolve_and_group_successor_projection() {
         created.series.id
     );
 
-    let resolved = database
-        .resolve_recurrence_occurrence(&workspace, &created.task.id, RecurrenceOutcome::Skipped)
-        .await
-        .unwrap();
+    let resolved = resolve_at(
+        &database,
+        &workspace,
+        &created.task.id,
+        RecurrenceOutcome::Skipped,
+        at(20, 18),
+    )
+    .await;
     let successor = resolved.successor.unwrap();
     let mut conn = database.acquire().await.unwrap();
     let actions = super::super::recent_actions::list_recent_actions_in_workspace(

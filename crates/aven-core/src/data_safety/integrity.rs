@@ -92,13 +92,7 @@ pub(crate) async fn recurrence_integrity_checks(
     checks.push(count_check(
         conn,
         "recurrence outcome changes",
-        "SELECT count(*) FROM recurrence_occurrences o LEFT JOIN changes c ON c.change_id = o.outcome_change_id AND c.entity_type = 'recurrence_series' AND c.entity_id = o.series_id AND c.field = 'outcome' AND c.op_type IN ('resolve_recurrence_occurrence', 'record_recurrence_outcome') AND CASE WHEN json_valid(c.payload) THEN json_extract(c.payload, '$.slot_on') END = o.slot_on AND CASE WHEN json_valid(c.payload) THEN json_extract(c.payload, '$.outcome') END = o.outcome AND CASE WHEN json_valid(c.payload) THEN json_extract(c.payload, '$.resolved_at') END = o.resolved_at WHERE o.outcome_change_id != '' AND c.change_id IS NULL",
-    )
-    .await?);
-    checks.push(count_check(
-        conn,
-        "recurrence corrected slots",
-        "SELECT count(*) FROM recurrence_occurrences WHERE projection_state = 'corrected' AND (task_id != '' OR outcome = '' OR resolved_at = '' OR outcome_change_id = '' OR archived_at != '')",
+        "SELECT count(*) FROM recurrence_occurrences o LEFT JOIN changes c ON c.change_id = o.outcome_change_id AND c.entity_type = 'recurrence_series' AND c.entity_id = o.series_id AND c.field = 'outcome' AND c.op_type = 'resolve_recurrence_occurrence' AND CASE WHEN json_valid(c.payload) THEN json_extract(c.payload, '$.slot_on') END = o.slot_on AND CASE WHEN json_valid(c.payload) THEN json_extract(c.payload, '$.outcome') END = o.outcome AND CASE WHEN json_valid(c.payload) THEN json_extract(c.payload, '$.resolved_at') END = o.resolved_at WHERE o.outcome_change_id != '' AND c.change_id IS NULL",
     )
     .await?);
     checks.push(count_check(
@@ -762,20 +756,8 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO recurrence_occurrences(
-                workspace_id, series_id, slot_on, task_id, outcome, resolved_at,
-                outcome_change_id, projection_state
-             ) VALUES (?, ?, '2026-07-19', '7KQ9A1X4MV2P8D6V', 'completed', 't', 'c', 'corrected')",
-        )
-        .bind(default_workspace_id())
-        .bind(series_id.to_string())
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO recurrence_occurrences(
-                workspace_id, series_id, slot_on, outcome, resolved_at,
-                outcome_change_id, projection_state
-             ) VALUES (?, ?, '2026-07-18', 'skipped', 't', 'off-lattice', 'corrected')",
+                workspace_id, series_id, slot_on, task_id, projection_state, archived_at
+             ) VALUES (?, ?, '2026-07-18', '7KQ9A1X4MV2P8D6V', 'archived', 't')",
         )
         .bind(default_workspace_id())
         .bind(series_id.to_string())
@@ -831,7 +813,6 @@ mod tests {
             "recurrence task links",
             "recurrence projected tasks",
             "recurrence task outcomes",
-            "recurrence corrected slots",
             "recurrence deterministic task identity",
             "recurrence schedule slots",
             "recurrence pause overlaps",

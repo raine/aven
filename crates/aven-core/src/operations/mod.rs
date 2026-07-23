@@ -33,9 +33,9 @@ pub use projects::{
 };
 pub(crate) use projects::{insert_project_metadata_change, set_project_metadata};
 pub use recurrence::{
-    RecurrenceCreateOutcome, RecurrenceReconcileOutcome, RecurrenceRecordOutcome,
-    RecurrenceResolveOutcome, RecurrenceSeriesDraft, RecurrenceStateOutcome,
-    RecurrenceTemplateUpdate, RecurrenceTemplateUpdateOutcome,
+    RecurrenceCreateOutcome, RecurrenceReconcileOutcome, RecurrenceResolveOutcome,
+    RecurrenceSeriesDraft, RecurrenceStateOutcome, RecurrenceTemplateUpdate,
+    RecurrenceTemplateUpdateOutcome,
 };
 pub(crate) use recurrence::{route_recurrence_task_field, undo_recurrence_resolution};
 pub(crate) use tasks::update_task_labels_in_workspace;

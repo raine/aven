@@ -1300,7 +1300,6 @@ mod tests {
             task_id: None,
             task_ref: None,
             openable: false,
-            corrected: false,
             archived_projection: false,
             resolved_at: None,
         }

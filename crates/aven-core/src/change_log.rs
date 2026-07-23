@@ -30,7 +30,6 @@ pub mod op_type {
     pub const UPDATE_RECURRENCE_TEMPLATE: &str = "update_recurrence_template";
     pub const PROJECT_RECURRENCE_OCCURRENCE: &str = "project_recurrence_occurrence";
     pub const RESOLVE_RECURRENCE_OCCURRENCE: &str = "resolve_recurrence_occurrence";
-    pub const RECORD_RECURRENCE_OUTCOME: &str = "record_recurrence_outcome";
     pub const SET_RECURRENCE_STATE: &str = "set_recurrence_state";
     pub const OPEN_RECURRENCE_PAUSE: &str = "open_recurrence_pause";
     pub const CLOSE_RECURRENCE_PAUSE: &str = "close_recurrence_pause";

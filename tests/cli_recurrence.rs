@@ -275,7 +275,7 @@ fn pause_resume_stop_and_delete_follow_recurrence_lifecycle() {
 }
 
 #[test]
-fn history_combines_archived_misses_derived_misses_and_taskless_corrections() {
+fn history_combines_archived_and_derived_misses() {
     let env = TestEnv::new();
     let db = env.db("recurrence-history.sqlite");
     ok(env.aven(&db, ["workspace", "list"]));
@@ -284,7 +284,7 @@ fn history_combines_archived_misses_derived_misses_and_taskless_corrections() {
         .enable_all()
         .build()
         .unwrap();
-    let (series_ref, archived_task_id, correction_slot) = runtime.block_on(async {
+    let (series_ref, archived_task_id) = runtime.block_on(async {
         let database = Database::open(&db).await.unwrap();
         let workspace = database.resolve_workspace("default").await.unwrap();
         let created_at = Utc::now() - Duration::days(6);
@@ -311,11 +311,7 @@ fn history_combines_archived_misses_derived_misses_and_taskless_corrections() {
             )
             .await
             .unwrap();
-        (
-            result.series_ref,
-            result.task.id.to_string(),
-            start_on.succ_opt().unwrap(),
-        )
+        (result.series_ref, result.task.id.to_string())
     });
 
     let history = ok(env.aven(&db, ["recur", "history", &series_ref]));
@@ -325,23 +321,6 @@ fn history_combines_archived_misses_derived_misses_and_taskless_corrections() {
     );
     assert!(history.matches("missed slot=").count() >= 5, "{history}");
 
-    let corrected_at = format!("{}T18:30:00Z", correction_slot);
-    let record = ok(env.aven(
-        &db,
-        [
-            "recur",
-            "record",
-            &series_ref,
-            "--slot",
-            &correction_slot.to_string(),
-            "--outcome",
-            "completed",
-            "--at",
-            &corrected_at,
-        ],
-    ));
-    contains_all(&record, &["outcome=completed", "taskless=yes"]);
-
     let history_json: serde_json::Value = serde_json::from_str(&ok(
         env.aven(&db, ["recur", "history", &series_ref, "--json"])
     ))
@@ -349,11 +328,7 @@ fn history_combines_archived_misses_derived_misses_and_taskless_corrections() {
     assert_eq!(history_json["version"], 1);
     let entries = history_json["history"]["entries"].as_array().unwrap();
     assert!(entries.iter().any(|entry| {
-        entry["slot_on"] == correction_slot.to_string()
-            && entry["outcome"] == "completed"
-            && entry["corrected"] == true
-            && entry["openable"] == false
-            && entry["task_id"].is_null()
+        entry["outcome"] == "missed" && entry["openable"] == false && entry["task_id"].is_null()
     }));
     assert!(entries.iter().any(|entry| {
         entry["task_id"] == archived_task_id

@@ -84,8 +84,6 @@ aven recur show RCR-7KP2
 aven recur history RCR-7KP2
 aven recur edit RCR-7KP2 --title "Future journal" --priority high
 aven recur skip RCR-7KP2
-aven recur record RCR-7KP2 --slot 2026-07-17 --outcome completed \
-  --at 2026-07-17T18:30:00+02:00
 aven recur pause RCR-7KP2
 aven recur resume RCR-7KP2
 aven recur stop RCR-7KP2
@@ -114,8 +112,9 @@ aven search "daily journal" --expand-recurring
   views. Stopping keeps the current occurrence as the final task unless
   `--skip-current` resolves it immediately.
 - Done and search group recurring history by series. Use `--expand-recurring`
-  for occurrence task rows and `recur history` for completed, skipped, missed,
-  paused, corrected, and archived outcomes.
+  for occurrence task rows and `recur history` for completed, skipped, derived
+  missed, archived missed, and paused entries. A past slot without an occurrence
+  task stays missed and has no completion or skip mutation.
 - List-like reports reconcile a bounded set of recurring series before reading.
   After a scheduled slot boundary, one report can append one bounded projection
   operation per changed series, including archiving one superseded projection

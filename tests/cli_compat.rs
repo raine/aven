@@ -102,3 +102,92 @@ async fn old_schema_database_can_be_opened_and_read() {
     assert_eq!(orphan_path_count, 0);
     assert_eq!(app_project_id.len(), 16);
 }
+
+#[tokio::test]
+async fn taskless_outcomes_return_to_derived_gaps_on_upgrade() {
+    let env = TestEnv::new();
+    let db = env.db("recurrence-taskless-outcomes.sqlite");
+    ok(env.aven(&db, ["workspace", "list"]));
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(&db)
+                .create_if_missing(false),
+        )
+        .await
+        .unwrap();
+    sqlx::raw_sql(
+        "PRAGMA ignore_check_constraints = ON;
+         INSERT INTO changes(
+             change_id, client_id, local_seq, entity_type, entity_id, field,
+             op_type, payload, created_at
+         ) VALUES (
+             'TASKLESSOUTCOME', 'client', 1, 'recurrence_series',
+             '7KQ9A1X4MV2P8D6R', 'outcome', 'record_recurrence_outcome',
+             '{\"slot_on\":\"2026-07-20\",\"outcome\":\"completed\",\"resolved_at\":\"2026-07-20T12:00:00Z\"}',
+             '2026-07-20T12:00:00Z'
+         );
+         INSERT INTO recurrence_occurrences(
+             workspace_id, series_id, slot_on, outcome, resolved_at,
+             outcome_change_id, projection_state
+         ) VALUES (
+             '0000000000000000', '7KQ9A1X4MV2P8D6R', '2026-07-20',
+             'completed', '2026-07-20T12:00:00Z', 'TASKLESSOUTCOME', 'corrected'
+         );
+         INSERT INTO conflicts(
+             workspace_id, entity_type, entity_id, field, local_value,
+             remote_value, remote_change_id, variant_a, variant_b, created_at
+         ) VALUES (
+             '0000000000000000', 'recurrence_series', '7KQ9A1X4MV2P8D6R',
+             'outcome:2026-07-20', 'completed', 'skipped', 'TASKLESSOUTCOME',
+             'local', 'remote', '2026-07-20T12:00:00Z'
+         );
+         DELETE FROM _sqlx_migrations WHERE version = 20260723060938;",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    drop(pool);
+
+    ok(env.aven(&db, ["workspace", "list"]));
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(&db)
+                .create_if_missing(false),
+        )
+        .await
+        .unwrap();
+    let occurrence_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM recurrence_occurrences WHERE slot_on = '2026-07-20'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let change_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM changes WHERE change_id = 'TASKLESSOUTCOME'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let conflict_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM conflicts WHERE remote_change_id = 'TASKLESSOUTCOME'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let table_sql: String = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'recurrence_occurrences'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(occurrence_count, 0);
+    assert_eq!(change_count, 0);
+    assert_eq!(conflict_count, 0);
+    assert!(table_sql.contains("projection_state IN ('projected', 'resolved', 'archived')"));
+}

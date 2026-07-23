@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use sqlx::{Row, SqliteConnection};
 use tracing::info;
 
@@ -450,24 +450,23 @@ async fn resolve_recurrence_outcome_conflict(
     let series_row = sqlx::query("SELECT workspace_id, id, title, description, project_id, priority, initial_status, frequency, interval, weekdays, timezone, start_on, available_local_time, due_policy, state, stopped_at, created_at, updated_at, deleted FROM recurrence_series WHERE workspace_id = ? AND id = ?")
         .bind(&workspace.id).bind(series_id).fetch_one(&mut *conn).await?;
     let series = crate::db::recurrence_series_from_row(&series_row)?;
-    let operation = if task_id.is_empty() {
-        op_type::RECORD_RECURRENCE_OUTCOME
+    ensure!(
+        !task_id.is_empty(),
+        "error recurrence-outcome-task-missing slot={slot_on}"
+    );
+    let status = if outcome == RecurrenceOutcome::Completed {
+        "done"
     } else {
-        let status = if outcome == RecurrenceOutcome::Completed {
-            "done"
-        } else {
-            "canceled"
-        };
-        apply_field_value_in_workspace(conn, &workspace.id, &task_id.parse()?, "status", status)
-            .await?;
-        op_type::RESOLVE_RECURRENCE_OCCURRENCE
+        "canceled"
     };
+    apply_field_value_in_workspace(conn, &workspace.id, &task_id.parse()?, "status", status)
+        .await?;
     let change_id = insert_change(
         conn,
         "recurrence_series",
         series_id.as_str(),
         Some("outcome"),
-        operation,
+        op_type::RESOLVE_RECURRENCE_OCCURRENCE,
         crate::change_log::ChangePayload::workspace(workspace)
             .set("slot_on", slot_on.to_string())
             .set("task_id", &task_id)

@@ -287,7 +287,6 @@ pub enum RecurrenceProjectionState {
     Projected,
     Resolved,
     Archived,
-    Corrected,
 }
 
 impl From<core_api::RecurrenceProjectionState> for RecurrenceProjectionState {
@@ -296,7 +295,6 @@ impl From<core_api::RecurrenceProjectionState> for RecurrenceProjectionState {
             core_api::RecurrenceProjectionState::Projected => Self::Projected,
             core_api::RecurrenceProjectionState::Resolved => Self::Resolved,
             core_api::RecurrenceProjectionState::Archived => Self::Archived,
-            core_api::RecurrenceProjectionState::Corrected => Self::Corrected,
         }
     }
 }
@@ -414,23 +412,6 @@ impl From<UpdateRecurrenceTemplate> for core_api::UpdateRecurrenceTemplate {
             labels: value.labels,
             available_local_time: value.available_local_time.into(),
             due_policy: value.due_policy.map(Into::into),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
-pub struct CorrectRecurrenceOutcome {
-    pub slot_on: String,
-    pub outcome: RecurrenceOutcome,
-    pub resolved_at: String,
-}
-
-impl From<CorrectRecurrenceOutcome> for core_api::CorrectRecurrenceOutcome {
-    fn from(value: CorrectRecurrenceOutcome) -> Self {
-        Self {
-            slot_on: value.slot_on,
-            outcome: value.outcome.into(),
-            resolved_at: value.resolved_at,
         }
     }
 }
@@ -697,21 +678,6 @@ impl From<core_api::RecurrenceResolveResult> for RecurrenceResolveResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
-pub struct RecurrenceRecordResult {
-    pub series: RecurrenceSeriesRecord,
-    pub occurrence: RecurrenceOccurrenceRecord,
-}
-
-impl From<core_api::RecurrenceRecordResult> for RecurrenceRecordResult {
-    fn from(value: core_api::RecurrenceRecordResult) -> Self {
-        Self {
-            series: value.series.into(),
-            occurrence: value.occurrence.into(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct RecurrenceStateResult {
     pub series: RecurrenceSeriesRecord,
     pub occurrence: Option<RecurrenceOccurrenceRecord>,
@@ -861,7 +827,6 @@ pub struct RecurrenceHistoryRow {
     pub task_id: Option<String>,
     pub task_ref: Option<String>,
     pub openable: bool,
-    pub corrected: bool,
     pub archived_projection: bool,
     pub resolved_at: Option<String>,
 }
@@ -876,7 +841,6 @@ impl From<core_api::RecurrenceHistoryRow> for RecurrenceHistoryRow {
             task_id: value.task_id.map(|id| id.to_string()),
             task_ref: value.task_ref,
             openable: value.openable,
-            corrected: value.corrected,
             archived_projection: value.archived_projection,
             resolved_at: value.resolved_at,
         }
@@ -1272,24 +1236,6 @@ impl AvenClient {
                 self.store
                     .skip_recurrence_occurrence(&workspace_id, &task_id),
             )
-            .map(Into::into)
-            .map_err(Into::into)
-    }
-
-    pub fn correct_recurrence_outcome(
-        &self,
-        workspace_id: String,
-        series_id: String,
-        input: CorrectRecurrenceOutcome,
-    ) -> Result<RecurrenceRecordResult, AvenError> {
-        let workspace_id = parse_workspace_id(&workspace_id)?;
-        let series_id = parse_recurrence_series_id(&series_id)?;
-        runtime()?
-            .block_on(self.store.correct_recurrence_outcome(
-                &workspace_id,
-                &series_id,
-                input.into(),
-            ))
             .map(Into::into)
             .map_err(Into::into)
     }

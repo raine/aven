@@ -385,35 +385,6 @@ impl Store {
             .await
     }
 
-    pub async fn correct_recurrence_outcome(
-        &self,
-        workspace_id: &WorkspaceId,
-        series_id: &RecurrenceSeriesId,
-        input: CorrectRecurrenceOutcome,
-    ) -> Result<RecurrenceRecordResult, Error> {
-        let slot_on = parse_date("slot_on", &input.slot_on)?;
-        validate_rfc3339("resolved_at", &input.resolved_at)?;
-        let workspace = self.workspace(workspace_id).await?;
-        let at = chrono::DateTime::parse_from_rfc3339(&crate::ids::now())
-            .map_err(|error| Error::from_internal(error.into()))?
-            .with_timezone(&chrono::Utc);
-        self.database
-            .record_recurrence_outcome(
-                &workspace,
-                series_id,
-                slot_on,
-                input.outcome.into(),
-                input.resolved_at,
-                at,
-            )
-            .await
-            .map(|value| RecurrenceRecordResult {
-                series: value.series.into(),
-                occurrence: value.occurrence.into(),
-            })
-            .map_err(Error::from_internal)
-    }
-
     pub async fn pause_recurrence_series(
         &self,
         workspace_id: &WorkspaceId,
@@ -636,17 +607,6 @@ fn parse_local_time(field: &str, value: &str) -> Result<NaiveTime, Error> {
             Error::new(
                 ErrorCode::Validation,
                 format!("{field} must use HH:MM or HH:MM:SS"),
-            )
-        })
-}
-
-fn validate_rfc3339(field: &str, value: &str) -> Result<(), Error> {
-    chrono::DateTime::parse_from_rfc3339(value)
-        .map(|_| ())
-        .map_err(|_| {
-            Error::new(
-                ErrorCode::Validation,
-                format!("{field} must be an RFC 3339 timestamp"),
             )
         })
 }
@@ -878,7 +838,6 @@ pub enum RecurrenceProjectionState {
     Projected,
     Resolved,
     Archived,
-    Corrected,
 }
 
 impl From<InternalRecurrenceProjectionState> for RecurrenceProjectionState {
@@ -887,7 +846,6 @@ impl From<InternalRecurrenceProjectionState> for RecurrenceProjectionState {
             InternalRecurrenceProjectionState::Projected => Self::Projected,
             InternalRecurrenceProjectionState::Resolved => Self::Resolved,
             InternalRecurrenceProjectionState::Archived => Self::Archived,
-            InternalRecurrenceProjectionState::Corrected => Self::Corrected,
         }
     }
 }
@@ -964,13 +922,6 @@ pub struct UpdateRecurrenceTemplate {
     pub labels: Option<Vec<String>>,
     pub available_local_time: OptionalLocalTimeUpdate,
     pub due_policy: Option<RecurrenceDuePolicy>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CorrectRecurrenceOutcome {
-    pub slot_on: String,
-    pub outcome: RecurrenceOutcome,
-    pub resolved_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1063,12 +1014,6 @@ pub struct RecurrenceResolveResult {
     pub occurrence: RecurrenceOccurrenceRecord,
     pub task: TaskRecord,
     pub successor: Option<TaskRecord>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecurrenceRecordResult {
-    pub series: RecurrenceSeriesRecord,
-    pub occurrence: RecurrenceOccurrenceRecord,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1206,7 +1151,6 @@ pub struct RecurrenceHistoryRow {
     pub task_id: Option<TaskId>,
     pub task_ref: Option<String>,
     pub openable: bool,
-    pub corrected: bool,
     pub archived_projection: bool,
     pub resolved_at: Option<String>,
 }
@@ -1221,7 +1165,6 @@ impl From<InternalRecurrenceHistoryEntry> for RecurrenceHistoryRow {
             task_id: value.task_id,
             task_ref: value.task_ref,
             openable: value.openable,
-            corrected: value.corrected,
             archived_projection: value.archived_projection,
             resolved_at: value.resolved_at,
         }

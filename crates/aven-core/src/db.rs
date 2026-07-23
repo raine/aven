@@ -575,13 +575,6 @@ pub(crate) fn recurrence_occurrence_from_row(row: &SqliteRow) -> Result<Recurren
                 && outcome_change_id.is_none()
                 && archived_at.is_some()
         }
-        RecurrenceProjectionState::Corrected => {
-            task_id.is_none()
-                && outcome.is_some()
-                && resolved_at.is_some()
-                && outcome_change_id.is_some()
-                && archived_at.is_none()
-        }
     };
     if !valid_shape {
         bail!("recurrence occurrence fields do not match projection state");
@@ -952,19 +945,22 @@ mod tests {
         let occurrence_row = sqlx::query(
             "SELECT '0000000000000000' AS workspace_id,
                     '7KQ9A1X4MV2P8D6R' AS series_id, '2026-07-20' AS slot_on,
-                    '' AS task_id, 'completed' AS outcome, 'resolved' AS resolved_at,
-                    'change' AS outcome_change_id, 'corrected' AS projection_state,
-                    '' AS archived_at",
+                    '7KQ9A1X4MV2P8D6T' AS task_id, 'completed' AS outcome,
+                    'resolved' AS resolved_at, 'change' AS outcome_change_id,
+                    'resolved' AS projection_state, '' AS archived_at",
         )
         .fetch_one(&mut conn)
         .await
         .unwrap();
         let occurrence = recurrence_occurrence_from_row(&occurrence_row).unwrap();
-        assert_eq!(occurrence.task_id, None);
+        assert_eq!(
+            occurrence.task_id.as_ref().map(|task_id| task_id.as_str()),
+            Some("7KQ9A1X4MV2P8D6T")
+        );
         assert_eq!(occurrence.outcome, Some(RecurrenceOutcome::Completed));
         assert_eq!(
             occurrence.projection_state,
-            RecurrenceProjectionState::Corrected
+            RecurrenceProjectionState::Resolved
         );
 
         let invalid_row = sqlx::query(

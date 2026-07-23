@@ -1,19 +1,14 @@
 use std::path::Path;
 
 use aven_core::api::{
-    ConflictChoice, ConflictField, CorrectRecurrenceOutcome, CreateRecurrenceSeries, CreateTask,
-    ErrorCode, OptionalDateUpdate, OptionalLocalTimeUpdate, RecurrenceDuePolicy,
-    RecurrenceFrequency, RecurrenceHistoryKind, RecurrenceOutcome, RecurrenceRule,
-    RecurrenceScheduleInput, RecurrenceSeriesState, Store, UpdateRecurrenceTemplate, UpdateTask,
+    ConflictChoice, ConflictField, CreateRecurrenceSeries, CreateTask, ErrorCode,
+    OptionalDateUpdate, OptionalLocalTimeUpdate, RecurrenceDuePolicy, RecurrenceFrequency,
+    RecurrenceHistoryKind, RecurrenceOutcome, RecurrenceRule, RecurrenceScheduleInput,
+    RecurrenceSeriesState, Store, UpdateRecurrenceTemplate, UpdateTask,
 };
 use aven_core::choices::{TaskPriority, TaskStatus};
 use aven_core::db::Database;
 use aven_core::ids::TaskId;
-use aven_core::operations::RecurrenceSeriesDraft;
-use aven_core::recurrence::{
-    RecurrenceDuePolicy as CoreDuePolicy, RecurrenceRule as CoreRule, RecurrenceSchedule,
-    TimeZoneId,
-};
 use aven_core::sync::wire::{
     MAX_PULL_BATCH, MAX_PUSH_BATCH, SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse,
 };
@@ -504,20 +499,6 @@ async fn consumer_api_owns_recurrence_lifecycle_reports_and_mutation_routing() {
         row.kind == RecurrenceHistoryKind::Paused && row.interval_started_at.is_some()
     }));
 
-    let invalid_correction = store
-        .correct_recurrence_outcome(
-            &workspace.id,
-            &created.series.id,
-            CorrectRecurrenceOutcome {
-                slot_on: "bad-date".to_string(),
-                outcome: RecurrenceOutcome::Skipped,
-                resolved_at: "bad-time".to_string(),
-            },
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(invalid_correction.code, ErrorCode::Validation);
-
     let stopped = store
         .stop_recurrence_series(&workspace.id, &created.series.id, true)
         .await
@@ -527,71 +508,6 @@ async fn consumer_api_owns_recurrence_lifecycle_reports_and_mutation_routing() {
         stopped.occurrence.unwrap().outcome,
         Some(RecurrenceOutcome::Skipped)
     );
-}
-
-#[tokio::test]
-async fn consumer_api_corrects_a_derived_miss_without_creating_a_task() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("correction.sqlite");
-    let database = Database::open(&path).await.unwrap();
-    let workspace = database.list_workspaces().await.unwrap().remove(0);
-    let created_at = chrono::Utc::now() - chrono::Duration::days(3);
-    let start_on = created_at.date_naive();
-    let created = database
-        .create_recurrence_series_at(
-            &workspace,
-            RecurrenceSeriesDraft {
-                title: "correctable daily".to_string(),
-                description: String::new(),
-                project: "Core".to_string(),
-                priority: "none".to_string(),
-                initial_status: "todo".to_string(),
-                labels: Vec::new(),
-                schedule: RecurrenceSchedule::new(
-                    CoreRule::daily(),
-                    "UTC".parse::<TimeZoneId>().unwrap(),
-                    start_on,
-                    None,
-                    CoreDuePolicy::SameDay,
-                ),
-            },
-            created_at,
-        )
-        .await
-        .unwrap();
-    drop(database);
-
-    let store = Store::open(&path).await.unwrap();
-    let corrected_slot = (start_on + chrono::Duration::days(1)).to_string();
-    let corrected = store
-        .correct_recurrence_outcome(
-            &workspace.id,
-            &created.series.id,
-            CorrectRecurrenceOutcome {
-                slot_on: corrected_slot.clone(),
-                outcome: RecurrenceOutcome::Completed,
-                resolved_at: format!("{corrected_slot}T12:00:00Z"),
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(corrected.occurrence.task_id, None);
-    assert_eq!(
-        corrected.occurrence.projection_state,
-        aven_core::api::RecurrenceProjectionState::Corrected
-    );
-    let history = store
-        .recurrence_history(&workspace.id, &created.series_ref, 0, 100)
-        .await
-        .unwrap();
-    let row = history
-        .items
-        .iter()
-        .find(|row| row.slot_on.as_deref() == Some(corrected_slot.as_str()))
-        .unwrap();
-    assert!(row.corrected);
-    assert!(!row.openable);
-    assert_eq!(row.task_id, None);
 }
 
 #[tokio::test]

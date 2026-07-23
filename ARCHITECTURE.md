@@ -49,7 +49,7 @@
 2. Each candidate reconciles in its own immediate transaction. A boundary crossing can archive one superseded projection and materialize one current projection through one atomic projection operation before the report reads.
 3. Lifecycle conflicts return existing state without projection writes. An incomplete reconciliation result makes the candidate bound explicit.
 4. Ordinary task paths exclude paused projected tasks and archived projections. Stopped final open tasks remain visible, while direct task detail and series history retain archived and paused task access.
-5. Task enrichment loads recurrence summaries by task ID chunks. Grouped Done, search, sidebar, and recent-action reports use series identity, while recurrence history merges explicit outcomes, taskless corrections, archived misses, derived misses, and pause intervals.
+5. Task enrichment loads recurrence summaries by task ID chunks. Grouped Done, search, sidebar, and recent-action reports use series identity, while recurrence history merges task-backed outcomes, archived misses, derived misses, and pause intervals. Taskless historical slots have no occurrence row and remain derived misses.
 
 ### TUI flow
 

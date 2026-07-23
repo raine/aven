@@ -14,8 +14,8 @@ use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, Utc};
 use serde::Serialize;
 
 use crate::cli::{
-    RecurCommand, RecurEditArgs, RecurHistoryArgs, RecurListArgs, RecurRecordArgs, RecurRefArgs,
-    RecurShowArgs, RecurStopArgs, RecurSubcommand,
+    RecurCommand, RecurEditArgs, RecurHistoryArgs, RecurListArgs, RecurRefArgs, RecurShowArgs,
+    RecurStopArgs, RecurSubcommand,
 };
 use crate::input::read_optional_text;
 use crate::render::{KvLine, changed_text, print_json_pretty, print_multiline_block, quote};
@@ -34,7 +34,6 @@ pub(crate) async fn cmd_recur(
         RecurSubcommand::History(args) => history(database, workspace, args).await,
         RecurSubcommand::Edit(args) => edit(database, workspace, args).await,
         RecurSubcommand::Skip(args) => skip(database, workspace, args).await,
-        RecurSubcommand::Record(args) => record(database, workspace, args).await,
         RecurSubcommand::Pause(args) => pause(database, workspace, args).await,
         RecurSubcommand::Resume(args) => resume(database, workspace, args).await,
         RecurSubcommand::Stop(args) => stop(database, workspace, args).await,
@@ -316,41 +315,6 @@ async fn skip(database: &Database, workspace: &Workspace, args: RecurRefArgs) ->
     Ok(())
 }
 
-async fn record(database: &Database, workspace: &Workspace, args: RecurRecordArgs) -> Result<()> {
-    let series = database
-        .resolve_recurrence_ref(workspace, &args.series_ref)
-        .await?;
-    let slot = parse_date(&args.slot)?;
-    let outcome = parse_outcome(&args.outcome)?;
-    let now = utc_now()?;
-    let resolved_at = match args.at {
-        Some(value) => {
-            DateTime::parse_from_rfc3339(&value)
-                .context("error invalid-recurrence-outcome-time")?;
-            value
-        }
-        None => format_utc(now),
-    };
-    let result = database
-        .record_recurrence_outcome(workspace, &series.id, slot, outcome, resolved_at, now)
-        .await?;
-    let series_ref = database
-        .recurrence_series_ref(&workspace.id, &result.series.id)
-        .await?;
-    println!(
-        "recorded {} slot={} outcome={} taskless=yes resolved_at={}",
-        series_ref,
-        result.occurrence.slot_on,
-        result
-            .occurrence
-            .outcome
-            .expect("recorded outcome")
-            .as_str(),
-        result.occurrence.resolved_at.as_deref().unwrap_or("")
-    );
-    Ok(())
-}
-
 async fn pause(database: &Database, workspace: &Workspace, args: RecurRefArgs) -> Result<()> {
     let series = database
         .resolve_recurrence_ref(workspace, &args.series_ref)
@@ -423,16 +387,8 @@ async fn print_state_outcome(
     Ok(())
 }
 
-fn parse_outcome(value: &str) -> Result<RecurrenceOutcome> {
-    RecurrenceOutcome::parse(value).map_err(Into::into)
-}
-
 fn utc_now() -> Result<DateTime<Utc>> {
     Ok(DateTime::parse_from_rfc3339(&aven_core::ids::now())?.with_timezone(&Utc))
-}
-
-fn format_utc(value: DateTime<Utc>) -> String {
-    value.format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 fn print_series_summary(item: &RecurrenceSeriesSummary) {
@@ -469,7 +425,6 @@ fn print_history_entry(item: &RecurrenceHistoryEntry) {
                 .field("slot", item.slot_on.as_deref().unwrap_or_default())
                 .optional("task", item.task_ref.clone())
                 .optional("resolved_at", item.resolved_at.clone())
-                .optional("corrected", item.corrected.then(|| "yes".to_string()))
                 .optional(
                     "archived_projection",
                     item.archived_projection.then(|| "yes".to_string()),
@@ -596,7 +551,6 @@ struct HistoryEntryJson {
     task_ref: Option<String>,
     task_id: Option<String>,
     openable: bool,
-    corrected: bool,
     archived_projection: bool,
     resolved_at: Option<String>,
 }
@@ -674,7 +628,6 @@ fn history_page_json(item: &RecurrenceHistoryPage) -> HistoryPageJson {
                 task_ref: entry.task_ref.clone(),
                 task_id: entry.task_id.as_ref().map(ToString::to_string),
                 openable: entry.openable,
-                corrected: entry.corrected,
                 archived_projection: entry.archived_projection,
                 resolved_at: entry.resolved_at.clone(),
             })

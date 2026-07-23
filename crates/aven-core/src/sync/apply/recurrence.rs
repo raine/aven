@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail, ensure};
-use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
+use chrono::{NaiveDate, NaiveTime};
 use serde_json::Value;
 use sqlx::{Row, SqliteConnection};
 
@@ -9,7 +9,7 @@ use crate::ids::{ProjectId, TaskId, WorkspaceId};
 use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceRule,
     RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId, WeekdaySet,
-    derive_occurrence_identity, is_slot, live_slot_on, slot_values,
+    derive_occurrence_identity, is_slot, slot_values,
 };
 use crate::sync::wire::ChangeWire;
 use crate::task_fields::TaskField;
@@ -409,18 +409,10 @@ pub(super) async fn resolve_occurrence(
     conn: &mut SqliteConnection,
     change: &ChangeWire,
 ) -> Result<()> {
-    apply_outcome(conn, change, true).await
+    apply_outcome(conn, change).await
 }
 
-pub(super) async fn record_outcome(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
-    apply_outcome(conn, change, false).await
-}
-
-async fn apply_outcome(
-    conn: &mut SqliteConnection,
-    change: &ChangeWire,
-    task_backed: bool,
-) -> Result<()> {
+async fn apply_outcome(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     let workspace_id = workspace_id(change)?;
     let series_id = series_id(change)?;
     let slot_on = date_payload(&change.payload, "slot_on")?;
@@ -440,65 +432,7 @@ async fn apply_outcome(
         resolved_at >= slot_values(&schedule, slot_on)?.boundary_at,
         "error invalid-sync-change recurrence-resolution-before-slot"
     );
-    let task_id = if task_backed {
-        Some(str_payload(&change.payload, "task_id")?.parse::<TaskId>()?)
-    } else {
-        let operation_at = DateTime::parse_from_rfc3339(&change.created_at)?.with_timezone(&Utc);
-        let live_slot = live_slot_on(
-            &schedule.rule,
-            schedule.start_on,
-            operation_at,
-            &schedule.timezone,
-        )
-        .context("recurrence schedule has no live slot")?;
-        ensure!(
-            slot_on < live_slot,
-            "error recurrence-correction-not-past slot={slot_on}"
-        );
-        let lifetime = sqlx::query(
-            "SELECT created_at, stopped_at FROM recurrence_series
-             WHERE workspace_id = ? AND id = ?",
-        )
-        .bind(&workspace_id)
-        .bind(&series_id)
-        .fetch_one(&mut *conn)
-        .await?;
-        let created_at: String = lifetime.get("created_at");
-        let created_on = DateTime::parse_from_rfc3339(&created_at)?
-            .with_timezone(&schedule.timezone.timezone())
-            .date_naive();
-        ensure!(
-            slot_on >= schedule.start_on && slot_on >= created_on,
-            "error recurrence-slot-outside-lifetime slot={slot_on}"
-        );
-        let stopped_at: String = lifetime.get("stopped_at");
-        let boundary = DateTime::parse_from_rfc3339(&slot_values(&schedule, slot_on)?.boundary_at)?
-            .with_timezone(&Utc);
-        if !stopped_at.is_empty() {
-            ensure!(
-                boundary < DateTime::parse_from_rfc3339(&stopped_at)?.with_timezone(&Utc),
-                "error recurrence-slot-outside-lifetime slot={slot_on}"
-            );
-        }
-        let intervals = sqlx::query(
-            "SELECT paused_at, resumed_at FROM recurrence_pause_intervals
-             WHERE workspace_id = ? AND series_id = ?",
-        )
-        .bind(&workspace_id)
-        .bind(&series_id)
-        .fetch_all(&mut *conn)
-        .await?;
-        for interval in intervals {
-            let paused_at = DateTime::parse_from_rfc3339(&interval.get::<String, _>("paused_at"))?
-                .with_timezone(&Utc);
-            let resumed_at: String = interval.get("resumed_at");
-            let inside = boundary >= paused_at
-                && (resumed_at.is_empty()
-                    || boundary < DateTime::parse_from_rfc3339(&resumed_at)?.with_timezone(&Utc));
-            ensure!(!inside, "error recurrence-slot-paused slot={slot_on}");
-        }
-        None
-    };
+    let task_id = str_payload(&change.payload, "task_id")?.parse::<TaskId>()?;
     let existing = sqlx::query(
         "SELECT task_id, outcome, resolved_at, outcome_change_id, projection_state
          FROM recurrence_occurrences WHERE workspace_id = ? AND series_id = ? AND slot_on = ?",
@@ -516,11 +450,6 @@ async fn apply_outcome(
             .unwrap_or(false);
         let local_outcome = row.get::<String, _>("outcome");
         if conflict_resolution {
-            let projection_state = if row.get::<String, _>("task_id").is_empty() {
-                "corrected"
-            } else {
-                "resolved"
-            };
             update_outcome(
                 conn,
                 &workspace_id,
@@ -529,35 +458,31 @@ async fn apply_outcome(
                 outcome,
                 &resolved_at,
                 &change.change_id,
-                projection_state,
+                "resolved",
             )
             .await?;
-            if let Some(task_id) = task_id.as_ref() {
-                let status = match outcome {
-                    RecurrenceOutcome::Completed => "done",
-                    RecurrenceOutcome::Skipped => "canceled",
-                };
-                sqlx::query("UPDATE tasks SET status = ?, updated_at = ?, queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
-                    .bind(status).bind(&resolved_at).bind(&resolved_at).bind(&workspace_id).bind(task_id).execute(&mut *conn).await?;
-                set_entity_field_version(
-                    conn,
-                    &workspace_id,
-                    MutableEntityType::Task,
-                    task_id.as_str(),
-                    "status",
-                    &change.change_id,
-                )
-                .await?;
-            }
+            let status = match outcome {
+                RecurrenceOutcome::Completed => "done",
+                RecurrenceOutcome::Skipped => "canceled",
+            };
+            sqlx::query("UPDATE tasks SET status = ?, updated_at = ?, queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
+                .bind(status).bind(&resolved_at).bind(&resolved_at).bind(&workspace_id).bind(&task_id).execute(&mut *conn).await?;
+            set_entity_field_version(
+                conn,
+                &workspace_id,
+                MutableEntityType::Task,
+                task_id.as_str(),
+                "status",
+                &change.change_id,
+            )
+            .await?;
             sqlx::query("UPDATE conflicts SET resolved = 1 WHERE workspace_id = ? AND entity_type = 'recurrence_series' AND entity_id = ? AND field = ? AND resolved = 0")
                 .bind(&workspace_id).bind(&series_id).bind(outcome_field(slot_on)).execute(&mut *conn).await?;
             return Ok(());
         }
         if local_outcome.is_empty() {
             ensure!(
-                task_backed
-                    && row.get::<String, _>("task_id")
-                        == task_id.as_ref().map(TaskId::as_str).unwrap_or(""),
+                row.get::<String, _>("task_id") == task_id.as_str(),
                 "error recurrence-outcome-task-mismatch"
             );
             update_outcome(
@@ -571,7 +496,7 @@ async fn apply_outcome(
                 "resolved",
             )
             .await?;
-            ensure_task_outcome(conn, &workspace_id, task_id.as_ref(), outcome).await?;
+            ensure_task_outcome(conn, &workspace_id, &task_id, outcome).await?;
             return Ok(());
         }
         let local = RecurrenceOutcome::parse(&local_outcome)?;
@@ -591,7 +516,7 @@ async fn apply_outcome(
                     .await?;
                 }
             }
-            ensure_task_outcome(conn, &workspace_id, task_id.as_ref(), outcome).await?;
+            ensure_task_outcome(conn, &workspace_id, &task_id, outcome).await?;
             return Ok(());
         }
         create_series_conflict(
@@ -607,25 +532,7 @@ async fn apply_outcome(
         .await?;
         return Ok(());
     }
-    ensure!(
-        !task_backed,
-        "error recurrence-occurrence-not-found slot={slot_on}"
-    );
-    sqlx::query(
-        "INSERT INTO recurrence_occurrences(
-            workspace_id, series_id, slot_on, task_id, outcome, resolved_at,
-            outcome_change_id, projection_state, archived_at
-         ) VALUES (?, ?, ?, '', ?, ?, ?, 'corrected', '')",
-    )
-    .bind(&workspace_id)
-    .bind(&series_id)
-    .bind(slot_on.to_string())
-    .bind(outcome.as_str())
-    .bind(resolved_at)
-    .bind(&change.change_id)
-    .execute(&mut *conn)
-    .await?;
-    Ok(())
+    bail!("error recurrence-occurrence-not-found slot={slot_on}")
 }
 
 pub(super) async fn set_state(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
@@ -876,12 +783,9 @@ async fn update_outcome(
 async fn ensure_task_outcome(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
-    task_id: Option<&TaskId>,
+    task_id: &TaskId,
     outcome: RecurrenceOutcome,
 ) -> Result<()> {
-    let Some(task_id) = task_id else {
-        return Ok(());
-    };
     let status: String =
         sqlx::query_scalar("SELECT status FROM tasks WHERE workspace_id = ? AND id = ?")
             .bind(workspace_id)
@@ -1239,7 +1143,7 @@ async fn apply_series_field(
 
 #[cfg(test)]
 mod tests {
-    use chrono::{NaiveDate, TimeZone};
+    use chrono::{NaiveDate, TimeZone, Utc};
 
     use super::*;
     use crate::db::begin_immediate;

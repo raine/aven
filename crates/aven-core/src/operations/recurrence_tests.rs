@@ -409,15 +409,13 @@ async fn template_edits_apply_only_to_future_occurrences() {
 async fn six_days_late_archives_old_projection_and_materializes_only_live_slot() {
     let (_temp, mut conn, workspace) = setup().await;
     let created = create_daily(&mut conn, &workspace).await;
-    crate::mutation::set_task_field(
-        &mut conn,
-        &workspace,
-        &created.task.id,
-        "description",
-        "local notes remain",
-    )
-    .await
-    .unwrap();
+    sqlx::query("UPDATE tasks SET description = ? WHERE workspace_id = ? AND id = ?")
+        .bind("local notes remain")
+        .bind(&workspace.id)
+        .bind(&created.task.id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
 
     let reconciled =
         reconcile_recurrence_series_once(&mut conn, &workspace, &created.series.id, at(26, 10))
@@ -647,61 +645,20 @@ async fn stopped_series_keeps_final_task_and_skip_current_creates_no_successor()
 }
 
 #[tokio::test]
-async fn correction_accepts_only_past_unpaused_taskless_lattice_slots() {
-    let (_temp, mut conn, workspace) = setup().await;
-    let created = create_daily(&mut conn, &workspace).await;
-    reconcile_recurrence_series_once(&mut conn, &workspace, &created.series.id, at(26, 10))
-        .await
-        .unwrap();
-
-    let corrected = record_recurrence_outcome(
-        &mut conn,
-        &workspace,
-        &created.series.id,
-        NaiveDate::from_ymd_opt(2026, 7, 22).unwrap(),
-        RecurrenceOutcome::Completed,
-        "2026-07-22T18:00:00Z".to_string(),
-        at(26, 10),
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        corrected.occurrence.projection_state,
-        RecurrenceProjectionState::Corrected
-    );
-    assert!(corrected.occurrence.task_id.is_none());
-
-    let current_error = record_recurrence_outcome(
-        &mut conn,
-        &workspace,
-        &created.series.id,
-        NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
-        RecurrenceOutcome::Skipped,
-        "2026-07-26T11:00:00Z".to_string(),
-        at(26, 10),
-    )
-    .await
-    .unwrap_err();
-    assert!(current_error.to_string().contains("correction-not-past"));
-
-    let conflict = record_recurrence_outcome(
-        &mut conn,
-        &workspace,
-        &created.series.id,
-        NaiveDate::from_ymd_opt(2026, 7, 22).unwrap(),
-        RecurrenceOutcome::Skipped,
-        "2026-07-22T19:00:00Z".to_string(),
-        at(26, 10),
-    )
-    .await
-    .unwrap_err();
-    assert!(conflict.to_string().contains("outcome-exists"));
-}
-
-#[tokio::test]
 async fn task_mutation_routing_rejects_delete_reopen_and_archived_edits() {
     let (_temp, mut conn, workspace) = setup().await;
-    let created = create_daily(&mut conn, &workspace).await;
+    let current_at = Utc::now();
+    let mut current_draft = draft(20);
+    current_draft.schedule = RecurrenceSchedule::new(
+        RecurrenceRule::daily(),
+        "UTC".parse::<TimeZoneId>().unwrap(),
+        current_at.date_naive(),
+        None,
+        RecurrenceDuePolicy::SameDay,
+    );
+    let created = create_recurrence_series(&mut conn, &workspace, current_draft, current_at)
+        .await
+        .unwrap();
     let delete_error =
         crate::mutation::set_task_field(&mut conn, &workspace, &created.task.id, "deleted", "1")
             .await
@@ -712,12 +669,13 @@ async fn task_mutation_routing_rejects_delete_reopen_and_archived_edits() {
             .contains("recurrence-current-delete")
     );
 
+    let resolved_at = format_utc(current_at + chrono::Duration::hours(1));
     let resolved = resolve(
         &mut conn,
         &workspace,
         &created.task.id,
         RecurrenceOutcome::Completed,
-        "2026-07-20T18:00:00Z",
+        &resolved_at,
     )
     .await;
     let reopen_error =
@@ -733,9 +691,14 @@ async fn task_mutation_routing_rejects_delete_reopen_and_archived_edits() {
         .unwrap();
 
     let successor = resolved.successor.unwrap();
-    reconcile_recurrence_series_once(&mut conn, &workspace, &created.series.id, at(26, 10))
-        .await
-        .unwrap();
+    reconcile_recurrence_series_once(
+        &mut conn,
+        &workspace,
+        &created.series.id,
+        current_at + chrono::Duration::days(6),
+    )
+    .await
+    .unwrap();
     let archived_error = crate::mutation::set_task_field(
         &mut conn,
         &workspace,

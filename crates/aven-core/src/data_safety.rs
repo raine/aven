@@ -1040,13 +1040,6 @@ fn validate_recurrence_snapshot(
                     && outcome_change_id.is_none()
                     && archived_at.is_some()
             }
-            RecurrenceProjectionState::Corrected => {
-                task_id.is_none()
-                    && outcome.is_some()
-                    && resolved_at.is_some()
-                    && outcome_change_id.is_some()
-                    && archived_at.is_none()
-            }
         };
         ensure!(
             valid_shape,
@@ -1152,10 +1145,7 @@ fn validate_recurrence_snapshot(
                 change.entity_type == "recurrence_series"
                     && change.entity_id == row.series_id.as_str()
                     && change.field.as_deref() == Some("outcome")
-                    && matches!(
-                        change.op_type.as_str(),
-                        "resolve_recurrence_occurrence" | "record_recurrence_outcome"
-                    ),
+                    && change.op_type == "resolve_recurrence_occurrence",
                 "error invalid-export-snapshot recurrence outcome change identity mismatch"
             );
             let payload: Value = serde_json::from_str(&change.payload)

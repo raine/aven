@@ -180,12 +180,6 @@ fn action_text(
                 "green".to_string(),
             )
         }
-        ("recurrence_series", op_type::RECORD_RECURRENCE_OUTCOME) => (
-            "recurrence".to_string(),
-            "corrected recurring history".to_string(),
-            payload_string(payload, "slot_on"),
-            "blue".to_string(),
-        ),
         ("recurrence_series", op_type::PROJECT_RECURRENCE_OCCURRENCE) => (
             "recurrence".to_string(),
             "projected recurring occurrence".to_string(),

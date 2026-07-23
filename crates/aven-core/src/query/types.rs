@@ -219,7 +219,6 @@ pub struct RecurrenceHistoryEntry {
     pub task_id: Option<TaskId>,
     pub task_ref: Option<String>,
     pub openable: bool,
-    pub corrected: bool,
     pub archived_projection: bool,
     pub resolved_at: Option<String>,
 }

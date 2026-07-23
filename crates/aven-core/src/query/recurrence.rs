@@ -623,10 +623,6 @@ fn build_history_entries(
             task_id: occurrence.task_id.clone(),
             task_ref,
             openable: occurrence.task_id.is_some(),
-            corrected: matches!(
-                occurrence.projection_state,
-                RecurrenceProjectionState::Corrected
-            ),
             archived_projection: matches!(
                 occurrence.projection_state,
                 RecurrenceProjectionState::Archived
@@ -658,7 +654,6 @@ fn build_history_entries(
                 task_id: None,
                 task_ref: None,
                 openable: false,
-                corrected: false,
                 archived_projection: false,
                 resolved_at: None,
             });
@@ -678,7 +673,6 @@ fn build_history_entries(
                 .and_then(|task_id| task_refs.get(task_id))
                 .cloned(),
             openable: pause.suspended_task_id.is_some(),
-            corrected: false,
             archived_projection: false,
             resolved_at: None,
         }

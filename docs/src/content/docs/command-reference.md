@@ -254,17 +254,16 @@ aven recur show <series-or-task-ref> [--json]
 aven recur history <series-or-task-ref> [--offset <number>] [--limit <number>] [--json]
 aven recur edit <series-or-task-ref> [template options]
 aven recur skip <series-or-task-ref>
-aven recur record <series-or-task-ref> --slot <YYYY-MM-DD> --outcome <completed|skipped> [--at <RFC3339>]
 aven recur pause <series-or-task-ref>
 aven recur resume <series-or-task-ref>
 aven recur stop <series-or-task-ref> [--skip-current]
 ```
 
-`list` prints one row per series with its lifecycle, fixed rule, time zone, current occurrence ref, and historical counts. `show` adds the future-occurrence template, current projection, and unresolved lifecycle conflicts. `history` combines completed and skipped tasks, derived misses, archived projected misses with task refs, taskless corrected outcomes, and pause intervals. Series list, show, and history JSON are versioned reports with `version: 1` and a typed `kind`.
+`list` prints one row per series with its lifecycle, fixed rule, time zone, current occurrence ref, and historical counts. `show` adds the future-occurrence template, current projection, and unresolved lifecycle conflicts. `history` combines task-backed completed and skipped outcomes, derived misses, archived projected misses with task refs, and pause intervals. A past slot without an occurrence task stays visible as a derived miss and has no completion or skip mutation. Series list, show, and history JSON are versioned reports with `version: 1` and a typed `kind`.
 
 `edit` accepts `--title`, description input flags, `--project`, `--status`, `--priority`, repeated `--label`, `--repeat-at <HH:MM|none>`, and `--repeat-due <same-day|none>`. Template edits affect future occurrences. The fixed rule, start date, and time zone stay immutable for the series.
 
-`skip` resolves the current occurrence as skipped through the same aggregate transition as setting its ordinary task status to `canceled`. `record` corrects one valid past slot without creating a task or advancing current work. `pause` hides the preserved current occurrence from ordinary active views. `resume` omits slots inside the pause interval. `stop` keeps the current occurrence as the final ordinary task; `--skip-current` resolves it immediately.
+`skip` resolves the current occurrence as skipped through the same aggregate transition as setting its ordinary task status to `canceled`. `pause` hides the preserved current occurrence from ordinary active views. `resume` omits slots inside the pause interval. `stop` keeps the current occurrence as the final ordinary task; `--skip-current` resolves it immediately.
 
 Done lists and search group recurrence-linked history by series. Pass `--expand-recurring` to `list` or `search` for occurrence-level task rows. Task JSON includes a nullable `recurrence` object and a nullable `recurrence_group` object.
 

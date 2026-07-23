@@ -5,11 +5,11 @@ use aven_core::db::Database;
 use aven_core::sync::ServerSyncPage;
 use aven_core::sync::wire::{SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse};
 use aven_uniffi::{
-    AvenClient, AvenError, AvenSyncSession, CorrectRecurrenceOutcome, CreateRecurrenceSeries,
-    CreateTask, ErrorCode, OptionalDateUpdate, OptionalLocalTimeUpdate, RecurrenceDuePolicy,
-    RecurrenceFrequency, RecurrenceHistoryKind, RecurrenceOutcome, RecurrenceRule,
-    RecurrenceScheduleInput, RecurrenceSeriesState, SyncHttpResponse, TaskPriority, TaskStatus,
-    UpdateRecurrenceTemplate, UpdateTask,
+    AvenClient, AvenError, AvenSyncSession, CreateRecurrenceSeries, CreateTask, ErrorCode,
+    OptionalDateUpdate, OptionalLocalTimeUpdate, RecurrenceDuePolicy, RecurrenceFrequency,
+    RecurrenceHistoryKind, RecurrenceOutcome, RecurrenceRule, RecurrenceScheduleInput,
+    RecurrenceSeriesState, SyncHttpResponse, TaskPriority, TaskStatus, UpdateRecurrenceTemplate,
+    UpdateTask,
 };
 
 fn error_parts(error: AvenError) -> (ErrorCode, String) {
@@ -240,22 +240,6 @@ fn recurrence_facade_exposes_lifecycle_history_reports_and_typed_ingress() {
     assert!(history.items.iter().any(|row| {
         row.kind == RecurrenceHistoryKind::Completed && row.task_id.is_some() && row.openable
     }));
-
-    let (code, message) = error_parts(
-        client
-            .correct_recurrence_outcome(
-                workspace.id.clone(),
-                created.series.id.clone(),
-                CorrectRecurrenceOutcome {
-                    slot_on: "2026-99-99".to_string(),
-                    outcome: RecurrenceOutcome::Completed,
-                    resolved_at: "invalid".to_string(),
-                },
-            )
-            .unwrap_err(),
-    );
-    assert_eq!(code, ErrorCode::Validation);
-    assert!(message.contains("slot_on"));
 
     let (code, message) = error_parts(
         client

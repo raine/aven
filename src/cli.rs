@@ -537,8 +537,6 @@ pub(crate) enum RecurSubcommand {
     Edit(RecurEditArgs),
     /// Skip the current occurrence
     Skip(RecurRefArgs),
-    /// Record an outcome for a past slot
-    Record(RecurRecordArgs),
     /// Pause a recurring series
     Pause(RecurRefArgs),
     /// Resume a paused recurring series
@@ -599,17 +597,6 @@ pub(crate) struct RecurEditArgs {
 #[derive(Args)]
 pub(crate) struct RecurRefArgs {
     pub(crate) series_ref: String,
-}
-
-#[derive(Args)]
-pub(crate) struct RecurRecordArgs {
-    pub(crate) series_ref: String,
-    #[arg(long, value_name = "YYYY-MM-DD")]
-    pub(crate) slot: String,
-    #[arg(long, value_name = "completed|skipped")]
-    pub(crate) outcome: String,
-    #[arg(long, value_name = "RFC3339_TIMESTAMP")]
-    pub(crate) at: Option<String>,
 }
 
 #[derive(Args)]

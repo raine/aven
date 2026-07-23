@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result, bail};
-use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
+use chrono::{NaiveDate, NaiveTime};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -15,7 +15,7 @@ use crate::ids::{BASE32, ProjectId, WorkspaceId};
 use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceOutcome, RecurrenceRule,
     RecurrenceSchedule, RecurrenceSeriesId, RecurrenceSeriesState, TimeZoneId, WeekdaySet,
-    derive_occurrence_identity, is_slot, live_slot_on, next_slot_after,
+    derive_occurrence_identity, is_slot, next_slot_after,
 };
 use crate::task_fields::TaskField;
 
@@ -500,8 +500,7 @@ fn validate_change_shape(change: &ChangeWire, direction: ChangeDirection) -> Res
         op_type::CREATE_RECURRENCE_SERIES => validate_recurrence_create(change)?,
         op_type::UPDATE_RECURRENCE_TEMPLATE => validate_recurrence_template(change)?,
         op_type::PROJECT_RECURRENCE_OCCURRENCE => validate_recurrence_projection(change)?,
-        op_type::RESOLVE_RECURRENCE_OCCURRENCE => validate_recurrence_outcome(change, true)?,
-        op_type::RECORD_RECURRENCE_OUTCOME => validate_recurrence_outcome(change, false)?,
+        op_type::RESOLVE_RECURRENCE_OCCURRENCE => validate_recurrence_outcome(change)?,
         op_type::SET_RECURRENCE_STATE | op_type::STOP_RECURRENCE_SERIES => {
             validate_recurrence_state(change)?
         }
@@ -723,7 +722,7 @@ fn validate_recurrence_projection(change: &ChangeWire) -> Result<()> {
     Ok(())
 }
 
-fn validate_recurrence_outcome(change: &ChangeWire, task_backed: bool) -> Result<()> {
+fn validate_recurrence_outcome(change: &ChangeWire) -> Result<()> {
     validate_recurrence_entity(change)?;
     validate_timestamp_value("created_at", &change.created_at)?;
     if change.field.as_deref() != Some("outcome") {
@@ -745,54 +744,37 @@ fn validate_recurrence_outcome(change: &ChangeWire, task_backed: bool) -> Result
         .get("conflict_resolution")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    if task_backed {
-        let task_id = required_string_payload("task_id", &change.payload)?;
-        ensure_sync_id("task_id", &task_id)?;
-        let workspace_id: WorkspaceId =
-            required_string_payload("workspace_id", &change.payload)?.parse()?;
-        let series_id: RecurrenceSeriesId = change.entity_id.parse().unwrap();
-        let identity = derive_occurrence_identity(&workspace_id, &series_id, &schedule, slot_on)?;
-        if task_id != identity.task_id.as_str() {
-            bail!("error invalid-sync-change recurrence-deterministic-mismatch field=task_id");
-        }
-        let expected_status = match outcome {
-            RecurrenceOutcome::Completed => "done",
-            RecurrenceOutcome::Skipped => "canceled",
-        };
-        if required_string_payload("task_status", &change.payload)? != expected_status {
-            bail!("error invalid-sync-change recurrence-outcome-status-mismatch");
-        }
-        let status_change_id = required_string_payload("task_status_change_id", &change.payload)?;
-        if !conflict_resolution || !status_change_id.is_empty() {
-            ensure_sync_id("task_status_change_id", &status_change_id)?;
-        }
-        let successor = required_string_payload("successor_task_id", &change.payload)?;
-        if !successor.is_empty() {
-            ensure_sync_id("successor_task_id", &successor)?;
-            let successor_slot = next_slot_after(&schedule.rule, schedule.start_on, slot_on)
-                .context("error invalid-sync-change recurrence-successor-out-of-range")?;
-            let successor_identity =
-                derive_occurrence_identity(&workspace_id, &series_id, &schedule, successor_slot)?;
-            if successor != successor_identity.task_id.as_str() {
-                bail!(
-                    "error invalid-sync-change recurrence-deterministic-mismatch field=successor_task_id"
-                );
-            }
-        }
-    } else {
-        let operation_at = DateTime::parse_from_rfc3339(&change.created_at)?.with_timezone(&Utc);
-        let live_slot = live_slot_on(
-            &schedule.rule,
-            schedule.start_on,
-            operation_at,
-            &schedule.timezone,
-        )
-        .context("error invalid-sync-change recurrence-schedule-out-of-range")?;
-        if slot_on >= live_slot {
-            bail!("error invalid-sync-change recurrence-correction-not-past");
-        }
-        if change.payload.get("task_id").is_some() && !conflict_resolution {
-            bail!("error invalid-sync-change recurrence-correction-has-task");
+    let task_id = required_string_payload("task_id", &change.payload)?;
+    ensure_sync_id("task_id", &task_id)?;
+    let workspace_id: WorkspaceId =
+        required_string_payload("workspace_id", &change.payload)?.parse()?;
+    let series_id: RecurrenceSeriesId = change.entity_id.parse().unwrap();
+    let identity = derive_occurrence_identity(&workspace_id, &series_id, &schedule, slot_on)?;
+    if task_id != identity.task_id.as_str() {
+        bail!("error invalid-sync-change recurrence-deterministic-mismatch field=task_id");
+    }
+    let expected_status = match outcome {
+        RecurrenceOutcome::Completed => "done",
+        RecurrenceOutcome::Skipped => "canceled",
+    };
+    if required_string_payload("task_status", &change.payload)? != expected_status {
+        bail!("error invalid-sync-change recurrence-outcome-status-mismatch");
+    }
+    let status_change_id = required_string_payload("task_status_change_id", &change.payload)?;
+    if !conflict_resolution || !status_change_id.is_empty() {
+        ensure_sync_id("task_status_change_id", &status_change_id)?;
+    }
+    let successor = required_string_payload("successor_task_id", &change.payload)?;
+    if !successor.is_empty() {
+        ensure_sync_id("successor_task_id", &successor)?;
+        let successor_slot = next_slot_after(&schedule.rule, schedule.start_on, slot_on)
+            .context("error invalid-sync-change recurrence-successor-out-of-range")?;
+        let successor_identity =
+            derive_occurrence_identity(&workspace_id, &series_id, &schedule, successor_slot)?;
+        if successor != successor_identity.task_id.as_str() {
+            bail!(
+                "error invalid-sync-change recurrence-deterministic-mismatch field=successor_task_id"
+            );
         }
     }
     Ok(())

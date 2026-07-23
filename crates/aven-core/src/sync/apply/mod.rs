@@ -56,7 +56,6 @@ pub async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWir
         op_type::RESOLVE_RECURRENCE_OCCURRENCE => {
             recurrence::resolve_occurrence(conn, change).await?
         }
-        op_type::RECORD_RECURRENCE_OUTCOME => recurrence::record_outcome(conn, change).await?,
         op_type::SET_RECURRENCE_STATE | op_type::STOP_RECURRENCE_SERIES => {
             recurrence::set_state(conn, change).await?
         }

@@ -160,7 +160,6 @@ fn history_lines(
     let resolved = entry.resolved_at.as_deref().unwrap_or("-");
     let task = entry.task_ref.as_deref().unwrap_or("-");
     let markers = [
-        entry.corrected.then_some("corrected"),
         entry.archived_projection.then_some("archived"),
         matches!(entry.kind, RecurrenceHistoryKind::Missed).then_some("missed"),
         matches!(entry.kind, RecurrenceHistoryKind::Paused).then_some("pause"),
@@ -213,7 +212,6 @@ mod tests {
             task_id: None,
             task_ref: None,
             openable: false,
-            corrected: false,
             archived_projection: false,
             resolved_at: None,
         };
@@ -225,7 +223,6 @@ mod tests {
             task_id: None,
             task_ref: None,
             openable: false,
-            corrected: false,
             archived_projection: false,
             resolved_at: None,
         };
@@ -254,7 +251,6 @@ mod tests {
             task_id: None,
             task_ref: Some("AVN-1234".to_string()),
             openable: false,
-            corrected: true,
             archived_projection: true,
             resolved_at: Some("2026-07-20T12:34:56Z".to_string()),
         };
@@ -285,7 +281,6 @@ mod tests {
             assert!(rendered.contains("completed"));
             assert!(rendered.contains("2026-07-20T12:34:56Z"));
             assert!(rendered.contains("AVN-1234"));
-            assert!(rendered.contains("corrected"));
             assert!(rendered.contains("archived"));
 
             let terminal_size = Size::new(width, 24);
@@ -310,7 +305,6 @@ mod tests {
                 task_id: None,
                 task_ref: None,
                 openable: false,
-                corrected: false,
                 archived_projection: false,
                 resolved_at: None,
             })

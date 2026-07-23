@@ -18,7 +18,7 @@ use crate::mutation::apply_field_value_in_workspace;
 use crate::projects::resolve_or_create_project_in_workspace;
 use crate::recurrence::{
     RecurrenceDuePolicy, RecurrenceOutcome, RecurrenceProjectionState, RecurrenceSchedule,
-    RecurrenceSeriesId, RecurrenceSeriesState, derive_occurrence_identity, is_slot, live_slot_on,
+    RecurrenceSeriesId, RecurrenceSeriesState, derive_occurrence_identity, live_slot_on,
     next_slot_after, recurrence_series_display_ref, slot_cutoff, slot_values,
 };
 use crate::refs::get_task_in_workspace;
@@ -104,12 +104,6 @@ pub struct RecurrenceResolveOutcome {
 pub struct RecurrenceStateOutcome {
     pub series: RecurrenceSeries,
     pub occurrence: Option<RecurrenceOccurrence>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RecurrenceRecordOutcome {
-    pub series: RecurrenceSeries,
-    pub occurrence: RecurrenceOccurrence,
 }
 
 impl Database {
@@ -213,28 +207,6 @@ impl Database {
         }
         tx.commit().await?;
         Ok(result)
-    }
-
-    pub async fn record_recurrence_outcome(
-        &self,
-        workspace: &Workspace,
-        series_id: &RecurrenceSeriesId,
-        slot_on: NaiveDate,
-        outcome: RecurrenceOutcome,
-        resolved_at: String,
-        at: DateTime<Utc>,
-    ) -> Result<RecurrenceRecordOutcome> {
-        let mut conn = self.acquire().await?;
-        record_recurrence_outcome(
-            &mut conn,
-            workspace,
-            series_id,
-            slot_on,
-            outcome,
-            resolved_at,
-            at,
-        )
-        .await
     }
 
     pub async fn pause_recurrence_series(
@@ -844,99 +816,6 @@ pub(crate) async fn resolve_recurrence_occurrence_in_transaction(
     })
 }
 
-pub async fn record_recurrence_outcome(
-    conn: &mut SqliteConnection,
-    workspace: &Workspace,
-    series_id: &RecurrenceSeriesId,
-    slot_on: NaiveDate,
-    outcome: RecurrenceOutcome,
-    resolved_at: String,
-    at: DateTime<Utc>,
-) -> Result<RecurrenceRecordOutcome> {
-    let resolved_at = format_utc(
-        DateTime::parse_from_rfc3339(&resolved_at)
-            .context("invalid recurrence resolution time")?
-            .with_timezone(&Utc),
-    );
-    let mut tx = begin_immediate(conn).await?;
-    let series = load_series(&mut tx, &workspace.id, series_id).await?;
-    let schedule = series.schedule();
-    ensure!(
-        is_slot(&series.rule, series.start_on, slot_on),
-        "error recurrence-slot-off-lattice slot={slot_on}"
-    );
-    let current = projection_slot_at(&schedule, at)?;
-    ensure!(
-        slot_on < current,
-        "error recurrence-correction-not-past slot={slot_on}"
-    );
-    let created_date = DateTime::parse_from_rfc3339(&series.created_at)?
-        .with_timezone(&series.timezone.timezone())
-        .date_naive();
-    ensure!(
-        slot_on >= created_date && slot_on >= series.start_on,
-        "error recurrence-slot-outside-lifetime slot={slot_on}"
-    );
-    if let Some(stopped_at) = series.stopped_at.as_deref() {
-        let stop = DateTime::parse_from_rfc3339(stopped_at)?.with_timezone(&Utc);
-        ensure!(
-            slot_values(&schedule, slot_on)?.boundary_at < format_utc(stop),
-            "error recurrence-slot-outside-lifetime slot={slot_on}"
-        );
-    }
-    ensure!(
-        !slot_is_paused(&mut tx, &workspace.id, series_id, slot_on).await?,
-        "error recurrence-slot-paused slot={slot_on}"
-    );
-    ensure!(
-        load_occurrence(&mut tx, &workspace.id, series_id, slot_on)
-            .await?
-            .is_none(),
-        "error recurrence-outcome-exists slot={slot_on}"
-    );
-    let change_id = append_change(
-        &mut tx,
-        ChangeEntity::RecurrenceSeries,
-        series_id.as_str(),
-        Some("outcome"),
-        op_type::RECORD_RECURRENCE_OUTCOME,
-        ChangePayload::workspace(workspace)
-            .set("slot_on", slot_on.format("%Y-%m-%d").to_string())
-            .set("outcome", outcome.as_str())
-            .set("resolved_at", &resolved_at)
-            .set("frequency", series.rule.frequency().as_str())
-            .set("interval", series.rule.interval())
-            .set("weekdays", series.rule.weekdays_set().to_string())
-            .set("timezone", series.timezone.as_str())
-            .set("start_on", series.start_on.format("%Y-%m-%d").to_string())
-            .set(
-                "available_local_time",
-                format_local_time(series.available_local_time),
-            )
-            .set("due_policy", series.due_policy.as_str()),
-    )
-    .await?;
-    sqlx::query(
-        "INSERT INTO recurrence_occurrences(
-            workspace_id, series_id, slot_on, task_id, outcome, resolved_at,
-            outcome_change_id, projection_state, archived_at
-         ) VALUES (?, ?, ?, '', ?, ?, ?, 'corrected', '')",
-    )
-    .bind(&workspace.id)
-    .bind(series_id)
-    .bind(slot_on.format("%Y-%m-%d").to_string())
-    .bind(outcome.as_str())
-    .bind(&resolved_at)
-    .bind(&change_id)
-    .execute(&mut *tx)
-    .await?;
-    let occurrence = load_occurrence(&mut tx, &workspace.id, series_id, slot_on)
-        .await?
-        .expect("corrected occurrence was inserted");
-    tx.commit().await?;
-    Ok(RecurrenceRecordOutcome { series, occurrence })
-}
-
 pub async fn pause_recurrence_series(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
@@ -1252,10 +1131,10 @@ pub(crate) async fn route_recurrence_task_field(
         if task.status.is_terminal() {
             if target.is_open() {
                 bail!(
-                    "error recurrence-terminal-reopen task_id={task_id} hint=\"use immediate undo or record a historical correction\""
+                    "error recurrence-terminal-reopen task_id={task_id} hint=\"use immediate undo\""
                 );
             }
-            bail!("error recurrence-outcome-correction-required task_id={task_id}");
+            bail!("error recurrence-outcome-final task_id={task_id} hint=\"use immediate undo\"");
         }
         if target.is_terminal() {
             ensure!(
@@ -1952,29 +1831,6 @@ async fn ensure_no_series_conflict(
         "error recurrence-conflicted-field series_id={series_id} field={field}"
     );
     Ok(())
-}
-
-async fn slot_is_paused(
-    conn: &mut SqliteConnection,
-    workspace_id: &WorkspaceId,
-    series_id: &RecurrenceSeriesId,
-    slot_on: NaiveDate,
-) -> Result<bool> {
-    let boundaries = sqlx::query(
-        "SELECT paused_at, resumed_at FROM recurrence_pause_intervals
-         WHERE workspace_id = ? AND series_id = ?",
-    )
-    .bind(workspace_id)
-    .bind(series_id)
-    .fetch_all(&mut *conn)
-    .await?;
-    let series = load_series(conn, workspace_id, series_id).await?;
-    let boundary = slot_values(&series.schedule(), slot_on)?.boundary_at;
-    Ok(boundaries.into_iter().any(|row| {
-        let paused_at: String = row.get("paused_at");
-        let resumed_at: String = row.get("resumed_at");
-        boundary >= paused_at && (resumed_at.is_empty() || boundary < resumed_at)
-    }))
 }
 
 pub async fn resolve_recurrence_ref(
