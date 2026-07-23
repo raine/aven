@@ -134,7 +134,7 @@ pub(crate) const NORMAL_HELP_SECTIONS: &[&str] = &[
     "Config",
 ];
 
-pub(crate) const DETAIL_HELP_SECTIONS: &[&str] = &["General", "Task detail", "Tasks"];
+pub(crate) const DETAIL_HELP_SECTIONS: &[&str] = &["General", "Navigation", "Task detail", "Tasks"];
 
 pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec::implemented(
