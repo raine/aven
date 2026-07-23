@@ -3,6 +3,11 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.16 (2026-07-23)
+
+- Task detail help includes navigation shortcuts for moving through tasks,
+  returning to previous views, and revisiting the most recently changed task.
+
 ## v0.1.15 (2026-07-23)
 
 - Status changes keep your place in task lists, Columns, and detail views. If a
