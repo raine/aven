@@ -3,6 +3,12 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## v0.1.15 (2026-07-23)
+
+- Status changes keep your place in task lists, Columns, and detail views. If a
+  changed task leaves the current view, press `g .` to return to it and then go
+  back.
+
 ## v0.1.14 (2026-07-23)
 
 - Explore Aven with `aven demo`, which opens a fresh sample workspace and
