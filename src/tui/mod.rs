@@ -103,6 +103,27 @@ pub(crate) async fn run(
     db_path: std::path::PathBuf,
     config: crate::config::AppConfig,
 ) -> Result<()> {
+    run_with_welcome_intro(database, workspace, launch, db_path, config, false).await
+}
+
+pub(crate) async fn run_demo(
+    database: Database,
+    workspace: crate::workspaces::Workspace,
+    launch: store::TuiLaunch,
+    db_path: std::path::PathBuf,
+    config: crate::config::AppConfig,
+) -> Result<()> {
+    run_with_welcome_intro(database, workspace, launch, db_path, config, true).await
+}
+
+async fn run_with_welcome_intro(
+    database: Database,
+    workspace: crate::workspaces::Workspace,
+    launch: store::TuiLaunch,
+    db_path: std::path::PathBuf,
+    config: crate::config::AppConfig,
+    show_welcome_intro: bool,
+) -> Result<()> {
     let mut app = app::App::new_with_view_state(database, workspace, launch.view_state).await?;
     app.set_add_task_db_path(db_path);
     match launch.startup {
@@ -125,6 +146,7 @@ pub(crate) async fn run(
             app.set_config(config);
             app.start_update_check();
             match startup {
+                store::TuiStartup::Browse if show_welcome_intro => app.show_welcome_intro(),
                 store::TuiStartup::Browse => app.maybe_open_onboarding().await,
                 store::TuiStartup::AddTask { natural } => {
                     app.open_add_task_on_start(natural).await?;

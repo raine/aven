@@ -34,7 +34,7 @@ pub use cli::Cli;
 use cli::{BackupSubcommand, Commands, DaemonSubcommand, InternalSubcommand, SkillSubcommand};
 use commands::{
     cmd_add, cmd_attachment, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
-    cmd_delete_restore, cmd_dep, cmd_doctor, cmd_edit, cmd_epic, cmd_export, cmd_import,
+    cmd_delete_restore, cmd_demo, cmd_dep, cmd_doctor, cmd_edit, cmd_epic, cmd_export, cmd_import,
     cmd_internal_natural_add, cmd_label, cmd_list, cmd_note, cmd_note_delete, cmd_prime,
     cmd_project, cmd_search, cmd_self_update, cmd_show, cmd_skill, cmd_skill_install, cmd_text,
     cmd_workspace,
@@ -48,7 +48,9 @@ pub async fn run_cli() -> Result<()> {
     logging::init(metadata.log_mode)?;
 
     match CliDispatch::from(cli.command) {
-        CliDispatch::Standalone(command) => dispatch_standalone(cli.db, command).await,
+        CliDispatch::Standalone(command) => {
+            dispatch_standalone(cli.db, cli.workspace, command).await
+        }
         CliDispatch::Database(command) => {
             dispatch_database(cli.db, cli.workspace, metadata, *command).await
         }
@@ -66,6 +68,7 @@ enum StandaloneCommand {
     BackupRestore(cli::BackupRestoreArgs),
     Config(cli::ConfigCommand),
     Daemon(cli::DaemonArgs),
+    Demo,
     Internal(cli::InternalCommand),
     Server(cli::ServerArgs),
     Skill(cli::SkillCommand),
@@ -144,6 +147,7 @@ impl From<Commands> for CliDispatch {
             Commands::Skill(args) => Self::Standalone(StandaloneCommand::Skill(args)),
             Commands::Doctor(args) => Self::database(DatabaseCommand::Doctor(args)),
             Commands::Daemon(args) => Self::Standalone(StandaloneCommand::Daemon(args)),
+            Commands::Demo => Self::Standalone(StandaloneCommand::Demo),
             Commands::Server(args) => Self::Standalone(StandaloneCommand::Server(args)),
             Commands::Sync(args) => Self::database(DatabaseCommand::Sync(args)),
             Commands::Tui(args) => Self::Tui(args),
@@ -154,6 +158,7 @@ impl From<Commands> for CliDispatch {
 
 async fn dispatch_standalone(
     db: Option<std::path::PathBuf>,
+    workspace: Option<String>,
     command: StandaloneCommand,
 ) -> Result<()> {
     match command {
@@ -171,6 +176,7 @@ async fn dispatch_standalone(
             Some(SkillSubcommand::Install(args)) => cmd_skill_install(args),
         },
         StandaloneCommand::Config(args) => cmd_config(args).await,
+        StandaloneCommand::Demo => cmd_demo(db, workspace).await,
         StandaloneCommand::Update(args) => cmd_self_update(args).await,
         StandaloneCommand::Internal(args) => {
             let config = config::AppConfig::load()?;

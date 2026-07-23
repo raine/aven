@@ -58,6 +58,14 @@ impl CommandMetadata {
             wakes_daemon: false,
         }
     }
+
+    fn standalone_tui() -> Self {
+        Self {
+            log_mode: logging::LogMode::Tui,
+            needs_workspace: false,
+            wakes_daemon: false,
+        }
+    }
 }
 
 impl Commands {
@@ -126,6 +134,7 @@ impl Commands {
             Self::Server(_) => CommandMetadata::server(),
             Self::Daemon(_) => CommandMetadata::daemon(),
             Self::Tui(_) => CommandMetadata::tui(),
+            Self::Demo => CommandMetadata::standalone_tui(),
             Self::Internal(_) => CommandMetadata::cli(),
         }
     }
@@ -173,5 +182,18 @@ impl TextSubcommand {
 impl ConflictSubcommand {
     pub(crate) fn wakes_daemon(&self) -> bool {
         matches!(self, Self::Resolve { .. })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn demo_uses_standalone_tui_metadata() {
+        let metadata = Commands::Demo.metadata();
+        assert_eq!(metadata.log_mode, logging::LogMode::Tui);
+        assert!(!metadata.needs_workspace);
+        assert!(!metadata.wakes_daemon);
     }
 }

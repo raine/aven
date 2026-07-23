@@ -714,7 +714,17 @@ aven daemon repair --if-installed
 aven daemon restart
 ```
 
-## Interactive command
+## Interactive commands
+
+### `aven demo`
+
+Open the TUI with a fresh temporary database containing the curated sample
+projects, labels, tasks, dependencies, and epic membership used in product
+screenshots.
+
+```sh
+aven demo
+```
 
 ### `aven tui`
 

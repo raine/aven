@@ -17,7 +17,7 @@ Or install with Homebrew:
 brew install raine/aven/aven
 ```
 
-## Open the TUI
+## Open Aven
 
 ```sh
 aven tui
@@ -28,6 +28,15 @@ Tasks live in a local SQLite database.
 The TUI is the human interface for aven. It opens to the queue, which highlights tasks that need attention.
 
 Use [Configuration](/configuration/) later when you want a specific database path, sync server, workspace routes, or project path mappings. Use `aven doctor` when config or database routing is unclear.
+
+## Explore the demo
+
+```sh
+aven demo
+```
+
+Every demo run starts from the same sample data, and changes are discarded on
+exit.
 
 ## First session
 

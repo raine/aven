@@ -127,6 +127,14 @@ impl App {
             .map(|intro| intro.remaining().min(ONBOARDING_FRAME_INTERVAL))
     }
 
+    pub(crate) fn show_welcome_intro(&mut self) {
+        self.pending_shortcut.clear();
+        self.onboarding_intro = Some(OnboardingIntro::new());
+        self.overlay = Some(OverlayState::Onboarding {
+            persist_on_exit: true,
+        });
+    }
+
     pub(super) fn show_welcome(&mut self) {
         self.pending_shortcut.clear();
         self.onboarding_intro = None;

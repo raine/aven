@@ -52,7 +52,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
     },
     HelpSection {
         heading: "INTERACTIVE",
-        commands: &["tui"],
+        commands: &["tui", "demo"],
     },
     HelpSection {
         heading: "AGENTS",
@@ -281,6 +281,8 @@ pub(crate) enum Commands {
     Sync(SyncArgs),
     /// Open the terminal UI
     Tui(TuiArgs),
+    /// Explore aven with disposable sample tasks
+    Demo,
     #[command(hide = true)]
     Internal(InternalCommand),
 }
@@ -348,7 +350,7 @@ impl TuiPriorityArg {
     }
 }
 
-#[derive(Args)]
+#[derive(Args, Default)]
 #[command(group(
     ArgGroup::new("tui_composer")
         .args(["add_task", "add_task_only"])

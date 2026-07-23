@@ -66,11 +66,20 @@ Or install with Homebrew:
 brew install raine/aven/aven
 ```
 
-Open the TUI:
+Open Aven:
 
 ```sh
 aven tui
 ```
+
+Or try the demo:
+
+```sh
+aven demo
+```
+
+Every demo run starts from the same sample data, and changes are discarded on
+exit.
 
 See [Getting started](https://aven.raine.dev/getting-started/) for first-run
 usage.

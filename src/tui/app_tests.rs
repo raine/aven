@@ -641,6 +641,34 @@ mod onboarding {
     }
 
     #[tokio::test]
+    async fn forced_welcome_uses_automatic_intro() {
+        let mut app = test_app().await;
+
+        app.show_welcome_intro();
+        assert!(app.onboarding_intro.is_some());
+        assert!(matches!(
+            app.view().overlay,
+            Some(OverlayView::Onboarding {
+                splash_underlay: true
+            })
+        ));
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Onboarding {
+                persist_on_exit: true
+            })
+        ));
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            app.store.onboarding_status().await.unwrap(),
+            OnboardingStatus::Complete
+        );
+    }
+
+    #[tokio::test]
     async fn welcome_replay_does_not_complete_automatic_onboarding() {
         let mut app = test_app().await;
 
