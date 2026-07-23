@@ -841,7 +841,7 @@ mod tests {
         assert!(rendered.contains("jump to next or previous section"));
         assert!(rendered.contains("scroll one page"));
         assert!(rendered.contains("select previous or next task"));
-        assert!(rendered.contains("edit selected task priority"));
+        assert!(rendered.contains("select the task most recently changed"));
         assert!(!rendered.contains("view updated"));
     }
 
