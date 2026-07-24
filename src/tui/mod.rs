@@ -35,6 +35,8 @@ mod platform;
 mod preview_controller;
 mod shortcut_buffer;
 mod store;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod text;
 mod theme;
 mod time;

@@ -139,46 +139,11 @@ fn truncate_title(title: &str, max_width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::choices::{TaskPriority, TaskStatus};
-
-    fn task_item(title: &str) -> TaskListItem {
-        TaskListItem {
-            task: crate::types::Task {
-                id: crate::test_support::task_id("task-1"),
-                workspace_id: "0000000000000001".parse().unwrap(),
-                title: title.to_string(),
-                description: String::new(),
-                project_id: "0000000000000001".parse().unwrap(),
-                project_key: "app".to_string(),
-                project_prefix: "APP".to_string(),
-                status: TaskStatus::Todo,
-                priority: TaskPriority::None,
-                created_at: "2026-06-20T00:00:00Z".to_string(),
-                updated_at: "2026-06-20T00:00:00Z".to_string(),
-                queue_activity_at: "2026-06-20T00:00:00Z".to_string(),
-                available_at: None,
-                due_on: None,
-                deleted: false,
-                is_epic: false,
-            },
-            display_ref: "APP-1".to_string(),
-            labels: Vec::new(),
-            notes: Vec::new(),
-            attachments: Vec::new(),
-            has_conflict: false,
-            unresolved_blocker_count: 0,
-            dependent_count: 0,
-            depends_on: Vec::new(),
-            blocks: Vec::new(),
-            epic_children: Vec::new(),
-            epic_parent: None,
-            queue: Default::default(),
-        }
-    }
+    use crate::tui::test_support::task_list_item;
 
     #[test]
     fn label_cell_right_aligns_summary_when_space_allows() {
-        let mut item = task_item("Short title");
+        let mut item = task_list_item("Short title");
         item.labels = vec!["search".to_string(), "ux".to_string()];
 
         let rendered = label_cell(&item.labels, 11).to_string();
@@ -189,7 +154,7 @@ mod tests {
 
     #[test]
     fn label_cell_uses_dim_text() {
-        let mut item = task_item("Short title");
+        let mut item = task_list_item("Short title");
         item.labels = vec!["search".to_string()];
 
         let line = label_cell(&item.labels, 6);
@@ -208,7 +173,7 @@ mod tests {
 
     #[test]
     fn label_cell_hides_labels_when_space_is_tight() {
-        let mut item = task_item("Short title");
+        let mut item = task_list_item("Short title");
         item.labels = vec!["search".to_string()];
 
         let rendered = label_cell(&item.labels, 5).to_string();
@@ -218,7 +183,7 @@ mod tests {
 
     #[test]
     fn title_cell_truncates_title_when_labels_are_hidden() {
-        let mut item = task_item("A very long task title");
+        let mut item = task_list_item("A very long task title");
         item.labels = vec!["search".to_string()];
 
         let rendered = title_cell(&item, 12).to_string();

@@ -92,70 +92,35 @@ pub(super) fn task_list_hit(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::choices::{TaskPriority, TaskStatus};
     use crate::queue::QueueBand;
     use crate::tui::store::TaskListRenderMode;
+    use crate::tui::test_support::{
+        task_list_item, task_list_item_with_id, task_list_item_with_id_and_status_and_queue,
+    };
     use std::collections::BTreeSet;
-
-    fn task_item(title: &str) -> TaskListItem {
-        TaskListItem {
-            task: crate::types::Task {
-                id: crate::test_support::task_id("task-1"),
-                workspace_id: "0000000000000001".parse().unwrap(),
-                title: title.to_string(),
-                description: String::new(),
-                project_id: "0000000000000001".parse().unwrap(),
-                project_key: "app".to_string(),
-                project_prefix: "APP".to_string(),
-                status: TaskStatus::Todo,
-                priority: TaskPriority::None,
-                created_at: "2026-06-20T00:00:00Z".to_string(),
-                updated_at: "2026-06-20T00:00:00Z".to_string(),
-                queue_activity_at: "2026-06-20T00:00:00Z".to_string(),
-                available_at: None,
-                due_on: None,
-                deleted: false,
-                is_epic: false,
-            },
-            display_ref: "APP-1".to_string(),
-            labels: Vec::new(),
-            notes: Vec::new(),
-            attachments: Vec::new(),
-            has_conflict: false,
-            unresolved_blocker_count: 0,
-            dependent_count: 0,
-            depends_on: Vec::new(),
-            blocks: Vec::new(),
-            epic_children: Vec::new(),
-            epic_parent: None,
-            queue: Default::default(),
-        }
-    }
-
-    fn task_item_with(title: &str, status: &str, band: QueueBand) -> TaskListItem {
-        let mut item = task_item(title);
-        item.task.title = title.to_string();
-        item.task.status = TaskStatus::parse(status).expect("valid status");
-        item.queue.band = band;
-        item
-    }
-
-    fn task_id(task: &mut TaskListItem, id: &str) {
-        task.task.id = crate::test_support::task_id(id);
-    }
-
-    use crate::query::TaskListItem;
 
     #[test]
     fn task_at_position_skips_queue_group_rows() {
-        let mut tasks = vec![
-            task_item_with("todo high", "todo", QueueBand::Focus),
-            task_item_with("todo medium", "todo", QueueBand::Focus),
-            task_item_with("inbox", "inbox", QueueBand::Triage),
+        let tasks = vec![
+            task_list_item_with_id_and_status_and_queue(
+                "todo high",
+                "task-1",
+                "todo",
+                QueueBand::Focus,
+            ),
+            task_list_item_with_id_and_status_and_queue(
+                "todo medium",
+                "task-2",
+                "todo",
+                QueueBand::Focus,
+            ),
+            task_list_item_with_id_and_status_and_queue(
+                "inbox",
+                "task-3",
+                "inbox",
+                QueueBand::Triage,
+            ),
         ];
-        task_id(&mut tasks[0], "task-1");
-        task_id(&mut tasks[1], "task-2");
-        task_id(&mut tasks[2], "task-3");
         let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
         let table_area = Rect::new(0, 0, 80, 10);
         let table_state = TableState::default();
@@ -183,12 +148,11 @@ mod tests {
 
     #[test]
     fn task_at_position_respects_scroll_position() {
-        let mut tasks = Vec::new();
-        for index in 0..20 {
-            let mut item = task_item(&format!("task {index}"));
-            task_id(&mut item, &format!("task-{index:02}"));
-            tasks.push(item);
-        }
+        let tasks = (0..20)
+            .map(|index| {
+                task_list_item_with_id(&format!("task {index}"), &format!("task-{index:02}"))
+            })
+            .collect::<Vec<_>>();
         let view = TaskListView::from_tasks(TaskListRenderMode::Flat, &tasks, &BTreeSet::new());
         let mut table_state = TableState::default();
         table_state.select(Some(10));
@@ -201,7 +165,7 @@ mod tests {
     #[test]
     fn task_at_position_ignores_scrollbar_column() {
         let tasks = (0..20)
-            .map(|index| task_item(&format!("task {index}")))
+            .map(|index| task_list_item(&format!("task {index}")))
             .collect::<Vec<_>>();
         let view = TaskListView::from_tasks(TaskListRenderMode::Flat, &tasks, &BTreeSet::new());
         let mut table_state = TableState::default();

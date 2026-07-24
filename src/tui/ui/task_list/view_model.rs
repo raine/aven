@@ -234,60 +234,19 @@ pub(super) fn scrollbar_position(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::choices::{TaskPriority, TaskStatus};
     use crate::queue::QueueBand;
+    use crate::tui::test_support::{
+        task_list_item, task_list_item_with_id, task_list_item_with_status_and_queue,
+    };
     use std::collections::BTreeSet;
-
-    fn task_item(title: &str) -> TaskListItem {
-        TaskListItem {
-            task: crate::types::Task {
-                id: crate::test_support::task_id("task-1"),
-                workspace_id: "0000000000000001".parse().unwrap(),
-                title: title.to_string(),
-                description: String::new(),
-                project_id: "0000000000000001".parse().unwrap(),
-                project_key: "app".to_string(),
-                project_prefix: "APP".to_string(),
-                status: TaskStatus::Todo,
-                priority: TaskPriority::None,
-                created_at: "2026-06-20T00:00:00Z".to_string(),
-                updated_at: "2026-06-20T00:00:00Z".to_string(),
-                queue_activity_at: "2026-06-20T00:00:00Z".to_string(),
-                available_at: None,
-                due_on: None,
-                deleted: false,
-                is_epic: false,
-            },
-            display_ref: "APP-1".to_string(),
-            labels: Vec::new(),
-            notes: Vec::new(),
-            attachments: Vec::new(),
-            has_conflict: false,
-            unresolved_blocker_count: 0,
-            dependent_count: 0,
-            depends_on: Vec::new(),
-            blocks: Vec::new(),
-            epic_children: Vec::new(),
-            epic_parent: None,
-            queue: Default::default(),
-        }
-    }
-
-    fn task_item_with(title: &str, status: &str, band: QueueBand) -> TaskListItem {
-        let mut item = task_item(title);
-        item.task.title = title.to_string();
-        item.task.status = TaskStatus::parse(status).expect("valid status");
-        item.queue.band = band;
-        item
-    }
 
     #[test]
     fn project_filtered_queue_view_groups_by_queue_band() {
         let tasks = vec![
-            task_item_with("todo high", "todo", QueueBand::Focus),
-            task_item_with("todo medium", "todo", QueueBand::Soon),
-            task_item_with("inbox", "inbox", QueueBand::Triage),
-            task_item_with("backlog", "backlog", QueueBand::Later),
+            task_list_item_with_status_and_queue("todo high", "todo", QueueBand::Focus),
+            task_list_item_with_status_and_queue("todo medium", "todo", QueueBand::Soon),
+            task_list_item_with_status_and_queue("inbox", "inbox", QueueBand::Triage),
+            task_list_item_with_status_and_queue("backlog", "backlog", QueueBand::Later),
         ];
 
         let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
@@ -323,9 +282,9 @@ mod tests {
     #[test]
     fn queue_view_keeps_nonadjacent_equal_bands_in_separate_groups() {
         let tasks = vec![
-            task_item_with("focus 1", "todo", QueueBand::Focus),
-            task_item_with("soon", "todo", QueueBand::Soon),
-            task_item_with("focus 2", "todo", QueueBand::Focus),
+            task_list_item_with_status_and_queue("focus 1", "todo", QueueBand::Focus),
+            task_list_item_with_status_and_queue("soon", "todo", QueueBand::Soon),
+            task_list_item_with_status_and_queue("focus 2", "todo", QueueBand::Focus),
         ];
 
         let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
@@ -355,8 +314,8 @@ mod tests {
     #[test]
     fn queue_view_groups_epics_separately() {
         let tasks = vec![
-            task_item_with("backlog", "backlog", QueueBand::Later),
-            task_item_with("epic", "todo", QueueBand::Epics),
+            task_list_item_with_status_and_queue("backlog", "backlog", QueueBand::Later),
+            task_list_item_with_status_and_queue("epic", "todo", QueueBand::Epics),
         ];
 
         let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
@@ -381,9 +340,9 @@ mod tests {
     #[test]
     fn queue_view_groups_terminal_statuses_by_status() {
         let tasks = vec![
-            task_item_with("backlog", "backlog", QueueBand::Later),
-            task_item_with("finished", "done", QueueBand::Later),
-            task_item_with("canceled", "canceled", QueueBand::Later),
+            task_list_item_with_status_and_queue("backlog", "backlog", QueueBand::Later),
+            task_list_item_with_status_and_queue("finished", "done", QueueBand::Later),
+            task_list_item_with_status_and_queue("canceled", "canceled", QueueBand::Later),
         ];
 
         let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
@@ -413,9 +372,9 @@ mod tests {
     #[test]
     fn non_queue_sort_does_not_emit_duplicate_status_groups() {
         let tasks = vec![
-            task_item_with("todo 1", "todo", QueueBand::Focus),
-            task_item_with("inbox", "inbox", QueueBand::Triage),
-            task_item_with("todo 2", "todo", QueueBand::Later),
+            task_list_item_with_status_and_queue("todo 1", "todo", QueueBand::Focus),
+            task_list_item_with_status_and_queue("inbox", "inbox", QueueBand::Triage),
+            task_list_item_with_status_and_queue("todo 2", "todo", QueueBand::Later),
         ];
 
         let view = TaskListView::from_tasks(TaskListRenderMode::Flat, &tasks, &BTreeSet::new());
@@ -434,9 +393,9 @@ mod tests {
     #[test]
     fn visual_row_uses_planned_rows() {
         let tasks = vec![
-            task_item_with("todo high", "todo", QueueBand::Focus),
-            task_item_with("todo medium", "todo", QueueBand::Soon),
-            task_item_with("inbox", "inbox", QueueBand::Triage),
+            task_list_item_with_status_and_queue("todo high", "todo", QueueBand::Focus),
+            task_list_item_with_status_and_queue("todo medium", "todo", QueueBand::Soon),
+            task_list_item_with_status_and_queue("inbox", "inbox", QueueBand::Triage),
         ];
         let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
 
@@ -448,9 +407,9 @@ mod tests {
     #[test]
     fn queue_view_keeps_group_header_with_first_visible_task() {
         let tasks = vec![
-            task_item_with("todo high", "todo", QueueBand::Focus),
-            task_item_with("todo medium", "todo", QueueBand::Soon),
-            task_item_with("inbox", "inbox", QueueBand::Triage),
+            task_list_item_with_status_and_queue("todo high", "todo", QueueBand::Focus),
+            task_list_item_with_status_and_queue("todo medium", "todo", QueueBand::Soon),
+            task_list_item_with_status_and_queue("inbox", "inbox", QueueBand::Triage),
         ];
         let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
 
@@ -506,7 +465,7 @@ mod tests {
 
     fn flat_view(row_count: usize) -> TaskListView {
         let tasks = (0..row_count)
-            .map(|index| task_item(&format!("task {index}")))
+            .map(|index| task_list_item(&format!("task {index}")))
             .collect::<Vec<_>>();
         TaskListView::from_tasks(TaskListRenderMode::Flat, &tasks, &BTreeSet::new())
     }
@@ -544,8 +503,8 @@ mod tests {
     #[test]
     fn queue_sticky_header_counts_toward_scroll_visibility() {
         let tasks = vec![
-            task_item_with("backlog", "backlog", QueueBand::Later),
-            task_item_with("epic", "todo", QueueBand::Epics),
+            task_list_item_with_status_and_queue("backlog", "backlog", QueueBand::Later),
+            task_list_item_with_status_and_queue("epic", "todo", QueueBand::Epics),
         ];
         let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
 
@@ -561,13 +520,13 @@ mod tests {
 
     #[test]
     fn upward_selection_from_bottom_keeps_final_queue_group_visible() {
-        let mut epic = task_item_with("epic", "todo", QueueBand::Epics);
+        let mut epic = task_list_item_with_status_and_queue("epic", "todo", QueueBand::Epics);
         epic.task.is_epic = true;
         let tasks = vec![
-            task_item_with("focus", "todo", QueueBand::Focus),
-            task_item_with("soon", "todo", QueueBand::Soon),
-            task_item_with("triage", "inbox", QueueBand::Triage),
-            task_item_with("later", "backlog", QueueBand::Later),
+            task_list_item_with_status_and_queue("focus", "todo", QueueBand::Focus),
+            task_list_item_with_status_and_queue("soon", "todo", QueueBand::Soon),
+            task_list_item_with_status_and_queue("triage", "inbox", QueueBand::Triage),
+            task_list_item_with_status_and_queue("later", "backlog", QueueBand::Later),
             epic,
         ];
         let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
@@ -606,9 +565,7 @@ mod tests {
     }
 
     fn make_task(title: &str, id: &str) -> TaskListItem {
-        let mut item = task_item(title);
-        item.task.id = crate::test_support::task_id(id);
-        item
+        task_list_item_with_id(title, id)
     }
 
     fn make_epic_parent(

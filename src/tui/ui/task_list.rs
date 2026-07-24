@@ -1465,46 +1465,12 @@ fn epic_parent_preview_line(parent: &crate::query::TaskDependencyLink) -> Line<'
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::choices::{TaskPriority, TaskStatus};
+    use crate::choices::TaskPriority;
     use crate::operations::TaskDraft;
     use crate::tui::overlay::OverlayRoute;
+    use crate::tui::test_support::task_list_item;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-
-    fn task_item(title: &str) -> TaskListItem {
-        TaskListItem {
-            task: crate::types::Task {
-                id: crate::test_support::task_id("task-1"),
-                workspace_id: "0000000000000001".parse().unwrap(),
-                title: title.to_string(),
-                description: String::new(),
-                project_id: "0000000000000001".parse().unwrap(),
-                project_key: "app".to_string(),
-                project_prefix: "APP".to_string(),
-                status: TaskStatus::Todo,
-                priority: TaskPriority::None,
-                created_at: "2026-06-20T00:00:00Z".to_string(),
-                updated_at: "2026-06-20T00:00:00Z".to_string(),
-                queue_activity_at: "2026-06-20T00:00:00Z".to_string(),
-                available_at: None,
-                due_on: None,
-                deleted: false,
-                is_epic: false,
-            },
-            display_ref: "APP-1".to_string(),
-            labels: Vec::new(),
-            notes: Vec::new(),
-            attachments: Vec::new(),
-            has_conflict: false,
-            unresolved_blocker_count: 0,
-            dependent_count: 0,
-            depends_on: Vec::new(),
-            blocks: Vec::new(),
-            epic_children: Vec::new(),
-            epic_parent: None,
-            queue: Default::default(),
-        }
-    }
 
     fn render_task_row_buffer(
         item: &TaskListItem,
@@ -1667,7 +1633,7 @@ mod tests {
 
     #[tokio::test]
     async fn populated_task_list_preserves_rows_without_empty_prompt() {
-        let store = test_store_with_tasks(vec![task_item("Ship the release")]).await;
+        let store = test_store_with_tasks(vec![task_list_item("Ship the release")]).await;
 
         let rendered = buffer_text(&render_task_list_buffer(&store, 80, 7));
 
@@ -1678,12 +1644,12 @@ mod tests {
 
     #[tokio::test]
     async fn label_column_width_uses_visible_task_labels() {
-        let mut hidden_wide = task_item("zz hidden wide label");
+        let mut hidden_wide = task_list_item("zz hidden wide label");
         hidden_wide.labels = vec!["very-wide-label".to_string()];
         let mut store = test_store_with_tasks(vec![
-            task_item("aa visible plain one"),
-            task_item("bb visible plain two"),
-            task_item("cc visible plain three"),
+            task_list_item("aa visible plain one"),
+            task_list_item("bb visible plain two"),
+            task_list_item("cc visible plain three"),
             hidden_wide,
         ])
         .await;
@@ -1719,14 +1685,14 @@ mod tests {
 
     #[test]
     fn label_column_width_collapses_without_visible_labels() {
-        let tasks = vec![task_item("plain"), task_item("also plain")];
+        let tasks = vec![task_list_item("plain"), task_list_item("also plain")];
 
         assert_eq!(label_column_width_from_tasks(&tasks, false), 0);
     }
 
     #[test]
     fn label_column_width_reserves_lane_for_visible_labels() {
-        let mut task = task_item("labeled");
+        let mut task = task_list_item("labeled");
         task.labels = vec!["search".to_string(), "ux".to_string()];
 
         assert_eq!(label_column_width_from_tasks(&[task], false), 11);
@@ -1734,7 +1700,7 @@ mod tests {
 
     #[test]
     fn label_column_width_collapses_in_narrow_layout() {
-        let mut task = task_item("labeled");
+        let mut task = task_list_item("labeled");
         task.labels = vec!["search".to_string()];
 
         assert_eq!(label_column_width_from_tasks(&[task], true), 0);
@@ -1748,7 +1714,7 @@ mod tests {
 
     #[test]
     fn queue_row_time_uses_queue_idle_duration() {
-        let mut item = task_item("queued");
+        let mut item = task_list_item("queued");
         item.task.created_at = "0".to_string();
         item.task.queue_activity_at = (9 * 86_400).to_string();
         item.queue.idle_seconds = Some(86_400);
@@ -1771,7 +1737,7 @@ mod tests {
 
     #[test]
     fn flat_row_marks_deferred_task_and_shows_availability_time() {
-        let mut item = task_item("deferred");
+        let mut item = task_list_item("deferred");
         item.task.available_at = Some("200".to_string());
 
         let cells = build_task_row_cells(
@@ -1884,7 +1850,7 @@ mod tests {
             .unwrap();
         assert!(buffer_text(terminal.backend().buffer()).contains("DUE"));
 
-        let mut item = task_item("future deadline");
+        let mut item = task_list_item("future deadline");
         item.task.due_on = Some("2999-01-01".to_string());
         let cell = task_time_cell(&item, 0, TaskListRenderMode::Flat, true);
         assert_eq!(cell.to_string(), "Jan1");
@@ -1893,15 +1859,15 @@ mod tests {
 
     #[test]
     fn metadata_column_width_collapses_without_metadata() {
-        let tasks = vec![task_item("plain"), task_item("also plain")];
+        let tasks = vec![task_list_item("plain"), task_list_item("also plain")];
 
         assert_eq!(metadata_column_width_from_tasks(&tasks), 0);
     }
 
     #[test]
     fn metadata_column_width_uses_given_task_refs() {
-        let plain = task_item("plain");
-        let mut documented = task_item("documented");
+        let plain = task_list_item("plain");
+        let mut documented = task_list_item("documented");
         documented.notes = vec![crate::query::TaskNote {
             body: "one".to_string(),
             created_at: "001".to_string(),
@@ -1921,7 +1887,7 @@ mod tests {
 
     #[test]
     fn metadata_column_width_reserves_lane_for_deferred_marker() {
-        let mut task = task_item("deferred");
+        let mut task = task_list_item("deferred");
         task.task.available_at = Some("2999-01-01T00:00:00Z".to_string());
 
         assert_eq!(
@@ -1936,7 +1902,7 @@ mod tests {
 
     #[test]
     fn metadata_column_width_reserves_lane_for_metadata() {
-        let mut task = task_item("documented");
+        let mut task = task_list_item("documented");
         task.notes = vec![crate::query::TaskNote {
             body: "one".to_string(),
             created_at: "001".to_string(),
@@ -1947,7 +1913,7 @@ mod tests {
 
     #[test]
     fn metadata_column_width_reserves_lane_for_epics() {
-        let mut task = task_item("epic");
+        let mut task = task_list_item("epic");
         task.task.is_epic = true;
 
         assert_eq!(metadata_column_width_from_tasks(&[task]), 3);
@@ -1955,14 +1921,14 @@ mod tests {
 
     #[test]
     fn priority_column_width_collapses_without_priority() {
-        let tasks = vec![task_item("plain"), task_item("also plain")];
+        let tasks = vec![task_list_item("plain"), task_list_item("also plain")];
 
         assert_eq!(priority_column_width_from_tasks(&tasks), 0);
     }
 
     #[test]
     fn priority_column_width_reserves_lane_for_priority() {
-        let mut task = task_item("prioritized");
+        let mut task = task_list_item("prioritized");
         task.task.priority = TaskPriority::High;
 
         assert_eq!(priority_column_width_from_tasks(&[task]), 3);
@@ -1970,7 +1936,7 @@ mod tests {
 
     #[tokio::test]
     async fn task_status_at_position_only_hits_status_column() {
-        let store = test_store_with_tasks(vec![task_item("task")]).await;
+        let store = test_store_with_tasks(vec![task_list_item("task")]).await;
         let table_state = TableState::default();
         let area = Rect::new(0, 0, 140, 10);
         let task_id = store.tasks[0].task.id.clone();
@@ -1997,7 +1963,7 @@ mod tests {
 
     #[tokio::test]
     async fn task_status_at_position_respects_wide_sidebar_offset() {
-        let store = test_store_with_tasks(vec![task_item("task")]).await;
+        let store = test_store_with_tasks(vec![task_list_item("task")]).await;
         let table_state = TableState::default();
         let area = Rect::new(26, 2, 114, 18);
         let task_id = store.tasks[0].task.id.clone();
@@ -2037,7 +2003,7 @@ mod tests {
 
     #[test]
     fn project_cell_truncates_with_status_spacing() {
-        let mut item = task_item("Title");
+        let mut item = task_list_item("Title");
         item.task.project_key = "very-long-project-name".to_string();
 
         let rendered = project_cell(&item, 10).to_string();
@@ -2047,7 +2013,7 @@ mod tests {
 
     #[test]
     fn selected_row_renders_inline_title_editor() {
-        let item = task_item("original title");
+        let item = task_list_item("original title");
         let editor = TextInputView {
             route: OverlayRoute::EditTitle,
             title: "Edit title".to_string(),
@@ -2065,7 +2031,7 @@ mod tests {
 
     #[test]
     fn inline_title_editor_draws_end_cursor_in_title_column() {
-        let item = task_item("original title");
+        let item = task_list_item("original title");
         let editor = TextInputView {
             route: OverlayRoute::EditTitle,
             title: "Edit title".to_string(),
@@ -2082,7 +2048,7 @@ mod tests {
 
     #[test]
     fn marked_row_shows_ref_marker() {
-        let item = task_item("marked");
+        let item = task_list_item("marked");
         let line = task_ref_cell(&item, true);
 
         assert!(line.to_string().starts_with("●"));
@@ -2090,7 +2056,7 @@ mod tests {
 
     #[test]
     fn normal_row_keeps_title_rendering_without_inline_editor() {
-        let item = task_item("original title");
+        let item = task_list_item("original title");
 
         let buffer = render_task_row_buffer(&item, None);
         let rendered = buffer_text(&buffer);
@@ -2100,7 +2066,7 @@ mod tests {
 
     #[test]
     fn deleted_row_marks_metadata_column_and_keeps_status() {
-        let mut item = task_item("original title");
+        let mut item = task_list_item("original title");
         item.task.deleted = true;
 
         let buffer = render_task_row_buffer(&item, None);
@@ -2146,7 +2112,7 @@ mod tests {
 
     #[test]
     fn metadata_cell_shows_note_marker() {
-        let mut item = task_item("documented");
+        let mut item = task_list_item("documented");
         item.task.description = "details".to_string();
         item.notes = vec![
             crate::query::TaskNote {
@@ -2164,7 +2130,7 @@ mod tests {
 
     #[test]
     fn metadata_cell_marks_epics() {
-        let mut item = task_item("epic");
+        let mut item = task_list_item("epic");
         item.task.is_epic = true;
 
         let line = metadata_cell(&item, None, false);
@@ -2175,7 +2141,7 @@ mod tests {
 
     #[test]
     fn metadata_cell_marks_children_of_selected_epic() {
-        let mut item = task_item("child");
+        let mut item = task_list_item("child");
         item.epic_parent = Some(crate::query::TaskDependencyLink {
             task_id: crate::test_support::task_id("epic-1"),
             display_ref: "APP-EPIC".to_string(),
@@ -2202,7 +2168,7 @@ mod tests {
 
     #[test]
     fn metadata_cell_shows_dependency_counts() {
-        let mut item = task_item("blocked");
+        let mut item = task_list_item("blocked");
         item.unresolved_blocker_count = 2;
         item.dependent_count = 1;
 
@@ -2211,7 +2177,7 @@ mod tests {
 
     #[test]
     fn metadata_cell_ignores_description_without_notes() {
-        let mut item = task_item("plain");
+        let mut item = task_list_item("plain");
         item.task.description = "details".to_string();
 
         assert_eq!(metadata_cell(&item, None, false).to_string(), "");
@@ -2219,7 +2185,7 @@ mod tests {
 
     #[test]
     fn task_preview_fields_show_created_timestamp() {
-        let item = task_item("preview");
+        let item = task_list_item("preview");
         let rendered = task_preview_fields_line(&item).to_string();
 
         assert!(rendered.contains("created "));
@@ -2227,7 +2193,7 @@ mod tests {
 
     #[test]
     fn task_preview_shows_future_availability() {
-        let mut item = task_item("preview");
+        let mut item = task_list_item("preview");
         item.task.available_at = Some("200".to_string());
 
         let line = availability_preview_line(&item, 100, 80).unwrap();
@@ -2241,7 +2207,7 @@ mod tests {
 
     #[test]
     fn task_preview_omits_elapsed_availability() {
-        let mut item = task_item("preview");
+        let mut item = task_list_item("preview");
         item.task.available_at = Some("100".to_string());
 
         assert!(availability_preview_line(&item, 200, 80).is_none());
@@ -2249,7 +2215,7 @@ mod tests {
 
     #[test]
     fn task_row_cells_insert_metadata_between_title_and_project() {
-        let mut item = task_item("documented");
+        let mut item = task_list_item("documented");
         item.task.description = "details".to_string();
         item.notes = vec![crate::query::TaskNote {
             body: "one".to_string(),
@@ -2293,7 +2259,7 @@ mod tests {
 
     #[test]
     fn task_row_cells_use_inline_title_when_selected() {
-        let item = task_item("original title");
+        let item = task_list_item("original title");
         let editor = TextInputView {
             route: OverlayRoute::EditTitle,
             title: "Edit title".to_string(),
@@ -2320,7 +2286,7 @@ mod tests {
 
     #[test]
     fn epic_child_ref_prefix_aligns_tree_with_parent_marker() {
-        let item = task_item("child");
+        let item = task_list_item("child");
 
         let cells =
             build_epic_child_row_cells(&item, false, 0, &[14, 40, 12, 6, 9, 10, 3, 5], false, None);
@@ -2349,7 +2315,7 @@ mod tests {
 
     #[test]
     fn preview_renders_markdown_blocks_and_inline_styles() {
-        let mut item = task_item("documented");
+        let mut item = task_list_item("documented");
         item.task.description =
             "### Context\n\nFirst **bold** paragraph.\n\n- one\n- `two`".to_string();
 
@@ -2374,7 +2340,7 @@ mod tests {
 
     #[test]
     fn preview_bounds_wrapped_markdown_to_available_height() {
-        let mut item = task_item("documented");
+        let mut item = task_list_item("documented");
         item.task.description = "A description with enough words to wrap across many lines in the selected task preview.".to_string();
 
         let lines = task_preview_lines(&item, 20, 7);
@@ -2387,7 +2353,7 @@ mod tests {
 
     #[test]
     fn preview_uses_single_remaining_line_for_description() {
-        let mut item = task_item("documented");
+        let mut item = task_list_item("documented");
         item.task.description = "small body".to_string();
 
         let lines = task_preview_lines(&item, 20, 4);
@@ -2398,7 +2364,7 @@ mod tests {
 
     #[test]
     fn preview_shows_child_tasks_for_epic_parent() {
-        let mut item = task_item("epic");
+        let mut item = task_list_item("epic");
         item.epic_children = vec![
             crate::query::TaskDependencyLink {
                 task_id: crate::test_support::task_id("child-1"),
@@ -2418,53 +2384,8 @@ mod tests {
             },
         ];
 
-        let lines = vec![
-            task_heading_line(&item),
-            task_preview_fields_line(&item),
-            Line::from(vec![
-                Span::styled("labels ", Style::new().fg(FG_DIM)),
-                Span::styled(String::new(), Style::new().fg(FG_MUTED)),
-            ]),
-        ];
-        let mut extended_lines = lines.clone();
-        extended_lines.extend(dependency_preview_lines(&item));
-        let open_child_links: Vec<_> = item
-            .epic_children
-            .iter()
-            .filter(|link| link.unresolved)
-            .collect();
-        if !open_child_links.is_empty() {
-            extended_lines.push(Line::from(vec![
-                Span::styled(
-                    "CHILD TASKS ",
-                    Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    format!("({}/{})", open_child_links.len(), item.epic_children.len()),
-                    Style::new().fg(ACCENT),
-                ),
-            ]));
-            let last_child_index = open_child_links.len().saturating_sub(1);
-            for (index, link) in open_child_links.iter().take(5).enumerate() {
-                let branch = if index == last_child_index {
-                    "└─"
-                } else {
-                    "├─"
-                };
-                extended_lines.push(Line::from(vec![
-                    Span::styled(format!("  {branch} "), Style::new().fg(FG_DIM)),
-                    Span::styled(
-                        format!("{} ", link.display_ref),
-                        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(&link.title, Style::new().fg(FG_MUTED)),
-                    Span::styled(format!(" {}", link.status), Style::new().fg(FG_DIM)),
-                ]));
-            }
-        }
-
-        let rendered = extended_lines
-            .iter()
+        let rendered = task_preview_lines(&item, 80, 20)
+            .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
