@@ -1,4 +1,4 @@
-pub(crate) fn is_near(a: &str, b: &str) -> bool {
+pub fn is_near(a: &str, b: &str) -> bool {
     is_contained_near(a, b) || levenshtein(a, b) <= 2
 }
 

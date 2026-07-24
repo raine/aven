@@ -11,7 +11,6 @@ mod config;
 mod config_edit;
 mod daemon;
 mod due;
-mod fuzzy;
 mod input;
 mod logging;
 mod operations;

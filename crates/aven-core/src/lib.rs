@@ -7,7 +7,7 @@ pub mod db;
 pub mod ids;
 pub mod labels;
 pub mod local_state;
-mod matching;
+pub mod matching;
 mod mutation;
 pub mod operations;
 pub mod projects;

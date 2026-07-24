@@ -3,10 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use aven_core::db::Database;
+use aven_core::{db::Database, matching::is_near};
 
 use crate::config::{self, AppConfig, ProjectOverrideConfig};
-use crate::fuzzy::is_near;
 use crate::ids::WorkspaceId;
 use crate::render::{print_near_error, quote};
 
