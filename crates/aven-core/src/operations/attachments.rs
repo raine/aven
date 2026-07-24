@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use anyhow::{Result, bail};
-use sqlx::Row;
 use sqlx::SqliteConnection;
+use sqlx::{AssertSqlSafe, Row};
 
 use crate::attachments::AttachmentBytesState;
 use crate::attachments::decode::{ImageFacts, ValidatedImage, validate_image};
@@ -69,6 +69,11 @@ pub struct AttachmentReadItem {
     pub has_blob: bool,
 }
 
+const ATTACHMENT_COLUMNS: &str =
+    "ta.workspace_id, ta.attachment_id, ta.task_id, ta.sha256, ta.byte_size,
+    ta.media_type, ta.filename, ta.alt_text, ta.width, ta.height,
+    ta.created_at, ta.created_by_change_id, ta.deleted, ta.deleted_at, ta.deleted_by_change_id";
+
 fn attachment_from_row(row: &sqlx::sqlite::SqliteRow) -> TaskAttachment {
     TaskAttachment {
         workspace_id: row.get("workspace_id"),
@@ -87,6 +92,27 @@ fn attachment_from_row(row: &sqlx::sqlite::SqliteRow) -> TaskAttachment {
         deleted_at: row.get("deleted_at"),
         deleted_by_change_id: row.get("deleted_by_change_id"),
     }
+}
+
+async fn require_attachment(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    attachment_id: &str,
+) -> Result<TaskAttachment> {
+    let row = sqlx::query(AssertSqlSafe(format!(
+        "SELECT {ATTACHMENT_COLUMNS}
+         FROM task_attachments ta
+         WHERE ta.workspace_id = ? AND ta.attachment_id = ?"
+    )))
+    .bind(workspace_id)
+    .bind(attachment_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+
+    let Some(row) = row else {
+        bail!("error attachment-not-found id={}", attachment_id);
+    };
+    Ok(attachment_from_row(&row))
 }
 
 async fn attachment_bytes_state(
@@ -110,14 +136,12 @@ async fn existing_live_attachments_by_sha(
     task_id: &TaskId,
     sha256: &str,
 ) -> Result<Vec<TaskAttachment>> {
-    let rows = sqlx::query(
-        "SELECT ta.workspace_id, ta.attachment_id, ta.task_id, ta.sha256, ta.byte_size,
-                ta.media_type, ta.filename, ta.alt_text, ta.width, ta.height,
-                ta.created_at, ta.created_by_change_id, ta.deleted, ta.deleted_at, ta.deleted_by_change_id
+    let rows = sqlx::query(AssertSqlSafe(format!(
+        "SELECT {ATTACHMENT_COLUMNS}
          FROM task_attachments ta
          WHERE ta.workspace_id = ? AND ta.task_id = ? AND ta.sha256 = ? AND ta.deleted = 0
-         ORDER BY ta.created_at, ta.attachment_id",
-    )
+         ORDER BY ta.created_at, ta.attachment_id"
+    )))
     .bind(workspace_id)
     .bind(task_id)
     .bind(sha256)
@@ -163,12 +187,23 @@ pub async fn prepare_task_attachment(input: TaskAttachmentAddInput) -> Result<Pr
     })
 }
 
-pub(super) async fn insert_prepared_attachment(
+struct AttachmentRecordDraft<'a> {
+    attachment_id: &'a str,
+    sha256: &'a str,
+    byte_size: i64,
+    media_type: &'a str,
+    filename: Option<&'a str>,
+    alt_text: Option<&'a str>,
+    width: i64,
+    height: i64,
+    created_at: &'a str,
+}
+
+async fn record_attachment_add(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     task_id: &TaskId,
-    prepared: &PreparedAttachment,
-    created_at: &str,
+    draft: AttachmentRecordDraft<'_>,
 ) -> Result<String> {
     let change_id = append_change(
         conn,
@@ -177,15 +212,15 @@ pub(super) async fn insert_prepared_attachment(
         Some("attachments"),
         op_type::ATTACHMENT_ADD,
         ChangePayload::workspace(workspace)
-            .set("attachment_id", &prepared.attachment_id)
-            .set("sha256", &prepared.sha256)
-            .set("byte_size", prepared.byte_size)
-            .set("media_type", &prepared.facts.media_type)
-            .set("filename", &prepared.filename)
-            .set("alt_text", &prepared.alt_text)
-            .set("width", prepared.facts.width)
-            .set("height", prepared.facts.height)
-            .set("created_at", created_at),
+            .set("attachment_id", draft.attachment_id)
+            .set("sha256", draft.sha256)
+            .set("byte_size", draft.byte_size)
+            .set("media_type", draft.media_type)
+            .set("filename", draft.filename)
+            .set("alt_text", draft.alt_text)
+            .set("width", draft.width)
+            .set("height", draft.height)
+            .set("created_at", draft.created_at),
     )
     .await?;
     sqlx::query(
@@ -193,20 +228,46 @@ pub(super) async fn insert_prepared_attachment(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&workspace.id)
-    .bind(&prepared.attachment_id)
+    .bind(draft.attachment_id)
     .bind(task_id)
-    .bind(&prepared.sha256)
-    .bind(prepared.byte_size)
-    .bind(&prepared.facts.media_type)
-    .bind(&prepared.filename)
-    .bind(&prepared.alt_text)
-    .bind(prepared.facts.width)
-    .bind(prepared.facts.height)
-    .bind(created_at)
+    .bind(draft.sha256)
+    .bind(draft.byte_size)
+    .bind(draft.media_type)
+    .bind(draft.filename)
+    .bind(draft.alt_text)
+    .bind(draft.width)
+    .bind(draft.height)
+    .bind(draft.created_at)
     .bind(&change_id)
     .execute(&mut *conn)
     .await?;
     Ok(change_id)
+}
+
+pub(super) async fn insert_prepared_attachment(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    task_id: &TaskId,
+    prepared: &PreparedAttachment,
+    created_at: &str,
+) -> Result<String> {
+    record_attachment_add(
+        conn,
+        workspace,
+        task_id,
+        AttachmentRecordDraft {
+            attachment_id: &prepared.attachment_id,
+            sha256: &prepared.sha256,
+            byte_size: prepared.byte_size,
+            media_type: &prepared.facts.media_type,
+            filename: prepared.filename.as_deref(),
+            alt_text: prepared.alt_text.as_deref(),
+            width: prepared.facts.width,
+            height: prepared.facts.height,
+            created_at,
+        },
+    )
+    .await
 }
 
 struct AttachmentCommitIdentity {
@@ -348,42 +409,22 @@ async fn add_task_attachment_inner(
 
         let attachment_id = identity.attachment_id.unwrap_or_else(new_id);
         let created_at = identity.created_at.unwrap_or_else(now);
-        let change_id = append_change(
+        record_attachment_add(
             &mut tx,
-            ChangeEntity::Task,
+            workspace,
             task_id,
-            Some("attachments"),
-            op_type::ATTACHMENT_ADD,
-            ChangePayload::workspace(workspace)
-                .set("attachment_id", &attachment_id)
-                .set("sha256", &stored.sha256)
-                .set("byte_size", stored.byte_size)
-                .set("media_type", &stored.facts.media_type)
-                .set("filename", &input.filename)
-                .set("alt_text", &input.alt_text)
-                .set("width", stored.facts.width)
-                .set("height", stored.facts.height)
-                .set("created_at", &created_at),
+            AttachmentRecordDraft {
+                attachment_id: &attachment_id,
+                sha256: &stored.sha256,
+                byte_size: stored.byte_size,
+                media_type: &stored.facts.media_type,
+                filename: input.filename.as_deref(),
+                alt_text: input.alt_text.as_deref(),
+                width: stored.facts.width,
+                height: stored.facts.height,
+                created_at: &created_at,
+            },
         )
-        .await?;
-
-        sqlx::query(
-            "INSERT INTO task_attachments(workspace_id, attachment_id, task_id, sha256, byte_size, media_type, filename, alt_text, width, height, created_at, created_by_change_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&workspace.id)
-        .bind(&attachment_id)
-        .bind(task_id)
-        .bind(&stored.sha256)
-        .bind(stored.byte_size)
-        .bind(&stored.facts.media_type)
-        .bind(&input.filename)
-        .bind(&input.alt_text)
-        .bind(stored.facts.width)
-        .bind(stored.facts.height)
-        .bind(&created_at)
-        .bind(&change_id)
-        .execute(&mut *tx)
         .await?;
         tx.commit().await?;
         Ok((attachment_id, true))
@@ -421,23 +462,7 @@ pub async fn attachment_by_id(
     workspace: &Workspace,
     attachment_id: &str,
 ) -> Result<AttachmentOutcome> {
-    let row = sqlx::query(
-        "SELECT ta.workspace_id, ta.attachment_id, ta.task_id, ta.sha256, ta.byte_size,
-                ta.media_type, ta.filename, ta.alt_text, ta.width, ta.height,
-                ta.created_at, ta.created_by_change_id, ta.deleted, ta.deleted_at, ta.deleted_by_change_id
-         FROM task_attachments ta
-         WHERE ta.workspace_id = ? AND ta.attachment_id = ?",
-    )
-    .bind(&workspace.id)
-    .bind(attachment_id)
-    .fetch_optional(&mut *conn)
-    .await?;
-
-    let Some(row) = row else {
-        bail!("error attachment-not-found id={}", attachment_id);
-    };
-
-    let attachment = attachment_from_row(&row);
+    let attachment = require_attachment(conn, &workspace.id, attachment_id).await?;
     let has_blob = attachment_has_blob(conn, &attachment.sha256).await?;
     Ok(AttachmentOutcome {
         attachment,
@@ -450,25 +475,8 @@ pub async fn delete_task_attachment(
     workspace: &Workspace,
     attachment_id: &str,
 ) -> Result<AttachmentOutcome> {
-    let row = sqlx::query(
-        "SELECT ta.workspace_id, ta.attachment_id, ta.task_id, ta.sha256, ta.byte_size,
-                ta.media_type, ta.filename, ta.alt_text, ta.width, ta.height,
-                ta.created_at, ta.created_by_change_id, ta.deleted, ta.deleted_at, ta.deleted_by_change_id
-         FROM task_attachments ta
-         WHERE ta.workspace_id = ? AND ta.attachment_id = ?",
-    )
-    .bind(&workspace.id)
-    .bind(attachment_id)
-    .fetch_optional(&mut *conn)
-    .await?;
-
-    let Some(row) = row else {
-        bail!("error attachment-not-found id={}", attachment_id);
-    };
-
-    let deleted: bool = row.get::<i64, _>("deleted") != 0;
-    if deleted {
-        let attachment = attachment_from_row(&row);
+    let attachment = require_attachment(conn, &workspace.id, attachment_id).await?;
+    if attachment.deleted {
         let has_blob = attachment_has_blob(conn, &attachment.sha256).await?;
         return Ok(AttachmentOutcome {
             attachment,
@@ -476,7 +484,7 @@ pub async fn delete_task_attachment(
         });
     }
 
-    let task_id: String = row.get("task_id");
+    let task_id = attachment.task_id.clone();
     let deleted_at = now();
 
     let mut tx = begin_immediate(conn).await?;
@@ -538,33 +546,21 @@ pub async fn attachments_by_task(
     task_id: &str,
     include_deleted: bool,
 ) -> Result<Vec<TaskAttachment>> {
-    let rows = if include_deleted {
-        sqlx::query(
-            "SELECT ta.workspace_id, ta.attachment_id, ta.task_id, ta.sha256, ta.byte_size,
-                    ta.media_type, ta.filename, ta.alt_text, ta.width, ta.height,
-                    ta.created_at, ta.created_by_change_id, ta.deleted, ta.deleted_at, ta.deleted_by_change_id
-             FROM task_attachments ta
-             WHERE ta.workspace_id = ? AND ta.task_id = ?
-             ORDER BY ta.created_at, ta.attachment_id",
-        )
-        .bind(workspace_id)
-        .bind(task_id)
-        .fetch_all(&mut *conn)
-        .await?
+    let deleted_predicate = if include_deleted {
+        ""
     } else {
-        sqlx::query(
-            "SELECT ta.workspace_id, ta.attachment_id, ta.task_id, ta.sha256, ta.byte_size,
-                    ta.media_type, ta.filename, ta.alt_text, ta.width, ta.height,
-                    ta.created_at, ta.created_by_change_id, ta.deleted, ta.deleted_at, ta.deleted_by_change_id
-             FROM task_attachments ta
-             WHERE ta.workspace_id = ? AND ta.task_id = ? AND ta.deleted = 0
-             ORDER BY ta.created_at, ta.attachment_id",
-        )
-        .bind(workspace_id)
-        .bind(task_id)
-        .fetch_all(&mut *conn)
-        .await?
+        " AND ta.deleted = 0"
     };
+    let rows = sqlx::query(AssertSqlSafe(format!(
+        "SELECT {ATTACHMENT_COLUMNS}
+         FROM task_attachments ta
+         WHERE ta.workspace_id = ? AND ta.task_id = ?{deleted_predicate}
+         ORDER BY ta.created_at, ta.attachment_id"
+    )))
+    .bind(workspace_id)
+    .bind(task_id)
+    .fetch_all(&mut *conn)
+    .await?;
 
     let mut attachments = Vec::with_capacity(rows.len());
     for row in &rows {
