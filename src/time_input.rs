@@ -4,7 +4,7 @@ use chrono::{
     Weekday,
 };
 
-use crate::queue::unix_seconds;
+use aven_core::time_validation::{validate_available_at_value, validate_due_on_value};
 
 pub fn parse_available_at_input(input: &str) -> Result<String> {
     parse_available_at_input_at(input, Local::now())
@@ -130,39 +130,6 @@ pub fn due_on_error_message(error: &anyhow::Error) -> String {
         .unwrap_or_else(|| {
             "try tomorrow, 2d, 2w, in 2 months, next week, next monday, or YYYY-MM-DD".to_string()
         })
-}
-
-pub fn validate_due_on_value(value: &str) -> Result<()> {
-    if value.is_empty() {
-        return Ok(());
-    }
-    if !is_iso_date(value) || parse_iso_date(value).is_err() {
-        bail!("error invalid-due value={value} hint=\"use YYYY-MM-DD or empty\"");
-    }
-    Ok(())
-}
-
-pub fn validate_available_at_value(value: &str) -> Result<()> {
-    if value.is_empty() {
-        return Ok(());
-    }
-    if !is_canonical_utc_timestamp(value)
-        || timestamp_components(value).is_none_or(|(year, month, day, hour, minute, second)| {
-            month == 0
-                || month > 12
-                || day == 0
-                || day > days_in_month(year, month)
-                || hour > 23
-                || minute > 59
-                || second > 59
-        })
-        || unix_seconds(value).is_none()
-    {
-        bail!(
-            "error invalid-available-at value={value} hint=\"use YYYY-MM-DDTHH:MM:SSZ or empty\""
-        );
-    }
-    Ok(())
 }
 
 fn parse_local_date_expression(
@@ -327,10 +294,6 @@ fn is_iso_timestamp(value: &str) -> bool {
     is_iso_date(date) && is_hms(time)
 }
 
-fn is_canonical_utc_timestamp(value: &str) -> bool {
-    value.ends_with('Z') && value.len() == 20 && is_iso_timestamp(value)
-}
-
 fn is_hms(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 8
@@ -348,33 +311,6 @@ fn normalize_timestamp(value: &str) -> String {
     } else {
         format!("{value}Z")
     }
-}
-
-fn timestamp_components(value: &str) -> Option<(i64, u32, u32, u32, u32, u32)> {
-    let (date, time) = value.trim_end_matches('Z').split_once('T')?;
-    let mut date = date.split('-');
-    let year = date.next()?.parse().ok()?;
-    let month = date.next()?.parse().ok()?;
-    let day = date.next()?.parse().ok()?;
-    let mut time = time.split(':');
-    let hour = time.next()?.parse().ok()?;
-    let minute = time.next()?.parse().ok()?;
-    let second = time.next()?.parse().ok()?;
-    Some((year, month, day, hour, minute, second))
-}
-
-fn days_in_month(year: i64, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if leap_year(year) => 29,
-        2 => 28,
-        _ => 0,
-    }
-}
-
-fn leap_year(year: i64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
 fn local_datetime_to_utc<Tz>(timezone: Tz, value: NaiveDateTime) -> Result<String>
