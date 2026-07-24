@@ -181,6 +181,17 @@ fn pending_push_acks(db: &std::path::Path, first_server_seq: i64) -> Vec<Value> 
     .collect()
 }
 
+fn seed_task_with_pending_push_acks(
+    env: &TestEnv,
+    db_name: &str,
+    title: &str,
+) -> (std::path::PathBuf, Vec<Value>) {
+    let db = env.db(db_name);
+    ok(env.aven(&db, ["add", title, "--project", "app"]));
+    let push_acks = pending_push_acks(&db, 99);
+    (db, push_acks)
+}
+
 fn assert_task_field_versions(db: &std::path::Path) {
     assert_eq!(scalar_i64(db, "SELECT count(*) FROM field_versions"), 9);
     assert_eq!(
@@ -508,16 +519,62 @@ fn remote_dependency_change(
     })
 }
 
-fn start_fake_sync_server_sequence(responses: Vec<Value>) -> (String, std::thread::JoinHandle<()>) {
+struct FakeSyncServer {
+    url: String,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl FakeSyncServer {
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn finish(mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        let thread = self.thread.take().expect("fake sync server thread");
+        thread.join().expect("fake sync server exits");
+    }
+}
+
+impl Drop for FakeSyncServer {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn start_fake_sync_server_sequence(responses: Vec<Value>) -> FakeSyncServer {
     use std::io::{BufRead as _, BufReader, Write as _};
     use std::net::TcpListener;
     use std::thread;
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake sync server");
+    listener
+        .set_nonblocking(true)
+        .expect("set fake sync server nonblocking");
     let url = format!("http://{}", listener.local_addr().expect("fake sync addr"));
-    let server = thread::spawn(move || {
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let thread_stop = std::sync::Arc::clone(&stop);
+    let thread = thread::spawn(move || {
         for response in responses {
-            let (mut stream, _) = listener.accept().expect("accept sync request");
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if thread_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept sync request: {error}"),
+                }
+            };
+            stream
+                .set_nonblocking(false)
+                .expect("set fake sync stream blocking");
             let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
             let mut line = String::new();
             loop {
@@ -542,14 +599,32 @@ fn start_fake_sync_server_sequence(responses: Vec<Value>) -> (String, std::threa
             .expect("write fake response");
         }
     });
-    (url, server)
+    FakeSyncServer {
+        url,
+        stop,
+        thread: Some(thread),
+    }
 }
 
-fn start_fake_sync_server(response: Value) -> (String, std::thread::JoinHandle<()>) {
+fn start_fake_sync_server(response: Value) -> FakeSyncServer {
     start_fake_sync_server_sequence(vec![response])
 }
 
-fn sync_response(cursor: i64, changes: impl IntoIterator<Item = Value>) -> Value {
+fn start_authenticated_server(env: &TestEnv) -> TestServer {
+    env.write_config(
+        r#"
+sync:
+  auth_token: "secret"
+"#,
+    );
+    TestServer::start_configured(env, "server.sqlite")
+}
+
+fn sync_response_with_push_acks(
+    cursor: i64,
+    push_acks: impl IntoIterator<Item = Value>,
+    changes: impl IntoIterator<Item = Value>,
+) -> Value {
     let changes = changes
         .into_iter()
         .enumerate()
@@ -564,9 +639,13 @@ fn sync_response(cursor: i64, changes: impl IntoIterator<Item = Value>) -> Value
         "protocol_version": SYNC_PROTOCOL_VERSION,
         "cursor": cursor,
         "has_more": false,
-        "push_acks": [],
+        "push_acks": push_acks.into_iter().collect::<Vec<_>>(),
         "changes": changes,
     })
+}
+
+fn sync_response(cursor: i64, changes: impl IntoIterator<Item = Value>) -> Value {
+    sync_response_with_push_acks(cursor, [], changes)
 }
 
 fn assert_sync_protocol_rejected(
@@ -774,7 +853,7 @@ fn same_key_remote_project_writes_alias() {
     let db = env.db("project-collision.sqlite");
     ok(env.aven(&db, ["add", "local seed", "--project", "app"]));
     exec_sql(&db, "UPDATE changes SET server_seq = local_seq + 90");
-    let (url, server) = start_fake_sync_server(sync_response(
+    let server = start_fake_sync_server(sync_response(
         1,
         [wire_change(
             "create_task",
@@ -790,7 +869,7 @@ fn same_key_remote_project_writes_alias() {
         )],
     ));
 
-    ok(env.aven(&db, ["sync", "--server", &url]));
+    ok(env.aven(&db, ["sync", "--server", server.url()]));
     assert_eq!(
         scalar_i64(
             &db,
@@ -816,7 +895,7 @@ fn same_key_remote_project_writes_alias() {
         ),
         1
     );
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -825,7 +904,7 @@ fn prefix_only_remote_project_collision_gets_unique_prefix() {
     let db = env.db("prefix-collision.sqlite");
     ok(env.aven(&db, ["project", "create", "App"]));
     exec_sql(&db, "UPDATE changes SET server_seq = local_seq + 90");
-    let (url, server) = start_fake_sync_server(sync_response(
+    let server = start_fake_sync_server(sync_response(
         1,
         [wire_change(
             "create_task",
@@ -841,7 +920,7 @@ fn prefix_only_remote_project_collision_gets_unique_prefix() {
         )],
     ));
 
-    ok(env.aven(&db, ["sync", "--server", &url]));
+    ok(env.aven(&db, ["sync", "--server", server.url()]));
     assert_eq!(
         scalar_i64(
             &db,
@@ -863,7 +942,7 @@ fn prefix_only_remote_project_collision_gets_unique_prefix() {
         ),
         1
     );
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -877,7 +956,7 @@ fn stale_project_id_alias_is_ignored_for_remote_task_create() {
         "INSERT INTO project_id_aliases(workspace_id, remote_project_id, local_project_id)
          VALUES ('0000000000000000', 'BBBBBBBBBBBBBBBB', 'DDDDDDDDDDDDDDDD')",
     );
-    let (url, server) = start_fake_sync_server(sync_response(
+    let server = start_fake_sync_server(sync_response(
         1,
         [wire_change(
             "create_task",
@@ -893,7 +972,7 @@ fn stale_project_id_alias_is_ignored_for_remote_task_create() {
         )],
     ));
 
-    ok(env.aven(&db, ["sync", "--server", &url]));
+    ok(env.aven(&db, ["sync", "--server", server.url()]));
 
     assert_eq!(
         scalar_i64(
@@ -909,7 +988,7 @@ fn stale_project_id_alias_is_ignored_for_remote_task_create() {
         ),
         1
     );
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -929,7 +1008,7 @@ fn remote_task_field_workspace_mismatch_preserves_task_and_conflicts() {
         exec_sql(&db, "UPDATE changes SET server_seq = local_seq + 90");
         let task_id =
             query_sql_scalar(&db, "SELECT id FROM tasks WHERE title = 'workspace scoped'");
-        let (url, server) = start_fake_sync_server(sync_response(
+        let server = start_fake_sync_server(sync_response(
             1,
             [json!({
                 "change_id": "CCCCCCCCCCCCCCCC",
@@ -950,7 +1029,7 @@ fn remote_task_field_workspace_mismatch_preserves_task_and_conflicts() {
             })],
         ));
 
-        let error = fail(env.aven(&db, ["sync", "--server", &url]));
+        let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
         contains_all(&error, &["error invalid-task-workspace"]);
         assert_eq!(
             query_sql_scalar(
@@ -961,7 +1040,7 @@ fn remote_task_field_workspace_mismatch_preserves_task_and_conflicts() {
         );
         assert_eq!(scalar_i64(&db, "SELECT count(*) FROM conflicts"), 0);
         assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("0"));
-        server.join().expect("fake sync server exits");
+        server.finish();
     }
 }
 
@@ -1234,13 +1313,7 @@ fn sync_auth_config_init_includes_placeholder() {
 #[test]
 fn sync_auth_missing_token_is_rejected() {
     let server_env = TestEnv::new();
-    server_env.write_config(
-        r#"
-sync:
-  auth_token: "secret"
-"#,
-    );
-    let server = TestServer::start_configured(&server_env, "server.sqlite");
+    let server = start_authenticated_server(&server_env);
 
     let client_env = TestEnv::new();
     let client = client_env.db("client.sqlite");
@@ -1260,13 +1333,7 @@ sync:
 #[test]
 fn sync_auth_wrong_token_is_rejected() {
     let server_env = TestEnv::new();
-    server_env.write_config(
-        r#"
-sync:
-  auth_token: "secret"
-"#,
-    );
-    let server = TestServer::start_configured(&server_env, "server.sqlite");
+    let server = start_authenticated_server(&server_env);
 
     let client_env = TestEnv::new();
     let client = client_env.db("client.sqlite");
@@ -1298,13 +1365,7 @@ sync:
 #[test]
 fn sync_auth_correct_token_syncs() {
     let server_env = TestEnv::new();
-    server_env.write_config(
-        r#"
-sync:
-  auth_token: "secret"
-"#,
-    );
-    let server = TestServer::start_configured(&server_env, "server.sqlite");
+    let server = start_authenticated_server(&server_env);
 
     let client_env = TestEnv::new();
     let a = client_env.db("client-a.sqlite");
@@ -1738,7 +1799,7 @@ fn valid_offline_batch_with_related_operations_still_syncs() {
 fn out_of_order_dependency_sync_does_not_advance_cursor() {
     let env = TestEnv::new();
     let db = env.db("dependency-out-of-order.sqlite");
-    let (url, server) = start_fake_sync_server(json!({
+    let server = start_fake_sync_server(json!({
         "protocol_version": SYNC_PROTOCOL_VERSION,
         "cursor": 3,
         "has_more": false,
@@ -1750,18 +1811,18 @@ fn out_of_order_dependency_sync_does_not_advance_cursor() {
         ]
     }));
 
-    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
     contains_all(&error, &["error dependency-missing-task"]);
     assert_eq!(scalar_i64(&db, "SELECT count(*) FROM task_dependencies"), 0);
     assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("0"));
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
 fn sync_cycle_edges_converge_deterministically() {
     let env = TestEnv::new();
     let db = env.db("dependency-cycle-convergence.sqlite");
-    let (url, server) = start_fake_sync_server(json!({
+    let server = start_fake_sync_server(json!({
         "protocol_version": SYNC_PROTOCOL_VERSION,
         "cursor": 4,
         "has_more": false,
@@ -1774,7 +1835,7 @@ fn sync_cycle_edges_converge_deterministically() {
         ]
     }));
 
-    ok(env.aven(&db, ["sync", "--server", &url]));
+    ok(env.aven(&db, ["sync", "--server", server.url()]));
     assert_eq!(
         query_sql_scalar(
             &db,
@@ -1782,7 +1843,7 @@ fn sync_cycle_edges_converge_deterministically() {
         ),
         "AAAAAAAAAAAAAAAA>BBBBBBBBBBBBBBBB"
     );
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -1987,23 +2048,15 @@ fn sync_server_pure_pull_succeeds_while_write_transaction_is_held() {
 #[test]
 fn push_acks_update_local_changes_without_pull_echo() {
     let env = TestEnv::new();
-    let db = env.db("push-acks.sqlite");
-    ok(env.aven(&db, ["add", "acked local", "--project", "app"]));
-    let push_acks = pending_push_acks(&db, 99);
-    let (url, server) = start_fake_sync_server(json!({
-        "protocol_version": SYNC_PROTOCOL_VERSION,
-        "cursor": 0,
-        "has_more": false,
-        "push_acks": push_acks,
-        "changes": []
-    }));
+    let (db, push_acks) = seed_task_with_pending_push_acks(&env, "push-acks.sqlite", "acked local");
+    let server = start_fake_sync_server(sync_response_with_push_acks(0, push_acks, []));
 
-    ok(env.aven(&db, ["sync", "--server", &url]));
+    ok(env.aven(&db, ["sync", "--server", server.url()]));
     assert_eq!(
         query_sql_scalar(&db, "SELECT count(*) FROM changes WHERE server_seq IS NULL"),
         "0"
     );
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -2024,7 +2077,7 @@ fn sync_client_skips_already_stored_pulled_change_in_applied_count() {
     );
     let change: Value = serde_json::from_str(&change_json).expect("change json");
     let cursor = change["server_seq"].as_i64().expect("server seq");
-    let (url, server) = start_fake_sync_server(json!({
+    let server = start_fake_sync_server(json!({
         "protocol_version": SYNC_PROTOCOL_VERSION,
         "cursor": cursor,
         "has_more": false,
@@ -2032,7 +2085,7 @@ fn sync_client_skips_already_stored_pulled_change_in_applied_count() {
         "changes": [change],
     }));
 
-    let output = ok(env.aven(&db, ["sync", "--server", &url]));
+    let output = ok(env.aven(&db, ["sync", "--server", server.url()]));
     contains_all(
         &output,
         &["pushed=0", "pulled=0", &format!("cursor={cursor}")],
@@ -2042,7 +2095,7 @@ fn sync_client_skips_already_stored_pulled_change_in_applied_count() {
         meta_value(&db, "sync_cursor").as_deref(),
         Some(expected_cursor.as_str())
     );
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -2079,7 +2132,7 @@ fn sync_client_preserves_existing_pulled_change_server_seq() {
         "created_at": "2026-01-01T00:00:01Z",
         "server_seq": 999,
     });
-    let (url, server) = start_fake_sync_server(json!({
+    let server = start_fake_sync_server(json!({
         "protocol_version": SYNC_PROTOCOL_VERSION,
         "cursor": 999,
         "has_more": false,
@@ -2087,7 +2140,7 @@ fn sync_client_preserves_existing_pulled_change_server_seq() {
         "changes": [same_id_change],
     }));
 
-    ok(env.aven(&db, ["sync", "--server", &url]));
+    ok(env.aven(&db, ["sync", "--server", server.url()]));
     assert_eq!(
         query_sql_scalar(
             &db,
@@ -2095,36 +2148,29 @@ fn sync_client_preserves_existing_pulled_change_server_seq() {
         ),
         original_seq
     );
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
 fn sync_client_rejects_duplicate_push_acks() {
     let env = TestEnv::new();
-    let db = env.db("duplicate-ack.sqlite");
-    ok(env.aven(&db, ["add", "duplicate ack", "--project", "app"]));
-    let change_id = query_sql_scalar(
-        &db,
-        "SELECT change_id FROM changes WHERE server_seq IS NULL ORDER BY local_seq LIMIT 1",
-    );
-    let mut push_acks = pending_push_acks(&db, 99);
+    let (db, mut push_acks) =
+        seed_task_with_pending_push_acks(&env, "duplicate-ack.sqlite", "duplicate ack");
+    let change_id = push_acks[0]["change_id"]
+        .as_str()
+        .expect("change id")
+        .to_string();
     push_acks[0] = json!({ "change_id": change_id, "server_seq": 99 });
     push_acks[1] = json!({ "change_id": change_id, "server_seq": 100 });
-    let (url, server) = start_fake_sync_server(json!({
-        "protocol_version": SYNC_PROTOCOL_VERSION,
-        "cursor": 0,
-        "has_more": false,
-        "push_acks": push_acks,
-        "changes": []
-    }));
+    let server = start_fake_sync_server(sync_response_with_push_acks(0, push_acks, []));
 
-    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
     contains_all(
         &error,
         &["error invalid-sync-response", "duplicate-push-ack"],
     );
     assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("0"));
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -2132,7 +2178,7 @@ fn sync_client_rejects_non_increasing_server_seq() {
     let env = TestEnv::new();
     let db = env.db("bad-server-seq.sqlite");
     let change = remote_task_change(SYNC_TASK_A_CHANGE_ID, SYNC_TASK_A_ID, "bad seq", 1);
-    let (url, server) = start_fake_sync_server(json!({
+    let server = start_fake_sync_server(json!({
         "protocol_version": SYNC_PROTOCOL_VERSION,
         "cursor": 1,
         "has_more": false,
@@ -2140,10 +2186,10 @@ fn sync_client_rejects_non_increasing_server_seq() {
         "changes": [change, remote_task_change(SYNC_TASK_B_CHANGE_ID, SYNC_TASK_B_ID, "bad seq b", 1)]
     }));
 
-    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
     contains_all(&error, &["error invalid-sync-response", "server-seq-order"]);
     assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("0"));
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -2163,7 +2209,7 @@ fn sync_client_rejects_oversized_pull_response_before_state_change() {
             )
         })
         .collect::<Vec<_>>();
-    let (url, server) = start_fake_sync_server(json!({
+    let server = start_fake_sync_server(json!({
         "protocol_version": SYNC_PROTOCOL_VERSION,
         "cursor": (MAX_PULL_BATCH as i64) + 1,
         "has_more": false,
@@ -2171,14 +2217,14 @@ fn sync_client_rejects_oversized_pull_response_before_state_change() {
         "changes": changes,
     }));
 
-    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
     contains_all(&error, &["error invalid-sync-response", "pull-too-large"]);
     assert_eq!(meta_value(&db, "sync_cursor"), cursor_before);
     assert_eq!(
         scalar_i64(&db, "SELECT count(*) FROM changes"),
         changes_before
     );
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -2187,7 +2233,7 @@ fn sync_client_rejects_cursor_mismatch_before_state_change() {
     let db = env.db("cursor-mismatch.sqlite");
     ok(env.aven(&db, ["list"]));
     let cursor_before = meta_value(&db, "sync_cursor");
-    let (url, server) = start_fake_sync_server(json!({
+    let server = start_fake_sync_server(json!({
         "protocol_version": SYNC_PROTOCOL_VERSION,
         "cursor": 2,
         "has_more": false,
@@ -2195,14 +2241,14 @@ fn sync_client_rejects_cursor_mismatch_before_state_change() {
         "changes": [remote_task_change(SYNC_TASK_A_CHANGE_ID, SYNC_TASK_A_ID, "bad cursor", 1)],
     }));
 
-    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
     contains_all(&error, &["error invalid-sync-response", "cursor-mismatch"]);
     assert_eq!(meta_value(&db, "sync_cursor"), cursor_before);
     assert_eq!(
         scalar_i64(&db, "SELECT count(*) FROM tasks WHERE title = 'bad cursor'",),
         0
     );
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -2211,7 +2257,7 @@ fn sync_client_rejects_short_has_more_page_before_state_change() {
     let db = env.db("short-has-more.sqlite");
     ok(env.aven(&db, ["list"]));
     let cursor_before = meta_value(&db, "sync_cursor");
-    let (url, server) = start_fake_sync_server(json!({
+    let server = start_fake_sync_server(json!({
         "protocol_version": SYNC_PROTOCOL_VERSION,
         "cursor": 1,
         "has_more": true,
@@ -2219,7 +2265,7 @@ fn sync_client_rejects_short_has_more_page_before_state_change() {
         "changes": [remote_task_change(SYNC_TASK_A_CHANGE_ID, SYNC_TASK_A_ID, "short page", 1)],
     }));
 
-    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
     contains_all(
         &error,
         &["error invalid-sync-response", "has-more-short-page"],
@@ -2229,7 +2275,7 @@ fn sync_client_rejects_short_has_more_page_before_state_change() {
         scalar_i64(&db, "SELECT count(*) FROM tasks WHERE title = 'short page'",),
         0
     );
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -2241,9 +2287,9 @@ fn sync_client_rejects_malformed_pull_payload_before_state_change() {
     let changes_before = scalar_i64(&db, "SELECT count(*) FROM changes");
     let mut change = remote_task_change(SYNC_TASK_A_CHANGE_ID, SYNC_TASK_A_ID, "bad payload", 1);
     change["payload"]["priority"] = json!("soon");
-    let (url, server) = start_fake_sync_server(sync_response(1, [change]));
+    let server = start_fake_sync_server(sync_response(1, [change]));
 
-    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
     contains_all(&error, &["error invalid-sync-change", "invalid-priority"]);
     assert_eq!(meta_value(&db, "sync_cursor"), cursor_before);
     assert_eq!(
@@ -2257,7 +2303,7 @@ fn sync_client_rejects_malformed_pull_payload_before_state_change() {
         ),
         0
     );
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -2287,7 +2333,7 @@ fn sync_client_preserves_valid_page_cursor_after_later_page_validation_failure()
         "bad page",
         invalid_seq,
     );
-    let (url, server) = start_fake_sync_server_sequence(vec![
+    let server = start_fake_sync_server_sequence(vec![
         json!({
             "protocol_version": SYNC_PROTOCOL_VERSION,
             "cursor": MAX_PULL_BATCH,
@@ -2304,7 +2350,7 @@ fn sync_client_preserves_valid_page_cursor_after_later_page_validation_failure()
         }),
     ]);
 
-    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
     contains_all(&error, &["error invalid-sync-response", "server-seq-order"]);
     assert_eq!(
         scalar_i64(&db, "SELECT count(*) FROM tasks WHERE title = 'valid page'"),
@@ -2319,7 +2365,7 @@ fn sync_client_preserves_valid_page_cursor_after_later_page_validation_failure()
         meta_value(&db, "sync_cursor").as_deref(),
         Some(expected_cursor.as_str())
     );
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -2459,7 +2505,7 @@ fn wrong_response_protocol_version_is_rejected() {
     ok(env.aven(&db, ["add", "seed", "--project", "app"]));
     let changes_before = scalar_i64(&db, "SELECT count(*) FROM changes");
     let sync_cursor_before = meta_value(&db, "sync_cursor");
-    let (url, server) = start_fake_sync_server(json!({
+    let server = start_fake_sync_server(json!({
         "protocol_version": 0,
         "cursor": 7,
         "has_more": false,
@@ -2467,7 +2513,7 @@ fn wrong_response_protocol_version_is_rejected() {
         "changes": [project_change_json("remote-change", "rogue")]
     }));
 
-    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
     contains_all(
         &error,
         &["error sync-protocol-unsupported client=9 server=0"],
@@ -2481,7 +2527,7 @@ fn wrong_response_protocol_version_is_rejected() {
         0
     );
     assert_eq!(meta_value(&db, "sync_cursor"), sync_cursor_before);
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 fn remote_delete_project_change(change_id: &str, project_id: &str, server_seq: i64) -> Value {
@@ -2643,7 +2689,7 @@ fn sync_deletes_converge_idempotently() {
              VALUES ('0000000000000000', '{project_id}', '/tmp/local-only-path')"
         ),
     );
-    let (url, fake) = start_fake_sync_server(sync_response(
+    let fake = start_fake_sync_server(sync_response(
         6,
         [
             remote_delete_project_change("DELPROJECT000001", &project_id, 1),
@@ -2654,7 +2700,7 @@ fn sync_deletes_converge_idempotently() {
             remote_delete_note_change("DELNOTE00000002", &c_task_id, &note_id, 6),
         ],
     ));
-    ok(env.aven(&c, ["sync", "--server", &url]));
+    ok(env.aven(&c, ["sync", "--server", fake.url()]));
     assert_eq!(
         query_sql_scalar(
             &c,
@@ -2696,7 +2742,7 @@ fn sync_deletes_converge_idempotently() {
         ),
         "1"
     );
-    fake.join().expect("fake sync server exits");
+    fake.finish();
 }
 
 #[tokio::test]
@@ -3113,9 +3159,9 @@ fn pulled_attachment_on_deleted_task_does_not_schedule_blob_download() {
         "UPDATE tasks SET deleted = 1; UPDATE changes SET server_seq = local_seq",
     );
     let change = remote_attachment_add("ATTACHMENTADD001", &task_id, 1);
-    let (url, server) = start_fake_sync_server(sync_response(1, [change]));
+    let server = start_fake_sync_server(sync_response(1, [change]));
 
-    let output = ok(env.aven(&db, ["sync", "--server", &url]));
+    let output = ok(env.aven(&db, ["sync", "--server", server.url()]));
 
     contains_all(
         &output,
@@ -3127,7 +3173,7 @@ fn pulled_attachment_on_deleted_task_does_not_schedule_blob_download() {
     );
     assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("1"));
     assert_eq!(scalar_i64(&db, "SELECT count(*) FROM blob_inventory"), 0);
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -3247,12 +3293,12 @@ fn attachment_metadata_duplicate_add_is_idempotent() {
     let mut change2 = change1.clone();
     change2["change_id"] = json!("ATTACHMENTADD002");
     change2["server_seq"] = json!(2);
-    let (url, server) = start_fake_sync_server(sync_response(2, [change1, change2]));
+    let server = start_fake_sync_server(sync_response(2, [change1, change2]));
 
-    ok(env.aven(&db, ["sync", "--server", &url]));
+    ok(env.aven(&db, ["sync", "--server", server.url()]));
 
     assert_eq!(scalar_i64(&db, "SELECT count(*) FROM task_attachments"), 1);
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -3277,9 +3323,9 @@ fn attachment_metadata_duplicate_delete_is_idempotent() {
         "2026-01-01T00:00:02Z",
         3,
     );
-    let (url, server) = start_fake_sync_server(sync_response(3, [add, del1, del2]));
+    let server = start_fake_sync_server(sync_response(3, [add, del1, del2]));
 
-    ok(env.aven(&db, ["sync", "--server", &url]));
+    ok(env.aven(&db, ["sync", "--server", server.url()]));
 
     assert_eq!(
         query_sql_scalar(
@@ -3288,7 +3334,7 @@ fn attachment_metadata_duplicate_delete_is_idempotent() {
         ),
         "1|2026-01-01T00:00:01Z"
     );
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -3305,9 +3351,9 @@ fn attachment_metadata_conflict_rolls_back_page_and_cursor() {
         false,
     );
     let change = remote_attachment_add("ATTACHMENTADD001", &task_id, 1);
-    let (url, server) = start_fake_sync_server(sync_response(1, [change]));
+    let server = start_fake_sync_server(sync_response(1, [change]));
 
-    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
 
     contains_all(&error, &["error attachment-identity-conflict"]);
     assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("0"));
@@ -3315,7 +3361,7 @@ fn attachment_metadata_conflict_rolls_back_page_and_cursor() {
         query_sql_scalar(&db, "SELECT sha256 FROM task_attachments"),
         "1111111111111111111111111111111111111111111111111111111111111111"
     );
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -3327,14 +3373,14 @@ fn sync_client_rejects_malformed_attachment_response_before_state_change() {
     let task_id = local_task_id(&db, "target");
     let mut change = remote_attachment_add("ATTACHMENTADD001", &task_id, 1);
     change["payload"]["sha256"] = json!("short");
-    let (url, server) = start_fake_sync_server(sync_response(1, [change]));
+    let server = start_fake_sync_server(sync_response(1, [change]));
 
-    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
 
     contains_all(&error, &["error invalid-sync-change", "invalid-sha256"]);
     assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("0"));
     assert_eq!(scalar_i64(&db, "SELECT count(*) FROM task_attachments"), 0);
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -3343,14 +3389,14 @@ fn attachment_add_for_missing_task_fails() {
     let db = env.db("attachment-missing-task.sqlite");
     ok(env.aven(&db, ["list"]));
     let change = remote_attachment_add("ATTACHMENTADD001", "AAAAAAAAAAAAAAAA", 1);
-    let (url, server) = start_fake_sync_server(sync_response(1, [change]));
+    let server = start_fake_sync_server(sync_response(1, [change]));
 
-    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
 
     contains_all(&error, &["error attachment-missing-task"]);
     assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("0"));
     assert_eq!(scalar_i64(&db, "SELECT count(*) FROM task_attachments"), 0);
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -3367,13 +3413,13 @@ fn attachment_delete_for_missing_attachment_is_idempotent() {
         "2026-01-01T00:00:01Z",
         1,
     );
-    let (url, server) = start_fake_sync_server(sync_response(1, [change]));
+    let server = start_fake_sync_server(sync_response(1, [change]));
 
-    ok(env.aven(&db, ["sync", "--server", &url]));
+    ok(env.aven(&db, ["sync", "--server", server.url()]));
 
     assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("1"));
     assert_eq!(scalar_i64(&db, "SELECT count(*) FROM task_attachments"), 0);
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -3391,14 +3437,14 @@ fn attachment_add_workspace_mismatch_preserves_state() {
     let mut change = remote_attachment_add("ATTACHMENTADD001", &task_id, 1);
     change["payload"]["workspace_id"] = json!("1111111111111111");
     change["payload"]["workspace_key"] = json!("other");
-    let (url, server) = start_fake_sync_server(sync_response(1, [change]));
+    let server = start_fake_sync_server(sync_response(1, [change]));
 
-    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
 
     contains_all(&error, &["error invalid-task-workspace"]);
     assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("0"));
     assert_eq!(scalar_i64(&db, "SELECT count(*) FROM task_attachments"), 0);
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -3415,15 +3461,15 @@ fn attachment_add_after_delete_does_not_resurrect() {
         true,
     );
     let change = remote_attachment_add("ATTACHMENTADD001", &task_id, 1);
-    let (url, server) = start_fake_sync_server(sync_response(1, [change]));
+    let server = start_fake_sync_server(sync_response(1, [change]));
 
-    ok(env.aven(&db, ["sync", "--server", &url]));
+    ok(env.aven(&db, ["sync", "--server", server.url()]));
 
     assert_eq!(
         query_sql_scalar(&db, "SELECT deleted FROM task_attachments"),
         "1"
     );
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -3443,14 +3489,14 @@ fn attachment_delete_identity_conflict_rejects_apply() {
         "2026-01-01T00:00:01Z",
         2,
     );
-    let (url, server) = start_fake_sync_server(sync_response(2, [add, del]));
+    let server = start_fake_sync_server(sync_response(2, [add, del]));
 
-    let error = fail(env.aven(&db, ["sync", "--server", &url]));
+    let error = fail(env.aven(&db, ["sync", "--server", server.url()]));
 
     contains_all(&error, &["error attachment-identity-conflict"]);
     assert_eq!(meta_value(&db, "sync_cursor").as_deref(), Some("0"));
     assert_eq!(scalar_i64(&db, "SELECT count(*) FROM task_attachments"), 0);
-    server.join().expect("fake sync server exits");
+    server.finish();
 }
 
 #[test]
@@ -3496,13 +3542,7 @@ fn sync_server_accepts_compressed_requests_and_sends_compressed_responses() {
 #[test]
 fn sync_server_rejects_unauthorized_compressed_request_before_body_parse() {
     let server_env = TestEnv::new();
-    server_env.write_config(
-        r#"
-sync:
-  auth_token: "secret"
-"#,
-    );
-    let server = TestServer::start_configured(&server_env, "server.sqlite");
+    let server = start_authenticated_server(&server_env);
 
     let host = server
         .url
