@@ -92,6 +92,22 @@ fn staging_dir(blob_dir: &Path) -> PathBuf {
     blob_dir.join("objects").join("sha256")
 }
 
+fn live_blob_references_sql(sha256_expr: &str) -> String {
+    format!(
+        "EXISTS(
+           SELECT 1 FROM task_attachments ta
+           JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
+           WHERE ta.sha256 = {sha256_expr} AND ta.deleted = 0 AND t.deleted = 0
+         ) OR EXISTS(
+           SELECT 1 FROM server_blob_references sbr
+           LEFT JOIN server_task_tombstones st
+             ON st.workspace_id = sbr.workspace_id AND st.task_id = sbr.task_id
+           WHERE sbr.sha256 = {sha256_expr} AND sbr.deleted = 0
+             AND COALESCE(st.deleted, 0) = 0
+         )"
+    )
+}
+
 pub async fn reconcile_liveness(conn: &mut SqliteConnection, clock: &dyn Clock) -> Result<()> {
     let mut tx = begin_immediate(conn).await?;
     reconcile_liveness_in_transaction(&mut tx, clock).await?;
@@ -118,38 +134,18 @@ pub(crate) async fn reconcile_liveness_in_transaction(
     )
     .execute(&mut *conn)
     .await?;
-    sqlx::query(
+    let live_blob_references = live_blob_references_sql("blob_lifecycle.sha256");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE blob_lifecycle SET unreferenced_at = NULL
-         WHERE EXISTS (
-           SELECT 1 FROM task_attachments ta
-           JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
-           WHERE ta.sha256 = blob_lifecycle.sha256 AND ta.deleted = 0 AND t.deleted = 0
-         ) OR EXISTS (
-           SELECT 1 FROM server_blob_references sbr
-           LEFT JOIN server_task_tombstones st
-             ON st.workspace_id = sbr.workspace_id AND st.task_id = sbr.task_id
-           WHERE sbr.sha256 = blob_lifecycle.sha256 AND sbr.deleted = 0
-             AND COALESCE(st.deleted, 0) = 0
-         )",
-    )
+         WHERE {live_blob_references}"
+    )))
     .execute(&mut *conn)
     .await?;
-    sqlx::query(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE blob_lifecycle SET unreferenced_at = ?
          WHERE unreferenced_at IS NULL
-           AND NOT EXISTS (
-             SELECT 1 FROM task_attachments ta
-             JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
-             WHERE ta.sha256 = blob_lifecycle.sha256 AND ta.deleted = 0 AND t.deleted = 0
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM server_blob_references sbr
-             LEFT JOIN server_task_tombstones st
-               ON st.workspace_id = sbr.workspace_id AND st.task_id = sbr.task_id
-             WHERE sbr.sha256 = blob_lifecycle.sha256 AND sbr.deleted = 0
-               AND COALESCE(st.deleted, 0) = 0
-           )",
-    )
+           AND NOT ({live_blob_references})"
+    )))
     .bind(&now)
     .execute(&mut *conn)
     .await?;
@@ -157,18 +153,10 @@ pub(crate) async fn reconcile_liveness_in_transaction(
 }
 
 async fn is_protected(conn: &mut SqliteConnection, sha256: &str, now: &str) -> Result<bool> {
-    Ok(sqlx::query_scalar::<_, bool>(
+    let live_blob_references = live_blob_references_sql("?");
+    Ok(sqlx::query_scalar::<_, bool>(sqlx::AssertSqlSafe(format!(
         "SELECT
-           EXISTS(
-             SELECT 1 FROM task_attachments ta
-             JOIN tasks t ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
-             WHERE ta.sha256 = ? AND ta.deleted = 0 AND t.deleted = 0
-           ) OR EXISTS(
-             SELECT 1 FROM server_blob_references sbr
-             LEFT JOIN server_task_tombstones st
-               ON st.workspace_id = sbr.workspace_id AND st.task_id = sbr.task_id
-             WHERE sbr.sha256 = ? AND sbr.deleted = 0 AND COALESCE(st.deleted, 0) = 0
-           ) OR EXISTS(
+           {live_blob_references} OR EXISTS(
              SELECT 1 FROM changes
              WHERE server_seq IS NULL AND op_type = 'attachment_add'
                AND json_extract(payload, '$.sha256') = ?
@@ -176,8 +164,8 @@ async fn is_protected(conn: &mut SqliteConnection, sha256: &str, now: &str) -> R
              SELECT 1 FROM blob_leases WHERE sha256 = ? AND expires_at > ?
            ) OR EXISTS(
              SELECT 1 FROM blob_upload_reservations WHERE sha256 = ? AND expires_at > ?
-           )",
-    )
+           )"
+    )))
     .bind(sha256)
     .bind(sha256)
     .bind(sha256)
@@ -626,20 +614,12 @@ pub async fn lifecycle_report(
     reconcile_liveness(conn, clock).await?;
     let now = timestamp(clock.now());
     let cutoff = cutoff(clock.now(), policy.grace)?;
-    let rows = sqlx::query(
+    let live_blob_references = live_blob_references_sql("bi.sha256");
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT bi.sha256, bi.byte_size, bi.available, bl.unreferenced_at,
-           EXISTS(
-             SELECT 1 FROM task_attachments ta JOIN tasks t
-             ON t.workspace_id = ta.workspace_id AND t.id = ta.task_id
-             WHERE ta.sha256 = bi.sha256 AND ta.deleted = 0 AND t.deleted = 0
-           ) OR EXISTS(
-             SELECT 1 FROM server_blob_references sbr
-             LEFT JOIN server_task_tombstones st
-               ON st.workspace_id = sbr.workspace_id AND st.task_id = sbr.task_id
-             WHERE sbr.sha256 = bi.sha256 AND sbr.deleted = 0 AND COALESCE(st.deleted, 0) = 0
-           ) AS referenced
-         FROM blob_inventory bi LEFT JOIN blob_lifecycle bl ON bl.sha256 = bi.sha256",
-    )
+           {live_blob_references} AS referenced
+         FROM blob_inventory bi LEFT JOIN blob_lifecycle bl ON bl.sha256 = bi.sha256"
+    )))
     .fetch_all(&mut *conn)
     .await?;
     let mut report = LifecycleReport::default();
