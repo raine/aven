@@ -105,13 +105,16 @@ pub(super) fn task_rows(tasks: &[TaskListItem]) -> Vec<TaskListRow> {
         .collect()
 }
 
-pub(super) fn queue_rows(tasks: &[TaskListItem]) -> Vec<TaskListRow> {
+fn grouped_task_rows_by<F>(tasks: &[TaskListItem], label_for: F) -> Vec<TaskListRow>
+where
+    F: Fn(&TaskListItem) -> String,
+{
     let mut rows = Vec::new();
     let mut index = 0;
     while index < tasks.len() {
-        let label = queue_group_label(&tasks[index]);
+        let label = label_for(&tasks[index]);
         let start = index;
-        while index < tasks.len() && queue_group_label(&tasks[index]) == label {
+        while index < tasks.len() && label_for(&tasks[index]) == label {
             index += 1;
         }
         rows.push(TaskListRow::Group(TaskGroupRow {
@@ -121,6 +124,10 @@ pub(super) fn queue_rows(tasks: &[TaskListItem]) -> Vec<TaskListRow> {
         rows.extend((start..index).map(|task_index| TaskListRow::Task { task_index }));
     }
     rows
+}
+
+pub(super) fn queue_rows(tasks: &[TaskListItem]) -> Vec<TaskListRow> {
+    grouped_task_rows_by(tasks, queue_group_label)
 }
 
 pub(super) fn queue_group_label(item: &TaskListItem) -> String {
@@ -132,29 +139,12 @@ pub(super) fn queue_group_label(item: &TaskListItem) -> String {
 }
 
 pub(super) fn upcoming_rows(tasks: &[TaskListItem], now_seconds: i64) -> Vec<TaskListRow> {
-    let mut rows = Vec::new();
-    let mut index = 0;
-    while index < tasks.len() {
-        let label = crate::tui::time::available_day_label(
-            tasks[index].task.available_at.as_deref().unwrap_or(""),
+    grouped_task_rows_by(tasks, |item| {
+        crate::tui::time::available_day_label(
+            item.task.available_at.as_deref().unwrap_or(""),
             now_seconds,
-        );
-        let start = index;
-        while index < tasks.len()
-            && crate::tui::time::available_day_label(
-                tasks[index].task.available_at.as_deref().unwrap_or(""),
-                now_seconds,
-            ) == label
-        {
-            index += 1;
-        }
-        rows.push(TaskListRow::Group(TaskGroupRow {
-            label,
-            count: index - start,
-        }));
-        rows.extend((start..index).map(|task_index| TaskListRow::Task { task_index }));
-    }
-    rows
+        )
+    })
 }
 
 pub(super) fn task_list_visible_rows(
@@ -326,6 +316,38 @@ mod tests {
                     count: 1,
                 }),
                 TaskListRow::Task { task_index: 3 },
+            ]
+        );
+    }
+
+    #[test]
+    fn queue_view_keeps_nonadjacent_equal_bands_in_separate_groups() {
+        let tasks = vec![
+            task_item_with("focus 1", "todo", QueueBand::Focus),
+            task_item_with("soon", "todo", QueueBand::Soon),
+            task_item_with("focus 2", "todo", QueueBand::Focus),
+        ];
+
+        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
+
+        assert_eq!(
+            view.rows,
+            vec![
+                TaskListRow::Group(TaskGroupRow {
+                    label: "focus".to_string(),
+                    count: 1,
+                }),
+                TaskListRow::Task { task_index: 0 },
+                TaskListRow::Group(TaskGroupRow {
+                    label: "soon".to_string(),
+                    count: 1,
+                }),
+                TaskListRow::Task { task_index: 1 },
+                TaskListRow::Group(TaskGroupRow {
+                    label: "focus".to_string(),
+                    count: 1,
+                }),
+                TaskListRow::Task { task_index: 2 },
             ]
         );
     }
