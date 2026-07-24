@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use crate::db::task_from_row;
 use crate::refs::DisplayRefContext;
+use crate::task_enrichment::labels_for_tasks;
 use crate::types::Task;
 
 use super::TaskListItem;
@@ -255,7 +256,7 @@ pub async fn search_task_preview_set_in_workspace(
         .iter()
         .map(|scored| scored.document.task.id.clone())
         .collect::<Vec<_>>();
-    let mut labels_by_task = labels_for_search_preview(conn, workspace_id, &task_ids).await?;
+    let mut labels_by_task = labels_for_tasks(conn, workspace_id, &task_ids).await?;
     let items = scored
         .items
         .into_iter()
@@ -282,44 +283,6 @@ pub async fn search_task_preview_set_in_workspace(
         items,
         total_matches: scored.total_matches,
     })
-}
-
-async fn labels_for_search_preview(
-    conn: &mut SqliteConnection,
-    workspace_id: &WorkspaceId,
-    task_ids: &[TaskId],
-) -> Result<HashMap<TaskId, Vec<String>>> {
-    let mut labels_by_task = HashMap::new();
-    if task_ids.is_empty() {
-        return Ok(labels_by_task);
-    }
-    for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
-        if chunk.is_empty() {
-            continue;
-        }
-        let mut query = QueryBuilder::<Sqlite>::new(
-            "SELECT task_id, label FROM task_labels WHERE workspace_id = ",
-        );
-        query.push_bind(workspace_id);
-        query.push(" AND task_id IN (");
-        {
-            let mut separated = query.separated(", ");
-            for task_id in chunk {
-                separated.push_bind(task_id);
-            }
-        }
-        query.push(") ORDER BY task_id, label");
-
-        for row in query.build().fetch_all(&mut *conn).await? {
-            let task_id: TaskId = row.get("task_id");
-            let label: String = row.get("label");
-            labels_by_task
-                .entry(task_id)
-                .or_insert_with(Vec::new)
-                .push(label);
-        }
-    }
-    Ok(labels_by_task)
 }
 
 async fn attachment_search_text_by_task(

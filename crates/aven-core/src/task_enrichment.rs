@@ -6,6 +6,7 @@ use crate::query::fragments;
 use crate::query::{AttachmentMetadata, TaskDependencyLink, TaskNote};
 use crate::refs::DisplayRefContext;
 use anyhow::Result;
+use sqlx::sqlite::SqliteRow;
 use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 
 const SQLITE_BIND_CHUNK_SIZE: usize = 900;
@@ -169,7 +170,7 @@ async fn notes_for_tasks(
     Ok(notes_by_task)
 }
 
-async fn labels_for_tasks(
+pub(crate) async fn labels_for_tasks(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     task_ids: &[TaskId],
@@ -205,6 +206,23 @@ async fn labels_for_tasks(
         }
     }
     Ok(labels_by_task)
+}
+
+fn dependency_link_from_row(
+    row: &SqliteRow,
+    workspace_id: &WorkspaceId,
+    display_refs: &DisplayRefContext,
+) -> TaskDependencyLink {
+    let task_id: TaskId = row.get("id");
+    let project_prefix: String = row.get("project_prefix");
+    TaskDependencyLink {
+        task_id: task_id.clone(),
+        display_ref: display_refs.display_ref_for_id(workspace_id, &project_prefix, &task_id),
+        title: row.get("title"),
+        status: row.get("status"),
+        priority: row.get("priority"),
+        unresolved: row.get::<i64, _>("unresolved") != 0,
+    }
 }
 
 async fn tasks_with_unresolved_conflicts(
@@ -400,23 +418,10 @@ async fn dependency_links_for_tasks(
 
         for row in query.build().fetch_all(&mut *conn).await? {
             let source_task_id: TaskId = row.get("source_task_id");
-            let task_id: TaskId = row.get("id");
-            let project_prefix: String = row.get("project_prefix");
             links
                 .entry(source_task_id)
                 .or_insert_with(Vec::new)
-                .push(TaskDependencyLink {
-                    task_id: task_id.clone(),
-                    display_ref: display_refs.display_ref_for_id(
-                        workspace_id,
-                        &project_prefix,
-                        &task_id,
-                    ),
-                    title: row.get("title"),
-                    status: row.get("status"),
-                    priority: row.get("priority"),
-                    unresolved: row.get::<i64, _>("unresolved") != 0,
-                });
+                .push(dependency_link_from_row(&row, workspace_id, display_refs));
         }
     }
     Ok(links)
@@ -460,23 +465,10 @@ async fn epic_children_for_tasks(
 
         for row in query.build().fetch_all(&mut *conn).await? {
             let source_task_id: TaskId = row.get("source_task_id");
-            let task_id: TaskId = row.get("id");
-            let project_prefix: String = row.get("project_prefix");
             links
                 .entry(source_task_id)
                 .or_insert_with(Vec::new)
-                .push(TaskDependencyLink {
-                    task_id: task_id.clone(),
-                    display_ref: display_refs.display_ref_for_id(
-                        workspace_id,
-                        &project_prefix,
-                        &task_id,
-                    ),
-                    title: row.get("title"),
-                    status: row.get("status"),
-                    priority: row.get("priority"),
-                    unresolved: row.get::<i64, _>("unresolved") != 0,
-                });
+                .push(dependency_link_from_row(&row, workspace_id, display_refs));
         }
     }
     Ok(links)
@@ -518,22 +510,9 @@ async fn epic_parents_for_tasks(
 
         for row in query.build().fetch_all(&mut *conn).await? {
             let source_task_id: TaskId = row.get("source_task_id");
-            let task_id: TaskId = row.get("id");
-            let project_prefix: String = row.get("project_prefix");
             links.insert(
                 source_task_id,
-                TaskDependencyLink {
-                    task_id: task_id.clone(),
-                    display_ref: display_refs.display_ref_for_id(
-                        workspace_id,
-                        &project_prefix,
-                        &task_id,
-                    ),
-                    title: row.get("title"),
-                    status: row.get("status"),
-                    priority: row.get("priority"),
-                    unresolved: row.get::<i64, _>("unresolved") != 0,
-                },
+                dependency_link_from_row(&row, workspace_id, display_refs),
             );
         }
     }
