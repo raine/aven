@@ -3,10 +3,9 @@ mod view_model;
 
 use std::collections::BTreeSet;
 
-use self::hit_test::{task_list_hit, task_list_hit_in_view};
+use self::hit_test::{task_list_hit, task_list_hit_in_projection};
 use self::view_model::{
-    TaskGroupRow, TaskListRow, TaskListView, scrollbar_position, task_list_scroll,
-    task_list_top_scroll, task_list_visible_rows,
+    TaskGroupRow, TaskListProjection, TaskListRow, TaskListView, scrollbar_position,
 };
 
 pub(crate) use self::hit_test::TaskListHit;
@@ -117,8 +116,9 @@ pub(crate) fn task_at_position(
         return super::columns::column_task_at_position(store, table_state, area, column, row);
     }
     let table_area = task_list_areas(area).table_area;
-    let view = TaskListView::new(store);
-    let candidate = task_list_hit_in_view(&view, table_state, table_area, column, row)?;
+    let viewport_rows = table_area.height.saturating_sub(1) as usize;
+    let projection = TaskListProjection::from_table_state(store, table_state, viewport_rows);
+    let candidate = task_list_hit_in_projection(&projection, table_area, column, row)?;
     task_list_hit(store, candidate)
 }
 
@@ -133,9 +133,10 @@ pub(crate) fn task_status_at_position(
         return None;
     }
     let table_area = task_list_areas(area).table_area;
-    let view = TaskListView::new(store);
-    let candidate = task_list_hit_in_view(&view, table_state, table_area, column, row)?;
-    let status_area = task_list_status_area(store, table_state, table_area, candidate.viewport_row);
+    let viewport_rows = table_area.height.saturating_sub(1) as usize;
+    let projection = TaskListProjection::from_table_state(store, table_state, viewport_rows);
+    let candidate = task_list_hit_in_projection(&projection, table_area, column, row)?;
+    let status_area = task_list_status_area(store, &projection, table_area, candidate.viewport_row);
     if column < status_area.x || column >= status_area.x.saturating_add(status_area.width) {
         return None;
     }
@@ -144,21 +145,14 @@ pub(crate) fn task_status_at_position(
 
 fn task_list_status_area(
     store: &TuiStore,
-    table_state: &TableState,
+    projection: &TaskListProjection,
     table_area: Rect,
     visual_row: u16,
 ) -> Rect {
-    let view = TaskListView::new(store);
-    let viewport_rows = table_area.height.saturating_sub(1) as usize;
-    let selected_row = table_state
-        .selected()
-        .map(|selected| view.visual_row(selected))
-        .unwrap_or(0);
-    let scroll = task_list_scroll(table_state.offset(), selected_row, &view, viewport_rows);
-    let visible_rows = task_list_visible_rows(&view, scroll, viewport_rows);
+    let visible_rows = projection.visible_rows();
     let visible_tasks = visible_task_items(store, &visible_rows);
-    let selected_epic_id = table_state
-        .selected()
+    let selected_epic_id = projection
+        .selected_task
         .and_then(|index| store.tasks.get(index))
         .filter(|item| item.task.is_epic)
         .map(|item| item.task.id.as_str());
@@ -485,26 +479,22 @@ fn build_task_list_render_model(
         };
     }
 
-    let view = TaskListView::new(store);
     let viewport_rows = row_areas.len().saturating_sub(1);
-    let selected_task = table_state.selected();
+    let projection = TaskListProjection::from_table_state(store, table_state, viewport_rows);
+    projection.commit_scroll(table_state);
+    let selected_task = projection.selected_task;
     let selected_epic_id = selected_task
         .and_then(|index| store.tasks.get(index))
         .filter(|item| item.task.is_epic)
         .map(|item| item.task.id.as_str());
-    let selected_row = selected_task
-        .map(|selected| view.visual_row(selected))
-        .unwrap_or(0);
-    let scroll = task_list_scroll(table_state.offset(), selected_row, &view, viewport_rows);
-    *table_state.offset_mut() = scroll;
-    let visible_rows = task_list_visible_rows(&view, scroll, viewport_rows);
+    let visible_rows = projection.visible_rows();
     let visible_tasks = visible_task_items(store, &visible_rows);
     let columns =
         task_list_columns_for_tasks(store, area.width < 90, &visible_tasks, selected_epic_id);
 
     let now = now_seconds();
     let due_order = store.view_state.sort() == TaskSort::DueOn;
-    let has_deferred_rows = view.render_mode == TaskListRenderMode::Flat
+    let has_deferred_rows = projection.view.render_mode == TaskListRenderMode::Flat
         && visible_tasks.iter().any(|item| is_deferred(item, now));
     let column_widths = task_list_column_widths(
         &columns,
@@ -525,7 +515,9 @@ fn build_task_list_render_model(
                 let selected = selected_task == Some(*task_index);
                 let marked = marked_task_ids.contains(&item.task.id);
                 let style = row_style(selected, focus == Focus::Tasks, marked);
-                let cells = if view.render_mode == TaskListRenderMode::Epics && item.task.is_epic {
+                let cells = if projection.view.render_mode == TaskListRenderMode::Epics
+                    && item.task.is_epic
+                {
                     build_epic_parent_row_cells(
                         item,
                         now,
@@ -540,7 +532,7 @@ fn build_task_list_render_model(
                         item,
                         TaskTimeContext {
                             now_seconds: now,
-                            render_mode: view.render_mode,
+                            render_mode: projection.view.render_mode,
                             due_order,
                         },
                         inline_title_editor.filter(|_| selected),
@@ -584,11 +576,11 @@ fn build_task_list_render_model(
         columns,
         row_areas: row_areas.to_vec(),
         rows,
-        scroll,
-        row_count: view.rows.len(),
+        scroll: projection.scroll,
+        row_count: projection.row_count(),
         viewport_rows,
-        top_scroll: task_list_top_scroll(&view),
-        render_mode: view.render_mode,
+        top_scroll: projection.top_scroll(),
+        render_mode: projection.view.render_mode,
         has_deferred_rows,
         due_order,
     }
@@ -1941,7 +1933,12 @@ mod tests {
         let area = Rect::new(0, 0, 140, 10);
         let task_id = store.tasks[0].task.id.clone();
 
-        let status_area = task_list_status_area(&store, &table_state, area, 1);
+        let projection = TaskListProjection::from_table_state(
+            &store,
+            &table_state,
+            area.height.saturating_sub(1) as usize,
+        );
+        let status_area = task_list_status_area(&store, &projection, area, 1);
         let hit = task_status_at_position(&store, &table_state, area, status_area.x, 2).unwrap();
         assert_eq!(hit.task_index, 0);
         assert_eq!(hit.task_id, task_id);
@@ -1968,7 +1965,12 @@ mod tests {
         let area = Rect::new(26, 2, 114, 18);
         let task_id = store.tasks[0].task.id.clone();
 
-        let status_area = task_list_status_area(&store, &table_state, area, 1);
+        let projection = TaskListProjection::from_table_state(
+            &store,
+            &table_state,
+            area.height.saturating_sub(1) as usize,
+        );
+        let status_area = task_list_status_area(&store, &projection, area, 1);
         let hit = task_status_at_position(&store, &table_state, area, status_area.x, 4).unwrap();
 
         assert_eq!(hit.task_index, 0);

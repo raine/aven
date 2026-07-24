@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use crate::query::TaskListItem;
 use crate::tui::store::{TaskListRenderMode, TuiStore};
+use ratatui::widgets::TableState;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct TaskGroupRow {
@@ -9,7 +10,7 @@ pub(super) struct TaskGroupRow {
     pub(super) count: usize,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum TaskListRow {
     Group(TaskGroupRow),
     Task {
@@ -22,9 +23,67 @@ pub(super) enum TaskListRow {
     },
 }
 
+#[derive(Debug, Clone)]
 pub(super) struct TaskListView {
     pub(super) rows: Vec<TaskListRow>,
     pub(super) render_mode: TaskListRenderMode,
+}
+
+#[derive(Debug)]
+pub(super) struct TaskListProjection {
+    pub(super) view: TaskListView,
+    pub(super) selected_task: Option<usize>,
+    pub(super) scroll: usize,
+    pub(super) viewport_rows: usize,
+}
+
+impl TaskListProjection {
+    pub(super) fn from_view(
+        view: TaskListView,
+        offset: usize,
+        selected_task: Option<usize>,
+        viewport_rows: usize,
+    ) -> Self {
+        let selected_row = selected_task
+            .map(|selected| view.visual_row(selected))
+            .unwrap_or(0);
+        let scroll = task_list_scroll(offset, selected_row, &view, viewport_rows);
+        Self {
+            view,
+            selected_task,
+            scroll,
+            viewport_rows,
+        }
+    }
+
+    pub(super) fn from_table_state(
+        store: &TuiStore,
+        table_state: &TableState,
+        viewport_rows: usize,
+    ) -> Self {
+        Self::from_view(
+            TaskListView::new(store),
+            table_state.offset(),
+            table_state.selected(),
+            viewport_rows,
+        )
+    }
+
+    pub(super) fn visible_rows(&self) -> Vec<(usize, &TaskListRow)> {
+        task_list_visible_rows(&self.view, self.scroll, self.viewport_rows)
+    }
+
+    pub(super) fn row_count(&self) -> usize {
+        self.view.rows.len()
+    }
+
+    pub(super) fn top_scroll(&self) -> usize {
+        task_list_top_scroll(&self.view)
+    }
+
+    pub(super) fn commit_scroll(&self, table_state: &mut TableState) {
+        *table_state.offset_mut() = self.scroll;
+    }
 }
 
 impl TaskListView {

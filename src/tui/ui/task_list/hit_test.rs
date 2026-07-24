@@ -1,9 +1,12 @@
 use ratatui::layout::Rect;
+#[cfg(test)]
 use ratatui::widgets::TableState;
 
 use crate::tui::store::TuiStore;
 
-use super::view_model::{TaskListRow, TaskListView, task_list_scroll, task_list_visible_rows};
+#[cfg(test)]
+use super::view_model::TaskListView;
+use super::view_model::{TaskListProjection, TaskListRow};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TaskListHit {
@@ -18,9 +21,8 @@ pub(super) struct TaskListHitCandidate {
     pub(super) viewport_row: u16,
 }
 
-pub(super) fn task_list_hit_in_view(
-    view: &TaskListView,
-    table_state: &TableState,
+pub(super) fn task_list_hit_in_projection(
+    projection: &TaskListProjection,
     table_area: Rect,
     column: u16,
     row: u16,
@@ -31,8 +33,7 @@ pub(super) fn task_list_hit_in_view(
     if row <= table_area.y || row >= table_area.y.saturating_add(table_area.height) {
         return None;
     }
-    let viewport_rows = table_area.height.saturating_sub(1) as usize;
-    if view.rows.len() > viewport_rows
+    if projection.row_count() > projection.viewport_rows
         && column
             == table_area
                 .x
@@ -41,27 +42,18 @@ pub(super) fn task_list_hit_in_view(
     {
         return None;
     }
-    if viewport_rows == 0 {
+    if projection.viewport_rows == 0 {
         return None;
     }
-    let scroll = task_list_scroll(
-        table_state.offset(),
-        table_state
-            .selected()
-            .map(|selected| view.visual_row(selected))
-            .unwrap_or(0),
-        view,
-        viewport_rows,
-    );
 
     let visual_row = row - table_area.y - 1;
     let visual_row = usize::from(visual_row);
-    if visual_row >= viewport_rows {
+    if visual_row >= projection.viewport_rows {
         return None;
     }
 
-    let viewport_rows = task_list_visible_rows(view, scroll, viewport_rows);
-    let (_, row) = *viewport_rows.get(visual_row)?;
+    let visible_rows = projection.visible_rows();
+    let (_, row) = *visible_rows.get(visual_row)?;
     let viewport_row = u16::try_from(visual_row).ok()?;
     match row {
         TaskListRow::Task { task_index } | TaskListRow::EpicChild { task_index, .. } => {
@@ -72,6 +64,24 @@ pub(super) fn task_list_hit_in_view(
         }
         TaskListRow::Group(_) => None,
     }
+}
+
+#[cfg(test)]
+pub(super) fn task_list_hit_in_view(
+    view: &TaskListView,
+    table_state: &TableState,
+    table_area: Rect,
+    column: u16,
+    row: u16,
+) -> Option<TaskListHitCandidate> {
+    let viewport_rows = table_area.height.saturating_sub(1) as usize;
+    let projection = TaskListProjection::from_view(
+        view.clone(),
+        table_state.offset(),
+        table_state.selected(),
+        viewport_rows,
+    );
+    task_list_hit_in_projection(&projection, table_area, column, row)
 }
 
 pub(super) fn task_list_hit(
