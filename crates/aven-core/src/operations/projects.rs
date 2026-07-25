@@ -12,6 +12,7 @@ use crate::projects::{
     create_project_in_workspace, normalize_key, resolve_existing_project_in_workspace,
 };
 use crate::types::Project;
+use crate::undo::{UndoCommand, UndoPayload, record_tui_undo};
 use crate::workspaces::Workspace;
 
 pub struct LabelDeleteOutcome {
@@ -47,6 +48,32 @@ impl Database {
         create_label_operation(&mut conn, workspace, name).await
     }
 
+    pub async fn create_label_with_tui_undo(
+        &self,
+        workspace: &Workspace,
+        name: &str,
+    ) -> Result<LabelOutcome> {
+        let mut conn = self.acquire().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let outcome = create_label_operation(&mut tx, workspace, name).await?;
+        if outcome.created {
+            record_tui_undo(
+                &mut tx,
+                &workspace.id,
+                &format!("label {}", outcome.name),
+                UndoPayload {
+                    commands: vec![UndoCommand::DeleteCreatedLabel {
+                        label: outcome.name.clone(),
+                        create_change_id: outcome.change_id.clone().unwrap_or_default(),
+                    }],
+                },
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(outcome)
+    }
+
     pub async fn delete_label(
         &self,
         workspace: &Workspace,
@@ -63,6 +90,34 @@ impl Database {
     ) -> Result<ProjectOutcome> {
         let mut conn = self.acquire().await?;
         create_project_operation(&mut conn, workspace, name).await
+    }
+
+    pub async fn create_project_with_tui_undo(
+        &self,
+        workspace: &Workspace,
+        name: &str,
+    ) -> Result<ProjectOutcome> {
+        let mut conn = self.acquire().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let outcome = create_project_operation(&mut tx, workspace, name).await?;
+        if outcome.created {
+            record_tui_undo(
+                &mut tx,
+                &workspace.id,
+                &format!("project {}", outcome.project.key),
+                UndoPayload {
+                    commands: vec![UndoCommand::DeleteCreatedProject {
+                        project_key: outcome.project.key.clone(),
+                        create_change_id: outcome.change_id.clone().unwrap_or_default(),
+                        expected_name: outcome.project.name.clone(),
+                        expected_prefix: outcome.project.prefix.clone(),
+                    }],
+                },
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(outcome)
     }
 
     pub async fn delete_project(
@@ -85,6 +140,27 @@ impl Database {
         rename_project_operation(&mut conn, workspace, project, new_name, prefix).await
     }
 
+    pub async fn rename_project_with_tui_undo(
+        &self,
+        workspace: &Workspace,
+        project: &str,
+        new_name: &str,
+        prefix: Option<&str>,
+    ) -> Result<ProjectRenameOutcome> {
+        let mut conn = self.acquire().await?;
+        let (outcome, ()) = rename_project_operation_before_commit(
+            &mut conn,
+            workspace,
+            project,
+            new_name,
+            prefix,
+            |_| Ok(()),
+            true,
+        )
+        .await?;
+        Ok(outcome)
+    }
+
     pub async fn rename_project_before_commit<T, F>(
         &self,
         workspace: &Workspace,
@@ -104,6 +180,7 @@ impl Database {
             new_name,
             prefix,
             before_commit,
+            false,
         )
         .await
     }
@@ -287,11 +364,16 @@ pub async fn rename_project_operation(
     new_name: &str,
     prefix: Option<&str>,
 ) -> Result<ProjectRenameOutcome> {
-    let (outcome, ()) =
-        rename_project_operation_before_commit(conn, workspace, project, new_name, prefix, |_| {
-            Ok(())
-        })
-        .await?;
+    let (outcome, ()) = rename_project_operation_before_commit(
+        conn,
+        workspace,
+        project,
+        new_name,
+        prefix,
+        |_| Ok(()),
+        false,
+    )
+    .await?;
     Ok(outcome)
 }
 
@@ -302,6 +384,7 @@ async fn rename_project_operation_before_commit<T, F>(
     new_name: &str,
     prefix: Option<&str>,
     before_commit: F,
+    tui_undo: bool,
 ) -> Result<(ProjectRenameOutcome, T)>
 where
     F: FnOnce(&ProjectRenameOutcome) -> Result<T>,
@@ -358,6 +441,25 @@ where
         changed: true,
     };
     let value = before_commit(&outcome)?;
+    if tui_undo {
+        record_tui_undo(
+            &mut tx,
+            &workspace.id,
+            &format!("project {}", outcome.project.key),
+            UndoPayload {
+                commands: vec![UndoCommand::SetProjectMetadata {
+                    project_id: outcome.project.id.clone(),
+                    before_key: outcome.previous.key.clone(),
+                    before_name: outcome.previous.name.clone(),
+                    before_prefix: outcome.previous.prefix.clone(),
+                    after_key: outcome.project.key.clone(),
+                    after_name: outcome.project.name.clone(),
+                    after_prefix: outcome.project.prefix.clone(),
+                }],
+            },
+        )
+        .await?;
+    }
     tx.commit().await?;
     info!(project_id = %outcome.project.id, project_key = %outcome.project.key, "project renamed");
     Ok((outcome, value))

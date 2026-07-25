@@ -3,7 +3,6 @@ use anyhow::Result;
 use crate::operations::rename_config_project_mapping;
 use crate::projects::{inferred_project_key_for_add_with_database, project_has_config_mapping};
 use crate::tui::store::{MutationMessage, TaskScope};
-use crate::undo::UndoCommand;
 
 use super::TuiStore;
 
@@ -12,19 +11,7 @@ impl TuiStore {
         let name = name.trim().to_string();
         let outcome = self
             .database
-            .create_project(&self.active_workspace, &name)
-            .await?;
-        let commands = if outcome.created {
-            vec![UndoCommand::DeleteCreatedProject {
-                project_key: outcome.project.key.clone(),
-                create_change_id: outcome.change_id.unwrap_or_default(),
-                expected_name: outcome.project.name.clone(),
-                expected_prefix: outcome.project.prefix.clone(),
-            }]
-        } else {
-            Vec::new()
-        };
-        self.record_undo_commands(&format!("project {}", outcome.project.key), commands)
+            .create_project_with_tui_undo(&self.active_workspace, &name)
             .await?;
         self.refresh(None).await?;
         Ok(format!("created project {}", outcome.project.key))
@@ -64,7 +51,7 @@ impl TuiStore {
     ) -> Result<MutationMessage> {
         let outcome = self
             .database
-            .rename_project(&self.active_workspace, project, &new_name, None)
+            .rename_project_with_tui_undo(&self.active_workspace, project, &new_name, None)
             .await?;
         let config_mapping = if outcome.changed {
             rename_config_project_mapping(
@@ -80,21 +67,6 @@ impl TuiStore {
             )
             .unwrap_or(false)
         };
-        if outcome.changed {
-            self.record_undo_commands(
-                &format!("project {}", outcome.project.key),
-                vec![UndoCommand::SetProjectMetadata {
-                    project_id: outcome.project.id.clone(),
-                    before_key: outcome.previous.key.clone(),
-                    before_name: outcome.previous.name.clone(),
-                    before_prefix: outcome.previous.prefix.clone(),
-                    after_key: outcome.project.key.clone(),
-                    after_name: outcome.project.name.clone(),
-                    after_prefix: outcome.project.prefix.clone(),
-                }],
-            )
-            .await?;
-        }
         if self.scope_project() == Some(outcome.previous.key.as_str()) {
             self.view_state.scope = TaskScope::Project(outcome.project.key.clone());
         }
@@ -115,17 +87,7 @@ impl TuiStore {
         let name = name.trim().to_string();
         let outcome = self
             .database
-            .create_label(&self.active_workspace, &name)
-            .await?;
-        let commands = if outcome.created {
-            vec![UndoCommand::DeleteCreatedLabel {
-                label: outcome.name.clone(),
-                create_change_id: outcome.change_id.unwrap_or_default(),
-            }]
-        } else {
-            Vec::new()
-        };
-        self.record_undo_commands(&format!("label {}", outcome.name), commands)
+            .create_label_with_tui_undo(&self.active_workspace, &name)
             .await?;
         self.labels = self
             .database

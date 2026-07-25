@@ -309,6 +309,67 @@ mod domain_mutations_and_pickers {
     use super::*;
 
     #[tokio::test]
+    async fn project_creation_rolls_back_when_undo_recording_fails() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        reject_undo_inserts(&pool).await;
+
+        let error = store
+            .create_project("Atomic Domain".to_string())
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("injected undo failure"));
+        let persisted: i64 = sqlx::query_scalar("SELECT count(*) FROM projects WHERE key = ?")
+            .bind("atomic-domain")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(persisted, 0);
+    }
+
+    #[tokio::test]
+    async fn label_creation_rolls_back_when_undo_recording_fails() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        reject_undo_inserts(&pool).await;
+
+        let error = store
+            .create_label("atomic-domain".to_string())
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("injected undo failure"));
+        let persisted: i64 = sqlx::query_scalar("SELECT count(*) FROM labels WHERE name = ?")
+            .bind("atomic-domain")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(persisted, 0);
+    }
+
+    #[tokio::test]
+    async fn project_rename_rolls_back_when_undo_recording_fails() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        store
+            .create_project("Before Atomic Rename".to_string())
+            .await
+            .unwrap();
+        reject_undo_inserts(&pool).await;
+
+        let error = store
+            .rename_project("before-atomic-rename", "After Atomic Rename".to_string())
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("injected undo failure"));
+        let key: String = sqlx::query_scalar("SELECT key FROM projects WHERE name = ?")
+            .bind("Before Atomic Rename")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(key, "before-atomic-rename");
+    }
+
+    #[tokio::test]
     async fn delete_project_removes_unused_project() {
         let mut store = test_store().await;
         create_mobile_project(&mut store).await;
