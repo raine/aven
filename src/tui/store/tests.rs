@@ -197,6 +197,23 @@ async fn consumed_undo_count(pool: &sqlx::SqlitePool, workspace_id: &WorkspaceId
     .unwrap()
 }
 
+async fn reject_undo_inserts(pool: &sqlx::SqlitePool) {
+    let mut conn = pool.acquire().await.unwrap();
+    sqlx::query(
+        "CREATE TRIGGER reject_undo_insert BEFORE INSERT ON tui_undo_entries
+         BEGIN SELECT RAISE(FAIL, 'injected undo failure'); END",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+}
+
+#[track_caller]
+fn assert_selected_task(store: &TuiStore, outcome: &MutationMessage, expected_task_id: &TaskId) {
+    let selected = outcome.selected.expect("mutation should restore selection");
+    assert_eq!(&store.tasks[selected].task.id, expected_task_id);
+}
+
 async fn latest_payload(
     conn: &mut sqlx::SqliteConnection,
     entity_type: &str,
@@ -1188,6 +1205,253 @@ mod task_creation_and_updates {
             .unwrap();
 
         assert_eq!(outcome.message, "labels unchanged on 1 task");
+    }
+
+    #[tokio::test]
+    async fn single_mutation_persists_when_undo_recording_fails() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (task_id, selected) = create_selected_task(&mut store, "Single undo failure").await;
+        let workspace_id = store.active_workspace.id.clone();
+        let undo_before = pending_undo_count(&pool, &workspace_id).await;
+        reject_undo_inserts(&pool).await;
+
+        let error = store
+            .update_status(Some(selected), "todo")
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("injected undo failure"));
+        let persisted: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(persisted, "todo");
+        assert_eq!(store.tasks[selected].task.status, TaskStatus::Inbox);
+        assert_eq!(pending_undo_count(&pool, &workspace_id).await, undo_before);
+    }
+
+    #[tokio::test]
+    async fn batch_mutation_persists_when_undo_recording_fails() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (first_id, _) = create_selected_task(&mut store, "First undo failure").await;
+        let (second_id, _) = create_selected_task(&mut store, "Second undo failure").await;
+        let workspace_id = store.active_workspace.id.clone();
+        let undo_before = pending_undo_count(&pool, &workspace_id).await;
+        reject_undo_inserts(&pool).await;
+
+        let error = store
+            .set_exact_priority_for_tasks(None, &[first_id.clone(), second_id.clone()], "high")
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("injected undo failure"));
+        for task_id in [&first_id, &second_id] {
+            let persisted: String = sqlx::query_scalar("SELECT priority FROM tasks WHERE id = ?")
+                .bind(task_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(persisted, "high");
+            let cached = store
+                .tasks
+                .iter()
+                .find(|item| &item.task.id == task_id)
+                .unwrap();
+            assert_eq!(cached.task.priority, TaskPriority::None);
+        }
+        assert_eq!(pending_undo_count(&pool, &workspace_id).await, undo_before);
+    }
+
+    #[tokio::test]
+    async fn unchanged_single_and_batch_edits_preserve_state_without_undo() {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (task_id, selected) = create_selected_task(&mut store, "Unchanged edits").await;
+        let workspace_id = store.active_workspace.id.clone();
+        let undo_before = pending_undo_count(&pool, &workspace_id).await;
+        let changes_before = pending_change_count(&pool).await;
+
+        let availability = store
+            .update_availability(Some(selected), String::new(), false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            availability.message,
+            format!(
+                "unchanged {} availability",
+                store.tasks[selected].display_ref
+            )
+        );
+        assert_selected_task(&store, &availability, &task_id);
+
+        let status = store
+            .update_status_for_tasks(Some(selected), std::slice::from_ref(&task_id), "inbox")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(status.message, "status unchanged on 1 task");
+        assert_selected_task(&store, &status, &task_id);
+
+        let priority = store
+            .set_exact_priority_for_tasks(status.selected, std::slice::from_ref(&task_id), "none")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(priority.message, "priority unchanged on 1 task");
+        assert_selected_task(&store, &priority, &task_id);
+
+        let project = store
+            .update_project_for_tasks(
+                priority.selected,
+                std::slice::from_ref(&task_id),
+                "aven".to_string(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(project.message, "project unchanged on 1 task");
+        assert_selected_task(&store, &project, &task_id);
+
+        let labels = store
+            .update_labels_for_tasks(
+                project.selected,
+                std::slice::from_ref(&task_id),
+                Vec::new(),
+                Vec::new(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(labels.message, "labels unchanged on 1 task");
+        assert_selected_task(&store, &labels, &task_id);
+
+        let availability = store
+            .update_availability_for_tasks(
+                labels.selected,
+                std::slice::from_ref(&task_id),
+                String::new(),
+                false,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(availability.message, "availability unchanged on 1 task");
+        assert_selected_task(&store, &availability, &task_id);
+
+        let due = store
+            .update_due_for_tasks(
+                availability.selected,
+                std::slice::from_ref(&task_id),
+                String::new(),
+                false,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(due.message, "due date unchanged on 1 task");
+        assert_selected_task(&store, &due, &task_id);
+
+        let deleted = store
+            .update_deleted_for_tasks(due.selected, std::slice::from_ref(&task_id), false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(deleted.message, "already restored 1 tasks");
+        assert_selected_task(&store, &deleted, &task_id);
+
+        assert_eq!(pending_change_count(&pool).await, changes_before);
+        assert_eq!(pending_undo_count(&pool, &workspace_id).await, undo_before);
+    }
+
+    #[tokio::test]
+    async fn mutation_families_restore_selection_after_refresh() {
+        let mut store = test_store().await;
+        store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        store.create_label("bug".to_string()).await.unwrap();
+        let (target_id, _) = create_selected_task(&mut store, "Mutation target").await;
+        let (selected_id, _) = create_selected_task(&mut store, "Selection anchor").await;
+        let selected = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == selected_id)
+            .unwrap();
+
+        let status = store
+            .update_status_for_tasks(Some(selected), std::slice::from_ref(&target_id), "todo")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(status.selected, Some(selected));
+        let selected = store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == selected_id)
+            .unwrap();
+
+        let priority = store
+            .set_exact_priority_for_tasks(Some(selected), std::slice::from_ref(&target_id), "high")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_selected_task(&store, &priority, &selected_id);
+
+        let project = store
+            .update_project_for_tasks(
+                priority.selected,
+                std::slice::from_ref(&target_id),
+                "mobile-app".to_string(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_selected_task(&store, &project, &selected_id);
+
+        let labels = store
+            .update_labels_for_tasks(
+                project.selected,
+                std::slice::from_ref(&target_id),
+                vec!["bug".to_string()],
+                Vec::new(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_selected_task(&store, &labels, &selected_id);
+
+        let availability = store
+            .update_availability_for_tasks(
+                labels.selected,
+                std::slice::from_ref(&target_id),
+                "2020-01-01T00:00:00Z".to_string(),
+                false,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_selected_task(&store, &availability, &selected_id);
+
+        let due = store
+            .update_due_for_tasks(
+                availability.selected,
+                std::slice::from_ref(&target_id),
+                "2099-01-01".to_string(),
+                false,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_selected_task(&store, &due, &selected_id);
+
+        let deleted = store
+            .update_deleted_for_tasks(due.selected, std::slice::from_ref(&target_id), true)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_selected_task(&store, &deleted, &selected_id);
     }
 }
 

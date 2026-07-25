@@ -5941,6 +5941,100 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn detail_lifecycle_preserves_parent_state_and_reopens_cleanly() {
+        let mut app = test_app().await;
+        let parent = create_and_select_task(&mut app, test_task_draft("Selectable parent")).await;
+        let parent_id = app.store.tasks[parent].task.id.clone();
+        let child = create_and_select_task(&mut app, test_task_draft("Linked child")).await;
+        let child_id = app.store.tasks[child].task.id.clone();
+        let parent = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == parent_id)
+            .unwrap();
+        app.widgets.table.select(Some(parent));
+        app.overlay = Some(OverlayState::Detail { scroll: 3 });
+        app.detail_focus = Some(DetailTargetId::Task {
+            section: DetailSection::Blocks,
+            task_id: child_id.clone(),
+        });
+        app.detail_expanded_sections.insert(DetailSection::Blocks);
+        let size = (80, 24).into();
+        app.dispatch_mouse(left_click(0, 3), size).await.unwrap();
+        app.dispatch_mouse(left_drag(10, 3), size).await.unwrap();
+        app.dispatch_mouse(left_release(10, 3), size).await.unwrap();
+        let parent_selection = app.detail_text_selection.clone().unwrap();
+        let parent_text = crate::tui::ui::detail_selected_text(
+            app.store.selected_task(Some(parent)).unwrap(),
+            &parent_selection,
+        )
+        .unwrap();
+
+        app.open_detail_task(&child_id, 3).await;
+
+        assert_eq!(app.store.tasks[0].task.id, child_id);
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert!(app.detail_focus.is_none());
+        assert!(app.detail_expanded_sections.is_empty());
+        assert!(app.detail_text_selection.is_some());
+        assert!(
+            crate::tui::ui::detail_selected_text(&app.store.tasks[0], &parent_selection).is_none()
+        );
+        assert!(app.detail_has_parent());
+
+        app.dispatch_key(key(KeyCode::Char('g')), size)
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('[')), size)
+            .await
+            .unwrap();
+
+        assert_eq!(app.store.tasks[0].task.id, parent_id);
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 3 })
+        ));
+        assert_eq!(
+            app.detail_focus.as_ref().and_then(DetailTargetId::task_id),
+            Some(&child_id)
+        );
+        assert!(
+            app.detail_expanded_sections
+                .contains(&DetailSection::Blocks)
+        );
+        assert_eq!(
+            crate::tui::ui::detail_selected_text(&app.store.tasks[0], &parent_selection).as_deref(),
+            Some(parent_text.as_str())
+        );
+        assert!(!app.detail_has_parent());
+
+        app.dispatch_key(key(KeyCode::Char('q')), size)
+            .await
+            .unwrap();
+        assert!(app.overlay.is_none());
+        assert!(app.detail_focus.is_none());
+        assert!(app.detail_expanded_sections.is_empty());
+        assert!(app.detail_text_selection.is_none());
+        assert!(!app.detail_text_dragging);
+        assert!(app.detail_navigation_history.is_empty());
+        assert_eq!(app.detail_context_scroll, 0);
+
+        app.activate_or_toggle_detail().await.unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert!(app.detail_focus.is_none());
+        assert!(app.detail_expanded_sections.is_empty());
+        assert!(app.detail_text_selection.is_none());
+        assert!(app.detail_navigation_history.is_empty());
+    }
+
+    #[tokio::test]
     async fn epic_detail_add_child_shortcut_opens_contextual_search() {
         let (_dir, _pool, mut app) = test_app_with_pool().await;
         let parent_index = create_and_select_task(
@@ -9148,6 +9242,27 @@ mod delete_and_restore {
                 .iter()
                 .any(|project| project.key == "sideagent")
         );
+        assert!(app.pending_rename_project.is_none());
+    }
+
+    #[tokio::test]
+    async fn rename_project_cancel_returns_to_browse_and_clears_pending_state() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Agent Offload".to_string())
+            .await
+            .unwrap();
+        let selected = app.widgets.table.selected();
+
+        app.execute(Action::BeginRenameProject).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        assert!(app.pending_rename_project.is_some());
+
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(!app.view().detail_underlay);
+        assert_eq!(app.widgets.table.selected(), selected);
         assert!(app.pending_rename_project.is_none());
     }
 
