@@ -1232,7 +1232,7 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
-    async fn batch_mutation_persists_when_undo_recording_fails() {
+    async fn batch_mutation_rolls_back_when_undo_recording_fails() {
         let (_dir, pool, mut store) = test_store_with_pool().await;
         let (first_id, _) = create_selected_task(&mut store, "First undo failure").await;
         let (second_id, _) = create_selected_task(&mut store, "Second undo failure").await;
@@ -1252,7 +1252,7 @@ mod task_creation_and_updates {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-            assert_eq!(persisted, "high");
+            assert_eq!(persisted, "none");
             let cached = store
                 .tasks
                 .iter()

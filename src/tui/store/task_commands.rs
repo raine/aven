@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
 
+use crate::choices::TaskPriority;
 use crate::query::TaskListItem;
 use crate::tui::store::MutationMessage;
 use crate::undo::{UndoCommand, UndoContext};
@@ -19,7 +20,21 @@ fn task_noun(count: usize) -> &'static str {
     if count == 1 { "task" } else { "tasks" }
 }
 
+fn cycled_priority(priority: TaskPriority, reverse: bool) -> TaskPriority {
+    let index = TaskPriority::ALL
+        .iter()
+        .position(|candidate| *candidate == priority)
+        .unwrap_or(0);
+    let next = if reverse {
+        (index + TaskPriority::ALL.len() - 1) % TaskPriority::ALL.len()
+    } else {
+        (index + 1) % TaskPriority::ALL.len()
+    };
+    TaskPriority::ALL[next]
+}
+
 impl TuiStore {
+    #[cfg(test)]
     async fn update_selected_task<F>(
         &mut self,
         index: Option<usize>,
@@ -125,21 +140,22 @@ impl TuiStore {
         reverse: bool,
     ) -> Result<Option<MutationMessage>> {
         if let Some(item) = self.selected_task(index).cloned() {
-            let before = item.task.priority.as_str().to_string();
-            let task = self
+            let priority = cycled_priority(item.task.priority, reverse);
+            let report = self
                 .database
-                .cycle_task_priority(&self.active_workspace, &item.task, reverse)
+                .mutate_tasks(
+                    &self.active_workspace,
+                    vec![(
+                        item.task.id.clone(),
+                        TaskUpdate {
+                            priority: Some(priority.as_str().to_string()),
+                            ..TaskUpdate::default()
+                        },
+                    )],
+                    UndoContext::tui(format!("priority {}", item.display_ref)),
+                )
                 .await?;
-            self.record_undo_commands(
-                &format!("priority {}", item.display_ref),
-                vec![UndoCommand::SetTaskField {
-                    task_id: item.task.id.clone(),
-                    field: "priority".to_string(),
-                    before,
-                    after: task.priority.as_str().to_string(),
-                }],
-            )
-            .await?;
+            let task = report.outcomes.into_iter().next().unwrap().task;
             return Ok(Some(
                 self.refresh_task_message(
                     &item.task.id,
@@ -159,30 +175,28 @@ impl TuiStore {
         let Some(item) = self.selected_task(index).cloned() else {
             return Ok(None);
         };
-        let before = item.task.priority.as_str().to_string();
-        let outcome = self
-            .update_selected_task(
-                index,
-                TaskUpdate {
-                    priority: Some(priority.to_string()),
-                    ..TaskUpdate::default()
-                },
-                |item| format!("set {} priority={priority}", item.display_ref),
+        let report = self
+            .database
+            .mutate_tasks(
+                &self.active_workspace,
+                vec![(
+                    item.task.id.clone(),
+                    TaskUpdate {
+                        priority: Some(priority.to_string()),
+                        ..TaskUpdate::default()
+                    },
+                )],
+                UndoContext::tui(format!("priority {}", item.display_ref)),
             )
             .await?;
-        if outcome.is_some() {
-            self.record_undo_commands(
-                &format!("priority {}", item.display_ref),
-                vec![UndoCommand::SetTaskField {
-                    task_id: item.task.id.clone(),
-                    field: "priority".to_string(),
-                    before,
-                    after: priority.to_string(),
-                }],
+        let outcome = report.outcomes.into_iter().next().unwrap();
+        Ok(Some(
+            self.refresh_task_message(
+                &outcome.task.id,
+                format!("set {} priority={priority}", item.display_ref),
             )
-            .await?;
-        }
-        Ok(outcome)
+            .await?,
+        ))
     }
 
     #[cfg(test)]
@@ -958,28 +972,30 @@ impl TuiStore {
             return Ok(None);
         }
 
-        let tasks = targets
+        let updates = targets
             .iter()
-            .map(|item| item.task.clone())
-            .collect::<Vec<_>>();
-        let outcomes = self
-            .database
-            .cycle_task_priorities(&self.active_workspace, &tasks, reverse)
-            .await?;
-        let undo_commands = targets
-            .iter()
-            .zip(outcomes)
-            .map(|(item, task)| UndoCommand::SetTaskField {
-                task_id: item.task.id.clone(),
-                field: "priority".to_string(),
-                before: item.task.priority.as_str().to_string(),
-                after: task.priority.as_str().to_string(),
+            .map(|item| {
+                let priority = cycled_priority(item.task.priority, reverse);
+                (
+                    item.task.id.clone(),
+                    TaskUpdate {
+                        priority: Some(priority.as_str().to_string()),
+                        ..TaskUpdate::default()
+                    },
+                )
             })
             .collect::<Vec<_>>();
-
-        let changed = undo_commands.len();
-        self.record_undo_commands(&format!("priority {changed} tasks"), undo_commands)
+        let expected_changed = updates.len();
+        let report = self
+            .database
+            .mutate_tasks(
+                &self.active_workspace,
+                updates,
+                UndoContext::tui(format!("priority {expected_changed} tasks")),
+            )
             .await?;
+
+        let changed = report.changed_count();
         Ok(Some(
             self.refresh_after_task_batch(
                 current_selected_index,
@@ -1001,11 +1017,9 @@ impl TuiStore {
             return Ok(None);
         }
 
-        let mut undo_commands = Vec::new();
         let mut updates = Vec::new();
         for item in &targets {
-            let before = item.task.priority.as_str().to_string();
-            if before == priority {
+            if item.task.priority.as_str() == priority {
                 continue;
             }
             updates.push((
@@ -1015,22 +1029,18 @@ impl TuiStore {
                     ..TaskUpdate::default()
                 },
             ));
-            undo_commands.push(UndoCommand::SetTaskField {
-                task_id: item.task.id.clone(),
-                field: "priority".to_string(),
-                before,
-                after: priority.to_string(),
-            });
         }
-        self.database
-            .update_tasks(&self.active_workspace, updates)
+        let expected_changed = updates.len();
+        let report = self
+            .database
+            .mutate_tasks(
+                &self.active_workspace,
+                updates,
+                UndoContext::tui(format!("priority {expected_changed} tasks")),
+            )
             .await?;
 
-        let changed = undo_commands.len();
-        if changed > 0 {
-            self.record_undo_commands(&format!("priority {changed} tasks"), undo_commands)
-                .await?;
-        }
+        let changed = report.changed_count();
         let message = if changed == 0 {
             format!(
                 "priority unchanged on {} {}",
