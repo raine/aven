@@ -1285,7 +1285,10 @@ mod task_creation_and_updates {
             .unwrap()
             .unwrap();
 
-        assert_eq!(outcome.message, "labels unchanged on 1 task");
+        assert_eq!(
+            outcome.message,
+            format!("set {} labels", store.tasks[selected].display_ref)
+        );
     }
 
     #[tokio::test]
@@ -1476,7 +1479,10 @@ mod task_creation_and_updates {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(status.message, "status unchanged on 1 task");
+        assert_eq!(
+            status.message,
+            format!("set {} status=inbox", store.tasks[selected].display_ref)
+        );
         assert_selected_task(&store, &status, &task_id);
 
         let priority = store
@@ -1484,7 +1490,10 @@ mod task_creation_and_updates {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(priority.message, "priority unchanged on 1 task");
+        assert_eq!(
+            priority.message,
+            format!("set {} priority=none", store.tasks[selected].display_ref)
+        );
         assert_selected_task(&store, &priority, &task_id);
 
         let project = store
@@ -1496,7 +1505,10 @@ mod task_creation_and_updates {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(project.message, "project unchanged on 1 task");
+        assert_eq!(
+            project.message,
+            format!("set {} project", store.tasks[selected].display_ref)
+        );
         assert_selected_task(&store, &project, &task_id);
 
         let labels = store
@@ -1509,7 +1521,10 @@ mod task_creation_and_updates {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(labels.message, "labels unchanged on 1 task");
+        assert_eq!(
+            labels.message,
+            format!("set {} labels", store.tasks[selected].display_ref)
+        );
         assert_selected_task(&store, &labels, &task_id);
 
         let availability = store
@@ -1522,7 +1537,13 @@ mod task_creation_and_updates {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(availability.message, "availability unchanged on 1 task");
+        assert_eq!(
+            availability.message,
+            format!(
+                "unchanged {} availability",
+                store.tasks[selected].display_ref
+            )
+        );
         assert_selected_task(&store, &availability, &task_id);
 
         let due = store
@@ -1535,7 +1556,10 @@ mod task_creation_and_updates {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(due.message, "due date unchanged on 1 task");
+        assert_eq!(
+            due.message,
+            format!("unchanged {} due date", store.tasks[selected].display_ref)
+        );
         assert_selected_task(&store, &due, &task_id);
 
         let deleted = store
@@ -1543,7 +1567,10 @@ mod task_creation_and_updates {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(deleted.message, "already restored 1 tasks");
+        assert_eq!(
+            deleted.message,
+            format!("already restored {}", store.tasks[selected].display_ref)
+        );
         assert_selected_task(&store, &deleted, &task_id);
 
         assert_eq!(pending_change_count(&pool).await, changes_before);

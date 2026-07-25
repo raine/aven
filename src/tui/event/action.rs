@@ -1,5 +1,6 @@
 use crossterm::event::KeyCode;
 
+use crate::choices::{TaskPriority, TaskStatus};
 use crate::tui::store::{TaskOrder, TaskView};
 
 #[cfg(test)]
@@ -42,8 +43,8 @@ pub(crate) enum Action {
     Refresh,
     SetOrder(TaskOrder),
     ReverseSort,
-    SetStatus(&'static str),
-    SetPriority(&'static str),
+    SetStatus(TaskStatus),
+    SetPriority(TaskPriority),
     CyclePriority(bool),
     CopyShortRef,
     CopyDurableRef,

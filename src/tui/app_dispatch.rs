@@ -159,7 +159,7 @@ impl App {
 
     async fn submit_footer_status(&mut self, status: &'static str) -> Result<()> {
         self.footer_choice_mode = None;
-        self.update_status(status).await?;
+        self.submit_edit_status(status.to_string()).await?;
         if self.detail_context && self.overlay.is_none() {
             self.restore_detail_overlay(true);
         }
@@ -168,7 +168,7 @@ impl App {
 
     async fn submit_footer_priority(&mut self, priority: &'static str) -> Result<()> {
         self.footer_choice_mode = None;
-        self.set_exact_priority(priority).await?;
+        self.submit_edit_priority(priority.to_string()).await?;
         if self.detail_context && self.overlay.is_none() {
             self.restore_detail_overlay(true);
         }

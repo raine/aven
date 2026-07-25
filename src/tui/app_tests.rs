@@ -2764,6 +2764,52 @@ mod command_and_config_overlays {
     }
 
     #[tokio::test]
+    async fn project_edit_keeps_captured_targets_and_anchor_across_refresh() {
+        let mut app = test_app().await;
+        app.store
+            .create_project("Mobile App".to_string())
+            .await
+            .unwrap();
+        let first = create_and_select_task(&mut app, test_task_draft("first")).await;
+        let first_id = app.store.tasks[first].task.id.clone();
+        let second = create_and_select_task(&mut app, test_task_draft("second")).await;
+        let second_id = app.store.tasks[second].task.id.clone();
+        let third = create_and_select_task(&mut app, test_task_draft("third")).await;
+        let third_id = app.store.tasks[third].task.id.clone();
+        app.widgets.marked_task_ids.insert(first_id.clone());
+        app.widgets.marked_task_ids.insert(second_id.clone());
+        app.begin_edit_project();
+
+        app.widgets.marked_task_ids.clear();
+        app.widgets.marked_task_ids.insert(third_id.clone());
+        app.widgets.table.select(Some(first));
+        app.store.refresh(None).await.unwrap();
+        app.submit_edit_project("mobile-app".to_string())
+            .await
+            .unwrap();
+
+        let project_for = |app: &App, task_id: &crate::ids::TaskId| {
+            app.store
+                .tasks
+                .iter()
+                .find(|item| &item.task.id == task_id)
+                .unwrap()
+                .task
+                .project_key
+                .clone()
+        };
+        assert_eq!(project_for(&app, &first_id), "mobile-app");
+        assert_eq!(project_for(&app, &second_id), "mobile-app");
+        assert_ne!(project_for(&app, &third_id), "mobile-app");
+        assert_eq!(
+            app.store
+                .selected_task(app.widgets.table.selected())
+                .map(|item| &item.task.id),
+            Some(&third_id)
+        );
+    }
+
+    #[tokio::test]
     async fn submit_edit_priority_updates_only_marked_tasks() {
         let mut app = test_app().await;
         let first = create_and_select_task(&mut app, test_task_draft("first")).await;
@@ -8120,7 +8166,7 @@ mod detail_mode {
         app.widgets.table.select(Some(selected));
         *app.widgets.table.offset_mut() = 1;
 
-        app.update_status("active").await.unwrap();
+        app.update_status(TaskStatus::Active).await.unwrap();
 
         assert_eq!(app.widgets.table.selected(), Some(selected));
         assert_ne!(app.store.tasks[selected].task.id, changed_id);
@@ -8152,7 +8198,7 @@ mod detail_mode {
         app.widgets.table.select(Some(selected));
         *app.widgets.table.offset_mut() = 1;
 
-        app.update_status("done").await.unwrap();
+        app.update_status(TaskStatus::Done).await.unwrap();
         let replacement_id = app.store.tasks[selected].task.id.clone();
         let return_offset = app.widgets.table.offset();
         app.execute(Action::ReturnToLastChange).await.unwrap();
@@ -10157,7 +10203,7 @@ mod task_dependencies {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("stay canceled")).await;
         app.store.show_view(TaskView::Columns).await.unwrap();
-        app.update_status("canceled").await.unwrap();
+        app.update_status(TaskStatus::Canceled).await.unwrap();
 
         app.move_tasks_to_column("done".to_string()).await.unwrap();
 
@@ -10277,7 +10323,7 @@ mod task_dependencies {
             .id
             .clone();
 
-        app.update_status("done").await.unwrap();
+        app.update_status(TaskStatus::Done).await.unwrap();
 
         let selected = app
             .store

@@ -308,7 +308,7 @@ impl App {
             }
             Some(ConfirmSubmitRoute::DeleteTaskConfirm) => {
                 let return_to_detail = self.detail_context;
-                self.update_deleted(true).await?;
+                self.submit_delete_selection().await?;
                 self.detail_context = false;
                 self.restore_detail_overlay(return_to_detail);
             }

@@ -108,6 +108,8 @@ fn implemented_action_is_handled(action: Action) -> bool {
 mod tests {
     use crossterm::event::KeyCode;
 
+    use crate::choices::{TaskPriority, TaskStatus};
+
     use super::*;
 
     #[test]
@@ -181,7 +183,7 @@ mod tests {
     fn lookup_command_finds_prefixed_suffix() {
         assert_eq!(
             lookup_command(":todo"),
-            CommandLookup::Found(Action::SetStatus("todo"))
+            CommandLookup::Found(Action::SetStatus(TaskStatus::Todo))
         );
     }
 
@@ -189,7 +191,7 @@ mod tests {
     fn lookup_command_ignores_dashes() {
         assert_eq!(
             lookup_command(":statusin"),
-            CommandLookup::Found(Action::SetStatus("inbox"))
+            CommandLookup::Found(Action::SetStatus(TaskStatus::Inbox))
         );
     }
 
@@ -411,7 +413,7 @@ mod tests {
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('a')]),
-            ShortcutLookup::Found(Action::SetStatus("active"))
+            ShortcutLookup::Found(Action::SetStatus(TaskStatus::Active))
         );
     }
 
@@ -825,23 +827,23 @@ mod tests {
     fn resolves_exact_priority_shortcuts() {
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('0')]),
-            ShortcutLookup::Found(Action::SetPriority("none"))
+            ShortcutLookup::Found(Action::SetPriority(TaskPriority::None))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('l')]),
-            ShortcutLookup::Found(Action::SetPriority("low"))
+            ShortcutLookup::Found(Action::SetPriority(TaskPriority::Low))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('m')]),
-            ShortcutLookup::Found(Action::SetPriority("medium"))
+            ShortcutLookup::Found(Action::SetPriority(TaskPriority::Medium))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('h')]),
-            ShortcutLookup::Found(Action::SetPriority("high"))
+            ShortcutLookup::Found(Action::SetPriority(TaskPriority::High))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('u')]),
-            ShortcutLookup::Found(Action::SetPriority("urgent"))
+            ShortcutLookup::Found(Action::SetPriority(TaskPriority::Urgent))
         );
     }
 
@@ -853,19 +855,19 @@ mod tests {
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('d')]),
-            ShortcutLookup::Found(Action::SetStatus("done"))
+            ShortcutLookup::Found(Action::SetStatus(TaskStatus::Done))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('x')]),
-            ShortcutLookup::Found(Action::SetStatus("canceled"))
+            ShortcutLookup::Found(Action::SetStatus(TaskStatus::Canceled))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('i')]),
-            ShortcutLookup::Found(Action::SetStatus("inbox"))
+            ShortcutLookup::Found(Action::SetStatus(TaskStatus::Inbox))
         );
         assert_eq!(
             resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('d')]),
-            ShortcutLookup::Found(Action::SetStatus("done"))
+            ShortcutLookup::Found(Action::SetStatus(TaskStatus::Done))
         );
     }
 

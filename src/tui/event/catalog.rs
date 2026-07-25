@@ -1,5 +1,6 @@
 use crossterm::event::KeyCode;
 
+use crate::choices::{TaskPriority, TaskStatus};
 use crate::tui::store::{TaskOrder, TaskView};
 
 use super::Action;
@@ -467,7 +468,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('t'), KeyCode::Char('i')],
             label: "t i",
         }],
-        Action::SetStatus("inbox"),
+        Action::SetStatus(TaskStatus::Inbox),
     ),
     CommandSpec::implemented(
         "status-backlog",
@@ -477,7 +478,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('t'), KeyCode::Char('b')],
             label: "t b",
         }],
-        Action::SetStatus("backlog"),
+        Action::SetStatus(TaskStatus::Backlog),
     ),
     CommandSpec::implemented_with_aliases(
         "status-todo",
@@ -488,7 +489,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('t'), KeyCode::Char('t')],
             label: "t t",
         }],
-        Action::SetStatus("todo"),
+        Action::SetStatus(TaskStatus::Todo),
     ),
     CommandSpec::implemented(
         "status-active",
@@ -498,7 +499,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('t'), KeyCode::Char('a')],
             label: "t a",
         }],
-        Action::SetStatus("active"),
+        Action::SetStatus(TaskStatus::Active),
     ),
     CommandSpec::implemented(
         "status-done",
@@ -514,7 +515,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 label: "d",
             },
         ],
-        Action::SetStatus("done"),
+        Action::SetStatus(TaskStatus::Done),
     ),
     CommandSpec::implemented(
         "status-canceled",
@@ -530,7 +531,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 label: "x",
             },
         ],
-        Action::SetStatus("canceled"),
+        Action::SetStatus(TaskStatus::Canceled),
     ),
     // Views
     CommandSpec::implemented(
@@ -959,7 +960,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('t'), KeyCode::Char('0')],
             label: "t 0",
         }],
-        Action::SetPriority("none"),
+        Action::SetPriority(TaskPriority::None),
     ),
     CommandSpec::implemented(
         "priority-low",
@@ -969,7 +970,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('t'), KeyCode::Char('l')],
             label: "t l",
         }],
-        Action::SetPriority("low"),
+        Action::SetPriority(TaskPriority::Low),
     ),
     CommandSpec::implemented(
         "priority-medium",
@@ -979,7 +980,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('t'), KeyCode::Char('m')],
             label: "t m",
         }],
-        Action::SetPriority("medium"),
+        Action::SetPriority(TaskPriority::Medium),
     ),
     CommandSpec::implemented(
         "priority-high",
@@ -989,7 +990,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('t'), KeyCode::Char('h')],
             label: "t h",
         }],
-        Action::SetPriority("high"),
+        Action::SetPriority(TaskPriority::High),
     ),
     CommandSpec::implemented(
         "priority-urgent",
@@ -999,7 +1000,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('t'), KeyCode::Char('u')],
             label: "t u",
         }],
-        Action::SetPriority("urgent"),
+        Action::SetPriority(TaskPriority::Urgent),
     ),
     CommandSpec::implemented(
         "toggle-mark",
@@ -1492,7 +1493,7 @@ pub(crate) const DETAIL_COMMANDS: &[CommandSpec] = &[
             codes: &[KeyCode::Char('t'), KeyCode::Char('d')],
             label: "t d",
         }],
-        Action::SetStatus("done"),
+        Action::SetStatus(TaskStatus::Done),
     ),
     CommandSpec::implemented(
         "detail-delete",

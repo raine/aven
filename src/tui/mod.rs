@@ -35,6 +35,7 @@ mod platform;
 mod preview_controller;
 mod shortcut_buffer;
 mod store;
+mod task_selection;
 #[cfg(test)]
 pub(crate) mod test_support;
 mod text;

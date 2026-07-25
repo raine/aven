@@ -1,19 +1,31 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
+use aven_core::operations::{TaskMutationReport, TaskUpdate};
 
-use crate::choices::TaskPriority;
-use crate::query::TaskListItem;
+use crate::choices::{TaskPriority, TaskStatus};
 use crate::tui::store::MutationMessage;
+use crate::tui::task_selection::TaskSelection;
 use crate::undo::UndoContext;
-use aven_core::operations::TaskUpdate;
 
 use super::TuiStore;
 
 #[derive(Clone, Copy)]
-enum StatusRefresh {
-    Default,
-    PreserveTask,
+pub(crate) enum PriorityMutation {
+    Cycle { reverse: bool },
+    Set(TaskPriority),
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum TaskDateField {
+    Availability,
+    Due,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum TaskTextField {
+    Title,
+    Description,
 }
 
 fn task_noun(count: usize) -> &'static str {
@@ -34,603 +46,413 @@ fn cycled_priority(priority: TaskPriority, reverse: bool) -> TaskPriority {
 }
 
 impl TuiStore {
-    pub(crate) async fn update_status(
+    pub(crate) async fn mutate_status_selection(
         &mut self,
-        index: Option<usize>,
-        status: &str,
-    ) -> Result<Option<MutationMessage>> {
-        self.update_status_with_refresh(index, status, StatusRefresh::Default)
-            .await
-    }
-
-    pub(crate) async fn update_status_preserving_task(
-        &mut self,
-        index: Option<usize>,
-        status: &str,
-    ) -> Result<Option<MutationMessage>> {
-        self.update_status_with_refresh(index, status, StatusRefresh::PreserveTask)
-            .await
-    }
-
-    async fn update_status_with_refresh(
-        &mut self,
-        index: Option<usize>,
-        status: &str,
-        refresh: StatusRefresh,
-    ) -> Result<Option<MutationMessage>> {
-        let Some(mut item) = self.selected_task(index).cloned() else {
-            return Ok(None);
-        };
-
-        let report = self
-            .database
-            .mutate_tasks(
-                &self.active_workspace,
-                vec![(
-                    item.task.id.clone(),
+        selection: &TaskSelection,
+        status: TaskStatus,
+        preserve_task: bool,
+    ) -> Result<MutationMessage> {
+        let updates = selection
+            .ids()
+            .cloned()
+            .map(|task_id| {
+                (
+                    task_id,
                     TaskUpdate {
                         status: Some(status.to_string()),
                         ..TaskUpdate::default()
                     },
-                )],
-                UndoContext::tui(format!("status {}", item.display_ref)),
-            )
-            .await?;
-        let outcome = report.outcomes.into_iter().next().unwrap();
-        let message = format!("set {} status={status}", item.display_ref);
-        item.task = outcome.task;
-        let result = match refresh {
-            StatusRefresh::PreserveTask => {
-                self.refresh_preserved_task_message(index, item, message)
-                    .await?
-            }
-            StatusRefresh::Default => self.refresh_index_message(index, message).await?,
-        };
-        Ok(Some(result))
-    }
-
-    async fn refresh_preserved_task_message(
-        &mut self,
-        selected: Option<usize>,
-        item: TaskListItem,
-        message: impl Into<String>,
-    ) -> Result<MutationMessage> {
-        self.refresh(None).await?;
-        let selected = match self
-            .tasks
-            .iter()
-            .position(|task| task.task.id == item.task.id)
-        {
-            Some(index) => Some(index),
-            None => {
-                let index = selected.unwrap_or(self.tasks.len()).min(self.tasks.len());
-                self.tasks.insert(index, item);
-                Some(index)
-            }
-        };
-
-        Ok(MutationMessage::new(message, selected))
-    }
-
-    pub(crate) async fn update_priority(
-        &mut self,
-        index: Option<usize>,
-        reverse: bool,
-    ) -> Result<Option<MutationMessage>> {
-        if let Some(item) = self.selected_task(index).cloned() {
-            let priority = cycled_priority(item.task.priority, reverse);
-            let report = self
-                .database
-                .mutate_tasks(
-                    &self.active_workspace,
-                    vec![(
-                        item.task.id.clone(),
-                        TaskUpdate {
-                            priority: Some(priority.as_str().to_string()),
-                            ..TaskUpdate::default()
-                        },
-                    )],
-                    UndoContext::tui(format!("priority {}", item.display_ref)),
                 )
-                .await?;
-            let task = report.outcomes.into_iter().next().unwrap().task;
-            return Ok(Some(
-                self.refresh_task_message(
-                    &item.task.id,
-                    format!("set {} priority={}", item.display_ref, task.priority),
-                )
-                .await?,
-            ));
-        }
-        Ok(None)
-    }
-
-    pub(crate) async fn set_exact_priority(
-        &mut self,
-        index: Option<usize>,
-        priority: &str,
-    ) -> Result<Option<MutationMessage>> {
-        let Some(item) = self.selected_task(index).cloned() else {
-            return Ok(None);
-        };
+            })
+            .collect();
         let report = self
             .database
             .mutate_tasks(
                 &self.active_workspace,
-                vec![(
+                updates,
+                UndoContext::tui(format!("status {} tasks", selection.len())),
+            )
+            .await?;
+        let changed = report.changed_count();
+        let message = if selection.is_single() {
+            format!("set {} status={status}", selection.targets()[0].display_ref)
+        } else if changed == 0 {
+            format!("status unchanged on {} tasks", selection.len())
+        } else {
+            format!("set status on {changed} {}", task_noun(changed))
+        };
+        self.refresh_task_selection(selection, report, message, preserve_task, true)
+            .await
+    }
+
+    pub(crate) async fn mutate_status_changes(
+        &mut self,
+        selection: &TaskSelection,
+        changes: &[(crate::ids::TaskId, TaskStatus)],
+    ) -> Result<MutationMessage> {
+        let status_by_id = changes.iter().cloned().collect::<BTreeMap<_, _>>();
+        let updates = selection
+            .ids()
+            .filter_map(|task_id| {
+                let status = status_by_id.get(task_id)?;
+                Some((
+                    task_id.clone(),
+                    TaskUpdate {
+                        status: Some(status.to_string()),
+                        ..TaskUpdate::default()
+                    },
+                ))
+            })
+            .collect();
+        let report = self
+            .database
+            .mutate_tasks(
+                &self.active_workspace,
+                updates,
+                UndoContext::tui(format!("move {} tasks between columns", selection.len())),
+            )
+            .await?;
+        let changed = report.changed_count();
+        let message = if changed == 0 {
+            format!("column unchanged on {} tasks", selection.len())
+        } else {
+            format!("moved {changed} tasks between columns")
+        };
+        self.refresh_task_selection(selection, report, message, false, false)
+            .await
+    }
+
+    pub(crate) async fn mutate_priority_selection(
+        &mut self,
+        selection: &TaskSelection,
+        mutation: PriorityMutation,
+    ) -> Result<MutationMessage> {
+        let updates = selection
+            .targets()
+            .iter()
+            .map(|item| {
+                let priority = match mutation {
+                    PriorityMutation::Cycle { reverse } => {
+                        cycled_priority(item.task.priority, reverse)
+                    }
+                    PriorityMutation::Set(priority) => priority,
+                };
+                (
                     item.task.id.clone(),
                     TaskUpdate {
                         priority: Some(priority.to_string()),
                         ..TaskUpdate::default()
                     },
-                )],
-                UndoContext::tui(format!("priority {}", item.display_ref)),
-            )
-            .await?;
-        let outcome = report.outcomes.into_iter().next().unwrap();
-        Ok(Some(
-            self.refresh_task_message(
-                &outcome.task.id,
-                format!("set {} priority={priority}", item.display_ref),
-            )
-            .await?,
-        ))
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn update_title(
-        &mut self,
-        index: Option<usize>,
-        title: String,
-    ) -> Result<Option<MutationMessage>> {
-        let title = title.trim().to_string();
-        let Some(item) = self.selected_task(index).cloned() else {
-            return Ok(None);
-        };
-        let before = item.task.title.clone();
-        if title == before {
-            return Ok(Some(
-                self.refresh_task_message(
-                    &item.task.id,
-                    format!("unchanged {} title", item.display_ref),
                 )
-                .await?,
-            ));
-        }
-        self.database
-            .mutate_tasks(
-                &self.active_workspace,
-                vec![(
-                    item.task.id.clone(),
-                    TaskUpdate {
-                        title: Some(title),
-                        ..TaskUpdate::default()
-                    },
-                )],
-                UndoContext::tui(format!("title {}", item.display_ref)),
-            )
-            .await?;
-        Ok(Some(
-            self.refresh_task_message(&item.task.id, format!("set {} title", item.display_ref))
-                .await?,
-        ))
-    }
-
-    pub(crate) async fn update_title_for_task(
-        &mut self,
-        current_selected_index: Option<usize>,
-        task_id: &crate::ids::TaskId,
-        title: String,
-    ) -> Result<Option<MutationMessage>> {
-        let title = title.trim().to_string();
-        let targets = self.tasks_matching_ids(std::slice::from_ref(task_id));
-        let Some(item) = targets.first() else {
-            return Ok(None);
-        };
-        let before = item.task.title.clone();
-        if title == before {
-            return Ok(Some(
-                self.refresh_after_task_batch(
-                    current_selected_index,
-                    &targets,
-                    format!("unchanged {} title", item.display_ref),
-                )
-                .await?,
-            ));
-        }
-        self.database
-            .mutate_tasks(
-                &self.active_workspace,
-                vec![(
-                    task_id.clone(),
-                    TaskUpdate {
-                        title: Some(title),
-                        ..TaskUpdate::default()
-                    },
-                )],
-                UndoContext::tui(format!("title {}", item.display_ref)),
-            )
-            .await?;
-        Ok(Some(
-            self.refresh_after_task_batch(
-                current_selected_index,
-                &targets,
-                format!("set {} title", item.display_ref),
-            )
-            .await?,
-        ))
-    }
-
-    pub(crate) async fn update_description_for_task(
-        &mut self,
-        current_selected_index: Option<usize>,
-        task_id: &crate::ids::TaskId,
-        description: String,
-    ) -> Result<Option<MutationMessage>> {
-        let targets = self.tasks_matching_ids(std::slice::from_ref(task_id));
-        let Some(item) = targets.first() else {
-            return Ok(None);
-        };
-        let before = item.task.description.clone();
-        if description == before {
-            return Ok(Some(
-                self.refresh_after_task_batch(
-                    current_selected_index,
-                    &targets,
-                    format!("unchanged {} description", item.display_ref),
-                )
-                .await?,
-            ));
-        }
-        self.database
-            .mutate_tasks(
-                &self.active_workspace,
-                vec![(
-                    task_id.clone(),
-                    TaskUpdate {
-                        description: Some(description),
-                        ..TaskUpdate::default()
-                    },
-                )],
-                UndoContext::tui(format!("description {}", item.display_ref)),
-            )
-            .await?;
-        Ok(Some(
-            self.refresh_after_task_batch(
-                current_selected_index,
-                &targets,
-                format!("set {} description", item.display_ref),
-            )
-            .await?,
-        ))
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn update_description(
-        &mut self,
-        index: Option<usize>,
-        description: String,
-    ) -> Result<Option<MutationMessage>> {
-        let Some(item) = self.selected_task(index).cloned() else {
-            return Ok(None);
-        };
-        self.database
-            .mutate_tasks(
-                &self.active_workspace,
-                vec![(
-                    item.task.id.clone(),
-                    TaskUpdate {
-                        description: Some(description),
-                        ..TaskUpdate::default()
-                    },
-                )],
-                UndoContext::tui(format!("description {}", item.display_ref)),
-            )
-            .await?;
-        Ok(Some(
-            self.refresh_task_message(
-                &item.task.id,
-                format!("set {} description", item.display_ref),
-            )
-            .await?,
-        ))
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn update_availability(
-        &mut self,
-        index: Option<usize>,
-        available_at: String,
-        preserve_task: bool,
-    ) -> Result<Option<MutationMessage>> {
-        let Some(mut item) = self.selected_task(index).cloned() else {
-            return Ok(None);
-        };
-        let before = item.task.available_at.clone().unwrap_or_default();
-        if available_at == before {
-            return Ok(Some(
-                self.refresh_task_message(
-                    &item.task.id,
-                    format!("unchanged {} availability", item.display_ref),
-                )
-                .await?,
-            ));
-        }
-
-        let report = self
-            .database
-            .mutate_tasks(
-                &self.active_workspace,
-                vec![(
-                    item.task.id.clone(),
-                    TaskUpdate {
-                        available_at: Some(
-                            (!available_at.is_empty()).then(|| available_at.clone()),
-                        ),
-                        ..TaskUpdate::default()
-                    },
-                )],
-                UndoContext::tui(format!("availability {}", item.display_ref)),
-            )
-            .await?;
-        let outcome = report.outcomes.into_iter().next().unwrap();
-        let message = if available_at.is_empty() {
-            format!("cleared {} availability", item.display_ref)
-        } else {
-            format!("set {} availability", item.display_ref)
-        };
-        item.task = outcome.task;
-        let result = if preserve_task {
-            self.refresh_preserved_task_message(index, item, message)
-                .await?
-        } else {
-            self.refresh_task_message(&item.task.id, message).await?
-        };
-        Ok(Some(result))
-    }
-
-    pub(crate) async fn update_availability_for_tasks(
-        &mut self,
-        current_selected_index: Option<usize>,
-        task_ids: &[crate::ids::TaskId],
-        available_at: String,
-        preserve_task: bool,
-    ) -> Result<Option<MutationMessage>> {
-        let targets = self.tasks_matching_ids(task_ids);
-        if targets.is_empty() {
-            return Ok(None);
-        }
-        let mut updates = Vec::new();
-        for item in &targets {
-            let before = item.task.available_at.clone().unwrap_or_default();
-            if before == available_at {
-                continue;
-            }
-            updates.push((
-                item.task.id.clone(),
-                TaskUpdate {
-                    available_at: Some((!available_at.is_empty()).then(|| available_at.clone())),
-                    ..TaskUpdate::default()
-                },
-            ));
-        }
-        let expected_changed = updates.len();
+            })
+            .collect();
         let report = self
             .database
             .mutate_tasks(
                 &self.active_workspace,
                 updates,
-                UndoContext::tui(format!("availability {expected_changed} tasks")),
+                UndoContext::tui(format!("priority {} tasks", selection.len())),
             )
             .await?;
         let changed = report.changed_count();
-        let noun = if targets.len() == 1 { "task" } else { "tasks" };
-        let message = if changed == 0 {
-            format!("availability unchanged on {} {noun}", targets.len())
-        } else if available_at.is_empty() {
+        let message = if selection.is_single() {
+            let priority = report.outcomes[0].task.priority;
             format!(
-                "cleared availability on {changed} {}",
-                if changed == 1 { "task" } else { "tasks" }
+                "set {} priority={priority}",
+                selection.targets()[0].display_ref
             )
+        } else if changed == 0 {
+            format!("priority unchanged on {} tasks", selection.len())
         } else {
-            format!(
-                "set availability on {changed} {}",
-                if changed == 1 { "task" } else { "tasks" }
-            )
+            format!("set priority on {changed} {}", task_noun(changed))
         };
-        let result = if preserve_task && targets.len() == 1 && changed == 1 {
-            let mut item = targets[0].clone();
-            item.task = report.outcomes.into_iter().next().unwrap().task;
-            self.refresh_preserved_task_message(current_selected_index, item, message)
-                .await?
-        } else {
-            self.refresh_after_task_batch(current_selected_index, &targets, message)
-                .await?
-        };
-        Ok(Some(result))
+        self.refresh_task_selection(selection, report, message, false, false)
+            .await
     }
 
-    pub(crate) async fn update_due_for_tasks(
+    pub(crate) async fn mutate_text_selection(
         &mut self,
-        current_selected_index: Option<usize>,
-        task_ids: &[crate::ids::TaskId],
-        due_on: String,
-        preserve_task: bool,
-    ) -> Result<Option<MutationMessage>> {
-        let targets = self.tasks_matching_ids(task_ids);
-        if targets.is_empty() {
-            return Ok(None);
-        }
-        let mut updates = Vec::new();
-        for item in &targets {
-            let before = item.task.due_on.clone().unwrap_or_default();
-            if before == due_on {
-                continue;
-            }
-            updates.push((
-                item.task.id.clone(),
+        selection: &TaskSelection,
+        field: TaskTextField,
+        value: String,
+    ) -> Result<MutationMessage> {
+        let item = &selection.targets()[0];
+        let (update, field_name) = match field {
+            TaskTextField::Title => (
                 TaskUpdate {
-                    due_on: Some((!due_on.is_empty()).then(|| due_on.clone())),
+                    title: Some(value),
                     ..TaskUpdate::default()
                 },
-            ));
-        }
-        let expected_changed = updates.len();
+                "title",
+            ),
+            TaskTextField::Description => (
+                TaskUpdate {
+                    description: Some(value),
+                    ..TaskUpdate::default()
+                },
+                "description",
+            ),
+        };
+        let report = self
+            .database
+            .mutate_tasks(
+                &self.active_workspace,
+                vec![(item.task.id.clone(), update)],
+                UndoContext::tui(format!("{field_name} {}", item.display_ref)),
+            )
+            .await?;
+        let verb = if report.changed_count() == 0 {
+            "unchanged"
+        } else {
+            "set"
+        };
+        let message = format!("{verb} {} {field_name}", item.display_ref);
+        self.refresh_task_selection(selection, report, message, false, false)
+            .await
+    }
+
+    pub(crate) async fn mutate_date_selection(
+        &mut self,
+        selection: &TaskSelection,
+        field: TaskDateField,
+        value: Option<String>,
+        preserve_task: bool,
+    ) -> Result<MutationMessage> {
+        let updates = selection
+            .ids()
+            .cloned()
+            .map(|task_id| {
+                let update = match field {
+                    TaskDateField::Availability => TaskUpdate {
+                        available_at: Some(value.clone()),
+                        ..TaskUpdate::default()
+                    },
+                    TaskDateField::Due => TaskUpdate {
+                        due_on: Some(value.clone()),
+                        ..TaskUpdate::default()
+                    },
+                };
+                (task_id, update)
+            })
+            .collect();
+        let field_name = match field {
+            TaskDateField::Availability => "availability",
+            TaskDateField::Due => "due date",
+        };
         let report = self
             .database
             .mutate_tasks(
                 &self.active_workspace,
                 updates,
-                UndoContext::tui(format!("due date {expected_changed} tasks")),
+                UndoContext::tui(format!("{field_name} {} tasks", selection.len())),
             )
             .await?;
         let changed = report.changed_count();
-        let noun = if targets.len() == 1 { "task" } else { "tasks" };
-        let message = if changed == 0 {
-            format!("due date unchanged on {} {noun}", targets.len())
-        } else if due_on.is_empty() {
-            format!(
-                "cleared due date on {changed} {}",
-                if changed == 1 { "task" } else { "tasks" }
-            )
+        let message = if selection.is_single() {
+            let verb = match (changed, value.is_none()) {
+                (0, _) => "unchanged",
+                (_, true) => "cleared",
+                (_, false) => "set",
+            };
+            format!("{verb} {} {field_name}", selection.targets()[0].display_ref)
+        } else if changed == 0 {
+            format!("{field_name} unchanged on {} tasks", selection.len())
         } else {
-            format!(
-                "set due date on {changed} {}",
-                if changed == 1 { "task" } else { "tasks" }
-            )
+            let verb = if value.is_none() { "cleared" } else { "set" };
+            format!("{verb} {field_name} on {changed} {}", task_noun(changed))
         };
-        let result = if preserve_task && targets.len() == 1 && changed == 1 {
-            let mut item = targets[0].clone();
-            item.task = report.outcomes.into_iter().next().unwrap().task;
-            self.refresh_preserved_task_message(current_selected_index, item, message)
-                .await?
-        } else {
-            self.refresh_after_task_batch(current_selected_index, &targets, message)
-                .await?
-        };
-        Ok(Some(result))
+        self.refresh_task_selection(selection, report, message, preserve_task, false)
+            .await
     }
 
-    #[cfg(test)]
-    pub(crate) async fn update_project(
+    pub(crate) async fn mutate_project_selection(
         &mut self,
-        index: Option<usize>,
+        selection: &TaskSelection,
         project: String,
-    ) -> Result<Option<MutationMessage>> {
-        let Some(item) = self.selected_task(index).cloned() else {
-            return Ok(None);
-        };
-        self.database
-            .mutate_tasks(
-                &self.active_workspace,
-                vec![(
-                    item.task.id.clone(),
+    ) -> Result<MutationMessage> {
+        let updates = selection
+            .ids()
+            .cloned()
+            .map(|task_id| {
+                (
+                    task_id,
                     TaskUpdate {
-                        project: Some(project),
+                        project: Some(project.clone()),
                         ..TaskUpdate::default()
                     },
-                )],
-                UndoContext::tui(format!("project {}", item.display_ref)),
-            )
-            .await?;
-        Ok(Some(
-            self.refresh_task_message(&item.task.id, format!("set {} project", item.display_ref))
-                .await?,
-        ))
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn update_labels(
-        &mut self,
-        index: Option<usize>,
-        selected_labels: Vec<String>,
-    ) -> Result<Option<MutationMessage>> {
-        let Some(item) = self.selected_task(index).cloned() else {
-            return Ok(None);
-        };
-        let add_labels = selected_labels
-            .iter()
-            .filter(|label| !item.labels.contains(label))
-            .cloned()
-            .collect::<Vec<_>>();
-        let remove_labels = item
-            .labels
-            .iter()
-            .filter(|label| !selected_labels.contains(label))
-            .cloned()
-            .collect::<Vec<_>>();
-        self.database
+                )
+            })
+            .collect();
+        let report = self
+            .database
             .mutate_tasks(
                 &self.active_workspace,
-                vec![(
+                updates,
+                UndoContext::tui(format!("project {} tasks", selection.len())),
+            )
+            .await?;
+        let changed = report.changed_count();
+        let message = if selection.is_single() {
+            format!("set {} project", selection.targets()[0].display_ref)
+        } else if changed == 0 {
+            format!("project unchanged on {} tasks", selection.len())
+        } else {
+            format!("set project on {changed} {}", task_noun(changed))
+        };
+        self.refresh_task_selection(selection, report, message, false, false)
+            .await
+    }
+
+    pub(crate) async fn mutate_labels_selection(
+        &mut self,
+        selection: &TaskSelection,
+        selected_labels: Vec<String>,
+        partial_labels: Vec<String>,
+    ) -> Result<MutationMessage> {
+        let selected = selected_labels.iter().collect::<BTreeSet<_>>();
+        let partial = partial_labels.iter().collect::<BTreeSet<_>>();
+        let updates = selection
+            .targets()
+            .iter()
+            .map(|item| {
+                let add_labels = selected_labels
+                    .iter()
+                    .filter(|label| !item.labels.contains(label))
+                    .cloned()
+                    .collect();
+                let remove_labels = item
+                    .labels
+                    .iter()
+                    .filter(|label| !selected.contains(label) && !partial.contains(label))
+                    .cloned()
+                    .collect();
+                (
                     item.task.id.clone(),
                     TaskUpdate {
                         add_labels,
                         remove_labels,
                         ..TaskUpdate::default()
                     },
-                )],
-                UndoContext::tui(format!("labels {}", item.display_ref)),
+                )
+            })
+            .collect();
+        let report = self
+            .database
+            .mutate_tasks(
+                &self.active_workspace,
+                updates,
+                UndoContext::tui(format!("labels {} tasks", selection.len())),
             )
             .await?;
-        Ok(Some(
-            self.refresh_task_message(&item.task.id, format!("set {} labels", item.display_ref))
-                .await?,
-        ))
+        let changed = report.changed_count();
+        let message = if selection.is_single() {
+            format!("set {} labels", selection.targets()[0].display_ref)
+        } else if changed == 0 {
+            format!("labels unchanged on {} tasks", selection.len())
+        } else {
+            format!("set labels on {changed} {}", task_noun(changed))
+        };
+        self.refresh_task_selection(selection, report, message, false, false)
+            .await
     }
 
-    pub(crate) async fn update_deleted(
+    pub(crate) async fn mutate_deleted_selection(
         &mut self,
-        index: Option<usize>,
+        selection: &TaskSelection,
         deleted: bool,
-    ) -> Result<Option<MutationMessage>> {
-        if let Some(item) = self.selected_task(index).cloned() {
-            if item.task.deleted == deleted {
-                return Ok(Some(MutationMessage::new(
-                    if deleted {
-                        format!("already deleted {}", item.display_ref)
-                    } else {
-                        format!("already restored {}", item.display_ref)
+    ) -> Result<MutationMessage> {
+        let updates = selection
+            .ids()
+            .cloned()
+            .map(|task_id| {
+                (
+                    task_id,
+                    TaskUpdate {
+                        deleted: Some(deleted),
+                        ..TaskUpdate::default()
                     },
-                    index,
-                )));
-            }
-
-            let summary = if deleted {
-                format!("delete {}", item.display_ref)
-            } else {
-                format!("restore {}", item.display_ref)
-            };
-            self.database
-                .mutate_tasks(
-                    &self.active_workspace,
-                    vec![(
-                        item.task.id.clone(),
-                        TaskUpdate {
-                            deleted: Some(deleted),
-                            ..TaskUpdate::default()
-                        },
-                    )],
-                    UndoContext::tui(summary),
                 )
-                .await?;
-            if deleted {
-                if let Some(index) = index
-                    && let Some(current) = self.tasks.get_mut(index)
-                {
-                    current.task.deleted = true;
-                }
-                return Ok(Some(MutationMessage::new(
-                    format!("deleted {}", item.display_ref),
-                    index,
-                )));
+            })
+            .collect();
+        let report = self
+            .database
+            .mutate_tasks(
+                &self.active_workspace,
+                updates,
+                UndoContext::tui(format!(
+                    "{} {} tasks",
+                    if deleted { "delete" } else { "restore" },
+                    selection.len()
+                )),
+            )
+            .await?;
+        let changed = report.changed_count();
+        let message = if selection.is_single() {
+            let verb = match (deleted, changed) {
+                (true, 0) => "already deleted",
+                (false, 0) => "already restored",
+                (true, _) => "deleted",
+                (false, _) => "restored",
+            };
+            format!("{verb} {}", selection.targets()[0].display_ref)
+        } else {
+            match (deleted, changed) {
+                (true, 0) => format!("already deleted {} tasks", selection.len()),
+                (false, 0) => format!("already restored {} tasks", selection.len()),
+                (true, _) => format!("deleted {changed} tasks"),
+                (false, _) => format!("restored {changed} tasks"),
             }
-            return Ok(Some(
-                self.refresh_task_message(&item.task.id, format!("restored {}", item.display_ref))
-                    .await?,
+        };
+        if deleted && selection.is_single() && !selection.uses_marks() {
+            if let Some(item) = self
+                .tasks
+                .iter_mut()
+                .find(|item| item.task.id == selection.targets()[0].task.id)
+            {
+                item.task.deleted = true;
+            }
+            return Ok(MutationMessage::new(
+                message,
+                Some(selection.anchor_index()),
             ));
         }
-        Ok(None)
+        self.refresh_task_selection(selection, report, message, false, false)
+            .await
+    }
+
+    async fn refresh_task_selection(
+        &mut self,
+        selection: &TaskSelection,
+        report: TaskMutationReport,
+        message: String,
+        preserve_task: bool,
+        restore_by_index: bool,
+    ) -> Result<MutationMessage> {
+        if preserve_task && selection.is_single() && report.changed_count() == 1 {
+            let mut item = selection.targets()[0].clone();
+            item.task = report.outcomes.into_iter().next().unwrap().task;
+            self.refresh(None).await?;
+            let selected = match self
+                .tasks
+                .iter()
+                .position(|task| task.task.id == item.task.id)
+            {
+                Some(index) => Some(index),
+                None => {
+                    let index = selection.anchor_index().min(self.tasks.len());
+                    self.tasks.insert(index, item);
+                    Some(index)
+                }
+            };
+            return Ok(MutationMessage::new(message, selected));
+        }
+        if restore_by_index && !preserve_task {
+            self.refresh(None).await?;
+            let selected = self.restored_task_selection_at_index(Some(selection.anchor_index()));
+            return Ok(MutationMessage::new(message, selected));
+        }
+        let selected = self.refresh(Some(selection.anchor_id())).await?;
+        Ok(MutationMessage::new(message, selected))
     }
 
     pub(crate) async fn add_dependency(
@@ -713,211 +535,78 @@ impl TuiStore {
             .await?,
         ))
     }
+}
 
-    fn tasks_matching_ids(&self, task_ids: &[crate::ids::TaskId]) -> Vec<TaskListItem> {
-        let task_ids = task_ids.iter().collect::<BTreeSet<_>>();
-        self.tasks
-            .iter()
-            .filter(|item| task_ids.contains(&item.task.id))
-            .cloned()
-            .collect()
-    }
-
-    async fn refresh_after_task_batch(
-        &mut self,
-        current_selected_index: Option<usize>,
-        targets: &[TaskListItem],
-        message: String,
-    ) -> Result<MutationMessage> {
-        let selected_id = self
-            .selected_task(current_selected_index)
-            .map(|item| item.task.id.clone());
-        let fallback_id = targets.first().map(|item| item.task.id.clone());
-        let selected = self
-            .refresh(selected_id.as_ref().or(fallback_id.as_ref()))
-            .await?;
-        Ok(MutationMessage::new(message, selected))
-    }
-
-    pub(crate) async fn update_status_for_tasks(
-        &mut self,
-        current_selected_index: Option<usize>,
+#[cfg(test)]
+impl TuiStore {
+    fn test_selection(
+        &self,
+        selected: Option<usize>,
         task_ids: &[crate::ids::TaskId],
+    ) -> Option<TaskSelection> {
+        TaskSelection::from_ids(&self.tasks, task_ids, selected)
+    }
+
+    fn test_selected(&self, selected: Option<usize>) -> Option<TaskSelection> {
+        let id = self.selected_task(selected)?.task.id.clone();
+        self.test_selection(selected, &[id])
+    }
+
+    pub(crate) async fn update_status(
+        &mut self,
+        selected: Option<usize>,
         status: &str,
     ) -> Result<Option<MutationMessage>> {
-        self.update_status_for_tasks_with_refresh(
-            current_selected_index,
-            task_ids,
-            status,
-            StatusRefresh::Default,
-        )
-        .await
-    }
-
-    pub(crate) async fn update_status_for_tasks_preserving_task(
-        &mut self,
-        current_selected_index: Option<usize>,
-        task_ids: &[crate::ids::TaskId],
-        status: &str,
-    ) -> Result<Option<MutationMessage>> {
-        self.update_status_for_tasks_with_refresh(
-            current_selected_index,
-            task_ids,
-            status,
-            StatusRefresh::PreserveTask,
-        )
-        .await
-    }
-
-    async fn update_status_for_tasks_with_refresh(
-        &mut self,
-        current_selected_index: Option<usize>,
-        task_ids: &[crate::ids::TaskId],
-        status: &str,
-        refresh: StatusRefresh,
-    ) -> Result<Option<MutationMessage>> {
-        let targets = self.tasks_matching_ids(task_ids);
-        if targets.is_empty() {
+        let Some(selection) = self.test_selected(selected) else {
             return Ok(None);
-        }
-
-        let mut updates = Vec::new();
-        for item in &targets {
-            let before = item.task.status.as_str();
-            if before == status {
-                continue;
-            }
-            updates.push((
-                item.task.id.clone(),
-                TaskUpdate {
-                    status: Some(status.to_string()),
-                    ..TaskUpdate::default()
-                },
-            ));
-        }
-        let expected_changed = updates.len();
-        let report = self
-            .database
-            .mutate_tasks(
-                &self.active_workspace,
-                updates,
-                UndoContext::tui(format!("status {expected_changed} tasks")),
-            )
-            .await?;
-
-        let changed = report.changed_count();
-        let message = if changed == 0 {
-            format!(
-                "status unchanged on {} {}",
-                targets.len(),
-                task_noun(targets.len())
-            )
-        } else {
-            format!("set status on {changed} {}", task_noun(changed))
-        };
-        let result = match refresh {
-            StatusRefresh::Default => {
-                self.refresh_index_message(current_selected_index, message)
-                    .await?
-            }
-            StatusRefresh::PreserveTask => {
-                self.refresh_after_task_batch(current_selected_index, &targets, message)
-                    .await?
-            }
-        };
-        Ok(Some(result))
-    }
-
-    pub(crate) async fn update_status_changes_for_tasks(
-        &mut self,
-        current_selected_index: Option<usize>,
-        changes: &[(crate::ids::TaskId, String)],
-    ) -> Result<Option<MutationMessage>> {
-        let status_by_id = changes.iter().cloned().collect::<BTreeMap<_, _>>();
-        let task_ids = status_by_id.keys().cloned().collect::<Vec<_>>();
-        let targets = self.tasks_matching_ids(&task_ids);
-        if targets.is_empty() {
-            return Ok(None);
-        }
-
-        let mut updates = Vec::new();
-        for item in &targets {
-            let Some(status) = status_by_id.get(&item.task.id) else {
-                continue;
-            };
-            if item.task.status.as_str() == status {
-                continue;
-            }
-            updates.push((
-                item.task.id.clone(),
-                TaskUpdate {
-                    status: Some(status.clone()),
-                    ..TaskUpdate::default()
-                },
-            ));
-        }
-        let expected_changed = updates.len();
-        let report = self
-            .database
-            .mutate_tasks(
-                &self.active_workspace,
-                updates,
-                UndoContext::tui(format!("move {expected_changed} tasks between columns")),
-            )
-            .await?;
-
-        let changed = report.changed_count();
-        let message = if changed == 0 {
-            format!("column unchanged on {} tasks", targets.len())
-        } else {
-            format!("moved {changed} tasks between columns")
         };
         Ok(Some(
-            self.refresh_after_task_batch(current_selected_index, &targets, message)
+            self.mutate_status_selection(&selection, TaskStatus::parse(status)?, false)
                 .await?,
         ))
     }
 
-    pub(crate) async fn update_priority_for_tasks(
+    pub(crate) async fn update_status_preserving_task(
         &mut self,
-        current_selected_index: Option<usize>,
-        task_ids: &[crate::ids::TaskId],
-        reverse: bool,
+        selected: Option<usize>,
+        status: &str,
     ) -> Result<Option<MutationMessage>> {
-        let targets = self.tasks_matching_ids(task_ids);
-        if targets.is_empty() {
+        let Some(selection) = self.test_selected(selected) else {
             return Ok(None);
-        }
-
-        let updates = targets
-            .iter()
-            .map(|item| {
-                let priority = cycled_priority(item.task.priority, reverse);
-                (
-                    item.task.id.clone(),
-                    TaskUpdate {
-                        priority: Some(priority.as_str().to_string()),
-                        ..TaskUpdate::default()
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
-        let expected_changed = updates.len();
-        let report = self
-            .database
-            .mutate_tasks(
-                &self.active_workspace,
-                updates,
-                UndoContext::tui(format!("priority {expected_changed} tasks")),
-            )
-            .await?;
-
-        let changed = report.changed_count();
+        };
         Ok(Some(
-            self.refresh_after_task_batch(
-                current_selected_index,
-                &targets,
-                format!("set priority on {changed} {}", task_noun(changed)),
+            self.mutate_status_selection(&selection, TaskStatus::parse(status)?, true)
+                .await?,
+        ))
+    }
+
+    pub(crate) async fn update_status_for_tasks(
+        &mut self,
+        selected: Option<usize>,
+        task_ids: &[crate::ids::TaskId],
+        status: &str,
+    ) -> Result<Option<MutationMessage>> {
+        let Some(selection) = self.test_selection(selected, task_ids) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.mutate_status_selection(&selection, TaskStatus::parse(status)?, false)
+                .await?,
+        ))
+    }
+
+    pub(crate) async fn set_exact_priority(
+        &mut self,
+        selected: Option<usize>,
+        priority: &str,
+    ) -> Result<Option<MutationMessage>> {
+        let Some(selection) = self.test_selected(selected) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.mutate_priority_selection(
+                &selection,
+                PriorityMutation::Set(TaskPriority::parse(priority)?),
             )
             .await?,
         ))
@@ -925,228 +614,205 @@ impl TuiStore {
 
     pub(crate) async fn set_exact_priority_for_tasks(
         &mut self,
-        current_selected_index: Option<usize>,
+        selected: Option<usize>,
         task_ids: &[crate::ids::TaskId],
         priority: &str,
     ) -> Result<Option<MutationMessage>> {
-        let targets = self.tasks_matching_ids(task_ids);
-        if targets.is_empty() {
+        let Some(selection) = self.test_selection(selected, task_ids) else {
             return Ok(None);
-        }
-
-        let mut updates = Vec::new();
-        for item in &targets {
-            if item.task.priority.as_str() == priority {
-                continue;
-            }
-            updates.push((
-                item.task.id.clone(),
-                TaskUpdate {
-                    priority: Some(priority.to_string()),
-                    ..TaskUpdate::default()
-                },
-            ));
-        }
-        let expected_changed = updates.len();
-        let report = self
-            .database
-            .mutate_tasks(
-                &self.active_workspace,
-                updates,
-                UndoContext::tui(format!("priority {expected_changed} tasks")),
-            )
-            .await?;
-
-        let changed = report.changed_count();
-        let message = if changed == 0 {
-            format!(
-                "priority unchanged on {} {}",
-                targets.len(),
-                task_noun(targets.len())
-            )
-        } else {
-            format!("set priority on {changed} {}", task_noun(changed))
         };
         Ok(Some(
-            self.refresh_after_task_batch(current_selected_index, &targets, message)
-                .await?,
+            self.mutate_priority_selection(
+                &selection,
+                PriorityMutation::Set(TaskPriority::parse(priority)?),
+            )
+            .await?,
+        ))
+    }
+
+    pub(crate) async fn update_title(
+        &mut self,
+        selected: Option<usize>,
+        title: String,
+    ) -> Result<Option<MutationMessage>> {
+        self.test_mutate_text(selected, TaskTextField::Title, title.trim().to_string())
+            .await
+    }
+
+    pub(crate) async fn update_description(
+        &mut self,
+        selected: Option<usize>,
+        description: String,
+    ) -> Result<Option<MutationMessage>> {
+        self.test_mutate_text(selected, TaskTextField::Description, description)
+            .await
+    }
+
+    async fn test_mutate_text(
+        &mut self,
+        selected: Option<usize>,
+        field: TaskTextField,
+        value: String,
+    ) -> Result<Option<MutationMessage>> {
+        let Some(selection) = self.test_selected(selected) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.mutate_text_selection(&selection, field, value).await?,
+        ))
+    }
+
+    pub(crate) async fn update_availability(
+        &mut self,
+        selected: Option<usize>,
+        value: String,
+        preserve_task: bool,
+    ) -> Result<Option<MutationMessage>> {
+        let Some(selection) = self.test_selected(selected) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.mutate_date_selection(
+                &selection,
+                TaskDateField::Availability,
+                (!value.is_empty()).then_some(value),
+                preserve_task,
+            )
+            .await?,
+        ))
+    }
+
+    pub(crate) async fn update_availability_for_tasks(
+        &mut self,
+        selected: Option<usize>,
+        task_ids: &[crate::ids::TaskId],
+        value: String,
+        preserve_task: bool,
+    ) -> Result<Option<MutationMessage>> {
+        self.test_mutate_date(
+            selected,
+            task_ids,
+            TaskDateField::Availability,
+            value,
+            preserve_task,
+        )
+        .await
+    }
+
+    pub(crate) async fn update_due_for_tasks(
+        &mut self,
+        selected: Option<usize>,
+        task_ids: &[crate::ids::TaskId],
+        value: String,
+        preserve_task: bool,
+    ) -> Result<Option<MutationMessage>> {
+        self.test_mutate_date(selected, task_ids, TaskDateField::Due, value, preserve_task)
+            .await
+    }
+
+    async fn test_mutate_date(
+        &mut self,
+        selected: Option<usize>,
+        task_ids: &[crate::ids::TaskId],
+        field: TaskDateField,
+        value: String,
+        preserve_task: bool,
+    ) -> Result<Option<MutationMessage>> {
+        let Some(selection) = self.test_selection(selected, task_ids) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.mutate_date_selection(
+                &selection,
+                field,
+                (!value.is_empty()).then_some(value),
+                preserve_task,
+            )
+            .await?,
+        ))
+    }
+
+    pub(crate) async fn update_project(
+        &mut self,
+        selected: Option<usize>,
+        project: String,
+    ) -> Result<Option<MutationMessage>> {
+        let Some(selection) = self.test_selected(selected) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.mutate_project_selection(&selection, project).await?,
         ))
     }
 
     pub(crate) async fn update_project_for_tasks(
         &mut self,
-        current_selected_index: Option<usize>,
+        selected: Option<usize>,
         task_ids: &[crate::ids::TaskId],
         project: String,
     ) -> Result<Option<MutationMessage>> {
-        let targets = self.tasks_matching_ids(task_ids);
-        if targets.is_empty() {
+        let Some(selection) = self.test_selection(selected, task_ids) else {
             return Ok(None);
-        }
-
-        let updates = targets
-            .iter()
-            .map(|item| {
-                (
-                    item.task.id.clone(),
-                    TaskUpdate {
-                        project: Some(project.clone()),
-                        ..TaskUpdate::default()
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
-        let expected_changed = updates.len();
-        let report = self
-            .database
-            .mutate_tasks(
-                &self.active_workspace,
-                updates,
-                UndoContext::tui(format!("project {expected_changed} tasks")),
-            )
-            .await?;
-
-        let changed = report.changed_count();
-        let message = if changed == 0 {
-            format!(
-                "project unchanged on {} {}",
-                targets.len(),
-                task_noun(targets.len())
-            )
-        } else {
-            format!("set project on {changed} {}", task_noun(changed))
         };
         Ok(Some(
-            self.refresh_after_task_batch(current_selected_index, &targets, message)
-                .await?,
+            self.mutate_project_selection(&selection, project).await?,
         ))
     }
 
-    pub(crate) async fn update_deleted_for_tasks(
+    pub(crate) async fn update_labels(
         &mut self,
-        current_selected_index: Option<usize>,
-        task_ids: &[crate::ids::TaskId],
-        deleted: bool,
+        selected: Option<usize>,
+        labels: Vec<String>,
     ) -> Result<Option<MutationMessage>> {
-        let targets = self.tasks_matching_ids(task_ids);
-        if targets.is_empty() {
+        let Some(selection) = self.test_selected(selected) else {
             return Ok(None);
-        }
-
-        let mut updates = Vec::new();
-        for item in &targets {
-            if item.task.deleted == deleted {
-                continue;
-            }
-            updates.push((
-                item.task.id.clone(),
-                TaskUpdate {
-                    deleted: Some(deleted),
-                    ..TaskUpdate::default()
-                },
-            ));
-        }
-        let expected_changed = updates.len();
-        let summary = if deleted { "delete" } else { "restore" };
-        let report = self
-            .database
-            .mutate_tasks(
-                &self.active_workspace,
-                updates,
-                UndoContext::tui(format!("{summary} {expected_changed} tasks")),
-            )
-            .await?;
-
-        let changed = report.changed_count();
-        let message = match (deleted, changed) {
-            (true, 0) => format!("already deleted {} tasks", targets.len()),
-            (false, 0) => format!("already restored {} tasks", targets.len()),
-            (true, _) => format!("deleted {changed} tasks"),
-            (false, _) => format!("restored {changed} tasks"),
         };
         Ok(Some(
-            self.refresh_after_task_batch(current_selected_index, &targets, message)
+            self.mutate_labels_selection(&selection, labels, Vec::new())
                 .await?,
         ))
     }
 
     pub(crate) async fn update_labels_for_tasks(
         &mut self,
-        current_selected_index: Option<usize>,
+        selected: Option<usize>,
         task_ids: &[crate::ids::TaskId],
-        selected_labels: Vec<String>,
+        labels: Vec<String>,
         partial_labels: Vec<String>,
     ) -> Result<Option<MutationMessage>> {
-        if task_ids.is_empty() {
+        let Some(selection) = self.test_selection(selected, task_ids) else {
             return Ok(None);
-        }
-        let selected_id = self
-            .selected_task(current_selected_index)
-            .map(|item| item.task.id.clone());
-        let task_ids = task_ids.iter().collect::<BTreeSet<_>>();
-        let selected_label_set = selected_labels.iter().collect::<BTreeSet<_>>();
-        let partial_label_set = partial_labels.iter().collect::<BTreeSet<_>>();
-        let targets = self
-            .tasks
-            .iter()
-            .filter(|item| task_ids.contains(&item.task.id))
-            .cloned()
-            .collect::<Vec<_>>();
-        if targets.is_empty() {
-            return Ok(None);
-        }
-
-        let mut updates = Vec::new();
-        for item in &targets {
-            let before = &item.labels;
-            let add_labels = selected_labels
-                .iter()
-                .filter(|label| !before.contains(label))
-                .cloned()
-                .collect::<Vec<_>>();
-            let remove_labels = before
-                .iter()
-                .filter(|label| {
-                    !selected_label_set.contains(label) && !partial_label_set.contains(label)
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            if add_labels.is_empty() && remove_labels.is_empty() {
-                continue;
-            }
-            updates.push((
-                item.task.id.clone(),
-                TaskUpdate {
-                    add_labels,
-                    remove_labels,
-                    ..TaskUpdate::default()
-                },
-            ));
-        }
-        let expected_changed = updates.len();
-        let report = self
-            .database
-            .mutate_tasks(
-                &self.active_workspace,
-                updates,
-                UndoContext::tui(format!("labels {expected_changed} tasks")),
-            )
-            .await?;
-
-        let changed = report.changed_count();
-        let fallback_id = targets.first().map(|item| item.task.id.clone());
-        let selected = self
-            .refresh(selected_id.as_ref().or(fallback_id.as_ref()))
-            .await?;
-        let message = if changed == 0 {
-            format!(
-                "labels unchanged on {} {}",
-                targets.len(),
-                task_noun(targets.len())
-            )
-        } else {
-            format!("set labels on {changed} {}", task_noun(changed))
         };
-        Ok(Some(MutationMessage::new(message, selected)))
+        Ok(Some(
+            self.mutate_labels_selection(&selection, labels, partial_labels)
+                .await?,
+        ))
+    }
+
+    pub(crate) async fn update_deleted(
+        &mut self,
+        selected: Option<usize>,
+        deleted: bool,
+    ) -> Result<Option<MutationMessage>> {
+        let Some(selection) = self.test_selected(selected) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.mutate_deleted_selection(&selection, deleted).await?,
+        ))
+    }
+
+    pub(crate) async fn update_deleted_for_tasks(
+        &mut self,
+        selected: Option<usize>,
+        task_ids: &[crate::ids::TaskId],
+        deleted: bool,
+    ) -> Result<Option<MutationMessage>> {
+        let Some(selection) = self.test_selection(selected, task_ids) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.mutate_deleted_selection(&selection, deleted).await?,
+        ))
     }
 }
