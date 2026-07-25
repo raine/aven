@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::query::TaskListItem;
 use crate::tui::store::MutationMessage;
-use crate::undo::UndoCommand;
+use crate::undo::{UndoCommand, UndoContext};
 use aven_core::operations::TaskUpdate;
 
 use super::TuiStore;
@@ -69,23 +69,23 @@ impl TuiStore {
             return Ok(None);
         };
 
-        let before = item.task.status.as_str().to_string();
-        let task = self
+        let report = self
             .database
-            .set_task_status(&self.active_workspace, &item.task, status)
+            .mutate_tasks(
+                &self.active_workspace,
+                vec![(
+                    item.task.id.clone(),
+                    TaskUpdate {
+                        status: Some(status.to_string()),
+                        ..TaskUpdate::default()
+                    },
+                )],
+                UndoContext::tui(format!("status {}", item.display_ref)),
+            )
             .await?;
-        self.record_undo_commands(
-            &format!("status {}", item.display_ref),
-            vec![UndoCommand::SetTaskField {
-                task_id: item.task.id.clone(),
-                field: "status".to_string(),
-                before,
-                after: status.to_string(),
-            }],
-        )
-        .await?;
+        let outcome = report.outcomes.into_iter().next().unwrap();
         let message = format!("set {} status={status}", item.display_ref);
-        item.task = task;
+        item.task = outcome.task;
         let result = match refresh {
             StatusRefresh::PreserveTask => {
                 self.refresh_preserved_task_message(index, item, message)
@@ -850,10 +850,9 @@ impl TuiStore {
             return Ok(None);
         }
 
-        let mut undo_commands = Vec::new();
         let mut updates = Vec::new();
         for item in &targets {
-            let before = item.task.status.as_str().to_string();
+            let before = item.task.status.as_str();
             if before == status {
                 continue;
             }
@@ -864,22 +863,18 @@ impl TuiStore {
                     ..TaskUpdate::default()
                 },
             ));
-            undo_commands.push(UndoCommand::SetTaskField {
-                task_id: item.task.id.clone(),
-                field: "status".to_string(),
-                before,
-                after: status.to_string(),
-            });
         }
-        self.database
-            .update_tasks(&self.active_workspace, updates)
+        let expected_changed = updates.len();
+        let report = self
+            .database
+            .mutate_tasks(
+                &self.active_workspace,
+                updates,
+                UndoContext::tui(format!("status {expected_changed} tasks")),
+            )
             .await?;
 
-        let changed = undo_commands.len();
-        if changed > 0 {
-            self.record_undo_commands(&format!("status {changed} tasks"), undo_commands)
-                .await?;
-        }
+        let changed = report.changed_count();
         let message = if changed == 0 {
             format!(
                 "status unchanged on {} {}",
@@ -914,14 +909,12 @@ impl TuiStore {
             return Ok(None);
         }
 
-        let mut undo_commands = Vec::new();
         let mut updates = Vec::new();
         for item in &targets {
             let Some(status) = status_by_id.get(&item.task.id) else {
                 continue;
             };
-            let before = item.task.status.as_str().to_string();
-            if before == *status {
+            if item.task.status.as_str() == status {
                 continue;
             }
             updates.push((
@@ -931,25 +924,18 @@ impl TuiStore {
                     ..TaskUpdate::default()
                 },
             ));
-            undo_commands.push(UndoCommand::SetTaskField {
-                task_id: item.task.id.clone(),
-                field: "status".to_string(),
-                before,
-                after: status.clone(),
-            });
         }
-        self.database
-            .update_tasks(&self.active_workspace, updates)
-            .await?;
-
-        let changed = undo_commands.len();
-        if changed > 0 {
-            self.record_undo_commands(
-                &format!("move {changed} tasks between columns"),
-                undo_commands,
+        let expected_changed = updates.len();
+        let report = self
+            .database
+            .mutate_tasks(
+                &self.active_workspace,
+                updates,
+                UndoContext::tui(format!("move {expected_changed} tasks between columns")),
             )
             .await?;
-        }
+
+        let changed = report.changed_count();
         let message = if changed == 0 {
             format!("column unchanged on {} tasks", targets.len())
         } else {

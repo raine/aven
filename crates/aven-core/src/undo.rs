@@ -31,6 +31,23 @@ pub struct UndoPayload {
     pub commands: Vec<UndoCommand>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub enum UndoContext {
+    #[default]
+    None,
+    Tui {
+        summary: String,
+    },
+}
+
+impl UndoContext {
+    pub fn tui(summary: impl Into<String>) -> Self {
+        Self::Tui {
+            summary: summary.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum UndoCommand {
@@ -115,6 +132,8 @@ pub struct TaskUndoSnapshot {
     #[serde(default)]
     pub due_on: String,
     pub deleted: bool,
+    #[serde(default)]
+    pub is_epic: bool,
     pub labels: Vec<String>,
 }
 
@@ -264,6 +283,7 @@ pub(crate) async fn task_snapshot(
         available_at: row.get("available_at"),
         due_on: row.get("due_on"),
         deleted: row.get::<i64, _>("deleted") != 0,
+        is_epic: row.get::<i64, _>("is_epic") != 0,
         labels,
     })
 }

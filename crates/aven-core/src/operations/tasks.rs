@@ -16,6 +16,9 @@ use crate::projects::resolve_or_create_project_in_workspace;
 use crate::refs::get_task_in_workspace;
 use crate::task_fields::TaskField;
 use crate::types::Task;
+use crate::undo::{
+    TaskUndoSnapshot, UndoCommand, UndoContext, UndoPayload, record_tui_undo, task_snapshot,
+};
 use crate::workspaces::Workspace;
 
 pub struct TaskDraft {
@@ -61,6 +64,28 @@ pub struct TaskUpdate {
 pub struct TaskUpdateOutcome {
     pub task: Task,
     pub changed: bool,
+}
+
+#[derive(Debug)]
+pub struct TaskMutationOutcome {
+    pub task: Task,
+    pub before: TaskUndoSnapshot,
+    pub after: TaskUndoSnapshot,
+    pub changed: bool,
+}
+
+#[derive(Debug)]
+pub struct TaskMutationReport {
+    pub outcomes: Vec<TaskMutationOutcome>,
+}
+
+impl TaskMutationReport {
+    pub fn changed_count(&self) -> usize {
+        self.outcomes
+            .iter()
+            .filter(|outcome| outcome.changed)
+            .count()
+    }
 }
 
 pub struct NoteDeleteOutcome {
@@ -145,10 +170,18 @@ impl Database {
         task_id: &TaskId,
         update: TaskUpdate,
     ) -> Result<TaskUpdateOutcome> {
-        let mut outcomes = self
-            .update_tasks(workspace, vec![(task_id.clone(), update)])
+        let report = self
+            .mutate_tasks(
+                workspace,
+                vec![(task_id.clone(), update)],
+                UndoContext::None,
+            )
             .await?;
-        Ok(outcomes.remove(0))
+        let outcome = report.outcomes.into_iter().next().unwrap();
+        Ok(TaskUpdateOutcome {
+            task: outcome.task,
+            changed: outcome.changed,
+        })
     }
 
     pub async fn update_tasks(
@@ -156,27 +189,62 @@ impl Database {
         workspace: &Workspace,
         updates: Vec<(TaskId, TaskUpdate)>,
     ) -> Result<Vec<TaskUpdateOutcome>> {
+        Ok(self
+            .mutate_tasks(workspace, updates, UndoContext::None)
+            .await?
+            .outcomes
+            .into_iter()
+            .map(|outcome| TaskUpdateOutcome {
+                task: outcome.task,
+                changed: outcome.changed,
+            })
+            .collect())
+    }
+
+    pub async fn mutate_tasks(
+        &self,
+        workspace: &Workspace,
+        updates: Vec<(TaskId, TaskUpdate)>,
+        undo: UndoContext,
+    ) -> Result<TaskMutationReport> {
         for (_, update) in &updates {
             validate_task_update(update)?;
         }
 
         let mut conn = self.acquire().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let mut changed = Vec::with_capacity(updates.len());
+        let mut outcomes = Vec::with_capacity(updates.len());
+        let mut undo_commands = Vec::new();
         for (task_id, update) in &updates {
-            changed.push(apply_task_update(&mut tx, workspace, task_id, update).await?);
+            let before = task_snapshot(&mut tx, &workspace.id, task_id).await?;
+            apply_task_update(&mut tx, workspace, task_id, update).await?;
+            let task = get_task_in_workspace(&mut tx, workspace, task_id).await?;
+            let after = task_snapshot(&mut tx, &workspace.id, task_id).await?;
+            append_task_undo_commands(task_id, &before, &after, &mut undo_commands);
+            outcomes.push(TaskMutationOutcome {
+                task,
+                changed: before != after,
+                before,
+                after,
+            });
+        }
+        if let UndoContext::Tui { summary } = undo {
+            record_tui_undo(
+                &mut tx,
+                &workspace.id,
+                &summary,
+                UndoPayload {
+                    commands: undo_commands,
+                },
+            )
+            .await?;
         }
         tx.commit().await?;
 
-        let mut outcomes = Vec::with_capacity(updates.len());
-        for ((task_id, _), changed) in updates.into_iter().zip(changed) {
-            info!(task_id = %task_id, changed, "task updated");
-            outcomes.push(TaskUpdateOutcome {
-                task: get_task_in_workspace(&mut conn, workspace, &task_id).await?,
-                changed,
-            });
+        for outcome in &outcomes {
+            info!(task_id = %outcome.task.id, changed = outcome.changed, "task updated");
         }
-        Ok(outcomes)
+        Ok(TaskMutationReport { outcomes })
     }
 
     pub async fn set_task_deleted(
@@ -604,6 +672,76 @@ pub async fn update_task(
         task: get_task_in_workspace(conn, workspace, task_id).await?,
         changed,
     })
+}
+
+fn append_task_undo_commands(
+    task_id: &TaskId,
+    before: &TaskUndoSnapshot,
+    after: &TaskUndoSnapshot,
+    commands: &mut Vec<UndoCommand>,
+) {
+    let fields = [
+        ("title", before.title.as_str(), after.title.as_str()),
+        (
+            "description",
+            before.description.as_str(),
+            after.description.as_str(),
+        ),
+        (
+            "project",
+            before.project_id.as_str(),
+            after.project_id.as_str(),
+        ),
+        ("status", before.status.as_str(), after.status.as_str()),
+        (
+            "priority",
+            before.priority.as_str(),
+            after.priority.as_str(),
+        ),
+        (
+            "available_at",
+            before.available_at.as_str(),
+            after.available_at.as_str(),
+        ),
+        ("due_on", before.due_on.as_str(), after.due_on.as_str()),
+    ];
+    for (field, before, after) in fields {
+        if before != after {
+            commands.push(UndoCommand::SetTaskField {
+                task_id: task_id.clone(),
+                field: field.to_string(),
+                before: before.to_string(),
+                after: after.to_string(),
+            });
+        }
+    }
+    let before_deleted = if before.deleted { "1" } else { "0" };
+    let after_deleted = if after.deleted { "1" } else { "0" };
+    if before_deleted != after_deleted {
+        commands.push(UndoCommand::SetTaskField {
+            task_id: task_id.clone(),
+            field: "deleted".to_string(),
+            before: before_deleted.to_string(),
+            after: after_deleted.to_string(),
+        });
+    }
+    let before_is_epic = if before.is_epic { "1" } else { "0" };
+    let after_is_epic = if after.is_epic { "1" } else { "0" };
+    if before_is_epic != after_is_epic {
+        commands.push(UndoCommand::SetTaskField {
+            task_id: task_id.clone(),
+            field: "is_epic".to_string(),
+            before: before_is_epic.to_string(),
+            after: after_is_epic.to_string(),
+        });
+    }
+    if before.labels != after.labels {
+        commands.push(UndoCommand::SetTaskLabels {
+            task_id: task_id.clone(),
+            before: before.labels.clone(),
+            after: after.labels.clone(),
+        });
+    }
 }
 
 fn validate_task_update(update: &TaskUpdate) -> Result<()> {

@@ -1,6 +1,10 @@
 use aven_core::db::Database;
 use aven_core::operations::{TaskDraft, TaskUpdate};
 use aven_core::sync::SyncSession;
+use aven_core::undo::UndoContext;
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{Connection, SqliteConnection};
+use std::str::FromStr;
 
 #[tokio::test]
 async fn opens_migrates_and_mutates_through_owned_api() {
@@ -81,6 +85,89 @@ async fn opens_migrates_and_mutates_through_owned_api() {
         .find(|version| version.entity_id == created.task.id.as_str() && version.field == "title")
         .unwrap();
     assert_eq!(title_version.version, title_change.change_id);
+}
+
+#[tokio::test]
+async fn tui_task_mutation_uses_one_transaction_for_change_and_undo() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("aven.sqlite");
+    let database = Database::open(&path).await.unwrap();
+    let workspace = database.list_workspaces().await.unwrap().remove(0);
+    let project = database
+        .create_project(&workspace, "Core")
+        .await
+        .unwrap()
+        .project;
+    let created = database
+        .create_task(
+            &workspace,
+            TaskDraft {
+                title: "atomic task".to_string(),
+                description: String::new(),
+                project: Some(project.key),
+                status: "inbox".to_string(),
+                priority: "none".to_string(),
+                labels: Vec::new(),
+                available_at: None,
+                due_on: None,
+                is_epic: false,
+            },
+        )
+        .await
+        .unwrap();
+
+    let report = database
+        .mutate_tasks(
+            &workspace,
+            vec![(
+                created.task.id.clone(),
+                TaskUpdate {
+                    status: Some("todo".to_string()),
+                    ..TaskUpdate::default()
+                },
+            )],
+            UndoContext::tui("status atomic task"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.changed_count(), 1);
+    assert_eq!(report.outcomes[0].before.status, "inbox");
+    assert_eq!(report.outcomes[0].after.status, "todo");
+
+    let mut conn = SqliteConnection::connect_with(
+        &SqliteConnectOptions::from_str(&path.display().to_string()).unwrap(),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER reject_undo_insert BEFORE INSERT ON tui_undo_entries
+         BEGIN SELECT RAISE(FAIL, 'injected undo failure'); END",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    drop(conn);
+
+    let error = database
+        .mutate_tasks(
+            &workspace,
+            vec![(
+                created.task.id.clone(),
+                TaskUpdate {
+                    status: Some("active".to_string()),
+                    ..TaskUpdate::default()
+                },
+            )],
+            UndoContext::tui("status atomic task"),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("injected undo failure"));
+    let persisted = database
+        .task_field_value(&workspace.id, &created.task.id, "status")
+        .await
+        .unwrap();
+    assert_eq!(persisted, "todo");
 }
 
 #[tokio::test]

@@ -1208,7 +1208,7 @@ mod task_creation_and_updates {
     }
 
     #[tokio::test]
-    async fn single_mutation_persists_when_undo_recording_fails() {
+    async fn single_mutation_rolls_back_when_undo_recording_fails() {
         let (_dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, selected) = create_selected_task(&mut store, "Single undo failure").await;
         let workspace_id = store.active_workspace.id.clone();
@@ -1226,7 +1226,7 @@ mod task_creation_and_updates {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(persisted, "todo");
+        assert_eq!(persisted, "inbox");
         assert_eq!(store.tasks[selected].task.status, TaskStatus::Inbox);
         assert_eq!(pending_undo_count(&pool, &workspace_id).await, undo_before);
     }
