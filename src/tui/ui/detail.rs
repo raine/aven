@@ -75,14 +75,33 @@ impl DependencyDirection {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct DetailContentLayout {
     body_area: Rect,
     content_area: Rect,
     metadata_area: Rect,
 }
 
-#[derive(Debug)]
+pub(crate) struct DetailRenderContext<'a> {
+    pub(crate) terminal_area: Rect,
+    pub(crate) scroll: u16,
+    pub(crate) inline_title_editor: Option<&'a TextInputView>,
+    pub(crate) active_target: Option<&'a DetailTargetId>,
+    pub(crate) hovered_target: Option<&'a DetailTargetId>,
+    pub(crate) expanded_sections: &'a BTreeSet<DetailSection>,
+    pub(crate) selection: Option<&'a DetailTextSelection>,
+    pub(crate) inline_images: Option<&'a DetailInlineImageContext>,
+    pub(crate) pending_attachments:
+        &'a [crate::tui::attachment_controller::PendingAttachmentView],
+}
+
+impl DetailRenderContext<'_> {
+    fn content_layout(&self) -> DetailContentLayout {
+        detail_content_layout(self.terminal_area)
+    }
+}
+
+#[derive(Debug, Clone)]
 struct DetailContentRenderModel {
     sticky_lines: Vec<Line<'static>>,
     lines: Vec<Line<'static>>,
@@ -155,18 +174,29 @@ enum DetailBodyBlock {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct SelectableLine {
     text: String,
     document_start: usize,
     body_index: Option<usize>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DetailSelectableDocument {
     text: String,
     title: SelectableLine,
     description: Vec<SelectableLine>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DetailDocument {
+    task_id: crate::ids::TaskId,
+    layout: DetailContentLayout,
+    model: DetailContentRenderModel,
+    selectable: DetailSelectableDocument,
+    section_body_indices: Vec<usize>,
+    #[cfg(test)]
+    projection_id: usize,
 }
 
 #[cfg(test)]
@@ -189,47 +219,333 @@ pub(crate) enum DetailMetadataTarget {
     Priority,
 }
 
-#[allow(clippy::too_many_arguments)]
+impl DetailDocument {
+    pub(crate) fn build(item: &TaskListItem, context: &DetailRenderContext<'_>) -> Self {
+        let layout = context.content_layout();
+        let selection = context
+            .selection
+            .filter(|selection| selection.terminal_width == context.terminal_area.width);
+        let mut model = build_detail_content_model_with_pending(
+            item,
+            layout.content_area,
+            context.scroll,
+            context.inline_title_editor,
+            context.active_target,
+            context.expanded_sections,
+            None,
+            context.inline_images,
+            context.pending_attachments,
+        );
+        let width = layout.content_area.width as usize;
+        let selectable = detail_selectable_document(item, width, context.inline_images);
+        if context.inline_title_editor.is_none()
+            && let Some(selection) = selection.filter(|selection| selection.task_id == item.task.id)
+        {
+            apply_detail_selection_from_document(
+                &selectable,
+                selection,
+                &mut model.sticky_lines,
+                &mut model.lines,
+                model.body_start,
+            );
+        }
+        if context.hovered_target != context.active_target
+            && let Some(hovered_target) = context.hovered_target
+        {
+            apply_hover_style(&mut model, hovered_target);
+        }
+        Self {
+            task_id: item.task.id.clone(),
+            layout,
+            model,
+            selectable,
+            section_body_indices: detail_section_body_indices(item, width, context.inline_images),
+            #[cfg(test)]
+            projection_id: next_detail_projection_id(),
+        }
+    }
+
+    fn render(&self, frame: &mut Frame, item: &TaskListItem, widgets: &mut WidgetState) {
+        frame.render_widget(Clear, self.layout.body_area);
+        frame.render_widget(
+            Block::new().style(Style::new().bg(BG)),
+            self.layout.body_area,
+        );
+        if self.layout.body_area.width == 0 || self.layout.body_area.height == 0 {
+            return;
+        }
+        render_detail_content_from_model(frame, self.layout.content_area, &self.model, widgets);
+        if self.layout.metadata_area.width > 0 {
+            render_detail_metadata(frame, item, self.layout.metadata_area);
+        }
+    }
+
+    pub(crate) fn matches_frame(
+        &self,
+        item: &TaskListItem,
+        terminal_size: ratatui::layout::Size,
+    ) -> bool {
+        self.task_id == item.task.id
+            && self.layout
+                == detail_content_layout(Rect::new(0, 0, terminal_size.width, terminal_size.height))
+    }
+
+    fn sticky_height(&self) -> usize {
+        self.model
+            .sticky_lines
+            .len()
+            .min(self.layout.content_area.height as usize)
+    }
+
+    fn body_visible(&self) -> usize {
+        (self.layout.content_area.height as usize).saturating_sub(self.sticky_height())
+    }
+
+    pub(crate) fn scroll_cap(&self) -> u16 {
+        self.model
+            .content_height
+            .saturating_sub(self.body_visible()) as u16
+    }
+
+    pub(crate) fn interactive_rows(&self) -> &[DetailInteractiveRow] {
+        &self.model.interactive_rows
+    }
+
+    pub(crate) fn target_at_position(&self, column: u16, row: u16) -> Option<DetailTargetId> {
+        if column < self.layout.content_area.x
+            || column
+                >= self
+                    .layout
+                    .content_area
+                    .x
+                    .saturating_add(self.layout.content_area.width)
+        {
+            return None;
+        }
+        let body_y = self
+            .layout
+            .content_area
+            .y
+            .saturating_add(self.sticky_height() as u16);
+        if row < body_y
+            || row
+                >= self
+                    .layout
+                    .content_area
+                    .y
+                    .saturating_add(self.layout.content_area.height)
+        {
+            return None;
+        }
+        let body_index = self
+            .model
+            .body_start
+            .saturating_add(row.saturating_sub(body_y) as usize);
+        self.model
+            .interactive_rows
+            .iter()
+            .find(|target| {
+                (target.line_index..target.line_index.saturating_add(target.height))
+                    .contains(&body_index)
+            })
+            .map(|target| target.target.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn attachment_at_position(
+        &self,
+        item: &TaskListItem,
+        column: u16,
+        row: u16,
+    ) -> Option<String> {
+        let DetailTargetId::Attachment { attachment_id } = self.target_at_position(column, row)?
+        else {
+            return None;
+        };
+        item.attachments
+            .iter()
+            .find(|attachment| attachment.attachment_id == attachment_id)
+            .filter(|attachment| attachment_is_locally_openable(attachment))
+            .map(|_| attachment_id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn child_task_at_position(
+        &self,
+        column: u16,
+        row: u16,
+    ) -> Option<crate::ids::TaskId> {
+        match self.target_at_position(column, row)? {
+            DetailTargetId::Task {
+                section: DetailSection::EpicChildren,
+                task_id,
+            } => Some(task_id),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn target_scroll_target(&self, target: &DetailTargetId, scroll: u16) -> Option<u16> {
+        let visible = self.body_visible();
+        let row = self
+            .model
+            .interactive_rows
+            .iter()
+            .find(|row| &row.target == target)?;
+        if visible == 0 {
+            return None;
+        }
+        let cap = self.model.content_height.saturating_sub(visible);
+        let scroll = (scroll as usize).min(cap);
+        let end = row.line_index.saturating_add(row.height.saturating_sub(1));
+        let target_scroll = if row.line_index < scroll {
+            row.line_index
+        } else if end >= scroll.saturating_add(visible) {
+            end.saturating_add(1).saturating_sub(visible)
+        } else {
+            scroll
+        };
+        Some(target_scroll.min(cap) as u16)
+    }
+
+    pub(crate) fn section_scroll_target(&self, reverse: bool) -> u16 {
+        let scroll_cap = self
+            .model
+            .content_height
+            .saturating_sub(self.body_visible());
+        let mut targets = self
+            .section_body_indices
+            .iter()
+            .map(|index| (*index).min(scroll_cap) as u16)
+            .collect::<Vec<_>>();
+        targets.dedup();
+        if reverse {
+            targets
+                .iter()
+                .rev()
+                .find(|&&target| target < self.model.body_start as u16)
+                .copied()
+                .or_else(|| targets.last().copied())
+                .unwrap_or(0)
+        } else {
+            targets
+                .iter()
+                .find(|&&target| target > self.model.body_start as u16)
+                .copied()
+                .or_else(|| targets.first().copied())
+                .unwrap_or(0)
+        }
+    }
+
+    pub(crate) fn text_cell_at_position(&self, column: u16, row: u16) -> Option<TextCell> {
+        if column < self.layout.body_area.x
+            || column
+                >= self
+                    .layout
+                    .content_area
+                    .x
+                    .saturating_add(self.layout.content_area.width)
+            || row < self.layout.content_area.y
+            || row
+                >= self
+                    .layout
+                    .content_area
+                    .y
+                    .saturating_add(self.layout.content_area.height)
+        {
+            return None;
+        }
+        let selectable = if row == self.layout.content_area.y {
+            &self.selectable.title
+        } else {
+            let body_y = self
+                .layout
+                .content_area
+                .y
+                .saturating_add(self.sticky_height() as u16);
+            if row < body_y || row >= body_y.saturating_add(self.layout.content_area.height) {
+                return None;
+            }
+            let body_index = self
+                .model
+                .body_start
+                .saturating_add(row.saturating_sub(body_y) as usize);
+            self.selectable
+                .description
+                .iter()
+                .find(|line| line.body_index == Some(body_index))?
+        };
+        let text_x = self
+            .layout
+            .content_area
+            .x
+            .saturating_add(u16::from(selectable.body_index.is_some()) * 2);
+        let cell_column = column.saturating_sub(text_x) as usize;
+        let local = text_cell_at_column(&selectable.text, cell_column).or_else(|| {
+            let edge_column = if column <= text_x {
+                0
+            } else {
+                selectable.text.width().checked_sub(1)?
+            };
+            text_cell_at_column(&selectable.text, edge_column)
+        })?;
+        Some(TextCell {
+            start: selectable.document_start + local.start,
+            end: selectable.document_start + local.end,
+        })
+    }
+
+    pub(crate) fn selected_text(&self, selection: &DetailTextSelection) -> Option<String> {
+        if selection.task_id != self.task_id {
+            return None;
+        }
+        self.selectable
+            .text
+            .get(selection.range())
+            .map(str::to_string)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn projection_id(&self) -> usize {
+        self.projection_id
+    }
+}
+
+#[cfg(test)]
+fn next_detail_projection_id() -> usize {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+    NEXT_ID.fetch_add(1, Ordering::Relaxed)
+}
+
 fn render_detail(
     frame: &mut Frame,
     item: &TaskListItem,
-    scroll: u16,
-    inline_title_editor: Option<&TextInputView>,
-    active_target: Option<&DetailTargetId>,
-    hovered_target: Option<&DetailTargetId>,
-    expanded_sections: &BTreeSet<DetailSection>,
-    selection: Option<&DetailTextSelection>,
+    context: &DetailRenderContext<'_>,
     widgets: &mut WidgetState,
-    inline_images: Option<&DetailInlineImageContext>,
-    pending_attachments: &[crate::tui::attachment_controller::PendingAttachmentView],
 ) {
-    let layout = detail_content_layout(frame.area());
-    frame.render_widget(Clear, layout.body_area);
-    frame.render_widget(Block::new().style(Style::new().bg(BG)), layout.body_area);
-    if layout.body_area.width == 0 || layout.body_area.height == 0 {
-        return;
-    }
+    let document = DetailDocument::build(item, context);
+    document.render(frame, item, widgets);
+    widgets.detail_document = Some(document);
+}
 
-    let selection = selection.filter(|selection| selection.terminal_width == frame.area().width);
-    let mut model = build_detail_content_model_with_pending(
-        item,
-        layout.content_area,
+fn detail_query_context<'a>(
+    terminal_width: u16,
+    terminal_height: u16,
+    scroll: u16,
+    expanded_sections: &'a BTreeSet<DetailSection>,
+    inline_images: Option<&'a DetailInlineImageContext>,
+) -> DetailRenderContext<'a> {
+    DetailRenderContext {
+        terminal_area: Rect::new(0, 0, terminal_width, terminal_height),
         scroll,
-        inline_title_editor,
-        active_target,
+        inline_title_editor: None,
+        active_target: None,
+        hovered_target: None,
         expanded_sections,
-        selection,
+        selection: None,
         inline_images,
-        pending_attachments,
-    );
-    if hovered_target != active_target
-        && let Some(hovered_target) = hovered_target
-    {
-        apply_hover_style(&mut model, hovered_target);
-    }
-    render_detail_content_from_model(frame, layout.content_area, &model, widgets);
-    if layout.metadata_area.width > 0 {
-        render_detail_metadata(frame, item, layout.metadata_area);
+        pending_attachments: &[],
     }
 }
 
@@ -281,27 +597,18 @@ pub(crate) fn detail_scroll_cap_with_images(
     terminal_height: u16,
     inline_images: Option<&DetailInlineImageContext>,
 ) -> u16 {
-    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    let model = build_detail_content_model(
+    let expanded_sections = BTreeSet::new();
+    DetailDocument::build(
         item,
-        layout.content_area,
-        0,
-        None,
-        None,
-        &BTreeSet::new(),
-        None,
-        inline_images,
-    );
-    let sticky_height = model
-        .sticky_lines
-        .len()
-        .min(layout.content_area.height as usize);
-    model.content_height.saturating_sub(
-        layout
-            .content_area
-            .height
-            .saturating_sub(sticky_height as u16) as usize,
-    ) as u16
+        &detail_query_context(
+            terminal_width,
+            terminal_height,
+            0,
+            &expanded_sections,
+            inline_images,
+        ),
+    )
+    .scroll_cap()
 }
 
 #[cfg(test)]
@@ -329,18 +636,18 @@ pub(crate) fn detail_interactive_rows(
     inline_images: Option<&DetailInlineImageContext>,
     expanded_sections: &BTreeSet<DetailSection>,
 ) -> Vec<DetailInteractiveRow> {
-    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    build_detail_content_model(
+    DetailDocument::build(
         item,
-        layout.content_area,
-        0,
-        None,
-        None,
-        expanded_sections,
-        None,
-        inline_images,
+        &detail_query_context(
+            terminal_width,
+            terminal_height,
+            0,
+            expanded_sections,
+            inline_images,
+        ),
     )
-    .interactive_rows
+    .interactive_rows()
+    .to_vec()
 }
 
 pub(crate) fn detail_target_scroll_target(
@@ -352,40 +659,17 @@ pub(crate) fn detail_target_scroll_target(
     inline_images: Option<&DetailInlineImageContext>,
     expanded_sections: &BTreeSet<DetailSection>,
 ) -> Option<u16> {
-    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    let model = build_detail_content_model(
+    DetailDocument::build(
         item,
-        layout.content_area,
-        0,
-        None,
-        None,
-        expanded_sections,
-        None,
-        inline_images,
-    );
-    let sticky_height = model
-        .sticky_lines
-        .len()
-        .min(layout.content_area.height as usize);
-    let visible = (layout.content_area.height as usize).saturating_sub(sticky_height);
-    let row = model
-        .interactive_rows
-        .iter()
-        .find(|row| &row.target == target)?;
-    if visible == 0 {
-        return None;
-    }
-    let cap = model.content_height.saturating_sub(visible);
-    let scroll = (scroll as usize).min(cap);
-    let end = row.line_index.saturating_add(row.height.saturating_sub(1));
-    let target_scroll = if row.line_index < scroll {
-        row.line_index
-    } else if end >= scroll.saturating_add(visible) {
-        end.saturating_add(1).saturating_sub(visible)
-    } else {
-        scroll
-    };
-    Some(target_scroll.min(cap) as u16)
+        &detail_query_context(
+            terminal_width,
+            terminal_height,
+            scroll,
+            expanded_sections,
+            inline_images,
+        ),
+    )
+    .target_scroll_target(target, scroll)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -399,51 +683,17 @@ pub(crate) fn detail_target_at_position(
     inline_images: Option<&DetailInlineImageContext>,
     expanded_sections: &BTreeSet<DetailSection>,
 ) -> Option<DetailTargetId> {
-    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    if column < layout.content_area.x
-        || column
-            >= layout
-                .content_area
-                .x
-                .saturating_add(layout.content_area.width)
-    {
-        return None;
-    }
-    let model = build_detail_content_model(
+    DetailDocument::build(
         item,
-        layout.content_area,
-        scroll,
-        None,
-        None,
-        expanded_sections,
-        None,
-        inline_images,
-    );
-    let sticky_height = model
-        .sticky_lines
-        .len()
-        .min(layout.content_area.height as usize) as u16;
-    let body_y = layout.content_area.y.saturating_add(sticky_height);
-    if row < body_y
-        || row
-            >= layout
-                .content_area
-                .y
-                .saturating_add(layout.content_area.height)
-    {
-        return None;
-    }
-    let body_index = model
-        .body_start
-        .saturating_add(row.saturating_sub(body_y) as usize);
-    model
-        .interactive_rows
-        .iter()
-        .find(|target| {
-            (target.line_index..target.line_index.saturating_add(target.height))
-                .contains(&body_index)
-        })
-        .map(|target| target.target.clone())
+        &detail_query_context(
+            terminal_width,
+            terminal_height,
+            scroll,
+            expanded_sections,
+            inline_images,
+        ),
+    )
+    .target_at_position(column, row)
 }
 
 #[cfg(test)]
@@ -455,45 +705,23 @@ pub(crate) fn detail_attachment_scroll_target(
     terminal_height: u16,
     inline_images: &DetailInlineImageContext,
 ) -> Option<u16> {
-    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    let model = build_detail_content_model(
+    let expanded_sections = BTreeSet::new();
+    let document = DetailDocument::build(
         item,
-        layout.content_area,
-        0,
-        None,
-        None,
-        &BTreeSet::new(),
-        None,
-        Some(inline_images),
+        &detail_query_context(
+            terminal_width,
+            terminal_height,
+            scroll,
+            &expanded_sections,
+            Some(inline_images),
+        ),
     );
-    let sticky_height = model
-        .sticky_lines
-        .len()
-        .min(layout.content_area.height as usize);
-    let body_visible = (layout.content_area.height as usize).saturating_sub(sticky_height);
-    let placement = model.interactive_rows.iter().find(|row| {
-        matches!(
-            &row.target,
-            DetailTargetId::Attachment {
-                attachment_id: candidate,
-            } if candidate == attachment_id
-        )
-    })?;
-    let frame_start = placement.line_index;
-    let frame_end = frame_start.saturating_add(placement.height.saturating_sub(1));
-    if body_visible == 0 {
-        return None;
-    }
-    let cap = model.content_height.saturating_sub(body_visible);
-    let scroll = (scroll as usize).min(cap);
-    let target = if placement.height > body_visible || frame_start < scroll {
-        frame_start
-    } else if frame_end >= scroll.saturating_add(body_visible) {
-        frame_end.saturating_add(1).saturating_sub(body_visible)
-    } else {
-        scroll
-    };
-    Some(target.min(cap) as u16)
+    document.target_scroll_target(
+        &DetailTargetId::Attachment {
+            attachment_id: attachment_id.to_string(),
+        },
+        scroll,
+    )
 }
 
 pub(crate) fn detail_section_scroll_target_with_images(
@@ -504,46 +732,18 @@ pub(crate) fn detail_section_scroll_target_with_images(
     reverse: bool,
     inline_images: Option<&DetailInlineImageContext>,
 ) -> u16 {
-    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    let model = build_detail_content_model(
+    let expanded_sections = BTreeSet::new();
+    DetailDocument::build(
         item,
-        layout.content_area,
-        scroll,
-        None,
-        None,
-        &BTreeSet::new(),
-        None,
-        inline_images,
-    );
-    let sticky_height = model
-        .sticky_lines
-        .len()
-        .min(layout.content_area.height as usize);
-    let visible = (layout.content_area.height as usize).saturating_sub(sticky_height);
-    let scroll_cap = model.content_height.saturating_sub(visible);
-    let mut targets =
-        detail_section_body_indices(item, layout.content_area.width as usize, inline_images)
-            .into_iter()
-            .map(|index| index.min(scroll_cap) as u16)
-            .collect::<Vec<_>>();
-    targets.dedup();
-
-    if reverse {
-        targets
-            .iter()
-            .rev()
-            .find(|&&target| target < model.body_start as u16)
-            .copied()
-            .or_else(|| targets.last().copied())
-            .unwrap_or(0)
-    } else {
-        targets
-            .iter()
-            .find(|&&target| target > model.body_start as u16)
-            .copied()
-            .or_else(|| targets.first().copied())
-            .unwrap_or(0)
-    }
+        &detail_query_context(
+            terminal_width,
+            terminal_height,
+            scroll,
+            &expanded_sections,
+            inline_images,
+        ),
+    )
+    .section_scroll_target(reverse)
 }
 
 fn detail_content_margin() -> Margin {
@@ -553,6 +753,7 @@ fn detail_content_margin() -> Margin {
     }
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn build_detail_content_model(
     item: &TaskListItem,
@@ -916,6 +1117,16 @@ fn apply_detail_selection(
     body_lines: &mut [Line<'static>],
 ) {
     let document = detail_selectable_document(item, width, inline_images);
+    apply_detail_selection_from_document(&document, selection, sticky_lines, body_lines, 0);
+}
+
+fn apply_detail_selection_from_document(
+    document: &DetailSelectableDocument,
+    selection: &DetailTextSelection,
+    sticky_lines: &mut [Line<'static>],
+    body_lines: &mut [Line<'static>],
+    body_start: usize,
+) {
     let range = selection.range();
     if let Some(line) = sticky_lines.first_mut() {
         highlight_selectable_line(line, &document.title, &range, 0);
@@ -923,6 +1134,7 @@ fn apply_detail_selection(
     for selectable in &document.description {
         if let Some(line) = selectable
             .body_index
+            .and_then(|index| index.checked_sub(body_start))
             .and_then(|index| body_lines.get_mut(index))
         {
             highlight_selectable_line(line, selectable, &range, 1);
@@ -2157,83 +2369,30 @@ pub(crate) fn detail_text_cell_at_position(
     row: u16,
     scroll: u16,
 ) -> Option<TextCell> {
-    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    if column < layout.body_area.x
-        || column
-            >= layout
-                .content_area
-                .x
-                .saturating_add(layout.content_area.width)
-        || row < layout.content_area.y
-        || row
-            >= layout
-                .content_area
-                .y
-                .saturating_add(layout.content_area.height)
-    {
-        return None;
-    }
-    let model = build_detail_content_model(
+    let expanded_sections = BTreeSet::new();
+    DetailDocument::build(
         item,
-        layout.content_area,
-        scroll,
-        None,
-        None,
-        &BTreeSet::new(),
-        None,
-        None,
-    );
-    let document = detail_selectable_document(item, layout.content_area.width as usize, None);
-
-    let selectable = if row == layout.content_area.y {
-        &document.title
-    } else {
-        let sticky_height = model
-            .sticky_lines
-            .len()
-            .min(layout.content_area.height as usize) as u16;
-        let body_y = layout.content_area.y.saturating_add(sticky_height);
-        if row < body_y || row >= body_y.saturating_add(layout.content_area.height) {
-            return None;
-        }
-        let body_index = model
-            .body_start
-            .saturating_add(row.saturating_sub(body_y) as usize);
-        document
-            .description
-            .iter()
-            .find(|line| line.body_index == Some(body_index))?
-    };
-
-    let text_x = layout
-        .content_area
-        .x
-        .saturating_add(u16::from(selectable.body_index.is_some()) * 2);
-    let cell_column = column.saturating_sub(text_x) as usize;
-    let local = text_cell_at_column(&selectable.text, cell_column).or_else(|| {
-        let edge_column = if column <= text_x {
-            0
-        } else {
-            selectable.text.width().checked_sub(1)?
-        };
-        text_cell_at_column(&selectable.text, edge_column)
-    })?;
-    Some(TextCell {
-        start: selectable.document_start + local.start,
-        end: selectable.document_start + local.end,
-    })
+        &detail_query_context(
+            terminal_width,
+            terminal_height,
+            scroll,
+            &expanded_sections,
+            None,
+        ),
+    )
+    .text_cell_at_position(column, row)
 }
 
 pub(crate) fn detail_selected_text(
     item: &TaskListItem,
     selection: &DetailTextSelection,
 ) -> Option<String> {
-    if selection.task_id != item.task.id {
-        return None;
-    }
-    let layout = detail_content_layout(Rect::new(0, 0, selection.terminal_width, 24));
-    let document = detail_selectable_document(item, layout.content_area.width as usize, None);
-    document.text.get(selection.range()).map(str::to_string)
+    let expanded_sections = BTreeSet::new();
+    DetailDocument::build(
+        item,
+        &detail_query_context(selection.terminal_width, 24, 0, &expanded_sections, None),
+    )
+    .selected_text(selection)
 }
 
 #[cfg(test)]
@@ -2246,24 +2405,19 @@ pub(crate) fn detail_attachment_at_position(
     scroll: u16,
     inline_images: &DetailInlineImageContext,
 ) -> Option<DetailAttachmentHit> {
-    match detail_target_at_position(
+    let expanded_sections = BTreeSet::new();
+    DetailDocument::build(
         item,
-        terminal_width,
-        terminal_height,
-        column,
-        row,
-        scroll,
-        Some(inline_images),
-        &BTreeSet::new(),
-    )? {
-        DetailTargetId::Attachment { attachment_id } => item
-            .attachments
-            .iter()
-            .find(|attachment| attachment.attachment_id == attachment_id)
-            .filter(|attachment| attachment_is_locally_openable(attachment))
-            .map(|_| DetailAttachmentHit { attachment_id }),
-        _ => None,
-    }
+        &detail_query_context(
+            terminal_width,
+            terminal_height,
+            scroll,
+            &expanded_sections,
+            Some(inline_images),
+        ),
+    )
+    .attachment_at_position(item, column, row)
+    .map(|attachment_id| DetailAttachmentHit { attachment_id })
 }
 
 #[cfg(test)]
@@ -2275,75 +2429,19 @@ pub(crate) fn detail_child_task_at_position(
     row: u16,
     scroll: u16,
 ) -> Option<DetailChildHit> {
-    let layout = detail_content_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    if column < layout.content_area.x
-        || column
-            >= layout
-                .content_area
-                .x
-                .saturating_add(layout.content_area.width)
-        || row < layout.content_area.y
-        || row
-            >= layout
-                .content_area
-                .y
-                .saturating_add(layout.content_area.height)
-    {
-        return None;
-    }
-    let model = build_detail_content_model(
+    let expanded_sections = BTreeSet::new();
+    DetailDocument::build(
         item,
-        layout.content_area,
-        scroll,
-        None,
-        None,
-        &BTreeSet::new(),
-        None,
-        None,
-    );
-    let sticky_height = model
-        .sticky_lines
-        .len()
-        .min(layout.content_area.height as usize) as u16;
-    let body_y = layout.content_area.y.saturating_add(sticky_height);
-    if row < body_y {
-        return None;
-    }
-    let body_row = row.saturating_sub(body_y) as usize;
-    let body_index = model.body_start.saturating_add(body_row);
-    let task_id = detail_epic_child_task_id_at_body_line(
-        item,
-        layout.content_area.width as usize,
-        body_index,
-    )?;
-    Some(DetailChildHit { task_id })
-}
-
-#[cfg(test)]
-fn detail_epic_child_task_id_at_body_line(
-    item: &TaskListItem,
-    width: usize,
-    body_line_index: usize,
-) -> Option<crate::ids::TaskId> {
-    if !item.task.is_epic || body_line_index == 0 {
-        return None;
-    }
-    let links = item
-        .epic_children
-        .iter()
-        .filter(|link| link.unresolved)
-        .chain(item.epic_children.iter().filter(|link| !link.unresolved))
-        .collect::<Vec<_>>();
-    let mut line_index = 1;
-    for (index, link) in links.iter().enumerate() {
-        let is_last = index + 1 == links.len();
-        let line_count = epic_child_tree_item_lines(link, is_last, width, false).len();
-        if (line_index..line_index + line_count).contains(&body_line_index) {
-            return Some(link.task_id.clone());
-        }
-        line_index += line_count;
-    }
-    None
+        &detail_query_context(
+            terminal_width,
+            terminal_height,
+            scroll,
+            &expanded_sections,
+            None,
+        ),
+    )
+    .child_task_at_position(column, row)
+    .map(|task_id| DetailChildHit { task_id })
 }
 
 pub(crate) fn detail_copy_target_at(
@@ -2550,19 +2648,18 @@ pub(super) fn render_detail_underlay(
             let position = removed.original_position.min(task.epic_children.len());
             task.epic_children.insert(position, child);
         }
-        render_detail(
-            frame,
-            &task,
+        let context = DetailRenderContext {
+            terminal_area: frame.area(),
             scroll,
             inline_title_editor,
             active_target,
             hovered_target,
             expanded_sections,
             selection,
-            widgets,
             inline_images,
             pending_attachments,
-        );
+        };
+        render_detail(frame, &task, &context, widgets);
     }
 }
 
@@ -3653,6 +3750,7 @@ mod tests {
             table: TableState::default(),
             marked_task_ids: BTreeSet::new(),
             inline_image_placements: Vec::new(),
+            detail_document: None,
         };
         let backend = TestBackend::new(20, 5);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -3838,25 +3936,26 @@ mod tests {
             table: TableState::default(),
             marked_task_ids: BTreeSet::new(),
             inline_image_placements: Vec::new(),
+            detail_document: None,
         };
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
 
+        let expanded_sections = BTreeSet::new();
         terminal
             .draw(|frame| {
-                render_detail(
-                    frame,
-                    &item,
-                    0,
-                    None,
-                    None,
-                    None,
-                    &BTreeSet::new(),
-                    None,
-                    &mut widgets,
-                    Some(&context),
-                    &[],
-                );
+                let render_context = DetailRenderContext {
+                    terminal_area: frame.area(),
+                    scroll: 0,
+                    inline_title_editor: None,
+                    active_target: None,
+                    hovered_target: None,
+                    expanded_sections: &expanded_sections,
+                    selection: None,
+                    inline_images: Some(&context),
+                    pending_attachments: &[],
+                };
+                render_detail(frame, &item, &render_context, &mut widgets);
             })
             .unwrap();
         let thumbnail = widgets.inline_image_placements[0].clone();

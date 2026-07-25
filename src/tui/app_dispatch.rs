@@ -14,8 +14,8 @@ use crate::tui::event::{
     lookup_command,
 };
 use crate::tui::navigation::{
-    detail_scroll_with_delta_with_images, detail_task_delta, handle_detail_overlay_key_with_images,
-    next_index, scroll_with_delta,
+    detail_scroll_with_delta_with_images, detail_task_delta, handle_detail_overlay_key_with_cap,
+    handle_detail_overlay_key_with_images, next_index, scroll_with_delta,
 };
 use crate::tui::overlay::{AddTaskMode, CommandState, OverlayOutcome, OverlayRoute, OverlayState};
 use crate::tui::platform::{copy_to_clipboard, is_editor_prefix_key};
@@ -525,6 +525,17 @@ impl App {
         )
     }
 
+    fn rendered_detail_document(
+        &self,
+        terminal_size: Size,
+    ) -> Option<&crate::tui::ui::DetailDocument> {
+        let item = self.store.selected_task(self.widgets.table.selected())?;
+        self.widgets
+            .detail_document
+            .as_ref()
+            .filter(|document| document.matches_frame(item, terminal_size))
+    }
+
     fn begin_detail_text_selection(&mut self, mouse: MouseEvent, terminal_size: Size) -> bool {
         let Some(OverlayState::Detail { scroll }) = self.overlay else {
             return false;
@@ -532,14 +543,20 @@ impl App {
         let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
             return false;
         };
-        let Some(cell) = detail_text_cell_at_position(
-            item,
-            terminal_size.width,
-            terminal_size.height,
-            mouse.column,
-            mouse.row,
-            scroll,
-        ) else {
+        let cell = self
+            .rendered_detail_document(terminal_size)
+            .and_then(|document| document.text_cell_at_position(mouse.column, mouse.row))
+            .or_else(|| {
+                detail_text_cell_at_position(
+                    item,
+                    terminal_size.width,
+                    terminal_size.height,
+                    mouse.column,
+                    mouse.row,
+                    scroll,
+                )
+            });
+        let Some(cell) = cell else {
             return false;
         };
         self.detail_text_selection = Some(crate::tui::detail_selection::DetailTextSelection::new(
@@ -562,14 +579,20 @@ impl App {
         let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
             return;
         };
-        let Some(cell) = detail_text_cell_at_position(
-            item,
-            terminal_size.width,
-            terminal_size.height,
-            mouse.column,
-            mouse.row,
-            scroll,
-        ) else {
+        let cell = self
+            .rendered_detail_document(terminal_size)
+            .and_then(|document| document.text_cell_at_position(mouse.column, mouse.row))
+            .or_else(|| {
+                detail_text_cell_at_position(
+                    item,
+                    terminal_size.width,
+                    terminal_size.height,
+                    mouse.column,
+                    mouse.row,
+                    scroll,
+                )
+            });
+        let Some(cell) = cell else {
             return;
         };
         if let Some(selection) = self.detail_text_selection.as_mut()
@@ -582,9 +605,15 @@ impl App {
 
     fn copy_detail_text_selection(&mut self) {
         let value = self.detail_text_selection.as_ref().and_then(|selection| {
-            self.store
-                .selected_task(self.widgets.table.selected())
-                .and_then(|item| detail_selected_text(item, selection))
+            self.widgets
+                .detail_document
+                .as_ref()
+                .and_then(|document| document.selected_text(selection))
+                .or_else(|| {
+                    self.store
+                        .selected_task(self.widgets.table.selected())
+                        .and_then(|item| detail_selected_text(item, selection))
+                })
         });
         let Some(value) = value.filter(|value| !value.is_empty()) else {
             self.set_info("no detail text selected");
@@ -600,17 +629,23 @@ impl App {
         let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
             return Vec::new();
         };
-        let mut targets = detail_interactive_rows(
-            item,
-            terminal_size.width,
-            terminal_size.height,
-            self.inline_image_context().as_ref(),
-            &self.detail_expanded_sections,
-        )
-        .into_iter()
-        .map(|row| row.target)
-        .filter(|target| detail_target_is_actionable(item, target))
-        .collect::<Vec<_>>();
+        let rows = self
+            .rendered_detail_document(terminal_size)
+            .map(|document| document.interactive_rows().to_vec())
+            .unwrap_or_else(|| {
+                detail_interactive_rows(
+                    item,
+                    terminal_size.width,
+                    terminal_size.height,
+                    self.inline_image_context().as_ref(),
+                    &self.detail_expanded_sections,
+                )
+            });
+        let mut targets = rows
+            .into_iter()
+            .map(|row| row.target)
+            .filter(|target| detail_target_is_actionable(item, target))
+            .collect::<Vec<_>>();
         if let Some(removed) = &self.removed_epic_child
             && removed.epic_id == item.task.id
             && !item
@@ -748,16 +783,20 @@ impl App {
         let Some(item) = self.store.selected_task(self.widgets.table.selected()) else {
             return scroll;
         };
-        detail_target_scroll_target(
-            item,
-            target,
-            scroll,
-            terminal_size.width,
-            terminal_size.height,
-            self.inline_image_context().as_ref(),
-            &self.detail_expanded_sections,
-        )
-        .unwrap_or(scroll)
+        self.rendered_detail_document(terminal_size)
+            .and_then(|document| document.target_scroll_target(target, scroll))
+            .or_else(|| {
+                detail_target_scroll_target(
+                    item,
+                    target,
+                    scroll,
+                    terminal_size.width,
+                    terminal_size.height,
+                    self.inline_image_context().as_ref(),
+                    &self.detail_expanded_sections,
+                )
+            })
+            .unwrap_or(scroll)
     }
 
     fn activate_detail_disclosure(&mut self, section: DetailSection, terminal_size: Size) {
@@ -965,19 +1004,23 @@ impl App {
             return Ok(false);
         };
         let hit = self
-            .store
-            .selected_task(self.widgets.table.selected())
-            .and_then(|item| {
-                detail_target_at_position(
-                    item,
-                    terminal_size.width,
-                    terminal_size.height,
-                    mouse.column,
-                    mouse.row,
-                    scroll,
-                    Some(&context),
-                    &self.detail_expanded_sections,
-                )
+            .rendered_detail_document(terminal_size)
+            .and_then(|document| document.target_at_position(mouse.column, mouse.row))
+            .or_else(|| {
+                self.store
+                    .selected_task(self.widgets.table.selected())
+                    .and_then(|item| {
+                        detail_target_at_position(
+                            item,
+                            terminal_size.width,
+                            terminal_size.height,
+                            mouse.column,
+                            mouse.row,
+                            scroll,
+                            Some(&context),
+                            &self.detail_expanded_sections,
+                        )
+                    })
             });
         let Some(hit) = hit else {
             return Ok(false);
@@ -1064,19 +1107,23 @@ impl App {
         };
         let inline_images = self.inline_image_context();
         self.detail_hover = self
-            .store
-            .selected_task(self.widgets.table.selected())
-            .and_then(|item| {
-                detail_target_at_position(
-                    item,
-                    terminal_size.width,
-                    terminal_size.height,
-                    mouse.column,
-                    mouse.row,
-                    scroll,
-                    inline_images.as_ref(),
-                    &self.detail_expanded_sections,
-                )
+            .rendered_detail_document(terminal_size)
+            .and_then(|document| document.target_at_position(mouse.column, mouse.row))
+            .or_else(|| {
+                self.store
+                    .selected_task(self.widgets.table.selected())
+                    .and_then(|item| {
+                        detail_target_at_position(
+                            item,
+                            terminal_size.width,
+                            terminal_size.height,
+                            mouse.column,
+                            mouse.row,
+                            scroll,
+                            inline_images.as_ref(),
+                            &self.detail_expanded_sections,
+                        )
+                    })
             });
     }
 
@@ -1152,6 +1199,9 @@ impl App {
         };
 
         let inline_images = self.inline_image_context();
+        let detail_scroll_cap = self
+            .rendered_detail_document(terminal_size)
+            .map(crate::tui::ui::DetailDocument::scroll_cap);
         match &mut self.overlay {
             Some(OverlayState::Help { scroll }) => {
                 let cap = help_scroll_cap(terminal_size.height);
@@ -1165,14 +1215,18 @@ impl App {
             }
             Some(OverlayState::Detail { scroll }) => {
                 let task = self.store.selected_task(self.widgets.table.selected());
-                *scroll = detail_scroll_with_delta_with_images(
-                    *scroll,
-                    delta,
-                    terminal_size.width,
-                    terminal_size.height,
-                    task,
-                    inline_images.as_ref(),
-                );
+                *scroll = if let Some(cap) = detail_scroll_cap {
+                    scroll_with_delta(*scroll, delta, cap)
+                } else {
+                    detail_scroll_with_delta_with_images(
+                        *scroll,
+                        delta,
+                        terminal_size.width,
+                        terminal_size.height,
+                        task,
+                        inline_images.as_ref(),
+                    )
+                };
                 true
             }
             Some(OverlayState::TextPanel(state)) => {
@@ -1488,15 +1542,21 @@ impl App {
                 section_direction,
                 self.store.selected_task(self.widgets.table.selected()),
             ) {
+                let target_scroll = self
+                    .rendered_detail_document(terminal_size)
+                    .map(|document| document.section_scroll_target(reverse))
+                    .unwrap_or_else(|| {
+                        detail_section_scroll_target_with_images(
+                            task,
+                            scroll,
+                            terminal_size.width,
+                            terminal_size.height,
+                            reverse,
+                            inline_images.as_ref(),
+                        )
+                    });
                 self.overlay = Some(OverlayState::Detail {
-                    scroll: detail_section_scroll_target_with_images(
-                        task,
-                        scroll,
-                        terminal_size.width,
-                        terminal_size.height,
-                        reverse,
-                        inline_images.as_ref(),
-                    ),
+                    scroll: target_scroll,
                 });
                 return Ok(());
             }
@@ -1519,14 +1579,23 @@ impl App {
 
             let overlay = OverlayState::Detail { scroll };
             let task = self.store.selected_task(self.widgets.table.selected());
-            let outcome = handle_detail_overlay_key_with_images(
-                key,
-                overlay,
-                terminal_size.width,
-                terminal_size.height,
-                task,
-                inline_images.as_ref(),
-            );
+            let outcome = if let Some(document) = self.rendered_detail_document(terminal_size) {
+                handle_detail_overlay_key_with_cap(
+                    key,
+                    overlay,
+                    terminal_size.height,
+                    document.scroll_cap(),
+                )
+            } else {
+                handle_detail_overlay_key_with_images(
+                    key,
+                    overlay,
+                    terminal_size.width,
+                    terminal_size.height,
+                    task,
+                    inline_images.as_ref(),
+                )
+            };
             match outcome {
                 OverlayOutcome::None(overlay) => self.overlay = Some(overlay),
                 OverlayOutcome::Cancelled => {

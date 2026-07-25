@@ -5505,6 +5505,46 @@ mod detail_mode {
     }
 
     #[tokio::test]
+    async fn stable_frame_mouse_movement_reuses_detail_document() {
+        let mut app = test_app().await;
+        let mut draft = test_task_draft("Stable detail projection");
+        draft.description =
+            "**wrapped Markdown** remains stable across pointer movement".to_string();
+        create_and_select_task(&mut app, draft).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+        let size: ratatui::layout::Size = (80, 24).into();
+        render_app_buffer(&mut app, size.width, size.height);
+        let projection_id = app
+            .widgets
+            .detail_document
+            .as_ref()
+            .expect("rendered detail document")
+            .projection_id();
+
+        for (column, row) in [(4, 7), (18, 9)] {
+            app.dispatch_mouse(
+                MouseEvent {
+                    kind: MouseEventKind::Moved,
+                    column,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                },
+                size,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                app.widgets
+                    .detail_document
+                    .as_ref()
+                    .expect("stable detail document")
+                    .projection_id(),
+                projection_id
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn detail_drag_selects_rendered_text_and_coexists_with_scrolling() {
         let mut app = test_app().await;
         let mut draft = test_task_draft("Select this title");

@@ -55,19 +55,24 @@ pub(crate) fn handle_detail_overlay_key_with_images(
     task: Option<&TaskListItem>,
     inline_images: Option<&DetailInlineImageContext>,
 ) -> OverlayOutcome {
+    let cap = task
+        .map(|task| {
+            detail_scroll_cap_with_images(task, terminal_width, terminal_height, inline_images)
+        })
+        .unwrap_or(0);
+    handle_detail_overlay_key_with_cap(key, overlay, terminal_height, cap)
+}
+
+pub(crate) fn handle_detail_overlay_key_with_cap(
+    key: KeyEvent,
+    overlay: OverlayState,
+    terminal_height: u16,
+    cap: u16,
+) -> OverlayOutcome {
     let OverlayState::Detail { scroll } = overlay else {
         return OverlayOutcome::None(overlay);
     };
-    let scroll_by = |scroll, delta| {
-        detail_scroll_with_delta_with_images(
-            scroll,
-            delta,
-            terminal_width,
-            terminal_height,
-            task,
-            inline_images,
-        )
-    };
+    let scroll_by = |scroll, delta| scroll_with_delta(scroll, delta, cap);
     let scroll = scroll_by(scroll, 0);
     let page = detail_page_scroll_rows(terminal_height);
     match key.code {

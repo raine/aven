@@ -43,7 +43,7 @@ pub(crate) use self::task_list::{
 use self::toast::render_toast;
 
 pub(crate) use self::detail::{
-    DetailInlineImageContext, DetailInlineImagePlacement, DetailMetadataTarget,
+    DetailDocument, DetailInlineImageContext, DetailInlineImagePlacement, DetailMetadataTarget,
     attachment_is_locally_openable, attachment_is_locally_previewable, detail_copy_target_at,
     detail_interactive_rows, detail_metadata_target_at, detail_scroll_cap_with_images,
     detail_section_scroll_target_with_images, detail_selected_text, detail_target_at_position,
@@ -167,6 +167,7 @@ pub(crate) fn render(
     view: &ViewState,
 ) {
     widgets.inline_image_placements.clear();
+    widgets.detail_document = None;
     frame.render_widget(Block::new().style(Style::new().bg(BG)), frame.area());
 
     if view.surface == ViewSurface::AddTask {

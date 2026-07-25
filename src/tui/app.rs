@@ -111,6 +111,7 @@ pub(crate) struct WidgetState {
     pub(crate) table: TableState,
     pub(crate) marked_task_ids: BTreeSet<crate::ids::TaskId>,
     pub(crate) inline_image_placements: Vec<crate::tui::ui::DetailInlineImagePlacement>,
+    pub(crate) detail_document: Option<crate::tui::ui::DetailDocument>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,6 +279,7 @@ impl App {
                 table: TableState::default(),
                 marked_task_ids: BTreeSet::new(),
                 inline_image_placements: Vec::new(),
+                detail_document: None,
             },
             overlay: None,
             edit_scope: crate::tui::app_edit::EditScope::None,
