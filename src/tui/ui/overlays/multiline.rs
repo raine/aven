@@ -6,8 +6,9 @@ use ratatui::widgets::Paragraph;
 
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::input::{InputWidth, input_cursor_spans, input_line};
+use super::confirm::render_confirm_with_hints;
 use super::shared::{tail_viewport_start, viewport_start_for_cursor};
-use crate::tui::overlay::{MultilineInputView, OverlayRoute};
+use crate::tui::overlay::{ConfirmView, MultilineInputMode, MultilineInputView, OverlayRoute};
 use crate::tui::text::{
     cell_width_ranges, char_boundary_at_or_before, char_count_ranges, char_count_segment_index,
 };
@@ -267,6 +268,21 @@ pub(in crate::tui::ui) fn render_add_note_input(frame: &mut Frame, state: &Multi
     render_tail_viewport_multiline(frame, state, 60, multiline_hint_line(), |line, cursor| {
         add_note_input_line(line, cursor, show_placeholder)
     });
+    if state.mode == MultilineInputMode::ConfirmDiscard {
+        render_confirm_with_hints(
+            frame,
+            &ConfirmView {
+                route: OverlayRoute::MessageOnly,
+                title: "Discard note draft?".to_string(),
+                prompt: "The note text will be lost.".to_string(),
+            },
+            &[
+                ("y", "discard"),
+                ("n", "keep editing"),
+                ("Esc", "keep editing"),
+            ],
+        );
+    }
 }
 
 fn render_tail_viewport_multiline(

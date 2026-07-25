@@ -161,6 +161,7 @@ mod tests {
             lines,
             row,
             column,
+            mode: crate::tui::overlay::MultilineInputMode::Compose,
         }
     }
 

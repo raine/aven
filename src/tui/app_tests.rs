@@ -14,9 +14,9 @@ use crate::tui::authoring::{ADD_NOTE_TITLE, AddTaskStep};
 use crate::tui::config_overlay::{CONFIG_INFO_TITLE, CONFIG_INIT_TITLE, CONFIG_PATHS_TITLE};
 use crate::tui::event::Action;
 use crate::tui::overlay::{
-    CommandState, ConfirmState, LineEdit, MultilineInputState, OverlayRoute, OverlayState,
-    OverlayView, PickerItem, PickerMode, PickerState, SearchPurpose, SearchState, TextInputState,
-    TextPanelState,
+    CommandState, ConfirmState, LineEdit, MultilineInputMode, MultilineInputState, OverlayRoute,
+    OverlayState, OverlayView, PickerItem, PickerMode, PickerState, SearchPurpose, SearchState,
+    TextInputState, TextPanelState,
 };
 use crate::tui::store::{
     SidebarEntryTarget, TaskOrder, TaskScope, TaskScopeTarget, TaskView, TaskViewState,
@@ -1098,6 +1098,7 @@ mod keyboard_dispatch {
                 lines: vec!["x".to_string()],
                 row: 0,
                 column: 1,
+                mode: MultilineInputMode::Compose,
             }),
             OverlayState::Picker(PickerState {
                 route: OverlayRoute::MessageOnly,
@@ -4951,6 +4952,55 @@ mod authoring {
     }
 
     #[tokio::test]
+    async fn add_note_discard_confirmation_preserves_and_discards_draft() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Note target")).await;
+
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('N')).await.unwrap();
+        type_chars(&mut app, "draft note").await;
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state))
+                if state.mode == MultilineInputMode::ConfirmDiscard
+                    && state.lines == ["draft note"]
+                    && state.row == 0
+                    && state.column == 10
+        ));
+        assert!(!app.authoring.is_idle());
+
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state))
+                if state.mode == MultilineInputMode::Compose
+                    && state.lines == ["draft note"]
+                    && state.row == 0
+                    && state.column == 10
+        ));
+
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Char('y')))
+            .await
+            .unwrap();
+        assert!(app.overlay.is_none());
+        assert!(app.authoring.is_idle());
+
+        app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+        app.handle_normal_key(KeyCode::Char('N')).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state))
+                if state.mode == MultilineInputMode::Compose
+                    && state.lines == [""]
+                    && state.row == 0
+                    && state.column == 0
+        ));
+    }
+
+    #[tokio::test]
     async fn add_note_flow_creates_note_for_selected_task() {
         let mut app = test_app().await;
         create_and_select_task(&mut app, test_task_draft("Note target")).await;
@@ -7210,6 +7260,48 @@ mod detail_mode {
             app.overlay,
             Some(OverlayState::Detail { scroll: 0 })
         ));
+    }
+
+    #[tokio::test]
+    async fn populated_add_note_from_detail_returns_after_confirmed_discard() {
+        let mut app = test_app().await;
+        create_and_select_task(&mut app, test_task_draft("Note target")).await;
+        app.overlay = Some(OverlayState::Detail { scroll: 0 });
+
+        app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('N')), (80, 24).into())
+            .await
+            .unwrap();
+        type_chars(&mut app, "detail draft").await;
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state))
+                if state.mode == MultilineInputMode::ConfirmDiscard
+                    && state.lines == ["detail draft"]
+        ));
+        assert!(app.detail_context);
+
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        assert!(matches!(
+            &app.overlay,
+            Some(OverlayState::MultilineInput(state))
+                if state.mode == MultilineInputMode::Compose
+                    && state.lines == ["detail draft"]
+        ));
+        assert!(app.detail_context);
+
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Char('Y')))
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::Detail { scroll: 0 })
+        ));
+        assert!(app.authoring.is_idle());
     }
 
     #[tokio::test]

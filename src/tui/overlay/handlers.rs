@@ -12,8 +12,9 @@ use super::picker::{
     visible_picker_indices,
 };
 use super::state::{
-    AddTaskMode, ConfirmState, HeaderMenuState, OrderMenuState, OverlayOutcome, OverlayState,
-    OverlaySubmit, PickerMode, PickerState, TagComboboxState, TextPanelState,
+    AddTaskMode, ConfirmState, HeaderMenuState, MultilineInputMode, OrderMenuState, OverlayOutcome,
+    OverlayRoute, OverlayState, OverlaySubmit, PickerMode, PickerState, TagComboboxState,
+    TextPanelState,
 };
 use super::tag_combobox::{
     handle_tag_combobox_key, normalize_tag_combobox_highlight, tag_combobox_matches,
@@ -49,7 +50,9 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
             OverlayState::TextInput(state)
         }
         OverlayState::MultilineInput(mut state) => {
-            state.insert_paste(text);
+            if state.mode == MultilineInputMode::Compose {
+                state.insert_paste(text);
+            }
             OverlayState::MultilineInput(state)
         }
         OverlayState::Picker(mut state) => {
@@ -308,6 +311,16 @@ pub(crate) fn handle_generic_overlay_key(
             }
         },
         OverlayState::MultilineInput(mut state) => {
+            if state.mode == MultilineInputMode::ConfirmDiscard {
+                return match key.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') => OverlayOutcome::Cancelled,
+                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                        state.mode = MultilineInputMode::Compose;
+                        OverlayOutcome::None(OverlayState::MultilineInput(state))
+                    }
+                    _ => OverlayOutcome::None(OverlayState::MultilineInput(state)),
+                };
+            }
             if (key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL))
                 || (key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::CONTROL))
             {
@@ -318,6 +331,12 @@ pub(crate) fn handle_generic_overlay_key(
                 });
             }
             match key.code {
+                KeyCode::Esc
+                    if state.route == OverlayRoute::AddNote && state.has_meaningful_content() =>
+                {
+                    state.mode = MultilineInputMode::ConfirmDiscard;
+                    OverlayOutcome::None(OverlayState::MultilineInput(state))
+                }
                 KeyCode::Esc => OverlayOutcome::Cancelled,
                 _ => {
                     edit_multiline_input(&mut state, key);
@@ -1110,6 +1129,7 @@ mod tests {
             lines: vec!["line".to_string()],
             row: 0,
             column: 4,
+            mode: MultilineInputMode::Compose,
         };
         let outcome = handle(
             ctrl(KeyCode::Char('s')),
@@ -1130,12 +1150,130 @@ mod tests {
             lines: vec!["line".to_string()],
             row: 0,
             column: 4,
+            mode: MultilineInputMode::Compose,
         };
         let outcome = handle(ctrl(KeyCode::Enter), OverlayState::MultilineInput(state));
         assert!(matches!(
             outcome,
             OverlayOutcome::Submitted(OverlaySubmit::Multiline { .. })
         ));
+    }
+
+    #[test]
+    fn populated_add_note_requires_discard_confirmation() {
+        let mut state = MultilineInputState::from_value(
+            OverlayRoute::AddNote,
+            "Add note",
+            "note body:",
+            " first\nsecond ".to_string(),
+        );
+        state.row = 0;
+        state.column = 3;
+
+        let OverlayOutcome::None(OverlayState::MultilineInput(state)) =
+            handle(key(KeyCode::Esc), OverlayState::MultilineInput(state))
+        else {
+            panic!("expected discard confirmation");
+        };
+        assert_eq!(state.mode, MultilineInputMode::ConfirmDiscard);
+        assert_eq!(state.lines, vec![" first", "second "]);
+        assert_eq!((state.row, state.column), (0, 3));
+    }
+
+    #[test]
+    fn blank_add_note_cancels_without_confirmation() {
+        for lines in [
+            vec![String::new()],
+            vec!["   ".to_string()],
+            vec!["\t".to_string(), "  ".to_string(), String::new()],
+        ] {
+            let mut state = MultilineInputState::blank(OverlayRoute::AddNote, "Add note", "");
+            state.lines = lines;
+            assert!(matches!(
+                handle(key(KeyCode::Esc), OverlayState::MultilineInput(state)),
+                OverlayOutcome::Cancelled
+            ));
+        }
+    }
+
+    #[test]
+    fn add_note_discard_confirmation_accepts_y_and_rejects_submission() {
+        for code in [KeyCode::Char('y'), KeyCode::Char('Y')] {
+            let mut state = MultilineInputState::from_value(
+                OverlayRoute::AddNote,
+                "Add note",
+                "",
+                "draft".to_string(),
+            );
+            state.mode = MultilineInputMode::ConfirmDiscard;
+            assert!(matches!(
+                handle(key(code), OverlayState::MultilineInput(state)),
+                OverlayOutcome::Cancelled
+            ));
+        }
+
+        for key in [ctrl(KeyCode::Char('s')), ctrl(KeyCode::Enter)] {
+            let mut state = MultilineInputState::from_value(
+                OverlayRoute::AddNote,
+                "Add note",
+                "",
+                "draft".to_string(),
+            );
+            state.mode = MultilineInputMode::ConfirmDiscard;
+            assert!(matches!(
+                handle(key, OverlayState::MultilineInput(state)),
+                OverlayOutcome::None(OverlayState::MultilineInput(MultilineInputState {
+                    mode: MultilineInputMode::ConfirmDiscard,
+                    ..
+                }))
+            ));
+        }
+    }
+
+    #[test]
+    fn add_note_discard_confirmation_preserves_draft_when_cancelled() {
+        for code in [KeyCode::Char('n'), KeyCode::Char('N'), KeyCode::Esc] {
+            let mut state = MultilineInputState::from_value(
+                OverlayRoute::AddNote,
+                "Add note",
+                "",
+                "first\nsecond".to_string(),
+            );
+            state.row = 0;
+            state.column = 2;
+            state.mode = MultilineInputMode::ConfirmDiscard;
+            let OverlayOutcome::None(OverlayState::MultilineInput(state)) =
+                handle(key(code), OverlayState::MultilineInput(state))
+            else {
+                panic!("expected composer");
+            };
+            assert_eq!(state.mode, MultilineInputMode::Compose);
+            assert_eq!(state.lines, vec!["first", "second"]);
+            assert_eq!((state.row, state.column), (0, 2));
+        }
+    }
+
+    #[test]
+    fn repeated_esc_never_discards_populated_add_note() {
+        let state = MultilineInputState::from_value(
+            OverlayRoute::AddNote,
+            "Add note",
+            "",
+            "draft".to_string(),
+        );
+        let OverlayOutcome::None(OverlayState::MultilineInput(state)) =
+            handle(key(KeyCode::Esc), OverlayState::MultilineInput(state))
+        else {
+            panic!("expected discard confirmation");
+        };
+        assert_eq!(state.mode, MultilineInputMode::ConfirmDiscard);
+        let OverlayOutcome::None(OverlayState::MultilineInput(state)) =
+            handle(key(KeyCode::Esc), OverlayState::MultilineInput(state))
+        else {
+            panic!("expected composer");
+        };
+        assert_eq!(state.mode, MultilineInputMode::Compose);
+        assert_eq!(state.lines, vec!["draft"]);
     }
 
     #[test]
@@ -1238,6 +1376,7 @@ mod tests {
                 lines: vec!["value".to_string()],
                 row: 0,
                 column: 5,
+                mode: MultilineInputMode::Compose,
             }),
             OverlayState::Picker(PickerState {
                 route: OverlayRoute::MessageOnly,
@@ -1334,6 +1473,7 @@ mod tests {
                 lines: vec!["note".to_string()],
                 row: 0,
                 column: 4,
+                mode: MultilineInputMode::Compose,
             }),
         );
         assert!(matches!(

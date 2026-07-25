@@ -6,13 +6,26 @@ use crate::tui::overlay::{ConfirmView, confirm_width};
 use crate::tui::text::char_count_ranges;
 
 pub(in crate::tui::ui) fn render_confirm(frame: &mut Frame, state: &ConfirmView) {
-    let width = confirm_width(frame.area().width, &state.prompt);
+    render_confirm_with_hint_line(frame, state, confirm_hint_line());
+}
+
+pub(in crate::tui::ui) fn render_confirm_with_hints(
+    frame: &mut Frame,
+    state: &ConfirmView,
+    hints: &[(&str, &str)],
+) {
+    render_confirm_with_hint_line(frame, state, dialog_hint_line(hints));
+}
+
+fn render_confirm_with_hint_line(frame: &mut Frame, state: &ConfirmView, hints: Line<'static>) {
+    let width = confirm_width(frame.area().width, &state.prompt)
+        .max(confirm_width(frame.area().width, &hints.to_string()));
     let prompt_rows = char_count_ranges(&state.prompt, width.saturating_sub(4) as usize).len();
     let height = prompt_rows.saturating_add(4) as u16;
     let text = Text::from(vec![
         Line::from(state.prompt.as_str()),
         Line::from(""),
-        confirm_hint_line(),
+        hints,
     ]);
     Dialog::new(&state.title, width, height)
         .wrap()

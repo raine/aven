@@ -4,8 +4,9 @@ use crate::tui::store::{TaskOrder, TuiDatabaseStats, TuiSyncStatus};
 use super::layout::TAG_COMBOBOX_VIEWPORT_ROWS;
 use super::picker::visible_picker_indices;
 use super::state::{
-    AddTaskMode, HeaderMenuItem, HeaderMenuKind, HeaderMenuState, OrderMenuState, OverlayRoute,
-    OverlayState, OverlayState::*, PickerItem, PickerMode, SearchPurpose, SearchResultItem,
+    AddTaskMode, HeaderMenuItem, HeaderMenuKind, HeaderMenuState, MultilineInputMode,
+    OrderMenuState, OverlayRoute, OverlayState, OverlayState::*, PickerItem, PickerMode,
+    SearchPurpose, SearchResultItem,
 };
 use super::tag_combobox::{tag_combobox_completion, tag_combobox_matches};
 
@@ -113,6 +114,7 @@ pub(crate) struct MultilineInputView {
     pub(crate) lines: Vec<String>,
     pub(crate) row: usize,
     pub(crate) column: usize,
+    pub(crate) mode: MultilineInputMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -260,6 +262,7 @@ impl From<&OverlayState> for OverlayView {
                 lines: state.lines.clone(),
                 row: state.row,
                 column: state.column,
+                mode: state.mode,
             }),
             Picker(state) => Self::Picker(PickerView {
                 route: state.route,

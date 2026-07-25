@@ -21,10 +21,10 @@ pub(crate) use layout::{
 pub(crate) use picker::{picker_viewport_start, visible_picker_indices};
 pub(crate) use state::{
     AddTaskMode, AddTaskState, CommandState, ConfirmSubmitRoute, HeaderMenuAction, HeaderMenuItem,
-    HeaderMenuKind, HeaderMenuState, MultilineInputState, MultilineSubmitRoute, OrderMenuState,
-    OverlayOutcome, OverlayRoute, OverlayState, OverlaySubmit, OverlaySubmitKind, PickerItem,
-    PickerMode, PickerState, PickerSubmitRoute, SearchPurpose, SearchResultItem, SearchState,
-    TextPanelState, TextSubmitRoute, UpdateOverlayState,
+    HeaderMenuKind, HeaderMenuState, MultilineInputMode, MultilineInputState, MultilineSubmitRoute,
+    OrderMenuState, OverlayOutcome, OverlayRoute, OverlayState, OverlaySubmit, OverlaySubmitKind,
+    PickerItem, PickerMode, PickerState, PickerSubmitRoute, SearchPurpose, SearchResultItem,
+    SearchState, TextPanelState, TextSubmitRoute, UpdateOverlayState,
 };
 #[cfg(test)]
 pub(crate) use state::{ConfirmState, TextInputState};

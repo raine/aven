@@ -3,9 +3,10 @@ use crate::query::SyncHistoryStats;
 use crate::tui::authoring::{AddTaskStep, PendingTaskAttachmentSummary};
 use crate::tui::config_overlay::{CONFIG_STATUS_TITLE, DATABASE_STATS_TITLE};
 use crate::tui::overlay::{
-    AddTaskAttachmentsView, AddTaskMode, AddTaskView, ConfirmView, MultilineInputView,
-    OverlayRoute, OverlayState, OverlayView, PickerItem, PickerMode, PickerState, PickerView,
-    SearchPurpose, SearchResultItem, TagComboboxView, TextInputView, TextPanelView,
+    AddTaskAttachmentsView, AddTaskMode, AddTaskView, ConfirmView, MultilineInputMode,
+    MultilineInputView, OverlayRoute, OverlayState, OverlayView, PickerItem, PickerMode,
+    PickerState, PickerView, SearchPurpose, SearchResultItem, TagComboboxView, TextInputView,
+    TextPanelView,
 };
 use crate::tui::store::{
     DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts, SyncStatusCheck, TuiDatabaseStats,
@@ -1193,6 +1194,7 @@ mod multiline_overlays {
             lines: vec!["line one".to_string()],
             row: 0,
             column: 4,
+            mode: MultilineInputMode::Compose,
         }));
         assert!(rendered.contains("Description"));
         assert!(rendered.contains("Body"));
@@ -1221,6 +1223,7 @@ mod multiline_overlays {
             lines: vec!["body".to_string(), String::new()],
             row: 1,
             column: 0,
+            mode: MultilineInputMode::Compose,
         };
         let (lines, _) = description_editor_lines(&state, 80);
         assert!(!lines[1].to_string().contains("Enter task description here"));
@@ -1237,6 +1240,7 @@ mod multiline_overlays {
             lines: vec!["a".repeat(160)],
             row: 0,
             column: 150,
+            mode: MultilineInputMode::Compose,
         });
         let rendered = render_overlay_view(overlay);
         assert!(rendered.contains("Edit description"));
@@ -1286,6 +1290,7 @@ mod multiline_overlays {
             lines: vec!["abcdefghij".to_string()],
             row: 0,
             column: 8,
+            mode: MultilineInputMode::Compose,
         };
         let (lines, cursor_row) = description_editor_lines(&state, 4);
         assert_eq!(lines.len(), 3);
@@ -1301,6 +1306,7 @@ mod multiline_overlays {
             lines: vec!["line one".to_string()],
             row: 0,
             column: 4,
+            mode: MultilineInputMode::Compose,
         }));
         assert!(rendered.contains("Edit description"));
         assert!(rendered.contains("line one"));
@@ -1327,6 +1333,7 @@ mod multiline_overlays {
             lines: vec![String::new()],
             row: 0,
             column: 0,
+            mode: MultilineInputMode::Compose,
         }));
         assert!(rendered.contains("Anything"));
         assert!(rendered.contains("Describe the task in natural language..."));
@@ -1344,6 +1351,7 @@ mod multiline_overlays {
             lines: vec![String::new()],
             row: 0,
             column: 0,
+            mode: MultilineInputMode::Compose,
         }));
         assert!(rendered.contains("Add task: natural language"));
         assert!(rendered.contains("body:"));
@@ -1361,6 +1369,7 @@ mod multiline_overlays {
             lines: vec![String::new()],
             row: 0,
             column: 0,
+            mode: MultilineInputMode::Compose,
         }));
         assert!(rendered.contains("Resolve manually"));
         assert!(rendered.contains(CONFLICT_MANUAL_BODY_PLACEHOLDER));
@@ -1377,6 +1386,7 @@ mod multiline_overlays {
             lines: vec![String::new()],
             row: 0,
             column: 0,
+            mode: MultilineInputMode::Compose,
         });
         let rendered = render_overlay_view(overlay.clone());
         assert!(rendered.contains("Add note"));
@@ -1397,6 +1407,25 @@ mod multiline_overlays {
     }
 
     #[test]
+    fn add_note_discard_confirmation_renders_explicit_controls() {
+        let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+            route: OverlayRoute::AddNote,
+            title: "Add note".to_string(),
+            prompt: "note body:".to_string(),
+            lines: vec!["draft note text".to_string()],
+            row: 0,
+            column: 5,
+            mode: MultilineInputMode::ConfirmDiscard,
+        }));
+
+        assert!(rendered.contains("Discard note draft?"));
+        assert!(rendered.contains("The note text will be lost."));
+        assert!(rendered.contains("y discard"));
+        assert!(rendered.contains("n keep editing"));
+        assert!(rendered.contains("Esc keep editing"));
+    }
+
+    #[test]
     fn add_note_overlay_hides_placeholder_on_later_empty_lines() {
         let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
             route: OverlayRoute::AddNote,
@@ -1405,6 +1434,7 @@ mod multiline_overlays {
             lines: vec!["existing note text".to_string(), String::new()],
             row: 1,
             column: 0,
+            mode: MultilineInputMode::Compose,
         }));
 
         assert!(rendered.contains("existing note text"));
@@ -1422,6 +1452,7 @@ mod multiline_overlays {
             lines: vec![body.clone()],
             row: 0,
             column: body.len(),
+            mode: MultilineInputMode::Compose,
         }));
 
         assert!(rendered.contains("wrapped note text"));
@@ -1453,6 +1484,7 @@ mod multiline_overlays {
                         lines,
                         row,
                         column,
+                        mode: MultilineInputMode::Compose,
                     },
                 )
             })
@@ -1795,6 +1827,7 @@ mod route_specific_rendering {
                 lines: vec!["line one".to_string()],
                 row: 0,
                 column: 4,
+                mode: MultilineInputMode::Compose,
             }),
             OverlayView::Picker(PickerView {
                 title: "Project".to_string(),
@@ -1854,6 +1887,7 @@ mod route_specific_rendering {
             lines: vec![String::new()],
             row: 0,
             column: 0,
+            mode: MultilineInputMode::Compose,
         }));
         assert!(rendered.contains("Changed note title"));
         assert!(rendered.contains("Enter note body here..."));
@@ -1869,6 +1903,7 @@ mod route_specific_rendering {
             lines: vec!["a".repeat(160)],
             row: 0,
             column: 150,
+            mode: MultilineInputMode::Compose,
         }));
         assert!(rendered.contains("Changed description title"));
         assert!(rendered.contains("Ctrl+X Ctrl+E editor"));
@@ -1884,6 +1919,7 @@ mod route_specific_rendering {
             lines: vec![String::new()],
             row: 0,
             column: 0,
+            mode: MultilineInputMode::Compose,
         }));
         assert!(rendered.contains("Changed add task description"));
         assert!(rendered.contains("Optional details, links, or handoff context..."));

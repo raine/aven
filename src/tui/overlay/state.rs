@@ -863,6 +863,12 @@ impl TextInputState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MultilineInputMode {
+    Compose,
+    ConfirmDiscard,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MultilineInputState {
     pub(crate) route: OverlayRoute,
@@ -871,9 +877,14 @@ pub(crate) struct MultilineInputState {
     pub(crate) lines: Vec<String>,
     pub(crate) row: usize,
     pub(crate) column: usize,
+    pub(crate) mode: MultilineInputMode,
 }
 
 impl MultilineInputState {
+    pub(crate) fn has_meaningful_content(&self) -> bool {
+        self.lines.iter().any(|line| !line.trim().is_empty())
+    }
+
     pub(crate) fn insert_paste(&mut self, text: &str) {
         if self.lines.is_empty() {
             self.lines.push(String::new());
@@ -911,6 +922,7 @@ impl MultilineInputState {
             lines: vec![String::new()],
             row: 0,
             column: 0,
+            mode: MultilineInputMode::Compose,
         }
     }
 
@@ -933,6 +945,7 @@ impl MultilineInputState {
             lines,
             row,
             column,
+            mode: MultilineInputMode::Compose,
         }
     }
 }
