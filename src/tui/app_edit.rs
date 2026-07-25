@@ -589,9 +589,9 @@ impl App {
 
     fn open_edit_availability_overlay(&mut self, input: String) {
         let prompt = if self.edit_aggregate == EditAggregate::Mixed {
-            "Current: varies\nEnter keeps existing dates · type a date to set all\nCtrl+D clears all after confirmation"
+            "Current: varies\nType a date to set it on all tasks"
         } else if self.edit_scope.len() > 1 {
-            "Try tomorrow · in 2 weeks · next monday at 9am\nCtrl+D clears all after confirmation"
+            "Try tomorrow · in 2 weeks · next monday at 9am"
         } else {
             EDIT_AVAILABILITY_PROMPT
         };
@@ -615,9 +615,9 @@ impl App {
 
     fn open_edit_due_overlay(&mut self, input: String) {
         let prompt = if self.edit_aggregate == EditAggregate::Mixed {
-            "Current: varies\nEnter keeps existing dates · type a date to set all\nCtrl+D clears all after confirmation"
+            "Current: varies\nType a date to set it on all tasks"
         } else if self.edit_scope.len() > 1 {
-            "Try today · tomorrow · in 2 weeks · next monday\nCtrl+D clears all after confirmation"
+            "Try today · tomorrow · in 2 weeks · next monday"
         } else {
             EDIT_DUE_PROMPT
         };

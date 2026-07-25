@@ -79,11 +79,16 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
             .lines()
             .map(|line| Line::from(Span::styled(line.to_string(), Style::new().fg(FG_DIM))))
             .collect::<Vec<_>>();
-        lines.extend([
-            input,
-            Line::from(""),
-            dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
-        ]);
+        let hints = if state.prompt.starts_with("Current: varies") {
+            &[
+                ("Enter", "keep"),
+                ("Ctrl+D", "clear dates"),
+                ("Esc", "cancel"),
+            ][..]
+        } else {
+            &[("Enter", "submit"), ("Ctrl+D", "clear"), ("Esc", "cancel")][..]
+        };
+        lines.extend([input, Line::from(""), dialog_hint_line(hints)]);
         lines
     } else {
         vec![
@@ -93,8 +98,10 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
             dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
         ]
     };
-    let height = if state.route == OverlayRoute::DeleteProjectNameConfirm || edit_date {
+    let height = if state.route == OverlayRoute::DeleteProjectNameConfirm {
         7
+    } else if edit_date {
+        state.prompt.lines().count() as u16 + 5
     } else {
         6
     };

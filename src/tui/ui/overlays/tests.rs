@@ -482,6 +482,22 @@ mod text_input {
     }
 
     #[test]
+    fn mixed_date_edit_uses_keep_and_clear_hints() {
+        let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
+            route: OverlayRoute::EditDue,
+            title: "Edit due date · 2 marked tasks".to_string(),
+            prompt: "Current: varies\nType a date to set it on all tasks".to_string(),
+            input: String::new(),
+            cursor: 0,
+        }));
+
+        assert!(rendered.contains("Type a date to set it on all tasks"));
+        assert!(rendered.contains("Enter keep"));
+        assert!(rendered.contains("Ctrl+D clear dates"));
+        assert!(rendered.contains("Esc cancel"));
+    }
+
+    #[test]
     fn overlay_render_omits_empty_text_input_prompt() {
         let rendered = render_overlay_view(OverlayView::TextInput(TextInputView {
             route: OverlayRoute::MessageOnly,
